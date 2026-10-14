@@ -80,12 +80,7 @@ class AccountAdditionalQuota(DashboardModel):
 
 
 class AccountFableScopedWeekly(DashboardModel):
-    """Anthropic's own Fable-scoped weekly marker for this account.
 
-    The same row the balancer's Fable eligibility reads. `fresh` is false once
-    the marker is older than the shared staleness window, in which case routing
-    falls back to the overall-weekly heuristic and this row is only history.
-    """
 
     used_percent: float
     reset_at: datetime | None = None
@@ -104,12 +99,7 @@ class AccountSubscriptionLedger(DashboardModel):
 
 
 class AccountIdentityMismatch(DashboardModel):
-    """Chronic usage-refresh identity mismatch (e.g. a lapsed plan).
 
-    Present only after the escalation threshold of consecutive refresh cycles
-    whose payload identity contradicted the stored slot — every one of those
-    refreshes was discarded, so the account's usage data is stale.
-    """
 
     count: int
     first_at: datetime
@@ -131,12 +121,12 @@ class AccountSummary(DashboardModel):
     routing_policy: str = Field(default="normal", pattern=r"^(normal|burn_first|preserve)$")
     status: str
     security_work_authorized: bool = False
-    # Anthropic only: weekly usage below the Fable threshold, i.e. the balancer
-    # will consider this account for Fable-class requests. Null for other providers.
+
+
     fable_eligible: bool | None = None
-    # Anthropic only: the raw Fable-scoped weekly marker behind fable_eligible,
-    # so a caller can see how much of the Fable week is left, not just the
-    # boolean. Null when no marker row exists for the account.
+
+
+
     fable_scoped_weekly: AccountFableScopedWeekly | None = None
     usage: AccountUsage | None = None
     reset_at_primary: datetime | None = None
@@ -168,22 +158,22 @@ class AccountSummary(DashboardModel):
     limit_warmup_enabled: bool = False
     limit_warmup: AccountLimitWarmupStatus | None = None
     last_primed_at: datetime | None = None
-    # True when another account row in the same response shares this real email,
-    # ChatGPT account identity, and workspace slot.
-    # Operators see this after a token-invalidation cascade where re-adding
-    # via OAuth creates a side-by-side row with a fresh refresh token; the
-    # older row keeps a revoked token and keeps generating 401s through the
-    # load balancer. Flagging the dupes in /accounts lets the dashboard
-    # surface a "delete older" action without requiring the operator to
-    # group rows by email themselves. See agent-lb #787 (B).
+
+
+
+
+
+
+
+
     is_email_duplicate: bool = False
-    # Escalated usage-refresh identity mismatch (see AccountIdentityMismatch);
-    # null while refreshes are healthy or below the escalation threshold.
+
+
     identity_mismatch: AccountIdentityMismatch | None = None
-    # Instance federation: which agent-lb instance currently owns OAuth refresh
-    # for this account. Null means this instance (the classic, non-federated
-    # case). is_locally_owned is the derived convenience flag the dashboard
-    # badges off of.
+
+
+
+
     owner_instance: str | None = None
     is_locally_owned: bool = True
     owner_label: str | None = None
@@ -212,14 +202,14 @@ class DegradationStatus(DashboardModel):
 
 
 class AvailabilityResponse(DashboardModel):
-    """Fleet-wide account availability, aggregated per provider."""
+
 
     degradation: DegradationStatus
     providers: dict[str, ProviderAvailability] = Field(default_factory=dict)
 
 
 class AnthropicModelsResponse(DashboardModel):
-    """Upstream Anthropic model ids, so `route` can resolve a Claude family alias to its newest model."""
+
 
     models: list[str] = Field(default_factory=list)
     fetched_at: datetime | None = None

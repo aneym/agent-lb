@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""Flag Harbor trials whose agent tried to reach the task's upstream history.
 
-The egress allowlist is the primary guard (see README.md). This is the
-after-the-fact check: it reads each trial's ATIF ``agent/trajectory.json`` and
-matches the agent's own tool calls (names and arguments, not tool output, since
-repo files legitimately mention git commands) against the channels a public
-agent-lb or codex-lb fix could arrive through.
-
-    python3 scan_trials.py jobs/<job> [more job or trial dirs...] [--json]
-
-Exits 1 when any trial is flagged or has no trajectory to scan.
-"""
 
 from __future__ import annotations
 

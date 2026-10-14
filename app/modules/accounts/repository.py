@@ -43,7 +43,7 @@ class ExchangeIntentWindow:
     ready: bool
 
 
-# Replayed request_ids are looked up in chunks to keep the IN list bounded.
+
 _REPLAYED_REQUEST_ID_CHUNK = 500
 
 
@@ -91,14 +91,7 @@ class AccountsRepository:
         self,
         account_ids: list[str] | None = None,
     ) -> dict[str, AccountRequestUsageSummary]:
-        """Per-account request-usage totals, counting each replayed row once.
 
-        Rows sharing (account_id, request_id, requested_at) are one request and only
-        the newest id counts (#904). Such replays are rare, so this sums every row in
-        one pass and subtracts the superseded replays, instead of ranking the whole
-        table through a window function (that sort took ~10s at 1.8M rows). Every
-        statement is bounded by one max(id) so rows landing mid-way are all excluded.
-        """
         conditions: list = [
             RequestLog.request_kind.not_in(("warmup", "limit_warmup")),
             RequestLog.deleted_at.is_(None),
@@ -121,7 +114,7 @@ class AccountsRepository:
         )
 
         totals_stmt = select(RequestLog.account_id, *usage_sums).where(*conditions).group_by(RequestLog.account_id)
-        # [request_count, input, output, cached_input, cache_creation, cache_read, cost]
+
         totals: dict[str, list[int | float]] = {
             account_id: [int(value or 0) for value in counts] + [float(cost or 0.0)]
             for account_id, *counts, cost in (await self._session.execute(totals_stmt)).all()
@@ -219,24 +212,24 @@ class AccountsRepository:
             merge_by_email = await self._merge_by_email_enabled()
 
         if dialect_name == "sqlite" and not sqlite_lock_acquired:
-            # sqlite BEGIN IMMEDIATE serializes all writers globally, so
-            # the identity-reconciliation branch is already mutually
-            # exclusive on this dialect.
+
+
+
             await self._acquire_sqlite_merge_lock()
         elif dialect_name == "postgresql":
-            # Identity-keyed advisory lock must always be acquired when
-            # identity reconciliation is in play, regardless of
-            # merge_by_email. Two concurrent reauths for the same
-            # upstream chatgpt_account_id but different email claims
-            # (e.g. user changed email upstream) would otherwise take
-            # different email-scoped locks, both miss the canonical-row
-            # lookup below, and both INSERT a duplicate row for the
-            # same identity.
-            #
-            # Ordering identity-first, then email, gives a stable
-            # acquisition order across all callers so two concurrent
-            # reauths that overlap on either key serialize without
-            # deadlock.
+
+
+
+
+
+
+
+
+
+
+
+
+
             identity_locked = False
             if merge_by_chatgpt_identity and account.chatgpt_account_id:
                 await self._acquire_postgresql_identity_lock(f"chatgpt:{account.chatgpt_account_id}")
@@ -246,17 +239,17 @@ class AccountsRepository:
             elif not identity_locked:
                 await self._acquire_postgresql_identity_lock(account.id)
 
-        # Identity-aware reconciliation runs before the deterministic-id
-        # check so that a deactivated row whose refresh token was revoked
-        # is reused on reauth instead of being shadowed by an __copy row
-        # under the same upstream ChatGPT identity (issue #788).
-        #
-        # This path is intentionally independent of merge_by_email: the
-        # OAuth reauth caller passes merge_by_chatgpt_identity=True even
-        # when the operator has opted into "import without overwrite",
-        # because that setting governs the dashboard import path (side-
-        # by-side rows for the same email) rather than the reauth path
-        # (one local row per upstream identity).
+
+
+
+
+
+
+
+
+
+
+
         if merge_by_chatgpt_identity and account.chatgpt_account_id:
             canonical = await self._account_by_chatgpt_identity(
                 account.chatgpt_account_id,
@@ -372,15 +365,7 @@ class AccountsRepository:
         *,
         workspace_id: str | None,
     ) -> Account | None:
-        """Return the canonical local account row for a ChatGPT identity.
 
-        Order of preference, so that reauth reuses the row that already
-        carries the historical usage and audit trail:
-
-        1. The oldest row by ``created_at`` (deterministic tie-break on
-           ``id``) — this is almost always the original row, before any
-           ``__copyN`` rows were created.
-        """
 
         stmt = select(Account).where(Account.chatgpt_account_id == chatgpt_account_id)
         order_by: list[Any] = [Account.created_at.asc(), Account.id.asc()]
@@ -510,7 +495,7 @@ class AccountsRepository:
         if expected_refresh_token_encrypted is not None:
             stmt = stmt.where(Account.refresh_token_encrypted == expected_refresh_token_encrypted)
         elif status != AccountStatus.EXCHANGE_UNCERTAIN:
-            # Only exchange resolution may clear an uncertain refresh outcome.
+
             stmt = stmt.where(Account.status != AccountStatus.EXCHANGE_UNCERTAIN)
         result = await self._session.execute(stmt.values(**values).returning(Account.id))
         await self._session.commit()
@@ -745,7 +730,7 @@ class AccountsRepository:
         ).scalar_one_or_none()
 
     async def drop_stale_exchange_intent(self, account_id: str, stale_hash: str, expected_token: bytes) -> bool:
-        """Retire a fence for a token the account no longer holds, under the account lock."""
+
         account = (
             await self._session.execute(
                 select(Account.refresh_token_encrypted, Account.status)
@@ -778,7 +763,7 @@ class AccountsRepository:
         replay: bool = False,
         timeout_seconds: float | None = None,
     ) -> bool:
-        """Atomically fence a locally owned token before it can reach the provider."""
+
         from sqlalchemy.exc import IntegrityError
 
         source = (
@@ -806,7 +791,7 @@ class AccountsRepository:
             async with self._session.begin_nested():
                 eligible = not replay or timeout_seconds is not None
                 if replay:
-                    # Serialize replacement with token rotation even if the advisory lock is lost.
+
                     account_row = await self._session.execute(
                         select(Account.id)
                         .where(
@@ -852,7 +837,7 @@ class AccountsRepository:
         return True
 
     async def abort_exchange(self, account_id: str, token_hash: str) -> None:
-        """Release a fence only when the provider could not have seen the token."""
+
         await self._session.execute(
             delete(AccountExchangeIntent).where(
                 AccountExchangeIntent.account_id == account_id,
@@ -862,7 +847,7 @@ class AccountsRepository:
         await self._session.commit()
 
     async def clear_exchange_intent(self, account_id: str, timeout_seconds: float) -> bool | datetime:
-        """Allow an operator-directed replay only after the provider's processing window."""
+
         window = await self.exchange_intent_window(account_id, timeout_seconds)
         if window is None:
             return False
@@ -1030,8 +1015,8 @@ class AccountsRepository:
             message = str(exc).lower()
             if "within a transaction" not in message:
                 raise
-            # A no-op write escalates the current deferred transaction to a write
-            # transaction, serializing concurrent writers.
+
+
             await self._session.execute(text("UPDATE accounts SET id = id WHERE 1 = 0"))
 
     async def _acquire_postgresql_merge_lock(self, email: str) -> None:

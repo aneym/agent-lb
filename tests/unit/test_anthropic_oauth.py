@@ -149,8 +149,8 @@ async def test_refresh_anthropic_access_token_returns_optional_id_token() -> Non
     body = json.loads(session.requests[0]["data"])
     assert body["grant_type"] == "refresh_token"
     assert body["refresh_token"] == "old-refresh"
-    # The refresh grant carries the configured Claude Code scopes; this is the
-    # request shape the live runtime has sent since 2026-09-10.
+
+
     assert body["scope"] == get_settings().anthropic_oauth_scope
 
 

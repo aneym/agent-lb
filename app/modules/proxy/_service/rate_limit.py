@@ -197,7 +197,7 @@ class _RateLimitMixin:
         account_map: dict[str, Account],
         now_epoch: int,
     ) -> list[AdditionalRateLimitData]:
-        """Build additional rate limit entries from AdditionalUsageRepository."""
+
         if not account_map:
             return []
 
@@ -256,8 +256,8 @@ class _RateLimitMixin:
                             reset_at=reset_at,
                         )
                     else:
-                        # Timing metadata absent - still emit used_percent
-                        # so clients retain visibility into quota consumption.
+
+
                         window_snapshot = RateLimitWindowSnapshotData(
                             used_percent=int(max(0.0, min(100.0, avg_used_percent))),
                         )
@@ -288,9 +288,9 @@ class _RateLimitMixin:
 
             rate_limit_details = None
             if avg_used_percent is not None or secondary_window_snapshot is not None:
-                # Per-account availability: an account is available when
-                # neither its primary nor secondary window is exhausted.
-                # Pool is allowed when at least one account can serve.
+
+
+
                 all_account_ids = set(filtered_entries.keys()) | set(filtered_secondary.keys())
                 any_available = False
                 for aid in all_account_ids:

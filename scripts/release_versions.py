@@ -1,8 +1,4 @@
-"""Release version helpers for agent-lb release workflows.
 
-The GitHub workflows intentionally use this stdlib-only module so that release
-metadata can be validated before project dependencies are installed.
-"""
 
 from __future__ import annotations
 
@@ -45,7 +41,7 @@ class ReleaseVersion:
 
     @property
     def pypi_version(self) -> str:
-        """Return the normalized PEP 440 spelling expected in PyPI output."""
+
 
         if self.channel == "stable":
             return self.version
@@ -101,12 +97,7 @@ def _write_text(path: Path, text: str) -> None:
 
 
 def update_project_versions(root: Path, version: str) -> None:
-    """Update all release-please managed version files to *version*.
 
-    This deliberately does not modify .github/release-please-manifest.json:
-    beta releases are prerelease snapshots of the next stable train, while the
-    stable train remains owned by release-please.
-    """
 
     release = parse_version(version)
 
@@ -222,13 +213,7 @@ def run_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedP
 
 
 def is_releasable_conventional_commit(subject: str, body: str = "") -> bool:
-    """Return whether a commit should open/update a release-please-style beta PR.
 
-    The beta channel should not advance for workflow-only noise such as
-    ``ci: ...`` after the previous beta tag. Match release-please's semver
-    intent rather than GitHub's broader generated release notes: feature, fix,
-    perf, dependency, revert, and breaking-change commits are releasable.
-    """
 
     match = _CONVENTIONAL_SUBJECT_RE.fullmatch(subject.strip())
     if not match:
@@ -241,7 +226,7 @@ def is_releasable_conventional_commit(subject: str, body: str = "") -> bool:
 
 
 def commit_messages_since(root: Path, ref: str) -> list[CommitMessage]:
-    """Return commits after *ref* in oldest-to-newest order."""
+
 
     proc = run_git(root, "log", "--reverse", "--format=%H%x00%s%x00%b%x1e", f"{ref}..HEAD")
     commits: list[CommitMessage] = []
@@ -280,7 +265,7 @@ def format_beta_changelog(root: Path, ref: str) -> str:
 
 
 def discover_release_please_base_version(root: Path) -> str:
-    """Read the next stable version from the release-please PR branch."""
+
 
     candidates = ["origin/release-please--branches--main", "release-please--branches--main"]
     last_error = ""

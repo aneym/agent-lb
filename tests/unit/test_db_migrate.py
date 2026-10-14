@@ -42,12 +42,12 @@ def _db_url(path: Path) -> str:
 
 
 def test_socket_host_url_survives_alembic_config_and_full_upgrade(tmp_path: Path) -> None:
-    # A socket path in the host query is percent-encoded by SQLAlchemy's URL renderer.
+
     socket_url = "postgresql+asyncpg://localhost/agentlb_si_r3m?host=/tmp"
     sync_url = to_sync_database_url(socket_url)
     assert _build_alembic_config(socket_url).get_main_option("sqlalchemy.url") == sync_url
-    # An encoded query on SQLite exercises the same Alembic offline and online paths
-    # without requiring a Postgres unix socket at a particular location.
+
+
     url = f"sqlite+aiosqlite:///{tmp_path / 'encoded.db'}?timeout=1%2E0"
     assert _build_alembic_config(url).get_main_option("sqlalchemy.url") == to_sync_database_url(url)
     upgraded = run_upgrade(url, "head", bootstrap_legacy=False)
@@ -204,7 +204,7 @@ def test_wait_for_connection_times_out_when_database_stays_unreachable(monkeypat
 
 
 def test_schema_migration_contract_matches_after_upgrade(tmp_path: Path) -> None:
-    """Prisma-style contract: migrated schema must match ORM metadata and policy."""
+
     db_path = tmp_path / "contract.db"
     url = _db_url(db_path)
 
@@ -1099,7 +1099,7 @@ def test_routing_policy_persistence_downgrade_does_not_drop_shared_columns(monke
 
 
 def test_refresh_intent_rollback_downgrades_only_exact_head(tmp_path: Path) -> None:
-    """The pre-pin schema is bootable only after the new build removes its Alembic head."""
+
     url = _db_url(tmp_path / "refresh-rollback.db")
     parent = "20260926_200000_add_team_pool_share"
     run_upgrade(url, "20260926_000000_refresh_intent_expiry", bootstrap_legacy=False)
@@ -1144,7 +1144,7 @@ def test_refresh_intent_rollback_downgrades_only_exact_head(tmp_path: Path) -> N
 
 
 def test_transfer_abort_states_upgrade_and_downgrade(tmp_path: Path) -> None:
-    """Both transfer states survive upgrade and map to a compatible old state on rollback."""
+
     url = _db_url(tmp_path / "transfer-abort.db")
     parent = "20260926_200000_add_team_pool_share"
     head = "20260926_000000_refresh_intent_expiry"
@@ -1172,7 +1172,7 @@ def test_transfer_abort_states_upgrade_and_downgrade(tmp_path: Path) -> None:
         with engine.connect() as connection:
             states = connection.execute(text("SELECT state FROM account_transfers ORDER BY id")).scalars().all()
         assert states == ["settled", "settled"]
-        # The models describe the latest head, so compare the schema there.
+
         run_upgrade(url, "head", bootstrap_legacy=False)
         assert check_schema_drift(url) == ()
     finally:

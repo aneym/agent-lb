@@ -1,4 +1,4 @@
-"""Check that glossary documentation explains each term completely."""
+
 
 import json
 import re

@@ -1,4 +1,4 @@
-"""First-match classification for read-only word reports."""
+
 
 import fnmatch
 import re

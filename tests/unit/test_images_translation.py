@@ -1,4 +1,4 @@
-"""Unit tests for the OpenAI Images <-> Responses translation layer."""
+
 
 from __future__ import annotations
 
@@ -15,32 +15,27 @@ from app.modules.proxy import images_service
 
 
 def _tool(responses: Any, index: int = 0) -> Mapping[str, JsonValue]:
-    """Return ``responses.tools[index]`` as a typed mapping for ``ty``.
 
-    The Responses request models tools as ``list[JsonValue]``; ``ty`` cannot
-    narrow to a mapping for chained subscripting in tests, so we cast at the
-    one place we use this access pattern.
-    """
     return cast(Mapping[str, JsonValue], responses.tools[index])
 
 
 def _input_msg(responses: Any, index: int = 0) -> Mapping[str, JsonValue]:
-    """Return ``responses.input[index]`` as a typed mapping for ``ty``."""
+
     return cast(Mapping[str, JsonValue], responses.input[index])
 
 
 def _content_list(message: Mapping[str, JsonValue]) -> list[JsonValue]:
-    """Return ``message['content']`` as a typed list for ``ty``."""
+
     return cast(list[JsonValue], message["content"])
 
 
 def _content_part(message: Mapping[str, JsonValue], index: int) -> Mapping[str, JsonValue]:
-    """Return one content part as a typed mapping for ``ty``."""
+
     return cast(Mapping[str, JsonValue], _content_list(message)[index])
 
 
 def _image_response(result: Any) -> V1ImageResponse:
-    """Narrow ``images_response_from_responses`` to ``V1ImageResponse`` for tests."""
+
     assert isinstance(result, V1ImageResponse)
     return result
 
@@ -49,9 +44,9 @@ def _as_mapping(value: Any) -> Mapping[str, JsonValue]:
     return cast(Mapping[str, JsonValue], value)
 
 
-# ---------------------------------------------------------------------------
-# Request translation
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class TestImagesGenerationToResponsesRequest:
@@ -60,10 +55,10 @@ class TestImagesGenerationToResponsesRequest:
         responses = images_service.images_generation_to_responses_request(payload, host_model="gpt-5.5")
         assert responses.model == "gpt-5.5"
         assert responses.store is False
-        # The internal Responses request is always streamed because the
-        # upstream backend rejects non-streaming requests that include the
-        # image_generation tool. Public non-streaming clients are served by
-        # draining the upstream stream into a JSON envelope.
+
+
+
+
         assert responses.stream is True
         assert "image generator" in responses.instructions
         assert isinstance(responses.input, list)
@@ -73,8 +68,8 @@ class TestImagesGenerationToResponsesRequest:
         tool = _tool(responses)
         assert tool["type"] == "image_generation"
         assert tool["model"] == "gpt-image-2"
-        # ``n`` is intentionally not forwarded into the tool config because
-        # the upstream image_generation tool does not accept it.
+
+
         assert "n" not in tool
         assert tool["size"] == "auto"
         assert tool["quality"] == "auto"
@@ -82,7 +77,7 @@ class TestImagesGenerationToResponsesRequest:
         assert tool["output_format"] == "png"
         assert tool["output_compression"] == 100
         assert tool["moderation"] == "auto"
-        # partial_images is omitted on non-streaming requests.
+
         assert "partial_images" not in tool
         assert "input_fidelity" not in tool
 
@@ -102,8 +97,8 @@ class TestImagesGenerationToResponsesRequest:
         assert responses.stream is True
         tool = _tool(responses)
         assert tool["partial_images"] == 2
-        # ``n`` is dropped from the tool config; see the docstring on
-        # _build_image_generation_tool. The Images-API layer enforces n bounds.
+
+
         assert "n" not in tool
         assert tool["size"] == "1024x1024"
         assert tool["quality"] == "low"
@@ -123,8 +118,8 @@ class TestImagesGenerationToResponsesRequest:
     def test_host_model_replaces_public_model(self) -> None:
         payload = V1ImagesGenerationsRequest.model_validate({"model": "gpt-image-2", "prompt": "blue square"})
         responses = images_service.images_generation_to_responses_request(payload, host_model="gpt-5.5")
-        # The public model only appears in tools[0].model — never on the
-        # outer Responses ``model`` field.
+
+
         assert responses.model == "gpt-5.5"
         assert _tool(responses)["model"] == "gpt-image-2"
 
@@ -141,8 +136,8 @@ class TestImagesEditToResponsesRequest:
             images=[(png_bytes, "image/png")],
             mask=None,
         )
-        # Exactly one input message containing the prompt and one input_image
-        # data URL.
+
+
         assert len(cast(list[JsonValue], responses.input)) == 1
         content = _content_list(_input_msg(responses))
         assert content[0] == {"type": "input_text", "text": "make it green"}
@@ -162,13 +157,13 @@ class TestImagesEditToResponsesRequest:
             mask=(b"mask-bytes", "image/png"),
         )
         content = _content_list(_input_msg(responses))
-        # Prompt picks up the mask hint.
+
         first_part = _as_mapping(content[0])
         assert first_part["type"] == "input_text"
         text_value = cast(str, first_part["text"])
         assert "edit this" in text_value
         assert "mask" in text_value.lower()
-        # Two input_image parts: source + mask.
+
         image_parts = [
             part for part in (cast(Mapping[str, JsonValue], p) for p in content) if part.get("type") == "input_image"
         ]
@@ -202,9 +197,9 @@ class TestImagesEditToResponsesRequest:
         assert _tool(responses)["input_fidelity"] == "high"
 
 
-# ---------------------------------------------------------------------------
-# Non-streaming response translation
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class TestImagesResponseFromResponses:
@@ -316,9 +311,9 @@ class TestImagesResponseFromResponses:
         assert response.usage.total_tokens is None
 
 
-# ---------------------------------------------------------------------------
-# SSE translation
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def _sse(payload: dict[str, object]) -> str:
@@ -420,16 +415,16 @@ class TestTranslateResponsesStreamToImagesStream:
         assert events[0]["b64_json"] == "PARTIAL_0"
         assert events[0]["partial_image_index"] == 0
         assert events[0]["size"] == "1024x1024"
-        # Internal-only fields are dropped.
+
         assert "sequence_number" not in events[0]
         assert "item_id" not in events[0]
         assert events[1]["b64_json"] == "PARTIAL_1"
         assert events[1]["partial_image_index"] == 1
         assert events[2]["b64_json"] == "FINAL_B64"
         assert events[2]["revised_prompt"] == "tiny red circle"
-        # ``usage`` is attached only on the final completed event from the
-        # trailing ``response.completed`` payload (the ``output_item.done``
-        # event itself does not carry ``tool_usage``).
+
+
+
         assert events[2]["usage"]["input_tokens"] == 1
         assert events[2]["usage"]["output_tokens"] == 2
 
@@ -488,7 +483,7 @@ class TestTranslateResponsesStreamToImagesStream:
 
     @pytest.mark.asyncio
     async def test_truncated_stream_emits_synthetic_error(self) -> None:
-        # No terminal event from upstream.
+
         upstream_events: list[str] = []
         translated_blocks = [
             block
@@ -521,9 +516,9 @@ class TestTranslateResponsesStreamToImagesStream:
         assert events[0]["error"]["code"] == "server_error"
 
 
-# ---------------------------------------------------------------------------
-# Stream -> non-streaming collector
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class TestCollectResponsesStreamForImages:
@@ -564,11 +559,7 @@ class TestCollectResponsesStreamForImages:
 
     @pytest.mark.asyncio
     async def test_response_incomplete_returns_error_envelope(self) -> None:
-        """``response.incomplete`` must surface as an error in non-streaming
-        collect, matching the streaming translator's behaviour. Returning a
-        200 image envelope on a half-finished response would silently
-        promote partial output to success.
-        """
+
         upstream_events = [
             _sse(
                 {
@@ -584,10 +575,7 @@ class TestCollectResponsesStreamForImages:
 
     @pytest.mark.asyncio
     async def test_late_failed_after_completed_is_ignored(self) -> None:
-        """Once ``response.completed`` is captured, a trailing
-        ``response.failed`` (e.g. transport-level error during cleanup)
-        must NOT invalidate the already-received image result.
-        """
+
         upstream_events = [
             _sse(
                 {
@@ -699,11 +687,7 @@ class TestCollectResponsesStreamForImages:
 class TestStreamingMultiImage:
     @pytest.mark.asyncio
     async def test_multiple_completed_image_items_are_all_emitted(self) -> None:
-        """When upstream emits multiple ``image_generation_call`` completions in
-        a single response, the translator must forward every one to the client
-        in arrival order. Only the last completion carries ``usage`` to match
-        the canonical OpenAI Images streaming shape.
-        """
+
         upstream_events = [
             _sse({"type": "response.created", "response": {"id": "resp_multi"}}),
             _sse(
@@ -751,7 +735,7 @@ class TestStreamingMultiImage:
         events = _events_from_translated_stream(translated_blocks)
         completed = [e for e in events if e["type"] == "image_generation.completed"]
         assert [e["b64_json"] for e in completed] == ["FIRST_B64", "SECOND_B64"]
-        # Only the final completion carries usage.
+
         assert "usage" not in completed[0]
         assert completed[1]["usage"]["input_tokens"] == 3
         assert completed[1]["usage"]["output_tokens"] == 11
@@ -802,17 +786,17 @@ class TestStreamingCapturesResponseId:
                 _stream(upstream_events), captured=captured
             )
         ]
-        # translator must reach a terminal event before captured is read by
-        # the caller; the response_id is captured on the first event whose
-        # ``response.id`` is present (typically ``response.created``).
+
+
+
         assert captured.get("response_id") == "resp_stream_id"
         events = _events_from_translated_stream(translated_blocks)
         assert any(e["type"] == "image_generation.completed" for e in events)
 
 
-# ---------------------------------------------------------------------------
-# Misc utilities
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class TestDecodeDataUrl:
@@ -835,10 +819,7 @@ class TestDecodeDataUrl:
 class TestStreamingEditEventNames:
     @pytest.mark.asyncio
     async def test_translator_emits_image_edit_events_when_is_edit_true(self) -> None:
-        """``/v1/images/edits`` callers must receive ``image_edit.*`` events,
-        not ``image_generation.*``, to match the canonical OpenAI Images
-        streaming vocabulary that SDKs listen for.
-        """
+
         upstream_events = [
             _sse(
                 {
@@ -877,17 +858,14 @@ class TestStreamingEditEventNames:
         types = [e["type"] for e in events]
         assert "image_edit.partial_image" in types
         assert "image_edit.completed" in types
-        # Must NOT emit the generation event names on the edits path.
+
         assert not any(t.startswith("image_generation.") for t in types)
 
 
 class TestStreamingCreatedAtAndUsageDetails:
     @pytest.mark.asyncio
     async def test_partial_and_completed_events_include_created_at(self) -> None:
-        """OpenAI Images stream event schemas expose ``created_at`` on
-        both partial and completed events. We synthesize a value when
-        upstream omits it.
-        """
+
         upstream_events = [
             _sse(
                 {

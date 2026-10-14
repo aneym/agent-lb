@@ -1,9 +1,4 @@
-"""Team mode closes the unauthenticated drain endpoints to untrusted clients.
 
-`_is_internal_client_host` reads the raw socket peer, which is loopback for everything
-arriving through the local reverse proxy, so on its own it would let any tailnet peer
-stop the service.
-"""
 
 from __future__ import annotations
 
@@ -31,7 +26,7 @@ def _make_request(headers: list[tuple[str, str]] | None = None) -> Request:
             "method": "POST",
             "path": "/internal/drain/start",
             "headers": [(key.lower().encode(), value.encode()) for key, value in (headers or [])],
-            # Loopback socket peer: what the reverse proxy always presents.
+
             "client": ("127.0.0.1", 54321),
             "query_string": b"",
             "scheme": "http",

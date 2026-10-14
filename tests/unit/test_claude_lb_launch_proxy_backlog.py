@@ -5,11 +5,11 @@ import socket
 
 from tests.unit.test_claude_lb_launch import load_launcher_module
 
-# Scenario (Opus, 2026-10-01; the implementer does not edit this file).
-# 13:02Z: the shared desktop proxy on :2458 refused connections under Studio
-# load (gh timeouts, review_pr crashes). It carries 60+ tunnels; a burst of
-# new connections arriving while its accept thread is slow must queue, not be
-# refused.
+
+
+
+
+
 
 
 def test_proxy_queues_a_connection_burst_before_accept() -> None:
@@ -21,7 +21,7 @@ def test_proxy_queues_a_connection_burst_before_accept() -> None:
     clients: list[socket.socket] = []
     refused = 0
     try:
-        # Nothing calls accept(): every connection waits in the listen backlog.
+
         for _ in range(64):
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.settimeout(0.3)

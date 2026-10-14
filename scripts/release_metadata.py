@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit release metadata for a tag."""
+
 
 from __future__ import annotations
 

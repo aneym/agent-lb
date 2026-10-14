@@ -44,7 +44,7 @@ def test_passes_through_nullable_fields() -> None:
     row = usage_history_to_window_row(entry)
     assert row.reset_at is None
     assert row.window_minutes is None
-    # Required fields stay populated.
+
     assert row.account_id == "acc1"
     assert row.used_percent == pytest.approx(42.5)
 

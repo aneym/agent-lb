@@ -1,4 +1,4 @@
-"""Subprocess integration: real Bash hook inputs guard account sessions without executing provider CLIs."""
+
 import json
 import os
 from pathlib import Path
@@ -80,7 +80,7 @@ def test_unparsable_non_floor_warns_and_allows(tmp_path):
 
 
 def test_installer_revision_refuses_stale_and_passes_descendant(tmp_path):
-    """Real git repository boundary proves stale policy cannot replace current policy."""
+
     import runpy
     installer = GUARD.parent.parent / 'install-policy.py'
     verify = runpy.run_path(str(installer))['verify_install_revision']

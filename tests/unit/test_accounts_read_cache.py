@@ -9,9 +9,7 @@ from app.modules.accounts.read_cache import StaleWhileRevalidate
 
 @pytest.mark.asyncio
 async def test_clear_during_load_does_not_recache_the_pre_clear_value():
-    """A settings write clears the additional-quotas cache while a warmer or
-    cold-read load may be in flight; that load must not put its pre-clear
-    value back, or /api/accounts serves the old routingPolicy until the TTL."""
+
     cache: StaleWhileRevalidate[str] = StaleWhileRevalidate("test", ttl_seconds=60.0)
     load_started = asyncio.Event()
     release_load = asyncio.Event()

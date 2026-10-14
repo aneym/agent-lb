@@ -1,9 +1,4 @@
-"""add provider dimension
 
-Revision ID: 20260528_172900_add_provider_dimension
-Revises: 20260525_000000_add_usage_raw_window_latest_index
-Create Date: 2026-05-28
-"""
 
 from __future__ import annotations
 

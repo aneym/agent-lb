@@ -10,11 +10,11 @@ from typing import TypedDict
 
 _NORMALIZE_PATTERN = re.compile(r"[^a-z0-9]+")
 ADDITIONAL_QUOTA_ROUTING_POLICIES = frozenset({"inherit", "burn_first", "normal", "preserve"})
-# "additional": the upstream reports this limit in additional_rate_limits, so a
-# model mapped to it routes only on fresh additional_usage rows.
-# "primary": the limit is the account's own primary/secondary windows (or another
-# provider's credits); nothing writes additional rows for it, so it labels models
-# without gating OpenAI routing.
+
+
+
+
+
 ADDITIONAL_QUOTA_USAGE_SOURCES = frozenset({"additional", "primary"})
 
 

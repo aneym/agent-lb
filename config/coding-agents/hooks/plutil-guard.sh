@@ -1,5 +1,5 @@
 #!/bin/bash
-# PreToolUse Bash: require an explicit output for plutil transformations.
+
 exec /usr/bin/perl -MJSON::PP -MText::ParseWords -e '
 local $/;
 my $data = eval { decode_json(<STDIN>) };

@@ -1,4 +1,4 @@
-# Development environment — based on the bundled install mode with local-friendly scale and logging.
+
 replicaCount: 1
 
 autoscaling:

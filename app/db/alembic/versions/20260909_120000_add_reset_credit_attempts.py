@@ -1,4 +1,4 @@
-"""Persist reset-credit intent and recovery before upstream consumption."""
+
 
 import sqlalchemy as sa
 from alembic import op
@@ -10,7 +10,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Re-runnable: a legacy revision id remaps to an older ancestor and replays this.
+
     if sa.inspect(op.get_bind()).has_table("reset_credit_attempts"):
         return
     op.create_table(

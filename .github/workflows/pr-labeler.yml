@@ -1,7 +1,7 @@
 name: PR labeler
 
 on:
-  pull_request_target: # zizmor: ignore[dangerous-triggers] labels fork PRs without checking out PR code
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:

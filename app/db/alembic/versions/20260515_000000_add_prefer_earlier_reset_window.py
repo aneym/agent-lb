@@ -1,9 +1,4 @@
-"""add prefer earlier reset window setting
 
-Revision ID: 20260515_000000_add_prefer_earlier_reset_window
-Revises: 20260514_000000_add_request_logs_api_key_time_index
-Create Date: 2026-05-15
-"""
 
 from __future__ import annotations
 

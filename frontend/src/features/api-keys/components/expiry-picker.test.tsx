@@ -89,7 +89,7 @@ describe("ExpiryPicker", () => {
 
     await user.click(screen.getByRole("button"));
 
-    // "No expiration" appears in both the trigger and the popover option
+
     const allMatches = await screen.findAllByText("No expiration");
     expect(allMatches.length).toBeGreaterThanOrEqual(2);
   });

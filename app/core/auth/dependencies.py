@@ -36,7 +36,7 @@ _bearer = HTTPBearer(description="API key (e.g. sk-clb-…)", auto_error=False)
 API_KEY_TOKEN_PREFIX = "sk-clb-"
 
 
-# --- Error format markers ---
+
 
 
 def set_openai_error_format(request: Request) -> None:
@@ -47,11 +47,11 @@ def set_dashboard_error_format(request: Request) -> None:
     request.state.error_format = "dashboard"
 
 
-# --- Proxy API key auth ---
+
 
 
 def select_proxy_authorization(authorization: str | None, x_api_key: str | None) -> str | None:
-    """An sk-clb bearer wins over the member header; otherwise a prefixed member header wins."""
+
     bearer_token = _extract_bearer_token(authorization)
     if bearer_token and bearer_token.startswith(API_KEY_TOKEN_PREFIX):
         return authorization
@@ -62,7 +62,7 @@ def select_proxy_authorization(authorization: str | None, x_api_key: str | None)
 
 
 def select_member_key_authorization(authorization: str | None, x_api_key: str | None) -> str | None:
-    """The selected agent-lb key as a bearer, or None; never a client's upstream credential."""
+
     selected = select_proxy_authorization(authorization, x_api_key)
     token = _extract_bearer_token(selected)
     return selected if token and token.startswith(API_KEY_TOKEN_PREFIX) else None
@@ -85,9 +85,9 @@ async def validate_proxy_api_key_authorization(
     settings = await get_settings_cache().get()
     if not settings.api_key_auth_enabled:
         if request is None or is_local_request(request) or _is_proxy_unauthenticated_client_allowed(request):
-            # Trusted clients stay keyless. An agent-lb key they send anyway is validated, so
-            # its traffic is attributed to the key and a revoked key stops working; any other
-            # bearer is ignored.
+
+
+
             trusted_token = _extract_bearer_token(authorization)
             if trusted_token and trusted_token.startswith(API_KEY_TOKEN_PREFIX):
                 return await _validate_api_key_token(trusted_token)
@@ -106,7 +106,7 @@ async def validate_proxy_api_key_authorization(
 
 
 async def _validate_api_key_token(token: str) -> ApiKeyData:
-    """Validate a plain API key token and return the typed key data."""
+
 
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     cache = get_api_key_cache()
@@ -128,19 +128,14 @@ async def _validate_api_key_token(token: str) -> ApiKeyData:
             raise ProxyAuthError(str(exc)) from exc
 
 
-# --- Self-service usage endpoint auth (always requires valid key) ---
+
 
 
 async def validate_usage_api_key(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
 ) -> ApiKeyData:
-    """Validate API key for self-service usage endpoint.
 
-    Unlike ``validate_proxy_api_key``, this dependency always requires a valid
-    Bearer API key, regardless of the global ``api_key_auth_enabled`` setting.
-    Raises ProxyAuthError when the key is missing or invalid.
-    """
     token = _extract_bearer_token(None if credentials is None else f"Bearer {credentials.credentials}")
     if not token:
         raise ProxyAuthError("Missing API key in Authorization header")
@@ -148,15 +143,15 @@ async def validate_usage_api_key(
     return await _validate_api_key_token(token)
 
 
-# --- Dashboard session auth ---
+
 
 
 async def validate_dashboard_session(request: Request) -> None:
     settings = await get_settings_cache().get()
 
-    # Team mode opens the network path to untrusted clients, so the dashboard and every
-    # admin API behind it must be closed to them first — before the DISABLED /
-    # trusted-header short-circuit, which would otherwise let them straight in.
+
+
+
     if getattr(settings, "team_mode_enabled", False) and not _is_trusted_dashboard_client(request):
         raise DashboardForbiddenError(
             "Dashboard is restricted to trusted clients in team mode",
@@ -200,22 +195,17 @@ def get_dashboard_request_auth_mode() -> DashboardAuthMode:
 
 
 def _is_trusted_dashboard_client(request: HTTPConnection) -> bool:
-    """True for local clients and for the configured unauthenticated CIDR allowlist.
 
-    Both helpers resolve the client IP through ``resolve_request_client_host``, so a
-    tailnet peer arriving through the trusted local reverse proxy is judged by its own
-    address rather than by the loopback socket peer.
-    """
     return is_local_request(request) or _is_proxy_unauthenticated_client_allowed(request)
 
 
-# Kept under the original private name so existing call sites and the tests that
-# monkeypatch it keep working; the implementation now lives beside the other
-# client-IP helpers in app/core/request_locality.py.
+
+
+
 _is_proxy_unauthenticated_client_allowed = is_unauthenticated_client_allowed
 
 
-# --- Codex usage caller identity auth ---
+
 
 
 async def validate_codex_usage_identity(request: Request) -> ApiKeyData | None:

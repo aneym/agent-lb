@@ -23,7 +23,7 @@ class DatabaseRateLimiter:
         return datetime.now(UTC) - timedelta(seconds=self.window_seconds)
 
     async def check(self, key: str, session: AsyncSession) -> None:
-        """Read-only rate-limit check. Raises if limit is exceeded; does NOT record an attempt."""
+
         window_start = self._window_start()
 
         count = await session.scalar(
@@ -57,13 +57,7 @@ class DatabaseRateLimiter:
             raise DashboardRateLimitError("Too many attempts", retry_after=retry_after)
 
     async def check_and_increment(self, key: str, session: AsyncSession) -> None:
-        """Atomically check the rate limit and record an attempt.
 
-        PostgreSQL: advisory lock serialises the count-then-insert.
-        SQLite: a single INSERT … SELECT statement with a WHERE-count
-        guard is processed atomically by SQLite's single-writer lock,
-        safe across processes sharing the same database file.
-        """
         dialect_name = session.get_bind().dialect.name
         if dialect_name == "postgresql":
             lock_key = f"{self.type}:{key}"
@@ -120,13 +114,7 @@ class DatabaseRateLimiter:
             raise DashboardRateLimitError("Too many attempts", retry_after=retry_after)
 
     async def record_failure(self, key: str, session: AsyncSession) -> None:
-        """Record a failed attempt atomically.
 
-        On PostgreSQL uses an advisory lock to serialize concurrent
-        record_failure calls for the same rate key.  After inserting,
-        re-counts attempts; if the post-insert total exceeds
-        ``max_attempts`` raises ``DashboardRateLimitError``.
-        """
         now = datetime.now(UTC)
         lock_key = f"{self.type}:{key}"
 
@@ -169,7 +157,7 @@ class DatabaseRateLimiter:
             raise DashboardRateLimitError("Too many attempts", retry_after=retry_after)
 
     async def clear_for_key(self, key: str, session: AsyncSession) -> None:
-        """Delete all attempts for (key, type) — used to reset counter on successful auth."""
+
         await session.execute(
             delete(RateLimitAttempt).where(
                 RateLimitAttempt.key == key,
@@ -179,7 +167,7 @@ class DatabaseRateLimiter:
         await session.commit()
 
     async def check_and_record(self, key: str, session: AsyncSession) -> None:
-        """Legacy method: check + unconditionally record. Kept for TOTP backward compatibility."""
+
         now = datetime.now(UTC)
         window_start = now - timedelta(seconds=self.window_seconds)
 

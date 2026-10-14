@@ -1318,14 +1318,14 @@ class _WebSocketMixin:
         )
         request_state.affinity_policy = affinity_policy
 
-        # First-turn ``input_file.file_id`` references must land on the
-        # account that registered the upload (chatgpt-account-id-scoped).
-        # Codex CLI's typical flow is upload-then-converse, so a fresh
-        # turn often references a file_id with no other affinity signal
-        # set. The helper short-circuits to ``None`` when stronger
-        # affinity signals (prompt_cache_key / session header /
-        # turn_state header / previous_response_id) are present, so this
-        # never overrides existing routing.
+
+
+
+
+
+
+
+
         if request_state.preferred_account_id is None:
             request_state.preferred_account_id = rewritten_file_account_id
             request_state.file_required_preferred_account = request_state.preferred_account_id is not None
@@ -1335,22 +1335,22 @@ class _WebSocketMixin:
             )
             request_state.file_required_preferred_account = request_state.preferred_account_id is not None
 
-        # Direct WebSocket retry-safety classification.
-        #
-        # The single-previous-response-miss masking path in
-        # ``_process_upstream_websocket_text`` only attempts a transparent
-        # reconnect-and-replay for a turn marked
-        # ``fresh_upstream_request_is_retry_safe`` with a captured
-        # ``fresh_upstream_request_text``. Without these flags, even a
-        # full-resend turn whose semantic payload does not depend on the
-        # upstream anchor (no client-supplied ``previous_response_id`` and no
-        # proxy-injected anchor) would fall through to ``stream_incomplete``
-        # instead of being recovered. That regresses the recovery behavior
-        # this PR is explicitly trying to preserve for full-resend variants.
-        #
-        # The HTTP-bridge path sets these flags at request prep time; mirror
-        # the same classification here for the direct WebSocket path so the
-        # mask in the reception path treats both variants identically.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         if responses_payload.previous_response_id is None and not request_state.proxy_injected_previous_response_id:
             request_state.fresh_upstream_request_text = text_data
             request_state.fresh_upstream_request_is_retry_safe = True
@@ -2105,7 +2105,7 @@ class _WebSocketMixin:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
         del previous_response_id, api_key_id, request_cache_scope
-        # Intentionally no-op: negative caching caused stale misses under concurrent sessions.
+
         return None
 
     async def _resolve_websocket_previous_response_owner(
@@ -2845,8 +2845,8 @@ class _WebSocketMixin:
             and request_state.preferred_account_id is not None
         ):
             if _websocket_request_can_rotate_account(request_state, continuity_state):
-                # The retry branch below restores the verified full body before
-                # reconnecting. Never send this account's anchor to its successor.
+
+
                 request_state.excluded_account_ids.add(account.id)
                 request_state.preferred_account_id = None
             else:
@@ -2866,11 +2866,11 @@ class _WebSocketMixin:
                 if not (
                     request_state.fresh_upstream_request_is_retry_safe and request_state.fresh_upstream_request_text
                 ):
-                    # A short continuation depends entirely on the upstream
-                    # anchor. Replaying the same lost previous_response_id on a
-                    # new websocket just re-surfaces the raw upstream 400; only
-                    # full-resend payloads with a prepared fresh body can be
-                    # transparently retried.
+
+
+
+
+
                     retry_error_code = None
                 else:
                     upstream_control.reconnect_requested = True

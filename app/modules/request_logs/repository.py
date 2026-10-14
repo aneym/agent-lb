@@ -53,7 +53,7 @@ class RequestLogsRepository:
         return list(result.scalars().all())
 
     async def anthropic_cache_tokens_since(self, since: datetime, until: datetime) -> tuple[int, int, int, int, int]:
-        """Return count, incomplete count, and disjoint Anthropic input-token totals."""
+
         complete = and_(
             RequestLog.input_tokens.is_not(None),
             RequestLog.cache_creation_tokens.is_not(None),
@@ -131,7 +131,7 @@ class RequestLogsRepository:
         if dialect == "postgresql":
             bucket_expr = func.floor(func.extract("epoch", RequestLog.requested_at) / bucket_seconds) * bucket_seconds
         else:
-            # Use explicit integer division for SQLite: CAST(epoch / N AS INTEGER) * N
+
             epoch_col = cast(func.strftime("%s", RequestLog.requested_at), Integer)
             bucket_expr = cast(epoch_col / bucket_seconds, Integer) * bucket_seconds
         bucket_col = bucket_expr.label("bucket_epoch")
@@ -252,17 +252,7 @@ class RequestLogsRepository:
         account_ids: Collection[str],
         include_unattributed: bool,
     ) -> tuple[UsageMetricsSummary, UsageCostSummary]:
-        """SQL-aggregated equivalent of hydrating ``list_since(since)`` and
-        deriving ``UsageMetricsSummary``/``UsageCostSummary`` from the rows in
-        Python (see ``app.modules.usage.builders._usage_metrics`` and
-        ``_cost_summary_from_logs``) — kept for exact parity without loading
-        every ``RequestLog`` row.
 
-        Account scoping matches the old ``_logs_for_accounts`` behavior: rows
-        with ``account_id`` outside ``account_ids`` are always excluded; rows
-        with ``account_id IS NULL`` are included only when
-        ``include_unattributed`` is true.
-        """
         bind = self._session.get_bind()
         dialect = bind.dialect.name if bind else "sqlite"
 
@@ -335,11 +325,7 @@ class RequestLogsRepository:
         *,
         account_ids: Collection[str],
     ) -> list[tuple[str, str, int, int, int, float]]:
-        """Group the dashboard's request metrics by caller without hydrating log rows.
 
-        Like aggregate_usage_window, this excludes warmups and out-of-scope
-        accounts, includes unassigned accounts, and retains soft-deleted logs.
-        """
         caller_user = func.coalesce(RequestLog.caller_user, "unattributed")
         caller_machine = func.coalesce(RequestLog.caller_machine, "unattributed")
         stmt = (
@@ -499,24 +485,15 @@ class RequestLogsRepository:
                 raise
 
     async def update_model_for_request(self, request_id: str, model: str) -> int:
-        """Override the ``model`` field of any logs matching ``request_id``.
 
-        Used by route handlers that translate a public request shape (e.g.
-        ``/v1/images/generations``) into an internal Responses request: the
-        first-pass log row stores the internal host model used for routing,
-        and we rewrite it here once the public effective model is known so
-        the dashboard and usage views surface the user-visible model.
-
-        Returns the number of rows that were updated.
-        """
         async with sqlite_writer_section(self._session):
             resolved_request_id = ensure_request_id(request_id)
             try:
-                # Fetch the affected rows so we can recompute ``cost_usd``
-                # from the new model. ``add_log`` derives the cost at insert
-                # time from the original (host) model; without recomputing
-                # here, dashboards would mix the public ``gpt-image-*`` model
-                # label with host-model pricing and report inaccurate cost.
+
+
+
+
+
                 stmt = select(RequestLog).where(RequestLog.request_id == resolved_request_id)
                 result_rows = await self._session.execute(stmt)
                 logs = list(result_rows.scalars())
@@ -799,8 +776,8 @@ def _account_scope_clause(account_ids: Collection[str], *, include_unattributed:
 
 
 def _least(dialect: str, a: ColumnElement, b: ColumnElement) -> ColumnElement:
-    # SQLite has no LEAST()/GREATEST(); its scalar min()/max() take this role
-    # when called with 2+ arguments (distinct from the 1-arg aggregate form).
+
+
     if dialect == "postgresql":
         return func.least(a, b)
     return func.min(a, b)

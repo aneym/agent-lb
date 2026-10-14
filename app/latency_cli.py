@@ -1,4 +1,4 @@
-"""Read-only TTFT report over request_logs. Works on PostgreSQL and SQLite."""
+
 
 from __future__ import annotations
 

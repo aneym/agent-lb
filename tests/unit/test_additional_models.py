@@ -86,14 +86,14 @@ def test_usage_payload_additional_rate_limits_empty_list():
 
 
 def test_usage_payload_without_additional_rate_limits_key():
-    # Backward compat: field absent entirely — should default to None
+
     data = {"plan_type": "pro", "rate_limit": {"primary_window": {"used_percent": 45}}}
     payload = UsagePayload.model_validate(data)
     assert payload.additional_rate_limits is None
 
 
 def test_usage_payload_additional_reuses_rate_limit_payload():
-    """Each additional limit's rate_limit should be a RateLimitPayload instance"""
+
     data = {
         "plan_type": "pro",
         "additional_rate_limits": [
@@ -117,16 +117,16 @@ def test_usage_payload_additional_reuses_rate_limit_payload():
 
 
 def test_usage_payload_parses_fixture():
-    """Parse the real fixture file captured from Task 0"""
+
     import os
 
     fixture_path = os.path.join(os.path.dirname(__file__), "../../tests/fixtures/upstream_usage_with_additional.json")
-    # Try both relative paths
+
     if not os.path.exists(fixture_path):
         fixture_path = "tests/fixtures/upstream_usage_with_additional.json"
     with open(fixture_path) as f:
         data = json.load(f)
-    # Strip the _fixture_notes meta key (not part of API response)
+
     data.pop("_fixture_notes", None)
     payload = UsagePayload.model_validate(data)
     assert payload.plan_type is not None

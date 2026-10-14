@@ -137,7 +137,7 @@ def _chat_file_part_from_data(*, file_data_b64: str, filename: str) -> ChatCompl
 def _chat_file_data_from_url(file_url: str) -> tuple[str, str]:
     parsed = urlparse(file_url)
     filename = parsed.path.rsplit("/", 1)[-1] or "input.bin"
-    with urlopen(file_url, timeout=15) as response:  # nosec B310
+    with urlopen(file_url, timeout=15) as response:
         payload = response.read()
     return base64.b64encode(payload).decode("ascii"), filename
 

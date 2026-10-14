@@ -188,9 +188,9 @@ async def test_build_additional_rate_limits_aggregates_reset_metadata_determinis
     assert limit.rate_limit is not None
     assert limit.rate_limit.primary_window is not None
     assert limit.rate_limit.primary_window.limit_window_seconds == 900
-    assert limit.rate_limit.primary_window.reset_at == 1100  # min (earliest reset)
+    assert limit.rate_limit.primary_window.reset_at == 1100
     assert limit.rate_limit.primary_window.reset_after_seconds == 100
     assert limit.rate_limit.secondary_window is not None
     assert limit.rate_limit.secondary_window.limit_window_seconds == 2700
-    assert limit.rate_limit.secondary_window.reset_at == 1400  # min (earliest reset)
+    assert limit.rate_limit.secondary_window.reset_at == 1400
     assert limit.rate_limit.secondary_window.reset_after_seconds == 400

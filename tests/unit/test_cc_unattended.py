@@ -1,8 +1,4 @@
-"""cc --unattended at its process boundary: the real launcher runs, and only the two programs it execs are probes.
 
-factory-operations 103 (2026-10-09): every unattended CoS, scoping or lead launch runs under `agent-pane-policy exec`
-so a permission prompt or a question never parks it; a tab Alex talks to (plain `cc`) is unchanged.
-"""
 import json
 import os
 import shutil

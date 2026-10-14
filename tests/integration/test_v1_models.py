@@ -7,7 +7,7 @@ from app.core.types import JsonValue
 
 pytestmark = pytest.mark.integration
 
-# 5030e44e added gpt-5.6-sol to the bootstrap catalog for the ccdex harness.
+
 BOOTSTRAP_MODEL_SLUGS = {
     "gpt-5.6-sol",
     "gpt-5.5",
@@ -124,17 +124,17 @@ async def test_v1_models_list(async_client):
 
 @pytest.mark.asyncio
 async def test_v1_models_also_carries_codex_models_field(async_client):
-    """Codex CLI 0.155+ reads /v1/models and requires a top-level ``models`` list."""
+
     await _populate_test_registry()
     resp = await async_client.get("/v1/models")
     assert resp.status_code == 200
     payload = resp.json()
 
-    # OpenAI-compatible clients keep reading ``data``.
+
     assert payload["object"] == "list"
     assert {item["id"] for item in payload["data"]} == {"gpt-5.2", "gpt-5.3-codex"}
 
-    # Codex reads ``models`` and expects its own entry shape, not ModelListItem.
+
     assert "models" in payload
     entries = payload["models"]
     assert {entry["slug"] for entry in entries} == {"gpt-5.2", "gpt-5.3-codex"}
@@ -625,13 +625,13 @@ async def test_model_context_window_override(async_client, monkeypatch):
     patched = original_settings.model_copy(update={"model_context_window_overrides": {"gpt-5.4": 515000}})
     monkeypatch.setattr(proxy_api_module, "get_settings", lambda: patched)
 
-    # /backend-api/codex/models
+
     resp = await async_client.get("/backend-api/codex/models")
     assert resp.status_code == 200
     entry = next(m for m in resp.json()["models"] if m["slug"] == "gpt-5.4")
     assert entry["context_window"] == 515000
 
-    # /v1/models
+
     resp_v1 = await async_client.get("/v1/models")
     assert resp_v1.status_code == 200
     v1_entry = next(m for m in resp_v1.json()["data"] if m["id"] == "gpt-5.4")

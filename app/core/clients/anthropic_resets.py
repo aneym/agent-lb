@@ -1,4 +1,4 @@
-"""Account-scoped Claude reset grants. Never retry a redemption implicitly."""
+
 
 from __future__ import annotations
 
@@ -65,8 +65,8 @@ class ResetStatus(BaseModel):
         return "no_selected_grant"
 
     def usable_grant(self, now: datetime, credit_id: str | None = None) -> ResetGrant | None:
-        # Early use is permitted only when this specific grant says a limit is
-        # not required; ordinary grants still need recoverable exhaustion.
+
+
         if self.redemption_blocker(now, credit_id) is not None:
             return None
         grant_id = credit_id or self.next_grant_id
@@ -99,8 +99,8 @@ async def fetch_status(*, access_token: str) -> ResetStatus:
 
 
 async def redeem(*, access_token: str, grant_id: str, request_id: str) -> ResetResult:
-    # Fetch the organization using the same account token: local account IDs
-    # identify users and cannot safely be substituted for organization UUIDs.
+
+
     profile = await _request("GET", "api/oauth/profile", access_token)
     organization = profile.get("organization")
     org_id = organization.get("uuid") if isinstance(organization, dict) else None

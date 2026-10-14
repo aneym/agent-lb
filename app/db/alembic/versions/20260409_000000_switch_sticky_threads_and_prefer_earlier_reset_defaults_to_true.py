@@ -1,9 +1,4 @@
-"""switch sticky_threads_enabled and prefer_earlier_reset_accounts defaults to true
 
-Revision ID: 20260409_000000_switch_sticky_threads_and_prefer_earlier_reset_defaults_to_true
-Revises: 20260408_010000_merge_import_without_overwrite_and_assignment_heads
-Create Date: 2026-04-09
-"""
 
 from __future__ import annotations
 

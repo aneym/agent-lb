@@ -1,4 +1,4 @@
-# Production environment — based on the external secrets install mode with HA, observability, and hardened defaults.
+
 replicaCount: 3
 
 postgresql:
@@ -9,7 +9,7 @@ autoscaling:
   maxReplicas: 20
   behavior:
     scaleDown:
-      stabilizationWindowSeconds: 600  # 10 min cooldown for bridge session stability
+      stabilizationWindowSeconds: 600
       policies:
         - type: Pods
           value: 1
@@ -36,8 +36,8 @@ ingress:
   certManager:
     enabled: true
 config:
-  # Connection pool budget: (databasePoolSize + databaseMaxOverflow) × maxReplicas ≤ PostgreSQL max_connections
-  # For maxReplicas=20: (3+2)×20=100 = PG default max_connections
+
+
   databasePoolSize: 3
   databaseMaxOverflow: 2
 externalSecrets:

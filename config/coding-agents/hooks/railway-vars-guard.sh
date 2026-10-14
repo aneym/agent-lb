@@ -1,9 +1,9 @@
 #!/bin/bash
-# Pre-GA writes and ssh/run may use the login; destructive deletes need custody.
-# A floor guard (S44, 2026-10-08): the input read is checked (set -euo pipefail; a `cat` that fails refuses, and the
-# Python below refuses input it cannot parse, an empty one included). A completed check that allows ends with the
-# receipt line `floor-ok railway-vars-guard.sh` when the dispatcher asks for it (HOOK_FLOOR_RECEIPT); the dispatcher
-# refuses an exit 0 without it.
+
+
+
+
+
 set -euo pipefail
 INPUT=$(cat) || { echo "BLOCKED: railway-vars-guard could not read the hook input (cat exit $?), so this call is refused." >&2; exit 2; }
 STATUS=0

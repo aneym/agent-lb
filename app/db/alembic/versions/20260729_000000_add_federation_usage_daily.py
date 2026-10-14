@@ -1,9 +1,4 @@
-"""add federation usage daily
 
-Revision ID: 20260729_000000_add_federation_usage_daily
-Revises: 20260715_160000_add_request_logs_session_time_index
-Create Date: 2026-07-29 00:00:00.000000
-"""
 
 from __future__ import annotations
 

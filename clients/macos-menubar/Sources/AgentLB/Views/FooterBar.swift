@@ -51,12 +51,12 @@ struct FooterBar: View {
           powerMenu
         }
       }
-      // PanelMetrics.footerControls — enforced so PanelLayout stays exact.
+
       .frame(height: PanelMetrics.footerControls)
       .padding(.horizontal, 14)
       .padding(.vertical, 12)
     }
-    // §8.2: footer buttons step up to .regular for the larger panel.
+
     .controlSize(.regular)
     .confirmationDialog("Stop Agent LB?", isPresented: $showStopConfirm) {
       Button("Stop Anyway", role: .destructive) {
@@ -90,23 +90,23 @@ struct FooterBar: View {
   }
 }
 
-// MARK: - Shared components
 
-// macOS 26 `MenuBarExtra(.window)` measures its panel once (first layout
-// after open) and never re-measures when the SwiftUI content's ideal size
-// changes. The panel height is therefore a pure function of app state
-// (PanelLayout); RootView pins its content to that height and calls `apply`
-// so the NSWindow always matches. No geometry feedback anywhere.
+
+
+
+
+
+
 @MainActor
 enum PanelResizer {
-  /// Set the panel window to the PanelLayout-computed height (top-anchored).
+
   static func apply(_ height: Double) {
     let target = min(height, PanelMetrics.maxHeight)
     guard target > 60, let panel = visiblePanel() else { return }
     let current = panel.frame.height
     guard abs(target - current) > 0.5 else { return }
     var frame = panel.frame
-    // AppKit origin is bottom-left; keep the top edge anchored to the bar.
+
     frame.origin.y += current - target
     frame.size.height = target
     panel.setFrame(frame, display: true)
@@ -119,13 +119,13 @@ enum PanelResizer {
   }
 }
 
-// §2.3: zero hue anywhere. `.glassProminent` composites with the system
-// accent on macOS 26 (and fighting it with `.tint(.primary)` produced an
-// illegible washed-out pill on some machines), so prominent actions use a
-// fully-owned monochrome style: ink capsule (`.primary` — white in dark
-// mode, black in light mode) with the label inverted via `.background`
-// (black text in dark, white text in light). The label style lives inside
-// makeBody so nothing downstream can override it.
+
+
+
+
+
+
+
 struct MonochromeProminentButtonStyle: ButtonStyle {
   @Environment(\.isEnabled) private var isEnabled
 
@@ -160,9 +160,9 @@ struct SectionLabel: View {
   }
 }
 
-/// The dashboard's monochrome quota bar (§2.4) — back in service for the
-/// §9.3 account-row window grid. `Capsule` track in `.quaternary`, fill in
-/// `.primary`, 4 pt tall; nil percent renders the bare track.
+
+
+
 struct MonoMeter: View {
   let percent: Double?
 
@@ -182,9 +182,9 @@ struct MonoMeter: View {
   }
 }
 
-/// §8 monochrome ring gauge — pool cards (30 pt) and account rows (20 pt).
-/// Track `.quaternary`, fill `.primary`, rounded caps, 12 o'clock clockwise.
-/// `percent == nil` renders the track only.
+
+
+
 struct RingGauge: View {
   let percent: Double?
   var lineWidth: CGFloat = 2
@@ -198,7 +198,7 @@ struct RingGauge: View {
         .stroke(.primary, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
         .rotationEffect(.degrees(-90))
     }
-    // Strokes straddle the path; inset so caps never clip at the frame edge.
+
     .padding(lineWidth / 2)
     .animation(.easeOut(duration: 0.15), value: percent)
   }
@@ -237,8 +237,8 @@ struct CountdownText: View {
   var prefix: String = ""
 
   var body: some View {
-    // Sub-hour countdowns tick every second; above an hour the rendered
-    // string only changes per minute, so a 60 s cadence avoids re-renders.
+
+
     let cadence: TimeInterval = target.timeIntervalSinceNow > 3600 ? 60 : 1
     TimelineView(.periodic(from: .now, by: cadence)) { _ in
       Text(prefix + Format.countdown(to: target))
@@ -258,21 +258,21 @@ struct RetryRow: View {
         .foregroundStyle(.secondary)
     }
     .buttonStyle(.plain)
-    // PanelMetrics.retryRow — enforced so PanelLayout stays exact.
+
     .frame(height: PanelMetrics.retryRow)
   }
 }
 
-// MARK: - Status-bar ring gauge (§8.1)
+
 
 enum StatusIconRenderer {
   enum IconState: Hashable, Sendable {
     case healthy, risk, down, update
   }
 
-  /// Cache key: state + all percents bucketed to 4 % steps (§8.1) so
-  /// closed-state 120 s polling can only ever materialize a bounded set of
-  /// composites per state.
+
+
+
   private struct Key: Hashable {
     let state: IconState
     let outerBucket: Int?
@@ -286,11 +286,11 @@ enum StatusIconRenderer {
   private static let cellSize: CGFloat = 18
   private static let fableGap: CGFloat = 2
 
-  /// Outer ring = tactical 5-hour (primary) remaining %; inner ring =
-  /// strategic weekly/monthly (long-window) remaining %. Both follow the
-  /// current provider scope — AppState feeds the already-scoped percents in.
-  /// `showFable` appends the Claude-focus cell: a third circle showing pool
-  /// Fable remaining % (track-only when the pool has no scoped data yet).
+
+
+
+
+
   @MainActor
   static func icon(
     for state: IconState,
@@ -324,20 +324,20 @@ enum StatusIconRenderer {
   ) -> NSImage {
     let width = showFable ? cellSize * 2 + fableGap : cellSize
     let image = NSImage(size: NSSize(width: width, height: cellSize), flipped: false) { _ in
-      // Existing two-ring composite always occupies the left 18 pt cell so
-      // the icon reads unchanged when the Fable cell toggles on/off.
+
+
       let rect = NSRect(x: 0, y: 0, width: cellSize, height: cellSize)
       let stroke: CGFloat = 2.0
       let ringAlpha: CGFloat = state == .down ? 0.35 : 1
       let center = NSPoint(x: rect.midX, y: rect.midY)
-      // Stroke straddles the path: radius leaves stroke/2 + a hair of margin.
+
       let outerRadius = rect.width / 2 - 1.0 - 0.5
       let innerRadius = outerRadius - 3.0
 
       drawRing(center: center, radius: outerRadius, stroke: stroke, bucket: outerBucket, ringAlpha: ringAlpha)
-      // .risk punches the exclamation glyph through the icon center, which
-      // the inner ring would otherwise occupy — draw only the outer ring so
-      // the glyph reads clearly (trades away the long-window ring for legibility).
+
+
+
       if state != .risk {
         drawRing(center: center, radius: innerRadius, stroke: stroke, bucket: innerBucket, ringAlpha: ringAlpha)
       }
@@ -346,10 +346,10 @@ enum StatusIconRenderer {
       case .healthy:
         break
       case .risk:
-        // Bold exclamation centered in the ring.
+
         drawSymbol("exclamationmark", pointSize: 7, weight: .bold, centeredIn: rect)
       case .down:
-        // Diagonal slash through the dimmed rings, full alpha.
+
         let slash = NSBezierPath()
         slash.move(to: NSPoint(x: rect.minX + 3.5, y: rect.minY + 3.5))
         slash.line(to: NSPoint(x: rect.maxX - 3.5, y: rect.maxY - 3.5))
@@ -358,7 +358,7 @@ enum StatusIconRenderer {
         NSColor.black.setStroke()
         slash.stroke()
       case .update:
-        // 3 pt dot at top-right inside a punched-hole halo.
+
         let dot = NSRect(x: rect.maxX - 4, y: rect.maxY - 4, width: 3, height: 3)
         punchHole(dot.insetBy(dx: -1, dy: -1))
         NSColor.black.setFill()
@@ -375,14 +375,14 @@ enum StatusIconRenderer {
       }
       return true
     }
-    // Template rendering: the menu bar tints the composite; we only draw alpha.
+
     image.isTemplate = true
     return image
   }
 
-  /// One ring: full-circle track at 22 % alpha (further dimmed when down) +
-  /// a remaining-percent arc from 12 o'clock (90°) clockwise, rounded caps,
-  /// full alpha. Unknown percent (nil bucket) → track only.
+
+
+
   private static func drawRing(
     center: NSPoint,
     radius: CGFloat,
@@ -412,9 +412,9 @@ enum StatusIconRenderer {
     arc.stroke()
   }
 
-  /// Claude-focus Fable cell: one ring at the outer radius showing pool Fable
-  /// remaining %, with a small F glyph centered so the extra circle reads as
-  /// the Fable gauge rather than a third usage window.
+
+
+
   private static func drawFableCell(
     in rect: NSRect,
     stroke: CGFloat,

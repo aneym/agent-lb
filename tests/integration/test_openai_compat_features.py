@@ -76,11 +76,7 @@ async def test_v1_responses_forwards_input_file_url(async_client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_v1_responses_forwards_input_file_id(async_client, monkeypatch):
-    """`input_file.file_id` was previously rejected because uploads via
-    `POST /backend-api/files` were not supported. With the file upload
-    protocol in place, the proxy now forwards these references verbatim
-    so callers can attach pre-uploaded files (bypassing the 16 MiB
-    websocket ceiling on `/responses`)."""
+
     await _import_account(async_client, "acc_input_file_id", "input-file-id@example.com")
 
     seen: dict[str, object] = {}
@@ -327,11 +323,10 @@ async def test_v1_responses_rejects_invalid_include(async_client):
 
 @pytest.mark.asyncio
 async def test_v1_responses_coerces_store_true_to_false(async_client):
-    """store=true should be silently coerced to false (not rejected) so the
-    bridge path can later override it on the upstream payload."""
+
     payload = {"model": "gpt-5.2", "input": "hi", "store": True}
     resp = await async_client.post("/v1/responses", json=payload)
-    # 503 means it passed validation (no 400) but there are no upstream accounts in test
+
     assert resp.status_code != 400
 
 
@@ -340,7 +335,7 @@ async def test_v1_responses_coerces_store_true_to_false(async_client):
 async def test_v1_responses_accepts_truncation(async_client, truncation):
     payload = {"model": "gpt-5.2", "input": "hi", "truncation": truncation}
     resp = await async_client.post("/v1/responses", json=payload)
-    # 503 means it passed validation (no 400) but there are no upstream accounts in test
+
     assert resp.status_code != 400
 
 
@@ -581,12 +576,7 @@ async def test_v1_chat_completions_maps_response_format(async_client, monkeypatc
 
 @pytest.mark.asyncio
 async def test_v1_chat_completions_rejects_strict_schema_violation(async_client):
-    """Strict-mode schema violations are rejected locally with 400.
 
-    Mirrors the OpenAI ``invalid_json_schema`` error so callers (Graphiti,
-    raw SDK clients) see actionable diagnostics instead of a generic
-    ``stream_incomplete`` 502 from upstream.
-    """
     payload = {
         "model": "gpt-5.2",
         "messages": [{"role": "user", "content": "Return JSON."}],
@@ -595,7 +585,7 @@ async def test_v1_chat_completions_rejects_strict_schema_violation(async_client)
             "json_schema": {
                 "name": "result_schema",
                 "strict": True,
-                # No additionalProperties: false → strict-mode violation.
+
                 "schema": {
                     "type": "object",
                     "properties": {"ok": {"type": "boolean"}},
@@ -616,14 +606,7 @@ async def test_v1_chat_completions_rejects_strict_schema_violation(async_client)
 
 @pytest.mark.asyncio
 async def test_v1_chat_completions_rejects_strict_function_tool_violation(async_client):
-    """Strict-mode violations on function tool parameters are rejected with 400.
 
-    Before this fix, ``_normalize_chat_tools`` dropped the ``strict`` flag
-    silently, so the request reached the upstream Codex backend with a
-    spec-violating schema and surfaced as a 502 ``upstream_rejected_input``.
-    Real OpenAI returns 400 ``invalid_function_parameters`` for the same
-    payload; agent-lb now does too.
-    """
     payload = {
         "model": "gpt-5.2",
         "messages": [{"role": "user", "content": "Weather in Seoul?"}],
@@ -637,7 +620,7 @@ async def test_v1_chat_completions_rejects_strict_function_tool_violation(async_
                         "type": "object",
                         "properties": {"city": {"type": "string"}},
                         "required": ["city"],
-                        # No additionalProperties: false → strict-mode violation.
+
                     },
                     "strict": True,
                 },
@@ -655,20 +638,12 @@ async def test_v1_chat_completions_rejects_strict_function_tool_violation(async_
 
 @pytest.mark.asyncio
 async def test_v1_chat_completions_strict_violation_param_uses_original_index(async_client):
-    """Regression: when ``_normalize_chat_tools`` drops earlier entries,
-    the strict-validator's ``param`` must still point at the *inbound*
-    index so clients can map the error back to their payload.
 
-    Index 0 is an invalid function tool (no ``name``) — the normalizer
-    will drop it. Index 1 is the real strict violation. The error
-    envelope must surface ``tools[1].function.parameters``, not
-    ``tools[0].function.parameters``.
-    """
     payload = {
         "model": "gpt-5.2",
         "messages": [{"role": "user", "content": "Weather in Seoul?"}],
         "tools": [
-            # Index 0: dropped by ``_normalize_chat_tools`` (missing name).
+
             {
                 "type": "function",
                 "function": {
@@ -676,7 +651,7 @@ async def test_v1_chat_completions_strict_violation_param_uses_original_index(as
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
-            # Index 1: strict violation (missing additionalProperties).
+
             {
                 "type": "function",
                 "function": {
@@ -703,23 +678,14 @@ async def test_v1_chat_completions_strict_violation_param_uses_original_index(as
 
 @pytest.mark.asyncio
 async def test_v1_chat_completions_strict_violation_when_type_omitted_in_chat_tool(async_client):
-    """Regression for the second codex review pass on PR #658.
 
-    ``_normalize_chat_tools`` coerces a tool with ``"function": {...}``
-    into a function tool even when the top-level ``"type"`` is omitted
-    (``"type": tool_type or "function"`` at chat_requests.py:198). The
-    strict pre-validator must mirror that detection rule — anchoring on
-    the presence of the ``function`` wrapper dict, not on a strict
-    ``type == "function"`` check — otherwise type-omitted strict
-    violations bypass the local 400 and surface as upstream 5xx.
-    """
     payload = {
         "model": "gpt-5.2",
         "messages": [{"role": "user", "content": "Weather in Seoul?"}],
         "tools": [
             {
-                # No top-level ``"type"`` — the chat normalizer still
-                # treats this as a function tool.
+
+
                 "function": {
                     "name": "get_weather",
                     "description": "x",
@@ -727,7 +693,7 @@ async def test_v1_chat_completions_strict_violation_when_type_omitted_in_chat_to
                         "type": "object",
                         "properties": {"city": {"type": "string"}},
                         "required": ["city"],
-                        # No additionalProperties → strict violation.
+
                     },
                     "strict": True,
                 },
@@ -745,7 +711,7 @@ async def test_v1_chat_completions_strict_violation_when_type_omitted_in_chat_to
 
 @pytest.mark.asyncio
 async def test_v1_chat_completions_responses_shaped_input_rejects_flat_strict_tool(async_client):
-    """Responses-shaped chat payloads must run the flat Responses strict validator."""
+
     payload = {
         "model": "gpt-5.2",
         "input": [{"role": "user", "content": [{"type": "input_text", "text": "Weather in Seoul?"}]}],
@@ -804,11 +770,7 @@ async def test_v1_chat_completions_responses_shaped_input_preserves_mcp_tool(asy
 
 @pytest.mark.asyncio
 async def test_v1_responses_rejects_strict_function_tool_violation(async_client):
-    """Same as the chat-completions case, but on the native /v1/responses endpoint.
 
-    The param shape differs: native responses callers see
-    ``tools[<i>].parameters`` rather than ``tools[<i>].function.parameters``.
-    """
     payload = {
         "model": "gpt-5.2",
         "input": [{"role": "user", "content": "Weather in Seoul?"}],
@@ -837,7 +799,7 @@ async def test_v1_responses_rejects_strict_function_tool_violation(async_client)
 
 @pytest.mark.asyncio
 async def test_backend_responses_rejects_strict_schema_violation_with_specific_error(async_client):
-    """Backend /responses must preserve strict-validator error code and message."""
+
     payload = {
         "model": "gpt-5.2",
         "instructions": "",

@@ -86,8 +86,8 @@ class FederationPushReceiver:
             elif account.expires_at_ms is not None and (
                 account.expires_at_ms <= now_ms or not _representable_expiry(account.expires_at_ms)
             ):
-                # Unrepresentable expiries cannot be persisted; skip instead of
-                # aborting the push before omitted accounts are deactivated.
+
+
                 reason = "expired_token"
             elif len(accepted) >= source.max_accounts:
                 reason = "over_limit"

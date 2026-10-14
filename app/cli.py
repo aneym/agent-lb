@@ -248,25 +248,25 @@ def main(argv: Sequence[str] | None = None) -> None:
         ssl_certfile=args.ssl_certfile,
         ssl_keyfile=args.ssl_keyfile,
         timeout_keep_alive=timeout_keep_alive,
-        # Drain in-flight streams on SIGTERM instead of severing them; a
-        # restart without a drain surfaces as "Server error mid-response"
-        # in every active client session.
+
+
+
         timeout_graceful_shutdown=timeout_graceful_shutdown,
-        # Mirror the upstream websocket leg (proxy_websocket): keep sending
-        # transport pings so intermediaries see liveness, but disable the pong
-        # deadline. Agent clients block their event loop for well over 20s
-        # during long local work; uvicorn's default 20s pong timeout was
-        # cutting those sessions mid-turn with 1011 "keepalive ping timeout".
+
+
+
+
+
         ws_ping_interval=20.0,
         ws_ping_timeout=None,
-        # permessage-deflate runs zlib synchronously on the event loop for
-        # every outbound frame; with multi-MB streaming deltas it starves the
-        # whole proxy (sampled mid-stall 2026-07-11). Clients are on
-        # localhost/tailnet, so the bandwidth saving is worthless here.
+
+
+
+
         ws_per_message_deflate=False,
-        # Logging is configured (and its queue listeners started) before
-        # uvicorn runs; None keeps uvicorn from re-applying a config whose
-        # listeners nobody would start.
+
+
+
         log_config=None,
     )
 
@@ -374,7 +374,7 @@ def _run_codex_sessions_retag(args: argparse.Namespace) -> None:
 
 
 def retag_codex_sessions(**kwargs) -> "RetagResult":
-    """Lazy compatibility seam for callers and tests that patch this helper."""
+
     from app.codex_sessions_retag import retag_codex_sessions as implementation
 
     return implementation(**kwargs)

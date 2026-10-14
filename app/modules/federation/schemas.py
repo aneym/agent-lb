@@ -8,7 +8,7 @@ from app.modules.shared.schemas import DashboardModel
 
 
 class FederationMirrorAccount(BaseModel):
-    """Owner-exported view of one owned account. NEVER carries a refresh token."""
+
 
     account_id: str
     provider: str
@@ -40,7 +40,7 @@ class FederationUsageDayRollup(BaseModel):
 
 
 class FederationPushRequest(BaseModel):
-    """A peer LB pushing its owned accounts into this LB (sender owns and refreshes them)."""
+
 
     instance_id: str = Field(min_length=1)
     accounts: list[FederationMirrorAccount]
@@ -52,7 +52,7 @@ class FederationPushSkip(BaseModel):
 
 
 class FederationPushResponse(BaseModel):
-    """Receiver's answer to a push. NEVER carries an access or refresh token."""
+
 
     source: str
     accepted: list[str]
@@ -138,7 +138,7 @@ class FederationStatusResponse(DashboardModel):
 
 
 class FederationAuthPayload(BaseModel):
-    """Full auth + identity material for a durable token import (checkout/checkin only)."""
+
 
     access_token: str
     refresh_token: str
@@ -219,7 +219,7 @@ class FederationAbortRequest(BaseModel):
 
 _INSTANCE_ID_PATTERN = r"^[A-Za-z0-9_.:-]{1,64}$"
 _REQUEST_LOG_BATCH_LIMIT = 500
-# Match RequestLog String(n) columns. Unbounded String/Text columns stay uncapped.
+
 CALLER_USER_MAX_LENGTH = 32
 CALLER_USER_SOURCE_MAX_LENGTH = 32
 CALLER_MACHINE_MAX_LENGTH = 48
@@ -229,7 +229,7 @@ ROOM_MAX_LENGTH = 128
 
 
 class FederationRequestLogRow(BaseModel):
-    """One edge request_logs row. No headers, bodies, or tokens."""
+
 
     source_row_id: int
     account_id: str | None = None

@@ -1,8 +1,4 @@
-"""Add durable account resume schedules.
 
-Revision ID: 20260925_020000_add_account_resume_schedules
-Revises: 20260925_010000_add_routing_policy_versions
-"""
 
 from __future__ import annotations
 
@@ -16,7 +12,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Re-runnable: a legacy revision id remaps to an older ancestor and replays this.
+
     if sa.inspect(op.get_bind()).has_table("account_resume_schedules"):
         return
     op.create_table(

@@ -1,4 +1,4 @@
-"""Weekly refill inspection contracts."""
+
 from __future__ import annotations
 
 import json
@@ -59,7 +59,7 @@ def test_weekly_refill_cohorts_and_next_low_account(tmp_path: Path, monkeypatch,
     args.json = False
     assert router["command_pools"](args) == 0
     assert "refills: 10-03 16:58Z +3 accounts, 10-03 21:06Z +1 accounts" in capsys.readouterr().out
-    # An earlier healthy reset and a spent account's past reset do not set the next low refill.
+
     accounts = refill_accounts()
     accounts["accounts"].extend([
         {"provider": "openai", "status": "active", "usage": {"secondaryRemainingPercent": 80},

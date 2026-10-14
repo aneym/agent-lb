@@ -1,11 +1,4 @@
-"""Incident 2026-10-05: a streamed Claude call must not wait minutes on a silent upstream.
 
-Two Claude Code calls from one tab waited 9 and 13 minutes: request f7612404 got its first
-byte after 553.6 s, and agent-lb had no bound short of its 600 s total budget. These drive
-/v1/messages through the real route, account loop and aiohttp upstream client against a
-local stand-in for the Anthropic API. Only the network edge is faked: name resolution and
-the upstream server, which goes silent where the incident did.
-"""
 
 from __future__ import annotations
 
@@ -39,9 +32,9 @@ from app.modules.proxy.anthropic_service import AnthropicProxyService
 pytestmark = pytest.mark.integration
 
 UPSTREAM_HOST = "model-upstream.test"
-QUOTA_KEY = "anthropic_top"  # the quota key of the model these calls use
+QUOTA_KEY = "anthropic_top"
 BOUND_SECONDS = 0.5
-STALL_SECONDS = 8.0  # how long the stand-in stays silent; the old code waits all of it
+STALL_SECONDS = 8.0
 BOUNDED_SECONDS = 4.0
 
 MESSAGE_START = (
@@ -60,7 +53,7 @@ REST = (
 )
 SSE = MESSAGE_START + REST
 CRLF_SSE = SSE.replace(b"\n", b"\r\n")
-CUT = REST.index(b'"text":"') + 4  # inside an event's JSON
+CUT = REST.index(b'"text":"') + 4
 JSON_MESSAGE = {
     "id": "msg_1",
     "type": "message",
@@ -73,7 +66,7 @@ JSON_MESSAGE = {
 
 
 class StandIn:
-    """Anthropic stand-in. ``mode`` picks how the first call misbehaves; later calls answer."""
+
 
     def __init__(self, mode: str) -> None:
         self.mode = mode
@@ -91,7 +84,7 @@ class StandIn:
         self.calls += 1
         first = self.calls == 1
         if not body.get("stream"):
-            await asyncio.sleep(2 * BOUND_SECONDS)  # a reply that is slow but not stalled
+            await asyncio.sleep(2 * BOUND_SECONDS)
             return web.json_response(JSON_MESSAGE)
         if first and self.mode == "silent_before_headers":
             await self._silence()
@@ -113,14 +106,14 @@ class StandIn:
         elif first and self.mode == "closes_mid_event":
             await response.write(MESSAGE_START + REST[:CUT])
         elif first and self.mode == "breaks_mid_body":
-            # A TCP close mid-body, as a network cut does: no terminating chunk.
+
             await response.write(MESSAGE_START + REST[:CUT])
             await asyncio.sleep(0.05)
             assert request.transport is not None
             request.transport.close()
             return response
         elif self.mode == "crlf_split_last_terminator":
-            # The final CRLF arrives in two reads: the CR, then the LF.
+
             await response.write(CRLF_SSE[:-1])
             await asyncio.sleep(0.05)
             await response.write(CRLF_SSE[-1:])
@@ -164,7 +157,7 @@ async def upstream(request, monkeypatch: pytest.MonkeyPatch):
 
 
 async def _insert_anthropic_accounts(count: int, *, cooling: int = 0) -> None:
-    """Insert ``count`` active accounts; the last ``cooling`` of them sit in a quota cooldown."""
+
     encryptor = TokenEncryptor()
     reset_at = int((utcnow() + timedelta(minutes=7)).replace(tzinfo=timezone.utc).timestamp())
     async with SessionLocal() as session:
@@ -244,7 +237,7 @@ async def _reservation_status() -> str | None:
 
 
 async def _stream_with_reservation(service: AnthropicProxyService):
-    """Start a streamed API-key call straight on the service, as the route does, and return its chunk iterator."""
+
     payload = AnthropicMessageRequest.model_validate(
         {
             "model": "claude-sonnet-4-20250514",
@@ -312,7 +305,7 @@ async def test_a_stream_that_goes_silent_mid_event_ends_with_a_clean_retryable_e
     assert elapsed < BOUNDED_SECONDS, f"the stream hung {elapsed:.1f} s after going silent"
     assert status == 200
     assert body.startswith(MESSAGE_START)
-    # The half-sent event never reaches the client; every event it gets parses.
+
     events = [block for block in body[len(MESSAGE_START) :].split(b"\n\n") if block.strip()]
     assert len(events) == 1 and events[0].startswith(b"event: error\ndata: "), body
     error = json.loads(events[0].split(b"data: ", 1)[1])
@@ -325,7 +318,7 @@ async def test_a_stream_that_goes_silent_mid_event_ends_with_a_clean_retryable_e
 async def test_running_out_of_accounts_after_a_stall_is_an_overload_not_a_quota_wait(
     upstream, async_client, monkeypatch
 ):
-    # The only other account is in a quota cooldown with a reset ahead.
+
     monkeypatch.setenv("AGENT_LB_ANTHROPIC_POOL_EXHAUSTED_WAIT_ENABLED", "false")
     get_settings.cache_clear()
     await _insert_anthropic_accounts(2, cooling=1)
@@ -362,7 +355,7 @@ async def test_a_stream_that_closes_mid_event_ends_with_a_clean_retryable_error_
 
     assert status == 200
     assert body.startswith(MESSAGE_START)
-    # The unfinished event is dropped, and the call counts as an error.
+
     events = [block for block in body[len(MESSAGE_START) :].split(b"\n\n") if block.strip()]
     assert len(events) == 1 and events[0].startswith(b"event: error\ndata: "), body
     error = json.loads(events[0].split(b"data: ", 1)[1])
@@ -373,8 +366,8 @@ async def test_a_stream_that_closes_mid_event_ends_with_a_clean_retryable_error_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("upstream", ["breaks_mid_body"], indirect=True)
 async def test_a_stream_whose_connection_breaks_mid_body_is_logged_as_a_failed_attempt(upstream, async_client):
-    # Harden run agent-lb-20261008T051116Z-8ab07e: a cut Claude stream raised ClientPayloadError out of
-    # the route (an ASGI 500 mid-stream) and the cut attempt left no request-log row at all.
+
+
     await _insert_anthropic_accounts(1)
 
     status, body, _ = await _call(async_client, stream=True)
@@ -397,7 +390,7 @@ async def test_a_client_gone_during_stall_bookkeeping_still_settles_and_records_
     await _insert_anthropic_accounts(1)
     await _insert_reservation()
     service = AnthropicProxyService(repo_factory=_proxy_repo_context)
-    # Holds one bookkeeping write open, so the disconnect lands in the middle of it.
+
     entered, release = asyncio.Event(), asyncio.Event()
     health_errors: list[str] = []
     real_finalize = ApiKeysService.finalize_usage_reservation
@@ -421,7 +414,7 @@ async def test_a_client_gone_during_stall_bookkeeping_still_settles_and_records_
     chunks = await _stream_with_reservation(service)
     assert await anext(chunks) == MESSAGE_START
 
-    # The stream stalls; the client disconnects mid-bookkeeping, which then finishes.
+
     reader = asyncio.ensure_future(anext(chunks))
     await asyncio.wait_for(entered.wait(), BOUNDED_SECONDS)
     reader.cancel()
@@ -458,7 +451,7 @@ async def test_a_client_gone_before_any_event_went_out_releases_the_api_key_rese
     await _insert_anthropic_accounts(1)
     await _insert_reservation()
     service = AnthropicProxyService(repo_factory=_proxy_repo_context)
-    # Holds the health write for the cut first event open, so the disconnect lands there.
+
     entered, release = asyncio.Event(), asyncio.Event()
     real_record_error = service._load_balancer.record_error
 

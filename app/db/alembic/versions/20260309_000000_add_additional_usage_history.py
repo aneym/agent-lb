@@ -1,9 +1,4 @@
-"""add additional_usage_history table
 
-Revision ID: 20260309_000000_add_additional_usage_history
-Revises: 20260309_000000_request_logs_nullable_account_id
-Create Date: 2026-03-09
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260309_000000_add_additional_usage_history"
 down_revision = "20260309_000000_request_logs_nullable_account_id"
 branch_labels = None
@@ -58,7 +52,7 @@ def upgrade() -> None:
             "additional_usage_history",
             ["account_id", "limit_name", "window", "recorded_at"],
         )
-    # Index for latest_by_account queries that filter on (limit_name, window)
+
     if "ix_additional_usage_limit_window" not in existing_indexes:
         op.create_index(
             "ix_additional_usage_limit_window",

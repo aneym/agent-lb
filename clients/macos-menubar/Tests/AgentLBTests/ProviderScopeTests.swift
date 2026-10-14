@@ -3,8 +3,8 @@ import XCTest
 
 final class ProviderScopeTests: XCTestCase {
 
-  // Same fixed "now" as AccountFilterTests: all fixture resetAtPrimary
-  // values are in the future relative to 2026-06-10T17:00:00Z.
+
+
   private let now = Format.iso8601.date(from: "2026-06-10T17:00:00Z")!
 
   private var accounts: [Account] = []
@@ -25,7 +25,7 @@ final class ProviderScopeTests: XCTestCase {
     )
   }
 
-  // MARK: - Labels (dashboard providerLabel)
+
 
   func testSegmentLabels() {
     XCTAssertEqual(ProviderScope.all.label, "All")
@@ -33,7 +33,7 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertEqual(ProviderScope.anthropic.label, "Claude")
   }
 
-  // MARK: - Scoping
+
 
   func testFilterByScope() {
     XCTAssertEqual(ProviderScope.all.filter(accounts).count, 8)
@@ -47,7 +47,7 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertFalse(ProviderScope.anthropic.includes(upper))
   }
 
-  // MARK: - §13 providerParam
+
 
   func testProviderParam() {
     XCTAssertNil(ProviderScope.all.providerParam)
@@ -93,23 +93,23 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertEqual(counts[.anthropic], 1)
   }
 
-  // MARK: - Scoped window math (§9.2: Σ remaining / Σ capacity × 100)
+
 
   func testAnthropicPrimaryWindowSums() throws {
     let scoped = ProviderScope.anthropic.filter(accounts)
     let scopedWindow = ProviderScope.summarizeWindow(scoped, window: .primary, now: now)
     let window = scopedWindow.usage
 
-    // remainingCreditsPrimary: 7 + 2 + 3 = 12; capacityCreditsPrimary: 3 × 100
+
     XCTAssertEqual(try XCTUnwrap(window.remainingCredits), 12.0, accuracy: 1e-9)
     XCTAssertEqual(try XCTUnwrap(window.capacityCredits), 300.0, accuracy: 1e-9)
     XCTAssertEqual(try XCTUnwrap(window.remainingPercent), 4.0, accuracy: 1e-9)
 
-    // Earliest FUTURE resetAtPrimary among 23:49:59 / 21:50:00 / 23:50:00.
+
     XCTAssertEqual(window.resetAt, Format.iso8601.date(from: "2026-06-10T21:50:00Z"))
 
-    // §10: only the earliest 1-minute bucket recovers — ddb5ff1a (21:50:00,
-    // 100 − 2 = 98). The 23:49:59/23:50:00 resets are staggered later.
+
+
     XCTAssertEqual(try XCTUnwrap(scopedWindow.recoveredCredits), 98.0, accuracy: 1e-9)
   }
 
@@ -118,12 +118,12 @@ final class ProviderScopeTests: XCTestCase {
     let scopedWindow = ProviderScope.summarizeWindow(scoped, window: .secondary, now: now)
     let window = scopedWindow.usage
 
-    // 41 + 60 + 53 = 154 of 300 → 51.333…%
+
     XCTAssertEqual(try XCTUnwrap(window.remainingCredits), 154.0, accuracy: 1e-9)
     XCTAssertEqual(try XCTUnwrap(window.remainingPercent), 154.0 / 300.0 * 100, accuracy: 1e-9)
     XCTAssertEqual(window.resetAt, Format.iso8601.date(from: "2026-06-14T04:00:00Z"))
 
-    // §10: earliest secondary reset is a4-other (06-14T04:00, 100 − 53 = 47).
+
     XCTAssertEqual(try XCTUnwrap(scopedWindow.recoveredCredits), 47.0, accuracy: 1e-9)
   }
 
@@ -132,14 +132,14 @@ final class ProviderScopeTests: XCTestCase {
     let scopedWindow = ProviderScope.summarizeWindow(scoped, window: .primary, now: now)
     let window = scopedWindow.usage
 
-    // 1485 + 1470 + 1500 + 1500 + 1500 = 7455 of 7500 → 99.4 %
+
     XCTAssertEqual(try XCTUnwrap(window.remainingCredits), 7455.0, accuracy: 1e-9)
     XCTAssertEqual(try XCTUnwrap(window.capacityCredits), 7500.0, accuracy: 1e-9)
     XCTAssertEqual(try XCTUnwrap(window.remainingPercent), 99.4, accuracy: 1e-9)
     XCTAssertEqual(window.resetAt, Format.iso8601.date(from: "2026-06-10T23:00:10Z"))
 
-    // §10: earliest is a2-second (23:00:10, 1500 − 1470 = 30); the three
-    // 02:15:2x resets share a minute but are NOT the earliest bucket.
+
+
     XCTAssertEqual(try XCTUnwrap(scopedWindow.recoveredCredits), 30.0, accuracy: 1e-9)
   }
 
@@ -189,10 +189,10 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertEqual(window.usage.resetAt, now.addingTimeInterval(600))
   }
 
-  // MARK: - §10 recovery edge cases
+
 
   func testSameMinuteResetsSumRecovery() throws {
-    // Two accounts reset 30 s apart (same 1-minute bucket), a third later.
+
     let first = makeTestAccount(
       id: "a", remainingCreditsPrimary: 40, capacityCreditsPrimary: 100,
       resetAtPrimary: now.addingTimeInterval(600))
@@ -204,7 +204,7 @@ final class ProviderScopeTests: XCTestCase {
       resetAtPrimary: now.addingTimeInterval(3600))
 
     let window = ProviderScope.summarizeWindow([first, second, later], window: .primary, now: now)
-    // (100−40) + (100−70) = 90; the later account's 100 does not count.
+
     XCTAssertEqual(try XCTUnwrap(window.recoveredCredits), 90.0, accuracy: 1e-9)
   }
 
@@ -217,8 +217,8 @@ final class ProviderScopeTests: XCTestCase {
   }
 
   func testRecoveryNilWhenBucketLacksCredits() {
-    // The earliest-resetting account exposes no credit fields; a credited
-    // account resets an hour later (outside the bucket) → unknowable.
+
+
     let resetOnly = makeTestAccount(id: "bare", resetAtPrimary: now.addingTimeInterval(600))
     let credited = makeTestAccount(
       id: "full", remainingCreditsPrimary: 10, capacityCreditsPrimary: 100,
@@ -227,7 +227,7 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertNil(window.recoveredCredits)
   }
 
-  // MARK: - §10 reset schedule (card tooltip)
+
 
   func testResetScheduleSoonestFirstWithRecovery() throws {
     let scoped = ProviderScope.anthropic.filter(accounts)
@@ -253,7 +253,7 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertNil(schedule[0].recoveredCredits)
   }
 
-  // MARK: - Edge cases
+
 
   func testEmptyScopeRendersNils() {
     let scopedWindow = ProviderScope.summarizeWindow([], window: .primary, now: now)
@@ -284,11 +284,11 @@ final class ProviderScopeTests: XCTestCase {
     let scopedWindow = ProviderScope.summarizeWindow(
       [withCredits, resetOnly], window: .primary, now: now
     )
-    // Sums come from the credit-bearing account only…
+
     XCTAssertEqual(try XCTUnwrap(scopedWindow.usage.remainingPercent), 10.0, accuracy: 1e-9)
     XCTAssertEqual(try XCTUnwrap(scopedWindow.usage.capacityCredits), 100.0, accuracy: 1e-9)
-    // …but the earliest future reset can come from the other account
-    // (whose recovery is then unknowable — §10).
+
+
     XCTAssertEqual(scopedWindow.usage.resetAt, now.addingTimeInterval(3600))
     XCTAssertNil(scopedWindow.recoveredCredits)
   }
@@ -305,7 +305,7 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertNil(window.recoveredCredits)
   }
 
-  // MARK: - Known-full reset presentation
+
 
   func testFiveKnownFullAccountsSkipPrimaryResetSchedule() throws {
     let full = (0..<5).map { index in

@@ -100,7 +100,7 @@ def test_forwarded_identity_is_authenticated_and_client_header_cannot_override_i
     assert error is None
     assert forwarded is not None and forwarded.context.identity == origin
 
-    # The signed identity is bound to the payload and cannot be edited in transit.
+
     headers[HTTP_BRIDGE_IDENTITY_HEADER] = '["forged","member","box-2","tailnet"]'
     forwarded, error = parse_forwarded_request(headers, payload=payload, current_instance="instance-b")
     assert forwarded is None and error is not None and error.status_code == 400
@@ -121,7 +121,7 @@ def test_bridge_forward_without_identity_uses_legacy_signature() -> None:
             payload.model_dump(mode="json", exclude_none=True), ensure_ascii=True, sort_keys=True, separators=(",", ":")
         ).encode()
     ).hexdigest()
-    # Independent protocol contract: the base build signs ten fields, not an empty identity field.
+
     legacy_bytes = "|".join(("instance-a", "instance-b", "0", "", "", "", "", "", "", body_digest)).encode()
     expected = hmac.new(get_or_create_key(get_settings().encryption_key_file), legacy_bytes, hashlib.sha256).hexdigest()
     assert headers[HTTP_BRIDGE_SIGNATURE_HEADER] == expected

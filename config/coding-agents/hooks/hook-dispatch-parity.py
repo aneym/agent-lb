@@ -1,49 +1,5 @@
 #!/usr/bin/env python3
-"""Parity fixture for hook-dispatch.py: the per-hook config and the dispatcher give Claude Code the same answers.
 
-For every case (event, tool, payload) it runs, in a fresh sandbox HOME each time:
-- old: every per-hook command from the registry's `per_hook` block whose group matches the tool by Claude Code's own
-  matcher rules (names, aliases, regexes), each through /bin/sh -c with its own timeout, as Claude Code runs them;
-- new: the dispatcher entries from the registry's `dispatch` block, with HOOK_DISPATCH_TRACE on.
-It compares (1) each guard's own result (exit code, stdout, stderr when the exit code is not 0, timeout) between the
-two paths, (2) the effect Claude Code builds from the results (decision, block message, updatedInput, context,
-system message and error notices, continue), emulated here independently of the dispatcher's merge code, with the
-floor rule applied to the per-hook results (a floor guard that fails refuses the call), and (3) the files each path
-leaves in the sandbox. Results are compared as observed: a dispatcher entry that hits its timeout here is cancelled
-as Claude Code cancels a hook. A case whose only difference may be a guard's timeout on a loaded machine is rerun
-(at most twice) before it counts. One expected difference is modelled, as the floor rule is: a rewriter the
-dispatcher execs into carries its own timeout as a timer (build lead decision (a), 2026-10-08), so where per-hook it
-hit that timeout and was cancelled with nothing shown, the dispatcher's is killed by SIGALRM at it: no rewrite, and
-a failed-hook notice.
-
-Floor replay: each live floor guard is made to time out, crash, go missing, print a malformed answer and exit 0
-without its allow receipt (a stub in the sandbox, never the real file); the dispatcher must refuse every one, and a
-non-floor control must fail open.
-
-Floor guards (S44, 2026-10-08) are modelled on their own: a floor guard's command must be a direct exec of its own
-script (`[python3|bash] <script> [args]`), and its own result is that exec with HOOK_FLOOR_RECEIPT=1 set; it allowed
-only when it exited 0 with its receipt line `floor-ok <script name>` last on stdout (taken off before its answer is
-read). A live floor guard that exits 0 without its receipt is a mismatch (a stale guard the dispatcher would refuse on
-every call). --overlay REL=PATH runs PATH in place of HOME/REL (install-policy passes the hooks it is about to
-install, so the fold is checked against the guards it will run).
-
-Processes per Bash call are observed as whole trees (see observe): a kqueue watch on each hook's shell from before it
-runs; at every fork the tree is stopped, every child of every known process (unreaped ones too) is listed and
-watched, and only then continued. The budget: hook-layer processes (dispatcher entries and the guard processes they
-start) at most 2 per Bash call, and the dispatcher path's whole tree no larger than the per-hook path's for the same
-command and cwd. A dispatcher-path count the watch did not observe completely fails; a self-test first proves exact
-counts from a plain exec (1) to grandchildren (4).
-
-The sandbox is test-owned: HOME, TMPDIR, lane, factory, ledger and state paths point inside it, HERDR_* and
-FACTORY_* are dropped, AGENT_LB_URL points at a closed port, AUTOCLOSE_DRY_RUN and IDLE_REAPER_DRY_RUN are set.
-Guard scripts are linked from the real HOME read-only; config files they read are copied. AskUserQuestion is never
-run (its hook files a real ask). It holds install-policy's per-home lock (shared) while it runs, unless the caller
-holds it (--lock-held). Exit 0 when every parity case matches and the floor replay holds (1: parity, 5: floor);
---require-process-count also requires the process budget (3).
-
-Usage: hook-dispatch-parity.py [--home H] [--registry R] [--dispatcher D] [--out FILE] [--require-process-count]
-       [--no-process-count] [--lock-held] [--require-expectations]
-"""
 import argparse
 import copy
 import hashlib
@@ -78,18 +34,18 @@ if [ "$2" = "--find-config-path" ]; then
 fi
 exit 0
 """
-HEAVY_DIR = os.path.join(os.path.expanduser("~"), "factory")  # under box-offload's roots, so it rewrites
-NEVER_RUN = {"AskUserQuestion"}  # its hook registers a real ask with unblock
+HEAVY_DIR = os.path.join(os.path.expanduser("~"), "factory")
+NEVER_RUN = {"AskUserQuestion"}
 
 
-# ---------------------------------------------------------------------------------------------------- matching
 
 
-# Claude Code 2.1.293's hook matcher (W3 in its bundle, read 2026-10-07): an empty matcher or `*` matches every
-# tool; a matcher of only letters, digits, `_`, `|`, `,`, ` ` and `-` is a list of exact names split on `|` or `,`
-# (each trimmed, each read through the tool alias table); anything else is a JavaScript regex searched (unanchored)
-# in the tool name and in the names that alias to it, and an invalid regex matches nothing. Events without a tool
-# (UserPromptSubmit, Stop) ignore the matcher. Tool families (MCP server families) are not modelled.
+
+
+
+
+
+
 TOOL_ALIASES = {"Task": "Agent", "KillShell": "TaskStop", "KillBash": "TaskStop", "ListPeers": "ListAgents",
                 "Brief": "SendUserMessage", "ListMcpResources": "ListMcpResourcesTool",
                 "ReadMcpResource": "ReadMcpResourceTool", "ReadMcpResourceDir": "ReadMcpResourceDirTool"}
@@ -106,7 +62,7 @@ def matches(matcher, tool, event="PreToolUse"):
         names = [TOOL_ALIASES.get(name.strip(), name.strip()) for name in re.split(r"[|,]", matcher) if name.strip()]
         return tool in names
     try:
-        pattern = re.compile(matcher)  # JavaScript and Python agree on the regexes hook matchers use
+        pattern = re.compile(matcher)
     except re.error:
         return False
     return any(pattern.search(name) for name in [tool] + [a for a, t in TOOL_ALIASES.items() if t == tool])
@@ -124,7 +80,7 @@ def old_hooks(per_hook, event, tool):
             continue
         for hook in group.get("hooks", []):
             if hook.get("command") in seen:
-                continue  # Claude Code runs an identical command once
+                continue
             seen.add(hook.get("command"))
             hooks.append(hook)
     return hooks
@@ -136,19 +92,17 @@ def new_hooks(dispatch, event, tool):
         if not matches(group.get("matcher"), tool, event):
             continue
         for hook in group.get("hooks", []):
-            if hook.get("command") not in seen:  # Claude Code runs an identical command once
+            if hook.get("command") not in seen:
                 seen.add(hook.get("command"))
                 hooks.append(hook)
     return hooks
 
 
-# ---------------------------------------------------------------------------------------------------- running
+
 
 
 def reap_group(pid):
-    """Kill what a hook left in its own session after it returned: a child it backgrounded with its output detached
-    keeps running (or sits stopped, state T, when the observer froze it) after communicate() returns, and each one
-    held memory and XProtect scans on Studio until reboot (2026-10-09). SIGKILL ends stopped processes too."""
+
     try:
         os.killpg(pid, signal.SIGKILL)
     except OSError:
@@ -181,7 +135,7 @@ def hook_timeout(hook):
     return float(value) if isinstance(value, (int, float)) and value > 0 else DEFAULT_TIMEOUT
 
 
-# -------------------------------------------------------------------------------- Claude Code's view
+
 
 
 def parse_json(text):
@@ -196,22 +150,14 @@ def parse_json(text):
 
 
 def effect(event, results):
-    """What Claude Code does with these hook results, per its per-hook rules (2.1.293), in config order.
 
-    Probed on 2.1.293 (2026-10-07): it reads stdout as JSON whatever the exit code and then ignores stderr (a JSON
-    answer with exit 1 is a success); `decision: block` or a PreToolUse deny blocks with the reason; an exit 2 with no
-    such reason blocks with `[<command>]: <stderr>`; any other exit without JSON (a signal too: Node reports no code,
-    which Claude Code reads as 1) is a non-blocking error notice to the user, `Failed with non-blocking status code:
-    <stderr, trimmed>` (or `No stderr output`), and its stdout reaches only the transcript. A hook that hit its
-    timeout is cancelled: nothing is shown for it (2.1.293 renders hook_cancelled only for UserPromptSubmit).
-    `shown` is what the user is shown besides a block, in config order: system messages and those notices."""
     view = {"decision": None, "block": [], "updatedInput": None, "context": [], "shown": [], "continue": True,
             "stopReason": [], "plain": []}
     failed_stdout = False
     rank = {"allow": 1, "ask": 2, "deny": 3}
     for result in results:
         if result["timed_out"]:
-            continue  # cancelled: no effect
+            continue
         obj = parse_json(result["out"])
         if obj is None:
             if result["code"] == 2:
@@ -249,11 +195,11 @@ def effect(event, results):
     if view["block"]:
         view["decision"] = "deny" if event == "PreToolUse" else "block"
         if event == "PreToolUse":
-            view["updatedInput"] = None  # a denied call never runs, so a rewrite of it has no effect
+            view["updatedInput"] = None
     if event == "UserPromptSubmit":
         view["context"] += [text.rstrip("\n") for text in view["plain"]]
     plain = view.pop("plain")
-    # Several messages or contexts reach the model either as separate items (old) or joined (dispatcher).
+
     view["block_raw"] = "\n".join(view["block"])
     view["block_parts"] = [FLOOR_MESSAGE.sub(r"\1hook-dispatch: floor guard refusal", message)
                            for message in view["block"]]
@@ -265,11 +211,11 @@ def effect(event, results):
     return view
 
 
-# ---------------------------------------------------------------------------------------------------- floor model
-# The rule the dispatcher must hold, modelled here on its own (p13D and the simplify lead, 2026-10-07): on PreToolUse
-# a floor guard that times out, crashes, is missing or prints something that is not a hook answer refuses the call,
-# whatever its per-hook wrapper made of the failure; its exit 2 blocks under any wrapper. Every other guard fails
-# open as before. The expected effect of the dispatcher path is the per-hook effect with this rule applied.
+
+
+
+
+
 FLOOR_NAMES = ("rm-dynamic-deny", "stash-guard",
                "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard",
                "agent-lb-bootout-guard.sh", "dangerous-command-guard.sh")
@@ -277,8 +223,8 @@ FLOOR_INLINE = "BLOCKED: Dangerous command"
 FLOOR_MESSAGE = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard [^\n]*(?:\n.*)?$", re.S)
 NOTICE_PREFIX = "Failed with non-blocking status code: "
 RECEIPT_ENV = "HOOK_FLOOR_RECEIPT"
-# Exact floor commands of earlier folds (sha256) -> the direct exec that replaced them (S44; kept in step with
-# hook-dispatch.py LEGACY_FLOOR_COMMANDS, written out here so the model does not read the dispatcher's code).
+
+
 LEGACY_FLOOR = {
     "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c":
         '"$HOME/.claude/hooks/dangerous-command-guard.sh"',
@@ -304,7 +250,7 @@ def floor_of(command):
 
 
 def direct_argv(command, name, home):
-    """argv of the direct exec a floor command must be (S44), with HOME expanded; None when it is anything else."""
+
     match = DIRECT.match(legacy(command) or command)
     if not match:
         return None
@@ -319,7 +265,7 @@ def direct_argv(command, name, home):
 
 
 def run_direct(argv, name, payload, env, cwd, timeout):
-    """A floor guard's own result: its direct exec with the receipt asked for; the receipt is taken off `out`."""
+
     started = time.monotonic()
     env = dict(env, **{RECEIPT_ENV: "1"})
     try:
@@ -351,8 +297,7 @@ def run_direct(argv, name, payload, env, cwd, timeout):
 
 
 def floor_failed(raw):
-    """Whether a floor guard's own result is a failure rather than an answer: not a direct exec, a timeout, any exit
-    but 0 and 2, or an exit 0 without its receipt; then an answer that is not a hook answer."""
+
     if raw.get("opaque"):
         return True
     if raw["timed_out"]:
@@ -383,8 +328,7 @@ def floor_failed(raw):
 
 
 def with_floor(event, results, unfolded=()):
-    """The per-hook results as the floor rule says the dispatcher must answer: a failed floor guard blocks. A guard
-    the fold left per-hook (in `unfolded`) is outside the dispatcher, so Claude Code reads it as before."""
+
     if event != "PreToolUse":
         return results
     out = []
@@ -401,15 +345,13 @@ def with_floor(event, results, unfolded=()):
 
 
 def with_exec_timer(results, execd):
-    """The per-hook results as the dispatcher must answer when it exec'd into a rewriter (a command in `execd`): one
-    that hit its own timeout per-hook is killed by the timer armed before the exec, which Claude Code reads as a
-    signal exit with no stderr (a failed-hook notice), never as a cancel and never as its late rewrite."""
+
     return [dict(result, code=128 + signal.SIGALRM, out="", err="", timed_out=False)
             if result["command"] in execd and result["timed_out"] else result for result in results]
 
 
 def effective(result):
-    """One guard's result as Claude Code reads it: stderr only matters when the exit code is not 0."""
+
     if result is None:
         return None
     if result["timed_out"]:
@@ -417,7 +359,7 @@ def effective(result):
     return {"code": result["code"], "out": result["out"], "err": result["err"] if result["code"] != 0 else ""}
 
 
-# ---------------------------------------------------------------------------------------------------- sandbox
+
 
 
 class Sandbox(object):
@@ -435,10 +377,10 @@ class Sandbox(object):
                 if os.path.isfile(source) and not os.path.lexists(target):
                     os.makedirs(os.path.dirname(target), exist_ok=True)
                     if rel in OVERLAY:
-                        # As install-policy write_atomic will write it: the source's bytes, a .sh file 0755 and any
-                        # other file the installed copy's mode (0644 when new), whatever the source checkout's mode.
-                        # 2026-10-08: a 0644 source made a direct exec of railway-vars-guard.sh fail in the sandbox
-                        # only, and the sticky install kept the old fold.
+
+
+
+
                         live = os.path.join(real_home, rel)
                         shutil.copyfile(source, target)
                         os.chmod(target, 0o755 if rel.endswith(".sh") else
@@ -459,12 +401,12 @@ class Sandbox(object):
         if os.path.lexists(dispatcher_link):
             os.unlink(dispatcher_link)
         os.symlink(os.path.abspath(dispatcher), dispatcher_link)
-        # As installed: registry.json and the rev file every settings entry reads first (2026-10-08 review M3).
+
         names = ["registry.json"] + (["registry.%s.json" % registry["rev"]] if registry.get("rev") else [])
         for name in names:
             with open(os.path.join(hooks_dir, "dispatch", name), "w") as handle:
                 json.dump(registry, handle, indent=2)
-        for rel in remove:  # a guard the run must find missing: its link goes (never the real file behind it)
+        for rel in remove:
             path = os.path.join(self.template, rel)
             if os.path.islink(path) or os.path.isfile(path):
                 os.unlink(path)
@@ -472,7 +414,7 @@ class Sandbox(object):
             path = os.path.join(self.template, rel)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             if os.path.lexists(path):
-                os.unlink(path)  # a link to a real guard is replaced, never written through
+                os.unlink(path)
             with open(path, "w") as handle:
                 handle.write(content)
             os.chmod(path, mode)
@@ -480,8 +422,8 @@ class Sandbox(object):
             os.makedirs(os.path.join(self.template, rel), exist_ok=True)
         with open(os.path.join(self.template, "factory", "machines.json"), "w") as handle:
             handle.write("[]\n")
-        # Never the network: every run gets a fake npx that logs its argv and answers --find-config-path the way
-        # prettier does (found only when a prettier config sits in the file's directory or a parent).
+
+
         with open(os.path.join(self.template, "bin", "npx"), "w") as handle:
             handle.write(FAKE_NPX)
         os.chmod(os.path.join(self.template, "bin", "npx"), 0o755)
@@ -534,16 +476,16 @@ def files_of(run):
         dirnames[:] = [d for d in dirnames if d not in ("__pycache__",)]
         rel_dir = os.path.relpath(dirpath, run)
         if rel_dir.split(os.sep)[0] == "tmp" or rel_dir == os.path.join("home", ".claude", "hooks", "dispatch"):
-            continue  # the dispatcher's own state (registry, failures.jsonl) is not a guard effect
+            continue
         for name in filenames:
             path = os.path.join(dirpath, name)
             if path in skip or name.startswith("hook-dispatch-") or name.endswith(".pyc"):
-                continue  # interpreter byte-code caches (~/Library/Caches/com.apple.python) are not guard effects
+                continue
             found.add(os.path.relpath(path, run))
     return found
 
 
-# ---------------------------------------------------------------------------------------------------- cases
+
 
 
 def bash(command, cwd_rel="work", **extra):
@@ -553,7 +495,7 @@ def bash(command, cwd_rel="work", **extra):
 def builtin_cases():
     deny = "deny"
     cases = [
-        # allow
+
         dict(bash("ls -la"), name="allow-ls", expect="allow"),
         dict(bash("git status"), name="allow-git-status (rtk rewrite)", expect="allow"),
         dict(bash("echo hello"), name="allow-echo", expect="allow"),
@@ -571,14 +513,14 @@ def builtin_cases():
         dict(bash("railway variables --json | jq 'keys'"), name="allow-railway-names", expect="allow"),
         dict(bash("link-cli auth status --filter-output authenticated"), name="allow-link-cli-filtered",
              expect="allow"),
-        # deny, one guard each. Guard trim (2026-10-08 09:18 ET): the wide-scan, no-direct-merge,
-        # herdr-shell-host, seat and relay cases keep their names but only warn now (expect None).
+
+
         dict(bash("rm -rf /"), name="deny-dangerous-cmd", expect=deny),
         dict(bash("rm -rf $d"), name="deny-rm-dynamic-deny", expect=deny),
         dict(bash("launchctl kickstart -k gui/501/com.aneyman.agent-lb"), name="deny-agent-lb-bootout",
              expect=deny),
-        # Since the 2026-10-08 guard edit a plain grep -r there is rewritten with -D skip; one with shell syntax
-        # (here a pipe) is still refused.
+
+
         dict(bash("grep -r needle ~/.agent-rails/x | head -1"), name="deny-wide-scan-fifo", expect=None),
         dict(bash("grep -r needle ~/.agent-rails/x"), name="rewrite-wide-scan-fifo", expect=None),
         dict(bash("rg needle /"), name="deny-wide-scan-root", expect=None),
@@ -597,36 +539,36 @@ def builtin_cases():
         dict(bash("git stash push -m parity", cwd_rel="work/repo"), name="deny-stash-guard", expect=deny,
              setup="stash"),
         dict(bash("git stash list", cwd_rel="work/repo"), name="allow-stash-list", expect="allow", setup="stash"),
-        # malformed input: guards that fail closed refuse, the rest fail open
+
         dict(event="PreToolUse", tool="Bash", raw='{"tool_name":"Bash","tool_input":{"command":"rm -rf $d"',
              name="malformed-rm (rm-dynamic-deny fails closed)", expect=deny),
         dict(event="PreToolUse", tool="Bash", raw='{"tool_name":"Bash","tool_input":{"command":"cua do click"',
              name="malformed-cua (desktop-guard fails closed)", expect=deny),
-        # Since hook-dispatcher-4 (2026-10-08) every floor guard refuses input it cannot read: the wide-scan and
-        # bootout guards (jq fails on it) and the railway guard (since agent-lb 7a71805e). It failed open before.
+
+
         dict(event="PreToolUse", tool="Bash", raw="not json at all", name="malformed-plain (floor guards refuse)",
              expect=deny),
         dict(event="PreToolUse", tool="Bash", input={"command": 123}, name="non-string-command", expect=None),
-        # Agent: the seat guard
+
         dict(event="PreToolUse", tool="Agent",
              input={"subagent_type": "general-purpose", "model": "gpt-5.4-mini", "prompt": "x", "description": "x"},
              name="deny-seat-guard-blocked-model", expect=None),
         dict(event="PreToolUse", tool="Agent",
              input={"subagent_type": "Explore", "prompt": "find files", "description": "explore"},
              name="allow-seat-guard", expect=None),
-        # Workflow: the relay guard and the workflow seat guard
+
         dict(event="PreToolUse", tool="Workflow", input={"script": "agent('do the thing')"},
              name="deny-relay-guard", expect=None),
         dict(event="PreToolUse", tool="Workflow", input={"script": "// RELAYED-REQUEST-GUARD\nagent('x')"},
              name="allow-relay-guard", expect=None),
-        # aside
+
         dict(event="PreToolUse", tool="mcp__aside__repl", input={"code": "await openTab('https://x')"},
              name="deny-aside-open-tab", expect=deny),
         dict(event="PreToolUse", tool="mcp__aside__repl", input={"code": "await listBrowserTabs()"},
              name="allow-aside", expect="allow"),
-        # Read
+
         dict(event="PreToolUse", tool="Read", input={"file_path": "/etc/hosts"}, name="allow-read", expect=None),
-        # PostToolUse
+
         dict(event="PostToolUse", tool="Bash", input={"command": "ls"}, response={"stdout": "x"},
              name="post-bash-bulletin", expect=None, setup="bulletin", pane=True),
         dict(event="PostToolUse", tool="Bash", input={"command": "ls"}, response={"stdout": "x"},
@@ -640,11 +582,11 @@ def builtin_cases():
         dict(event="PostToolUse", tool="Skill", input={"skill": "jev"}, name="post-skill-stats", expect=None),
         dict(event="PostToolUse", tool="mcp__supabase__apply_migration", input={"name": "x"},
              name="post-supabase", expect=None),
-        # UserPromptSubmit
+
         dict(event="UserPromptSubmit", prompt="parity test prompt", name="ups-quiet", expect=None),
         dict(event="UserPromptSubmit", prompt="parity test prompt", name="ups-bulletin-and-jev-alert", expect=None,
              setup="bulletin+jev", pane=True),
-        # Stop
+
         dict(event="Stop", name="stop", expect=None),
     ]
     return cases
@@ -708,7 +650,7 @@ def payload_for(case, run):
 
 
 def run_path(sandbox, case, hooks, extra, trace):
-    """Run hooks the way Claude Code does (each through /bin/sh -c, own timeout) in a fresh sandbox run dir."""
+
     run = sandbox.fresh()
     setup_case(case, run)
     payload = payload_for(case, run)
@@ -720,8 +662,8 @@ def run_path(sandbox, case, hooks, extra, trace):
         result = run_shell(hook["command"], payload, env, cwd, hook_timeout(hook))
         result["trace"] = []
         if not trace and case.get("event") == "PreToolUse" and floor_of(hook["command"]):
-            # A floor guard's own result, as the dispatcher must run it (S44): the direct exec of its script with the
-            # receipt asked for, or nothing at all when its command is not one (the call is refused).
+
+
             result["floor"] = floor_of(hook["command"])
             argv = direct_argv(hook["command"], result["floor"], env["HOME"])
             result["raw"] = run_direct(argv, result["floor"], payload, env, cwd, hook_timeout(hook)) if argv else dict(
@@ -750,11 +692,7 @@ FLOOR_REFUSAL = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard refusal$"
 
 
 def same_effect(old_view, new_view):
-    """The two views agree. The dispatcher joins every block message into one reason, so a floor refusal that is not
-    the first message is not normalized there (FLOOR_MESSAGE reads from the start): it matches the expected refusal
-    when it starts with that guard's `[<command>]: hook-dispatch: floor guard ` and the messages around it are equal
-    (2026-10-08: with the railway guard install-policy registers but has not yet installed, a fresh home's first fold
-    failed the fixture on that alone)."""
+
     def strip(view):
         return {key: value for key, value in view.items() if key not in ("block", "block_parts", "block_raw")}
 
@@ -776,21 +714,21 @@ def run_case(sandbox, registry, case):
     outcome = {"name": case["name"], "event": event, "tool": tool, "mismatches": []}
     run, old_results, old_files = run_path(sandbox, case, olds, extra, False)
     run2, new_results, new_files = run_path(sandbox, case, news, extra, True)
-    # Each result is compared as observed: a dispatcher entry that hit its timeout here (this harness kills it as
-    # Claude Code does) is a cancelled hook, exactly as a per-hook hook that hit its own.
-    unfolded = {result["command"] for result in new_results if not result["trace"]}  # left per-hook by the fold
+
+
+    unfolded = {result["command"] for result in new_results if not result["trace"]}
     execd = {record["exec"] for result in new_results for record in result["trace"] if record.get("exec")}
     old_plain = same(effect(event, old_results), run)
     expected = with_exec_timer(old_results, execd)
     old_view = same(effect(event, with_floor(event, expected, unfolded)), run)
     new_view = same(effect(event, new_results), run2)
-    # (2) what Claude Code does with the answers
+
     if not same_effect(old_view, new_view):
         outcome["mismatches"].append({"what": "effect", "old": old_view, "new": new_view, "floor_raw": [
             {key: (result.get("raw") or {}).get(key) for key in ("command", "code", "receipt", "timed_out", "opaque",
                                                                   "err")}
             for result in old_results if result.get("floor")]})
-    # (1) each guard: the dispatcher's own record of it, or its direct run when it was left per-hook
+
     new_by_command, modes = {}, []
     for result in new_results:
         if not result["trace"]:
@@ -800,7 +738,7 @@ def run_case(sandbox, registry, case):
             for row in record.get("hooks", []):
                 modes.append([row["command"][:70], row.get("kind"), row.get("mode"), row.get("reason")])
                 if record.get("exec") == row["command"] and "code" not in row:
-                    new_by_command[row["command"]] = (effective(result), "exec")  # this process became the guard
+                    new_by_command[row["command"]] = (effective(result), "exec")
                 elif str(row.get("mode", "")).startswith("skipped ("):
                     new_by_command[row["command"]] = (None, row["mode"])
                 elif "code" in row:
@@ -811,20 +749,20 @@ def run_case(sandbox, registry, case):
             continue
         new_eff, mode = new_by_command[old["command"]]
         if mode.startswith("skipped ("):
-            continue  # a rewriter skipped because a deny or a later rewrite decides; the effect check covers it
+            continue
         raw = old.get("raw") or old
         if old.get("floor") and mode != "per-hook" and not case.get("replay") and not raw.get("opaque") \
                 and not raw["timed_out"] and raw["code"] == 0 and not raw.get("receipt"):
-            # A live floor guard that allows without its receipt: the dispatcher refuses every call it guards (a
-            # guard older than the dispatcher that asks for it). Never folded over.
+
+
             outcome["mismatches"].append({"what": "floor guard exited 0 without its allow receipt",
                                           "command": old["command"]})
         if mode == "per-hook":
-            raw = old  # left per-hook: no floor rule, the same command on both paths
+            raw = old
         elif old.get("floor") and floor_failed(raw):
-            continue  # the floor rule turns this failure into a refusal; the effect check covers it
+            continue
         elif old.get("floor") and raw["code"] == 2 and not raw["timed_out"]:
-            old = dict(old, code=2, out=raw["out"], err=raw["err"])  # its block stands under any wrapper
+            old = dict(old, code=2, out=raw["out"], err=raw["err"])
         old_eff = same(effective(old), run)
         new_eff = same(new_eff, run2)
         if old_eff != new_eff:
@@ -837,8 +775,8 @@ def run_case(sandbox, registry, case):
     outcome["npx_calls"] = {"old": old_npx, "new": new_npx}
     if new_npx != old_npx and (new_npx or any("--find-config-path" not in call for call in old_npx)):
         outcome["mismatches"].append({"what": "npx calls", "old": old_npx, "new": new_npx})
-    # (3) side effects in the sandbox. A rewriter the dispatcher skipped (a guard denied, or a later guard rewrote
-    # the input) leaves no state of its own: rtk's warning timestamp is not a guard effect.
+
+
     if any(str(mode).startswith("skipped (") for _c, _k, mode, _r in modes):
         old_files = {f for f in old_files if not f.startswith(RTK_STATE)}
         new_files = {f for f in new_files if not f.startswith(RTK_STATE)}
@@ -849,7 +787,7 @@ def run_case(sandbox, registry, case):
     outcome["block_message"] = old_plain["block"][:400]
     outcome["new_decision"] = new_view["decision"] or "allow"
     outcome["new_block_message"] = new_view["block"][:400]
-    # What the dispatcher path showed and how long its entries ran: the exec'd rewriter's timeout case reads these.
+
     outcome["new_updated_input"] = new_view["updatedInput"]
     outcome["new_shown"] = new_view["shown"][:400]
     outcome["new_codes"] = [result["code"] for result in new_results]
@@ -860,7 +798,7 @@ def run_case(sandbox, registry, case):
         outcome["expect"] = case["expect"]
         outcome["expect_ok"] = outcome["decision"] == case["expect"]
     outcome["modes"] = modes
-    # An exec'd rewriter killed by its own timer hit its timeout too (a loaded machine can push a quick one past it).
+
     outcome["timeouts"] = any(r["timed_out"] for r in old_results + new_results) or any(
         row.get("timed_out") for r in new_results for record in r["trace"] for row in record.get("hooks", [])) or any(
         r["code"] == 128 + signal.SIGALRM and any(record.get("exec") for record in r["trace"]) for r in new_results)
@@ -869,7 +807,7 @@ def run_case(sandbox, registry, case):
 
 
 
-# ---------------------------------------------------------------------------------------------------- process count
+
 
 
 PROCESS_COMMANDS = ("ls -la", "git status", "echo hello", "cat README.md", "python3 -c 'print(1)'", "rg -n foo src",
@@ -879,7 +817,7 @@ _NATIVE = {}
 
 
 def _native():
-    """libproc (child pids, zombies included) and libc sysctl (a process's argv), loaded once; macOS only."""
+
     if not _NATIVE:
         import ctypes
         _NATIVE["ctypes"] = ctypes
@@ -889,7 +827,7 @@ def _native():
 
 
 def child_pids(pid):
-    """Every child of pid the kernel still lists: running, stopped, or exited and not yet reaped (a zombie)."""
+
     native = _native()
     ctypes = native["ctypes"]
     buf = (ctypes.c_int * 4096)()
@@ -898,20 +836,20 @@ def child_pids(pid):
 
 
 def reaped_children(pid):
-    """True when pid has reaped a child (rusage_info_v1 ri_child_elapsed_abstime > 0), None when unreadable."""
+
     native = _native()
     ctypes = native["ctypes"]
-    buf = (ctypes.c_uint64 * 20)()  # ri_uuid (2 words), then 16 counters; RUSAGE_INFO_V1 = 1
+    buf = (ctypes.c_uint64 * 20)()
     if native["proc"].proc_pid_rusage(pid, 1, buf) != 0:
         return None
     return buf[17] > 0
 
 
 def proc_argv(pid):
-    """A process's argv (sysctl KERN_PROCARGS2), or None when it is gone or unreadable."""
+
     native = _native()
     ctypes, libc = native["ctypes"], native["libc"]
-    mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
+    mib = (ctypes.c_int * 3)(1, 49, pid)
     size = ctypes.c_size_t(0)
     if libc.sysctl(mib, 3, None, ctypes.byref(size), None, ctypes.c_size_t(0)) != 0 or not size.value:
         return None
@@ -921,7 +859,7 @@ def proc_argv(pid):
     raw = buf.raw[:size.value]
     argc = int.from_bytes(raw[:4], sys.byteorder)
     parts = raw[4:].split(b"\0")
-    index = 1  # parts[0] is the exec path, then NUL padding
+    index = 1
     while index < len(parts) and parts[index] == b"":
         index += 1
     return [part.decode("utf-8", "replace") for part in parts[index:index + argc]]
@@ -933,17 +871,7 @@ def runs_dispatcher(pid):
 
 
 def observe(command, payload, env, cwd, timeout, grace=5.0):
-    """Run `/bin/sh -c command` as Claude Code does and count every process its tree starts, observed.
 
-    The child waits on a pipe until a kqueue watch (NOTE_FORK, NOTE_EXEC, NOTE_EXIT) is on its pid. On every fork
-    event the watched tree's process groups are stopped (SIGSTOP), every child of every known process is listed
-    (libproc lists unreaped children too, so a child that already exited is still found while its parent cannot reap
-    it), each new one is watched and its group stopped too, and only then is the tree continued. `processes` counts
-    every pid so found; `hook_layer` counts the root and each child a dispatcher process forked (the guard
-    processes it starts; a process an in-process guard starts counts here too, which only makes the count higher).
-    `observed` is False (nothing claimed) when the watch could not be set, the root did not exit in time, part of the
-    tree outlived it by more than `grace` seconds, a process forked more children than were found, or a process
-    reaped a child before its watch was on."""
     row = {"observed": False, "processes": None, "processes_lower": None, "hook_layer": None, "code": None,
            "why": None, "tree": []}
     if not hasattr(select, "kqueue") or sys.platform != "darwin":
@@ -957,7 +885,7 @@ def observe(command, payload, env, cwd, timeout, grace=5.0):
            os.open(paths["err"], os.O_WRONLY | os.O_CREAT, 0o600)]
     gate_r, gate_w = os.pipe()
     root = os.fork()
-    if root == 0:  # child: wait for the watch, then become the hook's shell
+    if root == 0:
         try:
             os.close(gate_w)
             os.read(gate_r, 1)
@@ -985,7 +913,7 @@ def observe(command, payload, env, cwd, timeout, grace=5.0):
             live.add(pid)
             return True
         except OSError:
-            return False  # it already exited: counted, with nothing more to watch
+            return False
 
     def freeze(pids):
         for pid in pids:
@@ -1019,10 +947,10 @@ def observe(command, payload, env, cwd, timeout, grace=5.0):
                 freeze([child])
                 watch(child)
                 frontier.append((child, True))
-            # A process found here ran unwatched from its fork until now: a child it started and reaped in that
-            # window sent no event and is listed nowhere. Its rusage still shows the reaped child, so such a gap
-            # makes the count incomplete, never a low count claimed as observed (2026-10-08 review M1). Read after
-            # its children are listed, so a child reaped since then errs toward incomplete.
+
+
+
+
             if new and reaped_children(pid) is not False:
                 gaps.append(pid)
 
@@ -1067,7 +995,7 @@ def observe(command, payload, env, cwd, timeout, grace=5.0):
         thaw()
         kq.close()
         leftover = sorted(live)
-        if leftover:  # every one of them descends from the child this call forked: test-owned
+        if leftover:
             for pid in leftover:
                 try:
                     os.killpg(os.getpgid(pid), signal.SIGKILL)
@@ -1088,8 +1016,8 @@ def observe(command, payload, env, cwd, timeout, grace=5.0):
     row["tree"] = [{"pid": pid, "parent": info["parent"], "by_dispatcher": info["by_dispatcher"]}
                    for pid, info in sorted(known.items())]
     row["processes"] = len(known)
-    # Each fork event is at least one process even when its child was never seen (a posix_spawnp that tries each
-    # PATH entry creates and loses one per miss), so this bound holds when the count is incomplete.
+
+
     row["processes_lower"] = max(len(known), 1 + sum(forks.values()))
     row["hook_layer"] = 1 + sum(1 for info in known.values() if info["by_dispatcher"])
     row["missed"] = missed
@@ -1103,25 +1031,21 @@ def observe(command, payload, env, cwd, timeout, grace=5.0):
     return row
 
 
-SELFTEST = (  # command, exact processes, exact hook_layer
+SELFTEST = (
     ("exec /usr/bin/true", 1, 1),
     ("/usr/bin/true; /usr/bin/true", 3, 1),
-    ("sleep 0; exec /usr/bin/true", 2, 1),  # a wrapper that forks once, then becomes its target
-    # a shell, a Python parent and two Python children (the case the audit-hook count reported as 2)
+    ("sleep 0; exec /usr/bin/true", 2, 1),
+
     ("python3 -c 'import subprocess, sys; [subprocess.run([sys.executable, \"-c\", \"pass\"]) for _ in range(2)]'; "
      "exit 0", 4, 1),
-    # grandchildren: a Python child that starts two of its own, each started without a fork of the shell
+
     ("exec python3 -c 'import subprocess, sys; subprocess.run([sys.executable, \"-c\", \"import subprocess, sys; "
      "[subprocess.run([\\\"/usr/bin/true\\\"]) for _ in range(2)]\"])'", 4, 1),
 )
 
 
 def counter_selftest(env, cwd):
-    """The observer counts exactly, from a plain exec (1) to grandchildren (4), and claims nothing it missed. A case
-    the watch did not observe completely (a short-lived child gone before it was found, on a loaded machine) is
-    observed again, up to three times, as the dispatcher's counts are (harden run hook-dispatcher-20261008T090944Z,
-    load 57: `/usr/bin/true; /usr/bin/true` saw 2 forks and found 1 child); only a complete observation counts, and
-    it must be exact."""
+
     rows = []
     for command, processes, hook_layer in SELFTEST:
         for attempt in range(1, 4):
@@ -1140,7 +1064,7 @@ CWD_PLAIN = "outside HOME (no .claude directory above)"
 
 
 def measure_call(sandbox, registry, command, where, path):
-    """One Bash call (PreToolUse + PostToolUse) on one path ("dispatcher" or "per-hook"), every hook observed."""
+
     total, layer, detail, complete = 0, 0, [], True
     for event in ("PreToolUse", "PostToolUse"):
         run = sandbox.fresh()
@@ -1164,19 +1088,13 @@ def measure_call(sandbox, registry, command, where, path):
 
 
 def process_count(sandbox, registry, jobs=4):
-    """Processes per Bash call (PreToolUse + PostToolUse), observed as full trees, on both paths, with the session's
-    cwd under a .claude directory (HOME and below; rtk finds the project there) and under none (worktrees on another
-    volume; rtk then runs `git rev-parse --show-toplevel`). The budget (build lead, w5W:p3, 2026-10-07): hook-layer
-    processes (dispatcher entries plus the guard processes they start; a guard the dispatcher execs into adds none)
-    at most 2 per Bash call, and the dispatcher path's whole tree no larger than the per-hook path's for the same
-    command and cwd. The dispatcher path must be observed completely; the per-hook count is a lower bound either
-    way (a fork the watch could not attribute only makes it larger), so it may stand when incomplete."""
+
     pairs = [(where, command) for where in (CWD_CLAUDE, CWD_PLAIN) for command in PROCESS_COMMANDS]
 
     def one(pair):
         where, command = pair
-        # An incomplete watch (a gap, a missed fork) is no count at all, so it is observed again, up to three times;
-        # only a complete observation is used.
+
+
         for attempt in range(1, 4):
             new = measure_call(sandbox, registry, command, where, "dispatcher")
             if new["complete"]:
@@ -1193,7 +1111,7 @@ def process_count(sandbox, registry, jobs=4):
         return list(pool.map(one, pairs))
 
 
-# ---------------------------------------------------------------------------------------------------- crash/timeout
+
 
 
 SYNTHETIC = {
@@ -1206,10 +1124,10 @@ SYNTHETIC = {
     "hang.sh": ("#!/bin/bash\nsleep 30\n", 0o755),
     "failclosed.sh": ("#!/bin/bash\necho 'BLOCKED: synthetic shell refusal' >&2\nexit 2\n", 0o755),
 }
-# A stand-in for `rtk hook claude` (on the sandbox PATH): rewrites the command at once, or after 1.45 s for a
-# `late-rewriter` one. The RewriteLate entry gives it a 1 s timeout: per-hook it is cancelled at 1 s; the dispatcher
-# execs into it with that timeout armed as a timer, so it is killed at 1 s and its late rewrite never lands (build
-# lead decision (a), 2026-10-08), well before the entry's own timeout (6 s) would have cancelled it.
+
+
+
+
 FAKE_RTK = """#!/bin/sh
 input=$(cat)
 case "$input" in
@@ -1242,12 +1160,12 @@ def synthetic_registry():
     return build_registry({"PreToolUse": groups}, ["crash.py", "hang.py", "failclosed.py"])
 
 
-# ---------------------------------------------------------------------------------------------------- floor replay
-# Each live floor guard is made to fail four ways in a sandbox (its script, or the `bash` an inline guard runs, is
-# replaced by a stub; never the real file) and run on both paths: the dispatcher must refuse every one. One
-# non-floor guard is failed the same ways as a control: it must fail open on both paths, as before.
+
+
+
+
 FLOOR_MODES = ("timeout", "crash", "missing", "malformed", "no-receipt")
-OVERLAY = {}  # HOME-relative path -> the file run in its place (--overlay; install-policy's hooks about to land)
+OVERLAY = {}
 PY_STUBS = {"timeout": "import time\ntime.sleep(30)\n",
             "crash": "raise RuntimeError('synthetic floor crash')\n",
             "no-receipt": "import sys\nsys.stdin.read()\n",
@@ -1257,16 +1175,16 @@ SH_STUBS = {"timeout": "#!/bin/bash\nexec sleep 30\n",
             "missing": "#!/bin/bash\necho \"bash: $0: No such file or directory\" >&2\nexit 127\n",
             "malformed": "#!/bin/bash\ncat >/dev/null\necho 'not a hook answer {'\n",
             "no-receipt": "#!/bin/bash\ncat >/dev/null\nexit 0\n"}
-# The Bash input reaches every pinned floor guard's prefilter (dangerous-command, railway, link-cli; launchctl for the
-# bootout guard, a floor guard since 2026-10-08), so each one runs; a guard its prefilter skips never runs, and so
-# cannot fail. Never executed.
+
+
+
 REPLAY_INPUT = {"Bash": {"command": "echo launchctl railway link-cli; rm -" "rf /tmp/hook-dispatch-floor-replay"},
                 "Agent": {"subagent_type": "Explore", "prompt": "x", "description": "x"},
                 "Workflow": {"script": "agent('x', {agentType: 'Explore'})"}}
 
 
 def replay_leaves(registry):
-    """(floor name or None, matcher key, hook) for each floor guard on PreToolUse, then one non-floor control."""
+
     leaves, control = [], None
     for group in registry["per_hook"].get("PreToolUse", []):
         key = group_key(group)
@@ -1296,7 +1214,7 @@ def replay_case(root, dispatcher, real_home, inproc, index, name, key, hook, mod
         else:
             extra[os.path.join("home", rel)] = ((("#!/usr/bin/env python3\n" + PY_STUBS[mode]) if python
                                                else SH_STUBS[mode]), 0o755)
-    else:  # an inline guard: the `bash` it starts fails
+    else:
         extra[os.path.join("bin", "bash")] = (SH_STUBS[mode], 0o755)
     timed = dict(hook, timeout=1) if mode == "timeout" else dict(hook, timeout=min(hook_timeout(hook), 20))
     registry = build_registry({"PreToolUse": [{"matcher": key, "hooks": [timed]}]}, inproc)
@@ -1334,7 +1252,7 @@ def floor_replay(root, dispatcher, real_home, registry, jobs=4):
 
 
 def build_registry(per_hook, inproc):
-    """The registry install-policy writes, for a per-hook block (kept in step with install-policy.fold)."""
+
     entries, dispatch = {}, {}
     for event, groups in per_hook.items():
         keys = []
@@ -1368,19 +1286,18 @@ def crash_cases(root, dispatcher, real_home):
                                 ("rewriter-late-times-out", "RewriteLate", "echo late-rewriter")):
         case = dict(event="PreToolUse", tool=tool, input={"command": command, "prompt": "x"}, name=name, expect=None)
         outcome, attempts = run_case(sandbox, registry, case), 1
-        while timing_only(outcome) and attempts < 3:  # a loaded machine: the slow rewriter ran past its 2.45 s
+        while timing_only(outcome) and attempts < 3:
             attempts += 1
             outcome = dict(run_case(sandbox, registry, case), attempts=attempts)
         out.append(outcome)
     return out
 
 
-# ---------------------------------------------------------------------------------------------------- main
+
 
 
 def install_lock(home, wait=600):
-    """Hold install-policy's per-home lock (shared) while the fixture reads the live guards, so a sync or hand install
-    cannot change them mid-run; waits for a running install. Same path as install-policy.locked_main."""
+
     import fcntl
     digest = hashlib.sha256(str(os.path.realpath(os.path.expanduser(home))).encode()).hexdigest()[:16]
     lock_dir = "/tmp" if os.path.isdir("/tmp") else tempfile.gettempdir()
@@ -1398,7 +1315,7 @@ def install_lock(home, wait=600):
 
 
 def timing_only(case):
-    """A failed case in which some guard hit its timeout on one path: rerun before calling it a difference."""
+
     return case["result"] != "pass" and case.get("timeouts")
 
 
@@ -1435,7 +1352,7 @@ def main():
         registry = json.load(handle)
     if args.workdir:
         os.makedirs(args.workdir, exist_ok=True)
-        # A run killed by a timeout cannot clean up; its sandbox is removed by the next run after an hour.
+
         for name in os.listdir(args.workdir):
             stale = os.path.join(args.workdir, name)
             if name.startswith("hook-parity-") and os.path.isdir(stale) and not os.path.islink(stale) \
@@ -1455,8 +1372,8 @@ def main():
             cases = [case for case in cases if re.search(args.only, case["name"])]
         with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
             report["cases"] = list(pool.map(lambda case: run_case(sandbox, registry, case), cases))
-        # A guard that hit its timeout on one path only (a loaded machine) is rerun, at most twice; a difference
-        # that is not about time fails at once, and one that persists fails.
+
+
         by_name = {case["name"]: case for case in cases}
         for index, outcome in enumerate(report["cases"]):
             attempts = 1
@@ -1487,7 +1404,7 @@ def main():
     missed = [case["name"] for case in report["cases"] if case.get("expect_ok") is False]
     report["expectations_failed"] = missed
     rows = report["process_count"]
-    # Unmeasured counts as failed: a count the watch did not observe completely proves nothing.
+
     selftest_ok = bool(report.get("process_counter_selftest") and report["process_counter_selftest"]["ok"])
     count_ok = bool(rows) and selftest_ok and all(row["ok"] for row in rows)
     report["parity"] = "pass" if parity_ok else "fail"

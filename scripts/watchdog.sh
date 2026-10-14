@@ -2,23 +2,23 @@
 set -uo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/db-endpoint.sh"
 
-# agent-lb launchd watchdog. Canonical source for ~/.agent-lb/bin/watchdog.sh
-# (run by com.aneyman.agent-lb-watchdog every 30s).
-#
-# Recovery contract:
-# - Healthy (/health -> 200): reset counters, exit.
-# - Unhealthy but bootstrapped: kickstart after THRESHOLD consecutive failures,
-#   unless the service process is younger than BOOT_GRACE_SECONDS — cold boot
-#   takes 60-80+s under host load, and kicking a booting instance restarts the
-#   clock and doubles the outage (observed 2026-07-11T20:24:50Z).
-# - Not bootstrapped at all: re-bootstrap from the plist after
-#   MISSING_THRESHOLD consecutive ticks. Intentional downtime must be signaled
-#   by touching the pause file — an unloaded job alone is treated as a failed
-#   deploy, not an operator decision (a bootout-without-bootstrap took the
-#   service down for 10 minutes on 2026-07-11).
-# - Service logs over SERVICE_LOG_MAX_MB rotate copy-then-truncate: launchd
-#   holds an append-mode fd, so a rename would leave it writing to the old
-#   inode until the next restart.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 URL="${AGENT_LB_HEALTH_URL:-http://127.0.0.1:2455/health}"
 LABEL="${AGENT_LB_LABEL:-com.aneyman.agent-lb}"
@@ -41,8 +41,8 @@ LB_RESTART="${AGENT_LB_RESTART_BIN:-$HOME/.agent-lb/bin/lb-restart}"
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { printf '%s %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
 
-# Touch this file to silence the watchdog without unloading the launchd job
-# (planned downtime, debugging, deploys that bootout/bootstrap).
+
+
 if [[ -f "$PAUSE_FILE" ]]; then
   exit 0
 fi
@@ -66,11 +66,11 @@ rotate_service_logs() {
 }
 rotate_service_logs
 
-# Pre-kick stall forensics: dump Python thread stacks (SIGUSR2) and an OS
-# sample of the app process before it gets killed and restarted, so the
-# evidence for what froze it survives the kick. Bounded to a few seconds
-# (sample duration is fixed) and every failure is swallowed — this must
-# never delay or block the kickstart.
+
+
+
+
+
 capture_forensics() {
   local pid="$1" reason="$2"
   mkdir -p "$FORENSICS_DIR" 2>/dev/null || return 0
@@ -107,14 +107,14 @@ save_state() {
   printf 'count=%d\nlast_kick=%d\nmissing=%d\n' "$count" "$last_kick" "$missing" > "$STATE_FILE"
 }
 
-# Job unloaded from launchd: revive it after MISSING_THRESHOLD consecutive
-# ticks (grace window for a deploy that bootstraps right back).
+
+
 if ! launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
   missing=$((missing + 1))
   if (( missing == 1 )) && [[ -f "$PLIST_FILE" ]]; then
-    # First tick after the job vanished: capture whether a plist edit
-    # accompanied the unload so the bootout source is attributable later
-    # (the 2026-08-18 mid-stream outage was traced only via plist mtime).
+
+
+
     plist_mtime=$(stat -f '%Sm' -t '%Y-%m-%dT%H:%M:%S' "$PLIST_FILE" 2>/dev/null || echo unknown)
     plist_sha=$(shasum -a 256 "$PLIST_FILE" 2>/dev/null | cut -c1-12)
     log "job missing forensics: plist_mtime=$plist_mtime plist_sha=${plist_sha:-unknown}"
@@ -164,7 +164,7 @@ service_pid() {
     awk '/^[[:space:]]*pid = /{print $3; exit}'
 }
 
-# [[dd-]hh:]mm:ss from `ps -o etime=` -> seconds; empty on parse failure.
+
 process_age_seconds() {
   local etime
   etime=$(ps -p "$1" -o etime= 2>/dev/null | tr -d ' ')
@@ -176,11 +176,11 @@ process_age_seconds() {
   }' <<<"$etime"
 }
 
-# Dependency gate (2026-10-06): after an unclean reboot Postgres spent ~2.5 min
-# in fsync + crash recovery. Restarting agent-lb (or booting a blue/green
-# standby against the same database) cannot fix that; it only adds churn and
-# killed the primary seconds before the database came up. When the configured
-# Postgres is not accepting connections, log it and wait instead of restarting.
+
+
+
+
+
 db_ready() {
   local url="${AGENT_LB_DATABASE_URL:-}"
   if ! command -v python3 >/dev/null 2>&1; then
@@ -188,8 +188,8 @@ db_ready() {
     return 1
   fi
   if [[ -z "${AGENT_LB_DATABASE_URL+x}" ]]; then
-    # Read the whole plist: a missing key is a valid SQLite default, while
-    # unreadable or malformed configuration must block recovery.
+
+
     if ! url=$(python3 - "$PLIST_FILE" 2>/dev/null <<'PYCONFIG'
 import plistlib
 import sys
@@ -246,9 +246,9 @@ if (( count >= THRESHOLD )); then
     fi
   fi
   capture_forensics "$pid" "unhealthy http=$http_code count=$count" || true
-  # Prefer the blue/green restart: a standby takes new connections while the
-  # sick primary drains or is killed. rc 75 = another restart holds the lock
-  # (it is already replacing the primary), so leave it alone.
+
+
+
   if [[ -x "$LB_RESTART" ]]; then
     log "unhealthy (http=$http_code) count=$count >= threshold=$THRESHOLD — lb-restart"
     "$LB_RESTART" --reason "watchdog: unhealthy http=$http_code count=$count" --lock-wait 0 >> "$LOG_FILE" 2>&1

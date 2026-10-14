@@ -103,8 +103,8 @@ async def test_pools_aggregates_live_windows_and_marks_the_fable_source(async_cl
     late_reset = int((now + timedelta(hours=4)).replace(tzinfo=timezone.utc).timestamp())
 
     async with SessionLocal() as session:
-        # Fable-scoped marker fresh and nearly spent, weekly window healthy:
-        # the two Anthropic pools must disagree.
+
+
         session.add(_account("acc-fable-hot", "anthropic", encryptor))
         session.add(_weekly_usage("acc-fable-hot", "anthropic", 30.0))
         session.add(_five_hour_usage("acc-fable-hot", 45.0, late_reset))

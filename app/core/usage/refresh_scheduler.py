@@ -132,7 +132,7 @@ class UsageRefreshScheduler:
                                 logger.warning(
                                     "Uncertain exchange recovery failed account_id=%s", account.id, exc_info=True
                                 )
-                        # Recovery is independent of usage freshness/cooldown and reset priority.
+
                         accounts = _usage_refresh_accounts(await accounts_repo.list_accounts(refresh_existing=True))
                     updater = UsageUpdater(usage_repo, accounts_repo, additional_usage_repo)
                     now_epoch = utcnow().replace(tzinfo=timezone.utc).timestamp()
@@ -155,8 +155,8 @@ class UsageRefreshScheduler:
                             and entry.recorded_at.replace(tzinfo=timezone.utc).timestamp() < entry.reset_at + 3
                         ):
                             await updater.force_refresh(account)
-                    # Give the reset's one-minute deadline priority over the
-                    # ordinary sequential refresh of every other account.
+
+
                     ordinary_usage_written = False
                     if not near_anthropic_reset:
                         ordinary_usage_written = await updater.refresh_accounts(
@@ -239,11 +239,7 @@ def _usage_refresh_accounts(accounts: list[Account]) -> list[Account]:
 
 
 def _warmup_eligible_accounts(accounts: list[Account]) -> list[Account]:
-    """Accounts the warm-up service may consider — both OpenAI and Anthropic.
 
-    The service applies its own per-account gating (active status,
-    ``limit_warmup_enabled``, cooldown); this only constrains the provider set.
-    """
     return [account for account in accounts if account.provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME}]
 
 

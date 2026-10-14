@@ -1,8 +1,4 @@
-"""Add observed routing policy versions and drafts.
 
-Revision ID: 20260925_010000_add_routing_policy_versions
-Revises: 20260925_000000_add_request_log_client_session_id
-"""
 
 from __future__ import annotations
 
@@ -16,7 +12,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Re-runnable: a legacy revision id remaps to an older ancestor and replays this.
+
     if sa.inspect(op.get_bind()).has_table("routing_policy_versions"):
         return
     op.create_table(

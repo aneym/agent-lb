@@ -46,7 +46,7 @@ _SECRET_MARKERS = (
 def test_import_does_not_join_the_live_provider_registry() -> None:
     before = list_provider_names()
 
-    # 5b88b132 added Kimi; 55ba9871 added OpenRouter to the live provider registry.
+
     assert before == (
         ANTHROPIC_PROVIDER_NAME,
         GLM_PROVIDER_NAME,

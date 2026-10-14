@@ -1,7 +1,7 @@
 #!/bin/bash
-# Install clients/cache-watch as a 10-minute launchd job, and clients/lb-cache,
-# which it runs, on PATH. Both live under $HOME because launchd jobs cannot read
-# the external volume.
+
+
+
 set -euo pipefail
 CLIENTS="$(cd "$(dirname "$0")/.." && pwd)/clients"
 BIN="$HOME/.agent-lb/bin/cache-watch"

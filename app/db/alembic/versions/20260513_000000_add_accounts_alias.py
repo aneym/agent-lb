@@ -1,9 +1,4 @@
-"""add alias to accounts
 
-Revision ID: 20260513_000000_add_accounts_alias
-Revises: 20260522_000000_add_limit_warmup_trigger
-Create Date: 2026-05-13
-"""
 
 from __future__ import annotations
 

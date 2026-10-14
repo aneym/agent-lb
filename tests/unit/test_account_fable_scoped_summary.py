@@ -71,8 +71,8 @@ def test_stale_marker_is_still_serialized_but_not_fresh() -> None:
     assert summary.fable_scoped_weekly is not None
     assert summary.fable_scoped_weekly.used_percent == 100.0
     assert summary.fable_scoped_weekly.fresh is False
-    # Stale means routing falls back to the weekly heuristic, so the boolean
-    # and the marker disagree on purpose.
+
+
     assert summary.fable_eligible is True
 
 
@@ -93,8 +93,8 @@ def test_non_anthropic_account_is_null_even_with_a_marker() -> None:
     assert _summary(_account(provider="openai"), marker).fable_scoped_weekly is None
 
 
-# The 90% scoped reserve itself is asserted beside the other eligibility rules
-# in tests/unit/test_account_mappers.py.
+
+
 
 
 def test_wire_shape_is_camel_case() -> None:

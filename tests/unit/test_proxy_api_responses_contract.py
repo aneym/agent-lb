@@ -187,7 +187,7 @@ async def test_normalize_public_responses_stream_normalizes_unknown_terminal_out
         )
     ]
 
-    # Now: response.created, synthetic delta, response.completed
+
     assert len(blocks) == 3
     created_payload = proxy_api_module._parse_sse_payload(blocks[0])
     assert created_payload is not None
@@ -407,24 +407,16 @@ async def test_collect_responses_payload_preserves_output_image_item() -> None:
     ]
 
 
-# --- OpenAI SDK stream contract regressions ---
-# These tests cover the public /v1/responses streaming SSE contract gaps found
-# during the OpenAI Python SDK compatibility audit. See change
-# `normalize-v1-responses-openai-sdk-stream` in openspec/changes/ for the
-# full audit, design rationale, and spec delta.
+
+
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_drops_codex_rate_limits_prefix() -> None:
-    """G1: Codex-internal vendor events MUST NOT leak onto the public /v1 stream.
 
-    The upstream Codex backend emits `codex.rate_limits` (throttled per window)
-    before `response.created`. The OpenAI SDK's ResponseStreamState raises
-    `RuntimeError: Expected to have received 'response.created' before
-    'codex.rate_limits'` on the first event. The /v1 normalizer must drop any
-    `codex.*` event so the first event the public stream emits is
-    `response.created`.
-    """
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -447,22 +439,14 @@ async def test_normalize_public_responses_stream_drops_codex_rate_limits_prefix(
     payloads = [proxy_api_module._parse_sse_payload(b) for b in blocks]
     event_types = [p["type"] for p in payloads if p is not None]
     assert "codex.rate_limits" not in event_types
-    # First event MUST be response.created (OpenAI SDK contract A)
+
     standard_events = [t for t in event_types if t not in ("[DONE]",)]
     assert standard_events[0] == "response.created"
 
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_backfills_terminal_output_from_items() -> None:
-    """G3: terminal `response.completed.output` MUST be backfilled from
-    `response.output_item.done` events when upstream sends empty output.
 
-    The Codex backend emits items via `output_item.done` and then sends
-    `response.completed` with `output: []`. The non-streaming path
-    (`_collect_responses_payload`) already merges these; the streaming path
-    must do the same so OpenAI SDK consumers calling
-    `stream.get_final_response().output` see the items.
-    """
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -499,8 +483,7 @@ async def test_normalize_public_responses_stream_backfills_terminal_output_from_
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_preserves_existing_terminal_output() -> None:
-    """G3 inverse: when upstream already includes terminal `output`,
-    the normalizer MUST NOT overwrite it from collected items."""
+
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -537,11 +520,7 @@ async def test_normalize_public_responses_stream_preserves_existing_terminal_out
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_synthesizes_response_created_on_leading_failure() -> None:
-    """G4: when the upstream stream's first standard event is not
-    `response.created` (e.g. upstream rejects and emits only
-    `response.failed`), the normalizer MUST synthesize a `response.created`
-    event from the failed event's envelope so the OpenAI SDK parser can begin.
-    """
+
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -557,29 +536,23 @@ async def test_normalize_public_responses_stream_synthesizes_response_created_on
 
     payloads = [proxy_api_module._parse_sse_payload(b) for b in blocks]
     event_types = [p["type"] for p in payloads if p is not None]
-    # response.created must be synthesized FIRST, then response.failed forwarded
+
     assert event_types[:2] == ["response.created", "response.failed"]
     created = payloads[0]
     assert created is not None
     created_response = created["response"]
     assert isinstance(created_response, dict)
-    # Synthesized envelope must use in_progress + empty output (the contract
-    # values for response.created), not copy "failed" from the source.
+
+
     assert created_response["status"] == "in_progress"
     assert created_response["output"] == []
-    # But the upstream id is preserved so downstream consumers can correlate.
+
     assert created_response["id"] == "resp_err"
 
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_drops_precreated_output_when_envelope_arrives() -> None:
-    """A: public /v1 must never attach anonymous pre-created output to a later response.
 
-    A downstream-cancelled HTTP bridge request can leave behind an anonymous
-    output event that has no response envelope. If a later retry response
-    envelope arrives, the orphan output still has no id proving ownership, so it
-    must be dropped rather than replayed into the retry.
-    """
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -614,12 +587,7 @@ async def test_normalize_public_responses_stream_drops_precreated_output_when_en
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_replays_legacy_precreated_text_after_created() -> None:
-    """Legacy unindexed text events can be preserved without violating SDK order.
 
-    These events have no output lifecycle of their own, so the normalizer emits
-    a synthetic message/content-part envelope after response.created before it
-    replays the visible text events.
-    """
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -688,12 +656,7 @@ async def test_normalize_public_responses_stream_legacy_precreated_text_suppress
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_dropped_precreated_delta_does_not_suppress_terminal_delta() -> None:
-    """Buffered orphan deltas are not marked seen until actually emitted.
 
-    Indexed pre-created deltas are dropped as unowned cancel/retry orphans. If a
-    later terminal response carries the real output, the normalizer must still
-    synthesize a replacement text delta for SDK streaming consumers.
-    """
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -773,8 +736,7 @@ async def test_normalize_public_responses_stream_drops_precreated_output_when_no
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_does_not_double_emit_response_created() -> None:
-    """G4 inverse: when the upstream stream already starts with
-    `response.created`, the normalizer MUST NOT emit a second synthesized one."""
+
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -800,10 +762,7 @@ async def test_normalize_public_responses_stream_does_not_double_emit_response_c
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_codex_route_preserves_codex_events() -> None:
-    """`enforce_openai_sdk_contract=False` (used by /backend-api/codex/*) MUST
-    forward `codex.*` vendor events verbatim, MUST NOT backfill terminal
-    output, and MUST NOT synthesize a leading `response.created`. The Codex
-    CLI consumes the upstream stream natively."""
+
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -821,18 +780,17 @@ async def test_normalize_public_responses_stream_codex_route_preserves_codex_eve
 
     payloads = [proxy_api_module._parse_sse_payload(b) for b in blocks]
     event_types = [p["type"] for p in payloads if p is not None]
-    # codex.rate_limits MUST be preserved
+
     assert "codex.rate_limits" in event_types
-    # response.created MUST NOT be synthesized
+
     assert "response.created" not in event_types
-    # Original sequence order preserved
+
     assert event_types == ["codex.rate_limits", "response.failed"]
 
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_codex_route_truncated_stream_does_not_synthesize_created() -> None:
-    """`enforce_openai_sdk_contract=False` appends a terminal failure for
-    truncated upstream streams without injecting an SDK-only created envelope."""
+
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -848,9 +806,7 @@ async def test_normalize_public_responses_stream_codex_route_truncated_stream_do
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_codex_route_does_not_backfill_output() -> None:
-    """`enforce_openai_sdk_contract=False` MUST NOT backfill terminal
-    `response.completed.output` from streamed item events. The Codex CLI
-    expects upstream's native item shape."""
+
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -875,7 +831,7 @@ async def test_normalize_public_responses_stream_codex_route_does_not_backfill_o
 
     payloads = [proxy_api_module._parse_sse_payload(b) for b in blocks]
     completed = next(p for p in payloads if p and p.get("type") == "response.completed")
-    # Output stays empty — Codex CLI handles its own assembly.
+
     response_obj = cast(dict[str, Any], completed["response"])
     assert response_obj["output"] == []
 
@@ -921,13 +877,13 @@ async def test_normalize_public_responses_stream_codex_route_does_not_duplicate_
     assert blocks.count("data: [DONE]\n\n") == 1
 
 
-# ----------------------------------------------------------------------------
-# internal_bridge_responses must opt out of OpenAI SDK contract enforcement.
-# (Regression guard: a forwarded /backend-api/codex/responses request that
-# travels through the internal bridge MUST NOT drop codex.* events or
-# synthesize a response.created envelope on the owner instance — the origin
-# instance is responsible for honouring the original route's policy.)
-# ----------------------------------------------------------------------------
+
+
+
+
+
+
+
 
 
 @pytest.mark.asyncio
@@ -942,12 +898,12 @@ async def test_internal_bridge_responses_disables_openai_sdk_contract(
 
     async def fake_stream_responses(*args: object, **kwargs: object) -> object:
         captured["kwargs"] = kwargs
-        return object()  # any non-None response; the handler returns it directly
+        return object()
 
     monkeypatch.setattr(proxy_api_module, "_stream_responses", fake_stream_responses)
 
-    # Bypass HMAC verification + header parsing — we only care about the flag
-    # that internal_bridge_responses passes to _stream_responses.
+
+
     fake_context = bridge_module.HTTPBridgeForwardContext(
         origin_instance="origin-a",
         target_instance="owner-b",
@@ -963,7 +919,7 @@ async def test_internal_bridge_responses_disables_openai_sdk_contract(
         return fake_forwarded, None
 
     monkeypatch.setattr(proxy_api_module, "parse_forwarded_request", fake_parse)
-    # The API-key validation hits the DB by default; short-circuit it.
+
     monkeypatch.setattr(
         proxy_api_module,
         "_validate_internal_bridge_api_key",
@@ -971,7 +927,7 @@ async def test_internal_bridge_responses_disables_openai_sdk_contract(
     )
     monkeypatch.setattr(proxy_api_module, "_strip_internal_bridge_headers", lambda h: dict(h))
 
-    # Minimal payload + request stubs.
+
     from app.core.openai.requests import ResponsesRequest
 
     payload = ResponsesRequest(model="gpt-5.5", input="hi", instructions="")
@@ -990,30 +946,30 @@ async def test_internal_bridge_responses_disables_openai_sdk_contract(
     assert response is not None
     kwargs_obj = captured["kwargs"]
     assert isinstance(kwargs_obj, dict)
-    # cast for the type-checker — isinstance narrows at runtime, ty doesn't track it here.
+
     kwargs = cast(dict[str, object], kwargs_obj)
-    # The regression we are guarding against: enforce_openai_sdk_contract must
-    # be passed AS False so the owner instance forwards the upstream stream
-    # verbatim. The origin instance reapplies normalization based on the
-    # original route's policy.
+
+
+
+
     assert kwargs.get("enforce_openai_sdk_contract") is False, (
         f"internal_bridge_responses must pass enforce_openai_sdk_contract=False; got kwargs={kwargs!r}"
     )
 
 
-# --- Codex remote-compaction v2 passthrough -------------------------------
-#
-# Codex CLI remote-compaction v2 streams a normal turn to
-# ``/backend-api/codex/responses`` with a ``compaction_trigger`` input item and
-# expects the response to carry exactly one output item of type ``compaction``
-# (an opaque ``encrypted_content`` blob, no text). Because that item type is not
-# on the public OpenAI-SDK passthrough allowlist, the normalizer used to drop or
-# re-type it on the Codex-native surface too, so the CLI saw zero compaction
-# output items and aborted with:
-#   "remote compaction v2 expected exactly one compaction output item, got 0
-#    from 0 output items".
-# On the Codex-native surface (enforce_openai_sdk_contract=False) the normalizer
-# must forward output items and terminal envelopes verbatim.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 _COMPACTION_ITEM: dict[str, Any] = {
     "type": "compaction",
@@ -1061,7 +1017,7 @@ async def test_normalize_public_responses_stream_forwards_codex_compaction_item_
 
     done_events = [p for p in payloads if p.get("type") == "response.output_item.done"]
     assert len(done_events) == 1
-    # The compaction item passes through byte-for-byte (type + encrypted_content).
+
     assert done_events[0]["item"] == _COMPACTION_ITEM
 
     completed_events = [p for p in payloads if p.get("type") == "response.completed"]
@@ -1069,18 +1025,18 @@ async def test_normalize_public_responses_stream_forwards_codex_compaction_item_
     response = completed_events[0]["response"]
     assert isinstance(response, dict)
     assert response["output"] == [_COMPACTION_ITEM]
-    # No contract-failure substitution on the Codex-native surface.
+
     assert all(p.get("type") != "response.failed" for p in payloads)
     assert blocks[-1] == "data: [DONE]\n\n"
 
 
-# Native OpenAI Responses server-side compaction (``context_management``) makes
-# ``compaction`` a first-class Responses output item rather than a Codex-only
-# vendor item: the provider seals summarized context into ``encrypted_content``
-# and the client must replay that exact blob on later turns. A live probe
-# through the deployed proxy (2026-08-09) confirmed upstream issues the item on
-# this route. Dropping it on the public surface left OpenAI SDK clients unable to
-# obtain a checkpoint at all, so native compaction was silently inert.
+
+
+
+
+
+
+
 
 
 @pytest.mark.asyncio
@@ -1112,10 +1068,10 @@ async def test_normalize_public_responses_stream_preserves_compaction_item_under
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_backfills_compaction_item_into_empty_terminal() -> None:
-    # Upstream streams the compaction item but sends a terminal envelope whose
-    # ``output`` array is empty (observed live). OpenAI SDK consumers read the
-    # checkpoint off ``stream.get_final_response().output``, so it must be
-    # backfilled there too.
+
+
+
+
     empty_completed = {
         "type": "response.completed",
         "sequence_number": 2,
@@ -1142,8 +1098,8 @@ async def test_normalize_public_responses_stream_backfills_compaction_item_into_
 
 @pytest.mark.asyncio
 async def test_collect_responses_payload_preserves_compaction_output_item() -> None:
-    # Non-streaming public path: the compaction item rides alongside the
-    # assistant message instead of being coerced into a message.
+
+
     compaction_item = {"id": "cmp_1", **_COMPACTION_ITEM}
     message_item = {
         "id": "msg_1",
@@ -1169,9 +1125,9 @@ async def test_collect_responses_payload_preserves_compaction_output_item() -> N
 
 @pytest.mark.asyncio
 async def test_normalize_public_responses_stream_still_drops_textless_unsupported_item() -> None:
-    # The compaction carve-out must not widen into "forward any unknown item":
-    # a text-less item of another unsupported type is still dropped and still
-    # turns a terminal envelope made only of such items into a contract failure.
+
+
+
     opaque_item = {"id": "op_1", "type": "vendor_opaque", "blob": "xyz"}
     opaque_done = {
         "type": "response.output_item.done",
@@ -1203,9 +1159,9 @@ async def test_normalize_public_responses_stream_still_drops_textless_unsupporte
 
 
 def test_responses_request_preserves_context_management_and_compaction_replay() -> None:
-    # Replay side: the client sends the provider's sealed checkpoint back as an
-    # input item alongside the top-level compaction config. Both must reach
-    # upstream byte-for-byte or the provider cannot decrypt the blob.
+
+
+
     blob = "gAAAAABmENCRYPTED-replay"
     payload: dict[str, Any] = {
         "model": "gpt-5.6",

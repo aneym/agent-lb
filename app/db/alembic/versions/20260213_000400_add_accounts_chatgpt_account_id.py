@@ -1,9 +1,4 @@
-"""add chatgpt_account_id to accounts
 
-Revision ID: 20260213_000400_add_accounts_chatgpt_account_id
-Revises: 20260213_000300_add_accounts_reset_at
-Create Date: 2026-02-13
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260213_000400_add_accounts_chatgpt_account_id"
 down_revision = "20260213_000300_add_accounts_reset_at"
 branch_labels = None

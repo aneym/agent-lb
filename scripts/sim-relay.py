@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Loopback simulator relay. Every operation requires a live own-lane UDID lease."""
+
 import argparse
 from datetime import datetime, timezone
 import json
@@ -64,7 +64,7 @@ def execute(request):
     elif verb == 'type' and len(args)==2 and len(args[1])<=2048 and '\x00' not in args[1]:
         driver=['text',args[1]]
     elif verb == 'button' and len(args)==2 and args[1].upper() in ('HOME','BACK'):
-        # iOS has no hardware BACK button; its navigation affordance is top-left.
+
         driver=['button','HOME'] if args[1].upper()=='HOME' else ['tap','24','60']
     elif verb in ('boot','shutdown') and len(args)==1: command=[verb,udid]
     elif verb == 'install' and len(args)==2:
@@ -82,7 +82,7 @@ def execute(request):
         output.parent.mkdir(parents=True,exist_ok=True)
         command=['io',udid,'screenshot',str(output)]
     else: raise ValueError('unsupported simctl operation or arguments')
-    # Preserve the canonical DRIVE arbitration for all simulator mutations and captures.
+
     gate=subprocess.run([sys.executable,str(LEASE_TOOL),'drive-check','--holder',lane,'--pid',str(pid),'--op',verb],capture_output=True,text=True,timeout=45)
     if gate.returncode: return {'rc':gate.returncode,'stdout':gate.stdout,'stderr':gate.stderr}
     tool = [str(HOME/'.local/bin/idb'),'ui',*driver,'--udid',udid] if driver else ['/usr/bin/xcrun','simctl',*command]

@@ -33,8 +33,7 @@ _OTHER_INSTANCE_ID = "laptop"
 
 
 def _jwt_with_exp(exp_epoch_seconds: float) -> str:
-    """An unsigned JWT-shaped string carrying only an `exp` claim — enough for
-    token_expiry_epoch_ms (which just base64-decodes the payload segment)."""
+
     payload = base64.urlsafe_b64encode(json.dumps({"exp": exp_epoch_seconds}).encode()).decode().rstrip("=")
     return f"header.{payload}.sig"
 
@@ -46,12 +45,12 @@ def _account(
     last_refresh: datetime | None = None,
     access_token: str = "access-token",
 ) -> Account:
-    # Constructed lazily (per call, inside the test body) rather than as a
-    # module-level singleton: the autouse `temp_key_file` fixture in
-    # tests/conftest.py points AGENT_LB_ENCRYPTION_KEY_FILE at a fresh temp
-    # key per test and clears the settings cache, so a TokenEncryptor built
-    # at import time would silently use a different key than the one
-    # AuthManager picks up inside the test.
+
+
+
+
+
+
     encryptor = TokenEncryptor()
     account = Account(
         id=account_id,
@@ -122,9 +121,9 @@ def _oauth_call_spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 def _patch_local_instance_id(monkeypatch: pytest.MonkeyPatch, instance_id: str) -> None:
     settings = Settings(local_instance_id=instance_id)
-    # auth_manager imports get_settings at module load time (name bound once),
-    # so it must be patched directly; pulse imports it lazily inside the
-    # function body, so patching the settings module attribute is enough.
+
+
+
     monkeypatch.setattr(auth_manager_module, "get_settings", lambda: settings)
     import app.core.config.settings as settings_module
 
@@ -170,7 +169,7 @@ async def test_non_owner_fresh_token_skips_refresh_without_error(
     monkeypatch: pytest.MonkeyPatch, _oauth_call_spy: list[str]
 ) -> None:
     _patch_local_instance_id(monkeypatch, _LOCAL_INSTANCE_ID)
-    account = _account(owner_instance=_OTHER_INSTANCE_ID)  # default last_refresh is fresh (now)
+    account = _account(owner_instance=_OTHER_INSTANCE_ID)
     manager = AuthManager(_Repo([account]))
 
     returned = await manager.ensure_fresh(account, force=False)
@@ -239,7 +238,7 @@ async def test_non_owner_force_true_raises_without_oauth_call(
     monkeypatch: pytest.MonkeyPatch, _oauth_call_spy: list[str]
 ) -> None:
     _patch_local_instance_id(monkeypatch, _LOCAL_INSTANCE_ID)
-    account = _account(owner_instance=_OTHER_INSTANCE_ID)  # default last_refresh is fresh (now)
+    account = _account(owner_instance=_OTHER_INSTANCE_ID)
     manager = AuthManager(_Repo([account]))
 
     with pytest.raises(AccountNotOwnedError):
@@ -252,8 +251,8 @@ async def test_non_owner_force_true_raises_without_oauth_call(
 async def test_non_owner_force_true_raises_even_within_margin(
     monkeypatch: pytest.MonkeyPatch, _oauth_call_spy: list[str]
 ) -> None:
-    # force=True demands a guaranteed-fresh token; a non-owner can't provide one
-    # regardless of how unexpired the mirrored token currently is.
+
+
     _patch_local_instance_id(monkeypatch, _LOCAL_INSTANCE_ID)
     account = _account(
         owner_instance=_OTHER_INSTANCE_ID,
@@ -269,8 +268,8 @@ async def test_non_owner_force_true_raises_even_within_margin(
 
 @pytest.mark.asyncio
 async def test_owner_within_margin_refreshes(monkeypatch: pytest.MonkeyPatch, _oauth_call_spy: list[str]) -> None:
-    # Owner path is unaffected by the non-owner hard-expiry carve-out: the
-    # proactive 300s margin still triggers a refresh as before.
+
+
     _patch_local_instance_id(monkeypatch, _LOCAL_INSTANCE_ID)
     account = _account(owner_instance=None, access_token=_jwt_with_exp(time.time() + 100))
     original_access_token_encrypted = account.access_token_encrypted

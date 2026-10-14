@@ -21,7 +21,7 @@ export function PausePopover({
   const [choice, setChoice] = useState<string | null>(fiveHourResetAt || weeklyResetAt || null);
   const [busy, setBusy] = useState(false);
   const sessions = useStickySessions().data;
-  // Sticky entries do not expose an account ID in all server versions; never guess a per-account count.
+
   const count = sessions?.entries.filter((entry) => entry.key === accountId).length;
   const qc = useQueryClient();
   async function apply() {

@@ -1,9 +1,4 @@
-"""add upstream proxy routing
 
-Revision ID: 20260602_050000_add_upstream_proxy_routing
-Revises: 20260602_060000_merge_account_workspace_and_failure_heads
-Create Date: 2026-06-01 15:10:00.000000
-"""
 
 from __future__ import annotations
 

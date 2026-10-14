@@ -1,9 +1,4 @@
-"""Unit tests for LoadBalancer._select_with_stickiness cache-affinity fixes.
 
-Covers:
-- Fix 1+3: sticky session preservation when pinned account is temporarily down
-- Fix 2: grace period for rate-limited accounts with imminent reset
-"""
 
 from __future__ import annotations
 
@@ -81,11 +76,7 @@ async def _invoke_stickiness(
     relative_availability_top_k: int = 5,
     routing_costs_by_account_id: RoutingCostsByAccount | None = None,
 ):
-    """Wrapper that calls production LoadBalancer._select_with_stickiness.
 
-    This delegates to the real implementation in LoadBalancer to avoid
-    maintaining a replica that can drift from production.
-    """
 
     @asynccontextmanager
     async def mock_repo_factory():
@@ -115,16 +106,14 @@ async def _invoke_stickiness(
     )
 
 
-# ---------------------------------------------------------------------------
-# Fix 1+3: sticky session is preserved when pinned account is temporarily down
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_fallback_does_not_overwrite_sticky_when_pinned_rate_limited():
-    """When the pinned account is rate-limited, a fallback is returned but the
-    sticky mapping must NOT be overwritten — so the next request can return to
-    the original account once it recovers."""
+
     now = time.time()
     acc_a = _rate_limited("a", cooldown_until=now + 60)
     acc_b = _active("b")
@@ -145,8 +134,7 @@ async def test_fallback_does_not_overwrite_sticky_when_pinned_rate_limited():
 
 @pytest.mark.asyncio
 async def test_all_accounts_unavailable_does_not_overwrite_sticky():
-    """When the pinned account is down AND no fallback is available,
-    the sticky mapping must still be preserved (not deleted or overwritten)."""
+
     now = time.time()
     acc_a = _rate_limited("a", cooldown_until=now + 60)
     repo = _make_sticky_repo(existing_account_id="a")
@@ -165,8 +153,7 @@ async def test_all_accounts_unavailable_does_not_overwrite_sticky():
 
 @pytest.mark.asyncio
 async def test_fallback_overwrites_sticky_when_reallocate_sticky_true():
-    """With reallocate_sticky=True (STICKY_THREAD), the sticky session IS
-    deleted and the fallback IS persisted."""
+
     now = time.time()
     acc_a = _rate_limited("a", cooldown_until=now + 60)
     acc_b = _active("b")
@@ -188,11 +175,10 @@ async def test_fallback_overwrites_sticky_when_reallocate_sticky_true():
 
 @pytest.mark.asyncio
 async def test_sticky_preserved_then_returns_to_original_on_recovery():
-    """After a temporary fallback (without overwrite), the NEXT request
-    returns to the original account once it recovers."""
+
     now = time.time()
 
-    # Request 1: pinned account is rate-limited → fallback to b
+
     acc_a_down = _rate_limited("a", cooldown_until=now + 60)
     acc_b = _active("b")
     repo = _make_sticky_repo(existing_account_id="a")
@@ -207,7 +193,7 @@ async def test_sticky_preserved_then_returns_to_original_on_recovery():
     assert r1.account.account_id == "b"
     repo.upsert.assert_not_called()
 
-    # Request 2: original account is back to active
+
     acc_a_up = _active("a", used_percent=5.0)
     acc_b2 = _active("b", used_percent=20.0)
     repo2 = _make_sticky_repo(existing_account_id="a")
@@ -224,8 +210,7 @@ async def test_sticky_preserved_then_returns_to_original_on_recovery():
 
 @pytest.mark.asyncio
 async def test_sticky_deleted_when_pinned_account_removed_from_pool():
-    """When the pinned account is no longer in the account pool (deleted),
-    the sticky session IS deleted and a new mapping IS persisted."""
+
     acc_b = _active("b")
     repo = _make_sticky_repo(existing_account_id="a")
 
@@ -242,9 +227,9 @@ async def test_sticky_deleted_when_pinned_account_removed_from_pool():
     repo.upsert.assert_called_once_with("key1", "b", kind=StickySessionKind.PROMPT_CACHE)
 
 
-# ---------------------------------------------------------------------------
-# Pool exhaustion guard — prevent thrashing when all accounts are depleted
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
@@ -431,7 +416,7 @@ async def test_pool_exhausted_candidate_with_none_usage_triggers_reallocation():
 
 @pytest.mark.asyncio
 async def test_first_request_creates_sticky_mapping():
-    """When no existing sticky mapping exists, the chosen account is persisted."""
+
     acc_a = _active("a", used_percent=10.0)
     acc_b = _active("b", used_percent=50.0)
     repo = _make_sticky_repo(existing_account_id=None)
@@ -450,8 +435,7 @@ async def test_first_request_creates_sticky_mapping():
 
 @pytest.mark.asyncio
 async def test_first_sticky_request_honors_relative_availability_tuning():
-    """When no sticky mapping exists yet, fallback selection must still use
-    configured relative-availability tuning instead of hard-coded defaults."""
+
     now = time.time()
     acc_a = AccountState(
         "a",
@@ -485,17 +469,16 @@ async def test_first_sticky_request_honors_relative_availability_tuning():
     repo.upsert.assert_called_once_with("key-relative-availability", "a", kind=StickySessionKind.PROMPT_CACHE)
 
 
-# ---------------------------------------------------------------------------
-# Fix 2: grace period for rate-limited pinned accounts with known reset_at
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_grace_period_returns_pinned_when_reset_imminent():
-    """When the pinned account is RATE_LIMITED but resets within the grace
-    window, it should be returned optimistically (not the fallback)."""
+
     now = time.time()
-    acc_a = _rate_limited("a", reset_at=now + 5)  # resets in 5s < grace 10s
+    acc_a = _rate_limited("a", reset_at=now + 5)
     acc_b = _active("b")
     repo = _make_sticky_repo(existing_account_id="a")
 
@@ -533,10 +516,9 @@ async def test_grace_period_keeps_rate_limited_pinned_account_even_when_usage_is
 
 @pytest.mark.asyncio
 async def test_grace_period_skipped_when_reset_far_away():
-    """When the reset_at is well beyond the grace window, the grace period
-    should NOT trigger — a fallback should be used instead."""
+
     now = time.time()
-    acc_a = _rate_limited("a", reset_at=now + 300)  # 5 minutes away
+    acc_a = _rate_limited("a", reset_at=now + 300)
     acc_b = _active("b")
     repo = _make_sticky_repo(existing_account_id="a")
 
@@ -554,11 +536,9 @@ async def test_grace_period_skipped_when_reset_far_away():
 
 @pytest.mark.asyncio
 async def test_grace_period_skipped_for_active_with_cooldown():
-    """Accounts that apply_usage_quota resets to ACTIVE (with cooldown still
-    active) must NOT be returned via the grace period — this avoids bypassing
-    error-handling cooldowns."""
+
     now = time.time()
-    # Simulates the apply_usage_quota path: status=ACTIVE, cooldown set
+
     acc_a = AccountState(
         "a",
         AccountStatus.ACTIVE,
@@ -583,7 +563,7 @@ async def test_grace_period_skipped_for_active_with_cooldown():
 
 @pytest.mark.asyncio
 async def test_grace_period_not_applied_for_reallocate_sticky():
-    """Grace period only applies when reallocate_sticky=False."""
+
     now = time.time()
     acc_a = _rate_limited("a", reset_at=now + 5)
     acc_b = _active("b")
@@ -604,8 +584,7 @@ async def test_grace_period_not_applied_for_reallocate_sticky():
 
 @pytest.mark.asyncio
 async def test_grace_period_skipped_when_no_reset_at():
-    """When the pinned account is RATE_LIMITED but has no reset_at (unknown
-    recovery time), the grace period should not fire."""
+
     now = time.time()
     acc_a = _rate_limited("a", reset_at=None, cooldown_until=now + 2)
     acc_b = _active("b")
@@ -623,15 +602,14 @@ async def test_grace_period_skipped_when_no_reset_at():
     repo.upsert.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# PR review issue 1: permanently down accounts must rebind sticky session
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_paused_pinned_account_persists_fallback():
-    """PAUSED is permanent — the fallback MUST be persisted so the sticky
-    session is rebound instead of pointing at a dead account forever."""
+
     acc_a = AccountState("a", AccountStatus.PAUSED)
     acc_b = _active("b")
     repo = _make_sticky_repo(existing_account_id="a")
@@ -650,7 +628,7 @@ async def test_paused_pinned_account_persists_fallback():
 
 @pytest.mark.asyncio
 async def test_reauth_required_pinned_account_persists_fallback():
-    """REAUTH_REQUIRED is hard-blocked — same rebind behaviour as PAUSED."""
+
     acc_a = AccountState("a", AccountStatus.REAUTH_REQUIRED, deactivation_reason="token expired")
     acc_b = _active("b")
     repo = _make_sticky_repo(existing_account_id="a")
@@ -667,18 +645,16 @@ async def test_reauth_required_pinned_account_persists_fallback():
     repo.upsert.assert_called_once_with("key1", "b", kind=StickySessionKind.PROMPT_CACHE)
 
 
-# ---------------------------------------------------------------------------
-# PR review issue 2: grace period must not mutate original state
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_grace_period_does_not_mutate_original_state():
-    """The grace-period select_account call must operate on a copy so the
-    original AccountState (synced to DB later) is not prematurely flipped
-    to ACTIVE."""
+
     now = time.time()
-    acc_a = _rate_limited("a", reset_at=now + 5)  # within grace window
+    acc_a = _rate_limited("a", reset_at=now + 5)
     acc_b = _active("b")
     repo = _make_sticky_repo(existing_account_id="a")
 
@@ -698,9 +674,7 @@ async def test_grace_period_does_not_mutate_original_state():
 
 @pytest.mark.asyncio
 async def test_codex_session_persists_fallback_during_outage():
-    """CODEX_SESSION is durable (no TTL). When the pinned account is
-    temporarily down, the fallback MUST be persisted so the session
-    sticks to one account instead of bouncing across random fallbacks."""
+
     now = time.time()
     acc_a = _rate_limited("a", cooldown_until=now + 60)
     acc_b = _active("b")
@@ -764,9 +738,8 @@ async def test_rate_limit_far_away_without_fallback_preserves_codex_session_affi
 
 @pytest.mark.asyncio
 async def test_budget_exhaustion_triggers_reallocation():
-    """When the pinned account has < 5% budget remaining (used_percent >= 95%),
-    it should be reallocated to a different account."""
-    acc_a = _active("a", used_percent=96.0)  # 96% used = < 4% remaining
+
+    acc_a = _active("a", used_percent=96.0)
     acc_b = _active("b", used_percent=50.0)
     repo = _make_sticky_repo(existing_account_id="a")
 
@@ -847,9 +820,7 @@ async def test_budget_threshold_reallocates_codex_session_affinity():
 
 @pytest.mark.asyncio
 async def test_budget_threshold_reallocates_sticky_thread_affinity():
-    """STICKY_THREAD with the pinned account strictly above the budget
-    threshold must rebind to a healthier candidate (parity with
-    PROMPT_CACHE / CODEX_SESSION)."""
+
     acc_a = _active("a", used_percent=96.0)
     acc_b = _active("b", used_percent=50.0)
 
@@ -895,9 +866,7 @@ async def test_budget_threshold_reallocates_to_primary_safe_secondary_pressured_
 
 @pytest.mark.asyncio
 async def test_sticky_thread_preserves_pinned_when_pool_also_above_threshold():
-    """When every candidate is above the budget threshold, STICKY_THREAD
-    must stay pinned to avoid thrashing (parity with the existing
-    capacity-weighted budget-pressure tests)."""
+
     acc_a = _active("a", used_percent=99.0)
     acc_b = _active("b", used_percent=96.0)
 
@@ -942,8 +911,7 @@ async def test_budget_threshold_preserves_sticky_when_every_candidate_secondary_
 
 @pytest.mark.asyncio
 async def test_sticky_thread_below_threshold_does_not_reallocate():
-    """Below the budget threshold, STICKY_THREAD must keep affinity
-    (regression guard against over-triggering reallocation)."""
+
     acc_a = _active("a", used_percent=85.0)
     acc_b = _active("b", used_percent=10.0)
     repo = _make_sticky_repo(existing_account_id="a")
@@ -1011,10 +979,9 @@ async def test_secondary_budget_threshold_controls_sticky_reallocation():
 
 @pytest.mark.asyncio
 async def test_rate_limit_far_away_triggers_reallocation():
-    """When the pinned account's rate limit reset is more than 10 minutes away,
-    it should be reallocated to avoid waiting."""
+
     now = time.time()
-    acc_a = _rate_limited("a", reset_at=now + 900)  # resets in 15 minutes > 10 min threshold
+    acc_a = _rate_limited("a", reset_at=now + 900)
     acc_b = _active("b")
     repo = _make_sticky_repo(existing_account_id="a")
 
@@ -1055,21 +1022,20 @@ async def test_burn_first_reallocation_only_when_burn_first_is_selectable():
     repo.upsert.assert_called_once_with("key1", "a", kind=StickySessionKind.PROMPT_CACHE)
 
 
-# ---------------------------------------------------------------------------
-# Headroom reallocation (ANTHROPIC_STICKY_HEADROOM_REALLOCATION_ENABLED)
-#
-# The flag only changes behavior when the pinned account is budget-pressured
-# AND the burn-first path yields no target. With zero burn-first accounts the
-# pin already reallocates (burn_first_reallocate is never narrowed), so the
-# flag's distinguishing case is a burn-first candidate that exists but is
-# currently unselectable.
-# ---------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_headroom_reallocation_rebinds_without_burn_first_target():
-    """Pinned above the primary threshold with no burn-first account and a
-    budget-safe candidate rebinds and persists the new mapping (flag on)."""
+
     pinned = _active("a", used_percent=96.0)
     safe = _active("b", used_percent=50.0)
     repo = _make_sticky_repo(existing_account_id="a")
@@ -1091,8 +1057,7 @@ async def test_headroom_reallocation_rebinds_without_burn_first_target():
 
 @pytest.mark.asyncio
 async def test_headroom_reallocation_rebinds_when_burn_first_unselectable():
-    """When burn-first candidates exist but none are selectable, the flag lets a
-    budget-pressured pin rebind to the best budget-safe account."""
+
     now = time.time()
     pinned = _active("a", used_percent=96.0)
     blocked_burn_first = _rate_limited("b", reset_at=now + 1200, routing_policy="burn_first")
@@ -1116,8 +1081,7 @@ async def test_headroom_reallocation_rebinds_when_burn_first_unselectable():
 
 @pytest.mark.asyncio
 async def test_headroom_reallocation_disabled_keeps_pin_when_burn_first_unselectable():
-    """Old behavior: with the flag off, a budget-pressured pin whose only
-    burn-first candidate is unselectable stays pinned."""
+
     now = time.time()
     pinned = _active("a", used_percent=96.0)
     blocked_burn_first = _rate_limited("b", reset_at=now + 1200, routing_policy="burn_first")
@@ -1140,8 +1104,7 @@ async def test_headroom_reallocation_disabled_keeps_pin_when_burn_first_unselect
 
 @pytest.mark.asyncio
 async def test_headroom_reallocation_keeps_pin_when_pool_exhausted():
-    """Anti-thrash: when every candidate is also above the threshold the pin is
-    kept even with the flag on and no burn-first target."""
+
     pinned = _active("a", used_percent=96.0)
     also_exhausted = _active("b", used_percent=97.0)
     repo = _make_sticky_repo(existing_account_id="a")
@@ -1162,9 +1125,8 @@ async def test_headroom_reallocation_keeps_pin_when_pool_exhausted():
 
 @pytest.mark.asyncio
 async def test_headroom_reallocation_no_flap_back_after_window_reset():
-    """After rebinding A→B, a later request whose pin (B) is budget-safe stays on
-    B even once A's window resets below the threshold (one-time re-pin)."""
-    # Request 1: pinned A exhausted, B safe → rebind to B.
+
+
     repo = _make_sticky_repo(existing_account_id="a")
     r1 = await _invoke_stickiness(
         [_active("a", used_percent=96.0), _active("b", used_percent=50.0)],
@@ -1176,8 +1138,8 @@ async def test_headroom_reallocation_no_flap_back_after_window_reset():
     )
     assert r1.account is not None and r1.account.account_id == "b"
 
-    # Request 2: mapping is now B; A has recovered to the lowest usage. B is
-    # below the threshold, so the session must stay on B (no flap-back to A).
+
+
     repo2 = _make_sticky_repo(existing_account_id="b")
     r2 = await _invoke_stickiness(
         [_active("a", used_percent=5.0), _active("b", used_percent=55.0)],
@@ -1192,20 +1154,16 @@ async def test_headroom_reallocation_no_flap_back_after_window_reset():
     repo2.delete.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Sticky-session rebind instrumentation: every rebind of an existing pin to a
-# DIFFERENT account is recorded as a `sticky_session_rebound` audit event with
-# the true triggering reason. A same-account touch records nothing, and a
-# recording failure never breaks selection.
-# ---------------------------------------------------------------------------
+
+
+
+
+
+
 
 
 def _patch_audit_log():
-    """Patch the fire-and-forget audit sink used by _record_sticky_rebind.
 
-    `log_async` is a synchronous dispatch (it schedules the write on a background
-    task), so it is patched with a plain Mock rather than an AsyncMock.
-    """
     return patch.object(load_balancer_module.AuditService, "log_async", new_callable=Mock)
 
 
@@ -1218,8 +1176,7 @@ def _rebind_event(audit_log: Mock) -> dict:
 
 @pytest.mark.asyncio
 async def test_rebind_via_failover_records_rate_limited_failover():
-    """A durable CODEX_SESSION pin whose rate-limited account cannot be served
-    (grace retry fails) rebinds to the fallback and records the failover."""
+
     now = time.time()
     acc_a = _rate_limited("a", cooldown_until=now + 60)
     acc_b = _active("b")
@@ -1242,15 +1199,14 @@ async def test_rebind_via_failover_records_rate_limited_failover():
     assert details["sticky_kind"] == StickySessionKind.CODEX_SESSION.value
     assert details["old_account_id"] == "a"
     assert details["new_account_id"] == "b"
-    # Raw affinity key must never be persisted.
+
     assert details["sticky_key_hash"] != "session_123"
     assert len(details["sticky_key_hash"]) == 64
 
 
 @pytest.mark.asyncio
 async def test_rebind_via_budget_pressure_records_budget_pressure():
-    """A pin above the budget threshold that reallocates to a healthier account
-    records the rebind with reason budget_pressure."""
+
     acc_a = _active("a", used_percent=96.0)
     acc_b = _active("b", used_percent=50.0)
     repo = _make_sticky_repo(existing_account_id="a")
@@ -1273,8 +1229,7 @@ async def test_rebind_via_budget_pressure_records_budget_pressure():
 
 @pytest.mark.asyncio
 async def test_rebind_via_burn_first_drain_records_burn_first_drain():
-    """An under-threshold pin drained onto a selectable burn-first account by the
-    fable burn-first sticky drain records reason burn_first_drain."""
+
     acc_a = _active("a", used_percent=50.0)
     acc_b = _active("b", used_percent=10.0, routing_policy="burn_first")
     repo = _make_sticky_repo(existing_account_id="a")
@@ -1298,8 +1253,7 @@ async def test_rebind_via_burn_first_drain_records_burn_first_drain():
 
 @pytest.mark.asyncio
 async def test_rebind_via_paused_account_records_account_unavailable():
-    """A pin on a permanently-down (PAUSED) account rebinds to the fallback and
-    records reason account_unavailable."""
+
     acc_a = AccountState("a", AccountStatus.PAUSED)
     acc_b = _active("b")
     repo = _make_sticky_repo(existing_account_id="a")
@@ -1320,8 +1274,7 @@ async def test_rebind_via_paused_account_records_account_unavailable():
 
 @pytest.mark.asyncio
 async def test_rebind_when_pinned_account_left_pool_records_account_unavailable():
-    """A pin whose account is gone from the pool rebinds and records
-    account_unavailable."""
+
     acc_b = _active("b")
     repo = _make_sticky_repo(existing_account_id="a")
 
@@ -1343,8 +1296,7 @@ async def test_rebind_when_pinned_account_left_pool_records_account_unavailable(
 
 @pytest.mark.asyncio
 async def test_same_account_repeat_selection_records_no_rebind():
-    """When the existing pin is re-selected onto the same account, nothing is
-    recorded — a same-account touch is not a rebind."""
+
     acc_a = _active("a", used_percent=10.0)
     acc_b = _active("b", used_percent=50.0)
     repo = _make_sticky_repo(existing_account_id="a")
@@ -1364,7 +1316,7 @@ async def test_same_account_repeat_selection_records_no_rebind():
 
 @pytest.mark.asyncio
 async def test_first_pin_creation_records_no_rebind():
-    """Creating a brand-new pin (no prior mapping) is not a rebind."""
+
     acc_a = _active("a", used_percent=10.0)
     acc_b = _active("b", used_percent=50.0)
     repo = _make_sticky_repo(existing_account_id=None)
@@ -1384,8 +1336,7 @@ async def test_first_pin_creation_records_no_rebind():
 
 @pytest.mark.asyncio
 async def test_rebind_recording_failure_does_not_break_selection():
-    """A failure while persisting the rebind event must be swallowed — selection
-    still returns the fallback account."""
+
     acc_a = _active("a", used_percent=96.0)
     acc_b = _active("b", used_percent=50.0)
     repo = _make_sticky_repo(existing_account_id="a")
@@ -1402,5 +1353,5 @@ async def test_rebind_recording_failure_does_not_break_selection():
     assert result.account is not None
     assert result.account.account_id == "b"
     audit_log.assert_called_once()
-    # The rebind still persisted even though the audit write failed.
+
     repo.upsert.assert_called_once_with("key1", "b", kind=StickySessionKind.PROMPT_CACHE)

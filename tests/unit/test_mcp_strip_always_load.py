@@ -1,4 +1,4 @@
-"""Transport contract for the deferred-tool MCP proxy."""
+
 
 import json
 import runpy

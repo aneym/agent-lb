@@ -142,12 +142,12 @@ def _bootstrap_model(
     )
 
 
-# Static bundled fallback models used before the first upstream registry refresh.
-# This mirrors Codex's model-manager pattern: ship a conservative catalog so
-# startup/offline paths have usable metadata, then treat the live upstream
-# registry as authoritative once a refresh succeeds. Keep compatibility fields
-# explicit rather than inherited from helper defaults; every slug must exist
-# upstream, and live upstream data always takes precedence once available.
+
+
+
+
+
+
 _BOOTSTRAP_STATIC_MODELS: tuple[UpstreamModel, ...] = (
     _bootstrap_model(
         "gpt-5.6-sol",
@@ -273,7 +273,7 @@ class ModelRegistry:
                 models: dict[str, UpstreamModel] = {}
                 model_plans: dict[str, set[str]] = {}
 
-                # Carry over data from plans not present in per_plan_results
+
                 if previous is not None:
                     previous_plans = set(previous.plan_models.keys())
                     refreshed_plans = set(per_plan_results.keys())
@@ -286,7 +286,7 @@ class ModelRegistry:
                                 models[slug] = previous.models[slug]
                             model_plans.setdefault(slug, set()).add(plan_type)
 
-                # Merge newly fetched results
+
                 for plan_type, plan_models_list in per_plan_results.items():
                     for model in plan_models_list:
                         models[model.slug] = model
@@ -296,7 +296,7 @@ class ModelRegistry:
                     slug: frozenset(plans) for slug, plans in model_plans.items()
                 }
 
-                # Build reverse index: plan_type -> set of slugs
+
                 plan_models_index: dict[str, set[str]] = {}
                 for slug, plans in frozen_model_plans.items():
                     for plan_type in plans:

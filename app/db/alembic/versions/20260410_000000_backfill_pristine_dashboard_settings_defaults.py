@@ -1,9 +1,4 @@
-"""backfill pristine dashboard settings defaults for staged fresh installs
 
-Revision ID: 20260410_000000_backfill_pristine_dashboard_settings_defaults
-Revises: 20260409_010000_add_dashboard_settings_bootstrap_token
-Create Date: 2026-04-10
-"""
 
 from __future__ import annotations
 

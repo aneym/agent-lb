@@ -25,7 +25,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def _clear_refresh_cache():
-    """Clear the module-level freshness cache between tests."""
+
     usage_updater_module._clear_usage_refresh_state()
     yield
     usage_updater_module._clear_usage_refresh_state()
@@ -787,9 +787,7 @@ async def test_usage_updater_refreshes_openai_and_anthropic_accounts(monkeypatch
 
 @pytest.mark.asyncio
 async def test_fable_scoped_weekly_written_to_additional_repo_on_refresh(monkeypatch) -> None:
-    """The dedicated Fable-scoped weekly limit is persisted as additional
-    usage under quota_key=anthropic_fable_scoped_weekly on every refresh,
-    for Anthropic accounts only."""
+
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
@@ -2329,12 +2327,12 @@ async def test_usage_updater_singleflights_concurrent_refreshes(monkeypatch) -> 
     assert len(usage_repo.entries) == 1
 
 
-# --- Additional rate limits tests ---
+
 
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_written_to_additional_repo(monkeypatch) -> None:
-    """Additional rate limits from payload are persisted via additional_usage_repo."""
+
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
@@ -2381,10 +2379,10 @@ async def test_additional_rate_limits_written_to_additional_repo(monkeypatch) ->
 
     await updater.refresh_accounts([acc], latest_usage={})
 
-    # Primary usage entry written
+
     assert len(usage_repo.entries) == 1
 
-    # Two additional entries: primary + secondary window
+
     assert len(additional_repo.entries) == 2
     by_window = {e.window: e for e in additional_repo.entries}
 
@@ -2401,7 +2399,7 @@ async def test_additional_rate_limits_written_to_additional_repo(monkeypatch) ->
     assert secondary.limit_name == "o-pro"
     assert secondary.metered_feature == "o_pro"
     assert secondary.used_percent == 75.0
-    assert secondary.reset_at == 2120  # now_epoch(2000) + 120
+    assert secondary.reset_at == 2120
     assert secondary.window_minutes == 60
 
 
@@ -2567,7 +2565,7 @@ async def test_additional_rate_limits_merge_windows_across_aliases(monkeypatch) 
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_null_writes_nothing(monkeypatch) -> None:
-    """When additional_rate_limits is null, no additional entries are written."""
+
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
@@ -2633,8 +2631,8 @@ async def test_additional_rate_limits_sync_even_when_main_rate_limit_missing(mon
 
     refreshed = await updater.refresh_accounts([acc], latest_usage={})
 
-    # Additional-only accounts write additional data and mark themselves as fresh
-    # to prevent tight re-polling (R6-F1).
+
+
     assert refreshed is True
     assert usage_repo.entries == []
     assert len(additional_repo.entries) == 1
@@ -2643,7 +2641,7 @@ async def test_additional_rate_limits_sync_even_when_main_rate_limit_missing(mon
 
 @pytest.mark.asyncio
 async def test_additional_only_account_not_repolled_within_interval(monkeypatch) -> None:
-    """R6-F1: Additional-only accounts must not cause tight re-polling."""
+
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
@@ -2679,11 +2677,11 @@ async def test_additional_only_account_not_repolled_within_interval(monkeypatch)
     updater = UsageUpdater(usage_repo, accounts_repo=None, additional_usage_repo=additional_repo)
     acc = _make_account("acc_add_only2", "workspace_add_only2", email="add-only2@example.com")
 
-    # First call fetches usage.
+
     await updater.refresh_accounts([acc], latest_usage={})
     assert call_count == 1
 
-    # Second call immediately should be skipped due to freshness cache.
+
     await updater.refresh_accounts([acc], latest_usage={})
     assert call_count == 1
 
@@ -2756,7 +2754,7 @@ async def test_additional_rate_limits_none_does_not_prune_existing_rows(monkeypa
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_multiple_limits(monkeypatch) -> None:
-    """Multiple additional limits produce one entry per limit per window."""
+
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
@@ -2814,7 +2812,7 @@ async def test_additional_rate_limits_multiple_limits(monkeypatch) -> None:
 
     await updater.refresh_accounts([acc], latest_usage={})
 
-    # o-pro: 1 primary; deep-research: 1 primary + 1 secondary = 3 total
+
     assert len(additional_repo.entries) == 3
     names = [(e.limit_name, e.window) for e in additional_repo.entries]
     assert ("o-pro", "primary") in names
@@ -2824,7 +2822,7 @@ async def test_additional_rate_limits_multiple_limits(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_secondary_none_only_primary(monkeypatch) -> None:
-    """When secondary_window is None, only primary entry is written."""
+
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
@@ -3010,7 +3008,7 @@ async def test_additional_rate_limits_prune_stale_secondary_window(monkeypatch) 
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_no_credits_passed(monkeypatch) -> None:
-    """Credits data is NOT passed to additional limit entries (no credits_* fields)."""
+
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
@@ -3052,11 +3050,11 @@ async def test_additional_rate_limits_no_credits_passed(monkeypatch) -> None:
 
     await updater.refresh_accounts([acc], latest_usage={})
 
-    # Primary usage entry should have credits
+
     assert len(usage_repo.entries) == 1
     assert usage_repo.entries[0].credits_has is True
 
-    # Additional entry should NOT have credits fields (not part of the protocol)
+
     assert len(additional_repo.entries) == 1
     entry = additional_repo.entries[0]
     assert not hasattr(entry, "credits_has")
@@ -3259,9 +3257,7 @@ async def test_refresh_accounts_does_not_repeat_post_reset_quota_probe(monkeypat
 
 
 def test_merge_additional_rate_limits_synthesizes_bounded_reset_when_upstream_omits_reset() -> None:
-    """An exhausted additional-quota window with no upstream reset info must be
-    persisted with a bounded, self-expiring reset_at so it cannot exclude an
-    account from routing indefinitely (regression: stale-exhausted permanent block)."""
+
     from types import SimpleNamespace
 
     from app.modules.usage.updater import _merge_additional_rate_limits
@@ -3371,7 +3367,7 @@ async def test_usage_refresh_records_openai_banked_reset_count(monkeypatch) -> N
         )
 
         assert reset_credit_cache.get_count("acc_banked") == 1
-        # No summary in the payload keeps the count from the last inventory listing.
+
         assert reset_credit_cache.get_count("acc_listed") == 2
     finally:
         reset_credit_cache.reset()
@@ -3379,7 +3375,7 @@ async def test_usage_refresh_records_openai_banked_reset_count(monkeypatch) -> N
 
 @pytest.mark.parametrize("strikes", [1, 2, 3, 4, 5, 6, 10, 20])
 def test_usage_refresh_rate_limit_delay_never_exceeds_cap(monkeypatch: pytest.MonkeyPatch, strikes: int) -> None:
-    """Regression for exponential backoff math at maximum jitter across strike boundaries."""
+
     account_id = "acc_rate_limit_cap"
     monkeypatch.setattr(usage_updater_module.random, "uniform", lambda low, high: high)
     monkeypatch.setattr(usage_updater_module.time, "monotonic", lambda: 1000.0)

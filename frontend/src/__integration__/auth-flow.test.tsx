@@ -56,7 +56,7 @@ describe("auth flow integration", () => {
 
     await user.type(screen.getByLabelText("TOTP code"), "123456");
 
-    // Auto-submit triggers on 6-digit completion via onComplete
+
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Providers" })).toBeInTheDocument();
     });

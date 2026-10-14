@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the Codex desktop routing guard as a per-user macOS LaunchAgent.
+
 set -euo pipefail
 
 LABEL="com.aneyman.agent-lb-codex-routing-guard"
@@ -186,7 +186,7 @@ if [[ ! -e "$PLIST" ]] && label_loaded; then
   fail "refusing to replace loaded $LABEL without its owned plist at $PLIST"
 fi
 
-# Validate and converge the config before changing launchd.
+
 "$PYTHON_BIN" "$GUARD" --config "$CONFIG" --provider "$PROVIDER"
 mkdir -p "$(dirname "$PLIST")" "$LOG_DIR"
 was_loaded=false

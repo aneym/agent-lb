@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# install-service.sh — install/restart agent-lb as a macOS launchd user agent.
-#
-# Resolves the repo from this script's location, generates a LaunchAgent plist
-# (label com.aneyman.agent-lb) pointing at the project venv binary, and bootstraps it.
-# Regenerating an existing plist preserves operator-provided environment,
-# arguments, and resource limits so reinstalling cannot silently switch data
-# stores or trusted-access configuration.
-# Guards against clobbering a localhost server already listening on port 2455
-# under a different label.
-#
-# Usage:
-#   scripts/install-service.sh            # install or restart the service
-#   scripts/install-service.sh --print    # print the generated plist, no changes
-#   scripts/install-service.sh --uninstall  # bootout + remove the plist
-#
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 set -euo pipefail
 
 LABEL="com.aneyman.agent-lb"
@@ -190,9 +190,9 @@ if [[ ! -x "$BIN" ]]; then
   exit 1
 fi
 
-# Port-conflict guard: refuse to touch a local server we don't own. Tailnet
-# listeners on the same public port are allowed because this service binds
-# 127.0.0.1 and Tailscale forwards to it.
+
+
+
 if localhost_port_busy && ! label_loaded; then
   echo "error: localhost port $PORT is in use by another process — is agent-lb already running under a different service name?" >&2
   exit 1
@@ -205,15 +205,15 @@ if label_loaded; then
   echo "Booting out existing $LABEL..."
   bootout_started_ms="$(now_ms)"
   launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
-  # Wait for the old process to release localhost:PORT before rebinding.
+
   port_free_deadline=$(($(date +%s) + PORT_FREE_TIMEOUT_SECONDS))
   while (($(date +%s) < port_free_deadline)) && localhost_port_busy; do
     sleep 0.1
   done
   if localhost_port_busy; then
-    # Never abort here: the job is already booted out, and exiting now leaves
-    # nothing bootstrapped (caused the 2026-07-11 outage). A draining old
-    # process just delays the rebind — KeepAlive retries until the port frees.
+
+
+
     echo "warning: localhost port $PORT still in use ${PORT_FREE_TIMEOUT_SECONDS}s after bootout — bootstrapping anyway; launchd will retry the bind" >&2
   fi
   bootout_elapsed_ms=$(($(now_ms) - bootout_started_ms))
@@ -221,8 +221,8 @@ fi
 
 write_plist
 
-# Bootstrap may fail with error 5 if launchd is still tearing down the old job;
-# retry with short bounded backoff instead of imposing a fixed cooldown on every restart.
+
+
 bootstrap_started_ms="$(now_ms)"
 bootstrap_ok=false
 for attempt in 1 2 3; do
@@ -235,9 +235,9 @@ for attempt in 1 2 3; do
     2) sleep 0.25 ;;
     *) sleep 0.5 ;;
   esac
-  # launchctl can return EIO while the GUI domain's plist watcher has already
-  # loaded the freshly written job. Treat the observable loaded state as the
-  # source of truth instead of reporting a false restart failure.
+
+
+
   if label_loaded; then
     echo "Bootstrap command returned nonzero, but $LABEL is loaded; continuing."
     bootstrap_ok=true
@@ -253,8 +253,8 @@ if [[ "$bootstrap_ok" != true ]]; then
   exit 1
 fi
 
-# Bootstrap alone frequently leaves the job loaded-but-not-running on macOS;
-# kickstart guarantees the process actually spawns with the new plist.
+
+
 launchctl kickstart -k "gui/$UID/$LABEL" >/dev/null 2>&1 || true
 
 process_started_ms="$(now_ms)"
@@ -262,9 +262,9 @@ startup_elapsed_ms=-1
 deadline=$(($(date +%s) + READY_TIMEOUT_SECONDS))
 readiness_rebootstrap_attempts=0
 while (($(date +%s) < deadline)); do
-  # A GUI-domain plist watcher can briefly report the label loaded after an
-  # EIO bootstrap, then drop it before the process spawns. Recover inside the
-  # bounded readiness window instead of polling a job that no longer exists.
+
+
+
   if ! label_loaded && ((readiness_rebootstrap_attempts < 3)); then
     readiness_rebootstrap_attempts=$((readiness_rebootstrap_attempts + 1))
     echo "LaunchAgent disappeared during readiness; re-bootstrap attempt $readiness_rebootstrap_attempts..." >&2

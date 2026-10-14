@@ -1,9 +1,4 @@
-"""Muse dispatch crosses the real CLI, file, registry, ledger and pool boundaries.
 
-The vendor executable alone is a stand-in. This guards lost workspace trust,
-incorrect completion settlement, build drift and missing vendor-limit cooldowns.
-The existing Cursor test cannot exercise Muse's JSON exec/session contract.
-"""
 from __future__ import annotations
 
 import json

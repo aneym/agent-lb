@@ -22,8 +22,7 @@ def test_build_sticky_session_cleanup_scheduler_respects_enabled_setting(monkeyp
 
 @pytest.mark.asyncio
 async def test_cleanup_once_purges_prompt_cache_only(monkeypatch) -> None:
-    """_cleanup_once should purge prompt-cache entries by affinity TTL.
-    Durable kinds (STICKY_THREAD, CODEX_SESSION) must NOT be purged."""
+
     dashboard_settings = SimpleNamespace(openai_cache_affinity_max_age_seconds=600)
 
     settings_repo = AsyncMock()

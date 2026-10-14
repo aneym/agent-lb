@@ -54,7 +54,7 @@ def test_agent_sdk_useragent_is_its_own_group() -> None:
 
 
 def test_query_uses_homebrew_psql_when_path_has_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    # cache-watch runs lb-cache from launchd, whose PATH (/usr/bin:/bin) has no psql.
+
     monkeypatch.setattr(shutil, "which", lambda name: None)
     monkeypatch.setattr(os, "access", lambda path, mode: path == "/opt/homebrew/bin/psql")
     lb_cache = load_lb_cache()

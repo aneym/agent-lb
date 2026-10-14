@@ -35,7 +35,7 @@ def _make_entry(
 
 
 def test_build_additional_usage_summary_aggregates_accounts():
-    """3 accounts with codex_other primary at 30%, 50%, 70% -> avg 50%."""
+
     data: dict[str, dict[str, dict[str, AdditionalUsageHistory]]] = {
         "codex_other": {
             "primary": {
@@ -76,14 +76,14 @@ def test_build_additional_usage_summary_aggregates_accounts():
     assert summary.primary_window is not None
     assert isinstance(summary.primary_window, AdditionalWindowSummary)
     assert summary.primary_window.used_percent == pytest.approx(50.0)
-    assert summary.primary_window.reset_at == 1000  # min (earliest reset for pool)
-    assert summary.primary_window.window_minutes == 120  # max
+    assert summary.primary_window.reset_at == 1000
+    assert summary.primary_window.window_minutes == 120
 
     assert summary.secondary_window is None
 
 
 def test_build_additional_usage_summary_with_secondary_window():
-    """Both primary and secondary windows present."""
+
     data: dict[str, dict[str, dict[str, AdditionalUsageHistory]]] = {
         "codex_other": {
             "primary": {
@@ -121,7 +121,7 @@ def test_build_additional_usage_summary_with_secondary_window():
 
 
 def test_build_additional_usage_summary_missing_account_data():
-    """Only accounts that have data appear in aggregation."""
+
     data: dict[str, dict[str, dict[str, AdditionalUsageHistory]]] = {
         "codex_other": {
             "primary": {
@@ -147,7 +147,7 @@ def test_build_additional_usage_summary_missing_account_data():
 
 
 def test_build_additional_usage_summary_multiple_limit_names():
-    """Returns one summary per limit_name."""
+
     data: dict[str, dict[str, dict[str, AdditionalUsageHistory]]] = {
         "codex_other": {
             "primary": {
@@ -190,7 +190,7 @@ def test_build_additional_usage_summary_multiple_limit_names():
 
 
 def test_build_additional_usage_summary_no_secondary():
-    """secondary_window is None when secondary dict is empty."""
+
     data: dict[str, dict[str, dict[str, AdditionalUsageHistory]]] = {
         "codex_other": {
             "primary": {
@@ -213,13 +213,13 @@ def test_build_additional_usage_summary_no_secondary():
 
 
 def test_build_additional_usage_summary_empty_input():
-    """Empty input returns empty list."""
+
     result = build_additional_usage_summary({})
     assert result == []
 
 
 def test_build_additional_usage_summary_max_reset_at_and_window_minutes():
-    """Aggregation uses max for reset_at and window_minutes."""
+
     data: dict[str, dict[str, dict[str, AdditionalUsageHistory]]] = {
         "codex_other": {
             "primary": {
@@ -254,13 +254,13 @@ def test_build_additional_usage_summary_max_reset_at_and_window_minutes():
     assert len(result) == 1
     pw = result[0].primary_window
     assert pw is not None
-    assert pw.used_percent == pytest.approx(20.0)  # (10+20+30)/3
-    assert pw.reset_at == 100  # min (earliest reset for pool)
-    assert pw.window_minutes == 120  # max
+    assert pw.used_percent == pytest.approx(20.0)
+    assert pw.reset_at == 100
+    assert pw.window_minutes == 120
 
 
 def test_build_additional_usage_summary_none_reset_at():
-    """None reset_at values are ignored in min computation."""
+
     data: dict[str, dict[str, dict[str, AdditionalUsageHistory]]] = {
         "codex_other": {
             "primary": {
@@ -288,15 +288,13 @@ def test_build_additional_usage_summary_none_reset_at():
     assert len(result) == 1
     pw = result[0].primary_window
     assert pw is not None
-    assert pw.used_percent == pytest.approx(50.0)  # (40+60)/2
+    assert pw.used_percent == pytest.approx(50.0)
     assert pw.reset_at == 1000
     assert pw.window_minutes == 60
 
 
 def test_additional_quota_window_readmits_exhausted_none_reset_row():
-    """A dashboard additional-quota window at 100% with reset_at=None must render
-    as re-admitted (0%), not as permanently exhausted (regression: stale-exhausted
-    permanent block)."""
+
     from app.modules.accounts.service import _additional_quota_window
 
     entry = _make_entry(

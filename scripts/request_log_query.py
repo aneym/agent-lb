@@ -1,24 +1,5 @@
 #!/usr/bin/env python3
-"""Per-request receipt from the agent-lb request log.
 
-Select requests by session id, API key (name, id or key prefix) and/or user agent
-inside a time range, and print for each request and in total: account, pool
-(provider/plan), model, input/output tokens, cache-read and cache-write tokens,
-latency. Open Factory uses it for per-trial receipts.
-
-    python3 scripts/request_log_query.py --key of-harbor --since 2026-09-25T19:00Z
-    python3 scripts/request_log_query.py --session 9ba3e627-... --json
-
-Token columns are normalised across providers: `input` is uncached input, and
-`context` = input + cache_read + cache_write. Anthropic logs input without cache;
-OpenAI logs input including its cached part, so cache_read is subtracted there.
-Session ids: --session matches agent-lb's session_id or the client's own id
-(client_session_id: Codex's `session-id` header = its rollout file id, Claude Code's
-session UUID). Codex websockets log session_id `turn_<hex>`, minted per connection. Loopback clients (incl. OrbStack
-containers via host.docker.internal) are logged keyless unless they send a key.
-Accounts show as their alias or provider:id-prefix, never an email. Reads Postgres
-through `psql` (AGENT_LB_DATABASE_URL, else the Studio default).
-"""
 
 from __future__ import annotations
 
@@ -65,7 +46,7 @@ def _psql_json(sql: str) -> list[dict]:
 
 
 def _has_client_session_column() -> bool:
-    # client_session_id arrives with migration 20260925_000000; older databases lack it.
+
     rows = _psql_json(
         "select 1 from information_schema.columns"
         " where table_name = 'request_logs' and column_name = 'client_session_id'"

@@ -1,29 +1,29 @@
 #!/usr/bin/env node
-// agent-lb-front — always-up TCP front for the agent-lb service.
-//
-// Holds the public localhost port (default 2455, the one tailscale serve and
-// local clients target) and pipes raw TCP to an app instance on an internal
-// port. While no app instance is up, new connections are HELD and the upstream
-// connect is retried instead of refused, so tailscale serve never turns a
-// restart into "502 Bad Gateway" for every in-flight chat. This process is
-// deliberately dumb (no HTTP parsing, no deps) so it rarely needs a restart of
-// its own — restarting it severs every piped connection.
-//
-// Blue/green: the front knows several upstream ports (the launchd primary on
-// 2457, the transient standby that scripts/lb-restart boots on 2459). Each new
-// connection tries the preferred port first, read from PREFERRED_FILE (one port
-// number; lb-restart writes it), then the others, so a draining or restarting
-// instance never holds a new connection while another instance is up. Existing
-// connections stay piped to the instance that accepted them until it closes
-// them, which is how the old instance drains.
-//
-// Env: AGENT_LB_FRONT_LISTEN_PORT (2455),
-//      AGENT_LB_FRONT_UPSTREAM_PORTS ("2457,2459"; falls back to
-//        AGENT_LB_FRONT_UPSTREAM_PORT for the single-port install),
-//      AGENT_LB_FRONT_PREFERRED_FILE (~/.agent-lb/state/front-preferred-port),
-//      AGENT_LB_FRONT_STATE_FILE (~/.agent-lb/state/front.json),
-//      AGENT_LB_FRONT_HOLD_MS (180000), AGENT_LB_FRONT_RETRY_INTERVAL_MS (250),
-//      AGENT_LB_FRONT_HOST (127.0.0.1)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import fs from "node:fs";
 import net from "node:net";
@@ -52,22 +52,22 @@ const RETRY_INTERVAL_MS = Number(
 
 let lastHoldLogMs = 0;
 
-// Logging is best-effort: a full disk once crashed the whole front with an
-// unhandled ENOSPC 'error' event from launchd's stdout stream (2026-07-14),
-// taking port 2455 down with it. Swallow stream errors — proxying must
-// outlive the log file.
+
+
+
+
 process.stdout.on("error", () => {});
 
 function log(message) {
   try {
     process.stdout.write(`${new Date().toISOString()} ${message}\n`);
   } catch {
-    // ENOSPC/EPIPE on the log stream must never kill the proxy.
+
   }
 }
 
-// Preferred port, re-read only when the file's mtime changes (one stat per
-// connection). A missing or malformed file means "first upstream".
+
+
 let preferredCache = { mtimeMs: -1, port: UPSTREAM_PORTS[0] };
 function preferredPort() {
   let stat;
@@ -85,7 +85,7 @@ function preferredPort() {
       const value = Number(fs.readFileSync(PREFERRED_FILE, "utf8").trim());
       if (UPSTREAM_PORTS.includes(value)) port = value;
     } catch {
-      // Keep the default.
+
     }
     if (port !== preferredCache.port) log(`preferred upstream now :${port}`);
     preferredCache = { mtimeMs: stat.mtimeMs, port };
@@ -100,8 +100,8 @@ function upstreamOrder() {
 
 const openByPort = new Map(UPSTREAM_PORTS.map((p) => [p, 0]));
 
-// Try each upstream in preference order; when none accepts, wait and retry
-// the whole list until the hold deadline.
+
+
 function connectUpstream(deadlineMs, onConnect, onGiveUp) {
   const order = upstreamOrder();
   const errors = [];
@@ -114,8 +114,8 @@ function connectUpstream(deadlineMs, onConnect, onGiveUp) {
       const now = Date.now();
       if (now - lastHoldLogMs > 5000) {
         lastHoldLogMs = now;
-        // error.code distinguishes a stopped backend (ECONNREFUSED) from
-        // front-side fd exhaustion (EMFILE) and resets (ECONNRESET).
+
+
         log(`no upstream up (${errors.join(", ")}) — holding connections`);
       }
       setTimeout(
@@ -173,8 +173,8 @@ const server = net.createServer({ noDelay: true }, (client) => {
   );
 });
 
-// lb-restart reads this to confirm the running front understands the
-// preferred-port file before it takes the primary down.
+
+
 function writeState() {
   const state = {
     pid: process.pid,
@@ -190,7 +190,7 @@ function writeState() {
     fs.writeFileSync(`${STATE_FILE}.tmp`, JSON.stringify(state));
     fs.renameSync(`${STATE_FILE}.tmp`, STATE_FILE);
   } catch {
-    // State is advisory; proxying must not depend on it.
+
   }
 }
 

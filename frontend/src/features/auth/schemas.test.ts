@@ -75,10 +75,10 @@ describe("LoginRequestSchema", () => {
 });
 
 describe("dashboard password length cap (#615)", () => {
-  // Mirrors `_MAX_PASSWORD_BYTES = 72` in the backend
-  // `app/modules/dashboard_auth/api.py`. Without these guards the form would
-  // still post and the user would only learn about the failure when the
-  // server returns HTTP 422 `password_too_long`.
+
+
+
+
 
   it("PasswordSetupRequestSchema accepts a password whose UTF-8 length is exactly 72 bytes", () => {
     const exact = "a".repeat(72);
@@ -103,7 +103,7 @@ describe("dashboard password length cap (#615)", () => {
   });
 
   it("PasswordSetupRequestSchema rejects a multi-byte password whose UTF-8 length exceeds 72 bytes", () => {
-    // Each `🔒` is 4 UTF-8 bytes; 19 of them = 76 bytes.
+
     const emojiPassword = "🔒".repeat(19);
     expect(new TextEncoder().encode(emojiPassword).length).toBe(76);
     const result = PasswordSetupRequestSchema.safeParse({
@@ -128,8 +128,8 @@ describe("dashboard password length cap (#615)", () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      // Error must point at newPassword (not currentPassword) so the form
-      // surfaces the violation on the right field.
+
+
       expect(result.error.issues[0]?.path).toContain("newPassword");
     }
   });

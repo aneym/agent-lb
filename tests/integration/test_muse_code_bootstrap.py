@@ -1,9 +1,4 @@
-"""Subprocess checks for the offline Muse pin and personal-login guard.
 
-The CLI boundary catches wrong model dispatch and accidental personal sign-in.
-Existing coverage has no Muse alias or executable. Only remote catalog access
-is replaced with route's existing fixture interface; no production seam is added.
-"""
 
 from __future__ import annotations
 

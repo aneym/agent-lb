@@ -1,8 +1,8 @@
 import XCTest
 @testable import AgentLB
 
-/// The row offers "reset limits" only where spending a scarce banked credit
-/// actually buys capacity back.
+
+
 final class ResetCreditRedeemTests: XCTestCase {
 
   private var decoder: JSONDecoder { APIClient.makeDecoder() }
@@ -11,7 +11,7 @@ final class ResetCreditRedeemTests: XCTestCase {
     makeTestAccount(provider: "openai", status: status, resetCreditsAvailable: credits)
   }
 
-  // MARK: - Eligibility
+
 
   func testQuotaExceededCodexAccountWithCreditCanRedeem() {
     XCTAssertTrue(codex(status: "quota_exceeded", credits: 1).canRedeemResetCredit)
@@ -87,7 +87,7 @@ final class ResetCreditRedeemTests: XCTestCase {
     XCTAssertTrue(account.canRedeemResetCredit)
   }
 
-  // MARK: - Consume response
+
 
   func testResetResponseCountsAsApplied() throws {
     let json = """
@@ -98,7 +98,7 @@ final class ResetCreditRedeemTests: XCTestCase {
     XCTAssertEqual(decoded.windowsReset, 2)
   }
 
-  /// Upstream treats a re-consumed credit as idempotent success.
+
   func testAlreadyRedeemedCountsAsApplied() throws {
     let json = """
     {"status": "redeemed", "accountId": "a1", "code": "already_redeemed", "windowsReset": 0}
@@ -106,8 +106,8 @@ final class ResetCreditRedeemTests: XCTestCase {
     XCTAssertTrue(try decoder.decode(AccountResetCreditConsumeResponse.self, from: json).didReset)
   }
 
-  /// 200 + `nothing_to_reset` is a no-op that keeps the credit banked; the row
-  /// must not read it as recovered capacity.
+
+
   func testNothingToResetIsNotApplied() throws {
     let json = """
     {"status": "not_redeemed", "accountId": "a1", "code": "nothing_to_reset", "windowsReset": 0}

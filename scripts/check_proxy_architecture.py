@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Architecture fitness checks for the proxy service decomposition.
 
-These checks are intentionally small ratchets. They protect the current
-`ProxyService` decomposition direction without trying to solve every future
-architecture concern in one script.
-"""
 
 from __future__ import annotations
 
@@ -69,10 +64,10 @@ ALLOWED_SERVICE_INTERNAL_IMPORTS = {
     "app.modules.proxy._service.support",
 }
 
-# The proxy decomposition still has a few deliberate shared-module couplings while
-# the large websocket/HTTP/streaming slices are being split across stacked PRs.
-# Keep this allowlist explicit so the recursive ratchet below detects any new
-# cross-domain dependency instead of silently ignoring subpackages.
+
+
+
+
 ALLOWED_SERVICE_IMPORT_DOMAINS_BY_DOMAIN = {
     "api_key_usage": {"support"},
     "codex_control": {"support"},

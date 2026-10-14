@@ -62,7 +62,7 @@ async def test_usage_summary_empty_returns_zeroes(async_client):
 
 @pytest.mark.asyncio
 async def test_usage_summary_codex_only_scope_has_no_primary_window(async_client, db_setup):
-    # OpenAI removed the codex 5h limit: a codex-only scope reports weekly only.
+
     now = utcnow()
     async with SessionLocal() as session:
         accounts_repo = AccountsRepository(session)
@@ -83,7 +83,7 @@ async def test_usage_summary_codex_only_scope_has_no_primary_window(async_client
     assert payload["primaryWindow"] is None
     assert payload["secondaryWindow"]["remainingPercent"] == pytest.approx(70.0)
 
-    # A pool that only contains codex accounts has no 5h window unscoped either.
+
     response = await async_client.get("/api/usage/summary")
     assert response.status_code == 200
     assert response.json()["primaryWindow"] is None

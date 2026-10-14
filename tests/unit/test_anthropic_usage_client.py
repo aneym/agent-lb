@@ -51,8 +51,8 @@ def test_anthropic_usage_maps_top_model_session_and_week_windows_only() -> None:
 
 
 def test_anthropic_usage_maps_enabled_extra_usage_to_credits() -> None:
-    # Shape observed live on /api/oauth/usage (2026-07-01): monthly_limit and
-    # used_credits arrive in currency minor units scaled by decimal_places.
+
+
     payload = AnthropicOAuthUsagePayload.model_validate(
         {
             "five_hour": {"utilization": 100.0, "resets_at": "2026-07-02T02:10:00+00:00"},
@@ -102,7 +102,7 @@ def test_anthropic_usage_maps_disabled_extra_usage_without_fabricated_balance() 
 
 
 def test_anthropic_usage_extracts_fable_scoped_weekly_limit() -> None:
-    # Real captured api/oauth/usage payload shape (2026-07-02).
+
     payload = AnthropicOAuthUsagePayload.model_validate(
         {
             "five_hour": {"utilization": 10.0, "resets_at": "2026-07-02T02:10:00+00:00"},
@@ -262,8 +262,8 @@ class _RejectingClient:
 
 @pytest.mark.asyncio
 async def test_rejected_usage_fetch_logs_account_short_id(caplog: pytest.LogCaptureFixture) -> None:
-    # The revoked-token 401 is how we find a second holder of the same grant;
-    # the log line has to say which account it was.
+
+
     with caplog.at_level(logging.WARNING, logger="app.core.clients.anthropic_usage"):
         with pytest.raises(UsageFetchError):
             await fetch_anthropic_usage(

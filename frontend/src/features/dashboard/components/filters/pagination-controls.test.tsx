@@ -53,7 +53,7 @@ describe("PaginationControls", () => {
       />,
     );
 
-    // Range display: "1–10 of 42"
+
     const rangeText = container.textContent;
     expect(rangeText).toContain("1");
     expect(rangeText).toContain("10");
@@ -72,7 +72,7 @@ describe("PaginationControls", () => {
       />,
     );
 
-    // rangeStart=0, rangeEnd=0, total=0
+
     const spans = container.querySelectorAll("span.tabular-nums");
     expect(spans.length).toBeGreaterThan(0);
     expect(spans[0].textContent).toContain("0");
@@ -147,7 +147,7 @@ describe("PaginationControls", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Last page" }));
-    // lastPage = (Math.ceil(42/10) - 1) * 10 = 40
+
     expect(onOffsetChange).toHaveBeenCalledWith(40);
   });
 

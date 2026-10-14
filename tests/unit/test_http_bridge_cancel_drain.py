@@ -71,12 +71,7 @@ def _make_request_state(
 async def test_cancelled_http_bridge_request_retires_session_before_retry_overlap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A cancelled downstream stream is an upstream ownership barrier.
 
-    Rather than guessing whether later anonymous frames belong to the cancelled
-    upstream response or to a retry, the bridge retires the shared upstream so a
-    follow-up request is forced onto a fresh bridge/session path.
-    """
     service = proxy_service.ProxyService(cast(Any, SimpleNamespace()))
     release_reservation = AsyncMock()
     monkeypatch.setattr(service, "_release_websocket_reservation", release_reservation)
@@ -278,7 +273,7 @@ def test_anonymous_event_prefers_unresolved_draining_owner_before_visible_retry(
 
 
 def test_anonymous_event_prefers_unresolved_visible_request_before_active_response() -> None:
-    """A normal pipelined request awaiting response.created owns pre-created anonymous events."""
+
     active_request = _make_request_state(
         "req-active-created",
         response_id="resp-active-created",
@@ -325,12 +320,7 @@ def test_anonymous_terminal_errors_can_target_visible_retry_when_drain_exists() 
 
 @pytest.mark.asyncio
 async def test_response_created_does_not_promote_in_progress_durable_anchor() -> None:
-    """Undo/edit safety: an in-progress response must not become the auto-continuation anchor.
 
-    If turn D has only reached response.created when the client interrupts/edits,
-    a later short E request on the same logical thread must not be auto-anchored
-    to D. Only a completed response is safe as the durable latest_response_id.
-    """
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

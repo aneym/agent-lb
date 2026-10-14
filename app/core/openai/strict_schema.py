@@ -1,25 +1,4 @@
-"""Validation for OpenAI strict JSON schema mode.
 
-When ``strict: true`` is set on a ``response_format`` (or ``text.format``)
-of type ``json_schema``, the upstream Codex/Responses API enforces several
-constraints on the schema (mirroring the public OpenAI Structured Outputs
-policy). The most common violations are:
-
-* every ``object`` schema must have ``additionalProperties: false``;
-* every property defined under ``properties`` must be listed in
-  ``required``;
-* schema nodes must have a ``type`` key (no empty ``{}``).
-
-When these violations reach the Codex backend over a websocket, the
-session is terminated with ``close_code=1000`` and the proxy currently
-surfaces a generic ``stream_incomplete`` 502 instead of the upstream
-``invalid_json_schema`` detail. We detect these violations locally so the
-client receives a 400 with the OpenAI-style error message before any
-upstream request is opened.
-
-Only the strict-mode constraints are enforced here. Schemas with
-``strict`` unset or ``strict: false`` pass through unchanged.
-"""
 
 from __future__ import annotations
 
@@ -32,7 +11,7 @@ from app.core.utils.json_guards import is_json_list, is_json_mapping
 
 @dataclass(frozen=True)
 class StrictSchemaError:
-    """A single strict-mode schema violation, formatted for the API."""
+
 
     code: str
     message: str
@@ -45,13 +24,7 @@ def validate_strict_json_schema(
     name: str | None,
     param: str,
 ) -> StrictSchemaError | None:
-    """Return the first strict-mode violation in ``schema`` or ``None``.
 
-    The returned message mirrors the upstream OpenAI Responses API format:
-
-        Invalid schema for response_format '<name>':
-        In context=(<path>), <reason>.
-    """
 
     label = name or "response_format"
     violation = _find_violation(schema, ())
@@ -73,25 +46,7 @@ def validate_strict_function_tool_schema(
     name: str | None,
     param: str,
 ) -> StrictSchemaError | None:
-    """Return the first strict-mode violation in a function tool's parameters.
 
-    The returned envelope mirrors what real OpenAI emits for the same
-    payload — see the ``invalid_function_parameters`` error in their
-    Structured Outputs guide. Specifically:
-
-    * ``code = "invalid_function_parameters"`` (distinct from the
-      ``invalid_json_schema`` envelope used by ``response_format`` /
-      ``text.format``);
-    * ``message`` is rendered as
-      ``Invalid schema for function '<name>': In context=<path>, <reason>.``;
-    * ``param`` is supplied by the caller so chat-completions can point
-      at ``tools[i].function.parameters`` while native Responses-API
-      callers point at ``tools[i].parameters``.
-
-    Re-uses the shared ``_find_violation`` walker so the strict-mode
-    rules stay in lockstep with ``response_format`` / ``text.format``
-    validation.
-    """
 
     label = name or "function"
     violation = _find_violation(schema, ())
@@ -119,12 +74,12 @@ def _find_violation(
     path: tuple[str, ...],
 ) -> tuple[tuple[str, ...], str] | None:
     if not is_json_mapping(node):
-        # Non-object nodes (booleans, etc.) are not subject to strict-mode
-        # property checks here.
+
+
         return None
 
-    # Require a ``type`` key on every node we visit. The upstream API
-    # rejects empty ``{}`` schemas in strict mode.
+
+
     if "type" not in node and not _has_combinator(node) and not _is_ref(node):
         return path, "schema must have a 'type' key"
 

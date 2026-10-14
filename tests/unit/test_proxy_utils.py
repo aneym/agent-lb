@@ -340,11 +340,11 @@ def _service_tier_enforcement_key(enforced: str) -> proxy_service.ApiKeyData:
 
 
 def test_apply_api_key_enforcement_default_service_tier_omits_outbound_field():
-    # Regression for #546: enforcing ``default`` previously forwarded
-    # the literal string upstream, which the ChatGPT/Codex backend
-    # rejects with ``Unsupported service_tier: default``. The fix maps
-    # ``default``/``auto`` to wire-level absence so enforcement
-    # actually reaches upstream.
+
+
+
+
+
     payload = ResponsesRequest.model_validate(
         {
             "model": "gpt-5.4",
@@ -375,9 +375,9 @@ def test_apply_api_key_enforcement_auto_service_tier_omits_outbound_field():
 
 
 def test_apply_api_key_enforcement_priority_service_tier_still_propagates():
-    # Sanity: omission only applies to ``auto``/``default``. Real
-    # service tiers (``priority``, ``flex``) MUST still be forwarded
-    # as the literal value the upstream backend recognises.
+
+
+
     payload = ResponsesRequest.model_validate(
         {
             "model": "gpt-5.4",
@@ -5140,7 +5140,7 @@ async def test_stream_responses_forced_websocket_does_not_fallback_on_handshake_
 
 
 def _shrink_edge_rejection_retry(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A bare 403 is retried for up to three minutes in production.
+
     monkeypatch.setattr(proxy_module, "_EDGE_REJECT_FIRST_BACKOFF_SECONDS", 0.01)
     monkeypatch.setattr(proxy_module, "_EDGE_REJECT_MAX_BACKOFF_SECONDS", 0.02)
     monkeypatch.setattr(proxy_module, "_EDGE_REJECT_RETRY_WINDOW_SECONDS", 0.3)
@@ -5158,10 +5158,10 @@ _ACCOUNT_403_ANSWER = (
 @pytest.mark.parametrize(
     ("answers", "expected_attempts", "expected_type", "expected_code"),
     [
-        # The edge refused eight handshakes in a row at 200 parallel agents; the
-        # ninth connects and the agent never sees the refusals.
+
+
         ([_EDGE_403_ANSWER] * 8, 9, "response.completed", None),
-        # A 403 with an OpenAI error body is about the account: no retry.
+
         ([_ACCOUNT_403_ANSWER], 1, "response.failed", "account_deactivated"),
     ],
 )
@@ -5890,8 +5890,8 @@ def test_logged_error_json_response_emits_proxy_error_log(caplog):
     assert secret_response.status_code == 502
     assert "proxy_error_response request_id=req_proxy_error_1" in caplog.text
     assert "method=POST path=/v1/responses status=502" in caplog.text
-    # Error code and message are diagnostics-grade log fields, but the message
-    # must pass through secret redaction before it lands in the log line.
+
+
     assert "code=upstream_error" in caplog.text
     assert "message=provider failed" in caplog.text
     assert "sk-live-supersecret" not in caplog.text
@@ -14415,18 +14415,7 @@ def test_websocket_continuity_response_ids_include_replay_downstream_alias_once(
 
 @pytest.mark.asyncio
 async def test_process_upstream_websocket_text_retries_precreated_previous_response_not_found(monkeypatch):
-    """A precreated retry-safe full-resend turn (with both
-    ``fresh_upstream_request_is_retry_safe=True`` and
-    ``fresh_upstream_request_text`` populated by the request-prep path) must
-    be transparently retried on a fresh upstream when upstream returns
-    ``previous_response_not_found``. The retry strips the stale
-    ``previous_response_id`` and replays the prepared fresh text.
 
-    This is the inverse of
-    ``test_process_upstream_websocket_text_short_previous_response_not_found_fails_closed``
-    below: when the request prep path has classified the turn as retry-safe,
-    the masking path must replay rather than fail closed.
-    """
 
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
@@ -14494,11 +14483,11 @@ async def test_process_upstream_websocket_text_retries_precreated_previous_respo
     assert upstream_control.suppress_downstream_event is True
     assert upstream_control.replay_request_state is pending_request
     assert pending_request.replay_count == 1
-    # The retry must strip the stale ``previous_response_id`` and use the
-    # prepared retry-safe text instead of the original anchored payload.
+
+
     assert pending_request.previous_response_id is None
     assert pending_request.request_text == json.dumps(fresh_request_payload, separators=(",", ":"))
-    # Retry-safety flag is consumed (set back to False) so we don't loop.
+
     assert pending_request.fresh_upstream_request_is_retry_safe is False
     assert pending_request.error_code_override is None
     assert pending_request.error_message_override is None
@@ -14569,9 +14558,9 @@ async def test_pop_replayable_created_without_visible_output_request_state():
         request_text='{"type":"response.create","model":"gpt-5.1","input":"retry"}',
         response_id="resp_created_then_closed",
         awaiting_response_created=False,
-        # response.created is protocol-only and no longer counted (see
-        # _PROTOCOL_ONLY_RESPONSE_EVENT_TYPES): "created received, nothing
-        # visible" is response_event_count == 0.
+
+
+
         response_event_count=0,
         downstream_visible=False,
         error_code_override="upstream_unavailable",
@@ -14642,8 +14631,8 @@ async def test_process_upstream_websocket_text_rewrites_replayed_created_only_re
         request_text='{"type":"response.create","model":"gpt-5.1","input":"retry"}',
         response_id="resp_downstream_original",
         awaiting_response_created=False,
-        # Protocol-only events (response.created) are not counted; zero means
-        # "created received, nothing visible yet".
+
+
         response_event_count=0,
         downstream_visible=False,
     )
@@ -17055,10 +17044,7 @@ async def test_compact_responses_records_transient_error_for_generic_upstream_fa
 
 
 def test_compact_max_account_attempts_covers_pool():
-    """Pin the compaction failover budget: it must cover a typical codex pool so a
-    single critical compaction call does not 503 with healthy accounts untried.
-    Guards against a regression back to 2 (which stranded compaction during a
-    transient-error burst on the first two selected accounts)."""
+
     from app.modules.proxy._service.compact import _compact_max_account_attempts
 
     assert proxy_service._COMPACT_MAX_ACCOUNT_ATTEMPTS >= 4
@@ -17067,11 +17053,7 @@ def test_compact_max_account_attempts_covers_pool():
 
 @pytest.mark.asyncio
 async def test_compact_responses_fails_over_across_more_than_two_accounts(monkeypatch):
-    """Regression for _COMPACT_MAX_ACCOUNT_ATTEMPTS 2->4: a compaction request whose
-    first three selected accounts return transient server errors must keep failing
-    over to additional DISTINCT accounts and succeed on the fourth, instead of
-    giving up after two and surfacing no_accounts. excluded_account_ids must
-    accumulate the failed accounts so each attempt selects a new one."""
+
     settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
@@ -17104,7 +17086,7 @@ async def test_compact_responses_fails_over_across_more_than_two_accounts(monkey
     result = await service.compact_responses(payload, {"session_id": "sid-compact-failover"})
 
     assert result.model_extra == {"output": []}
-    # Tried all 4 distinct accounts (capped at 2 before the fix -> would 503).
+
     assert select_account.await_count == 4
     assert select_account.await_args_list[1].kwargs["exclude_account_ids"] == {accts[0].id}
     assert select_account.await_args_list[2].kwargs["exclude_account_ids"] == {accts[0].id, accts[1].id}
@@ -17417,8 +17399,8 @@ async def test_ensure_fresh_same_stale_account_joins_singleflight_before_refresh
     request_logs = _RequestLogsRecorder()
 
     def repo_factory() -> _RepoContext:
-        # AuthManager reloads the stored row before a refresh exchange (a1f0f06b); the store
-        # still holds the stale credentials that both callers present.
+
+
         context = _RepoContext(request_logs)
         cast(Any, context._repos.accounts).reload_by_id = AsyncMock(side_effect=lambda _: Account(**stored_row))
         return context
@@ -20323,9 +20305,9 @@ async def test_http_bridge_session_events_emit_codex_keepalive_before_response_i
         service_tier=None,
         reasoning_effort=None,
         api_key_reservation=None,
-        # Recent start so the first-event timeout deadline stays in the future
-        # during this sub-second keepalive assertion; this test exercises the
-        # codex-keepalive backstop, not the first-event timeout.
+
+
+
         started_at=time.monotonic(),
         response_id=None,
         event_queue=asyncio.Queue(),
@@ -20444,8 +20426,8 @@ async def test_http_bridge_session_events_keepalive_backstop(monkeypatch):
         service_tier=None,
         reasoning_effort=None,
         api_key_reservation=None,
-        # Recent start so the first-event timeout does not pre-empt the
-        # keepalive/idle backstop this test asserts.
+
+
         started_at=time.monotonic(),
         response_id=None,
         event_queue=asyncio.Queue(),
@@ -20512,8 +20494,8 @@ async def test_http_bridge_session_events_keepalive_backstop_respects_idle_timeo
         service_tier=None,
         reasoning_effort=None,
         api_key_reservation=None,
-        # Recent start so the (shorter) stream_idle_timeout wins; the first-event
-        # timeout deadline stays in the future for this test.
+
+
         started_at=time.monotonic(),
         response_id=None,
         event_queue=asyncio.Queue(),
@@ -20649,8 +20631,8 @@ async def test_http_bridge_session_events_keepalive_backstop_uses_replay_downstr
         service_tier=None,
         reasoning_effort=None,
         api_key_reservation=None,
-        # Recent start so the first-event timeout does not pre-empt the
-        # replay-backstop keepalive/idle assertion.
+
+
         started_at=time.monotonic(),
         response_id=None,
         replay_downstream_response_id="resp_created_then_closed",
@@ -20801,9 +20783,9 @@ async def test_http_bridge_prewarm_times_out_on_silent_upstream(monkeypatch):
         timeout=2.0,
     )
 
-    # After timeout the session should be reset to not-prewarmed, and the
-    # upstream must be reconnected before the warmup state is dropped so late
-    # warmup events cannot be matched to the next visible request.
+
+
+
     assert session.prewarmed is False
     assert len(reconnect_observations) == 1
     assert len(admission_observations) == 1
@@ -20924,8 +20906,8 @@ async def test_retry_http_bridge_precreated_request_replays_created_without_visi
         request_text='{"type":"response.create","model":"gpt-5.1","input":"retry"}',
         response_id="resp_bridge_created_then_closed",
         awaiting_response_created=False,
-        # Protocol-only events (response.created) are not counted; zero means
-        # "created received, nothing visible yet".
+
+
         response_event_count=0,
         downstream_visible=False,
     )
@@ -21170,16 +21152,14 @@ async def test_pop_replayable_precreated_request_suppresses_replay_after_respons
 
 @pytest.mark.asyncio
 async def test_inline_http_bridge_image_urls_converts_external_urls(monkeypatch):
-    """HTTP bridge must inline external image URLs to data: URLs just like the
-    HTTP direct path does.  Without this, the upstream WS silently rejects the
-    request and the client sees a hang / stream_idle_timeout."""
+
 
     data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
     inlined_payloads: list[dict] = []
 
     async def fake_inline(payload_dict, _session, _timeout):
         inlined_payloads.append(payload_dict)
-        # Simulate converting the http URL to a data URL
+
         d = dict(payload_dict)
         inp = list(d["input"])
         item = dict(inp[0])
@@ -21239,7 +21219,7 @@ async def test_inline_http_bridge_image_urls_converts_external_urls(monkeypatch)
     assert len(inlined_payloads) == 1
     result_dict = json.loads(result)
     assert result_dict["input"][0]["content"][1]["image_url"] == data_url
-    # request_state.request_text must also be updated for replay safety
+
     assert request_state.request_text == result
 
 
@@ -21613,7 +21593,7 @@ async def test_inline_http_bridge_image_urls_converts_top_level_input_image(monk
 
 @pytest.mark.asyncio
 async def test_inline_http_bridge_image_urls_skips_when_disabled(monkeypatch):
-    """When image_inline_fetch_enabled is False, no inlining should happen."""
+
 
     class FakeSettings:
         image_inline_fetch_enabled = False
@@ -21653,7 +21633,7 @@ async def test_inline_http_bridge_image_urls_skips_when_disabled(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_inline_http_bridge_image_urls_skips_data_urls(monkeypatch):
-    """Payloads that already use data: URLs should pass through unchanged."""
+
 
     inlined_payloads: list[dict] = []
 
@@ -21710,12 +21690,11 @@ async def test_inline_http_bridge_image_urls_skips_data_urls(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_inline_http_bridge_image_urls_rejects_when_fetch_fails(monkeypatch):
-    """When inlining fails (fetch returns None / URL survives), the method
-    must raise a 400 error immediately rather than letting upstream hang."""
+
     from app.core.clients.proxy import ProxyResponseError
 
     async def fake_inline_noop(payload_dict, _session, _timeout):
-        # Simulate fetch failure: return unchanged payload
+
         return dict(payload_dict)
 
     class FakeSettings:

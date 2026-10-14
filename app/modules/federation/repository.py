@@ -27,10 +27,6 @@ from app.modules.federation.schemas import (
 )
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
-# Mirrored-only rows never carry a real refresh token (the owner never exports
-# one over /mirror), but the column is NOT NULL. This placeholder is inert:
-# the ownership gate in AuthManager guarantees a non-owned row is never
-# selected for refresh, so it is never decrypted for an OAuth call.
 _MIRROR_REFRESH_TOKEN_PLACEHOLDER = ""
 
 
@@ -304,11 +300,11 @@ class FederationRepository:
     async def release_for_checkout(
         self, account_id: str, taker_instance_id: str, *, local_instance_id: str, nonce: str
     ) -> AccountTransfer | None:
-        """Publish the owner gate and retryable transfer together, or neither."""
+
         try:
-            # Both the intent insert and this handoff lock the account row.
-            # Recheck the fence *after* acquiring that lock (including after a
-            # lost advisory lock), not in an earlier request-scoped snapshot.
+
+
+
             locked = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
             if locked is None or await self.has_exchange_intent(account_id):
                 await self._session.rollback()
@@ -347,7 +343,7 @@ class FederationRepository:
     async def release_for_checkin(
         self, account_id: str, counterparty: str, *, local_instance_id: str, nonce: str
     ) -> tuple[Account | None, str]:
-        """Fence refresh and persist a retryable return in one transaction."""
+
         try:
             account = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
             if account is None or await self.has_exchange_intent(account_id):
@@ -357,7 +353,7 @@ class FederationRepository:
                 account_id, direction=AccountTransferDirection.CHECKIN, counterparty_instance_id=counterparty
             )
             if pending and account.owner_instance == counterparty:
-                # No transaction or row lock may remain open across the peer call.
+
                 pending_nonce = pending.nonce
                 await self._session.commit()
                 await self._session.refresh(account)
@@ -396,11 +392,11 @@ class FederationRepository:
         local_instance_id: str,
         encryptor: TokenEncryptor,
     ) -> None:
-        """Import the live token, local owner gate and retry nonce atomically."""
+
         try:
             account = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
-            # The caller's committed reservation is the serialization point with
-            # reclaim. A tombstone or an aborting reservation cannot import.
+
+
             settled = await self._session.execute(
                 update(AccountTransfer)
                 .where(
@@ -470,9 +466,7 @@ class FederationRepository:
         encryptor: TokenEncryptor,
         expires_at_ms: int | None = None,
     ) -> bool:
-        """Create-or-update a mirrored row. Returns False (no-op) when the row
-        is locally owned — a checkout must never be clobbered by a stale
-        mirror cycle."""
+
         existing = await self._session.get(Account, account_id)
         if existing is not None:
             pending = (
@@ -536,7 +530,7 @@ class FederationRepository:
     async def deactivate_mirrored_accounts_not_in(
         self, *, owner_instance_id: str, keep_ids: set[str], encryptor: TokenEncryptor | None = None
     ) -> list[str]:
-        """Blank dropped access credentials without changing any other owner's rows."""
+
         statement = select(Account.id).where(
             Account.owner_instance == owner_instance_id,
             or_(
@@ -683,7 +677,7 @@ class FederationRepository:
         *,
         local_instance_id: str,
     ) -> AccountTransferState:
-        """A durable abort answer; a missing nonce leaves a tombstone."""
+
         try:
             account = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
             if account is None:
@@ -795,7 +789,7 @@ class FederationRepository:
     async def settle_checkout_and_blank_refresh(
         self, nonce: str, *, encryptor: TokenEncryptor
     ) -> AccountTransfer | None:
-        """Only erase the exported refresh token after the taker confirms import."""
+
         transfer = await self.get_transfer_by_nonce(nonce)
         if transfer is None or transfer.direction != AccountTransferDirection.CHECKOUT:
             return None
@@ -803,7 +797,7 @@ class FederationRepository:
             account = await self._session.get(
                 Account, transfer.account_id, with_for_update=True, populate_existing=True
             )
-            # Serialize with ownership changes before blanking the old copy.
+
             transfer = await self._session.get(
                 AccountTransfer, transfer.id, with_for_update=True, populate_existing=True
             )
@@ -834,7 +828,7 @@ class FederationRepository:
         *,
         encryptor: TokenEncryptor,
     ) -> AccountTransfer:
-        """Import the returned token and reopen the local gate in one commit."""
+
         try:
             account = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
             if account is None:

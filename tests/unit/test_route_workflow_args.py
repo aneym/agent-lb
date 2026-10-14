@@ -1,7 +1,4 @@
-"""`route workflow-args` through the real CLI and canonical table.
 
-The agent() options a Workflow script passes must reach the picked seat and model.
-"""
 
 from __future__ import annotations
 
@@ -18,8 +15,8 @@ def workflow_args(env: dict[str, str], table: Path = CANONICAL_TABLE) -> dict:
 
 
 def test_each_seat_kind_gets_options_that_reach_its_model(tmp_path: Path) -> None:
-    # Each seat kind must head some class: Cursor's gates open, Codex on pace (the live table gates Cursor
-    # while it is out of usage, 87ccaf14 and 18f90918, and a low Codex pool moves explore off Sol).
+
+
     args = workflow_args(setup(tmp_path, codex_low=False), table_copy(tmp_path, "cursor-open", reopen_cursor))
     seats = args["seats"]
     assert args["errors"] == {}
@@ -37,8 +34,8 @@ def test_each_seat_kind_gets_options_that_reach_its_model(tmp_path: Path) -> Non
     assert args["agent_cap"] == 6
     assert args["quota"]["opus_stages"] == ["judge", "synthesis"]
 
-    # Cross-vendor review: Claude-authored work never goes to a Claude reviewer, and the
-    # fixed Codex forwarder gets no model or effort its definition would ignore.
+
+
     assert args["review_for"]["anthropic"]["opts"] == {"agentType": "codex-verifier"}
     for vendor, reviewer in args["review_for"].items():
         assert reviewer["vendor"] != vendor
@@ -46,10 +43,10 @@ def test_each_seat_kind_gets_options_that_reach_its_model(tmp_path: Path) -> Non
 
 
 def test_bridge_model_with_effort_suffix_does_not_double_it(tmp_path: Path) -> None:
-    """The real CLI must pass a usable model when the picked alias already has effort."""
+
     def suffix_explore_model(table: dict) -> None:
         table["aliases"]["sol-latest-low"] = table["aliases"]["sol-latest"]
-        # The canonical table runs the interim ladder, so its first explore rung is what route picks.
+
         rung = table["ladders"]["interim"]["explore"][0]
         rung.update(model="sol-latest-low", pool="openai-codex")
 
@@ -74,7 +71,7 @@ def test_cursor_exhausted_moves_implement_to_the_sol_bridge_seat(tmp_path: Path)
 
 
 def test_baseline_forwarders_get_the_picked_model_and_effort_in_the_brief(tmp_path: Path) -> None:
-    """Review must-fixes of 2026-10-05: a Cursor auditor keeps its picked Sonnet id, codex-sol its effort."""
+
     baseline = table_copy(tmp_path, "baseline", lambda t: t.update(ladder="baseline"))
     args = workflow_args(setup(tmp_path, claude_eligible=1), baseline)
 

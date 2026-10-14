@@ -5,18 +5,13 @@ from contextvars import ContextVar, Token
 
 from starlette.types import Scope
 
-# The client's own conversation id, as the client names it on the wire. Codex 0.157
-# sends `session-id` (= its rollout file id); Claude Code sends
-# `x-claude-code-session-id`. Request logs store it beside agent-lb's own
-# session_id (for Codex websockets a minted `turn_<hex>`), so a harness can join
-# a trial's transcript to its requests even when trials run concurrently.
 _CLIENT_SESSION_HEADERS = (b"session-id", b"session_id", b"x-codex-session-id", b"x-claude-code-session-id")
 _MAX_LENGTH = 128
 
 _CLIENT_SESSION_ID: ContextVar[str | None] = ContextVar("client_session_id", default=None)
 
-# Launcher seat from AGENT_LB_SEAT, forwarded as x-agent-lb-seat. Request logs
-# store it so the token audit can name the seat when no transcript does.
+
+
 _SEAT_HEADER = b"x-agent-lb-seat"
 _SEAT_RE = re.compile(r"[a-z0-9][a-z0-9@._:-]{0,63}\Z")
 _CALLER_SEAT: ContextVar[str | None] = ContextVar("caller_seat", default=None)

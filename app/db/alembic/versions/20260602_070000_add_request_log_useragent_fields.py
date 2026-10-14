@@ -1,9 +1,4 @@
-"""add request log useragent fields
 
-Revision ID: 20260602_070000_add_request_log_useragent_fields
-Revises: 20260602_060000_merge_account_workspace_and_failure_heads
-Create Date: 2026-06-02 07:00:00.000000
-"""
 
 from __future__ import annotations
 

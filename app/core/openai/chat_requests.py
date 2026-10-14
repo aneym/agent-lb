@@ -154,10 +154,10 @@ class ChatCompletionsRequest(BaseModel):
                 data["stream_options"] = {"include_obfuscation": include_obfuscation}
 
         if messages is None or (not messages and "input" in data):
-            # Some OpenAI-compatible clients route Responses-shaped payloads
-            # through /v1/chat/completions. Keep that payload intact after
-            # applying chat-level normalizations instead of rejecting it for
-            # a missing or explicitly empty `messages` field.
+
+
+
+
             if not isinstance(data.get("instructions"), str):
                 data["instructions"] = ""
             data["tools"] = raw_tools
@@ -222,11 +222,11 @@ def _normalize_chat_tools(tools: list[JsonValue]) -> list[JsonValue]:
             name = function.get("name")
             if not isinstance(name, str) or not name:
                 continue
-            # Preserve the function-level ``strict`` flag so the responses-side
-            # ``enforce_strict_function_tools_format`` pre-validator can run on
-            # chat-completions traffic too. Without this, ``strict: true``
-            # would be silently dropped here, masking schema violations the
-            # upstream Codex backend would otherwise reject.
+
+
+
+
+
             normalized_tool: dict[str, JsonValue] = {
                 "type": tool_type or "function",
                 "name": name,

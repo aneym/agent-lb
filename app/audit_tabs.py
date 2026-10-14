@@ -1,4 +1,4 @@
-"""Daily token receipts for configured agent tabs."""
+
 
 from __future__ import annotations
 
@@ -203,8 +203,8 @@ def run(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    # The launchd job runs `python -m app.audit_tabs` from the runtime venv, so it works before
-    # the next lb-restart ships the `agent-lb audit tabs` CLI entry.
+
+
     _parser = argparse.ArgumentParser(prog="agent-lb audit tabs")
     _commands = _parser.add_subparsers(dest="audit_command", required=True)
     add_parser(_commands)

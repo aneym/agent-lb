@@ -85,7 +85,7 @@ type ModelContextWindowOverridesInput = str | dict[str, int] | None
 
 
 def identity_handle(value: str | None, limit: int) -> str | None:
-    """Normalize attribution handles consistently for settings and resolved nodes."""
+
     if not value:
         return None
     ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower()
@@ -178,7 +178,7 @@ class Settings(BaseSettings):
     upstream_stream_transport: Literal["http", "websocket", "auto"] = "auto"
     upstream_connect_timeout_seconds: float = 8.0
     upstream_connect_attempts: int = Field(default=3, ge=1)
-    # Gzip model-call request bodies of 16 KiB or more (Anthropic, Codex). Off sends them as before.
+
     upstream_request_gzip_enabled: bool = True
     upstream_compact_timeout_seconds: float | None = None
     upstream_websocket_trust_env: bool = Field(default_factory=_default_upstream_websocket_trust_env)
@@ -186,19 +186,19 @@ class Settings(BaseSettings):
     http_responses_stream_request_budget_seconds: float = Field(default=7200.0, gt=0)
     compact_request_budget_seconds: float = Field(default=180.0, gt=0)
     stream_idle_timeout_seconds: float = 600.0
-    # Streamed Anthropic /v1/messages calls: the longest wait, from send, for the
-    # first response body bytes before the attempt moves to another account, and
-    # the longest silence between later chunks before the stream ends with a
-    # retryable error event. 0 disables either bound. Without them, one call on
-    # 2026-10-05 waited 553.6 s for its first byte (normal-day maximum: 75 s).
+
+
+
+
+
     anthropic_first_byte_timeout_seconds: float = Field(default=180.0, ge=0)
     anthropic_stream_idle_timeout_seconds: float = Field(default=300.0, ge=0)
     sse_keepalive_interval_seconds: float = Field(default=10.0, ge=0)
     proxy_downstream_websocket_idle_timeout_seconds: float = Field(default=120.0, gt=0)
-    # Applies to both upstream SSE event buffering and upstream websocket message
-    # frames. Keep the default aligned with the common 16 MiB websocket ceiling so
-    # large built-in tool payloads (for example image_generation outputs) do not
-    # fail locally with a 1009 before upstream completion.
+
+
+
+
     max_sse_event_bytes: int = Field(default=16 * 1024 * 1024, gt=0)
     upstream_response_create_max_bytes: int = Field(default=15 * 1024 * 1024, gt=0)
     auth_base_url: str = "https://auth.openai.com"
@@ -208,7 +208,7 @@ class Settings(BaseSettings):
     oauth_timeout_seconds: float = 30.0
     oauth_redirect_uri: str = "http://localhost:1455/auth/callback"
     oauth_callback_host: str = _default_oauth_callback_host()
-    oauth_callback_port: int = 1455  # Do not change the port. OpenAI dislikes changes.
+    oauth_callback_port: int = 1455
     anthropic_upstream_base_url: str = "https://api.anthropic.com"
     anthropic_auth_base_url: str = "https://platform.claude.com"
     anthropic_oauth_authorize_url: str = "https://claude.com/cai/oauth/authorize"
@@ -235,65 +235,65 @@ class Settings(BaseSettings):
     auth_guardian_jitter_seconds: float = Field(default=300.0, ge=0)
     auth_guardian_failure_backoff_base_seconds: float = Field(default=300.0, ge=0)
     auth_guardian_failure_backoff_max_seconds: float = Field(default=3600.0, ge=0)
-    # Anthropic OAuth credentials are only honored when the first system block
-    # is the Claude Code identity line. Claude Code sends it; a client calling
-    # the proxy directly does not, and upstream answers 429. Prepending it (the
-    # client's own system prompt is kept, second) makes a plain API request
-    # behave like a Claude Code one. Off only for diagnosing that gate.
+
+
+
+
+
     anthropic_helper_cache_1h_enabled: bool = True
     anthropic_claude_code_identity_enabled: bool = True
     anthropic_fable_routing_enabled: bool = True
     anthropic_fable_weekly_max_used_percent: float = Field(default=50.0, ge=0, le=100)
-    # Drains non-Fable sticky pins off under-threshold accounts onto a
-    # selectable burn_first account proactively, instead of waiting for
-    # budget pressure to force the reallocation.
+
+
+
     anthropic_fable_sticky_drain_enabled: bool = True
-    # Prefer accounts past the Fable weekly threshold for non-Fable traffic.
-    # Off since Fable was retired (owner, 2026-09-22).
+
+
     anthropic_fable_burn_first_enabled: bool = False
-    # The weekly threshold is an unverified belief about Anthropic's Fable
-    # policy — keep empirically probing over-threshold accounts instead of
-    # permanently stranding them in case upstream doesn't actually block.
+
+
+
     anthropic_fable_over_threshold_probe_enabled: bool = True
-    # How long a "capable" Fable-probe marker stays fresh before the account
-    # must be re-verified (default: two pulse cycles at the default interval).
+
+
     anthropic_fable_probe_ttl_seconds: int = 43200
-    # Threshold against Anthropic's own dedicated Fable-scoped weekly percent
-    # (authoritative when fresh) — distinct from the overall-weekly heuristic
-    # threshold above, which stays the fallback when no fresh scoped data exists.
-    # Quota awareness is advisory; the default does not reserve unused capacity.
+
+
+
+
     anthropic_fable_scoped_max_used_percent: float = Field(default=100.0, ge=0, le=100)
-    # Fable-class traffic never stamps burn_first, so a budget-pressured pin with
-    # no burn-first target would otherwise ride to the 429 wall; this lets it
-    # rebind to a budget-safe account one window early (anti-thrash guard still
-    # keeps the pin when the whole pool is exhausted).
+
+
+
+
     anthropic_sticky_headroom_reallocation_enabled: bool = True
-    # Keep a pinned Claude session on its account until that account is really
-    # exhausted (100% or a live 429), then fail over once. Overrides the
-    # headroom-reallocation and sticky-drain moves above, each of which costs a
-    # full prompt-cache rewrite on the new account.
+
+
+
+
     anthropic_sticky_hold_until_exhausted: bool = True
-    # The same hold for OpenAI/Codex sticky sessions (prompt-cache, thread and Codex
-    # session pins): budget pressure and burn-first drain do not move a pin; only
-    # the account becoming unselectable does (a live 429 or usage-limit error, or
-    # 100% usage). The one failover is persisted, so the conversation stays on the
-    # new account instead of returning to the old one and rewriting its cache again.
+
+
+
+
+
     openai_sticky_hold_until_exhausted: bool = True
-    # Anthropic accounts with vendor-side "extra usage" enabled keep answering
-    # 200 after their subscription window exhausts and silently bill metered
-    # credits. Selection excludes such accounts; when false (default) they stay
-    # excluded even at pool exhaustion, when true they become last-resort
-    # candidates only.
+
+
+
+
+
     anthropic_route_to_extra_usage: bool = False
-    # Codex bills paid credits once a 5-hour or weekly window is spent.
-    # False (default) keeps those accounts out of rotation whatever their
-    # balance; true restores the old credit override.
+
+
+
     openai_route_to_credits: bool = False
-    # Claude-week rule (a) (p6, 2026-10-01): when true, /v1/messages refuses Opus requests from
-    # headless Claude Code (user agent "sdk-cli") that carry no x-agent-lb-seat header.
+
+
     refuse_untagged_headless_opus: bool = False
-    # Opt-in only: holding an exhausted pool open hides the error from clients
-    # for hours. By default return the quota error and reset headers immediately.
+
+
     anthropic_pool_exhausted_wait_enabled: bool = False
     anthropic_pool_exhausted_wait_max_seconds: float = Field(default=21600.0, gt=0)
     account_pulse_enabled: bool = True
@@ -311,40 +311,40 @@ class Settings(BaseSettings):
     usage_refresh_interval_seconds: int = Field(default=60, gt=0)
     reset_credit_auto_redeem_enabled: bool = True
     reset_credit_auto_redeem_interval_seconds: int = Field(default=60, gt=0)
-    # Daily allowance for automatic exhaustion redemptions: banked credits are
-    # scarce, so one reset per rolling 24h is the baseline, plus one more if the
-    # pool hits the limit again the same day (operator rule, 2026-09-10). The
-    # count is read from the durable attempt ledger (trigger=auto only), so a
-    # restart cannot lift it, and the cooldown below is the minimum spacing
-    # between two of them — it stops one exhaustion episode, read through a
-    # stale usage snapshot, from burning the whole allowance back-to-back.
-    # Expiry-sweep and operator-initiated redemptions are exempt from both.
+
+
+
+
+
+
+
+
     reset_credit_auto_redeem_max_per_day: int = Field(default=2, ge=0)
     reset_credit_auto_redeem_cooldown_seconds: int = Field(default=900, ge=0)
     reset_credit_expiry_redeem_enabled: bool = True
     reset_credit_expiry_redeem_window_hours: int = Field(default=24, gt=0)
     reset_credit_expiry_sweep_interval_seconds: int = Field(default=3600, gt=0)
-    # Anonymous, aggregate-only public usage endpoint (GET /api/usage/public). No PII is exposed.
+
     public_usage_enabled: bool = True
     openai_cache_affinity_max_age_seconds: int = Field(default=1800, gt=0)
     warmup_model: str = "gpt-5.4-mini"
     openai_prompt_cache_key_derivation_enabled: bool = True
     http_responses_session_bridge_enabled: bool = True
     http_responses_session_bridge_request_budget_seconds: float = Field(default=7200.0, gt=0)
-    # Maximum time a bridge-backed stream may wait for its *first* upstream event
-    # (response.created / first delta / terminal) before the client is told the
-    # turn failed and the poisoned bridge/durable session is torn down. Guards
-    # against a first-turn response.create that upstream never answers leaving the
-    # client SSE held open until stream_idle_timeout_seconds (~10 min) retires it.
+
+
+
+
+
     http_bridge_first_event_timeout_seconds: float = Field(default=60.0, gt=0)
-    # Reasoning ``encrypted_content`` blobs are bound to the upstream account
-    # that minted them. agent-lb rotates accounts, so transcripts replayed by
-    # long-lived ``store:false`` sessions can carry blobs the selected account
-    # cannot decrypt — upstream then accepts response.create and silently never
-    # answers (close 1000, zero events). When enabled, bridge-prepared
-    # first-turn requests have those blobs stripped (content-less reasoning
-    # items are dropped entirely), and a first-event timeout attempts one
-    # degraded retry with the blobs stripped before surfacing the failure.
+
+
+
+
+
+
+
+
     http_bridge_strip_foreign_encrypted_reasoning: bool = True
     http_responses_session_bridge_idle_ttl_seconds: float = Field(default=120.0, gt=0)
     http_responses_session_bridge_codex_idle_ttl_seconds: float = Field(default=900.0, gt=0)
@@ -354,18 +354,18 @@ class Settings(BaseSettings):
     http_responses_session_bridge_response_create_concurrency: int = Field(default=64, gt=0)
     http_responses_session_bridge_gateway_safe_mode: bool = False
     http_responses_session_bridge_instance_id: str = Field(default_factory=_default_http_bridge_instance_id)
-    # Identity for the local-first instance-federation ownership model: the
-    # single instance name that owns an account's OAuth refresh authority by
-    # default (see openspec instance-federation). This is a distinct concept
-    # from the bridge instance id/ring above, which identifies a pod within a
-    # *shared-database* replica set for HTTP-bridge session affinity — the
-    # opposite deployment model (one DB per instance here, vs. many pods on
-    # one shared DB there). Do not reuse or wire the two together.
+
+
+
+
+
+
+
     local_instance_id: str = Field(default_factory=_default_local_instance_id)
-    # Legacy token remains mirror-only; transfers require a separate credential.
+
     federation_token: str | None = None
     federation_mirror_token: str | None = None
-    federation_transfer_token: str | None = None  # rejected explicitly for safe upgrades
+    federation_transfer_token: str | None = None
     federation_transfer_inbound_sha256: str | None = None
     federation_transfer_outbound_token: str | None = None
     federation_taker_instance_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
@@ -379,11 +379,11 @@ class Settings(BaseSettings):
     # when true the mirror also carries accounts other instances own (pushed in or mirrored), access token only; the owner keeps refreshing them.  # noqa: E501
     federation_mirror_include_pushed: bool = False
     federation_usage_window_days: int = Field(default=7, gt=0)
-    # Mirrors forward request_logs to the peer. Set false to stop that push.
+
     federation_forward_request_logs: bool = True
-    # Account push (openspec add-federation-account-push). Sender side: which of
-    # this instance's owned accounts to push to which peer LBs. Receiver side:
-    # which Tailscale logins may push, and the tailscale CLI used to identify them.
+
+
+
     federation_push_path: Path = DEFAULT_HOME_DIR / "federation-push.json"
     federation_push_interval_seconds: int = Field(default=300, gt=0)
     federation_push_sources_path: Path = DEFAULT_HOME_DIR / "federation-push-sources.json"
@@ -412,25 +412,25 @@ class Settings(BaseSettings):
     max_decompressed_responses_body_bytes: int = Field(default=128 * 1024 * 1024, gt=0)
     image_inline_fetch_enabled: bool = True
     image_inline_allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
-    # OpenAI Images API compatibility (POST /v1/images/{generations,edits})
-    # ``images_host_model`` is the internal Responses model used to invoke the
-    # built-in ``image_generation`` tool. It is never echoed to clients.
-    # ``images_default_model`` is the public model returned to clients when
-    # they omit ``model``; it must remain in the ``gpt-image-*`` family.
+
+
+
+
+
     images_host_model: str = "gpt-5.5"
     images_default_model: str = "gpt-image-2"
     images_max_partial_images: int = Field(default=3, ge=0, le=3)
-    # NOTE: there is intentionally no ``images_max_n`` setting. The
-    # upstream ``image_generation`` tool path accepts only a single
-    # image per call and agent-lb does not yet implement client-side
-    # fan-out, so ``n > 1`` is hard-rejected at the API boundary. The
-    # cap is lifted in the same change that introduces fan-out.
+
+
+
+
+
     model_registry_enabled: bool = True
     model_registry_refresh_interval_seconds: int = Field(default=300, gt=0)
     model_registry_client_version: str = "0.101.0"
     model_context_window_overrides: Annotated[dict[str, int], NoDecode] = Field(default_factory=dict)
     proxy_unauthenticated_client_cidrs: Annotated[list[str], NoDecode] = Field(default_factory=list)
-    # Request-log attribution (app/core/identity.py). Real handles go in the instance env file, not the repo.
+
     identity_enabled: bool = True
     identity_owner: str = "owner"
     identity_owner_machines: Annotated[list[str], NoDecode] = Field(default_factory=list)
@@ -449,26 +449,26 @@ class Settings(BaseSettings):
 
     dashboard_auth_proxy_header: str = "Remote-User"
 
-    # --- Multi-replica & production settings ---
-    # Prometheus metrics
+
+
     metrics_enabled: bool = False
     metrics_host: str = "127.0.0.1"
     metrics_port: int = 9090
     event_loop_lag_warning_threshold_seconds: float = 0.5
 
-    # Logging
-    log_format: str = "text"  # "text" or "json"
 
-    # Leader election
+    log_format: str = "text"
+
+
     leader_election_enabled: bool = False
     leader_election_ttl_seconds: int = 600
 
-    # Circuit breaker
+
     circuit_breaker_enabled: bool = False
     circuit_breaker_failure_threshold: int = 5
     circuit_breaker_recovery_timeout_seconds: int = 60
 
-    # Soft drain & deterministic failover
+
     soft_drain_enabled: bool = True
     deterministic_failover_enabled: bool = True
     drain_primary_threshold_pct: float = 85.0
@@ -478,8 +478,8 @@ class Settings(BaseSettings):
     probe_quiet_seconds: float = 60.0
     probe_success_streak_required: int = 3
 
-    # Backpressure
-    backpressure_max_concurrent_requests: int = 0  # 0 = unlimited
+
+    backpressure_max_concurrent_requests: int = 0
 
     bulkhead_proxy_limit: int = Field(default=1024, ge=0)
     bulkhead_proxy_http_limit: int | None = Field(default=None, ge=0)
@@ -503,18 +503,18 @@ class Settings(BaseSettings):
     memory_warning_threshold_mb: int = 0
     memory_reject_threshold_mb: int = 0
 
-    # OpenTelemetry
+
     otel_enabled: bool = False
     otel_exporter_endpoint: str = ""
 
-    # Shutdown drain
+
     shutdown_drain_timeout_seconds: int = 30
 
-    # HTTP connector limits. Every Anthropic and OpenAI HTTP stream shares one
-    # pool, and all of a provider's streams go to one host, so a per-host cap is
-    # a cap on parallel agents: the pool wait counts against the connect timeout.
-    # The total limit stays as a file-descriptor guard (the launchd soft limit
-    # is 4096 and inbound sockets need their share); 0 per host means no cap.
+
+
+
+
+
     http_connector_limit: int = 1024
     http_connector_limit_per_host: int = 0
 
@@ -604,7 +604,7 @@ class Settings(BaseSettings):
     @field_validator("identity_machine_aliases", mode="before")
     @classmethod
     def _normalize_identity_machine_aliases(cls, value: str | Mapping[str, str] | None) -> dict[str, str]:
-        """Node handle to reported machine, from ``node=alias,node=alias``."""
+
         if value is None:
             return {}
         if isinstance(value, str):

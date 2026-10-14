@@ -13,13 +13,7 @@ T = TypeVar("T")
 
 
 class StaleWhileRevalidate(Generic[T]):
-    """One cached value for the accounts read path, refreshed off the request path.
 
-    A read whose key matches gets the cached value however old it is; once it is
-    older than ``ttl_seconds`` the read also starts one background refresh (never two
-    at a time). Only an empty or re-keyed slot makes the reader wait for a load.
-    ``refresh_now`` reloads in the caller, for the startup warm and the warmer loop.
-    """
 
     def __init__(self, name: str, *, ttl_seconds: float) -> None:
         self._name = name
@@ -28,8 +22,8 @@ class StaleWhileRevalidate(Generic[T]):
         self._value: T | None = None
         self._loaded_at = 0.0
         self._generation = 0
-        # Bumped only by clear(), so a load that straddles an invalidation
-        # (a settings write) cannot re-cache what it read before it.
+
+
         self._clear_epoch = 0
         self._refresh_task: asyncio.Task[None] | None = None
 
@@ -50,14 +44,14 @@ class StaleWhileRevalidate(Generic[T]):
         started_at = time.monotonic()
         clear_epoch = self._clear_epoch
         value = await load()
-        # A clear during the load may postdate what the load read: hand the
-        # value to this caller, but leave the slot empty for the next reader.
+
+
         if self._clear_epoch == clear_epoch:
             self._store(key, value, started_at)
         return value
 
     async def cancel_refresh(self) -> None:
-        """Stop an in-flight background refresh (shutdown, before the DB closes)."""
+
         task, self._refresh_task = self._refresh_task, None
         if task is None or task.done():
             return
@@ -94,6 +88,6 @@ class StaleWhileRevalidate(Generic[T]):
         except Exception:
             logger.warning("accounts %s cache refresh failed; serving the previous value", self._name, exc_info=True)
             return
-        # A clear or a newer load since this refresh started wins over its result.
+
         if self._generation == generation:
             self._store(key, value, started_at)

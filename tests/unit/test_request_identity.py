@@ -1,4 +1,4 @@
-"""Request attribution: who (member key or owner machine) and where (the auth client IP)."""
+
 
 from __future__ import annotations
 
@@ -35,14 +35,14 @@ MEMBER_A = ("member-id-a", "member-a")
 
 
 def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
-    """``member`` is (member id, looked-up name) for a validated member key."""
+
     return pytest.param(headers, socket_ip, member or (None, None), settings or {}, expected, id=case_id)
 
 
 @pytest.mark.parametrize(
     ("headers", "socket_ip", "member", "overrides", "expected"),
     [
-        # Person (spec change 1)
+
         _case("keyless-local-owner-machine", {}, LOOPBACK, OWNER_LOCAL),
         _case("member-key-local", {}, LOOPBACK, ("member-a", "member", "box-1", "local"), member=MEMBER_A),
         _case(
@@ -73,7 +73,7 @@ def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
             ("unknown", "unknown", "box-1", "local"),
             member=("member-id-c", "Member.B＠example.com"),
         ),
-        # Machine (spec change 2)
+
         _case(
             "keyless-owner-tailnet-via-alias",
             {"x-forwarded-for": TAIL_A},
@@ -295,7 +295,7 @@ def test_forged_forwarding_on_loopback_follows_the_auth_resolver(monkeypatch, tr
             resolved = resolve_identity(headers, LOOPBACK, node_cache=NODES, settings=get_settings())
             assert resolved.caller_machine_source == machine_source
     finally:
-        # The context has restored the environment; discard the now-stale Settings too.
+
         get_settings.cache_clear()
 
 
@@ -347,7 +347,7 @@ async def test_member_lookup_failure_records_unknown_and_does_not_raise(monkeypa
     assert resolved == RequestIdentity("unknown", "unknown", "box-1", "local")
     assert await attach_member(local, "member-id-lookup-failure") == resolved
     assert calls == 1
-    # A failure is remembered for 10 s, not the 60 s a found name gets; age only the timestamp.
+
     stored_at, handle, ttl = identity_module._member_names["member-id-lookup-failure"]
     assert (handle, ttl) == (None, 10.0)
     identity_module._member_names["member-id-lookup-failure"] = (stored_at - 11, handle, ttl)
@@ -440,12 +440,12 @@ async def test_member_lookup_is_bounded_and_shared(monkeypatch):
     monkeypatch.setattr(identity_module, "get_background_session", SlowSession)
     monkeypatch.setattr(identity_module, "_MEMBER_LOOKUP_TIMEOUT_SECONDS", 0.02)
     local = RequestIdentity("owner-a", "owner-machine", "box-1", "local")
-    # Concurrent writes to the same member share the one pending lookup.
+
     callers = [asyncio.create_task(attach_member(local, "member-id-slow")) for _ in range(10)]
     results = await asyncio.gather(*callers)
     assert calls == 1
     assert results == [RequestIdentity("unknown", "unknown", "box-1", "local")] * 10
-    # A timeout is negatively cached while the database is degraded.
+
     assert await attach_member(local, "member-id-slow") == results[0]
     assert calls == 1
     stored_at, handle, ttl = identity_module._member_names["member-id-slow"]

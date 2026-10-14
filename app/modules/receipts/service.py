@@ -108,7 +108,7 @@ class ReceiptsService:
                     cost_usd=round(float(row.cost_usd), 6),
                 )
             )
-        # The requested window drives zero-fill; without bounds use the observed extent.
+
         start = filters.since or total.first
         end = filters.until or (_date(total.last) + timedelta(microseconds=1) if total.last else None)
         series = []

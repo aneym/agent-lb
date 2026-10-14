@@ -1,10 +1,10 @@
-# Production Docker Compose — PostgreSQL backend
-# Usage:
-#   cp .env.example .env.local   # fill in secrets
-#   docker compose -f docker-compose.prod.yml up -d
-#
-# Requires external PostgreSQL. Set AGENT_LB_DATABASE_URL in .env.local:
-#   AGENT_LB_DATABASE_URL=postgresql+asyncpg://user:password@host:5432/agentlb
+
+
+
+
+
+
+
 services:
   server:
     build:

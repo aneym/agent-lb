@@ -1,4 +1,4 @@
-"""Ladder output contracts at the CLI and its factory consumer boundary."""
+
 
 from __future__ import annotations
 

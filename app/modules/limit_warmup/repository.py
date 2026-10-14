@@ -12,7 +12,7 @@ from app.db.session import sqlite_writer_section
 ANTHROPIC_CONTINUOUS_WINDOW = "anthropic_primary_continuous"
 OPENAI_CONTINUOUS_WINDOW = "openai_weekly_continuous"
 
-# Failed primers for one window bucket stop retrying after this many retries.
+
 _MAX_CONTINUOUS_RETRIES = 5
 
 
@@ -77,12 +77,7 @@ class LimitWarmupRepository:
         now: datetime,
         window: str = ANTHROPIC_CONTINUOUS_WINDOW,
     ) -> AccountLimitWarmup | None:
-        """Claim a window bucket or retry its failed send after a bounded backoff.
 
-        The unique (account, window, reset) key survives process restarts. A
-        pending send is never retried automatically: its upstream outcome is
-        uncertain after a crash, so a duplicate could spend credits.
-        """
         existing = await self._existing_attempt(account_id=account_id, window=window, reset_at=reset_at)
         if existing is None:
             return await self.try_create_attempt(

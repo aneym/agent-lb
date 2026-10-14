@@ -885,7 +885,7 @@ def test_handle_rate_limit_uses_bounded_retry_when_no_delay(monkeypatch):
     handle_rate_limit(state, {"message": "Rate limit exceeded."})
     assert state.status == AccountStatus.RATE_LIMITED
     assert state.cooldown_until is not None
-    # 82ed714b: live refusals now use bounded quota retry, not jittered request backoff.
+
     assert state.cooldown_until == pytest.approx(now + 60.0)
     assert state.reset_at == state.cooldown_until
     assert state.blocked_at == now
@@ -951,8 +951,8 @@ def test_select_account_caps_quota_exceeded_retry_hint():
     result = select_account(states, now=now)
     assert result.account is None
     assert result.error_message == "Rate limit exceeded. Try again in 300s"
-    # The underlying state values are intentionally not clamped — only the
-    # surfaced hint is.
+
+
     assert states[0].reset_at == far_future_reset
 
 
@@ -1085,7 +1085,7 @@ def test_apply_usage_quota_respects_runtime_reset_for_quota_exceeded(monkeypatch
     future = now + 3600.0
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
 
-    # Normally 50% used would reset it to ACTIVE, but runtime_reset is in future
+
     status, used_percent, reset_at = apply_usage_quota(
         status=AccountStatus.QUOTA_EXCEEDED,
         primary_used=50.0,
@@ -1105,7 +1105,7 @@ def test_apply_usage_quota_respects_runtime_reset_for_rate_limited(monkeypatch):
     future = now + 3600.0
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
 
-    # Normally 50% used would reset it to ACTIVE, but runtime_reset is in future
+
     status, used_percent, reset_at = apply_usage_quota(
         status=AccountStatus.RATE_LIMITED,
         primary_used=50.0,
@@ -1152,7 +1152,7 @@ def test_select_account_readmits_expired_rate_limit_keeping_used_percent():
 
     assert result.account is not None
     assert state.status == AccountStatus.ACTIVE
-    # 82ed714b: retry eligibility does not erase the last usage ranking snapshot.
+
     assert state.used_percent == 100.0
     assert state.reset_at is None
 
@@ -1171,7 +1171,7 @@ def test_select_account_readmits_expired_quota_exceeded_keeping_usage_percents()
 
     assert result.account is not None
     assert state.status == AccountStatus.ACTIVE
-    # 82ed714b: expired refusal readmits without fabricating fresh usage.
+
     assert state.used_percent == 100.0
     assert state.secondary_used_percent == 100.0
     assert state.reset_at is None
@@ -1239,7 +1239,7 @@ def test_quota_exceeded_cooldown_allows_selection_after_expiry():
 
 
 def test_bypass_quota_exceeded_keeps_account_in_pool():
-    """When bypass_quota_exceeded=True, a QUOTA_EXCEEDED account should not be filtered out."""
+
     now = 1_700_000_000.0
     state = AccountState(
         "a",
@@ -1247,11 +1247,11 @@ def test_bypass_quota_exceeded_keeps_account_in_pool():
         used_percent=100.0,
         reset_at=int(now) + 3600,
     )
-    # Default (bypass=False) → account is excluded.
+
     result_default = select_account([state], now=now)
     assert result_default.account is None
 
-    # With bypass=True → account stays in the pool.
+
     result_bypass = select_account([state], now=now, bypass_quota_exceeded=True)
     assert result_bypass.account is not None
     assert result_bypass.account.account_id == "a"
@@ -1272,7 +1272,7 @@ def test_bypass_quota_exceeded_still_recovers_expired_quota_state():
     assert result.account is not None
     assert result.account.account_id == "a"
     assert state.status == AccountStatus.ACTIVE
-    # 82ed714b: bounded retry does not reset advisory usage percentages.
+
     assert state.used_percent == 100.0
     assert state.secondary_used_percent == 100.0
     assert state.reset_at is None
@@ -1432,7 +1432,7 @@ def test_requested_limit_relative_availability_uses_requested_reset_window():
 
 
 def test_bypass_quota_exceeded_does_not_affect_other_statuses():
-    """bypass_quota_exceeded should only affect QUOTA_EXCEEDED, not hard-blocked states."""
+
     now = 1_700_000_000.0
     paused = AccountState("p", AccountStatus.PAUSED, used_percent=5.0)
     reauth = AccountState("r", AccountStatus.REAUTH_REQUIRED, used_percent=5.0)
@@ -1440,7 +1440,7 @@ def test_bypass_quota_exceeded_does_not_affect_other_statuses():
     quota = AccountState("q", AccountStatus.QUOTA_EXCEEDED, used_percent=100.0, reset_at=int(now) + 3600)
 
     result = select_account([paused, reauth, deactivated, quota], now=now, bypass_quota_exceeded=True)
-    # Hard-blocked states still excluded; QUOTA_EXCEEDED is kept.
+
     assert result.account is not None
     assert result.account.account_id == "q"
 
@@ -1556,7 +1556,7 @@ async def test_anthropic_fable_eligibility_snapshots_usage_before_repo_exit(monk
         model="claude-fable-5",
     )
 
-    # 82ed714b: snapshots remain eligible; Fable preference still favors fresh capacity.
+
     assert eligibility.account_ids == [fresh_account.id]
 
 
@@ -1570,9 +1570,7 @@ def _anthropic_eligibility_settings() -> SimpleNamespace:
 
 @pytest.mark.asyncio
 async def test_anthropic_eligibility_readmits_additional_quota_row_with_none_reset(monkeypatch):
-    """An additional-quota cooldown row at 100% with reset_at=None must not
-    permanently exclude the account from routing (regression: stale-exhausted
-    permanent block)."""
+
     account = _make_test_account(account_id="anthropic-stale")
     account.provider = "anthropic"
 
@@ -1609,8 +1607,7 @@ async def test_anthropic_eligibility_readmits_additional_quota_row_with_none_res
 
 @pytest.mark.asyncio
 async def test_anthropic_eligibility_readmits_primary_window_with_none_reset(monkeypatch):
-    """A persisted primary usage window at 100% with reset_at=None must not gate
-    the account out of routing indefinitely."""
+
     account = _make_test_account(account_id="anthropic-primary-stale")
     account.provider = "anthropic"
 
@@ -1643,8 +1640,7 @@ async def test_anthropic_eligibility_readmits_primary_window_with_none_reset(mon
 
 @pytest.mark.asyncio
 async def test_anthropic_eligibility_still_blocks_bounded_future_reset(monkeypatch):
-    """A bounded, still-future exhaustion reset continues to gate the account —
-    only unbounded (None) resets are re-admitted."""
+
     account = _make_test_account(account_id="anthropic-cooling")
     account.provider = "anthropic"
     future = int(time.time()) + 3600
@@ -1682,8 +1678,7 @@ async def test_anthropic_eligibility_still_blocks_bounded_future_reset(monkeypat
 
 @pytest.mark.asyncio
 async def test_anthropic_eligibility_ignores_tripwire_after_primary_recovers(monkeypatch):
-    """A historical paid-usage tripwire must not quarantine an account after
-    its latest subscription primary window has recovered."""
+
     account = _make_test_account(account_id="anthropic-recovered")
     account.provider = "anthropic"
     future = int(time.time()) + 3600
@@ -1744,9 +1739,7 @@ async def test_anthropic_eligibility_ignores_tripwire_after_primary_recovers(mon
 
 @pytest.mark.asyncio
 async def test_anthropic_eligibility_tripwire_stays_until_secondary_headroom_is_newer(monkeypatch):
-    """A primary snapshot at 8% recorded after the tripwire does not lift it
-    while the latest secondary snapshot (99%) is older. A secondary snapshot
-    under 100% recorded after the tripwire does."""
+
     account = _make_test_account(account_id="anthropic-secondary-stale")
     account.provider = "anthropic"
     future = int(time.time()) + 3600
@@ -1819,18 +1812,13 @@ async def test_anthropic_eligibility_tripwire_stays_until_secondary_headroom_is_
 
 
 def _quota_scoped_additional_usage(quota_key: str, entries: dict) -> AsyncMock:
-    """latest_by_account stub that returns entries only for the given quota key
-    (the eligibility path also queries the extra-usage tripwire key)."""
+
     return AsyncMock(side_effect=lambda key, window, *, account_ids: entries if key == quota_key else {})
 
 
 @pytest.mark.asyncio
 async def test_anthropic_eligibility_pool_wide_transient_cooldowns_readmit_accounts(monkeypatch):
-    """When every candidate is blocked only by requested-quota cooldowns, the
-    pool must re-admit them once the bounded live retry has passed, even while
-    the stored header reset is still in the future, instead of returning a
-    pool-wide 429 (regression: 2-account pools permanently 'cooling down for
-    quota'). 82ed714b replaced the old near-reset bypass with this bound."""
+
     first = _make_test_account(account_id="anthropic-transient-1")
     first.provider = "anthropic"
     second = _make_test_account(account_id="anthropic-transient-2")
@@ -1875,8 +1863,7 @@ async def test_anthropic_eligibility_pool_wide_transient_cooldowns_readmit_accou
 
 @pytest.mark.asyncio
 async def test_anthropic_eligibility_transient_bypass_prefers_healthy_accounts(monkeypatch):
-    """The transient bypass is a last resort: a healthy candidate keeps the
-    cooled account excluded."""
+
     cooled = _make_test_account(account_id="anthropic-cooled")
     cooled.provider = "anthropic"
     healthy = _make_test_account(account_id="anthropic-healthy")
@@ -1910,15 +1897,14 @@ async def test_anthropic_eligibility_transient_bypass_prefers_healthy_accounts(m
 
     eligibility = await service._provider_quota_eligibility("anthropic", "anthropic_top_thinking")
 
-    # 82ed714b: a live cooldown still excludes while healthy accounts route.
+
     assert eligibility.account_ids == [healthy.id]
     assert eligibility.blocked_count == 1
 
 
 @pytest.mark.asyncio
 async def test_anthropic_eligibility_transient_bypass_respects_primary_exhaustion(monkeypatch):
-    """An account whose primary window is genuinely exhausted must stay blocked
-    even when its requested-quota cooldown reset is near."""
+
     account = _make_test_account(account_id="anthropic-exhausted")
     account.provider = "anthropic"
     now = int(time.time())
@@ -1965,7 +1951,7 @@ async def test_anthropic_eligibility_transient_bypass_respects_primary_exhaustio
 
     eligibility = await service._provider_quota_eligibility("anthropic", "anthropic_top_thinking")
 
-    # 82ed714b: the live cooldown excludes, not the primary snapshot.
+
     assert eligibility.account_ids == []
     assert eligibility.blocked_count == 1
     assert eligibility.cooldown_reset_at == now + 60
@@ -2039,7 +2025,7 @@ def test_state_from_account_treats_monthly_usage_as_long_window_quota(monkeypatc
         runtime=RuntimeState(),
     )
 
-    # 82ed714b: exhausted monthly snapshot ranks but cannot exclude an account.
+
     assert state.status == AccountStatus.ACTIVE
     assert state.secondary_used_percent == 100.0
     assert state.secondary_reset_at == future_reset
@@ -2178,15 +2164,15 @@ def test_state_from_account_readmits_free_rate_limit_without_failure_marker(monk
         runtime=RuntimeState(),
     )
 
-    # 82ed714b: a snapshot-only rate limit has no upstream failure marker.
+
     assert state.status == AccountStatus.ACTIVE
     assert state.reset_at is None
     assert state.used_percent == 100.0
 
 
 def test_state_from_account_holds_free_plan_rate_limit_until_persisted_bounded_retry_expires(monkeypatch):
-    # 82ed714b: a persisted real 429 holds for its bounded retry across a restart,
-    # even when the zero-capacity-primary rule would otherwise seed the account active.
+
+
     now = 1_700_000_000.0
     blocked = now - 30.0
     retry_at = int(blocked + 60)
@@ -2263,7 +2249,7 @@ def test_state_from_account_readmits_free_rate_limit_for_legacy_unknown_primary_
         runtime=RuntimeState(),
     )
 
-    # 82ed714b: legacy rate-limit status without blocked_at cannot exclude.
+
     assert state.status == AccountStatus.ACTIVE
     assert state.reset_at is None
     assert state.used_percent == 100.0
@@ -2353,7 +2339,7 @@ def test_state_from_account_readmits_quota_exceeded_on_restart_without_blocked_a
         secondary_entry=secondary,
         runtime=RuntimeState(),
     )
-    # 82ed714b: missing usage cannot turn a marker-free legacy status into a real refusal.
+
     assert state.status == AccountStatus.ACTIVE
     assert state.blocked_at is None
 
@@ -2432,7 +2418,7 @@ def test_state_from_account_uses_freshest_credit_snapshot(monkeypatch):
         runtime=RuntimeState(),
     )
 
-    # 82ed714b: exhausted credits snapshot is advisory, not an upstream refusal.
+
     assert state.status == AccountStatus.ACTIVE
     assert state.secondary_used_percent == 100.0
     assert _extract_credit_status(stale_primary_with_credits, fresh_secondary_without_credits) == (
@@ -2464,7 +2450,7 @@ def test_state_from_account_readmits_quota_exceeded_without_blocked_at_when_usag
         secondary_entry=secondary,
         runtime=RuntimeState(),
     )
-    # 82ed714b: same-window usage does not preserve a marker-free exclusion.
+
     assert state.status == AccountStatus.ACTIVE
     assert state.blocked_at is None
 
@@ -2499,7 +2485,7 @@ def test_state_from_account_clears_quota_exceeded_after_restart_with_persisted_b
 
 def test_state_from_account_keeps_quota_exceeded_after_restart_when_persisted_blocked_at_is_recent(monkeypatch):
     now = 1_700_000_000.0
-    # 82ed714b: a persisted real refusal must exclude before its bounded retry.
+
     blocked = now - 30.0
     future_reset = int(now + 3600)
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
@@ -2553,7 +2539,7 @@ def test_state_from_account_readmits_expired_quota_block_after_restart_when_seco
         secondary_entry=secondary,
         runtime=RuntimeState(),
     )
-    # 82ed714b: older usage cannot extend an expired persisted upstream refusal.
+
     assert state.status == AccountStatus.ACTIVE
     assert state.blocked_at is None
 
@@ -2636,7 +2622,7 @@ def test_state_from_account_readmits_quota_exceeded_at_retry_expiry_when_usage_i
         secondary_entry=secondary,
         runtime=runtime,
     )
-    # 82ed714b: stale usage cannot extend the expired runtime retry.
+
     assert state.status == AccountStatus.ACTIVE
 
 
@@ -2659,7 +2645,7 @@ def test_state_from_account_readmits_quota_exceeded_after_retry_without_usage_da
         secondary_entry=None,
         runtime=runtime,
     )
-    # 82ed714b: retry does not require any usage refresh.
+
     assert state.status == AccountStatus.ACTIVE
 
 
@@ -2694,7 +2680,7 @@ def test_state_from_account_readmits_rate_limited_after_retry_when_primary_is_st
         secondary_entry=fresh_secondary,
         runtime=runtime,
     )
-    # 82ed714b: a stale primary snapshot cannot extend a live refusal retry.
+
     assert state.status == AccountStatus.ACTIVE
 
 
@@ -3039,13 +3025,13 @@ def test_error_backoff_expired_account_does_not_immediately_relock():
 
 @pytest.mark.asyncio
 async def test_load_selection_inputs_parallelizes_usage_queries():
-    """Verify that independent usage queries are parallelized with asyncio.gather()."""
+
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
 
     from app.modules.proxy.load_balancer import LoadBalancer
 
-    # Create mock repositories
+
     mock_accounts_repo = AsyncMock()
     mock_accounts_repo.list_accounts = AsyncMock(return_value=[])
 
@@ -3063,17 +3049,17 @@ async def test_load_selection_inputs_parallelizes_usage_queries():
     mock_repos.__aenter__ = AsyncMock(return_value=mock_repos)
     mock_repos.__aexit__ = AsyncMock(return_value=None)
 
-    # Create LoadBalancer with mocked repo factory
+
     balancer = LoadBalancer(repo_factory=lambda: mock_repos)
 
-    # Measure execution time
+
     start = time.time()
     result = await balancer._load_selection_inputs(model=None)
     elapsed = time.time() - start
 
-    # If queries were sequential, elapsed would be ~0.4s (0.2 + 0.2)
-    # If queries are parallel, elapsed should be ~0.2s
-    # We use a generous threshold of 0.35s to account for test environment overhead
+
+
+
     assert elapsed < 0.35, f"Queries appear to be sequential (took {elapsed:.3f}s, expected <0.35s)"
     assert result.latest_primary == {}
     assert result.latest_secondary == {}
@@ -4840,8 +4826,8 @@ def test_select_account_fill_first_secondary_used_breaks_primary_tie_high_first(
     ]
     result = select_account(states, now=now, routing_strategy="fill_first")
     assert result.account is not None
-    # bravo has the highest secondary_used (98%), so least remaining weekly
-    # capacity, so it gets drained first.
+
+
     assert result.account.account_id == "bravo"
 
 
@@ -4890,7 +4876,7 @@ def test_select_account_fill_first_secondary_none_treated_as_zero():
     ]
     result = select_account(states, now=now, routing_strategy="fill_first")
     assert result.account is not None
-    # b has secondary 10% > a's None-as-0, so b drains first.
+
     assert result.account.account_id == "b"
 
 
@@ -4912,16 +4898,12 @@ def test_select_account_fill_first_primary_dominates_over_secondary():
     ]
     result = select_account(states, now=now, routing_strategy="fill_first")
     assert result.account is not None
-    # Primary still wins -- only ties break on secondary.
+
     assert result.account.account_id == "high-secondary"
 
 
 def test_state_from_account_anthropic_credits_never_rescue_exhausted_windows(monkeypatch):
-    """Anthropic extra-usage credits are dashboard-visible only by default:
-    a positive credit balance must not make a weekly-exhausted account look
-    healthier (upstream would happily keep serving it by billing dollars).
-    Since 82ed714b a snapshot no longer sets QUOTA_EXCEEDED; the exhausted
-    window is a ranking input, so credits must leave that input unchanged."""
+
     now = 1_700_000_000.0
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
@@ -4964,8 +4946,8 @@ def test_state_from_account_anthropic_credits_never_rescue_exhausted_windows(mon
         runtime=RuntimeState(),
     )
 
-    # The exhausted weekly window still ranks the account as spent, and the
-    # credit balance changes none of the routing inputs.
+
+
     assert state.secondary_used_percent == 100.0
     ranking_inputs = ("status", "used_percent", "secondary_used_percent", "reset_at", "capacity_credits")
     assert {name: getattr(state, name) for name in ranking_inputs} == {
@@ -4974,11 +4956,7 @@ def test_state_from_account_anthropic_credits_never_rescue_exhausted_windows(mon
 
 
 def test_state_from_account_anthropic_opt_in_does_not_globally_clear_quota(monkeypatch):
-    """Anthropic credits do not globally clear exhausted standard quota.
 
-    The eligibility prefilter supplies exact paid-fallback IDs to the load
-    balancer for a request-scoped bypass instead.
-    """
     now = 1_700_000_000.0
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
@@ -5007,7 +4985,7 @@ def test_state_from_account_anthropic_opt_in_does_not_globally_clear_quota(monke
             runtime=RuntimeState(),
         )
 
-        # 82ed714b: snapshots rank; only a live refusal sets a rate-limit status.
+
         assert state.status == AccountStatus.ACTIVE
         assert state.used_percent == 100.0
         assert state.reset_at is None

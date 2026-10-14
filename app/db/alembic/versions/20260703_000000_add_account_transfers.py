@@ -1,12 +1,4 @@
-"""add account_transfers table for instance-federation checkout/checkin
 
-Revision ID: 20260703_000000_add_account_transfers
-Revises: 20260702_000000_add_account_owner_instance
-Create Date: 2026-07-03
-
-Durable, nonce-keyed handshake state for the instance-federation
-checkout/checkin protocol (see openspec instance-federation design.md).
-"""
 
 from __future__ import annotations
 

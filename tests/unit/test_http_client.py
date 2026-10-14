@@ -286,9 +286,9 @@ async def test_close_http_client_force_closes_active_current_and_retired_session
 
 @pytest.mark.asyncio
 async def test_shared_session_holds_hundreds_of_streams_open_to_one_host() -> None:
-    # Every Anthropic stream goes to one host through this session. A per-host
-    # pool cap makes stream N+1 wait for a slot, and the pool wait counts
-    # against the 8 s connect timeout, so parallel agents past the cap fail.
+
+
+
     concurrent = 200
     arrived = 0
     all_arrived = asyncio.Event()

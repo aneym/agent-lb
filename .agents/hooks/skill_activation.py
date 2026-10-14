@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UserPromptSubmit hook — suggest relevant skills based on prompt keywords/intent."""
+
 
 import json
 import re
@@ -15,7 +15,7 @@ except ImportError:
 
 
 def load_skill_rules() -> dict:
-    """Load skill-rules.json relative to this hook's location."""
+
     hook_dir = Path(__file__).resolve().parent
     rules_path = hook_dir.parent / "skills" / "skill-rules.json"
     with open(rules_path) as f:
@@ -23,7 +23,7 @@ def load_skill_rules() -> dict:
 
 
 def match_prompt_triggers(prompt: str, triggers: dict) -> bool:
-    """Check if prompt matches keyword or intent pattern triggers."""
+
     prompt_lower = prompt.lower()
 
     for kw in triggers.get("keywords", []):
@@ -54,7 +54,7 @@ def main() -> None:
 
     skills = rules.get("skills", {})
 
-    # Match each skill's promptTriggers against the user prompt
+
     matched: list[dict] = []
     for name, rule in skills.items():
         triggers = rule.get("promptTriggers")
@@ -83,13 +83,13 @@ def main() -> None:
         )
         sys.exit(0)
 
-    # Group by priority
+
     priority_order = ["critical", "high", "medium", "low"]
     by_priority: dict[str, list[dict]] = {p: [] for p in priority_order}
     for m in matched:
         by_priority.setdefault(m["priority"], []).append(m)
 
-    # Build output banner
+
     lines: list[str] = [
         "",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",

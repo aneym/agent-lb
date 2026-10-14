@@ -1,4 +1,4 @@
-"""Durable custody boundaries: a nonce serializes import with abort."""
+
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ async def test_checkout_import_and_reclaim_serialize_on_reservation(db_setup: bo
         async with SessionLocal() as session:
             repo = FederationRepository(session)
             if not abort_first:
-                # Pause after payload receipt but before the commit, holding the nonce row.
+
                 original = session.commit
 
                 async def paused_commit() -> None:

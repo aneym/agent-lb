@@ -29,12 +29,7 @@ def _stub_account(account_id: str, email: str, chatgpt_id: str | None = None) ->
 
 
 def _make_postgres_repo(monkeypatch: pytest.MonkeyPatch) -> tuple[AccountsRepository, dict[str, list[str]]]:
-    """Build an AccountsRepository whose dialect reports postgresql and
-    whose lock acquisitions and session writes are all stubbed.
 
-    Returns the repo plus a dict of ordered lock-key recordings keyed by
-    lock type, so callers can assert the exact lock sequence.
-    """
     session = MagicMock()
     session.execute = AsyncMock()
     session.commit = AsyncMock()
@@ -52,7 +47,7 @@ def _make_postgres_repo(monkeypatch: pytest.MonkeyPatch) -> tuple[AccountsReposi
     async def fake_email_lock(email: str) -> None:
         recorded["email"].append(email)
 
-    async def fake_merge_by_email_enabled() -> bool:  # only used when merge_by_email is None
+    async def fake_merge_by_email_enabled() -> bool:
         return True
 
     async def fake_account_by_chatgpt_identity(_chatgpt_id: str, *, workspace_id: str | None):
@@ -78,15 +73,7 @@ def _make_postgres_repo(monkeypatch: pytest.MonkeyPatch) -> tuple[AccountsReposi
 
 @pytest.mark.asyncio
 async def test_upsert_takes_identity_lock_even_when_merge_by_email_enabled(monkeypatch):
-    """Pin the fix for the codex P2 finding on PR #799.
 
-    When merge_by_email=True AND merge_by_chatgpt_identity=True with a
-    chatgpt_account_id set, two concurrent reauths for the same upstream
-    identity but different email claims would otherwise take different
-    email-scoped locks, both miss the canonical-row lookup, and both
-    INSERT a duplicate row for that identity. The fix takes the
-    identity-keyed advisory lock first, then the email-scoped one.
-    """
 
     repo, recorded = _make_postgres_repo(monkeypatch)
     account = _stub_account("acc_a", "a@example.com", chatgpt_id="chatgpt_xyz")
@@ -101,9 +88,7 @@ async def test_upsert_takes_identity_lock_even_when_merge_by_email_enabled(monke
 
 @pytest.mark.asyncio
 async def test_upsert_takes_identity_lock_when_merge_by_email_disabled(monkeypatch):
-    """Existing path: merge_by_email=False + merge_by_chatgpt_identity
-    keys lock by upstream identity (unchanged behavior).
-    """
+
 
     repo, recorded = _make_postgres_repo(monkeypatch)
     account = _stub_account("acc_b", "b@example.com", chatgpt_id="chatgpt_zzz")
@@ -116,10 +101,7 @@ async def test_upsert_takes_identity_lock_when_merge_by_email_disabled(monkeypat
 
 @pytest.mark.asyncio
 async def test_upsert_falls_back_to_id_lock_without_identity(monkeypatch):
-    """When identity reconciliation is off and merge_by_email is off, the
-    per-account fallback lock keyed by account.id still fires (so two
-    concurrent inserts of the same id serialize).
-    """
+
 
     repo, recorded = _make_postgres_repo(monkeypatch)
     account = _stub_account("acc_c", "c@example.com", chatgpt_id=None)
@@ -132,9 +114,7 @@ async def test_upsert_falls_back_to_id_lock_without_identity(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_upsert_email_only_when_identity_not_in_play(monkeypatch):
-    """merge_by_email=True without identity reconciliation keeps the
-    pre-existing email-only lock behavior.
-    """
+
 
     repo, recorded = _make_postgres_repo(monkeypatch)
     account = _stub_account("acc_d", "d@example.com", chatgpt_id="chatgpt_qqq")

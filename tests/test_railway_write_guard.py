@@ -1,9 +1,4 @@
-"""Integration coverage of the custody/argv floor at the actual hook boundary.
 
-The prior login-only guard allowed writes and wrapper bypasses. No existing
-Railway coverage exercises hook JSON; subprocesses need no production seam.
-Only synthetic credentials are used; Railway itself is never executed.
-"""
 import json
 import os
 from pathlib import Path
@@ -51,7 +46,7 @@ def test_login_only_writes_are_refused(command):
     'RAILWAY_TOKEN=x sh -c "railway up"',
     'RAILWAY_TOKEN=x railway variables --set PORT=8080',
     'railway status', 'railway logs', 'railway environment', 'echo ordinary',
-    # Live overblock after 7a71805e: paths and prose that merely name the guard.
+
     'cmp config/coding-agents/hooks/railway-vars-guard.sh ~/.claude/hooks/railway-vars-guard.sh',
     'python3 -m pytest -q tests/test_railway_write_guard.py',
     'env PYTHONPATH=. python3 tests/test_railway_write_guard.py',
@@ -89,9 +84,9 @@ def test_secret_shaped_argv_warns_even_with_custody(command):
 
 
 
-# hook-dispatcher-4 review (2026-10-08): the custody rewrite (7a71805e) dropped the earlier guard's refusal of
-# reads that print every secret value; `railway variables --kv` was allowed. These print values whatever token is
-# in custody.
+
+
+
 @pytest.mark.parametrize('command,denial', [
     ('railway variables --kv', 'railway variables read prints values'),
     ('RAILWAY_TOKEN=x railway variables --kv', 'railway variables read prints values'),
@@ -107,8 +102,8 @@ def test_reads_that_print_secret_values_warn_even_with_custody(command, denial):
     assert denial in result.stderr
     assert "secret floor" in result.stderr
 
-# Review F1-F7: subprocess JSON boundary covers missed executable routes and
-# overblocked data without executing the CLI or adding a production seam.
+
+
 @pytest.mark.parametrize('command,tokens,expected', [
     *[(f'{runner} @railway/cli up', {}, 0) for runner in
       ['npx', 'bunx', 'pnpm dlx', 'yarn dlx', 'npm exec', 'npm exec --']],
@@ -149,8 +144,8 @@ def test_review_counterexamples(command, tokens, expected):
     assert 'synthetic' not in result.stderr
 
 
-# R3 floor regressions: real hook decisions for numeric argv, unknown custody,
-# sudo options and executable heredoc expansions; no CLI or test-only seam.
+
+
 @pytest.mark.parametrize('command,tokens,expected', [
     ('RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 > /dev/null', {}, 0),
     ('RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 2 > /dev/null', {}, 0),
@@ -180,8 +175,8 @@ def test_r3_counterexamples(command, tokens, expected):
     assert 'synthetic' not in result.stderr
 
 
-# R4 floor regressions: comments must preserve command boundaries, here-strings
-# must not swallow later commands, and sudo bundles must expose executable argv.
+
+
 @pytest.mark.parametrize('command,tokens,expected', [
     ('echo hi # note\nrailway up', {}, 0),
     ("echo hi # owner's note\nrailway status", {}, 0),
@@ -217,9 +212,9 @@ def test_deliberate_obfuscation_residuals(command, tokens):
     assert invoke(command, **tokens).returncode == 2
 
 
-# Pre-GA policy at the real hook JSON/subprocess boundary. These cases protect
-# session-based non-prod writes, production custody, and the retained output
-# floor; wrappers and short flags would otherwise bypass the new branch.
+
+
+
 @pytest.mark.parametrize('command,expected', [
     ('railway variables --set FOO=bar', 0),
     ('railway variables -s FOO=bar', 0),
@@ -264,7 +259,7 @@ def test_unknown_link_write_is_logged_without_values():
     assert 'bar' not in result.stderr
 
 
-# CLI argv ownership regressions at the hook boundary, without running Railway.
+
 @pytest.mark.parametrize('command,expected', [
     *[(f'{prefix} {args}{suffix}', 0)
       for prefix, suffix in [('railway', ''), ('eval "railway', '"'),
@@ -301,8 +296,8 @@ def test_pre_ga_r2_argv_ownership(command, expected):
         assert 'WARNING:' in result.stderr
 
 
-# SSH/run policy is exercised through hook stdin, never the CLI. Existing r2
-# cases cover variable writes, not this login-only execution branch.
+
+
 @pytest.mark.parametrize('command,expected', [
     ('railway ssh --service rails --environment staging -- python -c ...', 0),
     ("railway ssh --service rails --environment staging -- python -c 'print(1)'", 0),
@@ -358,7 +353,7 @@ def test_pre_ga_ssh_run_linked_environment(mode, environment, expected, tmp_path
     assert result.returncode == expected, result.stderr
     if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
         assert 'WARNING:' in result.stderr
-    # Explicit targeting takes precedence over the linked default.
+
     result = invoke(f'railway {mode} -e staging -- python -c ...', cwd=child, HOME=str(home))
     assert result.returncode == 0, result.stderr
 
@@ -392,15 +387,15 @@ def test_pre_ga_review_advisories(command, expected):
     assert 'synthetic' not in result.stderr
 
 
-# Accident prevention does not interpret arbitrary Python or script bodies.
+
 @pytest.mark.xfail(strict=True, reason='Accepted arbitrary Python value-output residual')
 def test_python_environment_printing_residual():
     result = invoke('railway ssh -e production -- python -c "import os; print(os.environ)"')
     assert result.returncode == 2
 
 
-# Full nested checks protect wrapper output and destructive deletes after stripping
-# ssh/run argv. This table reproduces the bypass through real hook stdin.
+
+
 @pytest.mark.parametrize('command,expected', [
     ('railway run -- npx @railway/cli variables', 0),
     ('railway run -- bash -c "railway service delete x"', 2),
@@ -431,8 +426,8 @@ def test_ssh_run_full_nested_policy(command, expected):
         assert 'destructive data' in result.stderr
 
 
-# R4 trims cover permissive non-delete commands and option operand ownership
-# through the real hook boundary; no CLI execution or production seam is needed.
+
+
 @pytest.mark.parametrize('command,expected', [
     *[(f'railway {args}', 0) for args in
       ['link', 'add', 'volume', 'service api', 'environment new staging']],
@@ -459,7 +454,7 @@ def test_deep_check_exception_is_denied():
     assert 'Traceback' not in result.stderr
 
 
-# The launch flag restores secret blocking at the real hook boundary.
+
 @pytest.mark.parametrize('command', [
     'railway variables', 'railway variables --kv', 'railway variables --json',
     'railway variables get FOO', 'railway run printenv', 'railway ssh env',

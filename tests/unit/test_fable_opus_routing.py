@@ -110,7 +110,7 @@ def test_explicit_cli_model_is_preserved(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_launch_defaults_follow_the_newest_opus() -> None:
-    """cc and opus launch Claude Code's `opus` alias, so a new Opus needs no edit (owner, 2026-09-22)."""
+
     newest = "claude-opus-5-5"
     clients = ROOT / "clients"
     assert 'MODEL = "opus[1m]"' in (clients / "opus").read_text()

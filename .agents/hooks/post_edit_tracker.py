@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""PostToolUse hook — track code file modifications.
 
-Matcher: Edit|Write|MultiEdit
-
-Records modified code files in dirty-{session_id}.json.
-"""
 
 import json
 import sys
@@ -19,18 +14,18 @@ except ImportError:
         pass
 
 
-# Code file extensions (backend only)
+
 CODE_EXTENSIONS = {".py"}
 
-# Code directories (relative to project root)
+
 CODE_DIRS = {"app/", "tests/"}
 
-# Exclusion patterns
+
 EXCLUDE_PATTERNS = {"__pycache__/", ".claude/", ".agents/"}
 
 
 def is_code_file(file_path: str, project_dir: str) -> bool:
-    """Determine if the given path is a code file."""
+
     if Path(file_path).suffix not in CODE_EXTENSIONS:
         return False
 
@@ -59,13 +54,13 @@ def main() -> None:
     if not file_path or not is_code_file(file_path, project_dir):
         sys.exit(0)
 
-    # Record dirty state
+
     hook_dir = Path(__file__).resolve().parent
     state_dir = hook_dir / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_dir / f"dirty-{session_id}.json"
 
-    # Load existing state
+
     state: dict[str, object] = {"modified": True, "files": [], "last_modified": ""}
     if state_path.exists():
         try:
@@ -74,7 +69,7 @@ def main() -> None:
         except (json.JSONDecodeError, PermissionError):
             pass
 
-    # Add file (deduplicate)
+
     files = state.get("files", [])
     if isinstance(files, list) and file_path not in files:
         files.append(file_path)

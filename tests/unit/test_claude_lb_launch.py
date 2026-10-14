@@ -124,7 +124,7 @@ def test_ccgpt_proxy_rewrites_gpt_messages_and_token_count_but_rejects_claude() 
     gpt_body = b'{"model":"gpt-6-sol"}'
     claude_body = b'{"model":"claude-opus-4-8"}'
     assert launcher._ccgpt_upstream_path("/v1/messages", gpt_body) == "/v1/ccgpt/messages"
-    # Other GPT names pass the gate; agent-lb resolves them against its served models.
+
     for name in ("gpt-6-luna-low", "sol-latest", "luna-latest-xhigh"):
         body = b'{"model":"' + name.encode() + b'"}'
         assert launcher._ccgpt_upstream_path("/v1/messages", body) == "/v1/ccgpt/messages"
@@ -665,7 +665,7 @@ def test_interactive_launcher_never_applies_startup_grace_to_remote(monkeypatch)
 
 
 class _BlackHoleServer:
-    """Accepts TCP connections and never answers: an LB whose event loop is stalled."""
+
 
     def __enter__(self):
         self.sock = socket.socket()
@@ -760,7 +760,7 @@ def test_headless_claim_defers_on_timeout_instead_of_failing() -> None:
         elapsed = time.monotonic() - started
     assert claim is launcher.DEFERRED_CLAIM
     assert (error, retry_at) == ("", None)
-    # one retry with a doubled budget, then defer: ~0.1s + ~0.2s
+
     assert 0.25 <= elapsed < 1.0, elapsed
 
 
@@ -1209,15 +1209,15 @@ def test_shim_connect_error_is_retryable_only_for_connection_failures() -> None:
     launcher = load_launcher_module()
     classify = launcher._is_retryable_shim_connect_error
 
-    # Connection refused/reset (LB restarting) — safe to retry, request never landed.
+
     assert classify(ConnectionRefusedError()) is True
     assert classify(ConnectionResetError()) is True
     assert classify(urllib.error.URLError(ConnectionRefusedError())) is True
 
-    # A real HTTP response — never retried; its status passes straight through.
+
     assert classify(urllib.error.HTTPError("http://lb", 503, "Service Unavailable", {}, None)) is False
 
-    # Read timeout — request may be in flight, so do not re-send (no double-process).
+
     assert classify(urllib.error.URLError(socket.timeout())) is False
     assert classify(RuntimeError("boom")) is False
 
@@ -1230,9 +1230,9 @@ def test_shim_connect_retry_budget_outlasts_watchdog_recovery() -> None:
         for attempt in range(launcher.SHIM_CONNECT_RETRIES_DEFAULT)
     )
 
-    # Watchdog revival of an unloaded LB takes up to ~65s (2 x 30s ticks +
-    # startup); the shim must keep retrying well past that instead of
-    # surfacing a 502 broken pipe to the agent.
+
+
+
     assert budget >= 100
 
 
@@ -1247,7 +1247,7 @@ def test_tunnel_bucket_from_env_defaults_and_disable(monkeypatch) -> None:
     monkeypatch.setenv("CLAUDE_LB_TUNNEL_RATE_MBPS", "0")
     assert launcher._tunnel_bucket_from_env() is None
 
-    # NaN passes a plain <=0 gate; it must disable shaping, not poison sleeps.
+
     monkeypatch.setenv("CLAUDE_LB_TUNNEL_RATE_MBPS", "nan")
     assert launcher._tunnel_bucket_from_env() is None
 
@@ -1260,8 +1260,8 @@ def test_tunnel_bucket_from_env_defaults_and_disable(monkeypatch) -> None:
 def test_tunnel_bucket_paces_aggregate_relay_rate() -> None:
     launcher = load_launcher_module()
 
-    # 1 MB/s with a 10KB burst: four 50KB chunks book 0.2s of schedule; after
-    # the burst window the caller must have slept ~0.14s of it.
+
+
     bucket = launcher._TunnelBucket(1_000_000.0, burst_bytes=10_000.0)
     started = time.monotonic()
     for _ in range(4):
@@ -1269,7 +1269,7 @@ def test_tunnel_bucket_paces_aggregate_relay_rate() -> None:
     elapsed = time.monotonic() - started
     assert elapsed >= 0.12
 
-    # Disabled shaping never sleeps regardless of volume.
+
     unlimited = launcher._TunnelBucket(0.0)
     started = time.monotonic()
     unlimited.throttle(10**9)
@@ -1280,14 +1280,14 @@ def test_tunnel_bucket_small_writes_bypass_sleep_but_debit_schedule() -> None:
     launcher = load_launcher_module()
 
     bucket = launcher._TunnelBucket(1_000_000.0, burst_bytes=10_000.0)
-    # Small frames (RC websocket scale) pass without sleeping...
+
     started = time.monotonic()
     for _ in range(5):
         bucket.throttle(1_000)
     assert time.monotonic() - started < 0.05
-    # ...but they booked schedule: once the booked backlog exceeds the burst
-    # window, small writes throttle too, so chunking small cannot dodge
-    # shaping. 30 x 8KB = 240KB at 1 MB/s must take ~0.24s minus the burst.
+
+
+
     started = time.monotonic()
     for _ in range(30):
         bucket.throttle(8_000)
@@ -1309,8 +1309,8 @@ def test_splice_relays_both_directions_and_reports_totals() -> None:
     pump = threading.Thread(target=run, daemon=True)
     pump.start()
 
-    # Stay under the AF_UNIX socketpair buffer: a payload larger than the
-    # in-flight capacity deadlocks this single-threaded send/read sequence.
+
+
     client_far.sendall(b"a" * 4_000)
     received = b""
     while len(received) < 4_000:
@@ -1329,10 +1329,7 @@ def test_splice_relays_both_directions_and_reports_totals() -> None:
 
 
 def test_tunnel_connect_failure_is_stamped_in_the_proxy_log(capsys) -> None:
-    """2026-10-08: rails.so CONNECTs through :2458 stalled while Studio was
-    losing packets, and nothing in the proxy log said which upstream connect
-    failed or when, so the stall read as a proxy fault. Drives a real CONNECT
-    through the proxy server to a closed port."""
+
     launcher = load_launcher_module()
     closed = socket.socket()
     closed.bind(("127.0.0.1", 0))
@@ -1432,10 +1429,7 @@ def test_overlapping_launchers_keep_independent_readiness_after_peer_cleanup(mon
 
 @pytest.mark.parametrize('sink_mode', ['normal', 'stalled', 'enospc', 'epipe'])
 def test_connect_logging_preserves_response_privacy_and_bounds(monkeypatch, sink_mode):
-    """Real CONNECT boundary: malformed targets must not leak, and sink failures must not delay 502.
 
-    A flood also proves bounded output. Existing closed-port coverage did not exercise these floors.
-    """
     import errno
     import threading
     import io
@@ -1481,12 +1475,12 @@ def test_connect_logging_preserves_response_privacy_and_bounds(monkeypatch, sink
 
 
 def test_successful_tunnel_transfers_before_stalled_slow_log(monkeypatch):
-    """Real CONNECT/socket echo: a slow connect's diagnostic sink cannot precede the splice."""
+
     import threading
     import sys
 
     launcher = load_launcher_module()
-    # Exercise slow-connect reporting without sleeping a test for the production threshold.
+
     monkeypatch.setattr(launcher, 'SHIM_TUNNEL_SLOW_CONNECT_SECONDS', 0)
     release = threading.Event()
     entered = threading.Event()
@@ -1535,10 +1529,7 @@ def test_successful_tunnel_transfers_before_stalled_slow_log(monkeypatch):
     "example.com:65536",
 ])
 def test_connect_rejects_invalid_authority_without_logging_userinfo(target, capsys):
-    """Real CONNECT rejects the whole malformed authority, not a sanitized prefix.
 
-    Existing path/query coverage misses userinfo mistaken for a host and invalid ports.
-    """
     import threading
 
     launcher = load_launcher_module()
@@ -1560,7 +1551,7 @@ def test_connect_rejects_invalid_authority_without_logging_userinfo(target, caps
 
 
 def test_connect_valid_domain_logs_validated_target(monkeypatch, capsys):
-    """Real CONNECT keeps normal domain diagnostics when the network edge refuses it."""
+
     import threading
 
     launcher = load_launcher_module()

@@ -887,10 +887,7 @@ def test_v1_rejects_unknown_message_role():
 
 
 def test_responses_accepts_input_file_with_file_id_content_item():
-    """Regression: ``input_file`` content items with a ``file_id`` were
-    previously rejected. They are now allowed and forwarded verbatim so
-    callers can reference uploads registered through the
-    ``POST /backend-api/files`` upload protocol."""
+
     content = [
         {"type": "input_text", "text": "Summarize this file."},
         {"type": "input_file", "file_id": "file_abc"},
@@ -919,8 +916,7 @@ def test_responses_compact_accepts_input_file_with_file_id_content_item():
 
 
 def test_responses_accepts_top_level_input_file_with_file_id():
-    """Top-level ``input_file`` items (sibling of role messages) were
-    also rejected; they should now be forwarded as-is."""
+
     payload = {
         "model": "gpt-5.1",
         "instructions": "hi",
@@ -950,7 +946,7 @@ def test_extract_input_file_ids_finds_top_level_and_nested_ids():
         },
         {"type": "input_file", "file_id": "file_b"},
         {"type": "input_image", "file_id": "file_c"},
-        # Duplicates and missing/blank ids are filtered out.
+
         {"type": "input_file", "file_id": "file_a"},
         {"type": "input_file", "file_id": ""},
         {"type": "input_file"},

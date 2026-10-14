@@ -142,8 +142,8 @@ class AccountSelection:
     error_message: str | None
     error_code: str | None = None
     lease: AccountLease | None = None
-    # Populated on selection failure so API surfaces can explain WHY every
-    # account was excluded and when the earliest one recovers.
+
+
     excluded_accounts: list[ExcludedAccount] = field(default_factory=list)
     retry_at: datetime | None = None
 
@@ -332,9 +332,9 @@ class LoadBalancer:
         scoped_account_ids = None if account_ids is None else set(account_ids)
         request_ignore_primary_quota_ids = frozenset(ignore_primary_quota_account_ids or ())
         request_burn_first_ids = frozenset(burn_first_account_ids or ())
-        # Last failed core-selection result; its per-account exclusion detail
-        # and earliest-recovery hint ride the terminal AccountSelection so API
-        # surfaces can explain the failure.
+
+
+
         failed_result: SelectionResult | None = None
         provider_name = normalize_provider_name(provider)
 
@@ -848,8 +848,8 @@ class LoadBalancer:
         )
         cached = await self._selection_inputs_cache.get(cache_key)
         if cached is not None:
-            # Tests and non-SQL consumers keep their short-lived snapshot;
-            # SQL-backed paths reload only the account rows, not quota joins.
+
+
             async with self._repo_factory() as repos:
                 if not isinstance(getattr(repos.accounts, "session", None), AsyncSession):
                     return _clone_selection_inputs(cached)
@@ -879,8 +879,8 @@ class LoadBalancer:
             all_accounts = [
                 account for account in all_accounts if normalize_provider_name(account.provider) == provider_name
             ]
-            # Mirrors cannot refresh locally, so stop routing them five minutes before expiry.
-            # Owned accounts remain eligible for refresh on demand.
+
+
             selection_settings = get_settings()
             encryptor = TokenEncryptor()
             excluded_mirror_count = 0
@@ -1343,33 +1343,33 @@ class LoadBalancer:
             )
         else:
             existing = sticky_existing_account_id if isinstance(sticky_existing_account_id, str) else None
-        # When the pinned account is temporarily unavailable (rate-limited,
-        # error backoff) but still in the pool, pick a fallback WITHOUT
-        # overwriting the sticky mapping so the next request returns to the
-        # original account — and its warm OpenAI prompt cache — once it
-        # recovers.  Only reallocate_sticky=True opts in to permanent
-        # reassignment.
+
+
+
+
+
+
         persist_fallback = True
         apply_sticky_secondary_budget_threshold = False
-        # Threaded from the branch that actually forces a rebind so the audit
-        # event records the true cause rather than an after-the-fact guess. Only
-        # consulted when the fallback upsert lands on a different account than
-        # the one previously pinned (see the persist_fallback block below).
+
+
+
+
         rebind_reason = "other"
 
         if existing:
             pinned = next((state for state in states if state.account_id == existing), None)
             if pinned is not None:
-                # Proactively rebind session affinity for any sticky kind
-                # once the pinned account is already above the configured
-                # budget threshold. That preserves continuity below the
-                # threshold while avoiding obvious short-window failures once
-                # the session is skating on the edge of exhaustion.
+
+
+
+
+
                 now = time.time()
-                # Holding, a pin moves only when its account becomes unselectable
-                # (a live 429 or usage-limit cooldown, or 100% usage): budget
-                # pressure and burn-first drain would strand the rest of the window
-                # and pay a full prompt-cache rewrite on the new account.
+
+
+
+
                 budget_pressured = (
                     not hold_sticky_until_exhausted
                     and sticky_kind
@@ -1390,7 +1390,7 @@ class LoadBalancer:
                     sticky_kind == StickySessionKind.PROMPT_CACHE
                     and pinned.status == AccountStatus.RATE_LIMITED
                     and pinned.reset_at is not None
-                    and pinned.reset_at - now >= 600  # 10 minutes
+                    and pinned.reset_at - now >= 600
                 )
 
                 burn_first_reallocate = pinned.routing_policy != ROUTING_POLICY_BURN_FIRST
@@ -1414,11 +1414,11 @@ class LoadBalancer:
                         burn_first_target_selectable = burn_first.account is not None
                         burn_first_reallocate = burn_first_target_selectable
 
-                # Non-Fable Anthropic traffic with a live request-scoped burn
-                # set moves pins off under-threshold accounts onto a
-                # selectable burn_first account without waiting for budget
-                # pressure; the guards mirror budget_pressured so rate-limit
-                # grace/fallback semantics below are untouched.
+
+
+
+
+
                 sticky_drain_reallocate = (
                     burn_first_sticky_drain
                     and not hold_sticky_until_exhausted
@@ -1436,12 +1436,12 @@ class LoadBalancer:
                 proactive_reallocate = (
                     budget_pressured or rate_limit_far_away or sticky_drain_reallocate
                 ) and burn_first_reallocate
-                # Fable-class traffic never stamps burn_first, so a
-                # budget-pressured pin with no burn-first target would otherwise
-                # ride to the 429 wall. When headroom reallocation is enabled,
-                # budget pressure alone opens the reallocation branch; the
-                # anti-thrash guard below still keeps the pin when the whole
-                # pool is exhausted.
+
+
+
+
+
+
                 headroom_pressure_reallocate = headroom_reallocate and budget_pressured
 
                 if not (proactive_reallocate or headroom_pressure_reallocate):
@@ -1462,13 +1462,13 @@ class LoadBalancer:
                             await sticky_repo.upsert(sticky_key, pinned.account_id, kind=sticky_kind)
                         return pinned_result
                 else:
-                    # Entered via a selectable burn-first target or (Anthropic
-                    # only) headroom pressure with no burn-first candidate.
-                    # Before reallocating, check whether the pool has a
-                    # meaningfully better candidate.  When every account
-                    # is above the budget threshold, reallocating just
-                    # wastes DB writes and destroys prompt-cache locality
-                    # (thrashing).
+
+
+
+
+
+
+
                     if budget_pressured:
                         apply_sticky_secondary_budget_threshold = True
                         pool_best = _select_account_preferring_budget_safe(
@@ -1515,10 +1515,10 @@ class LoadBalancer:
                                         kind=sticky_kind,
                                     )
                                 return pinned_result
-                    # rate_limit_far_away is mutually exclusive with the other
-                    # two (it requires a RATE_LIMITED pin); when budget pressure
-                    # and burn-first drain both hold, attribute to budget
-                    # pressure as the higher-severity trigger.
+
+
+
+
                     if rate_limit_far_away:
                         rebind_reason = "rate_limited_failover"
                     elif budget_pressured:
@@ -1526,12 +1526,12 @@ class LoadBalancer:
                     elif sticky_drain_reallocate:
                         rebind_reason = "burn_first_drain"
                     reallocate_sticky = True
-                # Grace period: if the pinned account is rate-limited with a
-                # known reset time within a short window, retry selection
-                # with a small time advance to preserve prompt cache.
-                # A shallow copy is used so the time-advanced selection does
-                # not mutate the original state (which is later synced to DB
-                # by _sync_state for all accounts).
+
+
+
+
+
+
                 if not reallocate_sticky and pinned.status == AccountStatus.RATE_LIMITED:
                     grace_copy = replace(pinned)
                     grace_result = select_account(
@@ -1554,29 +1554,29 @@ class LoadBalancer:
                 if reallocate_sticky:
                     await sticky_repo.delete(sticky_key, kind=sticky_kind)
                 elif pinned.status not in _RECOVERABLE_STATUSES:
-                    # Permanently down (PAUSED/DEACTIVATED) — let the
-                    # fallback be persisted to rebind the mapping.
+
+
                     rebind_reason = "account_unavailable"
                 elif hold_sticky_until_exhausted and pinned.status in (
                     AccountStatus.RATE_LIMITED,
                     AccountStatus.QUOTA_EXCEEDED,
                 ):
-                    # Holding: the pin's account is out, so fail over once and
-                    # persist it; returning to the old account on recovery would
-                    # rewrite the cache a second time.
+
+
+
                     rebind_reason = "rate_limited_failover"
                 elif sticky_max_age_seconds is not None:
-                    # TTL-based kind (PROMPT_CACHE): preserve the original
-                    # mapping so the next request returns to the warm-cache
-                    # account once it recovers.  The TTL will naturally
-                    # expire the mapping if recovery takes too long.
+
+
+
+
                     persist_fallback = False
                 else:
-                    # Durable kind without TTL (CODEX_SESSION): persist the
-                    # fallback so the session sticks to one account during the
-                    # outage instead of bouncing across random fallbacks. The
-                    # pin is recoverable but currently unselectable — a
-                    # rate-limited pin whose grace retry failed is a failover.
+
+
+
+
+
                     rebind_reason = "rate_limited_failover" if pinned.status == AccountStatus.RATE_LIMITED else "other"
             else:
                 await sticky_repo.delete(sticky_key, kind=sticky_kind)
@@ -1618,15 +1618,7 @@ class LoadBalancer:
         new_account_id: str,
         reason: str,
     ) -> None:
-        """Record a durable-pin rebind as an audit event, fire-and-forget.
 
-        A rebind busts the conversation's org-scoped Anthropic prompt cache and
-        re-bills its input tokens uncached, so the frequency and cause need to be
-        measurable. Dispatched via AuditService.log_async — the repo-wide audit
-        convention — so the write never blocks selection; any error building or
-        dispatching it is swallowed after a log line. The raw sticky key is hashed
-        so affinity keys never land in the audit table.
-        """
         try:
             key_hash = hashlib.sha256(sticky_key.encode("utf-8")).hexdigest()
             AuditService.log_async(
@@ -1677,7 +1669,7 @@ class LoadBalancer:
         await self.record_errors(account, 1)
 
     async def record_errors(self, account: Account, count: int) -> None:
-        """Record *count* transient errors in a single lock acquisition."""
+
         if count < 1:
             return
         lock = await self._get_account_lock(account.id)
@@ -1694,7 +1686,7 @@ class LoadBalancer:
                 await self._persist_state_if_current(repos.accounts, account_snapshot, state)
 
     async def record_success(self, account: Account) -> None:
-        """Clear transient error state after a successful upstream request."""
+
         lock = await self._get_account_lock(account.id)
         async with lock:
             runtime = self._runtime.get(account.id)
@@ -1782,8 +1774,8 @@ class LoadBalancer:
         if not preserve_quota_state:
             self._sync_runtime_state(account, state, selected=selected)
             return
-        # Primary-only paid fallback is request-scoped. Preserve the runtime
-        # quota/cooldown/backoff state, recording only that selection occurred.
+
+
         if selected:
             runtime = self._runtime.setdefault(account.id, RuntimeState())
             runtime.last_selected_at = time.time()
@@ -1932,10 +1924,10 @@ def _build_states(
         )
         if routing_policy_override is not None and account.id in ignore_standard_quota_account_ids:
             state.routing_policy = routing_policy_override
-        # Request-scoped burn preference (e.g. non-Fable Anthropic traffic
-        # draining accounts past the Fable weekly threshold). Applied to the
-        # per-request state only — never persisted — and only over a stored
-        # `normal` policy so operator preserve/burn choices win.
+
+
+
+
         if account.id in burn_first_account_ids and state.routing_policy == _ROUTING_POLICY_NORMAL:
             state.routing_policy = ROUTING_POLICY_BURN_FIRST
         state.ignore_standard_quota = account.id in ignore_standard_quota_account_ids
@@ -2090,9 +2082,9 @@ def _state_from_account(
         effective_secondary_entry = None
     primary_row = usage_history_to_window_row(primary_entry) if primary_entry is not None else None
     secondary_row = usage_history_to_window_row(secondary_entry) if secondary_entry is not None else None
-    # Weekly-only accounts may not emit a dedicated secondary row; treat the
-    # weekly primary row as quota-window input for balancer decisions. When
-    # both rows exist, prefer the newer weekly snapshot.
+
+
+
     if primary_row is not None and usage_core.should_use_weekly_primary(primary_row, secondary_row):
         effective_secondary_entry = primary_entry
         primary_used = None
@@ -2101,14 +2093,14 @@ def _state_from_account(
 
     secondary_used = effective_secondary_entry.used_percent if effective_secondary_entry else None
     secondary_reset = effective_secondary_entry.reset_at if effective_secondary_entry else None
-    # Anthropic extra-usage credits never act as an OpenAI-style global quota
-    # override: upstream keeps serving an exhausted window by billing metered
-    # dollars, so usable credits must not make every request see the account as
-    # healthy. The Anthropic prefilter passes exact paid-fallback account IDs
-    # into _build_states for a request-scoped primary-quota bypass.
-    # OpenAI is the same while openai_route_to_credits is false: Codex bills
-    # paid credits once a window is spent, so the balance must not keep the
-    # account selectable.
+
+
+
+
+
+
+
+
     raw_credits_has, raw_credits_unlimited, raw_credits_balance = _extract_credit_status(
         primary_entry,
         effective_secondary_entry,
@@ -2117,10 +2109,10 @@ def _state_from_account(
     route_openai_credits = bool(getattr(get_settings(), "openai_route_to_credits", False))
     openai_account = normalize_provider_name(account.provider) == OPENAI_PROVIDER_NAME
 
-    # If the usage window has reset (reset_at is in the past) but the last
-    # recorded sample still shows 100 % usage, the data is stale.  Zero it
-    # out so the account is not incorrectly blocked or deprioritised while
-    # waiting for the next usage refresh to fetch fresh numbers.
+
+
+
+
     now_epoch = int(time.time())
     if primary_used is not None and primary_used >= 100.0:
         if primary_reset is not None and primary_reset <= now_epoch:
@@ -2169,8 +2161,8 @@ def _state_from_account(
         if account.status == AccountStatus.RATE_LIMITED:
             status_seed = AccountStatus.ACTIVE
 
-    # Use account.reset_at from DB as the authoritative source for runtime reset
-    # and to survive process restarts.
+
+
     ignore_primary_status_reset = primary_quota_bypassed and account.status == AccountStatus.RATE_LIMITED
     db_reset_at = (
         None
@@ -2180,8 +2172,8 @@ def _state_from_account(
     effective_runtime_reset = db_reset_at or runtime.reset_at
     effective_blocked_at = float(account.blocked_at) if account.blocked_at is not None else runtime.blocked_at
     if ignore_zero_capacity_primary_runtime_reset and effective_blocked_at is not None:
-        # The zero-capacity-primary seed only discounts snapshot-derived limits.
-        # A persisted real refusal still holds until its bounded retry expires.
+
+
         marker_reset = (float(account.reset_at) if account.reset_at else None) or runtime.reset_at
         if _bounded_retry_at(marker_reset, effective_blocked_at) > time.time():
             status_seed = account.status
@@ -2190,14 +2182,14 @@ def _state_from_account(
         effective_runtime_reset = _bounded_retry_at(effective_runtime_reset, effective_blocked_at)
     effective_cooldown_until = runtime.cooldown_until
     if effective_cooldown_until is not None and effective_blocked_at is not None:
-        # Both guards describe the same refusal. A legacy window deadline must
-        # not outlive the bounded retry merely because it is also held in memory.
+
+
         effective_cooldown_until = _bounded_retry_at(effective_cooldown_until, effective_blocked_at)
 
-    # Usage is a ranking signal, not evidence that an upstream request failed.
-    # Older quota statuses with no failure marker were inferred from snapshots.
-    # Real failures carry blocked_at and get a bounded retry even if the next
-    # usage refresh still reports an exhausted window.
+
+
+
+
     status = status_seed
     reset_at = effective_runtime_reset
     used_percent = primary_used
@@ -2206,9 +2198,9 @@ def _state_from_account(
             status = AccountStatus.ACTIVE
             reset_at = None
 
-    # Codex answers 200 and bills credits when a window is spent. A snapshot
-    # stays a ranking signal until the account actually has credits to bill;
-    # then a spent window leaves it out of rotation.
+
+
+
     if (
         openai_account
         and not route_openai_credits
@@ -2328,10 +2320,10 @@ def _state_from_account(
 
 
 def _bounded_retry_at(reset_at: float | None, blocked_at: float) -> float:
-    # A missing reset, or a legacy one more than an hour past the block, retries
-    # 60s after the real refusal instead of holding the account for the window.
-    # Persisted refusal markers have whole-second precision; runtime retries
-    # retain fractions. Compare like precision without shortening a valid hour.
+
+
+
+
     if reset_at is None or int(reset_at) > int(blocked_at) + 3600:
         return blocked_at + 60.0
     return reset_at
@@ -2343,13 +2335,7 @@ def background_recovery_state_from_account(
     primary_entry: UsageHistory | None,
     secondary_entry: UsageHistory | None,
 ) -> AccountState:
-    """Evaluate recovery for a persisted blocked account without live runtime state.
 
-    The usage refresh scheduler only needs to know whether a persisted blocked
-    account can safely return to `active`. Seed a throwaway runtime snapshot
-    from the persisted block marker so fresh post-block usage rows can clear a
-    stale reset guard even when the original balancer process is gone.
-    """
 
     runtime = RuntimeState()
     blocked_at = float(account.blocked_at) if account.blocked_at is not None else None
@@ -2373,9 +2359,9 @@ def background_recovery_state_from_account(
             primary_entry=primary_entry,
             long_window_entry=secondary_entry,
         )
-        # Compare against the computed state, not the raw persisted reset: the
-        # bounded retry can expire before a legacy long reset does, and pre-block
-        # usage is still no evidence that the persisted status recovered.
+
+
+
         if blocked_at is not None and reset_at is not None and state.status == AccountStatus.ACTIVE:
             if not _usage_entry_recorded_after_block(freshness_entry, blocked_at):
                 return replace(
@@ -2500,14 +2486,7 @@ def _filter_accounts_for_model(accounts: list[Account], model: str) -> list[Acco
 
 
 def selectable_accounts(accounts: list[Account]) -> list[Account]:
-    """Accounts the load balancer is willing to route to.
 
-    Filters out rows that can never serve traffic — reauth-required,
-    deactivated, or paused status, and subscriptions that have been
-    canceled. This is the single source of truth for the "routable
-    pool" so selection, quota prefilters, and failure diagnostics all
-    reason about the same population.
-    """
     return [
         account
         for account in accounts
@@ -2636,8 +2615,8 @@ def _additional_quota_eligibility(
     fresh_primary: dict[str, AdditionalUsageHistory],
     fresh_secondary: dict[str, AdditionalUsageHistory],
 ) -> str:
-    # Missing, stale, and exhausted additional-usage snapshots do not prove a
-    # live request will fail. Model/plan compatibility is checked separately.
+
+
     return "eligible"
 
 

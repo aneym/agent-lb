@@ -1,9 +1,4 @@
-"""add account security work authorization flag
 
-Revision ID: 20260521_000000_add_account_security_work_authorized
-Revises: 20260513_000000_add_accounts_alias
-Create Date: 2026-05-21
-"""
 
 from __future__ import annotations
 

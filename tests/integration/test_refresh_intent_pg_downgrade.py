@@ -1,4 +1,4 @@
-"""PostgreSQL enum rollback preserves data and column defaults."""
+
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def test_refresh_intent_pg_downgrade_preserves_defaults_and_enum_values() -> Non
     engine = create_engine(to_sync_database_url(url))
     try:
         with engine.begin() as connection:
-            # Exercise both enum swaps even if this scratch schema has no account status default.
+
             if _column_default(connection, "accounts", "status") is None:
                 connection.execute(
                     text("ALTER TABLE accounts ALTER COLUMN status SET DEFAULT 'active'::account_status")

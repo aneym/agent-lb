@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# openai-auth.sh — drive agent-lb's OpenAI (ChatGPT) OAuth flow from the CLI.
-#
-# Talks to the locally running agent-lb server over its dashboard API. Unlike
-# the Anthropic flow, OpenAI is browser-callback-based: `start` spins up a
-# localhost:1455 callback listener inside the SERVER process, then you open the
-# returned authorizationUrl, approve in ChatGPT, and the browser redirect to
-# localhost:1455 completes the flow automatically. There is no paste-back step.
-# This only works when the browser runs on the same machine as the server.
-#
-# Usage:
-#   scripts/openai-auth.sh start              # start a flow, print the ChatGPT auth URL
-#   scripts/openai-auth.sh status <flowId>    # check a flow's status
-#   scripts/openai-auth.sh accounts           # list OpenAI accounts + status
-#
-# Env: BASE_URL (default http://127.0.0.1:2455)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 set -euo pipefail
 BASE_URL="${BASE_URL:-http://127.0.0.1:2455}"
 cmd="${1:-}"

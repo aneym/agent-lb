@@ -252,8 +252,8 @@ def test_account_to_summary_exposes_cached_reset_credits_for_openai_and_anthropi
 
 
 def test_account_to_summary_openai_without_primary_usage_has_no_primary_gauge() -> None:
-    # OpenAI removed the codex 5h limit: no primary usage must not default to
-    # a full 100% primary gauge for openai accounts.
+
+
     encryptor = TokenEncryptor()
     openai = _account(AccountStatus.ACTIVE)
     openai.provider = "openai"
@@ -278,12 +278,12 @@ def test_fable_eligible_flag_by_provider_and_threshold() -> None:
     openai = _account(AccountStatus.ACTIVE)
     openai.provider = "openai"
 
-    # Anthropic: under threshold eligible, at/over threshold not, no sample eligible.
+
     assert mappers._fable_eligible(anthropic, 10.0) is True
     assert mappers._fable_eligible(anthropic, 50.0) is False
     assert mappers._fable_eligible(anthropic, 90.0) is False
     assert mappers._fable_eligible(anthropic, None) is True
-    # Other providers: null.
+
     assert mappers._fable_eligible(openai, 10.0) is None
 
 
@@ -323,27 +323,26 @@ def test_fable_eligible_prefers_fresh_scoped_signal_over_heuristic() -> None:
     anthropic.provider = "anthropic"
     now = datetime.now(timezone.utc)
 
-    # Overall weekly (62%) is over the heuristic threshold, but a fresh
-    # scoped entry with headroom (45%) overrides it.
+
+
     fresh_headroom = _fable_scoped_weekly(used_percent=45.0, recorded_at=now)
     assert mappers._fable_eligible(anthropic, 62.0, fresh_headroom) is True
 
-    # Overall weekly (30%) is well under the heuristic, but a fresh scoped
-    # entry at the scoped threshold (100%) overrides it the other way.
+
+
     fresh_exhausted = _fable_scoped_weekly(used_percent=100.0, recorded_at=now)
     assert mappers._fable_eligible(anthropic, 30.0, fresh_exhausted) is False
 
-    # A stale (>6h) scoped entry is ignored; the heuristic applies.
+
     stale_exhausted = _fable_scoped_weekly(used_percent=100.0, recorded_at=now - timedelta(hours=7))
     assert mappers._fable_eligible(anthropic, 30.0, stale_exhausted) is True
 
-    # No scoped entry at all: unchanged heuristic behavior.
+
     assert mappers._fable_eligible(anthropic, 62.0, None) is False
 
 
 def test_effective_status_ignores_extra_usage_credits_for_anthropic_accounts() -> None:
-    """Anthropic extra-usage credits stay dashboard-visible but must not
-    rescue an exhausted account's effective status."""
+
     account = _account()
     account.provider = "anthropic"
     primary = _primary_usage()

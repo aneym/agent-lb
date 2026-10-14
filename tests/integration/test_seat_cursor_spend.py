@@ -1,4 +1,4 @@
-"""Cursor dollars: leased runs record model and tokens, and the LB prices them into two monthly pools."""
+
 
 from __future__ import annotations
 
@@ -66,11 +66,11 @@ def test_leased_cursor_runs_are_priced_into_two_monthly_pools(tmp_path: Path) ->
     pools = {pool.id: pool for pool in cli_seats.cursor_budget_pools(seats, config, now=now)}
 
     models, other = pools["cursor-models"], pools["cursor-other"]
-    # Grok 1M in at $2 + 0.1M out at $6 = $2.60; Composer 10M in at $0.50 + 1M out at $2.50 = $7.50.
+
     assert models.spent_usd == pytest.approx(10.10)
-    # Cursor publishes no size for its own models' pool: no budget, so no remaining figure to pace on.
+
     assert (models.budget_usd, models.monthly_remaining_percent, models.unbudgeted_accounts) == (None, None, 1)
-    # Sonnet through Cursor: 2M in at $2 + 0.2M out at $10 = $6.00 of the Ultra tier's $400.
+
     assert other.spent_usd == pytest.approx(6.00)
     assert other.budget_usd == 400
     assert other.monthly_remaining_percent == pytest.approx(98.5)

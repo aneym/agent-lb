@@ -1,9 +1,4 @@
-"""add bridge gateway-safe mode to dashboard settings
 
-Revision ID: 20260407_000000_add_bridge_gateway_safe_mode
-Revises: 20260403_000000_add_credit_api_key_limit_values
-Create Date: 2026-04-07
-"""
 
 from __future__ import annotations
 

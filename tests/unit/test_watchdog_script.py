@@ -22,7 +22,7 @@ SCRIPT = ROOT / "scripts" / "watchdog.sh"
     ],
 )
 def test_invalid_database_endpoint_emits_only_failure(url: str) -> None:
-    """Exercise malformed configuration at the shell subprocess boundary."""
+
     result = subprocess.run(
         ["bash", "-c", 'source "$1"; db_endpoint "$2"', "bash", str(ROOT / "scripts" / "db-endpoint.sh"), url],
         capture_output=True,
@@ -64,7 +64,7 @@ def _run_watchdog(
 ) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    # lb-restart shim: the real one would blue/green the live agent-lb (it did, 2026-09-25).
+
     for name, body in (
         ("launchctl", LAUNCHCTL_SHIM),
         ("curl", CURL_SHIM),
@@ -169,7 +169,7 @@ def test_kick_skipped_while_process_within_boot_grace(tmp_path: Path) -> None:
 
     assert _kickstart_calls(call_log) == []
     assert "boot grace" in (tmp_path / "watchdog.log").read_text()
-    # counter keeps accumulating so the kick fires once the grace expires
+
     assert "count=3" in (tmp_path / "watchdog.state").read_text()
 
 
@@ -184,7 +184,7 @@ def test_kick_fires_when_process_older_than_boot_grace(tmp_path: Path) -> None:
             etime="02:10:00",
         )
 
-    # lb-restart (blue/green) goes first; its failure falls back to one raw kickstart.
+
     assert [c for c in call_log.read_text().splitlines() if c.startswith("lb-restart")] != []
     kicks = _kickstart_calls(call_log)
     assert len(kicks) == 1

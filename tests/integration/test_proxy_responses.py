@@ -43,29 +43,20 @@ def _make_auth_json(account_id: str, email: str, *, plan_type: str = "plus") -> 
 
 
 def _extract_first_event(lines: list[str]) -> dict:
-    """Return the first standard SSE event payload, ignoring the synthetic
-    ``response.created`` that ``_normalize_public_responses_stream`` may
-    prepend when the upstream stream's first standard event is not
-    ``response.created`` (see change
-    ``normalize-v1-responses-openai-sdk-stream``). Callers that want to
-    assert on the *original* first upstream event (e.g. ``response.failed``)
-    should keep using this helper unchanged; callers that want to assert on
-    the new synthetic created should use ``_extract_first_raw_event`` below.
-    """
+
     for event in _iter_sse_events(lines):
         if event.get("type") == "response.created":
             response = event.get("response")
             if isinstance(response, dict) and response.get("status") == "in_progress" and response.get("output") == []:
-                # Likely the synthesized created envelope — skip and return
-                # whatever the upstream actually started with.
+
+
                 continue
         return event
     raise AssertionError("No SSE data event found")
 
 
 def _extract_first_raw_event(lines: list[str]) -> dict:
-    """Return the literal first SSE data event, including any synthesized
-    ``response.created`` the public-stream normalizer prepended."""
+
     for event in _iter_sse_events(lines):
         return event
     raise AssertionError("No SSE data event found")
@@ -253,7 +244,7 @@ async def test_proxy_responses_stream_reaches_upstream_despite_missing_additiona
         lines = [line async for line in resp.aiter_lines() if line]
 
     event = _extract_first_event(lines)
-    # 82ed714b: missing additional usage does not deny a live streaming attempt.
+
     assert event["type"] == "response.completed"
     assert event["response"]["id"] == "resp_missing_quota"
     assert attempted_accounts == [raw_account_id]
@@ -1169,7 +1160,7 @@ async def test_proxy_responses_streams_upstream(async_client, monkeypatch):
         "POST",
         "/backend-api/codex/responses",
         json=payload,
-        # Codex 0.157 names its conversation (rollout file id) in `session-id`.
+
         headers={"x-request-id": request_id, "session-id": "01a0d9f6-f125-75a2-a6dd-0efe73e324d7"},
     ) as resp:
         assert resp.status_code == 200
@@ -1801,13 +1792,7 @@ async def test_v1_responses_normalizes_tool_messages(async_client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_proxy_responses_codex_compaction_v2_item_passthrough(async_client, monkeypatch):
-    """Regression: Codex remote-compaction v2 streams a normal turn to
-    /backend-api/codex/responses and expects exactly one ``compaction`` output
-    item back. agent-lb must forward the compaction item (and its terminal
-    envelope) verbatim on the Codex-native surface instead of dropping/re-typing
-    it, which previously produced "remote compaction v2 expected exactly one
-    compaction output item, got 0 from 0 output items".
-    """
+
     email = "backend-codex-compaction@example.com"
     raw_account_id = "acc_backend_codex_compaction"
     auth_json = _make_auth_json(raw_account_id, email)
@@ -1838,8 +1823,8 @@ async def test_proxy_responses_codex_compaction_v2_item_passthrough(async_client
 
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
 
-    # Codex-native request: ``instructions`` is set (so this is NOT treated as an
-    # OpenAI-SDK request) and the user-agent is the Codex CLI.
+
+
     payload = {
         "model": "gpt-5.5",
         "instructions": "compact the conversation",
@@ -1868,14 +1853,7 @@ async def test_proxy_responses_codex_compaction_v2_item_passthrough(async_client
 
 @pytest.mark.asyncio
 async def test_proxy_responses_codex_compaction_v2_item_passthrough_without_instructions(async_client, monkeypatch):
-    """Regression: remote-compaction v2 turns that omit top-level ``instructions``
-    were misclassified as OpenAI-SDK requests by ``_is_openai_sdk_request``
-    (``_has_openai_responses_shape`` treats "has input, no instructions" as an
-    OpenAI-compat payload), which made ``enforce_openai_sdk_contract=True`` drop
-    the ``compaction`` output item and fail the stream with
-    ``response.failed``/``invalid_output_item`` even though the request carries a
-    ``compaction_trigger`` item that no OpenAI SDK caller sends.
-    """
+
     email = "backend-codex-compaction-no-instructions@example.com"
     raw_account_id = "acc_backend_codex_compaction_no_instructions"
     auth_json = _make_auth_json(raw_account_id, email)
@@ -1906,9 +1884,9 @@ async def test_proxy_responses_codex_compaction_v2_item_passthrough_without_inst
 
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
 
-    # Codex-native request without top-level ``instructions`` — without the fix
-    # this looks like an OpenAI-SDK payload per ``_has_openai_responses_shape``
-    # and gets misrouted onto the strict SDK contract.
+
+
+
     payload = {
         "model": "gpt-5.5",
         "input": [{"type": "compaction_trigger"}],
@@ -1952,9 +1930,7 @@ def _compaction_fake_stream(compaction_item: dict, call_log: list[int]):
 
 @pytest.mark.asyncio
 async def test_proxy_responses_compaction_retry_breaker_rejects_sixth_identical(async_client, monkeypatch):
-    """Six identical compaction turns: the breaker admits the first five and
-    rejects the sixth locally with 429 before any upstream account is
-    consumed (see add-compaction-retry-circuit-breaker)."""
+
     email = "compaction-breaker-identical@example.com"
     raw_account_id = "acc_compaction_breaker_identical"
     auth_json = _make_auth_json(raw_account_id, email)
@@ -1994,8 +1970,7 @@ async def test_proxy_responses_compaction_retry_breaker_rejects_sixth_identical(
 
 @pytest.mark.asyncio
 async def test_proxy_responses_compaction_retry_breaker_allows_distinct_inputs(async_client, monkeypatch):
-    """Compaction turns whose inputs differ never trip the breaker, even past
-    the identical-fingerprint threshold."""
+
     email = "compaction-breaker-distinct@example.com"
     raw_account_id = "acc_compaction_breaker_distinct"
     auth_json = _make_auth_json(raw_account_id, email)
@@ -2028,8 +2003,7 @@ async def test_proxy_responses_compaction_retry_breaker_allows_distinct_inputs(a
 
 @pytest.mark.asyncio
 async def test_proxy_responses_compaction_retry_breaker_window_expiry_readmits(async_client, monkeypatch):
-    """Once the window elapses for a fingerprint that tripped the breaker, the
-    same fingerprint is admitted again."""
+
     from app.modules.proxy._service.compaction_breaker import get_compaction_retry_breaker
 
     email = "compaction-breaker-window@example.com"
@@ -2067,7 +2041,7 @@ async def test_proxy_responses_compaction_retry_breaker_window_expiry_readmits(a
     denied = await async_client.post("/backend-api/codex/responses", json=payload, headers=headers)
     assert denied.status_code == 429
 
-    fake_now[0] += 601.0  # past COMPACTION_RETRY_WINDOW_SECONDS
+    fake_now[0] += 601.0
 
     async with async_client.stream("POST", "/backend-api/codex/responses", json=payload, headers=headers) as resp:
         assert resp.status_code == 200
@@ -2078,8 +2052,7 @@ async def test_proxy_responses_compaction_retry_breaker_window_expiry_readmits(a
 
 @pytest.mark.asyncio
 async def test_proxy_responses_compaction_retry_breaker_never_fingerprints_non_compaction(async_client, monkeypatch):
-    """A repeated identical NON-compaction request is never rejected by the
-    breaker, no matter how many times it repeats."""
+
     email = "compaction-breaker-non-compaction@example.com"
     raw_account_id = "acc_compaction_breaker_non_compaction"
     auth_json = _make_auth_json(raw_account_id, email)

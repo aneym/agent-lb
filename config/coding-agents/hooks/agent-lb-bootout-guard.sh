@@ -1,18 +1,18 @@
 #!/bin/bash
-# PreToolUse guard: agent-lb restarts go through lb-restart (blue/green, 2026-09-25).
-# A raw kickstart/bootout of the service or the front holds every new connection
-# while the old process drains (10-95 s measured 2026-09-25) and can cut streams.
-# Escape hatch when lb-restart itself is broken: touch ~/.agent-lb/raw-restart.ok
-# Adopted into agent-lb 2026-10-08 (hook-dispatcher-4): edit this source only. It is a floor guard, so input it
-# cannot read (jq missing or failing) is refused, never allowed as an empty command. jq reads the input itself (a
-# missing `cat` before it read as an empty command), and a matcher that fails (grep missing or erroring, exit > 1) is
-# told apart from no match (exit 1) and refuses (2026-10-08 review: a missing grep let a raw kickstart through).
-# S44 (2026-10-08): reads are checked (set -euo pipefail) and jq must read exactly one JSON input (`input` fails on an
-# empty one); an allow ends with the receipt line `floor-ok agent-lb-bootout-guard.sh` when the dispatcher asks for it
-# (HOOK_FLOOR_RECEIPT), and the dispatcher refuses an exit 0 without it.
-# Guard trim (Alex, 2026-10-08 09:18 ET): a kept floor (keeps the orchestrators up). Its message names the floor and
-# it accepts the Rails CoS approval record: a trailing `# alex-approval: <path>` naming an existing
-# ~/.agent-rails/lanes/orchestrator-refs/alex-*-2026-*.md that carries a time.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 set -euo pipefail
 FLOOR="floor: keeps the orchestrators up (agent-lb carries every agent session)"
 APPROVAL="Approved restarts pass with a trailing '# alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-<topic>-2026-<date>.md' (a first-hand Alex quote with a time)."
@@ -63,7 +63,7 @@ allow() {
   if [ -n "${HOOK_FLOOR_RECEIPT:-}" ]; then printf 'floor-ok %s\n' agent-lb-bootout-guard.sh; fi
   exit 0
 }
-# Exit 0: a command that runs restarts agent-lb; 1: none does; anything else: the parser failed.
+
 runs() {
   python3 - "$CMD" <<'PY'
 import os, re, shlex, sys
@@ -259,7 +259,7 @@ if ! CMD=$("$JQ" -n -r 'input | .tool_input.command // empty' 2>/dev/null); then
   exit 2
 fi
 [ -n "$CMD" ] || allow
-case "$CMD" in *launchctl*) ;; *) allow ;; esac  # the pattern needs `launchctl`; the dispatcher's prefilter is this
+case "$CMD" in *launchctl*) ;; *) allow ;; esac
 MATCH=0
 grep -qE 'launchctl[^|;&]*(bootout|kickstart|stop|kill)[^|;&]*com\.aneyman\.agent-lb(-front)?([^a-zA-Z0-9_-]|$)' <<<"$CMD" || MATCH=$?
 if [ "$MATCH" -gt 1 ]; then
@@ -267,10 +267,10 @@ if [ "$MATCH" -gt 1 ]; then
   exit 2
 fi
 if [ "$MATCH" -eq 0 ]; then
-  # The grep is a prefilter (guard rule 2026-10-08, factory-operations 165): a hit counts only when a command that runs
-  # here is launchctl with a restart verb and the agent-lb label. Heredoc bodies written to a file, quoted arguments,
-  # echo and commit text, and ssh arguments (another host) are data. A body fed to a shell, `bash -c`, `eval`, $( )
-  # and backticks run and are read. Text the parser cannot read counts as a hit (fail closed).
+
+
+
+
   RUNS=0
   runs || RUNS=$?
   if [ "$RUNS" -gt 1 ]; then

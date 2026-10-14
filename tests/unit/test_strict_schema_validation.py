@@ -1,11 +1,4 @@
-"""Local strict-mode JSON schema validation.
 
-Exercises the validator in ``app.core.openai.strict_schema`` and the
-``ResponsesRequest`` integration. Mirrors the upstream OpenAI Responses
-API error shape so that clients (Graphiti, raw SDK callers, etc.) see the
-same ``invalid_json_schema`` payload regardless of which endpoint they
-hit.
-"""
 
 from __future__ import annotations
 
@@ -80,7 +73,7 @@ def test_strict_nested_missing_additional_properties():
 
 
 def test_strict_dict_str_any_pattern_rejected():
-    """Pydantic ``dict[str, Any]`` -> ``additionalProperties: true``."""
+
 
     schema: JsonValue = {
         "type": "object",
@@ -97,7 +90,7 @@ def test_strict_dict_str_any_pattern_rejected():
 
 
 def test_strict_empty_schema_node_rejected():
-    """``Any`` typed Pydantic field -> ``{}`` schema node."""
+
 
     schema: JsonValue = {
         "type": "object",
@@ -125,11 +118,7 @@ def test_strict_valid_schema_passes():
 
 
 def test_strict_required_must_list_every_property():
-    """Strict mode requires every key in ``properties`` to appear in ``required``.
 
-    Mirrors OpenAI's wording so callers see the same diagnostic regardless
-    of whether the request hit the local pre-check or the upstream API.
-    """
 
     schema: JsonValue = {
         "type": "object",
@@ -145,7 +134,7 @@ def test_strict_required_must_list_every_property():
 
 
 def test_strict_required_empty_array_rejected():
-    """Even an empty ``required`` is rejected when ``properties`` is non-empty."""
+
 
     schema: JsonValue = {
         "type": "object",
@@ -176,7 +165,7 @@ def test_strict_combinator_recurses_into_branches():
             "value": {
                 "anyOf": [
                     {"type": "string"},
-                    # Nested object missing additionalProperties: false
+
                     {
                         "type": "object",
                         "properties": {"x": {"type": "integer"}},
@@ -242,7 +231,7 @@ def test_normalize_responses_payload_accepts_strict_false():
             },
         }
     )
-    # Strict=False schemas are passed through unchanged.
+
     request = normalize_responses_request_payload(payload, openai_compat=False)
     assert request.text is not None
     assert request.text.format is not None
@@ -302,9 +291,9 @@ def test_chat_completions_strict_schema_violation_surfaces_via_enforce_helper():
     assert err.param == "text.format.schema"
 
 
-# ---------------------------------------------------------------------------
-# Strict function tool parameter schemas (PR fix/validate-strict-function-tool-schema)
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def test_strict_function_tool_missing_additional_properties():
@@ -363,7 +352,7 @@ def test_strict_function_tool_nested_violation_surfaced():
                 "type": "object",
                 "properties": {"q": {"type": "string"}},
                 "required": ["q"],
-                # missing additionalProperties:false on nested object
+
             }
         },
         "required": ["filter"],
@@ -381,9 +370,9 @@ def test_strict_function_tool_anonymous_name_falls_back():
     assert "Invalid schema for function 'function'" in violation.message
 
 
-# ---------------------------------------------------------------------------
-# enforce_strict_function_tools_format integration
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def _responses_payload_with_tools(tools: list[JsonValue]) -> dict[str, JsonValue]:
@@ -442,7 +431,7 @@ def test_enforce_strict_function_tools_rejects_at_correct_index():
                 "type": "object",
                 "properties": {"x": {"type": "string"}},
                 "required": ["x"],
-                # missing additionalProperties:false
+
             },
             "strict": True,
         },
@@ -468,7 +457,7 @@ def test_enforce_strict_function_tools_accepts_strict_false():
             "strict": False,
         }
     ]
-    # No violation should be raised for strict=False — pre-validator skips entirely.
+
     normalize_responses_request_payload(_responses_payload_with_tools(tools), openai_compat=False)
 
 
@@ -509,10 +498,10 @@ def test_enforce_strict_function_tools_accepts_compliant_schema():
 
 
 def test_enforce_strict_function_tools_param_template_for_chat():
-    # Chat handler now validates the *raw* request payload's ``tools`` list
-    # (before ``_normalize_chat_tools`` drops any entries), so the helper is
-    # called with the chat shape directly — wrapped under ``"function"`` —
-    # and ``nested=True`` to extract ``parameters``/``strict`` from there.
+
+
+
+
     chat_tools: list[JsonValue] = [
         {
             "type": "function",
@@ -537,9 +526,9 @@ def test_enforce_strict_function_tools_param_template_for_chat():
     assert exc_info.value.param == "tools[0].function.parameters"
 
 
-# ---------------------------------------------------------------------------
-# Chat → responses coercion preserves strict (PR fix/validate-strict-function-tool-schema)
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def test_chat_function_tool_strict_true_preserved_in_coercion():
@@ -567,8 +556,8 @@ def test_chat_function_tool_strict_true_preserved_in_coercion():
     responses_request = request.to_responses_request()
     tool = _json_object(responses_request.tools[0])
     assert tool["strict"] is True
-    # Compliant schema passes the strict pre-validator (chat path validates
-    # the raw payload tools, before ``_normalize_chat_tools`` runs).
+
+
     enforce_strict_function_tools_format(
         request.tools,
         param_template="tools[{index}].function.parameters",
@@ -590,7 +579,7 @@ def test_chat_function_tool_strict_true_violation_pre_validates():
                         "type": "object",
                         "properties": {"city": {"type": "string"}},
                         "required": ["city"],
-                        # missing additionalProperties:false
+
                     },
                     "strict": True,
                 },
@@ -661,30 +650,19 @@ def test_chat_function_tool_without_strict_has_no_strict_key():
     assert "strict" not in tool
 
 
-# ---------------------------------------------------------------------------
-# Chat strict enforcement: error ``param`` uses the original payload index
-# (regression for codex review feedback on PR #658).
-# ---------------------------------------------------------------------------
+
+
+
+
 
 
 def test_chat_strict_violation_param_uses_original_index_when_normalizer_drops():
-    """``_normalize_chat_tools`` silently drops entries it cannot coerce
-    (non-dict tools, function tools with missing/empty ``name``). The chat
-    strict pre-validator must report the violation index against the
-    *inbound* ``tools`` list — not the normalized output — so clients can
-    map ``param`` back to what they sent.
 
-    Scenario: original index 0 is an invalid function tool with no
-    ``name`` (dropped by the normalizer); original index 1 is a real
-    function tool whose ``strict: true`` schema is missing
-    ``additionalProperties: false``. The error must surface
-    ``tools[1].function.parameters`` — not ``tools[0]``.
-    """
     payload = {
         "model": "gpt-5.5",
         "messages": [{"role": "user", "content": "hi"}],
         "tools": [
-            # Index 0: invalid (no ``name``) → ``_normalize_chat_tools`` drops it.
+
             {
                 "type": "function",
                 "function": {
@@ -692,7 +670,7 @@ def test_chat_strict_violation_param_uses_original_index_when_normalizer_drops()
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
-            # Index 1: strict violation (missing ``additionalProperties``).
+
             {
                 "type": "function",
                 "function": {
@@ -717,17 +695,14 @@ def test_chat_strict_violation_param_uses_original_index_when_normalizer_drops()
         )
     err = exc_info.value
     assert err.code == "invalid_function_parameters"
-    # Index 1 here is the inbound-payload index, not the normalized one.
-    # Validating ``responses_request.tools`` instead would surface
-    # ``tools[0]`` and break the client's ability to locate the bad entry.
+
+
+
     assert err.param == "tools[1].function.parameters"
 
 
 def test_chat_strict_enforcement_runs_against_raw_payload_in_handler_path():
-    """End-to-end-shaped check at the function level: confirm the chat
-    handler's enforcement target is the raw ``payload.tools`` (the same
-    structure the FastAPI handler sees) by validating directly against it
-    without going through ``to_responses_request()`` first."""
+
     payload = {
         "model": "gpt-5.5",
         "messages": [{"role": "user", "content": "hi"}],
@@ -749,7 +724,7 @@ def test_chat_strict_enforcement_runs_against_raw_payload_in_handler_path():
         ],
     }
     request = ChatCompletionsRequest.model_validate(payload)
-    # Compliant payload — no exception even before coercion runs.
+
     enforce_strict_function_tools_format(
         request.tools,
         param_template="tools[{index}].function.parameters",
@@ -757,24 +732,18 @@ def test_chat_strict_enforcement_runs_against_raw_payload_in_handler_path():
     )
 
 
-# ---------------------------------------------------------------------------
-# Chat strict enforcement detects function tools by the wrapper key, not by
-# ``type`` — mirroring ``_normalize_chat_tools`` (regression for second codex
-# review pass on PR #658).
-# ---------------------------------------------------------------------------
+
+
+
+
+
 
 
 def test_chat_strict_violation_when_type_omitted_but_function_dict_present():
-    """``_normalize_chat_tools`` coerces a tool with ``"function": {...}``
-    into a function tool even when the top-level ``"type"`` is omitted
-    (``"type": tool_type or "function"`` at chat_requests.py:198). The
-    strict pre-validator MUST anchor on the same signal (presence of a
-    ``"function"`` dict), otherwise the violation slips through and the
-    upstream Codex backend surfaces a 5xx instead of the local 400.
-    """
+
     chat_tools: list[JsonValue] = [
         {
-            # No top-level ``"type"``.
+
             "function": {
                 "name": "get_weather",
                 "description": "x",
@@ -782,7 +751,7 @@ def test_chat_strict_violation_when_type_omitted_but_function_dict_present():
                     "type": "object",
                     "properties": {"city": {"type": "string"}},
                     "required": ["city"],
-                    # No additionalProperties → strict violation.
+
                 },
                 "strict": True,
             },
@@ -801,18 +770,12 @@ def test_chat_strict_violation_when_type_omitted_but_function_dict_present():
 
 
 def test_chat_strict_skips_tool_without_function_wrapper_even_with_type():
-    """Symmetric guardrail: if ``tool["function"]`` isn't a dict, the
-    chat pre-validator skips the entry regardless of ``"type"``. The
-    flat shape (``{"type": "function", "name": ..., "parameters": ...}``)
-    is what ``/v1/responses`` callers send; ``_normalize_chat_tools``
-    leaves it alone (fallthrough branch), strict is not preserved, and
-    pre-validation here would be a false positive.
-    """
+
     chat_tools: list[JsonValue] = [
         {
             "type": "function",
-            # No ``"function"`` wrapper — this is the /v1/responses
-            # shape leaked into a chat-completions payload.
+
+
             "name": "get_weather",
             "parameters": {
                 "type": "object",
@@ -822,8 +785,8 @@ def test_chat_strict_skips_tool_without_function_wrapper_even_with_type():
             "strict": True,
         }
     ]
-    # Must not raise — there is no ``function`` dict to inspect, and the
-    # chat normalizer won't promote strict on this shape anyway.
+
+
     enforce_strict_function_tools_format(
         chat_tools,
         param_template="tools[{index}].function.parameters",
@@ -832,16 +795,12 @@ def test_chat_strict_skips_tool_without_function_wrapper_even_with_type():
 
 
 def test_responses_path_still_requires_type_function():
-    """Defensive symmetry check: native /v1/responses validation (the
-    default flat shape, ``nested=False``) keeps requiring an explicit
-    ``"type": "function"``. The responses request model enforces this
-    elsewhere, so the helper does not need to extend coverage there.
-    """
+
     tools: list[JsonValue] = [
         {
-            # No ``"type"`` field — would never reach this helper in the
-            # /v1/responses path (model validation rejects it), but the
-            # helper's own behavior should still skip it cleanly.
+
+
+
             "name": "get_weather",
             "parameters": {
                 "type": "object",
@@ -851,6 +810,6 @@ def test_responses_path_still_requires_type_function():
             "strict": True,
         }
     ]
-    # Must not raise — the flat-shape branch requires explicit
-    # ``"type" == "function"``.
+
+
     enforce_strict_function_tools_format(tools)

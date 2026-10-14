@@ -12,12 +12,7 @@ _RESERVED = frozenset({"proxy", "proxies", "impersonate", "ja3", "akamai", "extr
 
 
 class CodexTransportError(RuntimeError):
-    """Sanitized upstream transport failure.
 
-    Transport libraries can include proxy URLs in exception strings. Proxy URLs
-    may embed credentials, so callers should surface this sanitized exception
-    instead of the original transport message.
-    """
 
     def __init__(
         self, message: str, *, status_code: int | None = None, phase: ExchangePhase = ExchangePhase.AMBIGUOUS

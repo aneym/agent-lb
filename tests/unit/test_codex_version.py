@@ -66,7 +66,7 @@ async def test_returns_cached_version_within_ttl():
         second = await cache.get_version()
 
     assert first == second == "1.2.3"
-    # Only one HTTP call — second hit served from cache
+
     session.get.assert_called_once()
 
 
@@ -80,7 +80,7 @@ async def test_refetches_after_ttl_expires():
         v1 = await cache.get_version()
     assert v1 == "1.0.0"
 
-    # Expire the cache
+
     cache._cached_at = time.monotonic() - 120
 
     resp2 = _mock_response(json_data={"name": "2.0.0"})
@@ -100,7 +100,7 @@ async def test_rejects_invalid_version_name():
     with patch("app.core.clients.codex_version.aiohttp.ClientSession", return_value=session):
         version = await cache.get_version()
 
-    # Invalid name falls back to settings default
+
     assert version == "0.101.0"
 
 
@@ -120,23 +120,23 @@ async def test_rejects_alpha_version_name():
 async def test_fallback_to_stale_cache_on_github_failure():
     cache = CodexVersionCache(ttl_seconds=60)
 
-    # Populate cache
+
     resp_ok = _mock_response(json_data={"name": "1.5.0"})
     session_ok = _mock_session(resp_ok)
     with patch("app.core.clients.codex_version.aiohttp.ClientSession", return_value=session_ok):
         v1 = await cache.get_version()
     assert v1 == "1.5.0"
 
-    # Expire the cache
+
     cache._cached_at = time.monotonic() - 120
 
-    # GitHub returns error
+
     resp_fail = _mock_response(status=503, json_data=None)
     session_fail = _mock_session(resp_fail)
     with patch("app.core.clients.codex_version.aiohttp.ClientSession", return_value=session_fail):
         v2 = await cache.get_version()
 
-    # Returns stale cached value
+
     assert v2 == "1.5.0"
 
 
@@ -265,7 +265,7 @@ async def test_github_skipped_when_returning_valid_version():
     with patch("app.core.clients.codex_version.aiohttp.ClientSession", return_value=session):
         version = await cache.get_version()
 
-    # GitHub wins; npm is not consulted.
+
     assert version == "0.130.0"
     urls = [call.args[0] for call in session.get.call_args_list]
     requested_hosts = [urlparse(url).hostname for url in urls]
@@ -277,7 +277,7 @@ async def test_github_skipped_when_returning_valid_version():
 async def test_falls_back_to_stale_cache_when_both_sources_fail():
     cache = CodexVersionCache(ttl_seconds=60)
 
-    # Populate cache via GitHub
+
     github_ok = _mock_response(json_data={"name": "1.5.0"})
     npm_unused = _mock_response(json_data={"version": "9.9.9"})
     session_ok = _mock_session_per_url({"api.github.com": github_ok, "registry.npmjs.org": npm_unused})
@@ -285,7 +285,7 @@ async def test_falls_back_to_stale_cache_when_both_sources_fail():
         v1 = await cache.get_version()
     assert v1 == "1.5.0"
 
-    # Expire the cache and make both sources fail
+
     cache._cached_at = time.monotonic() - 120
     github_fail = _mock_response(status=403, json_data=None)
     npm_fail = _mock_response(status=503, json_data=None)

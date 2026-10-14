@@ -1,9 +1,4 @@
-"""add reset_at to accounts
 
-Revision ID: 20260213_000300_add_accounts_reset_at
-Revises: 20260213_000200_add_request_logs_reasoning_effort
-Create Date: 2026-02-13
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260213_000300_add_accounts_reset_at"
 down_revision = "20260213_000200_add_request_logs_reasoning_effort"
 branch_labels = None

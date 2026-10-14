@@ -419,11 +419,11 @@ class _CompactMixin:
             prompt_cache_key_set=_prompt_cache_key_from_request_model(payload) is not None,
         )
         routing_strategy = _routing_strategy(settings)
-        # ``input_file.file_id`` references must land on the account that
-        # registered the upload (chatgpt-account-id-scoped). The helper
-        # returns ``None`` when stronger affinity signals are present
-        # (prompt_cache_key / session header / turn_state header /
-        # previous_response_id), so existing routing wins.
+
+
+
+
+
         file_preferred_account_id = rewritten_file_account_id
         if file_preferred_account_id is None:
             file_preferred_account_id = await proxy._resolve_file_account_for_responses(payload, headers)
@@ -738,7 +738,7 @@ class _CompactMixin:
                                 )
                                 await asyncio.sleep(delay)
                                 continue
-                            # Exhausted same-account transient retries — penalize and failover
+
                             logger.warning(
                                 "Compact transient retries exhausted for account "
                                 "request_id=%s account_id=%s retries=%s code=server_error",
@@ -747,13 +747,13 @@ class _CompactMixin:
                                 transient_retries,
                             )
                             await proxy._handle_proxy_error(account, exc)
-                            # Record remaining errors so total equals transient_retries,
-                            # meeting the load balancer backoff threshold (error_count >= 3).
+
+
                             await proxy._load_balancer.record_errors(account, transient_retries - 1)
                             last_exc = exc
                             excluded_account_ids.add(account.id)
                             transient_exhausted = True
-                            break  # break inner loop → outer loop tries different account
+                            break
                         if exc.retryable_same_contract and safe_retry_budget > 0:
                             safe_retry_budget -= 1
                             continue
@@ -830,8 +830,8 @@ class _CompactMixin:
                         )
                         raise
                 if transient_exhausted:
-                    continue  # outer loop: try different account
-            # All account attempts exhausted — raise last error
+                    continue
+
             await proxy._settle_compact_api_key_usage(
                 api_key=api_key,
                 api_key_reservation=api_key_reservation,

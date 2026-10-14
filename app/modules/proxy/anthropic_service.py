@@ -78,37 +78,37 @@ _ANTHROPIC_COOLDOWN_WINDOW = "primary"
 _ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
 _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
-# Dedicated marker for a successful response that Anthropic served from paid
-# extra usage after rejecting the subscription window. Keeping this distinct
-# from request-quota 429 cooldowns lets the explicit paid fallback bypass only
-# the credit-billing tripwire, never a real upstream rejection.
+
+
+
+
 _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY = "anthropic_extra_usage"
-# Mirrored in app/modules/accounts/pulse.py (ANTHROPIC_FABLE_ACCESS_QUOTA_KEY)
-# — both must agree on the quota_key/window identifying the Fable-access
-# probe marker written by the account pulse.
+
+
+
 _ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"
 _ANTHROPIC_FABLE_ACCESS_WINDOW = "primary"
-# Mirrored in app/modules/usage/updater.py (write side) — both must agree on
-# the quota_key/window identifying Anthropic's dedicated Fable-scoped weekly
-# limit marker.
+
+
+
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
-# A scoped entry older than this is stale; the overall-weekly heuristic and
-# probe-marker fallback apply instead (usage refreshes far more often than
-# this, so staleness signals a refresh gap, not just normal cadence).
-_FABLE_SCOPED_FRESH_SECONDS = 21600  # 6 hours
+
+
+
+_FABLE_SCOPED_FRESH_SECONDS = 21600
 _ANTHROPIC_PLANNER_MODEL_ALIAS = "claude-planner"
-# Fable is retired (owner 2026-09-22), so the planner alias targets Opus.
+
 _ANTHROPIC_PLANNER_MODEL = "claude-opus-5-5"
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
 _ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 _COUNT_TOKENS_TIMEOUT_SECONDS = 30.0
 
-# Unified rate-limit status headers observed on live OAuth responses
-# (2026-07-01). A healthy subscription-covered response carries
-# ``anthropic-ratelimit-unified-status: allowed``; a response served by
-# billing extra-usage credits carries ``rejected`` plus
-# ``anthropic-ratelimit-unified-overage-in-use: true``.
+
+
+
+
+
 _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER = "anthropic-ratelimit-unified-overage-in-use"
 _ANTHROPIC_UNIFIED_STATUS_HEADERS = (
     "anthropic-ratelimit-unified-status",
@@ -117,10 +117,10 @@ _ANTHROPIC_UNIFIED_STATUS_HEADERS = (
 )
 _ANTHROPIC_UNIFIED_ALLOWED_STATUSES = frozenset({"allowed", "allowed_warning"})
 
-# Upstream 529 "Overloaded" is a transient capacity signal, not quota or
-# account health: during partial brownouts another account frequently serves
-# the same request immediately. Failover retries back off briefly so a herd
-# of concurrent requests does not hammer the next account in lockstep.
+
+
+
+
 _OVERLOADED_BACKOFF_BASE_SECONDS = 0.25
 _OVERLOADED_BACKOFF_MAX_SECONDS = 2.0
 _OVERLOADED_BACKOFF_MAX_JITTER_SECONDS = 0.25
@@ -130,14 +130,14 @@ def _default_overloaded_backoff_jitter() -> float:
     return random.uniform(0.0, _OVERLOADED_BACKOFF_MAX_JITTER_SECONDS)
 
 
-# Injection points so tests drive 529 failover without real sleeps.
+
 _OVERLOADED_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
 
-# Upstream connect failures (DNS, refused, connect timeout) happen before any
-# bytes reach the provider, so they are safe to retry on the same account.
-# Under host load the LB's own event loop can starve long enough to trip the
-# 8s connect timeout; before this, every such blip surfaced to the client as
-# an unhandled 500 ("Connection timeout to host ...", 2026-09-16).
+
+
+
+
+
 _CONNECT_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
 _CONNECT_ERRORS: tuple[type[BaseException], ...] = (
     aiohttp.ClientConnectorError,
@@ -164,12 +164,7 @@ async def _admitted_http_session(
 
 
 class UpstreamStallTimeout(Exception):
-    """A streamed upstream call sent no bytes within its bound.
 
-    ``first_byte``: nothing arrived between send and the first body chunk, so
-    no bytes reached the client and the attempt can move to another account.
-    ``stream_idle``: the stream went silent after bytes already went out.
-    """
 
     def __init__(self, phase: str, seconds: float) -> None:
         self.phase = phase
@@ -183,11 +178,7 @@ class UpstreamStallTimeout(Exception):
 
 
 class UpstreamTruncatedEvent(UpstreamStallTimeout):
-    """The upstream closed the stream cleanly in the middle of an SSE event.
 
-    Handled like a stall: the fragment never reaches the client, and the
-    attempt fails over or ends with a retryable error event.
-    """
 
     def __init__(self) -> None:
         Exception.__init__(self, "Anthropic closed the stream inside an event (upstream_truncated_event)")
@@ -197,12 +188,7 @@ class UpstreamTruncatedEvent(UpstreamStallTimeout):
 
 
 class UpstreamBrokenStream(UpstreamStallTimeout):
-    """The upstream connection broke in the middle of the body (incomplete transfer framing).
 
-    aiohttp reports it as ``ClientPayloadError``. Handled like a stall: the
-    unfinished event never reaches the client, the attempt is logged as a
-    failure, and it fails over or ends with a retryable error event.
-    """
 
     def __init__(self) -> None:
         Exception.__init__(self, "Anthropic stream broke before the response finished (upstream_stream_broken)")
@@ -212,7 +198,7 @@ class UpstreamBrokenStream(UpstreamStallTimeout):
 
 
 class _StallCatcher:
-    """Ends an upstream attempt on a stall and records it for the attempt loop."""
+
 
     def __init__(self) -> None:
         self.stall: UpstreamStallTimeout | None = None
@@ -227,18 +213,13 @@ class _StallCatcher:
         return False
 
 
-# A blank line: a line terminator (CRLF, LF or CR) right after another. The
-# groups are atomic so a CRLF is never read as CR then LF.
+
+
 _SSE_BLANK_LINE = re.compile(rb"(?>\r\n|\r|\n)(?>\r\n|\r|\n)")
 
 
 def _sse_event_boundary(buffer: bytes | bytearray, start: int = 0) -> int:
-    """Length of the prefix of ``buffer`` that ends on its last complete SSE event.
 
-    Only bytes from ``start`` on are searched, less 3 bytes of lookback for a
-    blank line split across reads, so a caller that passes how much it already
-    scanned reads each byte about once even when one event spans many reads.
-    """
     end = 0
     for match in _SSE_BLANK_LINE.finditer(buffer, max(0, start - 3)):
         end = match.end()
@@ -252,12 +233,7 @@ async def _stall_bounded_chunks(
     first_byte_seconds: float,
     idle_seconds: float,
 ) -> AsyncIterator[bytes]:
-    """Yield upstream chunks, bounding the wait for the first and each later one.
 
-    Each bound wraps a single read and never spans a yield: the route drives
-    this stream from a fresh task per chunk (SSE keepalive merging), so a
-    timeout scope left open across a yield would cancel the wrong task.
-    """
     iterator = chunks.__aiter__()
     loop = asyncio.get_running_loop()
     deadline = first_byte_deadline
@@ -284,22 +260,13 @@ async def _stall_bounded_chunks(
 
 
 def _compression_deadline_error() -> AnthropicProxyError:
-    # The request budget ran out while the body waited to be gzipped; nothing
-    # was sent upstream. Same code and message as the Codex paths.
+
+
     return AnthropicProxyError(504, "Proxy request budget exhausted", code="upstream_request_timeout")
 
 
 class _ConnectRetryingResponse:
-    """Async context manager that retries the upstream *connect* phase.
 
-    Only errors raised while entering the wrapped response context (DNS,
-    refused, connect timeout) are retried; anything after headers arrive is
-    the caller's responsibility. Exhausting the attempts raises a 503
-    ``upstream_unreachable`` proxy error so clients retry instead of seeing a
-    generic 500. A ``first_byte_deadline`` (event-loop time) bounds the whole
-    wait for response headers, connect retries included, and raises
-    ``UpstreamStallTimeout("first_byte")`` instead of retrying the same account.
-    """
 
     def __init__(
         self,
@@ -324,15 +291,15 @@ class _ConnectRetryingResponse:
             async with bound:
                 response = await self._open_with_retries()
                 if self._first_byte_deadline is not None and response.status >= 400:
-                    # Callers read error bodies in full; read them inside the
-                    # bound so an error status with a silent body cannot hang
-                    # the attempt. aiohttp keeps the body for later reads.
+
+
+
                     await response.read()
                 return response
         except BaseException as exc:
             if response is not None:
-                # The caller's ``async with`` never entered, so it will not
-                # release this response: close its connection here.
+
+
                 response.close()
                 self._context = None
             if isinstance(exc, TimeoutError) and bound.expired():
@@ -381,10 +348,10 @@ def _overloaded_backoff_seconds(attempt: int) -> float:
     return base + _OVERLOADED_RETRY_JITTER()
 
 
-# Pool-exhausted wait: how streams hold for the next window instead of dying.
-# Sleeps are sliced so an account freed early (cooldown cleared, account
-# added) is picked up within one poll interval; jitter avoids a thundering
-# herd of held streams re-attempting selection in the same instant.
+
+
+
+
 _POOL_WAIT_MIN_POLL_SECONDS = 5.0
 _POOL_WAIT_MAX_POLL_SECONDS = 300.0
 _POOL_WAIT_MAX_JITTER_SECONDS = 5.0
@@ -394,7 +361,7 @@ def _default_pool_wait_jitter() -> float:
     return random.uniform(0.0, _POOL_WAIT_MAX_JITTER_SECONDS)
 
 
-# Injection points so tests drive the hold with a fake clock — never real sleeps.
+
 _POOL_WAIT_CLOCK: Callable[[], float] = time.time
 _POOL_WAIT_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
 _POOL_WAIT_JITTER: Callable[[], float] = _default_pool_wait_jitter
@@ -439,20 +406,20 @@ class _AnthropicQuotaEligibility:
     account_ids: list[str]
     blocked_count: int = 0
     next_reset_at: int | None = None
-    # Of `blocked_count`, the accounts held out by a request-quota cooldown
-    # this request did not re-admit, and the earliest reset among them. The
-    # rest are blocked by an exhausted primary/secondary window or a tripwire,
-    # which is a different fact about the pool: reporting them all as "quota
-    # cooldown" sent the 2026-09-20 investigation after a cooldown that had
-    # already been bypassed, with a weekly reset days out quoted as its end.
+
+
+
+
+
+
     cooldown_blocked_count: int = 0
     cooldown_reset_at: int | None = None
-    # Exact IDs allowed to bypass a persisted primary-window RATE_LIMITED
-    # status for this request. This is intentionally narrower than account_ids:
-    # only the paid last-resort branch may populate it.
+
+
+
     paid_fallback_account_ids: frozenset[str] = frozenset()
-    # Accounts past the Fable weekly threshold: preferred (burn_first) for
-    # non-Fable traffic so under-threshold accounts keep Fable headroom.
+
+
     burn_first_account_ids: frozenset[str] = frozenset()
 
 
@@ -460,10 +427,10 @@ class _AnthropicQuotaEligibility:
 class _AnthropicErrorDetails:
     message: str
     error_type: str | None = None
-    # Anthropic's structured `error.details` object. Clients classify some
-    # errors from it rather than from the prose message — Claude Code reads
-    # `thread_not_found` out of it to replay a stateful thread instead of
-    # failing the turn — so the proxy must carry it through untouched.
+
+
+
+
     details: Any | None = None
 
 
@@ -548,9 +515,9 @@ class AnthropicProxyService:
         except AnthropicProxyError as exc:
             if not wait_enabled or exc.retry_at is None:
                 raise
-            # Pool-wide exhaustion with a known reset: hold the stream open in
-            # body() (keepalives flow at the route) instead of killing the
-            # agent session with a 429.
+
+
+
             first_account = None
             initial_wait_error = exc
         if first_account is not None:
@@ -562,8 +529,8 @@ class AnthropicProxyService:
             last_error_status: int | None = None
             last_error_message: str | None = None
             streamed_bytes = False
-            # Set when the latest attempt ended on a silent upstream before any
-            # bytes went out; cleared when the next account is picked.
+
+
             last_stall: UpstreamStallTimeout | None = None
             latency_first_token_ms: int | None = None
             wait_deadline = (
@@ -580,8 +547,8 @@ class AnthropicProxyService:
                     last_error_message = None
                     last_stall = None
                 try:
-                    # Try every eligible account once before declaring the pool
-                    # exhausted; a healthy account can be fifth in a large pool.
+
+
                     wake_eligibility = await self._provider_quota_eligibility(
                         provider_name, quota_key, model=payload.model
                     )
@@ -633,12 +600,12 @@ class AnthropicProxyService:
                             provider_name == ANTHROPIC_PROVIDER_NAME
                             and get_settings().anthropic_claude_code_identity_enabled
                         ):
-                            # Anthropic's OAuth endpoint only serves requests
-                            # whose first system block is the Claude Code
-                            # identity; without it every account answers 429,
-                            # which reads as a pool-wide quota wall. Claude
-                            # Code sends it (behind its leading billing block),
-                            # a plain API client does not.
+
+
+
+
+
+
                             body_payload = ensure_claude_code_identity_body(body_payload)
 
                         unified_headers: dict[str, str] | None = None
@@ -650,8 +617,8 @@ class AnthropicProxyService:
                         )
 
                         nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
-                        # Streamed calls only: a non-streamed reply legitimately
-                        # sends nothing until the whole message is generated.
+
+
                         first_byte_seconds = get_settings().anthropic_first_byte_timeout_seconds
                         idle_seconds = get_settings().anthropic_stream_idle_timeout_seconds if payload.stream else 0.0
                         stall_catcher = _StallCatcher()
@@ -824,11 +791,11 @@ class AnthropicProxyService:
                                     last_error_message = error_message
                                     continue
                                 if resp.status == 529:
-                                    # Transient upstream overload: another
-                                    # account frequently serves the same
-                                    # request immediately, so fail over inside
-                                    # the attempt budget instead of raising.
-                                    # No quota cooldown — 529 is not quota.
+
+
+
+
+
                                     error_message = await _read_error_message(resp)
                                     await self._load_balancer.record_error(account)
                                     await self._persist_request_log(
@@ -856,13 +823,13 @@ class AnthropicProxyService:
                                     continue
                                 if resp.status >= 400:
                                     error_details = await _read_error_details(resp)
-                                    # A 404 is a statement about the request —
-                                    # an unknown model, or server-side thread
-                                    # state the account no longer holds — never
-                                    # about the account's health. Counting it
-                                    # as an account error pushed healthy
-                                    # accounts down the ranking on every
-                                    # stateful-thread miss (2026-09-20).
+
+
+
+
+
+
+
                                     if resp.status != 404:
                                         await self._load_balancer.record_error(account)
                                     await self._persist_request_log(
@@ -890,12 +857,12 @@ class AnthropicProxyService:
                                         details=error_details.details,
                                     )
 
-                                # A 200 whose unified rate-limit headers report
-                                # the subscription window exhausted was served by
-                                # billing extra-usage credits. Drop the body only
-                                # when extra-usage routing is off and this account
-                                # was not the paid last resort. With the setting
-                                # on, stream the body and record the cooldown.
+
+
+
+
+
+
                                 tripwire_error: UpstreamError | None = None
                                 if provider_name == ANTHROPIC_PROVIDER_NAME:
                                     tripwire_error = _extra_usage_tripwire_error(resp.headers)
@@ -956,13 +923,13 @@ class AnthropicProxyService:
 
                                 text_buffer = ""
                                 stream_error: AnthropicErrorEvent | None = None
-                                # Non-streaming responses are a single JSON document, not SSE, so the
-                                # SSE collector never sees usage. Buffer the raw body and parse it at the end.
+
+
                                 raw_body = bytearray() if not payload.stream else None
-                                # Streamed bytes go out whole SSE events at a time,
-                                # so the client always sits on an event boundary: an
-                                # error event can follow cleanly, and a keepalive
-                                # comment never lands inside an event.
+
+
+
+
                                 unsent = bytearray()
                                 scanned = 0
                                 async for chunk in _stall_bounded_chunks(
@@ -997,17 +964,17 @@ class AnthropicProxyService:
                                 if unsent.strip(b"\r\n"):
                                     raise UpstreamTruncatedEvent()
                                 if unsent:
-                                    # Only the tail of a blank line split across
-                                    # reads (the LF of a CRLF): no event is cut.
+
+
                                     yield bytes(unsent)
                                 if raw_body is not None:
                                     usage = _usage_from_json_body(bytes(raw_body)) or usage
 
                                 if stream_error is not None:
-                                    # Bytes already went out, so the request cannot be
-                                    # retried — but the failure must reach account
-                                    # health and the request log instead of counting
-                                    # as a success.
+
+
+
+
                                     stream_error_type = stream_error.error.type or "unknown"
                                     logger.warning(
                                         "anthropic_stream_error_event request_id=%s account_id=%s "
@@ -1092,9 +1059,9 @@ class AnthropicProxyService:
                         stall = stall_catcher.stall
                         if stall is None:
                             continue
-                        # The stalled connection is already closed. Anthropic
-                        # answers retries with overload-type errors, so clients
-                        # retry; the account takes a transient health hit.
+
+
+
                         logger.warning(
                             "anthropic_upstream_stall request_id=%s account_id=%s phase=%s bound_seconds=%g "
                             "streamed_bytes=%s",
@@ -1104,9 +1071,9 @@ class AnthropicProxyService:
                             stall.seconds,
                             streamed_bytes,
                         )
-                        # Once bytes went out the stream ends here, so the
-                        # reservation is settled too. The client may disconnect
-                        # meanwhile; the bookkeeping still runs to the end.
+
+
+
                         await self._shielded(
                             self._record_stall(
                                 account,
@@ -1130,15 +1097,15 @@ class AnthropicProxyService:
                             )
                         )
                         if not streamed_bytes:
-                            # Nothing reached the client: fail over at once.
+
                             last_stall = stall
                             last_error_status = 529
                             last_error_message = str(stall)
                             continue
-                        # Bytes already went out, so the request cannot move to
-                        # another account; end the stream with an error event
-                        # the client retries instead of holding it open. Only
-                        # whole events were forwarded, so it follows cleanly.
+
+
+
+
                         error_event = json.dumps(
                             {"type": "error", "error": {"type": "overloaded_error", "message": str(stall)}},
                             separators=(",", ":"),
@@ -1164,16 +1131,16 @@ class AnthropicProxyService:
                     raise AnthropicProxyError(503, message, code=code) from exc
                 except AnthropicProxyError as exc:
                     if exc.code == "upstream_request_timeout":
-                        # The request budget is spent: no other account or
-                        # hold can serve it, and it is not an overload.
+
+
                         raise
                     if last_stall is not None:
-                        # Candidates ran out right after a silent upstream:
-                        # that is an overload, not a quota wall, so no pool
-                        # hold and no unrelated reset hint.
+
+
+
                         raise AnthropicProxyError(529, str(last_stall), code="overloaded_error") from exc
-                    # Never hold once response bytes have gone out: appending a
-                    # second upstream stream to a partial one would corrupt it.
+
+
                     if not streamed_bytes and _pool_wait_should_hold(
                         exc, wait_enabled=wait_enabled, deadline=wait_deadline
                     ):
@@ -1181,9 +1148,9 @@ class AnthropicProxyService:
                         account_override = None
                         continue
                     if last_error_status == 529 and exc.retry_at is None:
-                        # Candidates ran out mid-wake after 529s: the pool is
-                        # not the problem, upstream is overloaded — surface the
-                        # vendor-native error so clients retry appropriately.
+
+
+
                         raise AnthropicProxyError(
                             529,
                             last_error_message or "Upstream overloaded",
@@ -1195,12 +1162,12 @@ class AnthropicProxyService:
                     await self._release_api_key_reservation(api_key_reservation)
                     raise AnthropicProxyError(529, str(last_stall), code="overloaded_error")
                 message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
-                # Upstream 429s above recorded cooldowns, so eligibility now knows the
-                # earliest reset; surface it so clients can schedule a retry.
+
+
                 eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=payload.model)
-                # A budget exhausted on 529s is an upstream overload, not a
-                # local pool problem: surface the vendor-native type so
-                # clients apply their own overload retry policy.
+
+
+
                 exhausted_code = (
                     "overloaded_error" if last_error_status == 529 else _no_available_accounts_code(provider_name)
                 )
@@ -1355,12 +1322,12 @@ class AnthropicProxyService:
                 body=json.dumps({"input_tokens": estimated}).encode(),
                 media_type="application/json",
             )
-        # Token counting is quota-free upstream and account-agnostic, so any
-        # active account may serve it: selection skips sticky affinity and uses
-        # a dedicated quota key that never records cooldowns, keeping message
-        # cooldowns from blocking free counting. No usage, reservation, or
-        # response-driven error-health state is written for this path; only
-        # the shared token-refresh step may mark an account, as on every route.
+
+
+
+
+
+
         account = await self._select_account(
             model,
             provider_name=provider_name,
@@ -1521,16 +1488,16 @@ class AnthropicProxyService:
                 retry_at=eligibility.next_reset_at,
             )
         settings = await get_settings_cache().get()
-        # The routing flags live on the app config (get_settings), the same
-        # source as anthropic_fable_routing_enabled, not the dashboard-editable
-        # settings above.
+
+
+
         app_settings = get_settings()
-        # A session's prompt cache lives on the account that wrote it, so a
-        # move re-writes the whole context on the new account. When holding,
-        # a pinned session stays until its account is really out (eligibility
-        # drops it at 100%, or a live 429 excludes it) and then fails over once
-        # to the least-used account. Moving at 95% or onto burn-first accounts
-        # strands the rest of the window and still pays the rewrite.
+
+
+
+
+
+
         hold_until_exhausted = app_settings.anthropic_sticky_hold_until_exhausted
         selection = await self._load_balancer.select_account(
             model=model,
@@ -1605,9 +1572,9 @@ class AnthropicProxyService:
             provider_accounts = [
                 account for account in await repos.accounts.list_accounts() if account.provider.lower() == provider_name
             ]
-            # Headline counts and status summary reflect only the routable
-            # pool — counting canceled/deactivated rows would inflate the
-            # total and imply spare capacity that can never serve traffic.
+
+
+
             accounts = selectable_accounts(provider_accounts)
             unusable_count = len(provider_accounts) - len(accounts)
             account_count = len(accounts)
@@ -1622,9 +1589,9 @@ class AnthropicProxyService:
                 for entry in primary_usage.values()
                 if entry.reset_at and float(entry.used_percent) >= 100.0
             )
-        # The prefilter deadline includes response-written extra-usage tripwires
-        # as well as requested-quota cooldowns. Merge both stages' live guards;
-        # persisted account and usage windows below remain advisory fallback.
+
+
+
         live_retries = [
             candidate
             for candidate in (quota_reset_at, quota_cooldown_reset_at, selection_retry_at)
@@ -1702,10 +1669,10 @@ class AnthropicProxyService:
         now = int(time.time())
         settings = get_settings()
         fable_routing = provider_name == ANTHROPIC_PROVIDER_NAME and settings.anthropic_fable_routing_enabled
-        # Accounts with vendor-side extra usage keep answering 200 after the
-        # primary window exhausts and silently bill metered credits, so the
-        # window itself is a hard gate. Token counting is quota-free upstream
-        # and never bills, so its dedicated quota key stays exempt.
+
+
+
+
         extra_usage_gate = provider_name == ANTHROPIC_PROVIDER_NAME and quota_key != _count_tokens_quota_key(
             provider_name
         )
@@ -1713,11 +1680,11 @@ class AnthropicProxyService:
             provider_accounts = [
                 account for account in await repos.accounts.list_accounts() if account.provider.lower() == provider_name
             ]
-            # Scope eligibility to the same routable pool the load balancer
-            # uses. Canceled-subscription, deactivated, paused, and
-            # reauth-required rows can never be selected, so counting them
-            # as "remaining candidates" produces misleading diagnostics and
-            # masks the real "all usable accounts are cooling down" state.
+
+
+
+
+
             account_ids = [account.id for account in selectable_accounts(provider_accounts)]
             request_quota_latest = await repos.additional_usage.latest_by_account(
                 quota_key,
@@ -1743,10 +1710,10 @@ class AnthropicProxyService:
                     )
                     for account_id, entry in extra_usage_tripwire_latest.items()
                 }
-            # A persisted primary window with reset_at=None must not gate an
-            # account out of routing indefinitely. Only a bounded, still-future
-            # reset counts as an active exhaustion here; a None reset re-admits
-            # the account (a genuine 429 re-writes a bounded cooldown).
+
+
+
+
             primary_exhaustion: dict[str, int] = {}
             primary_headroom_recorded_at: dict[str, int] = {}
             credit_enabled_exhausted_account_ids: frozenset[str] = frozenset()
@@ -1805,8 +1772,8 @@ class AnthropicProxyService:
             fable_access_markers: dict[str, tuple[float, int | None]] = {}
             fable_scoped_markers: dict[str, tuple[float, int | None, int]] = {}
             if fable_routing:
-                # Snapshot scalars inside the repo session — the ORM rows
-                # detach once the context closes (regression 1f47e633).
+
+
                 fable_access = await repos.additional_usage.latest_by_account(
                     _ANTHROPIC_FABLE_ACCESS_QUOTA_KEY,
                     _ANTHROPIC_FABLE_ACCESS_WINDOW,
@@ -1821,9 +1788,9 @@ class AnthropicProxyService:
                     _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW,
                     account_ids=account_ids,
                 )
-                # recorded_at is a naive-UTC datetime column; snapshot it as
-                # an epoch int here too, alongside the other scalars, since
-                # the ORM row detaches once this session context closes.
+
+
+
                 fable_scoped_markers = {
                     account_id: (
                         float(entry.used_percent),
@@ -1841,10 +1808,10 @@ class AnthropicProxyService:
             return weekly_usage_used_percent.get(account_id, 0.0)
 
         def _fresh_scoped_percent(account_id: str) -> float | None:
-            # Anthropic's dedicated Fable-scoped weekly percent is
-            # authoritative when fresh. The caller additionally checks that
-            # an exhausted marker has a still-future reset before treating it
-            # as a hard model-scope exclusion.
+
+
+
+
             marker = fable_scoped_markers.get(account_id)
             if marker is None:
                 return None
@@ -1869,8 +1836,8 @@ class AnthropicProxyService:
             preferred_ids: set[str] = set()
             for account_id in account_ids:
                 scoped_percent = _fresh_scoped_percent(account_id)
-                # A Fable-scoped usage marker is advisory, including at 100%.
-                # An actual upstream refusal is handled by account backoff.
+
+
                 model_scope_account_ids.append(account_id)
                 if (
                     scoped_percent is not None
@@ -1898,9 +1865,9 @@ class AnthropicProxyService:
                 primary_headroom_recorded_at.get(account_id),
                 tripwire[2],
             )
-            # Paid fallback keeps the primary-only lift. With the flag off, a
-            # weekly snapshot must also show headroom recorded after the
-            # tripwire; an account with no secondary snapshot stays primary-only.
+
+
+
             if route_paid_extra or account_id not in secondary_snapshot_recorded_at:
                 return not primary_recovered
             if not primary_recovered:
@@ -1911,9 +1878,9 @@ class AnthropicProxyService:
             )
 
         for account_id in model_scope_account_ids:
-            # A response-written requested-quota cooldown remains a real
-            # refusal, but its retry is bounded even if the header reset is
-            # days away. New failures also persist account-level backoff.
+
+
+
             request_cooldown = request_quota_cooldowns.get(account_id)
             if (
                 request_cooldown is not None
@@ -1924,9 +1891,9 @@ class AnthropicProxyService:
                 request_quota_blocked_account_ids.add(account_id)
                 blocked_reset_by_account_id[account_id] = min(int(request_cooldown[1]), request_cooldown[2] + 60)
                 continue
-            # Weekly exhaustion is a hard gate for billable messages when paid
-            # extra usage is off. The paid-fallback path still treats the
-            # snapshot as ranking and excludes it only from last-resort candidates.
+
+
+
             if extra_usage_gate and not route_paid_extra and account_id in secondary_exhaustion:
                 blocked_count += 1
                 weekly_reset = secondary_exhaustion[account_id]
@@ -1948,9 +1915,9 @@ class AnthropicProxyService:
             if preferred_standard_account_ids:
                 eligible_account_ids = preferred_standard_account_ids
             else:
-                # The heuristic is a preference, not a model-capability oracle.
-                # Healthy primary headroom in the soft Fable pool must be used
-                # before paid extra usage is considered.
+
+
+
                 logger.warning(
                     "All subscription-covered Anthropic accounts are soft Fable fallbacks "
                     "past the weekly threshold (%.0f%%); using that headroom model=%s",
@@ -1963,13 +1930,13 @@ class AnthropicProxyService:
         )
         paid_fallback_account_ids: frozenset[str] = frozenset()
         if not eligible_account_ids and pool_primary_exhausted and settings.anthropic_route_to_extra_usage:
-            # Opt-in last resort: only pool-wide primary-window exhaustion can
-            # authorize paid traffic. A healthy-primary account blocked by a
-            # model/quota cooldown must not cause another account to spend
-            # credits. Re-admit only exhausted accounts whose same latest
-            # primary snapshot reports usable extra-usage capacity; this also
-            # recognizes the dedicated response tripwire without weakening
-            # real request-quota cooldowns written by upstream 429 responses.
+
+
+
+
+
+
+
             paid_candidates = [
                 account_id
                 for account_id in model_scope_account_ids
@@ -1990,9 +1957,9 @@ class AnthropicProxyService:
                 blocked_reset_by_account_id.pop(account_id, None)
 
         burn_first_account_ids: frozenset[str] = frozenset()
-        # Burn-first steers non-Fable traffic onto accounts already past the
-        # Fable threshold to save Fable capacity. Off by default since Fable
-        # was retired: it pulls sessions onto busier accounts for no benefit.
+
+
+
         if fable_routing and settings.anthropic_fable_burn_first_enabled and not fable_request and eligible_account_ids:
 
             def _is_over_fable_threshold(account_id: str) -> bool:
@@ -2005,8 +1972,8 @@ class AnthropicProxyService:
                 account_id for account_id in eligible_account_ids if _is_over_fable_threshold(account_id)
             )
 
-        # Only cooldowns that survived every re-admission path may be reported
-        # as a cooldown; a re-admitted account is not being held out by one.
+
+
         cooling_account_ids = request_quota_blocked_account_ids - set(eligible_account_ids)
         cooldown_resets = [
             blocked_reset_by_account_id[account_id]
@@ -2104,9 +2071,9 @@ class AnthropicProxyService:
         except RefreshError as exc:
             if exc.code == "exchange_uncertain":
                 raise AnthropicProxyError(503, exc.message, code=exc.code) from exc
-            # AuthManager already conditionally persists permanent failures against
-            # the exchanged token version. Repeating that write here can disable a
-            # concurrently reauthorized account using this request's stale snapshot.
+
+
+
             if exc.is_permanent or classify_refresh_error(exc.code):
                 get_account_selection_cache().invalidate()
             raise AnthropicProxyError(401, exc.message, code=exc.code) from exc
@@ -2135,8 +2102,8 @@ class AnthropicProxyService:
         quota_observed_at: datetime | None = None,
         request_kind: str = "normal",
     ) -> None:
-        # The member lookup adds an await. Keep the log task alive if the client
-        # disconnects, as the proxy request logger does.
+
+
         task = asyncio.create_task(
             self._persist_request_log_row(
                 account=account,
@@ -2165,7 +2132,7 @@ class AnthropicProxyService:
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
-            # Keep a strong reference through completion, and consume any failure.
+
             self._pending_request_logs.add(task)
             task.add_done_callback(self._request_log_finished)
             raise
@@ -2320,10 +2287,7 @@ class AnthropicProxyService:
         body: AsyncIterator[bytes],
         reservation: ApiKeyUsageReservationData | None,
     ) -> AsyncIterator[bytes]:
-        """Release the reservation when the client leaves before any byte went out.
 
-        Once bytes went out, the body settles the reservation itself.
-        """
         forwarded = False
         try:
             async for chunk in body:
@@ -2335,7 +2299,7 @@ class AnthropicProxyService:
             raise
 
     async def _shielded(self, work: Coroutine[Any, Any, None]) -> None:
-        """Run ``work`` to the end even if the caller is cancelled (a client disconnect)."""
+
         task = asyncio.create_task(work)
         try:
             await asyncio.shield(task)
@@ -2421,8 +2385,8 @@ def _anthropic_quota_key(payload: AnthropicMessageRequest) -> str:
 
 
 def _resolve_planner_model(model: str) -> str:
-    # Resolved before account selection, forwarding, logs, pricing and
-    # settlement, so every step sees the model that actually serves.
+
+
     if model.strip().lower() == _ANTHROPIC_PLANNER_MODEL_ALIAS:
         return _ANTHROPIC_PLANNER_MODEL
     return model
@@ -2444,8 +2408,8 @@ def _provider_name_for_model(model: str) -> str:
 
 
 def _count_tokens_quota_key(provider_name: str) -> str:
-    # Dedicated key with no recorded cooldowns: count_tokens is quota-free
-    # upstream, so message-quota cooldowns must not exclude accounts from it.
+
+
     return get_anthropic_compat_profile(provider_name).count_tokens_quota_key
 
 
@@ -2477,10 +2441,10 @@ def _messages_affinity_quota_key(payload: AnthropicMessageRequest, *, provider_n
         base = "anthropic_top"
     elif base == "anthropic_opus_thinking":
         base = "anthropic_top_thinking"
-    # Fable-class traffic gets its own affinity family so a session that
-    # interleaves Fable and non-Fable requests holds two independent sticky
-    # pins instead of ping-ponging one pin between an under-threshold (Fable)
-    # and an over-threshold (burn_first) account on every model switch.
+
+
+
+
     return f"{base}_fable" if _is_fable_model(payload.model) else base
 
 
@@ -2636,11 +2600,11 @@ def _anthropic_selection_quota_detail(
     selection_error_message: str | None,
 ) -> str | None:
     parts: list[str] = []
-    # A cooldown clause may only speak for accounts a cooldown is actually
-    # holding out, with that cooldown's own reset. Reporting every blocked
-    # account as a cooldown, dated by the pool-wide retry hint, turned two
-    # weekly-exhausted accounts plus a 60-second cooldown into "cooldown
-    # excluded 2 accounts until <three days out>" (2026-09-20).
+
+
+
+
+
     if cooldown_blocked_count > 0:
         noun = "account" if cooldown_blocked_count == 1 else "accounts"
         reset_text = (
@@ -2669,10 +2633,10 @@ def _hash_for_key(value: str) -> str:
 def _anthropic_cooldown_is_active(used_percent: float, reset_at: int | None, *, now: int) -> bool:
     if float(used_percent) < 100.0:
         return False
-    # A persisted exhaustion with no reset horizon must not block routing
-    # forever. Without a bounded reset we cannot know the window is still
-    # exhausted, so re-admit the account; if it is genuinely exhausted the
-    # next upstream 429 trips a fresh bounded cooldown.
+
+
+
+
     if reset_at is None:
         return False
     return int(reset_at) > now
@@ -2684,7 +2648,7 @@ def _upgrade_helper_cache(
     inbound_headers: Mapping[str, str],
     provider_name: str,
 ) -> str | None:
-    # Claude Code already sends this conversation ID for subagents, not leads.
+
     agent_id = next((value for key, value in inbound_headers.items() if key.lower() == "x-claude-code-agent-id"), "")
     if (
         provider_name != ANTHROPIC_PROVIDER_NAME
@@ -2789,22 +2753,16 @@ def _collect_usage_from_chunk(
     chunk: bytes,
     usage: AnthropicUsage | None,
 ) -> tuple[str, AnthropicUsage | None, AnthropicErrorEvent | None, bool]:
-    """Parse forwarded SSE chunks for usage, in-band errors, and first output.
 
-    Anthropic reports mid-stream failures as an SSE ``error`` event on an
-    HTTP 200 stream; without inspecting the forwarded bytes those failures
-    are invisible to account health and request logging. The same parse
-    records whether a content block start or delta arrived.
-    """
     error_event: AnthropicErrorEvent | None = None
     saw_output = False
     text_buffer += chunk.decode("utf-8", errors="replace")
     normalized = text_buffer.replace("\r\n", "\n")
     while "\n\n" in normalized:
         block, normalized = normalized.split("\n\n", 1)
-        # Match the SSE event name, not the parsed model: block types the
-        # strict union does not know (redacted_thinking, server_tool_use)
-        # parse to None but are still the model's first output.
+
+
+
         if _FIRST_OUTPUT_EVENT_RE.search(block):
             saw_output = True
         event = parse_sse_event(block)
@@ -2898,8 +2856,8 @@ def _pool_wait_should_hold(
 ) -> bool:
     if not wait_enabled or deadline is None:
         return False
-    # Only pool-wide exhaustion with a known earliest reset is worth holding
-    # for; selection failures without reset timing are not reset-recoverable.
+
+
     if exc.retry_at is None:
         return False
     return _POOL_WAIT_CLOCK() < deadline
@@ -2972,10 +2930,10 @@ def _unified_limit_exhausted(headers: Mapping[str, str]) -> bool:
         if value is None:
             continue
         normalized = value.strip().lower()
-        # On a 2xx, any non-allowed unified status means the subscription
-        # window rejected the request yet upstream served it anyway — i.e.
-        # it billed credits. Unknown statuses fail closed: a spurious
-        # cooldown is bounded, silent credit burn is not.
+
+
+
+
         if normalized and normalized not in _ANTHROPIC_UNIFIED_ALLOWED_STATUSES:
             return True
     return False
@@ -3034,7 +2992,7 @@ def _retry_after_seconds(headers: Mapping[str, str]) -> int | None:
 
 
 def _parse_reset_epoch(value: str | None) -> int | None:
-    """Parse a reset header as RFC 3339 or Unix epoch (seconds or milliseconds)."""
+
     if not value:
         return None
     normalized = value.strip()
@@ -3045,7 +3003,7 @@ def _parse_reset_epoch(value: str | None) -> int | None:
     else:
         if epoch <= 0:
             return None
-        if epoch > 1e12:  # milliseconds
+        if epoch > 1e12:
             epoch /= 1000.0
         return int(epoch)
     if normalized.endswith("Z"):

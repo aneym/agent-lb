@@ -1,6 +1,4 @@
-"""R028: Re-inject factory role, lane state and learnings after compact or resume.
-install-policy.py installs this SessionStart hook.
-"""
+
 from __future__ import annotations
 
 import json

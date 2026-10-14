@@ -51,7 +51,7 @@ type Labelled = { alias?: string | null; planType: string; email: string };
 const ACRONYMS = new Set(["glm", "api"]);
 const titleCase = (s: string) =>
   ACRONYMS.has(s.toLowerCase()) ? s.toUpperCase() : s.charAt(0).toUpperCase() + s.slice(1);
-/** "Max · alex", or "Max · a•••x" when emails are hidden; an alias always wins. */
+
 export function accountLabel(a: Labelled, hideEmails: boolean) {
   if (a.alias) return a.alias;
   const local = a.email.split("@")[0];

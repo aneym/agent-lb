@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Recompute each task's required tests from in-container oracle and nop runs.
 
-The miner recorded FAIL_TO_PASS/PASS_TO_PASS on the host. Inside the task image some of those
-tests behave differently (no system tools, other Python), so the lists are re-derived where the
-agent will be graded, the way SWE-bench derives them:
-
-- FAIL_TO_PASS: passes with the fix (oracle), does not pass without it (nop).
-- PASS_TO_PASS: passes in both.
-
-A task with no FAIL_TO_PASS left, or whose oracle trial did not finish, is moved to
-<tasks-dir>/../dropped/ so arm runs never see it. The host lists are kept as tests/required.host.json.
-
-    python3 calibrate.py <tasks-dir> <oracle-job-dir> <nop-job-dir>
-"""
 
 from __future__ import annotations
 

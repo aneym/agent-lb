@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Integration fixture: exercise the real dispatcher subprocess and JSON boundary.
 
-Synthetic command hooks are protocol fixtures, not mocks of our own guards.
-"""
 import argparse
 import json
 import os

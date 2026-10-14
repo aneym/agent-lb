@@ -3,7 +3,7 @@ import XCTest
 
 final class PlanPricingTests: XCTestCase {
 
-  // MARK: - monthlyUSD(provider:planType:)
+
 
   func testMonthlyUSDAnthropicTable() {
     XCTAssertEqual(PlanPricing.monthlyUSD(provider: "anthropic", planType: "claude"), 200)
@@ -31,7 +31,7 @@ final class PlanPricingTests: XCTestCase {
     XCTAssertEqual(PlanPricing.monthlyUSD(provider: "Anthropic", planType: "MAX"), 200)
   }
 
-  // MARK: - monthlyUSD(for:)
+
 
   func testMonthlyUSDForAccountUsesOperatorAmount() {
     let account = makeTestAccount(
@@ -111,7 +111,7 @@ final class PlanPricingTests: XCTestCase {
     XCTAssertNil(PlanPricing.monthlyUSD(for: account))
   }
 
-  // MARK: - ArbitrageStats.compute
+
 
   func testComputeNilSummaryIsNil() {
     XCTAssertNil(ArbitrageStats.compute(summary: nil, accounts: []))
@@ -227,7 +227,7 @@ final class PlanPricingTests: XCTestCase {
     XCTAssertEqual(stats?.estimated, false)
   }
 
-  // MARK: - multipleLabel
+
 
   func testMultipleLabelEstimated() {
     let stats = ArbitrageStats(

@@ -118,7 +118,7 @@ export function TotpSettings({ settings, disabled = false, onSave }: TotpSetting
   return (
     <section className="rounded-xl border bg-card p-5">
       <div className="space-y-3">
-        {/* Status row */}
+        {                }
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
@@ -158,7 +158,7 @@ export function TotpSettings({ settings, disabled = false, onSave }: TotpSetting
           </div>
         </div>
 
-        {/* Require on login toggle */}
+        {                             }
         <div className="flex items-center justify-between rounded-lg border p-3">
           <div>
             <p className="text-sm font-medium">Require TOTP on login</p>
@@ -174,7 +174,7 @@ export function TotpSettings({ settings, disabled = false, onSave }: TotpSetting
         </div>
       </div>
 
-      {/* Setup dialog */}
+      {                  }
       <Dialog open={activeDialog === "setup"} onOpenChange={(open) => !open && closeDialog()}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
@@ -243,7 +243,7 @@ export function TotpSettings({ settings, disabled = false, onSave }: TotpSetting
         </DialogContent>
       </Dialog>
 
-      {/* Disable dialog */}
+      {                    }
       <Dialog open={activeDialog === "disable"} onOpenChange={(open) => !open && closeDialog()}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>

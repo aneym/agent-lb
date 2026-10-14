@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Pure lane-path parser regression table, including traversal and sibling escapes.
 
-Own-lane edits must be allowed without authorizing other lanes or host state.
-The old blanket Finish prohibition had no owning-lane resolution coverage.
-"""
 import importlib.util
 import os
 from pathlib import Path

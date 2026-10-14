@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the read-only routing audit outside /Volumes for launchd."""
+
 from __future__ import annotations
 
 import argparse
@@ -60,8 +60,8 @@ def main():
     plist.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(Path(__file__).with_name("routing_daily_audit.py"), target)
     target.chmod(0o755)
-    # launchd calendars use local time. Wake at :05 each hour and guard in UTC so
-    # the daily 11:05Z run stays correct across timezone and DST changes.
+
+
     homebrew = "/opt/homebrew/bin/python3"
     interpreter = (homebrew if os.path.isfile(homebrew) and os.access(homebrew, os.X_OK)
                    else str(Path(sys.executable).resolve()))

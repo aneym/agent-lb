@@ -174,7 +174,7 @@ echo "$@" >> "$SHIM_CALL_LOG"
 exit 0
 """
 
-# Always reports a listener on 127.0.0.1:2455 — the old process never drains.
+
 LSOF_SHIM = """#!/usr/bin/env bash
 echo "python  1234 user  23u  IPv4  TCP 127.0.0.1:2455 (LISTEN)"
 """
@@ -185,8 +185,8 @@ echo '{"status":"ok"}'
 
 
 def test_install_service_busy_port_after_bootout_still_bootstraps(tmp_path: Path) -> None:
-    # Run a copy of the installer from a scratch repo so the test needs neither
-    # this checkout's .venv (fresh worktrees have none) nor the real launchd.
+
+
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
     installer = repo / "scripts" / "install-service.sh"

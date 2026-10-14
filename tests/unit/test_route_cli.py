@@ -1,4 +1,4 @@
-"""Contract C4 of the router program: the `route` CLI, driven as a subprocess."""
+
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "clients" / "route"
-# CLI mechanics run against a frozen table so lineup changes in the canonical
-# table do not rewrite these tests; the canonical lineup has its own checks.
+
+
 TABLE = REPO / "tests" / "fixtures" / "route" / "routing-table.json"
 CANONICAL_TABLE = REPO / "config" / "coding-agents" / "routing-table.json"
 
@@ -293,7 +293,7 @@ def test_pools_falls_back_to_the_accounts_endpoint_when_the_pools_endpoint_is_mi
                     "resetAtSecondary": "2026-09-20T11:00:00Z",
                 },
                 {
-                    # 5-hour window spent: blocked now whatever the week says.
+
                     "provider": "anthropic",
                     "status": "active",
                     "fableEligible": False,
@@ -406,7 +406,7 @@ def seat_record(home: Path, seat: str) -> dict[str, object]:
 
 
 def test_doctor_keeps_a_seat_up_when_a_429_probe_meets_recent_real_traffic(home: Path, tmp_path: Path) -> None:
-    """The live false negative: a fresh-selection 429 while real Opus traffic was succeeding."""
+
     fixtures = doctor_fixtures(
         tmp_path,
         name="busy-but-working",
@@ -440,7 +440,7 @@ def test_doctor_keeps_a_seat_up_when_a_429_probe_meets_recent_real_traffic(home:
 
 
 def test_doctor_counts_traffic_as_proof_even_when_the_session_logged_some_errors(home: Path, tmp_path: Path) -> None:
-    """`errors` is session-level and cannot be pinned on one model; 155 requests beat 3 errors."""
+
     fixtures = doctor_fixtures(
         tmp_path,
         name="working-with-errors",
@@ -581,8 +581,8 @@ def test_doctor_clears_the_alert_when_every_probe_passes(home: Path, tmp_path: P
 
 
 def test_doctor_never_runs_the_host_cursor_or_devin_cli(home: Path) -> None:
-    # 2026-09-27: doctor tests ran the host's real cursor-agent under a temporary HOME, and its keychain
-    # probe popped macOS "Keychain Not Found" dialogs. conftest puts failing stand-ins first on PATH.
+
+
     from tests.conftest import VENDOR_CLI_STUB_EXIT
 
     result = run("doctor", home=home, extra={"ROUTE_CODEX_CMD": "/bin/echo codex-ok"})
@@ -594,9 +594,7 @@ def test_doctor_never_runs_the_host_cursor_or_devin_cli(home: Path) -> None:
 
 
 def test_one_cli_seat_failure_keeps_routing_and_two_hold_it_until_a_passing_probe(home: Path, tmp_path: Path) -> None:
-    """2026-10-08: one 15 s `devin auth status` timeout under load took devin-seat out until the next doctor run
-    (30 min). One failure now keeps the seat routable; two consecutive failures hold it (for a short window), and
-    the next passing probe clears the hold."""
+
     table = json.loads(TABLE.read_text(encoding="utf-8"))
     table["classes"]["mechanical"]["chain"].insert(0, {"seat": "devin-seat", "model": "claude-opus-5"})
     table_path = tmp_path / "devin-table.json"
@@ -729,9 +727,9 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
     plan, implement, audit = pick("plan"), pick("implement"), pick("verify", "--author-vendor", "anthropic")
 
     assert plan.returncode == 0, plan.stderr
-    # No Anthropic model list in the fixtures: Claude aliases fall back to their pinned ids.
+
     assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "claude-opus-5-5")
-    # Implement leads with gpt-implementer on the newest Sol (E12, 2026-09-28), whose auditor is Opus.
+
     assert implement.returncode == 0, implement.stderr
     picked = json.loads(implement.stdout)
     assert (picked["seat"], picked["model"]) == ("gpt-implementer", "gpt-6-sol")
@@ -756,9 +754,9 @@ def test_canonical_implement_falls_to_sonnet_high_then_opus_only_when_sol_is_out
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
 
-    # A low Codex pool is not "out": Sol keeps the work.
+
     assert pick({"anthropic-general": "ok", "openai-codex": "low"})["seat"] == "gpt-implementer"
-    # Sol recorded down (a 429 or usage limit) is out: Sonnet high stands in first, and Sol audits it.
+
     (tmp_path / ".claude").mkdir(parents=True, exist_ok=True)
     routing_state(tmp_path, age_seconds=60, seats={"gpt-implementer": {"ok": False, "error": "HTTP 429"}})
     out = pick({"anthropic-general": "ok", "openai-codex": "ok"})
@@ -769,7 +767,7 @@ def test_canonical_implement_falls_to_sonnet_high_then_opus_only_when_sol_is_out
     assert out["audit"]["alias"] == "sol-latest"
     (tmp_path / ".claude" / "routing-state.json").unlink()
 
-    # implement_default names the seat route puts first; switching it puts Sonnet ahead of Sol.
+
     table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
     table["ladder"] = "baseline"
     table["implement_default"] = "sonnet-implementer"
@@ -797,19 +795,19 @@ def test_claude_aliases_resolve_to_the_newest_listed_model_without_a_pin(tmp_pat
         assert result.returncode == 0, result.stderr
         return result.stdout.strip()
 
-    # A dated snapshot never counts as a newer minor version.
+
     assert [resolve(a) for a in ("sonnet-latest", "opus-latest", "haiku-latest")] == [
         "claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-4-5"]
     write_fixture(fixtures, "api_models_anthropic.json", {"models": [*listed, "claude-sonnet-6"]})
     (tmp_path / "route-anthropic-models.json").unlink()
     assert resolve("sonnet-latest") == "claude-sonnet-6"
-    # With the LB list gone, the day-old cache answers; with neither, the harness alias does.
+
     empty = tmp_path / "empty-fixtures"
     empty.mkdir()
     assert resolve("sonnet-latest", empty) == "claude-sonnet-6"
     (tmp_path / "route-anthropic-models.json").unlink()
     assert resolve("sonnet-latest", empty) == "sonnet"
-    # A cache stamp with no timezone is not ours: it is ignored, never a crash.
+
     (tmp_path / "route-anthropic-models.json").write_text(
         json.dumps({"ts": "2026-09-28T12:00:00", "models": ["claude-sonnet-6"]}), encoding="utf-8")
     assert resolve("sonnet-latest", empty) == "sonnet"
@@ -832,24 +830,24 @@ def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> No
 
     assert (sol.returncode, sol.stdout.strip()) == (0, "gpt-6-sol")
     assert terra.returncode == 2 and "no non-retired terra" in terra.stderr
-    # A retired id named outright is an explicit request (2026-10-05): it resolves and is logged.
+
     assert (named.returncode, named.stdout.strip()) == (0, "gpt-6-astra")
     logged = [json.loads(line) for line in (tmp_path / "dispatch.jsonl").read_text().splitlines()]
     assert [(r["event"], r["model"], r["source"]) for r in logged] == [("explicit_model", "gpt-6-astra", "route resolve")]
     assert blocked.returncode == 2 and "no longer served" in blocked.stderr
 
-    # Readmitted aliases (2026-10-05) reach their retired family; the bare ids stay retired.
+
     write_fixture(fixtures, "api_models_anthropic.json", {"models": ["claude-fable-5", "claude-fable-5-1", "claude-opus-5-5"]})
     astra = run("resolve", "astra-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     fable = run("resolve", "fable-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     assert (astra.returncode, astra.stdout.strip()) == (0, "gpt-6-astra")
     assert (fable.returncode, fable.stdout.strip()) == (0, "claude-fable-5-1")
-    # When the upstream list answers without Fable, fable-latest falls back to opus-latest.
+
     write_fixture(fixtures, "api_models_anthropic.json", {"models": ["claude-opus-5-5", "claude-sonnet-5-5"]})
     (tmp_path / "route-anthropic-models.json").unlink()
     gone = run("resolve", "fable-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     assert (gone.returncode, gone.stdout.strip()) == (0, "claude-opus-5-5")
-    # A routed seat other than the one `readmitted` names never reaches the alias.
+
     table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
     table["classes"]["explore"]["chain"].insert(0, {"seat": "gpt-explorer", "vendor": "openai", "model": "astra-latest"})
     table["ladder"] = "baseline"
@@ -861,7 +859,7 @@ def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> No
 
 
 def _pace_gated_table(tmp_path: Path) -> Path:
-    """The canonical table with a pace-gated Opus ahead of Codex Sol: the chain the pace and audit rules act on."""
+
     table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
     table["ladder"] = "baseline"
     table["classes"]["implement"]["chain"] = [
@@ -997,7 +995,7 @@ def test_an_lb_without_weekly_pace_is_paced_from_its_accounts(tmp_path: Path) ->
     fixtures = tmp_path / "fixtures"
     now = datetime.now(timezone.utc)
     reset = (now + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    # An older /api/pools: no weeklyPacePercent, and a five-hour-capped aggregate.
+
     write_fixture(
         fixtures,
         "api_pools.json",
@@ -1037,7 +1035,7 @@ def test_an_lb_without_weekly_pace_is_paced_from_its_accounts(tmp_path: Path) ->
 def test_a_seat_whose_auditor_cannot_resolve_is_picked_with_an_audit_gap(tmp_path: Path) -> None:
     fixtures = tmp_path / "fixtures"
     _paced_pools(fixtures, 60.0, 84.0, 4)
-    # No Sol served: Opus can still implement without an available auditor.
+
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-luna"}]})
     extra = {
         "ROUTE_MODELS_CACHE": str(tmp_path / "models.json"),
@@ -1212,7 +1210,7 @@ def test_canonical_implement_admission_by_codex_pool(
         ]},
     )
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
-    # Sonnet is recorded down here so the rows test Sol's admission and the opus-seat fallback alone.
+
     down = {"sonnet-implementer": {"ok": False, "error": "HTTP 429"}}
     if recorded_down:
         down["gpt-implementer"] = {"ok": False, "error": "unavailable"}
@@ -1231,7 +1229,7 @@ def test_canonical_implement_admission_by_codex_pool(
     if expected_error:
         assert expected_error in result.stderr
 
-# The seat CLI reads committed rules, not the local ROUTE_TABLE fixture.
+
 def policy_clone(tmp_path: Path) -> dict:
     import copy
 
@@ -1501,7 +1499,7 @@ def test_route_seats_on_the_canonical_rules_meets_the_workflow_preflight(tmp_pat
 
 
 def test_resolve_degrades_only_live_empty_anthropic_pool_and_recovers(tmp_path: Path) -> None:
-    """CLI integration: actual pool boundary signals, not estimated percentages."""
+
     fixtures = tmp_path / "degrade-fixtures"
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6.1-sol"}]})
     extra = {"ROUTE_LEDGER": str(tmp_path / "degradation.jsonl"),

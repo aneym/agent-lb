@@ -51,16 +51,7 @@ def build_weekly_credit_pace(
     usage_refresh_interval_seconds: int,
     working_days: set[int] | None = None,
 ) -> WeeklyCreditPaceResponse | None:
-    """Build server-side weekly quota pace from active, fresh weekly usage rows.
 
-    The dashboard card needs two separate signals:
-    - current schedule gap: actual remaining vs. linear expected remaining now
-    - forecast shortfall: whether recent burn will deplete the pool before resets
-
-    Computing this in the backend keeps status/freshness filters aligned with the
-    routing pool and lets the forecast use usage_history instead of a full-window
-    cumulative average.
-    """
 
     now_ms = naive_utc_to_epoch(now) * 1000.0
     if not _is_finite_positive(now_ms):

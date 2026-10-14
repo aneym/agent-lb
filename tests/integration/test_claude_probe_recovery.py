@@ -1,7 +1,4 @@
-"""HTTP/SQLite regression: a vendor probe restores routing after transient failures.
 
-The vendor edge is an actual local HTTP server; no application collaborators are mocked.
-"""
 
 from datetime import datetime, timezone
 

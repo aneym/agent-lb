@@ -30,11 +30,11 @@ function invalidateAccountRelatedQueries(queryClient: ReturnType<typeof useQuery
   }
 }
 
-/**
- * Account mutation actions without the polling query.
- * Use this when you need account actions but already have account data
- * from another source (e.g. the dashboard overview query).
- */
+
+
+
+
+
 export function useAccountMutations() {
   const queryClient = useQueryClient();
 
@@ -107,11 +107,11 @@ export function useAccountMutations() {
     },
   });
 
-  /**
-   * Spends one banked reset credit on an account. The upstream `code` decides
-   * the verdict, not the HTTP status: `nothing_to_reset` leaves the credit
-   * banked, and `no_credit` means the bank was already empty.
-   */
+
+
+
+
+
   const resetCreditMutation = useMutation({
     mutationFn: ({ accountId, creditId }: { accountId: string; creditId?: string }) =>
       consumeAccountResetCredit(accountId, creditId),

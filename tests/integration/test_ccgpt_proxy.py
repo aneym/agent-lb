@@ -111,11 +111,11 @@ async def test_ccgpt_messages_propagates_per_task_effort(async_client, monkeypat
 async def test_ccgpt_context_overflow_returns_prompt_too_long_not_api_error(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Upstream rejects an over-limit turn with context_length_exceeded before
-    # streaming begins; _stream_responses turns that into the real non-streaming
-    # error response the ccgpt handler must translate. Claude Code only reactive-
-    # compacts when the error message contains "prompt is too long" — a bare
-    # api_error drives the identical-retry storm this regression guards against.
+
+
+
+
+
     overflow_envelope = {
         "error": {
             "type": "invalid_request_error",
@@ -155,13 +155,13 @@ async def test_ccgpt_context_overflow_returns_prompt_too_long_not_api_error(
 async def test_ccgpt_midstream_context_overflow_emits_prompt_too_long_without_success(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Upstream streams real assistant content, THEN fails mid-stream with a
-    # context_length_exceeded envelope on a `response.failed` SSE event. Because
-    # the assistant turn already has visible content, this is a genuine
-    # mid-stream failure: it MUST stay an HTTP 200 SSE stream carrying an
-    # Anthropic invalid_request_error `error` event whose message contains
-    # "prompt is too long", and it MUST NOT close the turn with a normal empty
-    # success (message_delta/message_stop) after the error.
+
+
+
+
+
+
+
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
             yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-6.1-sol"}}\n\n'
@@ -200,14 +200,14 @@ async def test_ccgpt_midstream_context_overflow_emits_prompt_too_long_without_su
 
 @pytest.mark.asyncio
 async def test_ccgpt_precontent_stream_overflow_returns_http_400(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Upstream emits `response.created` fast (so the pre-stream HTTP probe sees a
-    # non-error first item and commits to a streaming response), then a terminal
-    # context overflow arrives BEFORE any assistant content. Claude Code only
-    # reactive-compacts on a non-200 HTTP response received before it creates the
-    # assistant turn; an `error` SSE frame after `message_start` under HTTP 200 is
-    # dropped and the harness storms identical over-limit retries. The endpoint
-    # MUST surface a pre-content terminal overflow as an HTTP 400 Anthropic
-    # `invalid_request_error` with no `message_start` in the body.
+
+
+
+
+
+
+
+
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
             yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-6.1-sol"}}\n\n'
@@ -243,9 +243,9 @@ async def test_ccgpt_precontent_stream_overflow_returns_http_400(async_client, m
 async def test_ccgpt_precontent_top_level_overflow_frame_returns_http_400(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Same pre-content overflow, but delivered through the ChatGPT-backed Codex
-    # top-level `error` frame shape (detail fields on the event root). It slips
-    # past the pre-stream probe as a later frame and must still become HTTP 400.
+
+
+
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
             yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-6.1-sol"}}\n\n'
@@ -310,9 +310,9 @@ async def test_ccgpt_non_overflow_error_stays_api_error(async_client, monkeypatc
 async def test_ccgpt_account_rejection_is_retryable_not_a_login_prompt(
     async_client, monkeypatch: pytest.MonkeyPatch, status: int
 ) -> None:
-    # Every Codex account rejected the turn. The caller's own key is fine, so the
-    # client must get a retryable error, not the 401/403 that makes Claude Code
-    # stop and ask for /login.
+
+
+
     async def fake_stream(request, payload, context, api_key, **kwargs):
         return proxy_api._stream_startup_error_response(
             request,
@@ -338,10 +338,10 @@ async def test_ccgpt_account_rejection_is_retryable_not_a_login_prompt(
 
 @pytest.mark.asyncio
 async def test_ccgpt_stream_reports_usage_the_way_anthropic_does(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Claude Code can record a turn's content blocks before message_delta arrives,
-    # with message_start's usage; a 0/0 start shows as "0 tok". The final usage
-    # splits OpenAI's input (which includes cached tokens) into uncached input and
-    # cache reads, as Anthropic reports them.
+
+
+
+
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
             yield 'data: {"type":"response.created","response":{"id":"resp_usage","model":"gpt-6.1-sol"}}\n\n'
@@ -452,7 +452,7 @@ async def test_messages_route_serves_worker_alias_via_bridge(
         ("/v1/messages", "sol-latest", "gpt-7-sol", None),
         ("/v1/messages", "sol-latest-low", "gpt-7-sol", "low"),
         ("/v1/messages", "luna-latest-xhigh", "gpt-6-luna", "xhigh"),
-        # astra-consult's seat model (readmitted 2026-10-05).
+
         ("/v1/messages", "astra-latest-high", "gpt-6-astra", "high"),
         ("/v1/messages", "gpt-7-sol-high", "gpt-7-sol", "high"),
         ("/v1/ccgpt/messages", "gpt-6.1-sol-low", CCGPT_WORKER_MODEL, "low"),
@@ -466,7 +466,7 @@ async def test_gpt_model_names_resolve_from_the_served_model_list(
     expected_model: str,
     expected_effort: str | None,
 ) -> None:
-    # gpt-7-sol stands in for a release the code has never heard of.
+
     served = dict.fromkeys(["gpt-5.6-sol", "gpt-6.1-sol", "gpt-7-sol", "gpt-6-luna", "gpt-6-astra", "codex-auto-review"])
     monkeypatch.setattr(
         proxy_api, "get_model_registry", lambda: SimpleNamespace(get_models_with_fallback=lambda: served)
@@ -501,9 +501,9 @@ async def test_gpt_model_names_resolve_from_the_served_model_list(
 async def test_bridged_turns_of_one_conversation_share_a_stable_prefix_and_cache_key(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Two turns of one Claude Code conversation and a parallel subagent in the same
-    # session, as sent through the first-party MITM: the billing block's cch changes
-    # on every request and cache_control moves off the first message after turn 1.
+
+
+
     captured: list = []
 
     async def fake_stream(request, payload, context, api_key, **kwargs):
@@ -557,9 +557,9 @@ async def test_bridged_turns_of_one_conversation_share_a_stable_prefix_and_cache
     assert one.prompt_cache_key == two.prompt_cache_key
     assert other.prompt_cache_key not in (None, one.prompt_cache_key)
 
-    # A workflow fans out subagents whose first messages are identical. Each one
-    # is its own conversation (its own bridge session, which runs one turn at a
-    # time), named by the agent id header, and keeps its key across its turns.
+
+
+
     captured.clear()
     for agent_id, body in (("a1", turn_1), ("a2", turn_1), ("a1", turn_2)):
         response = await async_client.post("/v1/messages", json=body, headers={"x-claude-code-agent-id": agent_id})
@@ -636,10 +636,10 @@ async def test_messages_count_tokens_worker_alias_is_local(async_client, alias: 
 async def test_messages_route_refuses_message_threads_before_upstream(
     async_client, monkeypatch: pytest.MonkeyPatch, thread: dict[str, str]
 ) -> None:
-    # Claude Code's message-threads beta sends continuation turns as a bare
-    # delta (no system, no tools, no history). Forwarding one upstream hung the
-    # session; the route must refuse it with the error code Claude Code reads
-    # to resend the turn stateless.
+
+
+
+
     called = False
 
     async def fake_stream(request, payload, context, api_key, **kwargs):

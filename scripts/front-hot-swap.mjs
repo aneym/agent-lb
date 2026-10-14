@@ -1,17 +1,17 @@
-// Hot-swap a running agent-lb-front (old build) to the new build in-process.
-// The inspector context has no dynamic import, so the new module's source is
-// rewritten to take builtins from process.getBuiltinModule and evaluated as a
-// script. Its server.listen is deferred: the new server is built first, then
-// the old listener closes and the new one binds in the same turn, so the
-// listen gap is sub-millisecond and existing piped connections are untouched.
-//
-// Use it to upgrade the live front: copy the new agent-lb-front.mjs into the
-// runtime (the launchd job's file, so a later real restart runs the same
-// code), then
-//   node scripts/front-hot-swap.mjs [node-pid] [new-front-path]
-// pid defaults to the process listening on LISTEN_PORT (2455); the path
-// defaults to the runtime copy. Opens the Node inspector on 127.0.0.1:9229 for
-// the swap and closes it again.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -25,7 +25,7 @@ let src = fs.readFileSync(newPath, "utf8");
 src = src.replace(/^#!.*\n/, "");
 src = src.replace(/^import (\w+) from "(node:\w+)";$/gm, 'const $1 = process.getBuiltinModule("$2");');
 if (/^import /m.test(src)) throw new Error("unhandled import in new front");
-// Defer the bind: expose the listen call instead of running it.
+
 const marker = "server.listen(LISTEN_PORT, HOST, () => {";
 if (!src.includes(marker)) throw new Error("listen marker not found");
 src = src.replace(marker, "return () => server.listen(LISTEN_PORT, HOST, () => {");

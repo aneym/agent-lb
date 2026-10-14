@@ -1,9 +1,4 @@
-"""restore import_without_overwrite default to true
 
-Revision ID: 20260410_030000_restore_import_without_overwrite_default_true
-Revises: 20260409_020000_fix_http_bridge_last_seen_index
-Create Date: 2026-04-10
-"""
 
 from __future__ import annotations
 

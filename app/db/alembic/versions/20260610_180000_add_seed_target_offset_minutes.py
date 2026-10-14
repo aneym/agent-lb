@@ -1,9 +1,4 @@
-"""add seed_target_offset_minutes to quota_planner_settings
 
-Revision ID: 20260610_180000_add_seed_target_offset_minutes
-Revises: 20260609_150000_add_account_subscription_ledger
-Create Date: 2026-06-10 18:00:00.000000
-"""
 
 from __future__ import annotations
 

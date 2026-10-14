@@ -39,7 +39,7 @@ class TeamRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    # ── Member CRUD ──
+
 
     async def create(self, row: TeamMember, *, commit: bool = True) -> TeamMember:
         self._session.add(row)
@@ -79,7 +79,7 @@ class TeamRepository:
     async def rollback(self) -> None:
         await self._session.rollback()
 
-    # ── Keys ──
+
 
     async def list_keys_by_member(self, member_id: str) -> list[ApiKey]:
         result = await self._session.execute(
@@ -99,7 +99,7 @@ class TeamRepository:
                 grouped.setdefault(row.member_id, []).append(row)
         return grouped
 
-    # ── Usage aggregates ──
+
 
     async def aggregate_usage(self, member_id: str, *, since: datetime) -> TeamUsageTotals:
         member_key_ids = select(ApiKey.id).where(ApiKey.member_id == member_id)

@@ -1,4 +1,4 @@
-"""Short-lived inventory snapshots; an expired count is unknown, not zero."""
+
 
 from time import monotonic
 

@@ -1,8 +1,8 @@
 import Foundation
 
-/// §9.2 top-level provider scope (dashboard parity). Pure, testable logic:
-/// segment labels/counts, account scoping, and the scoped pool-window math
-/// (dashboard `summarizeFilteredWindow` semantics).
+
+
+
 enum ProviderScope: String, CaseIterable, Sendable {
   case all
   case openai
@@ -11,7 +11,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
   case devin
   case other
 
-  /// Dashboard `providerLabel`: openai → "Codex", anthropic → "Claude".
+
   var label: String {
     switch self {
     case .all: "All"
@@ -32,8 +32,8 @@ enum ProviderScope: String, CaseIterable, Sendable {
     return provider == rawValue
   }
 
-  /// §13: `/api/usage/summary?provider=` query value for this scope — nil for
-  /// `.all` (server default, unscoped), else the provider rawValue.
+
+
   var providerParam: String? {
     self == .all ? nil : rawValue
   }
@@ -42,7 +42,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
     accounts.filter { includes($0) }
   }
 
-  /// Live segment counts over the full (unfiltered) accounts list.
+
   static func counts(in accounts: [Account], seats: [SeatAccount] = []) -> [ProviderScope: Int] {
     var counts = Dictionary(uniqueKeysWithValues: allCases.map { ($0, 0) })
     for account in accounts where account.isHeadlineCountable {
@@ -61,43 +61,43 @@ enum ProviderScope: String, CaseIterable, Sendable {
     return counts
   }
 
-  // MARK: - Scoped pool windows (§9.2 / §10)
+
 
   enum Window: Sendable {
     case primary, secondary
   }
 
-  /// A scoped pool window plus the §10 "next reset" recovery: the summed
-  /// percentage never resets at one moment (per-account clocks stagger), so
-  /// the card reports the credits the pool gets back at the NEXT reset.
+
+
+
   struct ScopedPoolWindow: Equatable, Sendable {
     let usage: UsageWindow
-    /// Σ(capacity − remaining) over the accounts whose window resets in the
-    /// earliest future 1-minute bucket; nil when no bucket account exposes
-    /// credit fields (or there is no future reset at all).
+
+
+
     let recoveredCredits: Double?
   }
 
-  /// One account's contribution to the per-window reset schedule (§10
-  /// tooltip), soonest first.
+
+
   struct AccountReset: Equatable, Sendable {
-    /// §12: carried so the tooltip can swap in a privacy-mode pseudonym.
+
     let accountId: String
     let displayName: String
     let resetAt: Date
-    /// capacity − remaining for this account's window; nil when unknown.
+
     let recoveredCredits: Double?
   }
 
-  /// Recomputes a pool window from per-account credits:
-  ///   percent   = Σ remainingCredits / Σ capacityCredits × 100
-  ///   credits   = the same sums
-  ///   resetAt   = earliest FUTURE reset among the accounts
-  ///   recovered = Σ(capacity − remaining) over the accounts resetting
-  ///               within 1 minute of that earliest reset (§10)
-  /// Accounts missing either credit field do not contribute to the sums.
-  /// No contributing accounts (or zero capacity) → nil fields, which the
-  /// pool cards render as "—".
+
+
+
+
+
+
+
+
+
   static func summarizeWindow(
     _ accounts: [Account], window: Window, now: Date
   ) -> ScopedPoolWindow {
@@ -120,8 +120,8 @@ enum ProviderScope: String, CaseIterable, Sendable {
       }
     }
 
-    // §10: the recovery at the next reset — only accounts in the earliest
-    // future 1-minute bucket count; staggered later resets do not.
+
+
     var recovered: Double?
     if let earliest = earliestReset {
       let bucketEnd = earliest.addingTimeInterval(60)
@@ -148,8 +148,8 @@ enum ProviderScope: String, CaseIterable, Sendable {
     )
   }
 
-  /// Per-account reset schedule for a window, soonest first (§10 tooltip).
-  /// Only future resets appear; ties order by display name for determinism.
+
+
   static func resetSchedule(
     _ accounts: [Account], window: Window, now: Date
   ) -> [AccountReset] {
@@ -175,7 +175,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
       }
   }
 
-  // MARK: - Per-account window accessors
+
 
   private static func windowCredits(
     of account: Account, window: Window

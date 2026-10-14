@@ -428,13 +428,7 @@ async def test_http_bridge_stream_masks_single_top_level_previous_response_error
 
 
 class _FakeMonotonicClock:
-    """Drop-in for the ``time`` module that lets tests jump monotonic time.
 
-    The bridge stream generator reads the current time via ``_service_time()``
-    which resolves to the ``time`` attribute on the proxy service module, so
-    patching ``proxy_service.time`` with this object makes the first-event
-    deadline check deterministic without sleeping.
-    """
 
     def __init__(self, value: float = 0.0) -> None:
         self._value = value
@@ -458,14 +452,7 @@ def _make_first_event_timeout_settings() -> SimpleNamespace:
 async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A bridge whose first turn never produces an upstream event must fail fast.
 
-    Reproduces the production silent-hold bug: an OpenClaw ``/v1/responses``
-    request (``propagate_http_errors=True``, ``response_id is None``) used to
-    loop silently until ``stream_idle_timeout_seconds`` (~10 min). With the
-    first-event timeout it surfaces a ``bridge_first_event_timeout`` failure and
-    the poisoned session is retired so the next request gets a fresh bridge.
-    """
 
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
@@ -506,7 +493,7 @@ async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_ses
         last_used_at=1.0,
         idle_ttl_seconds=120.0,
     )
-    # Register the session so we can prove self-heal removes it.
+
     service._http_bridge_sessions[session_key] = session
 
     request_state = proxy_service._WebSocketRequestState(
@@ -515,8 +502,8 @@ async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_ses
         service_tier=None,
         reasoning_effort=None,
         api_key_reservation=None,
-        # started_at well before the fake clock value so the deadline is already
-        # in the past once the first keepalive timeout fires.
+
+
         started_at=0.0,
         awaiting_response_created=True,
         event_queue=asyncio.Queue(),
@@ -560,37 +547,37 @@ async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_ses
     retry_fresh.assert_awaited_once()
     assert request_state.excluded_account_ids == {"acc-first-event"}
 
-    # Self-heal: the poisoned bridge must be removed from the live session map so
-    # the next request with the same key starts a fresh upstream session.
+
+
     assert service._http_bridge_sessions.get(session_key) is None
     assert session.closed is True
     cast(AsyncMock, session.upstream.close).assert_awaited()
 
-    # Account health: the first-event timeout is delegated to _handle_stream_error,
-    # which now classifies "bridge_first_event_timeout" as ACCOUNT-NEUTRAL (no
-    # health penalty) — see test_first_event_timeout_is_account_neutral_no_health_penalty.
-    # The per-bridge-key cooldown below is what steers the retry off this account.
+
+
+
+
     handle_stream_error.assert_awaited_once()
     penalty_args = handle_stream_error.await_args
     assert penalty_args is not None
     assert penalty_args.args[0] is session.account
     assert penalty_args.args[2] == "bridge_first_event_timeout"
 
-    # Stickiness: the failed account is cooled down for this bridge key so the
-    # next bridge creation excludes it from selection...
+
+
     cooldown = service._http_bridge_account_cooldowns[session_key]
     assert cooldown.account_id == "acc-first-event"
     assert cooldown.expires_at == pytest.approx(1000.0 + _HTTP_BRIDGE_FIRST_EVENT_COOLDOWN_SECONDS)
-    # ...and the sticky mapping is cleared so a later retry cannot re-pin the
-    # dead account through a stale binding.
+
+
     sticky_repo.delete.assert_awaited_once_with(
         "sid-first-event-timeout",
         kind=proxy_service.StickySessionKind.CODEX_SESSION,
     )
 
-    # Diagnostics: the exact upstream payload is dumped for offline analysis,
-    # since a request upstream accepts but never answers is content-specific
-    # and the body is not persisted anywhere else.
+
+
+
     payload_dump.assert_called_once()
     dump_call = payload_dump.call_args
     assert dump_call.args[0] is request_state
@@ -599,11 +586,10 @@ async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_ses
 
 
 def test_bridge_first_event_timeout_is_account_neutral_code() -> None:
-    """The first-event timeout must be in the account-neutral set so it does not
-    feed account-health error backoff."""
+
     assert proxy_service._is_account_neutral_error_code("bridge_first_event_timeout") is True
     assert proxy_service._is_account_neutral_error_code("proxy_unavailable") is True
-    # Genuine account-attributable faults stay non-neutral.
+
     assert proxy_service._is_account_neutral_error_code("stream_idle_timeout") is False
     assert proxy_service._is_account_neutral_error_code("server_error") is False
 
@@ -612,13 +598,7 @@ def test_bridge_first_event_timeout_is_account_neutral_code() -> None:
 async def test_first_event_timeout_is_account_neutral_no_health_penalty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression: a ``bridge_first_event_timeout`` must NOT record an account
-    health error. Recording it let a few large-payload compaction timeouts push
-    every codex account past the error_count>=3 backoff threshold (logic.py),
-    draining the routable pool to a spurious ``no_accounts`` 503 that broke
-    context compaction. Neutral classification keeps the pool intact; the
-    per-bridge-key cooldown still steers the retry to a different account.
-    """
+
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     record_error = AsyncMock()
     service._load_balancer = cast(
@@ -638,10 +618,10 @@ async def test_first_event_timeout_is_account_neutral_no_health_penalty(
         "bridge_first_event_timeout",
     )
     assert classified is not None
-    # The keystone assertion: account health is untouched by a first-event timeout.
+
     record_error.assert_not_awaited()
 
-    # Contrast: a genuine transient stream fault is still recorded as account health.
+
     await service._handle_stream_error(account, cast(Any, {"message": "idle"}), "stream_idle_timeout")
     record_error.assert_awaited_once_with(account)
 
@@ -650,7 +630,7 @@ async def test_first_event_timeout_is_account_neutral_no_health_penalty(
 async def test_http_bridge_first_event_timeout_retries_fresh_account_before_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Replay-safe first turns fail over before surfacing a no-byte timeout."""
+
 
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
@@ -756,9 +736,9 @@ async def test_http_bridge_first_event_timeout_retries_fresh_account_before_fail
     )
     request_state.response_id = "resp_first_event_failover"
     request_state.response_event_count = 1
-    # With the 1ms test keepalive interval, the stream may legitimately emit a
-    # synthetic response.in_progress keepalive between response_id being set
-    # and the queued created event being consumed — drain until created.
+
+
+
     first = await asyncio.wait_for(first_event_task, timeout=1.0)
     while "response.created" not in first:
         assert "response.in_progress" in first
@@ -777,11 +757,7 @@ async def test_http_bridge_first_event_timeout_retries_fresh_account_before_fail
 async def test_http_bridge_first_event_timeout_not_triggered_after_first_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Once any upstream event arrives, the first-event timeout must not fire.
 
-    A healthy stream that has begun emitting must be governed only by the
-    regular keepalive / idle machinery, never retired as a poisoned session.
-    """
 
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
@@ -829,7 +805,7 @@ async def test_http_bridge_first_event_timeout_not_triggered_after_first_event(
 
     event_queue = request_state.event_queue
     assert event_queue is not None
-    # Deliver a real first event, then the terminal completion.
+
     request_state.response_id = "resp_first_event_healthy"
     request_state.response_event_count = 1
     await event_queue.put(
@@ -860,11 +836,7 @@ async def _drive_create_bridge_session_with_cooldown(
     cooldown_expires_at: float,
     preferred_account_id: str | None = None,
 ) -> tuple[proxy_service.ProxyService, proxy_service._HTTPBridgeSessionKey, dict[str, Any], Any]:
-    """Run ``_create_http_bridge_session`` with a cooldown entry for the key.
 
-    Returns the service, bridge key, the kwargs captured from account
-    selection, and the created session. The fake clock is fixed at 1000.0.
-    """
 
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     key = proxy_service._HTTPBridgeSessionKey("prompt_cache", "bridge-cooldown", None)
@@ -941,9 +913,7 @@ async def _drive_create_bridge_session_with_cooldown(
 async def test_create_http_bridge_session_excludes_cooled_down_account(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """While a first-event-timeout cooldown is live, the failed account must be
-    excluded from selection so the follow-up request lands on a different
-    account instead of re-pinning the dead one via stickiness."""
+
 
     service, key, select_kwargs, session = await _drive_create_bridge_session_with_cooldown(
         monkeypatch,
@@ -952,8 +922,8 @@ async def test_create_http_bridge_session_excludes_cooled_down_account(
 
     assert select_kwargs["exclude_account_ids"] == {"acc-dead"}
     assert session.account.id == "acc-healthy"
-    # The cooldown stays live until expiry so rapid retries within the window
-    # keep avoiding the dead account.
+
+
     assert key in service._http_bridge_account_cooldowns
 
 
@@ -961,8 +931,7 @@ async def test_create_http_bridge_session_excludes_cooled_down_account(
 async def test_create_http_bridge_session_prunes_expired_cooldown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An expired cooldown entry must be pruned and not excluded — after the
-    window the account is governed by normal health/routing again."""
+
 
     service, key, select_kwargs, _session = await _drive_create_bridge_session_with_cooldown(
         monkeypatch,
@@ -977,8 +946,7 @@ async def test_create_http_bridge_session_prunes_expired_cooldown(
 async def test_create_http_bridge_session_cooldown_exempts_preferred_account(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Continuity-anchored requests that prefer the cooled-down account are
-    exempt from the exclusion — previous-response continuity wins."""
+
 
     _service, _key, select_kwargs, _session = await _drive_create_bridge_session_with_cooldown(
         monkeypatch,
@@ -1234,9 +1202,7 @@ async def test_prune_http_bridge_session_skips_wedged_session_with_visible_pendi
 
 @pytest.mark.asyncio
 async def test_prune_http_bridge_sessions_locked_throttles_full_registry_scans() -> None:
-    """The idle-prune scan runs synchronously under the bridge lock on every
-    session get-or-create; unthrottled it blocked the event loop for seconds
-    under load. Repeat calls within the throttle interval must be no-ops."""
+
     from app.modules.proxy._service.http_bridge.mixin import _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS
 
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
@@ -2611,18 +2577,10 @@ async def test_stream_via_http_bridge_does_not_inject_session_anchor_for_soft_re
 async def test_stream_via_http_bridge_skips_session_anchor_injection_when_trim_would_not_apply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Guard session-level previous_response_id injection.
 
-    The session anchor must only be injected when the trim branch would
-    actually strip the already-stored prefix. If the incoming payload is
-    a full resend whose prefix cannot be trimmed (non-list input, shorter
-    history, or a prefix fingerprint mismatch), injecting an anchor would
-    send both the full history and a previous_response_id upstream, which
-    duplicates context and distorts output/cost.
-    """
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
-    # Non-list input: trim cannot possibly apply, so no anchor should be
-    # injected even though the session has a completed response.
+
+
     payload = proxy_service.ResponsesRequest.model_validate(
         {"model": "gpt-5.4", "instructions": "hi", "input": "fresh turn text"},
     )
@@ -2726,9 +2684,9 @@ async def test_stream_via_http_bridge_skips_session_anchor_injection_when_trim_w
     ]
 
     assert chunks == []
-    # No anchor should have been injected because the non-list input
-    # would have left the trim branch inert, which would have duplicated
-    # context upstream.
+
+
+
     assert prepared_previous_response_ids == [None]
 
 
@@ -2859,11 +2817,11 @@ async def test_stream_via_http_bridge_does_not_inject_durable_previous_response_
 
     assert chunks == []
     assert captured["previous_response_id"] is None
-    # Full-resend payloads are explicitly excluded from durable anchor
-    # injection, so the bridge prepares the original request exactly once.
+
+
     assert prepared_input_lengths == [3]
-    # This path never reaches the trim branch, so the fake request_state
-    # returned by fake_prepare keeps its default metadata.
+
+
     assert request_state.input_full_fingerprint is None
 
 
@@ -4570,9 +4528,9 @@ async def test_stream_via_http_bridge_uses_generated_downstream_turn_state_for_o
     )
     assert request_state.session_id == "http_turn_generated"
     assert request_state.preferred_account_id == "acc-owner-from-turn-state"
-    # No durable anchor is injected in this path; the request is prepared
-    # once with the original single-item input while owner lookup uses the
-    # generated downstream turn state for scoping.
+
+
+
     assert prepared_input_lengths == [1]
 
 
@@ -9916,14 +9874,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_refuses_to_resend_pre
 async def test_retry_http_bridge_request_on_fresh_upstream_replays_retry_safe_injection_without_anchor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Durable-anchor injections opt in to fresh-turn replay on send failure.
 
-    The proxy captures the original unanchored full-resend payload before
-    injecting ``previous_response_id`` on durable reattach. That text is a
-    safe fresh-turn replay target because it already contains the full
-    history; dropping the anchor and replaying is equivalent to the
-    client's own retry.
-    """
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     send_text = AsyncMock()
     session = proxy_service._HTTPBridgeSession(
@@ -9969,8 +9920,8 @@ async def test_retry_http_bridge_request_on_fresh_upstream_replays_retry_safe_in
 
     assert recovered is True
     assert request_state.replay_count == 1
-    # Replaying should have dropped the anchor metadata so the request
-    # executes as a fresh turn using the captured unanchored payload.
+
+
     assert request_state.previous_response_id is None
     assert request_state.proxy_injected_previous_response_id is False
     send_text.assert_awaited_once_with('{"type":"response.create","input":"full-history-fallback"}')
@@ -9980,16 +9931,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_replays_retry_safe_in
 async def test_retry_http_bridge_request_on_fresh_upstream_refuses_session_level_injection_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Session-level injections must not be replayed as fresh turns.
 
-    When the proxy injects ``previous_response_id`` from a bridge session's
-    last completed response, the original payload may have relied on the
-    anchor for context (for example a single-item follow-up whose prior
-    turns live only in the stored conversation). Dropping the anchor and
-    replaying would silently turn the continuation into a context-free
-    fresh turn and return wrong-but-successful output instead of surfacing
-    the retriable send failure.
-    """
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     send_text = AsyncMock()
     session = proxy_service._HTTPBridgeSession(
@@ -11881,11 +11823,11 @@ async def test_cancel_api_key_reservation_heartbeat_task_does_not_wait_for_task_
     assert task.cancelled()
 
 
-# ---------------------------------------------------------------------------
-# Foreign encrypted-reasoning stripping (account-bound encrypted_content blobs
-# replayed through rotated accounts make upstream accept response.create and
-# silently never answer — bisection-verified 2026-06-10).
-# ---------------------------------------------------------------------------
+
+
+
+
+
 
 _ENCRYPTED_REASONING_WITH_SUMMARY: dict[str, Any] = {
     "type": "reasoning",
@@ -11921,9 +11863,9 @@ def test_strip_encrypted_reasoning_drops_all_reasoning_items_when_any_blob_prese
 
     sanitized, dropped_blob_count, dropped_plain_count = strip_encrypted_reasoning_input_items(items)
 
-    # Bisection-verified (2026-06-10): replaying a reasoning item by id without
-    # its blob black-holes upstream the same way as a foreign blob, so once any
-    # blob is present ALL reasoning items must go.
+
+
+
     assert dropped_blob_count == 2
     assert dropped_plain_count == 1
     assert sanitized == [_USER_MESSAGE]
@@ -11955,8 +11897,8 @@ def test_strip_encrypted_reasoning_from_request_text_round_trips() -> None:
     assert sanitized_text is not None
     assert (stripped_count, dropped_count) == (1, 0)
     parsed = json.loads(sanitized_text)
-    # The include directive legitimately retains "reasoning.encrypted_content"
-    # (it governs what the response returns); only input items must be blob-free.
+
+
     assert "encrypted_content" not in json.dumps(parsed["input"])
     assert parsed["input"] == [_USER_MESSAGE]
     assert parsed["include"] == ["reasoning.encrypted_content"]
@@ -12009,10 +11951,10 @@ def test_prepare_response_bridge_request_state_strips_encrypted_reasoning_on_fir
 
     upstream_payload = json.loads(text_data)
     assert isinstance(upstream_payload["input"], list)
-    # The include directive legitimately retains "reasoning.encrypted_content";
-    # only input items must be blob-free.
+
+
     assert "encrypted_content" not in json.dumps(upstream_payload["input"])
-    # ALL reasoning items dropped (blob-less replay is equally poisonous).
+
     assert upstream_payload["input"] == [_USER_MESSAGE]
     assert request_state.input_item_count == 1
 
@@ -12043,8 +11985,7 @@ def test_prepare_response_bridge_request_state_passthrough_when_strip_disabled(
 def test_prepare_response_bridge_request_state_skips_strip_for_anchored_continuations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Anchored continuations are pinned to the minting account, so their
-    reasoning items are left untouched."""
+
 
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_strip_settings(enabled=True))
@@ -12068,8 +12009,7 @@ def test_prepare_response_bridge_request_state_skips_strip_for_anchored_continua
 async def test_http_bridge_first_event_timeout_degraded_retry_strips_reasoning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If the payload still carries encrypted reasoning at first-event timeout,
-    the stream retries once with the blobs stripped instead of failing."""
+
 
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
@@ -12130,7 +12070,7 @@ async def test_http_bridge_first_event_timeout_degraded_retry_strips_reasoning(
     first_event_task = asyncio.create_task(anext(stream))
     await asyncio.sleep(0.05)
 
-    # The degraded retry fired with the blobs stripped, no failure surfaced.
+
     degraded_retry.assert_awaited_once()
     retry_kwargs = degraded_retry.await_args.kwargs
     assert "encrypted_content" not in retry_kwargs["text_data"]
@@ -12138,12 +12078,12 @@ async def test_http_bridge_first_event_timeout_degraded_retry_strips_reasoning(
     assert request_state.request_text == retry_kwargs["text_data"]
     assert first_event_task.done() is False
 
-    # Upstream answers after the retry; the stream completes normally.
+
     event_queue = request_state.event_queue
     assert event_queue is not None
-    # Queue the created event BEFORE marking response_id: once response_id is
-    # set with an empty queue, the 1ms keepalive tick may yield a synthetic
-    # response.in_progress frame first and win the race against this event.
+
+
+
     await event_queue.put(
         proxy_service.format_sse_event(
             cast(
@@ -12157,9 +12097,9 @@ async def test_http_bridge_first_event_timeout_degraded_retry_strips_reasoning(
     )
     request_state.response_id = "resp_degraded_ok"
     request_state.response_event_count = 1
-    # With the 1ms test keepalive interval, the stream may legitimately emit a
-    # synthetic response.in_progress keepalive between response_id being set
-    # and the queued created event being consumed — drain until created.
+
+
+
     first = await asyncio.wait_for(first_event_task, timeout=1.0)
     while "response.created" not in first:
         assert "response.in_progress" in first
@@ -12177,8 +12117,7 @@ async def test_http_bridge_first_event_timeout_degraded_retry_strips_reasoning(
 async def test_http_bridge_first_event_timeout_degraded_retry_failure_falls_back_to_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If the degraded retry cannot be performed, the first-event timeout
-    failure surfaces as before (single attempt, no retry loop)."""
+
 
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())

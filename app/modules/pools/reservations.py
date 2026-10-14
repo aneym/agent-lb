@@ -41,7 +41,7 @@ class ReservationRequest(BaseModel):
 
 class HeartbeatRequest(BaseModel):
     ttl_s: StrictInt | None = Field(default=None, ge=1, le=3600)
-    # The model the hold runs, once route has listed a vendor's models under it (the hold was taken on the alias).
+
     model: str | None = Field(default=None, min_length=1)
 
 

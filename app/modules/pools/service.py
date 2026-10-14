@@ -27,16 +27,16 @@ from app.modules.pools.schemas import (
 GLM_POOL_PROVIDER = "glm"
 KIMI_POOL_PROVIDER = "kimi"
 
-# A pool is `ok` while the best account still has a quarter of its window, and
-# `low` once it is inside the last quarter but above the reserve the router
-# needs to finish work in flight.
+
+
+
 _OK_HEADROOM_PERCENT = 25.0
 _LOW_HEADROOM_PERCENT = 5.0
 
-# Rows that cannot answer a request now and will not without operator action.
-# Rate-limited and quota-exceeded accounts stay in the aggregate: they recover
-# on their own at the window reset. They contribute zero until then and do not
-# count as eligible.
+
+
+
+
 _UNROUTABLE_STATUSES = frozenset(
     {
         AccountStatus.PAUSED.value,
@@ -54,12 +54,7 @@ class _Candidate:
 
 
 def is_pool_usable(summary: AccountSummary) -> bool:
-    """Whether this account can serve pool traffic at all.
 
-    Mirrors the routing-side gates: a canceled subscription or an operator/auth
-    hold takes the account out of the pool arithmetic entirely rather than
-    dragging the aggregate down with a number nothing can spend.
-    """
     if normalize_subscription_status(summary.subscription.status if summary.subscription else None) == (
         CANCELED_SUBSCRIPTION_STATUS
     ):
@@ -68,25 +63,20 @@ def is_pool_usable(summary: AccountSummary) -> bool:
 
 
 def _secondary_remaining(summary: AccountSummary) -> float:
-    # No weekly sample yet means a fresh window, not an empty one — the same
-    # reading the Fable eligibility heuristic takes.
+
+
     remaining = summary.usage.secondary_remaining_percent if summary.usage else None
     return 100.0 if remaining is None else float(remaining)
 
 
 def _primary_remaining(summary: AccountSummary) -> float:
-    # Unmetered providers report no window at all; treat them as full.
+
     remaining = summary.usage.primary_remaining_percent if summary.usage else None
     return 100.0 if remaining is None else float(remaining)
 
 
 def _available_now(summary: AccountSummary, window_remaining: float) -> float:
-    """What this account can serve on the next request, not only this week.
 
-    The account is blocked by whichever window is lower, and a limited status
-    (an upstream 429 cooldown or a spent window) blocks it whatever the
-    windows say.
-    """
     if summary.status in _LIMITED_STATUSES:
         return 0.0
     return min(window_remaining, _primary_remaining(summary))
@@ -163,14 +153,7 @@ def _pool(
 
 
 def _fable_pool(anthropic: list[AccountSummary]) -> PoolSummary:
-    """The Fable-scoped pool, read the way the balancer reads eligibility.
 
-    Per account: Anthropic's own Fable-scoped marker when it is fresh, else the
-    overall-weekly window. `source` answers a different question — whether the
-    vendor's scoped signal is arriving at all — so it is read across every
-    Anthropic account with a marker, including ones held out of the arithmetic.
-    A paused account still proves the refresh pipeline is alive.
-    """
     saw_fresh_marker = any(
         summary.fable_scoped_weekly is not None and summary.fable_scoped_weekly.fresh for summary in anthropic
     )
@@ -280,10 +263,10 @@ _WEEKLY_CYCLE_HOURS = 168.0
 
 
 def _weekly_pace(summary: AccountSummary, now: datetime) -> float:
-    """Each account against its own reset, so one early reset cannot lift the pool."""
+
     reset_at = summary.reset_at_secondary
     if reset_at is None:
-        # No weekly sample yet: a fresh window, all of the cycle still ahead.
+
         hours_left = _WEEKLY_CYCLE_HOURS
     else:
         if reset_at.tzinfo is None:
@@ -319,17 +302,13 @@ def _primary_window_pool(
         for summary in summaries
     ):
         pool = pool.model_copy(update={"unavailable_reason": "no balance"})
-    # Kimi and GLM have one short window and no weekly cap; report it as five-hour only when it is one.
+
     remaining, reset = _five_hour_fields(summaries)
     return pool.model_copy(update={"five_hour_remaining_percent": remaining, "five_hour_reset_at": reset})
 
 
 def build_pools(summaries: list[AccountSummary], *, generated_at: datetime | None = None) -> PoolsResponse:
-    """Aggregate account summaries into the routable pools of contract C1.
 
-    Pure over the summaries the accounts service already builds, so the router
-    and the dashboard read the same windows the balancer routes on.
-    """
     anthropic = _by_provider(summaries, ANTHROPIC_PROVIDER_NAME)
     now = generated_at or utcnow()
     if now.tzinfo is None:
@@ -364,11 +343,11 @@ class PoolsService:
         self._accounts_service = accounts_service
 
     async def get_pools(self) -> PoolsResponse:
-        # include_request_usage stays off: the pools view needs windows, not the
-        # expensive request_logs dedup aggregation behind the token columns.
+
+
         summaries = await self._accounts_service.list_accounts()
         response = build_pools(summaries)
-        # Cursor and Devin never pass through the LB; their pools come from the seat CLI's state.
+
         seats = read_seat_accounts()
         seat_pools = [pool.model_copy(update={"window_label": "month"}) for pool in cli_seat_pools(seats)]
         managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"

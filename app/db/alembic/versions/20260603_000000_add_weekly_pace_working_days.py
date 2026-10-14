@@ -1,9 +1,4 @@
-"""add weekly pace working days setting
 
-Revision ID: 20260603_000000_add_weekly_pace_working_days
-Revises: 20260604_000000_add_reauth_required_account_status
-Create Date: 2026-06-03
-"""
 
 from __future__ import annotations
 

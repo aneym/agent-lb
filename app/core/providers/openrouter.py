@@ -13,7 +13,7 @@ OPENROUTER_PROVIDER_NAME = "openrouter"
 OPENROUTER_DEFAULT_PLAN = "openrouter"
 OPENROUTER_UPSTREAM_BASE_URL = "https://openrouter.ai/api"
 OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
-# Live POST /api/v1/messages/count_tokens returned 404. Do not relay it.
+
 SUPPORTS_UPSTREAM_COUNT_TOKENS = False
 
 

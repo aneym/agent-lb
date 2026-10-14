@@ -1,9 +1,4 @@
-"""CLI integration protects pane isolation, model drift and persistent audit rows.
 
-Existing token tests do not exercise agent.json or per-tab exports. A changed
-session mapping, window predicate or family match must fail this real CLI test;
-no production hooks or collaborator mocks are needed.
-"""
 
 import json
 import os
@@ -44,7 +39,7 @@ def test_tabs_cli_receipts_and_exports(tmp_path, window_args):
             for session, pane, tab in (("one", "w5H:p15W", "cos"), ("two", "w5H:p16W", "factory"))
         )
     )
-    # Use the actual schema so receipt-column changes cannot silently invalidate the fixture.
+
     db = tmp_path / "receipts.db"
     engine = create_engine(f"sqlite:///{db}")
     Base.metadata.create_all(engine)

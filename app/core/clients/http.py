@@ -82,8 +82,8 @@ async def _build_http_client() -> HttpClient:
         trust_env=True,
     )
     try:
-        # Match direct Codex transport unless operators explicitly override or
-        # standard outbound proxy env vars are present.
+
+
         websocket_session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(ssl=_build_ssl_context()),
             timeout=aiohttp.ClientTimeout(total=None),
@@ -227,15 +227,15 @@ async def close_http_client() -> None:
             *_closing_http_clients,
         )
         for managed_client in clients:
-            # Global shutdown has already bounded request drain; do not let
-            # long-lived streams keep process shutdown waiting on active leases.
+
+
             _request_client_close_locked(managed_client, force=True)
     if clients:
         await asyncio.gather(*(managed_client.closed.wait() for managed_client in clients))
 
 
 def get_http_client() -> HttpClient:
-    """Return the current client for compatibility; network use should lease it."""
+
     if _http_client is None:
         raise RuntimeError("HTTP client not initialized")
     return _http_client.client

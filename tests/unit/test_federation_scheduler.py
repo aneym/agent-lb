@@ -176,8 +176,8 @@ class _RequestLogPeer(_PeerClient):
 
 
 def _log_repo_factory():
-    # The production factory: its background session expires ORM rows on its
-    # exit rollback, which a plain SessionLocal factory hid (edge crash 2026-10-04).
+
+
     return _default_federation_repo_factory
 
 

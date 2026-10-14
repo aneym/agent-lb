@@ -1,9 +1,4 @@
-"""add canonical quota_key to additional_usage_history
 
-Revision ID: 20260312_000000_add_additional_usage_quota_key
-Revises: 20260310_000000_fix_postgresql_enum_value_casing
-Create Date: 2026-03-12
-"""
 
 from __future__ import annotations
 
@@ -17,7 +12,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260312_000000_add_additional_usage_quota_key"
 down_revision = "20260310_000000_fix_postgresql_enum_value_casing"
 branch_labels = None

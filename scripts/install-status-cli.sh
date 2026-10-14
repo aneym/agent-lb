@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install a PATH entry for an already provisioned internal runtime; never restart it.
+
 set -eu
 runtime=${AGENT_LB_RUNTIME_DIR:-"$HOME/.agent-lb/runtime/agent-lb"}
 bindir=${AGENT_LB_BIN_DIR:-"$HOME/.local/bin"}

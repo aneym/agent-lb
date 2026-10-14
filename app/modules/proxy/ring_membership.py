@@ -25,19 +25,15 @@ RING_STALE_GRACE_SECONDS = RING_HEARTBEAT_INTERVAL_SECONDS + 5
 
 
 class RingMembershipService:
-    """Manages pod registration in the bridge ring.
 
-    This service stores and retrieves active pod memberships from the DB,
-    ensuring all pods see the same ring view (solving the split-brain problem).
-    """
 
     def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def register(self, instance_id: str, *, endpoint_base_url: str | None = None) -> None:
-        """Upsert pod into ring. Safe to call multiple times."""
+
         async with self._session() as session:
-            # Dialect-specific upsert
+
             dialect = session.get_bind().dialect.name
             metadata_json = _bridge_ring_metadata_json(endpoint_base_url)
             if dialect == "postgresql":
@@ -84,7 +80,7 @@ class RingMembershipService:
             await session.commit()
 
     async def heartbeat(self, instance_id: str, *, endpoint_base_url: str | None = None) -> None:
-        """Upsert heartbeat — recovers from mark_stale or unregister by sibling workers."""
+
         async with self._session() as session:
             dialect = session.get_bind().dialect.name
             now = utcnow()
@@ -129,7 +125,7 @@ class RingMembershipService:
             await session.commit()
 
     async def unregister(self, instance_id: str) -> None:
-        """Remove pod from ring."""
+
         async with self._session() as session:
             stmt = delete(BridgeRingMember).where(BridgeRingMember.instance_id == instance_id)
             await session.execute(stmt)
@@ -142,12 +138,7 @@ class RingMembershipService:
         stale_threshold_seconds: int = RING_STALE_THRESHOLD_SECONDS,
         grace_seconds: int = RING_STALE_GRACE_SECONDS,
     ) -> None:
-        """Age the heartbeat close to expiry without deleting the shared row.
 
-        A short grace window lets sibling workers refresh the shared row on
-        their next heartbeat, while a fully terminating pod still ages out far
-        faster than the normal stale threshold.
-        """
         from datetime import timedelta
 
         active_for_seconds = max(grace_seconds, 0)
@@ -168,7 +159,7 @@ class RingMembershipService:
         *,
         require_endpoint: bool = False,
     ) -> list[str]:
-        """Return sorted list of pods whose heartbeat is within threshold."""
+
         from datetime import timedelta
 
         cutoff = utcnow() - timedelta(seconds=stale_threshold_seconds)
@@ -201,7 +192,7 @@ class RingMembershipService:
         return _bridge_ring_endpoint_from_metadata(metadata_json)
 
     async def ring_fingerprint(self, stale_threshold_seconds: int = RING_STALE_THRESHOLD_SECONDS) -> str:
-        """sha256 of sorted active member list. Same for all pods with same membership."""
+
         members = await self.list_active(stale_threshold_seconds)
         data = ",".join(sorted(members))
         return sha256(data.encode()).hexdigest()

@@ -1,4 +1,4 @@
-"""Execute one host-routed brief, with bounded stand-ins and durable receipts."""
+
 
 from __future__ import annotations
 
@@ -139,7 +139,7 @@ def attempt(
         seat_pool = seat.get("pool", "").startswith("cursor") or seat.get("pool") == "devin"
         usage_error = seat_pool and code == 2 and stderr.lstrip().startswith("usage:")
         pool_miss = seat_pool and (code == 3 or code == 2 and not usage_error)
-        # seat run exits 4 when its reservation must wait (A4d): that seat is full, so stand in on the next.
+
         outcome = (
             "ok" if code == 0 else
             "fail" if usage_error else

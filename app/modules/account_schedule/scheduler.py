@@ -29,7 +29,7 @@ async def resume_due_accounts_once() -> None:
                     await context.service.reactivate_account(schedule.account_id)
                 await schedules.clear(schedule.account_id, resume_at=schedule.resume_at)
             except AccountStateTransitionError:
-                # The state changed while this tick was running. Retry next tick.
+
                 logger.info("Account resume raced with another state change: %s", schedule.account_id)
             except Exception:
                 logger.exception("Failed to resume account %s", schedule.account_id)

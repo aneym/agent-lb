@@ -1,14 +1,4 @@
-"""Scenario tests for the federation push RECEIVER (openspec add-federation-account-push).
 
-A peer LB (the owner and only refresher) pushes access tokens for some of its
-accounts to POST /api/federation/push. The receiver authorizes the caller by
-Tailscale identity, binds the source to one sender instance, upserts mirrored
-rows owned by that instance, deactivates that instance's rows the push left
-out, and answers with local usage for the accepted ids. Tests go through the
-fixed seams only: the HTTP route, push_auth.resolve_tailscale_login (patched,
-or driven through a fake tailscale binary), push_auth's source helpers,
-push_receiver.load_binding, and the database.
-"""
 
 from __future__ import annotations
 
@@ -46,11 +36,11 @@ _PUSH = "/api/federation/push"
 _HOUR_MS = 3_600_000
 
 
-# --------------------------------------------------------------------------- helpers
+
 
 
 def _push_auth() -> ModuleType:
-    # Imported lazily so the file collects while the receiver is still being written.
+
     return importlib.import_module("app.modules.federation.push_auth")
 
 
@@ -94,7 +84,7 @@ def _nate_source(max_accounts: int | None = None) -> dict[str, Any]:
 
 
 def _bump_mtime(path: Path) -> None:
-    # Guard against a coarse-mtime filesystem hiding a rewrite from the reload check.
+
     stamp = path.stat().st_mtime + 5
     os.utime(path, (stamp, stamp))
 
@@ -168,7 +158,7 @@ def state_path(sources_path: Path) -> Path:
 
 @pytest.fixture
 def whois_calls(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, str], list[str]]:
-    """(IP -> login table, lookup log) behind a patched push_auth.resolve_tailscale_login."""
+
     table: dict[str, str] = {_NATE_IP: "Nate@Example.com", _STRANGER_IP: "stranger@example.com"}
     calls: list[str] = []
 
@@ -190,7 +180,7 @@ async def _push(app_instance: Any, body: dict[str, Any], *, ip: str = _NATE_IP, 
         return await peer.post(_PUSH, json=body, headers=headers or {})
 
 
-# --------------------------------------------------------------------------- authorization
+
 
 
 @pytest.mark.asyncio
@@ -214,20 +204,20 @@ async def test_callers_the_receiver_cannot_place_are_refused(
     _write_sources(sources_path, [_nate_source()])
     before = await _snapshot_accounts()
 
-    # Loopback socket peer (the default test client), even though its login would match.
+
     table["127.0.0.1"] = _NATE_LOGIN
     loopback = await async_client.post(_PUSH, json=_push_body(_account("x")))
     assert loopback.status_code == 403
 
-    # Tailnet IP whose login is not listed.
+
     stranger = await _push(app_instance, _push_body(_account("x")), ip=_STRANGER_IP)
     assert stranger.status_code == 403
 
-    # Tailnet IP whose whois fails.
+
     unknown = await _push(app_instance, _push_body(_account("x")), ip="100.64.0.99")
     assert unknown.status_code == 403
 
-    # Client IP that cannot be resolved: a trusted proxy forwarded a malformed chain.
+
     monkeypatch.setenv("AGENT_LB_FIREWALL_TRUST_PROXY_HEADERS", "true")
     monkeypatch.setenv("AGENT_LB_FIREWALL_TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
     get_settings.cache_clear()
@@ -277,7 +267,7 @@ async def test_real_client_ip_behind_tailscale_serve_is_used(
     _write_sources(sources_path, [_nate_source()])
     forwarded = {"X-Forwarded-For": _NATE_IP}
 
-    # Without proxy trust, the socket peer 127.0.0.1 is the client: refused as loopback.
+
     untrusted = await _push(app_instance, _push_body(_account("x")), ip="127.0.0.1", headers=forwarded)
     assert untrusted.status_code == 403
     assert calls == []
@@ -302,7 +292,7 @@ async def test_team_mode_and_proxy_keys_do_not_gate_the_push(
     _write_sources(sources_path, [_nate_source()])
 
     async with _peer(app_instance, _NATE_IP) as peer:
-        # The dashboard gate does refuse this peer, so the 200 below is the push route's own auth.
+
         gated = await peer.get("/api/accounts")
         assert gated.status_code in (401, 403), gated.text
         pushed = await peer.post(_PUSH, json=_push_body(_account("x")))
@@ -327,7 +317,7 @@ async def test_sources_file_edits_apply_without_restart(
     assert accepted.json()["source"] == "nate"
 
 
-# --------------------------------------------------------------------------- binding
+
 
 
 @pytest.mark.asyncio
@@ -352,7 +342,7 @@ async def test_second_instance_cannot_take_over_bound_source(
     assert first.status_code == 200, first.text
     before = await _snapshot_accounts()
 
-    # A wrongful accept would add row z.
+
     takeover = await _push(app_instance, _push_body(_account("z"), instance_id="other-lb"))
 
     assert takeover.status_code == 409
@@ -370,7 +360,7 @@ async def test_push_cannot_claim_own_or_pull_peer_instance_id(
     before = await _snapshot_accounts()
 
     as_local = await _push(app_instance, _push_body(_account("x"), instance_id=_LOCAL_INSTANCE_ID))
-    # An empty push as the pull peer would otherwise deactivate every laptop row.
+
     as_pull_peer = await _push(app_instance, _push_body(instance_id=_PULL_PEER_INSTANCE_ID))
 
     assert as_local.status_code == 409
@@ -379,7 +369,7 @@ async def test_push_cannot_claim_own_or_pull_peer_instance_id(
     assert _push_receiver().load_binding(state_path) == {}
 
 
-# --------------------------------------------------------------------------- apply
+
 
 
 @pytest.mark.asyncio
@@ -469,7 +459,7 @@ async def test_dropped_accounts_are_deactivated_scoped_to_that_owner_and_come_ba
     others = {"z", "o", "n"}
     others_before = {k: v for k, v in (await _snapshot_accounts()).items() if k in others}
 
-    # Owner drops y.
+
     second = await _push(app_instance, _push_body(_account("x", token="pushed-access-x-2")))
     assert second.status_code == 200, second.text
     assert second.json()["accepted"] == ["x"]
@@ -483,7 +473,7 @@ async def test_dropped_accounts_are_deactivated_scoped_to_that_owner_and_come_ba
     assert y_row.owner_instance == _SENDER_INSTANCE_ID
     assert _decrypt(y_row.access_token_encrypted) != "pushed-access-y"
 
-    # Owner pushes y again: it is live again with the new token.
+
     third = await _push(app_instance, _push_body(_account("x"), _account("y", token="pushed-access-y-2")))
     assert third.status_code == 200, third.text
     assert sorted(third.json()["accepted"]) == ["x", "y"]
@@ -491,7 +481,7 @@ async def test_dropped_accounts_are_deactivated_scoped_to_that_owner_and_come_ba
     assert y_row is not None and y_row.status == AccountStatus.ACTIVE
     assert _decrypt(y_row.access_token_encrypted) == "pushed-access-y-2"
 
-    # An empty push deactivates everything this owner pushed, and nothing else.
+
     empty = await _push(app_instance, _push_body())
     assert empty.status_code == 200, empty.text
     assert sorted(empty.json()["removed"]) == ["x", "y"]
@@ -522,7 +512,7 @@ async def test_changes_invalidate_the_selection_cache(
     assert cache.generation > generation
 
 
-# --------------------------------------------------------------------------- response content
+
 
 
 @pytest.mark.asyncio
@@ -531,7 +521,7 @@ async def test_usage_is_filtered_to_accepted_accounts(
 ) -> None:
     await _seed_account("o", owner_instance=_LOCAL_INSTANCE_ID)
     _write_sources(sources_path, [_nate_source()])
-    # request_logs.account_id references accounts, so x must exist before it has usage.
+
     first = await _push(app_instance, _push_body(_account("x")))
     assert first.status_code == 200, first.text
     now = utcnow()
@@ -616,17 +606,12 @@ async def test_mirror_export_is_unchanged_and_skips_pushed_rows(
     assert "pushed-access-x" not in after.text
 
 
-# --------------------------------------------------------------------------- push_auth helpers
+
 
 
 @pytest.fixture
 def fake_tailscale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    """A fake tailscale binary wired through settings.federation_tailscale_bin.
 
-    Returns (call log, "healed" flag file). 100.64.77.201 answers with a leading
-    warning line; .202 fails until the flag file exists; .203 prints non-JSON.
-    These IPs are used nowhere else, so the module's per-IP cache cannot leak in.
-    """
     log = tmp_path / "whois-calls.log"
     healed = tmp_path / "healed"
     script = tmp_path / "tailscale"

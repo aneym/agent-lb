@@ -1,9 +1,4 @@
-"""Accounting contracts: independent arithmetic, attribution overrides and waste boundaries.
 
-These are new CLI behaviors, not covered by request-path pricing tests. Fixtures
-exercise double-counting, imputation provenance and false session starts without
-DB mocks or test-only production hooks.
-"""
 
 import json
 import tomllib
@@ -261,7 +256,7 @@ def test_report_reconciles_aggregate_prices_and_token_totals():
     ],
 )
 def test_report_pane_attribution_reconciles_costs(meta, label):
-    """Pure receipt attribution arithmetic covers missing, bounded and private labels."""
+
     rows = [receipt(cost_usd=0.04), receipt(sid="other", cost_usd=0.02)]
     report = build_report(rows, {}, {}, {"session": meta}, [], ["pane"], 10)
     expected = {label: 0.04}

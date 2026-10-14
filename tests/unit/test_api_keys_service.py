@@ -1077,7 +1077,7 @@ async def test_validate_key_checks_expiry_and_limit() -> None:
         )
     )
 
-    # validate_key now checks auth/expiry only.
+
     limits = await repo.get_limits_by_key(created.id)
     limits[0].current_value = 10
     limits[0].reset_at = utcnow() + timedelta(days=1)
@@ -1087,7 +1087,7 @@ async def test_validate_key_checks_expiry_and_limit() -> None:
     with pytest.raises(ApiKeyRateLimitExceededError):
         await service.enforce_limits_for_request(created.id, request_model="gpt-5")
 
-    # Test expiry
+
     limits[0].current_value = 5
     row = await repo.get_by_id(created.id)
     assert row is not None
@@ -1111,7 +1111,7 @@ async def test_validate_key_lazy_resets_expired_limit() -> None:
         )
     )
 
-    # Set limit as expired
+
     limits = await repo.get_limits_by_key(created.id)
     limits[0].current_value = 9
     limits[0].reset_at = utcnow() - timedelta(days=8)
@@ -1119,7 +1119,7 @@ async def test_validate_key_lazy_resets_expired_limit() -> None:
     validated = await service.validate_key(created.key)
     assert validated.id == created.id
 
-    # Verify lazy reset occurred
+
     updated_limits = await repo.get_limits_by_key(created.id)
     assert updated_limits[0].current_value == 0
     assert updated_limits[0].reset_at > utcnow()
@@ -1203,7 +1203,7 @@ async def test_validate_key_multi_limit_all_must_pass() -> None:
     token_limit = next(lim for lim in limits if lim.limit_type == LimitType.TOTAL_TOKENS)
     cost_limit = next(lim for lim in limits if lim.limit_type == LimitType.COST_USD)
 
-    # Token within range, cost exceeded → should fail
+
     token_limit.current_value = 50
     cost_limit.current_value = 5_000_000
     token_limit.reset_at = utcnow() + timedelta(days=1)
@@ -1528,7 +1528,7 @@ async def test_record_usage_increments_matching_limits() -> None:
     input_limit = next(lim for lim in limits if lim.limit_type == LimitType.INPUT_TOKENS)
     output_limit = next(lim for lim in limits if lim.limit_type == LimitType.OUTPUT_TOKENS)
 
-    assert total_limit.current_value == 150  # input + output
+    assert total_limit.current_value == 150
     assert input_limit.current_value == 100
     assert output_limit.current_value == 50
 
@@ -1551,7 +1551,7 @@ async def test_record_usage_model_filter_matching() -> None:
         )
     )
 
-    # Record usage for gpt-5.1 → both limits should increment
+
     await service.record_usage(
         created.id,
         model="gpt-5.1",
@@ -1565,7 +1565,7 @@ async def test_record_usage_model_filter_matching() -> None:
     assert global_limit.current_value == 150
     assert model_limit.current_value == 150
 
-    # Record usage for different model → only global limit increments
+
     await service.record_usage(
         created.id,
         model="gpt-4o-mini",
@@ -1576,8 +1576,8 @@ async def test_record_usage_model_filter_matching() -> None:
     limits = await repo.get_limits_by_key(created.id)
     global_limit = next(lim for lim in limits if lim.model_filter is None)
     model_limit = next(lim for lim in limits if lim.model_filter == "gpt-5.1")
-    assert global_limit.current_value == 450  # 150 + 300
-    assert model_limit.current_value == 150  # unchanged
+    assert global_limit.current_value == 450
+    assert model_limit.current_value == 150
 
 
 @pytest.mark.asyncio
@@ -1901,7 +1901,7 @@ async def test_fail_usage_reservation_preserves_failed_request_record() -> None:
 
 @pytest.mark.asyncio
 async def test_release_after_finalize_is_noop() -> None:
-    """Finalize 후 release 호출 시 quota 이중 반영 없음 (멱등성)."""
+
     repo = _FakeApiKeysRepository()
     service = ApiKeysService(repo)
     created = await service.create_key(
@@ -1917,7 +1917,7 @@ async def test_release_after_finalize_is_noop() -> None:
 
     reservation = await service.enforce_limits_for_request(created.id, request_model="gpt-5.1")
     limits = await repo.get_limits_by_key(created.id)
-    assert limits[0].current_value == 100  # reserved
+    assert limits[0].current_value == 100
 
     await service.finalize_usage_reservation(
         reservation.reservation_id,
@@ -1928,18 +1928,18 @@ async def test_release_after_finalize_is_noop() -> None:
     )
 
     limits = await repo.get_limits_by_key(created.id)
-    assert limits[0].current_value == 15  # finalized: 100 -> 15
+    assert limits[0].current_value == 15
 
-    # Release after finalize should be no-op
+
     await service.release_usage_reservation(reservation.reservation_id)
 
     limits = await repo.get_limits_by_key(created.id)
-    assert limits[0].current_value == 15  # unchanged
+    assert limits[0].current_value == 15
 
 
 @pytest.mark.asyncio
 async def test_finalize_after_release_is_noop() -> None:
-    """Release 후 finalize 호출 시 quota 반영 없음 (멱등성)."""
+
     repo = _FakeApiKeysRepository()
     service = ApiKeysService(repo)
     created = await service.create_key(
@@ -1958,9 +1958,9 @@ async def test_finalize_after_release_is_noop() -> None:
     await service.release_usage_reservation(reservation.reservation_id)
 
     limits = await repo.get_limits_by_key(created.id)
-    assert limits[0].current_value == 0  # released: 100 -> 0
+    assert limits[0].current_value == 0
 
-    # Finalize after release should be no-op
+
     await service.finalize_usage_reservation(
         reservation.reservation_id,
         model="gpt-5.1",
@@ -1970,7 +1970,7 @@ async def test_finalize_after_release_is_noop() -> None:
     )
 
     limits = await repo.get_limits_by_key(created.id)
-    assert limits[0].current_value == 0  # unchanged
+    assert limits[0].current_value == 0
 
 
 def test_build_api_key_trends_includes_partial_boundary_hours() -> None:
@@ -2038,7 +2038,7 @@ async def _cost_capped_key(service: ApiKeysService, name: str, *, max_value: int
 @pytest.mark.parametrize(
     ("model", "settle_kwargs", "expected_microdollars"),
     [
-        # Opus 5.5 list price: $4 in, $20 out, $5 5m write, $8 1h write, $0.20 read per 1M tokens.
+
         (
             "claude-opus-5-5[1m]",
             {"cache_creation_input_tokens": 2_000, "cache_read_input_tokens": 3_000, "cache_creation_tier": "5m"},
@@ -2049,10 +2049,10 @@ async def _cost_capped_key(service: ApiKeysService, name: str, *, max_value: int
             {"cache_creation_input_tokens": 2_000, "cache_read_input_tokens": 3_000, "cache_creation_tier": "1h"},
             4_000 + 2_000 + 16_000 + 600,
         ),
-        # A caller that gives no cache split has its cached tokens metered as cache reads.
+
         ("claude-opus-5-5", {"cached_input_tokens": 3_000}, 4_000 + 2_000 + 600),
         ("claude-haiku-4-5-20251001", {}, 1_000 + 500),
-        # Anthropic's per-TTL breakdown: 500 of the 2,000 writes are 1-hour writes ($8), the rest 5-minute ($5).
+
         (
             "claude-opus-5-5",
             {
@@ -2062,14 +2062,14 @@ async def _cost_capped_key(service: ApiKeysService, name: str, *, max_value: int
             },
             4_000 + 2_000 + 7_500 + 4_000 + 600,
         ),
-        # Opus 4.6 has its own $5/$25 entry; it must not fall through claude-opus-4* to Opus 4's $15/$75.
+
         ("claude-opus-4-6[1m]", {}, 5_000 + 2_500),
     ],
 )
 async def test_cost_cap_settles_claude_usage_at_list_price(
     model: str, settle_kwargs: dict[str, Any], expected_microdollars: int
 ) -> None:
-    """Money math: cap accounting for Claude reads the Anthropic list price, never $0 (bops S16)."""
+
     repo = _FakeApiKeysRepository()
     service = ApiKeysService(repo)
     key_id = await _cost_capped_key(service, "claude-list-price")

@@ -58,7 +58,7 @@ def _error_format(request: Request) -> str | None:
     fmt = getattr(request.state, "error_format", None)
     if fmt is not None:
         return fmt
-    # Fallback for unmatched routes (e.g. SPA fallback 404s)
+
     path = request.url.path
     if path.startswith("/api/"):
         return "dashboard"
@@ -68,7 +68,7 @@ def _error_format(request: Request) -> str | None:
 
 
 def add_exception_handlers(app: FastAPI) -> None:
-    # --- Domain exceptions: OpenAI envelope ---
+
 
     for exc_cls in _OPENAI_EXCEPTION_TYPES:
 
@@ -90,7 +90,7 @@ def add_exception_handlers(app: FastAPI) -> None:
                 headers=headers,
             )
 
-    # --- Domain exceptions: Dashboard envelope ---
+
 
     for exc_cls in _DASHBOARD_EXCEPTION_TYPES:
 
@@ -113,7 +113,7 @@ def add_exception_handlers(app: FastAPI) -> None:
                 headers=headers,
             )
 
-    # --- Framework exceptions: format based on router marker ---
+
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
@@ -209,7 +209,7 @@ def add_exception_handlers(app: FastAPI) -> None:
             return JSONResponse(status_code=exc.status_code, content=openai_error(code, detail, error_type=error_type))
         return await http_exception_handler(request, exc)
 
-    # --- Catch-all for unhandled exceptions ---
+
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:

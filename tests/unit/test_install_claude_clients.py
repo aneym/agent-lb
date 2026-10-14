@@ -24,7 +24,7 @@ MARKER_BLOCK = (
 
 @pytest.fixture(autouse=True)
 def _no_live_model_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """install-policy resolves sonnet-latest through route; keep that off the live LB and its caches."""
+
     monkeypatch.setenv("AGENT_LB_URL", "http://127.0.0.1:1")
     monkeypatch.setenv("ROUTE_MODELS_CACHE", str(tmp_path / "route-cache" / "models.json"))
     for name in ("ROUTE_FIXTURE_DIR", "ROUTE_TABLE"):
@@ -131,7 +131,7 @@ def test_installer_converges_links_and_removes_retired_artifacts(tmp_path: Path)
             "CLAUDE_LB_DRY_RUN": "1",
         },
     )
-    # The launcher leaves the compaction window to settings.json (400k since 2026-09-25).
+
     assert "--autocompact" not in dry_run.stdout
     assert "--model opus[1m]" in dry_run.stdout
 
@@ -305,7 +305,7 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
         for group in settings["hooks"]["PreToolUse"]
         for hook_config in group["hooks"]
     ]
-    # A seat guard registered twice under Agent (the live settings had it, factory-operations 165) runs once.
+
     assert commands[0] == ("Bash", "keep-safety-hook")
     assert commands[1:] == [
         ("Agent", '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"'),

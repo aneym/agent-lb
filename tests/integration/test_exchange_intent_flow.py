@@ -55,8 +55,8 @@ async def _refresh(account_id: str) -> Account:
 
 
 async def _refresh_in_background_session(account_id: str) -> Account:
-    # Production lifecycle: get_background_session rolls back an open
-    # transaction before closing, which expires every row it loaded.
+
+
     async with get_background_session() as session:
         repo = AccountsRepository(session)
         account = await repo.get_by_id(account_id)
@@ -493,7 +493,7 @@ async def test_stale_intent_after_tolerant_relogin_refreshes(db_setup, monkeypat
     refreshed = await _refresh(account_id)
     assert refreshed.status == AccountStatus.ACTIVE
     assert encryptor.decrypt(refreshed.refresh_token_encrypted) == "si-refresh"
-    assert calls == 2  # exactly one SI call after the tolerant rewrite
+    assert calls == 2
     async with SessionLocal() as session:
         assert await session.get(AccountExchangeIntent, account_id) is None
 
@@ -810,8 +810,8 @@ async def test_relogin_between_reload_and_begin_returns_rotated_account(db_setup
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_kind", ["session_local", "background"])
 async def test_relogin_during_exchange_returns_rotated_account(db_setup, monkeypatch, session_kind):
-    # The provider answers, but a re-login stored new tokens first, so update_tokens
-    # loses its compare-and-swap and the refresh returns the re-login's account.
+
+
     account_id = f"relogin-during-exchange-{session_kind}"
     await _account(account_id)
     encryptor = TokenEncryptor()
@@ -841,8 +841,8 @@ async def test_relogin_during_exchange_returns_rotated_account(db_setup, monkeyp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_kind", ["session_local", "background"])
 async def test_rotation_during_chatgpt_account_id_backfill_returns_rotated_account(db_setup, monkeypatch, session_kind):
-    # ensure_fresh backfills chatgpt_account_id from the id token; a token rotation that lands
-    # first makes that compare-and-swap lose, and the rotated account comes back instead.
+
+
     account_id = f"backfill-race-{session_kind}"
     encryptor = TokenEncryptor()
     claims = base64.urlsafe_b64encode(json.dumps({"chatgpt_account_id": "acct-backfill"}).encode()).decode().rstrip("=")
@@ -896,10 +896,10 @@ async def test_rotation_during_chatgpt_account_id_backfill_returns_rotated_accou
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_kind", ["session_local", "background"])
 async def test_account_deleted_before_ensure_fresh_returns_detached_copy(db_setup, session_kind):
-    # The row loaded by the caller's session disappears before ensure_fresh reloads it;
-    # the account handed back must stay readable after that session closes. This pins
-    # readability only: ensure_fresh serving a just-deleted account is unchanged from
-    # before this fix, and whether it should refuse one instead is a separate decision.
+
+
+
+
     account_id = f"deleted-before-fresh-{session_kind}"
     encryptor = TokenEncryptor()
     async with SessionLocal() as session:

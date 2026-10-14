@@ -1,12 +1,4 @@
-"""Pools for the CLI-only seats (Cursor, Devin, Muse), read from the `seat` CLI's state file.
 
-Their traffic never passes through the LB and neither vendor publishes a usage
-endpoint for these plans, so there is no window to read. What the LB can serve is
-what `clients/seat` observed: which accounts are registered, whether each one's
-auth probe passed, which are cooling down after a limit error, and the runs and
-tokens each served. Headroom is therefore availability, not a metered percent:
-100 while any account can take work, 0 when none can.
-"""
 
 from __future__ import annotations
 
@@ -29,7 +21,7 @@ logger = logging.getLogger(__name__)
 CLI_SEAT_VENDORS = ("cursor", "devin", "muse")
 POOL_KIND_CLI_SEAT = "cli_seat"
 POOL_SOURCE_SEAT_STATE = "seat_state"
-# A state nobody has touched for this long says nothing about auth today.
+
 POOL_SOURCE_SEAT_STATE_STALE = "seat_state_stale"
 _STALE_AFTER = timedelta(hours=12)
 

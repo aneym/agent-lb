@@ -1,7 +1,7 @@
 import Foundation
 
-/// Pure account filter/sort logic for the Accounts section (§8.2 — dashboard
-/// parity). Kept free of SwiftUI so it is unit-testable with fixture data.
+
+
 struct AccountFilter: Equatable, Sendable {
   enum Provider: String, CaseIterable, Sendable {
     case all, anthropic, openai
@@ -21,7 +21,7 @@ struct AccountFilter: Equatable, Sendable {
   var query: String = ""
   var sort: Sort = .resetSoonest
 
-  /// True when any narrowing filter is applied (sort alone never counts).
+
   var hasActiveFilters: Bool {
     provider != .all || status != .all || !trimmedQuery.isEmpty
   }
@@ -30,11 +30,11 @@ struct AccountFilter: Equatable, Sendable {
     query.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
-  // MARK: - Classification
 
-  /// Effective status; mirrors AccountRow presentation priority. Reset
-  /// timestamps are detail for already-blocked accounts; they do not make an
-  /// otherwise active account synthetic-rate-limited.
+
+
+
+
   static func classify(_ account: Account, now: Date) -> Status {
     if account.isSubscriptionCanceled { return .unsubscribed }
     if account.status == "paused" { return .paused }
@@ -45,8 +45,8 @@ struct AccountFilter: Equatable, Sendable {
     return .active
   }
 
-  /// Earliest *future* reset across the primary/secondary windows — the
-  /// reset-sort key. Nil when neither window resets in the future.
+
+
   static func nextReset(of account: Account, now: Date) -> Date? {
     [account.resetAtPrimary, account.resetAtSecondary]
       .compactMap { $0 }
@@ -54,7 +54,7 @@ struct AccountFilter: Equatable, Sendable {
       .min()
   }
 
-  // MARK: - Apply
+
 
   func apply(to accounts: [Account], now: Date) -> [Account] {
     sorted(
@@ -67,8 +67,8 @@ struct AccountFilter: Equatable, Sendable {
     )
   }
 
-  /// Per-provider counts with the *other* filters (status + query) applied —
-  /// the provider chips show what each selection would yield (§8.2).
+
+
   func providerCounts(in accounts: [Account], now: Date) -> [Provider: Int] {
     var counts: [Provider: Int] = [.all: 0, .anthropic: 0, .openai: 0]
     for account in accounts where matchesStatus(account, now: now) && matchesQuery(account) {
@@ -80,7 +80,7 @@ struct AccountFilter: Equatable, Sendable {
     return counts
   }
 
-  // MARK: - Predicates
+
 
   private func matchesProvider(_ account: Account) -> Bool {
     provider == .all || account.provider.lowercased() == provider.rawValue
@@ -97,7 +97,7 @@ struct AccountFilter: Equatable, Sendable {
     return haystacks.contains { $0?.localizedCaseInsensitiveContains(q) == true }
   }
 
-  // MARK: - Sort
+
 
   private func sorted(_ accounts: [Account], now: Date) -> [Account] {
     switch sort {
@@ -116,8 +116,8 @@ struct AccountFilter: Equatable, Sendable {
     }
   }
 
-  /// Nil resets always sort last regardless of direction; ties fall back to
-  /// name then id so the order is deterministic for equal keys.
+
+
   private func byReset(_ lhs: Account, _ rhs: Account, now: Date, ascending: Bool) -> Bool {
     switch (Self.nextReset(of: lhs, now: now), Self.nextReset(of: rhs, now: now)) {
     case (nil, nil): return byName(lhs, rhs, ascending: true)
@@ -129,8 +129,8 @@ struct AccountFilter: Equatable, Sendable {
     }
   }
 
-  /// Weekly usage only: missing weekly telemetry sorts last even when
-  /// monthly or primary telemetry is known. Zero is a known depleted value.
+
+
   private func byRemaining(_ lhs: Account, _ rhs: Account, ascending: Bool) -> Bool {
     switch (remainingPercent(of: lhs), remainingPercent(of: rhs)) {
     case (nil, nil): return byName(lhs, rhs, ascending: true)
@@ -146,8 +146,8 @@ struct AccountFilter: Equatable, Sendable {
     account.usage.secondaryRemainingPercent
   }
 
-  // Plain lowercased comparison (not localized collation) so ordering is
-  // deterministic across locales — matches the dashboard's JS sort.
+
+
   private func byName(_ lhs: Account, _ rhs: Account, ascending: Bool) -> Bool {
     let l = lhs.displayName.lowercased()
     let r = rhs.displayName.lowercased()

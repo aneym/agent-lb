@@ -1,9 +1,4 @@
-"""Team mode closes the dashboard and its admin APIs to untrusted clients.
 
-The live deployment runs with ``AGENT_LB_DASHBOARD_AUTH_MODE=disabled``, so without this
-gate every admin route would be open to any tailnet peer that team mode lets reach the
-port.  The check therefore runs ahead of the DISABLED / trusted-header short-circuit.
-"""
 
 from __future__ import annotations
 
@@ -36,7 +31,7 @@ def _make_request(client_host: str, *, headers: list[tuple[str, str]] | None = N
             "client": (client_host, 54321),
             "query_string": b"",
             "scheme": "https",
-            # Not "testserver": is_local_request treats the test server as local.
+
             "server": ("lb.example", 443),
             "http_version": "1.1",
         }
@@ -73,7 +68,7 @@ def _patch_environment(
 async def test_untrusted_client_is_forbidden_when_team_mode_on(monkeypatch):
     _patch_environment(monkeypatch, team_mode_enabled=True)
 
-    # Arrives through the trusted loopback reverse proxy, carrying its own tailnet IP.
+
     request = _make_request("127.0.0.1", headers=[("x-forwarded-for", _UNTRUSTED_TAILNET_IP)])
 
     with pytest.raises(DashboardForbiddenError) as excinfo:
@@ -130,7 +125,7 @@ async def test_settings_without_team_mode_attribute_keeps_the_short_circuit(monk
 
 @pytest.mark.asyncio
 async def test_untrusted_client_is_forbidden_before_any_password_prompt(monkeypatch):
-    """Standard mode: the 403 lands ahead of the session-cookie check, not after it."""
+
 
     _patch_environment(
         monkeypatch,
@@ -156,7 +151,7 @@ async def test_untrusted_client_is_forbidden_before_any_password_prompt(monkeypa
 
 @pytest.mark.asyncio
 async def test_trusted_client_still_hits_the_password_prompt_in_standard_mode(monkeypatch):
-    """The gate must not become a bypass: trusted clients keep their normal auth path."""
+
 
     _patch_environment(
         monkeypatch,
@@ -183,12 +178,7 @@ async def test_trusted_client_still_hits_the_password_prompt_in_standard_mode(mo
 
 @pytest.mark.asyncio
 async def test_loopback_tooling_without_forwarding_header_passes_in_deployment_config(monkeypatch):
-    """The real deployment config: trust_proxy_headers on, loopback the only trusted proxy.
 
-    Local tooling on the box dials loopback and sends no forwarding header. It resolves
-    to 127.0.0.1 and is admitted through the unauthenticated CIDR allowlist, using the
-    real _is_proxy_unauthenticated_client_allowed rather than a stub.
-    """
     _patch_environment(monkeypatch, team_mode_enabled=True, trust_proxy_headers=True)
 
     request = _make_request("127.0.0.1", headers=[("host", "localhost")])

@@ -1,19 +1,5 @@
 #!/usr/bin/env python3
-"""Terminal-Bench-Science on a fixed seeded subset, through our seats and agent-lb.
 
-The public comparison dataset (PROGRAM.md D7 (2)). Artificial Analysis publishes pass@1 on the
-full 70 tasks; we run a seeded subset, one attempt per task, and report it as a subset.
-
-    python3 run_subset.py --arm A2-cc-sonnet [--tasks 10] [--seed 0] [-n 4] [--dry-run]
-
-- Local docker only (no Modal/Daytona), at most 4 concurrent trials: each task asks for up to
-  4 CPUs and 16 GB, and Studio is shared.
-- The images are the dataset's own, without our prebaked CLIs, so the agents install them
-  (OF_HARBOR_ALLOW_INSTALL=1). The tasks use open egress: they are not our code, so the leak
-  rule does not apply.
-- Agent timeouts are the dataset's (8 h), as in the published runs.
-- --dry-run checks the dataset, the subset and the arm, prints the harbor command, and runs nothing.
-"""
 
 from __future__ import annotations
 
@@ -72,7 +58,7 @@ def main() -> int:
         args.arm,
     ]
     for name in subset:
-        # Harbor matches -i against the task name, bare for a local dir, org/name from the registry.
+
         cmd += ["-i", name, "-i", f"*/{name}"]
 
     print(f"dataset {args.dataset.name}: {len(names)} tasks; subset seed={args.seed}: {len(subset)}")

@@ -1,13 +1,4 @@
-"""add owner_instance to accounts
 
-Revision ID: 20260702_000000_add_account_owner_instance
-Revises: 20260611_000000_default_enable_account_limit_warmup
-Create Date: 2026-07-02 00:00:00.000000
-
-NULL means the account is owned by the local instance (single-instance
-legacy default); existing rows are intentionally left NULL rather than
-backfilled with an explicit instance id.
-"""
 
 from __future__ import annotations
 

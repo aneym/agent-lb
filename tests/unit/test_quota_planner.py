@@ -438,8 +438,7 @@ def test_build_demand_forecast_uses_current_proxy_history_rows() -> None:
 
 
 def test_forecast_accepts_lean_demand_slots() -> None:
-    """The repository's (slot, request_kind) aggregation satisfies the forecast
-    protocol and yields the same units as the wide per-account bins."""
+
     from app.modules.quota_planner.repository import DemandSlot
 
     settings = PlannerSettings(

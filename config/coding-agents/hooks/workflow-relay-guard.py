@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Advise Workflow launches whose agent prompts lack the relayed-request guard.
 
-Workflow subagents get the launching turn's user message relayed above their task.
-Five times (09-27, 09-29 x2, 09-30, 10-01) seats followed that message instead of
-their brief: wrong work, stray files, edits to another lane's plan.md. The guard
-line must appear in the script (a shared prompt prefix) so every seat sees it.
-Memory: workflow-relayed-user-request.md.
-
-Adopted into agent-lb 2026-10-08 (S44, hook-dispatcher-5) from the hand-installed copy: edit this source only. It is
-a floor guard, so input it cannot read (not JSON, not an object, a tool_input that is not an object, a script that is
-not text) is refused, never allowed; the advice itself never blocks. A completed check ends with the receipt line
-`floor-ok workflow-relay-guard.py` when the dispatcher asks for it (HOOK_FLOOR_RECEIPT); the dispatcher refuses an
-exit 0 without it.
-"""
 import json
 import os
 import sys
@@ -42,8 +29,8 @@ def main():
     script = ti.get("script") or ""
     if not isinstance(script, str):
         refuse("the script is not text")
-    # Inline scripts only. Saved and template runs (scriptPath, name) are factory folds launched from
-    # relay turns with no live user ask; checking them stopped every fold 11:52-12:25 ET 2026-10-01.
+
+
     if not script:
         return
     if MARK in script:

@@ -3,7 +3,7 @@ import XCTest
 
 final class ModelDecodingTests: XCTestCase {
 
-  // MARK: - Helpers
+
 
   private func fixture(_ filename: String) throws -> Data {
     let url = try XCTUnwrap(
@@ -19,42 +19,42 @@ final class ModelDecodingTests: XCTestCase {
 
   private var decoder: JSONDecoder { APIClient.makeDecoder() }
 
-  // MARK: - accounts.json
+
 
   func testAccountsDecoding() throws {
     let data = try fixture("accounts.json")
     let response = try decoder.decode(AccountsResponse.self, from: data)
 
-    // First account asserts
+
     let first = try XCTUnwrap(response.accounts.first)
     XCTAssertEqual(first.accountId, "2c436b54-a7e2-4299-9d6b-689ad2dda8cb")
     XCTAssertEqual(first.usage.primaryRemainingPercent, 7.0)
 
-    // rateLimitResetAt is whole-second ISO — must parse
+
     XCTAssertNotNil(first.rateLimitResetAt,
                     "rateLimitResetAt (whole-second ISO-8601) must decode")
 
-    // lastRefreshAt is fractional ISO — must parse
+
     XCTAssertNotNil(first.lastRefreshAt,
                     "lastRefreshAt (fractional ISO-8601) must decode")
 
-    // Nulls decode as nil
+
     XCTAssertNil(first.alias)
     XCTAssertNil(first.workspaceLabel)
 
-    // isEmailDuplicate decodes as false (not nil, not true)
+
     XCTAssertEqual(first.isEmailDuplicate, false)
     XCTAssertEqual(first.fableEligible, true)
     XCTAssertEqual(first.fableAvailability, .available)
 
-    // §9.2: per-account credit fields drive the scoped pool windows
+
     XCTAssertEqual(first.remainingCreditsPrimary, 7.0)
     XCTAssertEqual(first.capacityCreditsPrimary, 100.0)
     XCTAssertEqual(first.remainingCreditsSecondary, 41.0)
     XCTAssertEqual(first.capacityCreditsSecondary, 100.0)
 
-    // Unknown requestUsage payload still decodes without error; additionalQuotas
-    // is intentionally decoded for scoped Fable usage.
+
+
     XCTAssertNotNil(first.additionalQuotas)
     XCTAssertNil(first.fableRemainingPercent)
     XCTAssertEqual(response.accounts.count, 8)
@@ -235,12 +235,12 @@ final class ModelDecodingTests: XCTestCase {
     XCTAssertEqual(account.subscription?.status, "active")
     XCTAssertNotNil(account.subscription?.currentPeriodEndAt)
     XCTAssertNotNil(account.subscription?.lastVerifiedAt)
-    // §11: the operator-entered monthly price feeds the arbitrage denominator.
+
     XCTAssertEqual(account.subscription?.amount, 20.00)
     XCTAssertEqual(account.subscription?.currency, "USD")
   }
 
-  // MARK: - summary.json
+
 
   func testSummaryDecoding() throws {
     let data = try fixture("summary.json")
@@ -252,12 +252,12 @@ final class ModelDecodingTests: XCTestCase {
     XCTAssertNotNil(summary.primaryWindow)
     XCTAssertNotNil(summary.secondaryWindow)
 
-    // §8.2 metrics strip line 2 inputs
+
     XCTAssertEqual(summary.metrics?.tokensSecondaryWindow, 3_834_168_753)
     XCTAssertEqual(summary.metrics?.cachedTokensSecondaryWindow, 3_050_279_380)
   }
 
-  // MARK: - projections.json
+
 
   func testProjectionsDecoding() throws {
     let data = try fixture("projections.json")
@@ -268,23 +268,23 @@ final class ModelDecodingTests: XCTestCase {
     XCTAssertNotNil(proj.depletionSecondary)
   }
 
-  // MARK: - request-logs.json
+
 
   func testRequestLogsDecoding() throws {
     let data = try fixture("request-logs.json")
     let logs = try decoder.decode(RequestLogsResponse.self, from: data)
 
     XCTAssertEqual(logs.requests.count, 5)
-    // total is Int64-range safe (143334 in fixture)
+
     XCTAssertEqual(logs.total, 143334)
     XCTAssertTrue(logs.hasMore)
 
-    // costUsd is null in all fixture entries
+
     XCTAssertNil(logs.requests[0].costUsd)
   }
 
   func testErrorShapedLogEntry() throws {
-    // Craft a minimal error-shaped entry to verify errorCode decodes correctly
+
     let json = """
     {
       "requests": [{
@@ -308,7 +308,7 @@ final class ModelDecodingTests: XCTestCase {
     XCTAssertNil(entry.accountId)
   }
 
-  // MARK: - version.json
+
 
   func testVersionDecoding() throws {
     let data = try fixture("version.json")
@@ -319,7 +319,7 @@ final class ModelDecodingTests: XCTestCase {
     XCTAssertEqual(version.currentVersion, "1.20.0-beta.3")
   }
 
-  // MARK: - Negative: malformed date
+
 
   func testInvalidDateThrows() throws {
     let json = """
@@ -331,8 +331,8 @@ final class ModelDecodingTests: XCTestCase {
     """.data(using: .utf8)!
 
     XCTAssertThrowsError(try decoder.decode(RequestLogEntry.self, from: json)) { error in
-      // Must be a DecodingError (APIError.decoding wraps it outside this scope;
-      // bare decoder.decode throws DecodingError directly)
+
+
       XCTAssertTrue(error is DecodingError, "Expected DecodingError, got \(error)")
     }
   }

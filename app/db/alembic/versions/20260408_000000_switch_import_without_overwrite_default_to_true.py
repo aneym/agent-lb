@@ -1,9 +1,4 @@
-"""switch import_without_overwrite default to true
 
-Revision ID: 20260408_000000_switch_import_without_overwrite_default_to_true
-Revises: 20260403_000000_add_credit_api_key_limit_values
-Create Date: 2026-04-08
-"""
 
 from __future__ import annotations
 

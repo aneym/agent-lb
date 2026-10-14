@@ -189,7 +189,7 @@ def test_fable_telemetry_and_historical_fixtures_are_not_route_migrated() -> Non
 
     assert 'FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"' in launcher
     assert '"claude-fable-5": AnthropicModelPrice(' in pricing
-    # The pulse probes the current Fable (5.1); the 5.0 price and fixtures stay.
+
     assert 'calls[0]["model"] == "claude-fable-5-1"' in pulse_test
     assert '"model":"claude-fable-5"' in fixture
 
@@ -210,6 +210,6 @@ def test_install_pins_the_sonnet_alias_to_the_newest_listed_sonnet(tmp_path: Pat
         return json.loads((home / ".claude" / "settings.json").read_text())["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"]
 
     assert install({"ROUTE_FIXTURE_DIR": str(fixtures)}) == "claude-sonnet-6"
-    # No list and no cache: the pinned fallback.
+
     (tmp_path / "cache" / "route-anthropic-models.json").unlink()
     assert install({}) == "claude-sonnet-5-5"

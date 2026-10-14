@@ -1,7 +1,4 @@
-"""Dry seat startup through the actual home-writer process, using fixture config
-and no credentials. Protects sandbox/network/transport and rollout layout at the
-file boundary. Old global archive indexing is not duplicated in a mock.
-"""
+
 import os
 import subprocess
 import sys
@@ -68,7 +65,7 @@ base_url = "https://example.invalid"
 
 
 def test_dry_installed_writer_and_launcher_patch(tmp_path: Path):
-    # Exercise the installed generator and apply the real external launcher patch.
+
     import shutil
 
     source = tmp_path / "policy"
@@ -93,7 +90,7 @@ def test_dry_installed_writer_and_launcher_patch(tmp_path: Path):
     archive = home / ".codex/sessions"
     archive.mkdir(parents=True)
     (archive / "untouched").write_text("global archive")
-    # The patched actual launcher fragment must not undo the writer's local layout.
+
     subprocess.run(["zsh", str(launcher)], env=os.environ | {"HOME": str(home), "N": "dry"},
                    check=True, capture_output=True, timeout=10)
     local = home / ".agent-rails/jobs/codex-homes/dry/sessions"

@@ -44,12 +44,12 @@ def _cost_for(model: str, usage: UsageTokens, service_tier: str | None = None) -
 
 
 def test_gpt_6_astra_is_priced():
-    """An unpriced model bills $0, which silently uncaps USD-based team caps."""
+
     usage = UsageTokens(input_tokens=60_000, output_tokens=20_000, cached_input_tokens=10_000)
     cost = _cost_for("gpt-6-astra", usage)
     assert cost is not None
     assert cost > 0
-    # 50k fresh input @ $10 + 10k cached @ $1 + 20k output @ $50 per 1M.
+
     assert cost == pytest.approx(0.5 + 0.01 + 1.0)
 
 
@@ -63,7 +63,7 @@ def test_gpt_6_astra_effort_suffix_resolves_to_base_price():
 
 
 def test_gpt_6_astra_priority_tier_doubles_standard_rates():
-    # Kept under the 272k long-context threshold so only the tier varies.
+
     usage = UsageTokens(input_tokens=100_000, output_tokens=100_000)
     assert _cost_for("gpt-6-astra", usage) == pytest.approx(6.0)
     assert _cost_for("gpt-6-astra", usage, "priority") == pytest.approx(12.0)
@@ -71,14 +71,14 @@ def test_gpt_6_astra_priority_tier_doubles_standard_rates():
 
 def test_gpt_6_astra_long_context_surcharge():
     usage = UsageTokens(input_tokens=300_000, output_tokens=100_000)
-    # >272k input bills the whole request at 2x input ($20) / 1.5x output ($75).
+
     assert _cost_for("gpt-6-astra", usage) == pytest.approx(6.0 + 7.5)
 
 
 @pytest.mark.parametrize(
     ("model", "expected"),
     [
-        # 50k fresh input + 10k cached + 20k output at OpenAI's published list price.
+
         ("gpt-6.1-sol", 50_000 * 2.0e-6 + 10_000 * 0.1e-6 + 20_000 * 10.0e-6),
         ("gpt-6.1-sol-xhigh", 50_000 * 2.0e-6 + 10_000 * 0.1e-6 + 20_000 * 10.0e-6),
         ("gpt-6.1-sol-pro", None),
@@ -86,7 +86,7 @@ def test_gpt_6_astra_long_context_surcharge():
         ("gpt-6-sol-low", 50_000 * 2.0e-6 + 10_000 * 0.2e-6 + 20_000 * 10.0e-6),
         ("gpt-6-luna", 50_000 * 0.1e-6 + 10_000 * 0.01e-6 + 20_000 * 0.5e-6),
         ("gpt-6-luna-xhigh", 50_000 * 0.1e-6 + 10_000 * 0.01e-6 + 20_000 * 0.5e-6),
-        # Unpublished variants stay unpriced rather than billed at Sol rates.
+
         ("gpt-6-sol-pro", None),
         ("gpt-6-terra", None),
     ],

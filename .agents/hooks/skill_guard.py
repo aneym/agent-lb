@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse hook — enforce guardrail skills before Edit/Write operations."""
+
 
 import json
 import os
@@ -17,7 +17,7 @@ except ImportError:
 
 
 def load_skill_rules() -> dict:
-    """Load skill-rules.json relative to this hook's location."""
+
     hook_dir = Path(__file__).resolve().parent
     rules_path = hook_dir.parent / "skills" / "skill-rules.json"
     with open(rules_path) as f:
@@ -25,7 +25,7 @@ def load_skill_rules() -> dict:
 
 
 def load_session_state(session_id: str) -> dict:
-    """Load session state for tracking which skills have been used."""
+
     hook_dir = Path(__file__).resolve().parent
     state_path = hook_dir / "state" / f"skills-used-{session_id}.json"
     if state_path.exists():
@@ -38,12 +38,12 @@ def load_session_state(session_id: str) -> dict:
 
 
 def match_path_patterns(file_path: str, patterns: list[str]) -> bool:
-    """Check if file_path matches any glob pattern."""
+
     return any(fnmatch(file_path, pat) for pat in patterns)
 
 
 def match_content_patterns(file_path: str, patterns: list[str]) -> bool:
-    """Check if file content matches any regex pattern."""
+
     try:
         content = Path(file_path).read_text(errors="ignore")
         return any(re.search(pat, content) for pat in patterns)
@@ -52,7 +52,7 @@ def match_content_patterns(file_path: str, patterns: list[str]) -> bool:
 
 
 def check_pass_state(pass_state_file: str) -> bool:
-    """Check if a pass state file exists and has result=PASS."""
+
     hook_dir = Path(__file__).resolve().parent
     state_path = hook_dir / "state" / pass_state_file
     if not state_path.exists():
@@ -65,7 +65,7 @@ def check_pass_state(pass_state_file: str) -> bool:
 
 
 def check_file_markers(file_path: str, markers: list[str]) -> bool:
-    """Check if file contains any skip markers."""
+
     try:
         content = Path(file_path).read_text(errors="ignore")
         return any(marker in content for marker in markers)
@@ -77,7 +77,7 @@ def main() -> None:
     try:
         input_data = json.loads(sys.stdin.read())
     except (json.JSONDecodeError, EOFError):
-        sys.exit(0)  # fail-open
+        sys.exit(0)
 
     session_id = input_data.get("session_id", "unknown")
     tool_input = input_data.get("tool_input", {})
@@ -89,13 +89,13 @@ def main() -> None:
     try:
         rules = load_skill_rules()
     except (FileNotFoundError, json.JSONDecodeError):
-        sys.exit(0)  # fail-open
+        sys.exit(0)
 
     skills = rules.get("skills", {})
 
     session_state = load_session_state(session_id)
 
-    # --- Phase 1: Hard block guardrails ---
+
     guardrails = {
         name: rule
         for name, rule in skills.items()
@@ -119,7 +119,7 @@ def main() -> None:
         if content_patterns and not match_content_patterns(file_path, content_patterns):
             continue
 
-        # --- Skip conditions ---
+
         skip = rule.get("skipConditions", {})
 
         pass_state_file = skip.get("passStateFile")
@@ -137,7 +137,7 @@ def main() -> None:
         if env_override and os.environ.get(env_override):
             continue
 
-        # All checks passed — block
+
         emit_event(
             session_id,
             "hook.invoked",
@@ -156,7 +156,7 @@ def main() -> None:
         print(block_message, file=sys.stderr)
         sys.exit(2)
 
-    # --- Phase 2: Remind enforcement (block until skill invoked in session) ---
+
     remind_rules = {
         name: rule for name, rule in skills.items() if rule.get("enforcement") == "remind" and rule.get("fileTriggers")
     }
@@ -176,7 +176,7 @@ def main() -> None:
         if content_patterns and not match_content_patterns(file_path, content_patterns):
             continue
 
-        # --- Skip conditions ---
+
         skip = rule.get("skipConditions", {})
 
         if skip.get("sessionSkillUsed") and name in session_state.get("usedSkills", []):
@@ -186,7 +186,7 @@ def main() -> None:
         if env_override and os.environ.get(env_override):
             continue
 
-        # Block with convention reminder
+
         emit_event(
             session_id,
             "hook.invoked",

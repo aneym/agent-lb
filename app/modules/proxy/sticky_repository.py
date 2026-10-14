@@ -18,13 +18,13 @@ from app.modules.sticky_sessions.schemas import StickySessionSortBy, StickySessi
 
 logger = logging.getLogger(__name__)
 
-# Each (key, kind) pair in delete_entries contributes 2 bind parameters to
-# the underlying DELETE...OR (key=:k AND kind=:t)... statement. SQLite's
-# default SQLITE_LIMIT_VARIABLE_NUMBER is 999 on builds older than 3.32
-# and 32766 on newer builds, so chunking conservatively at 250 pairs
-# (500 bind parameters) keeps delete-filtered safe on any libsqlite that
-# ships with current Python interpreters. Postgres allows up to 65535
-# bind parameters, which this chunk size also respects.
+
+
+
+
+
+
+
 _DELETE_ENTRIES_CHUNK_SIZE = 250
 
 

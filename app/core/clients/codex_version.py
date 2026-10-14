@@ -42,7 +42,7 @@ class CodexVersionCache:
                 self._cached_at = now
                 return version
 
-            # Fallback: stale cache value
+
             if self._cached_version is not None:
                 logger.warning(
                     "Upstream version sources failed; using stale cached version %s",
@@ -50,7 +50,7 @@ class CodexVersionCache:
                 )
                 return self._cached_version
 
-            # Fallback: settings default
+
             fallback = get_settings().model_registry_client_version
             logger.warning(
                 "Upstream version sources failed and no cached version; falling back to settings default %s",
@@ -101,9 +101,9 @@ class CodexVersionCache:
         return name
 
     async def _fetch_from_npm(self, session: aiohttp.ClientSession) -> str | None:
-        # npm registry is not anonymously rate-limited the way the GitHub
-        # API is, so it is a reliable secondary source when GitHub returns
-        # 403 / 5xx (see issue #664).
+
+
+
         try:
             headers = {"Accept": "application/json"}
             async with session.get(_NPM_REGISTRY_URL, headers=headers) as resp:

@@ -24,9 +24,6 @@ from app.modules.usage.schemas import (
     UsageWindowResponse,
 )
 
-# Cached (metrics, cost) aggregates derived from the request-log window,
-# keyed by (provider, window minutes, account-id set). Values are
-# (monotonic timestamp, metrics, cost).
 _LOG_METRICS_CACHE_TTL_SECONDS = 60.0
 _LOG_METRICS_CACHE: dict[
     tuple[str, int, tuple[str, ...]],
@@ -88,11 +85,11 @@ class UsageService:
         account_ids: set[str],
         provider: str | None,
     ) -> tuple[UsageMetricsSummary, UsageCostSummary]:
-        # SQL-aggregated over the request-log window instead of hydrating full
-        # ORM rows (observed >700k rows for the 7-day window, which blocked
-        # the event loop for seconds to a minute per recomputation). The
-        # menubar polls this endpoint continuously — cache briefly so the
-        # aggregation cost is paid at most once per TTL.
+
+
+
+
+
         cache_key = (provider or "", secondary_minutes, tuple(sorted(account_ids)))
         mono_now = time.monotonic()
         cached = _LOG_METRICS_CACHE.get(cache_key)

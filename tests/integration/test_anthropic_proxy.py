@@ -281,8 +281,8 @@ def test_messages_affinity_quota_key_scopes_fable_class_separately():
         }
     )
 
-    # Fable-class traffic gets a distinct affinity family; non-Fable models
-    # (opus, haiku) keep the unchanged, unsuffixed quota key.
+
+
     assert (
         anthropic_proxy_module._messages_affinity_quota_key(fable_payload, provider_name="anthropic")
         == "anthropic_top_thinking_fable"
@@ -391,8 +391,8 @@ async def test_anthropic_session_route_surfaces_provider_status_failure(async_cl
             status=AccountStatus.ACTIVE if runtime_only else AccountStatus.RATE_LIMITED,
         )
 
-    # 82ed714b: a status without a failure marker is legacy and routable, so
-    # mark these as live provider failures inside their bounded retry.
+
+
     blocked_at = int(time.time())
     retry_at = blocked_at + 60
     if runtime_only:
@@ -465,7 +465,7 @@ async def _insert_quota_cooldown(
 
 @pytest.fixture
 def fable_burn_first_enabled(monkeypatch):
-    """Burn-first is opt-in since Fable was retired; these tests guard that path."""
+
     from app.core.config.settings import get_settings
 
     monkeypatch.setenv("AGENT_LB_ANTHROPIC_FABLE_BURN_FIRST_ENABLED", "true")
@@ -485,8 +485,8 @@ def eastern_local_time(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_anthropic_messages_quota_cooldown_returns_native_rate_limit(async_client, eastern_local_time):
-    # The message printed the reset in the host's local time with no offset, so
-    # on the Studio (EDT) "Reset at 17:40:00" read as four hours in the past.
+
+
     await _insert_account(
         account_id="anthropic-cooling",
         provider="anthropic",
@@ -516,7 +516,7 @@ async def test_anthropic_messages_quota_cooldown_returns_native_rate_limit(async
     assert body["type"] == "error"
     assert body["error"]["type"] == "rate_limit_error"
     assert "cooling down" in body["error"]["message"]
-    # 82ed714b: the live cooldown is retried after a bounded minute, not at the snapshot reset.
+
     retry_at = int(response.headers["anthropic-ratelimit-unified-reset"])
     assert f"Reset at {datetime.fromtimestamp(retry_at, tz=timezone.utc).isoformat()}." in body["error"]["message"]
     assert reset_at - retry_at >= 5 * 60
@@ -551,7 +551,7 @@ async def test_anthropic_session_route_includes_retry_metadata(async_client):
     assert response.status_code == 429
     error = response.json()["error"]
     assert error["code"] == "anthropic_quota_cooldown"
-    # 82ed714b: retry metadata reflects bounded live cooldown, not usage-window reset.
+
     assert error["retryAt"] == datetime.fromtimestamp(
         int(time.time()) + error["retryAfterSeconds"], tz=timezone.utc
     ).isoformat().replace("+00:00", "Z")
@@ -671,7 +671,7 @@ async def test_anthropic_session_route_explains_active_account_blocked_by_model_
     assert "statuses: active=1, quota_exceeded=1" in error["message"]
     assert "Model quota: anthropic_top cooldown excluded 1 account" in error["message"]
     assert "1 account remained after the anthropic_top prefilter" in error["message"]
-    # 82ed714b: retry metadata follows the bounded live cooldown, not the snapshot.
+
     retry_at = datetime.fromisoformat(error["retryAt"].replace("Z", "+00:00")).timestamp()
     assert 0 < retry_at - time.time() <= 60
     assert 0 < error["retryAfterSeconds"] <= 4 * 60
@@ -679,14 +679,7 @@ async def test_anthropic_session_route_explains_active_account_blocked_by_model_
 
 @pytest.mark.asyncio
 async def test_anthropic_messages_all_routable_accounts_cooling_returns_429_despite_unusable_rows(async_client):
-    """Regression for the 6-account routing incident.
 
-    When every *routable* account is cooling down on the model quota, the
-    proxy must return a clean 429 with retry metadata — not a confusing
-    503 that treats canceled/deactivated rows as 'remaining candidates'.
-    Here one usable account is thinking-cooled while a canceled-subscription
-    row and a deactivated row are present but unroutable.
-    """
     await _insert_account(
         account_id="anthropic-usable-cooling",
         provider="anthropic",
@@ -730,16 +723,14 @@ async def test_anthropic_messages_all_routable_accounts_cooling_returns_429_desp
     assert body["type"] == "error"
     assert body["error"]["type"] == "rate_limit_error"
     assert "cooling down" in body["error"]["message"]
-    # 82ed714b: a real cooldown excludes, but only for the bounded retry.
+
     assert 0 < int(response.headers["anthropic-ratelimit-unified-reset"]) - time.time() <= 60
     assert 0 < int(response.headers["retry-after"]) <= 6 * 60
 
 
 @pytest.mark.asyncio
 async def test_anthropic_session_route_failure_counts_only_routable_accounts(async_client, monkeypatch):
-    """The selection-failure message must count only routable accounts and
-    label stored-but-unusable rows separately, instead of inflating the
-    headline total with canceled/deactivated rows."""
+
     await _insert_account(
         account_id="anthropic-routable",
         provider="anthropic",
@@ -764,8 +755,8 @@ async def test_anthropic_session_route_failure_counts_only_routable_accounts(asy
 
     async def fake_select_account(self, **kwargs):
         del self
-        # Only the routable row reaches the load balancer; canceled and
-        # deactivated rows are filtered out by the eligibility prefilter.
+
+
         assert kwargs["account_ids"] == ["anthropic-routable"]
         return AccountSelection(
             account=None,
@@ -794,8 +785,8 @@ async def test_anthropic_session_route_failure_counts_only_routable_accounts(asy
 
 @pytest.mark.asyncio
 async def test_anthropic_messages_mid_stream_failure_emits_sse_error_event(async_client, monkeypatch):
-    # With the pool-exhausted wait disabled, a mid-stream pool-wide failure
-    # must keep surfacing the immediate structured error instead of holding.
+
+
     _disable_pool_exhausted_wait(monkeypatch)
     await _insert_account(
         account_id="anthropic-only",
@@ -920,9 +911,9 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
     assert captured["headers"]["anthropic-beta"] == "oauth-2025-04-20"
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
     assert "x-api-key" not in {key.lower() for key in captured["headers"]}
-    # The client's own system prompt still reaches upstream verbatim; the
-    # Claude Code identity block that Anthropic's OAuth endpoint requires is
-    # prepended ahead of it.
+
+
+
     assert captured["json_body"]["system"] == [
         {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."},
         {"type": "text", "text": payload["system"]},
@@ -955,10 +946,10 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
 
 @pytest.mark.asyncio
 async def test_anthropic_upstream_stream_error_event_is_logged_as_error(async_client, monkeypatch):
-    # Anthropic reports mid-stream failures as an in-band SSE `error` event on
-    # an HTTP 200 stream. The proxy must forward the bytes verbatim (the
-    # request is not retryable once output started) but the request log must
-    # record the failure instead of a success (2026-08-18 audit).
+
+
+
+
     await _insert_account(
         account_id="anthropic-account",
         provider="anthropic",
@@ -1000,7 +991,7 @@ async def test_anthropic_upstream_stream_error_event_is_logged_as_error(async_cl
         assert response.status_code == 200
         body = await response.aread()
 
-    # Forwarded verbatim: the client sees the partial output and the error event.
+
     assert body == upstream_bytes
 
     async with SessionLocal() as session:
@@ -1017,8 +1008,8 @@ async def test_anthropic_upstream_stream_error_event_is_logged_as_error(async_cl
 
 @pytest.mark.asyncio
 async def test_kimi_count_tokens_served_locally_without_upstream_call(async_client, monkeypatch):
-    # Kimi's upstream answers count_tokens with a non-Anthropic 404, which
-    # breaks Claude Code at startup, so the estimate is served locally.
+
+
     await _insert_account(
         account_id="kimi-account",
         provider="kimi",
@@ -1094,8 +1085,8 @@ async def test_anthropic_count_tokens_forwards_verbatim_without_usage_writes(asy
     assert captured["headers"]["anthropic-beta"] == "oauth-2025-04-20"
     assert "x-api-key" not in {key.lower() for key in captured["headers"]}
 
-    # Counting is quota-free: no request log, usage settlement, or cooldown
-    # rows may be written for it.
+
+
     async with SessionLocal() as session:
         logs = list((await session.execute(select(RequestLog))).scalars())
         cooldowns = list((await session.execute(select(AdditionalUsageHistory))).scalars())
@@ -1134,8 +1125,8 @@ async def test_anthropic_count_tokens_passes_through_upstream_error_envelope(asy
     assert response.status_code == 429
     assert response.content == upstream_error
 
-    # An upstream error on the free counting endpoint must not perturb
-    # account health or quota cooldowns.
+
+
     async with SessionLocal() as session:
         account = (await session.execute(select(Account))).scalar_one()
         cooldowns = list((await session.execute(select(AdditionalUsageHistory))).scalars())
@@ -1241,7 +1232,7 @@ async def test_glm_messages_selects_glm_account_and_upstream(async_client, monke
 async def test_kimi_messages_selects_kimi_account_and_upstream(async_client, monkeypatch, model):
     from app.core.config.settings import get_settings
 
-    # Pin the upstream so an operator .env override cannot decide this test.
+
     monkeypatch.setenv("AGENT_LB_KIMI_ANTHROPIC_UPSTREAM_BASE_URL", "https://api.kimi.com/coding")
     get_settings.cache_clear()
 
@@ -1745,10 +1736,10 @@ async def test_anthropic_429_records_quota_cooldown_and_bounded_account_backoff_
             )
         ).scalar_one()
 
-    # 82ed714b: a live 429 now also persists account-level backoff (the spec's
-    # "exclude that account for a bounded retry interval"), so the old
-    # "without global rate limit" name no longer held. The backoff is bounded
-    # to a minute even though the upstream reset is ten minutes out.
+
+
+
+
     assert accounts["anthropic-a"].status == AccountStatus.RATE_LIMITED
     assert accounts["anthropic-a"].blocked_at is not None
     assert 0 < accounts["anthropic-a"].reset_at - accounts["anthropic-a"].blocked_at <= 60
@@ -1776,10 +1767,7 @@ async def test_anthropic_429_failover_repins_durable_mapping_to_serving_account(
     async_client,
     monkeypatch,
 ):
-    """Reactive contract: after an in-request 429 fails over from the pinned
-    account A to account B, the durable mapping must point at B so the next
-    request reuses the cache B just rebuilt — and must not bounce back to the
-    cooled-down A."""
+
     await _insert_account(
         account_id="anthropic-a",
         provider="anthropic",
@@ -1858,8 +1846,8 @@ async def test_anthropic_429_failover_repins_durable_mapping_to_serving_account(
 
     assert await _durable_mapping() == "anthropic-b"
 
-    # Next request: A is still cooling down and the mapping is B, so the session
-    # serves from B directly — no re-selection churn back to A.
+
+
     second = await async_client.post("/v1/messages", json=payload, headers=headers)
     assert second.status_code == 200
     assert seen_authorizations == [
@@ -2091,7 +2079,7 @@ async def test_fable_requests_fall_back_when_all_accounts_over_threshold(async_c
         },
     )
 
-    # Local threshold is a preference, not an oracle: the request still routes.
+
     assert response.status_code == 200
     assert response.json()["accountId"].startswith("anthropic-weekly-over-")
 
@@ -2122,8 +2110,8 @@ async def test_non_fable_requests_prefer_accounts_over_weekly_threshold(async_cl
         },
     )
 
-    # usage_weighted alone would pick the fresh account; the burn_first stamp
-    # on the over-threshold account must win so Fable headroom is preserved.
+
+
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-burn-hot"
 
@@ -2158,17 +2146,14 @@ async def test_non_fable_burn_preference_respects_preserve_policy(async_client):
         },
     )
 
-    # The stored preserve policy must not be overridden by the burn stamp.
+
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-preserve-fresh"
 
 
 @pytest.mark.asyncio
 async def test_mixed_model_session_holds_separate_pins(async_client, fable_burn_first_enabled):
-    """A session that interleaves Fable and non-Fable requests on the same
-    quotaKey family must hold two independent sticky pins (one per Fable-
-    class affinity family) instead of ping-ponging a single shared pin
-    between the under-threshold and over-threshold accounts."""
+
     await _insert_account(
         account_id="anthropic-mixed-hot",
         provider="anthropic",
@@ -2275,9 +2260,9 @@ async def test_non_fable_sticky_session_drains_to_over_threshold_account(
         },
     )
 
-    # burn_first_sticky_drain must proactively move the pin off the fresh
-    # account onto the over-threshold account without waiting for budget
-    # pressure on the pinned account itself.
+
+
+
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-drain-hot"
 
@@ -2297,12 +2282,12 @@ async def test_non_fable_sticky_session_drains_to_over_threshold_account(
 @pytest.mark.parametrize(
     ("live_429", "expected_account"),
     [
-        # 97% of the 5-hour window used: the session keeps its warm cache and
-        # spends the last of the window instead of moving to the idle account
-        # (the burn-first drain and the 95% budget move both used to fire).
+
+
+
         (False, "anthropic-hold-pinned"),
-        # Upstream answered 429: the pin fails over once, to the least-used
-        # account, and stays there.
+
+
         (True, "anthropic-hold-idle"),
     ],
 )
@@ -2334,7 +2319,7 @@ async def test_sticky_session_holds_account_until_exhausted(async_client, live_4
         )
     await _insert_weekly_usage(account_id="anthropic-hold-pinned", used_percent=10.0)
     await _insert_primary_usage(account_id="anthropic-hold-idle", used_percent=5.0)
-    # Over the Fable weekly threshold, so it is a burn-first target.
+
     await _insert_primary_usage(account_id="anthropic-hold-busy", used_percent=60.0)
     await _insert_weekly_usage(account_id="anthropic-hold-busy", used_percent=60.0)
 
@@ -2530,9 +2515,9 @@ async def test_over_threshold_account_with_fresh_capable_marker_joins_fable_pool
         },
     )
 
-    # Both accounts are over the weekly threshold; only the one with a fresh
-    # capable Fable-access marker is admitted — proves marker-based
-    # admission, not the blanket "all over threshold" fallback.
+
+
+
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-fable-probe-capable"
 
@@ -2570,7 +2555,7 @@ async def test_over_threshold_accounts_without_fresh_capable_marker_stay_exclude
         used_percent=0.0,
         reset_at=past_reset_at,
     )
-    # anthropic-fable-probe-nomarker gets no marker at all.
+
 
     response = await async_client.post(
         "/api/anthropic/session-route",
@@ -2581,9 +2566,9 @@ async def test_over_threshold_accounts_without_fresh_capable_marker_stay_exclude
         },
     )
 
-    # The control account (fresh capable marker) is the only admitted
-    # candidate; refused, expired-capable, and marker-less accounts stay
-    # excluded even though all four are over the weekly threshold.
+
+
+
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-fable-probe-control"
 
@@ -2620,8 +2605,8 @@ async def test_non_fable_burn_preference_unchanged_by_capable_fable_marker(async
         },
     )
 
-    # A capable Fable-access marker must not change non-Fable burn_first
-    # preference: the over-threshold account still drains non-Fable traffic.
+
+
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-burn-marker-hot"
 
@@ -2652,12 +2637,12 @@ async def _insert_fable_scoped_weekly(
 
 @pytest.mark.asyncio
 async def test_fable_scoped_exhaustion_excludes_despite_overall_headroom(async_client):
-    # OpenSpec scenario: 30% overall weekly (well under the 50% heuristic)
-    # but the Fable-scoped signal is at the scoped threshold (default 100%)
-    # — the scoped signal must exclude the account even though the overall
-    # heuristic alone would have admitted it. A second, genuinely-eligible
-    # control account rules out the "all over threshold" full-pool fallback
-    # masking the exclusion.
+
+
+
+
+
+
     await _insert_account(
         account_id="anthropic-scoped-exhausted",
         provider="anthropic",
@@ -2874,8 +2859,8 @@ async def test_planner_api_key_reservation_and_settlement_use_effective_model(
     )
 
     assert response.status_code == 200
-    # The reservation is taken on the effective model, not the requested alias,
-    # and the same model reaches upstream and settles.
+
+
     assert captured == {
         "reserved_model": "claude-opus-5-5",
         "upstream_model": "claude-opus-5-5",
@@ -3103,7 +3088,7 @@ async def test_all_fable_scoped_snapshot_exhaustions_still_attempt_upstream(
         "anthropic_top_thinking",
         model="claude-fable-5",
     )
-    # 82ed714b: even 100% scoped snapshots are advisory until upstream refuses.
+
     assert eligibility.account_ids == ["anthropic-fable-hard-excluded-a", "anthropic-fable-hard-excluded-b"]
     assert eligibility.blocked_count == 0
     assert eligibility.next_reset_at is None
@@ -3139,10 +3124,10 @@ async def test_all_fable_scoped_snapshot_exhaustions_still_attempt_upstream(
 
 @pytest.mark.asyncio
 async def test_fable_scoped_headroom_admits_despite_overall_heuristic(async_client):
-    # OpenSpec scenario: 62% overall weekly (over the 50% heuristic, which
-    # alone would require a probe marker to admit) but only 45%
-    # Fable-scoped — the scoped signal alone admits the account, with no
-    # probe marker present.
+
+
+
+
     await _insert_account(
         account_id="anthropic-scoped-headroom",
         provider="anthropic",
@@ -3167,11 +3152,11 @@ async def test_fable_scoped_headroom_admits_despite_overall_heuristic(async_clie
 
 @pytest.mark.asyncio
 async def test_non_fable_burn_set_derived_from_scoped_percents_when_fresh(async_client):
-    # Inverted relative to the overall-weekly heuristic: the scoped-hot
-    # account has LOW overall weekly usage (heuristic would spare it) but a
-    # scoped-exhausted marker; the scoped-cool account has HIGH overall
-    # weekly usage (heuristic would burn it) but scoped headroom. The burn
-    # set must follow the scoped percents, not the heuristic.
+
+
+
+
+
     await _insert_account(
         account_id="anthropic-burn-scoped-hot",
         provider="anthropic",
@@ -3212,8 +3197,8 @@ async def test_stale_fable_scoped_row_falls_back_to_overall_heuristic(async_clie
     )
     await _insert_weekly_usage(account_id="anthropic-scoped-stale", used_percent=10.0)
     stale_recorded_at = utcnow() - timedelta(hours=7)
-    # Scoped-exhausted, but recorded over 6h ago — must be ignored in favor
-    # of the (well under threshold) overall-weekly heuristic.
+
+
     await _insert_fable_scoped_weekly(
         account_id="anthropic-scoped-stale",
         used_percent=100.0,
@@ -3269,8 +3254,7 @@ async def _insert_primary_usage(
 
 @pytest.mark.asyncio
 async def test_session_route_admits_recovered_primary_despite_historical_tripwire(async_client):
-    """The public routing surface must use current subscription headroom
-    instead of quarantining an account on an older paid-usage marker."""
+
     await _insert_account(
         account_id="anthropic-tripwire-recovered",
         provider="anthropic",
@@ -3305,9 +3289,7 @@ async def test_session_route_admits_recovered_primary_despite_historical_tripwir
 
 @pytest.mark.asyncio
 async def test_exhausted_primary_window_account_is_not_selected_when_alternative_exists(async_client, monkeypatch):
-    """An account at 100% primary utilization (extra usage keeps upstream at
-    200) must never serve pool traffic while a subscription-covered account
-    exists."""
+
     await _insert_account(
         account_id="anthropic-exhausted",
         provider="anthropic",
@@ -3364,10 +3346,7 @@ async def test_exhausted_primary_window_account_is_not_selected_when_alternative
 
 @pytest.mark.asyncio
 async def test_pool_of_exhausted_window_snapshots_still_attempts_upstream_by_default(async_client, monkeypatch):
-    """With ANTHROPIC_ROUTE_TO_EXTRA_USAGE at its default (false), pool-wide
-    primary-exhaustion snapshots used to return a 429 envelope without an
-    upstream call. Since 82ed714b snapshots only rank, so the router still
-    makes one real attempt and lets upstream decide."""
+
     await _insert_account(
         account_id="anthropic-exhausted-a",
         provider="anthropic",
@@ -3423,7 +3402,7 @@ async def test_pool_of_exhausted_window_snapshots_still_attempts_upstream_by_def
         headers={"anthropic-beta": "oauth-2025-04-20"},
     )
 
-    # 82ed714b: snapshots alone cannot suppress an upstream attempt.
+
     assert response.status_code == 200
     assert len(upstream_calls) == 1
 
@@ -3606,9 +3585,9 @@ async def test_fable_extra_usage_tripwire_excludes_paid_rows_while_headroom_rout
         "anthropic_top_thinking",
         model="claude-fable-5",
     )
-    # 82ed714b: scoped snapshots and primary exhaustion no longer exclude healthy accounts.
+
     assert eligibility.account_ids == headroom_ids
-    # The response-written extra-usage tripwire still excludes the paid rows.
+
     assert eligibility.paid_fallback_account_ids == frozenset()
     assert eligibility.blocked_count == 2
     assert eligibility.next_reset_at == paid_reset_at
@@ -3853,7 +3832,7 @@ async def test_route_to_extra_usage_does_not_bypass_secondary_exhaustion(async_c
     )
     assert eligibility.account_ids == []
     assert eligibility.paid_fallback_account_ids == frozenset()
-    # 82ed714b: the live extra-usage tripwire, not the weekly snapshot, sets retry.
+
     assert eligibility.next_reset_at == primary_reset_at
 
     upstream_calls: list[str] = []
@@ -3887,9 +3866,7 @@ async def test_route_to_extra_usage_does_not_bypass_secondary_exhaustion(async_c
 
 @pytest.mark.asyncio
 async def test_count_tokens_stays_exempt_from_message_quota_cooldowns(async_client, monkeypatch):
-    """The extra-usage eligibility gate must not leak into the quota-free
-    count_tokens path: message cooldowns and high (sub-100) primary usage
-    leave counting untouched."""
+
     await _insert_account(
         account_id="anthropic-exhausted-count",
         provider="anthropic",
@@ -3929,7 +3906,7 @@ async def test_count_tokens_stays_exempt_from_message_quota_cooldowns(async_clie
 
 
 _OVERAGE_BILLING_HEADERS = {
-    # Captured live 2026-07-01 from a 200 served by billing extra-usage credits.
+
     "anthropic-ratelimit-unified-status": "rejected",
     "anthropic-ratelimit-unified-5h-status": "rejected",
     "anthropic-ratelimit-unified-5h-utilization": "1.0",
@@ -3941,8 +3918,7 @@ _OVERAGE_BILLING_HEADERS = {
 
 @pytest.mark.asyncio
 async def test_credit_billing_response_trips_cooldown_and_rotates_next_request(async_client, monkeypatch):
-    """A 200 billed to extra usage records the cooldown and the same request
-    fails over; the billed body is not the client response."""
+
     await _insert_account(
         account_id="anthropic-tripwire",
         provider="anthropic",
@@ -3984,9 +3960,9 @@ async def test_credit_billing_response_trips_cooldown_and_rotates_next_request(a
         "anthropic-beta": "oauth-2025-04-20",
         "x-claude-session-id": "tripwire-session",
     }
-    # Pin the session to the soon-to-bill account so the first request
-    # deterministically exercises the tripwire (mirrors a live session riding
-    # an account across the 100% utilization boundary).
+
+
+
     request = AnthropicMessageRequest.model_validate(payload)
     sticky_key = anthropic_proxy_module._anthropic_sticky_key(
         request,
@@ -4081,8 +4057,7 @@ async def _pin_sticky(account_id: str, payload: dict[str, object]) -> None:
 
 @pytest.mark.asyncio
 async def test_weekly_exhausted_account_is_not_selected_after_primary_recovers(async_client, monkeypatch):
-    """Secondary 100% with a future reset stays ineligible for /v1/messages even
-    when a newer primary snapshot is at 8% and postdates an extra-usage tripwire."""
+
     from app.core.config.settings import get_settings
 
     monkeypatch.delenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", raising=False)
@@ -4308,8 +4283,7 @@ async def test_overage_200_only_account_returns_usage_limit_not_body(async_clien
 async def test_overage_200_is_streamed_when_routing_on_and_account_is_not_paid_fallback(
     async_client, monkeypatch
 ):
-    """With extra-usage routing on, a non-fallback account that answers 200
-    with overage-in-use still streams that body and records the cooldown."""
+
     from app.core.config.settings import get_settings
 
     monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
@@ -4373,8 +4347,7 @@ async def test_overage_200_is_streamed_when_routing_on_and_account_is_not_paid_f
 
 @pytest.mark.asyncio
 async def test_pool_exhausted_streaming_request_waits_for_reset_and_serves(async_client, monkeypatch):
-    """Agent session survives pool-wide exhaustion: the stream holds, the
-    window resets, and the request is served on the freed account."""
+
     from app.core.config.settings import get_settings
 
     monkeypatch.setenv("AGENT_LB_ANTHROPIC_POOL_EXHAUSTED_WAIT_ENABLED", "true")
@@ -4401,7 +4374,7 @@ async def test_pool_exhausted_streaming_request_waits_for_reset_and_serves(async
     async def fake_sleep(delay: float) -> None:
         sleep_calls.append(delay)
         fake_now["value"] += delay
-        # Simulate the upstream window resetting while the stream held open.
+
         async with SessionLocal() as session:
             result = await session.execute(
                 select(AdditionalUsageHistory).where(AdditionalUsageHistory.account_id == "anthropic-waiting")
@@ -4536,7 +4509,7 @@ async def test_pool_exhausted_wait_defaults_to_immediate_envelope(async_client, 
     assert response.status_code == 429
     body = response.json()
     assert body["error"]["type"] == "rate_limit_error"
-    # 82ed714b: the envelope advertises the bounded live cooldown retry.
+
     assert 0 < int(response.headers["anthropic-ratelimit-unified-reset"]) - time.time() <= 60
 
 
@@ -4545,8 +4518,7 @@ _OVERLOADED_529_BODY = b'{"error":{"type":"overloaded_error","message":"Overload
 
 @pytest.mark.asyncio
 async def test_upstream_529_fails_over_to_next_account(async_client, monkeypatch):
-    """A transient 529 retries on another account instead of propagating, and
-    records no quota cooldown for the browned-out account."""
+
     await _insert_account(
         account_id="anthropic-brownout",
         provider="anthropic",
@@ -4609,8 +4581,8 @@ async def test_upstream_529_fails_over_to_next_account(async_client, monkeypatch
         )
         logs = list((await session.execute(select(RequestLog))).scalars())
 
-    # No cooldown for the browned-out account (the serving account writes its
-    # normal 0% clear row on success, which is not a cooldown).
+
+
     assert brownout_cooldowns == []
     error_logs = [log for log in logs if log.status == "error"]
     assert [log.error_code for log in error_logs] == ["upstream_529"]
@@ -4662,8 +4634,8 @@ async def test_upstream_529_full_outage_fails_fast_with_overloaded_error(async_c
     body = response.json()
     assert body["error"]["type"] == "overloaded_error"
     assert body["error"]["message"] == "Overloaded"
-    # Bounded attempt budget: one call per attempt, distinct accounts, and no
-    # backoff after the final attempt.
+
+
     assert len(upstream_calls) == 4
     assert len(set(upstream_calls)) == 4
     assert backoff_sleeps == [pytest.approx(0.25), pytest.approx(0.5), pytest.approx(1.0)]
@@ -4675,11 +4647,7 @@ async def test_upstream_529_full_outage_fails_fast_with_overloaded_error(async_c
 
 @pytest.mark.asyncio
 async def test_anthropic_messages_adds_claude_code_identity_for_plain_api_clients(async_client, monkeypatch):
-    """Anthropic's OAuth endpoint only serves requests whose first system block
-    is the Claude Code identity; without it every account answers 429 and the
-    proxy records that as a quota cooldown, so the pool reads as exhausted
-    after two attempts. A client that sends no system prompt of its own (curl,
-    an SDK, another harness) must still reach upstream with the identity."""
+
     await _insert_account(
         account_id="anthropic-account",
         provider="anthropic",
@@ -4720,8 +4688,7 @@ async def test_anthropic_messages_adds_claude_code_identity_for_plain_api_client
 
 @pytest.mark.asyncio
 async def test_anthropic_messages_keeps_claude_code_identity_payload_untouched(async_client, monkeypatch):
-    """A real Claude Code payload already leads with the identity, so nothing
-    is prepended — a duplicated block would change the cached prefix."""
+
     await _insert_account(
         account_id="anthropic-account",
         provider="anthropic",
@@ -4765,12 +4732,7 @@ async def test_anthropic_messages_keeps_claude_code_identity_payload_untouched(a
 
 @pytest.mark.asyncio
 async def test_anthropic_messages_forward_claude_code_billing_first_payloads_unchanged(async_client, monkeypatch):
-    """Claude Code 2.1.280+ leads with a billing block whose cch changes on
-    every request, then its identity (CLI) or Agent SDK line. Anthropic only
-    keeps that block out of the cached prefix while it is the FIRST system
-    block. Prepending an identity pushed it to index 1 and every request
-    re-wrote its whole context (2026-09-23..25: subagents missed the cache on
-    99% of calls). The proxy must forward these payloads byte-for-byte."""
+
     await _insert_account(
         account_id="anthropic-account",
         provider="anthropic",
@@ -4793,7 +4755,7 @@ async def test_anthropic_messages_forward_claude_code_billing_first_payloads_unc
         ("You are Claude Code, Anthropic's official CLI for Claude.", "7122f"),
         ("You are Claude Code, Anthropic's official CLI for Claude.", "dc618"),
         ("You are a Claude agent, built on Anthropic's Claude Agent SDK.", "60f1e"),
-        # In-process teammates carry no cc_prompt_id.
+
         ("You are a Claude agent, built on Anthropic's Claude Agent SDK.", "f8d14"),
     ):
         marker = f"x-anthropic-billing-header: cc_version=2.1.282.190; cc_entrypoint=cli; cch={cch};"
@@ -4819,11 +4781,7 @@ async def test_anthropic_messages_forward_claude_code_billing_first_payloads_unc
 
 @pytest.mark.asyncio
 async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_windows(async_client, monkeypatch):
-    """The cooldown clause must speak only for accounts a cooldown is holding
-    out, dated by that cooldown. Reporting every blocked account as a cooldown
-    and dating it with the pool-wide retry hint turned a weekly-exhausted
-    account into "cooldown excluded 2 accounts until <days out>", which is what
-    sent the 2026-09-20 investigation after a quota wall that did not exist."""
+
     await _insert_account(
         account_id="anthropic-cooling",
         provider="anthropic",
@@ -4834,14 +4792,14 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
     cooldown_reset_at = int((cooldown_recorded_at + timedelta(minutes=6)).replace(tzinfo=timezone.utc).timestamp())
     await _insert_quota_cooldown(
         account_id="anthropic-cooling",
-        # Opus requests are held out by Opus-scoped cooldowns only; a legacy
-        # anthropic_top marker belongs to Fable and no longer blocks Opus.
+
+
         quota_key="anthropic_opus",
         reset_at=cooldown_reset_at,
         recorded_at=cooldown_recorded_at,
     )
-    # 82ed714b: a live cooldown excludes for a bounded minute after the 429,
-    # even though its header reset is six minutes out.
+
+
     bounded_retry_at = int(cooldown_recorded_at.replace(tzinfo=timezone.utc).timestamp()) + 60
     await _insert_account(
         account_id="anthropic-weekly-spent",
@@ -4856,9 +4814,9 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
         reset_at=weekly_reset_at,
     )
 
-    # One healthy account keeps a candidate in the pool, so the failure comes
-    # from the selector and carries the quota detail (an empty candidate list
-    # short-circuits to the "all accounts are cooling down" 429 instead).
+
+
+
     await _insert_account(
         account_id="anthropic-healthy",
         provider="anthropic",
@@ -4885,8 +4843,8 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
     message = response.json()["error"]["message"]
     quota_sentence = message.split("Model quota: ", 1)[1].split(". ", 1)[0]
     clauses = [clause.strip() for clause in quota_sentence.split(";")]
-    # Weekly exhaustion is its own gate. The cooldown clause still names
-    # only the live cooldown, dated by its bounded retry.
+
+
     assert clauses == [
         f"anthropic_opus cooldown excluded 1 account until {datetime.fromtimestamp(bounded_retry_at).isoformat()}",
         "1 account out of window or capped",
@@ -4953,7 +4911,7 @@ async def test_opus_specific_cooldown_remains_a_real_blocker(async_client):
 
 
 class _FailingConnectContext:
-    """Upstream context whose connect phase fails, like aiohttp under a starved loop."""
+
 
     def __init__(self, error: BaseException) -> None:
         self._error = error
@@ -5098,12 +5056,7 @@ async def test_session_route_retry_uses_earliest_live_guard_across_disjoint_acco
     [("helper-123", True, "1h"), (None, True, None), ("helper-123", False, None)],
 )
 async def test_helper_cache_ttl_at_upstream_boundary(async_client, monkeypatch, agent_id, enabled, expected_ttl):
-    """Protect breakpoint TTLs, unchanged lead bytes, and persisted write tier.
 
-    Existing billing-first coverage has no helper header or 5m breakpoints;
-    this golden request catches missing upgrades and accidental lead changes.
-    Only the third-party upstream is replaced, not our proxy collaborators.
-    """
     monkeypatch.setenv("AGENT_LB_ANTHROPIC_HELPER_CACHE_1H_ENABLED", str(enabled).lower())
     anthropic_proxy_module.get_settings.cache_clear()
     await _insert_account(
@@ -5167,7 +5120,7 @@ async def test_helper_cache_ttl_at_upstream_boundary(async_client, monkeypatch, 
 @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "PATCH", "DELETE"])
 @pytest.mark.parametrize("auth_case", ["accepted", "recovered", "rejected"])
 async def test_frame_database_proxy(async_client, monkeypatch, method, auth_case):
-    """Frame HTTP bytes, account affinity, refresh and log attribution cross real boundaries."""
+
     from aiohttp import web
 
     await _insert_account(

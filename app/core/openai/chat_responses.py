@@ -134,17 +134,7 @@ class ToolCallIndex:
         return self.indexes[key]
 
     def index_for_output_index(self, output_index: int | None, call_id: str | None, name: str | None) -> int:
-        """Resolve tool call index, preferring output_index mapping when available.
 
-        Always records the resolved index against every routing key that is
-        present (``output_index``, ``call_id``/``name``) so a later event for
-        the same logical tool call that only carries one of those identifiers
-        does not get assigned a new slot. Without this, a stream that first
-        routes by ``item_id`` + ``output_index`` and later emits a
-        ``call_id``-only event without ``output_index`` (e.g. legacy delta
-        formats) would split one tool call into two ``tool_calls[]`` slots and
-        reintroduce the duplication this change fixes.
-        """
         key = _tool_call_key(call_id, name)
         if output_index is not None and output_index in self.output_index_map:
             idx = self.output_index_map[output_index]
@@ -168,13 +158,13 @@ class ToolCallIndex:
         return idx
 
     def register_alias(self, alias_id: str, index: int) -> None:
-        """Register an additional ID that maps to the same index."""
+
         key = f"id:{alias_id}"
         if key not in self.indexes:
             self.indexes[key] = index
 
     def register_output_index(self, output_index: int, index: int) -> None:
-        """Map a Responses API output_index to a tool call index."""
+
         if output_index not in self.output_index_map:
             self.output_index_map[output_index] = index
 
@@ -636,7 +626,7 @@ def _coerce_number(value: JsonValue) -> int | float | None:
 
 
 def _resolve_output_index(payload: Mapping[str, JsonValue]) -> int | None:
-    """Extract output_index from a Responses API event payload."""
+
     val = payload.get("output_index")
     if isinstance(val, int):
         return val
@@ -644,15 +634,7 @@ def _resolve_output_index(payload: Mapping[str, JsonValue]) -> int | None:
 
 
 def _register_item_id_alias(payload: Mapping[str, JsonValue], index: int, indexer: ToolCallIndex) -> None:
-    """Register item.id from output_item events as an index alias.
 
-    The Responses API emits output_item.added/done events with item.id
-    (e.g. "fc_01ee...") and item.call_id (e.g. "call_kI8y...").
-    Subsequent function_call_arguments.delta/done events reference the
-    tool call via item_id (= item.id), not call_id.  By registering
-    item.id as an alias when we first see the output_item event, later
-    delta/done events can resolve to the correct index.
-    """
     item = payload.get("item")
     if not isinstance(item, dict):
         return
@@ -848,6 +830,6 @@ def _pending_stream_arguments(emitted: str, current: str) -> str | None:
     if current.startswith(emitted):
         suffix = current[len(emitted) :]
         return suffix or None
-    # Chat Completions tool-call arguments are append-only, so snapshot rewrites
-    # that change previously emitted bytes cannot be represented safely.
+
+
     return None

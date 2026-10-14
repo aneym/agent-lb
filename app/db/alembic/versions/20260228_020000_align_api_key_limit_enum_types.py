@@ -1,9 +1,4 @@
-"""align api_key_limits enum column types on postgresql
 
-Revision ID: 20260228_020000_align_api_key_limit_enum_types
-Revises: 20260225_000000_add_dashboard_settings_routing_strategy
-Create Date: 2026-02-28
-"""
 
 from __future__ import annotations
 
@@ -12,7 +7,6 @@ from alembic import op
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql.sqltypes import TypeEngine
 
-# revision identifiers, used by Alembic.
 revision = "20260228_020000_align_api_key_limit_enum_types"
 down_revision = "20260225_000000_add_dashboard_settings_routing_strategy"
 branch_labels = None

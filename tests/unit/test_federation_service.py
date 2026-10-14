@@ -172,8 +172,8 @@ async def test_execute_checkout_confirm_failure_leaves_account_owned_and_unconfi
         service = FederationService(FederationRepository(session), settings=_settings(), peer_client=peer)
         result = await service.execute_checkout("acc_execute_unconfirmed")
 
-    # The confirm step failed, but the account is still safely owned locally
-    # and the failure is surfaced rather than raised.
+
+
     assert result.confirmed is False
     assert result.owner_instance == _LOCAL_INSTANCE_ID
     assert peer.confirm_calls == [result.nonce]
@@ -184,7 +184,7 @@ async def test_execute_checkout_confirm_failure_leaves_account_owned_and_unconfi
     async with SessionLocal() as session:
         transfer = await FederationRepository(session).get_transfer_by_nonce(result.nonce)
     assert transfer is not None
-    assert transfer.state == AccountTransferState.SETTLED  # import committed before confirm
+    assert transfer.state == AccountTransferState.SETTLED
     assert transfer.direction == AccountTransferDirection.CHECKOUT
     assert transfer.counterparty_instance_id == _OWNER_INSTANCE_ID
 
@@ -194,8 +194,8 @@ async def test_execute_checkin_closes_local_gate_before_calling_peer(db_setup: b
     del db_setup
     await _seed_account("acc_checkin_execute", owner_instance=_LOCAL_INSTANCE_ID)
 
-    # Establish the counterparty (original owner) via a prior local checkout
-    # transfer record, matching how execute_checkout would have left it.
+
+
     async with SessionLocal() as session:
         await FederationRepository(session).create_transfer(
             account_id="acc_checkin_execute",
@@ -220,8 +220,8 @@ async def test_execute_checkin_closes_local_gate_before_calling_peer(db_setup: b
         result = await service.execute_checkin("acc_checkin_execute")
 
     assert result.settled is True
-    # The local gate (owner_instance) must already be the counterparty by the
-    # time the peer call happens — never unilaterally reclaimed after.
+
+
     assert owner_instance_when_peer_called == [_OWNER_INSTANCE_ID]
     account = await _get_account("acc_checkin_execute")
     assert account.owner_instance == _OWNER_INSTANCE_ID
@@ -246,9 +246,9 @@ async def test_checkout_race_exactly_one_taker_wins(db_setup: bool) -> None:
     successes = {taker: r for taker, r in outcomes.items() if not isinstance(r, FederationConflictError)}
     failures = {taker: r for taker, r in outcomes.items() if isinstance(r, FederationConflictError)}
 
-    # The guarded compare-and-set UPDATE means exactly one concurrent
-    # checkout can ever win the account; the other must hit the conflict
-    # path (409), never both succeeding (double owner).
+
+
+
     assert len(successes) == 1
     assert len(failures) == 1
 
@@ -291,7 +291,7 @@ async def test_double_checkout_checkin_round_trip_reimports_on_second_checkin(db
             )
             assert checkin_response.state == "settled"
 
-    # Round 1: a correctly-behaving taker mints a fresh checkin nonce.
+
     await _round_trip(
         access_token="round1-access", refresh_token="round1-refresh", checkin_nonce="checkin-nonce-round-1"
     )
@@ -300,9 +300,9 @@ async def test_double_checkout_checkin_round_trip_reimports_on_second_checkin(db
     encryptor = TokenEncryptor()
     assert encryptor.decrypt(account_after_round1.access_token_encrypted) == "round1-access"
 
-    # Round 2: distinct checkout + a distinct checkin nonce — proves the
-    # second checkin genuinely re-imports rather than short-circuiting on a
-    # stale settled nonce from round 1.
+
+
+
     await _round_trip(
         access_token="round2-access", refresh_token="round2-refresh", checkin_nonce="checkin-nonce-round-2"
     )
@@ -342,13 +342,13 @@ async def test_execute_checkin_second_round_trip_mints_fresh_nonce(db_setup: boo
             result = await service.execute_checkin(account_id)
             assert result.settled is True
 
-    # Round 1: assume ownership, then check it back in.
+
     await _do_checkout("execute-checkout-nonce-round-1")
     await _do_checkin()
 
-    # Round 2: assume ownership again (a fresh checkout nonce from the
-    # peer), then check in again. Before the fix this reused round 1's
-    # now-settled checkin nonce instead of minting a new one.
+
+
+
     await _do_checkout("execute-checkout-nonce-round-2")
     await _do_checkin()
 
@@ -358,7 +358,7 @@ async def test_execute_checkin_second_round_trip_mints_fresh_nonce(db_setup: boo
 
 @pytest.mark.asyncio
 async def test_checkout_retry_does_not_overwrite_rotated_taker_token(db_setup: bool) -> None:
-    """Lost confirm plus a peer retry cannot replace the taker's live token."""
+
     del db_setup
     await _seed_account("retry-account", owner_instance=_OWNER_INSTANCE_ID)
     peer = _FakePeerClient(

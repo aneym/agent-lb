@@ -1,12 +1,4 @@
-"""Tests for transient stream retry logic.
 
-Covers:
-- Streaming: SSE-level transient errors → same-account retry → failover
-- Streaming: HTTP-level 500 → same-account retry → failover
-- Compact: HTTP 500 → same-account retry with backoff → account failover
-- Budget exhaustion during inner retry
-- Non-500 errors are not intercepted by transient retry
-"""
 
 from __future__ import annotations
 
@@ -36,9 +28,9 @@ async def _force_usage_weighted_routing(async_client) -> None:
     assert response.status_code == 200
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def _encode_jwt(payload: dict) -> str:
@@ -142,14 +134,14 @@ def _extract_events(lines: list[str]) -> list[dict]:
     return events
 
 
-# ===========================================================================
-# Streaming — SSE-level server_error
-# ===========================================================================
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_stream_server_error_succeeds_on_second_try_same_account(async_client, monkeypatch):
-    """server_error on 1st SSE event → inner retry on same account → success on 2nd try."""
+
     await _import_account(async_client, "acc_trans_1", "trans1@example.com")
 
     call_count = 0
@@ -175,14 +167,14 @@ async def test_stream_server_error_succeeds_on_second_try_same_account(async_cli
     completed = [e for e in events if e.get("type") == "response.completed"]
     assert len(completed) == 1
 
-    # Both calls should be to the same account
+
     assert len(seen_account_ids) == 2
     assert seen_account_ids[0] == seen_account_ids[1]
 
 
 @pytest.mark.asyncio
 async def test_stream_timeout_succeeds_on_second_try_same_account(async_client, monkeypatch):
-    """Timeout as the first SSE event is a reconnectable transient failure."""
+
     await _import_account(async_client, "acc_trans_timeout", "timeout@example.com")
 
     call_count = 0
@@ -215,7 +207,7 @@ async def test_stream_timeout_succeeds_on_second_try_same_account(async_client, 
 
 @pytest.mark.asyncio
 async def test_stream_server_error_exhausts_inner_retries_then_failover(async_client, monkeypatch):
-    """server_error x3 on account A → penalize A → failover to account B → success."""
+
     await _import_account(async_client, "acc_trans_fo_a", "fo_a@example.com")
     await _import_account(async_client, "acc_trans_fo_b", "fo_b@example.com")
 
@@ -239,7 +231,7 @@ async def test_stream_server_error_exhausts_inner_retries_then_failover(async_cl
     completed = [e for e in events if e.get("type") == "response.completed"]
     assert len(completed) == 1
 
-    # 3 retries on account A + 1 success on account B
+
     a_calls = [aid for aid in seen_account_ids if aid == "acc_trans_fo_a"]
     b_calls = [aid for aid in seen_account_ids if aid == "acc_trans_fo_b"]
     assert len(a_calls) == 3
@@ -248,7 +240,7 @@ async def test_stream_server_error_exhausts_inner_retries_then_failover(async_cl
 
 @pytest.mark.asyncio
 async def test_stream_server_error_all_accounts_exhausted(async_client, monkeypatch):
-    """server_error on all accounts → eventually returns error to client."""
+
     await _import_account(async_client, "acc_trans_all_a", "all_a@example.com")
 
     async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
@@ -262,14 +254,14 @@ async def test_stream_server_error_all_accounts_exhausted(async_client, monkeypa
         lines = [line async for line in resp.aiter_lines() if line]
 
     events = _extract_events(lines)
-    # Should end with an error event (either response.failed or no_accounts)
+
     last_event = events[-1] if events else {}
     assert last_event.get("type") in ("response.failed", "error")
 
 
 @pytest.mark.asyncio
 async def test_stream_server_error_succeeds_on_third_try(async_client, monkeypatch):
-    """server_error on tries 1 and 2, success on try 3 — all same account."""
+
     await _import_account(async_client, "acc_trans_3rd", "trans3@example.com")
 
     call_count = 0
@@ -295,19 +287,19 @@ async def test_stream_server_error_succeeds_on_third_try(async_client, monkeypat
     completed = [e for e in events if e.get("type") == "response.completed"]
     assert len(completed) == 1
 
-    # All 3 calls to the same account
+
     assert len(seen_account_ids) == 3
     assert len(set(seen_account_ids)) == 1
 
 
-# ===========================================================================
-# Streaming — HTTP-level 500 (ProxyResponseError)
-# ===========================================================================
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_stream_http_500_retries_same_account_then_succeeds(async_client, monkeypatch):
-    """HTTP 500 ProxyResponseError → inner retry on same account → success."""
+
     await _import_account(async_client, "acc_http500_1", "http500@example.com")
 
     call_count = 0
@@ -342,7 +334,7 @@ async def test_stream_http_500_retries_same_account_then_succeeds(async_client, 
 
 @pytest.mark.asyncio
 async def test_stream_http_500_exhausts_then_failover(async_client, monkeypatch):
-    """HTTP 500 x3 on account A → failover to account B → success."""
+
     await _import_account(async_client, "acc_h5fo_a", "h5fo_a@example.com")
     await _import_account(async_client, "acc_h5fo_b", "h5fo_b@example.com")
 
@@ -377,7 +369,7 @@ async def test_stream_http_500_exhausts_then_failover(async_client, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_stream_connect_phase_429_usage_limit_transparent_failover(async_client, monkeypatch):
-    """Connect-phase 429/usage_limit_reached on A should fail over to B before any downstream event."""
+
     await _import_account(async_client, "acc_stream_429_a", "stream429a@example.com")
     await _import_account(async_client, "acc_stream_429_b", "stream429b@example.com")
 
@@ -438,14 +430,14 @@ async def test_stream_http_502_unknown_code_fails_over_to_second_account(async_c
     assert seen_account_ids[:2] == ["acc_h502_a", "acc_h502_b"]
 
 
-# ===========================================================================
-# Streaming — Non-server_error is NOT retried via transient path
-# ===========================================================================
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_stream_non_server_error_not_retried_as_transient(async_client, monkeypatch):
-    """A 400-class error should NOT be caught by transient retry logic."""
+
     await _import_account(async_client, "acc_no_trans", "notrans@example.com")
 
     call_count = 0
@@ -476,21 +468,13 @@ async def test_stream_non_server_error_not_retried_as_transient(async_client, mo
     failed = [e for e in events if e.get("type") == "response.failed"]
     assert len(failed) == 1
 
-    # Should NOT retry — only 1 call
+
     assert call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_stream_rate_limit_on_last_attempt_returns_actual_error(async_client, monkeypatch):
-    """rate_limit_exceeded on the final outer attempt must yield the real error event,
-    not a generic no_accounts message. Regression test for allow_retry flag separation.
 
-    Needs 3 accounts so each outer attempt (max_attempts=3) reaches _stream_once:
-    - Attempt 0: account A → rate_limit → mark A RATE_LIMITED → continue
-    - Attempt 1: account B → rate_limit → mark B RATE_LIMITED → continue
-    - Attempt 2 (last): account C → rate_limit → allow_retry=False →
-      error event yielded to client → _TerminalStreamError → return
-    """
     await _import_account(async_client, "acc_rl_a", "rla@example.com")
     await _import_account(async_client, "acc_rl_b", "rlb@example.com")
     await _import_account(async_client, "acc_rl_c", "rlc@example.com")
@@ -516,7 +500,7 @@ async def test_stream_rate_limit_on_last_attempt_returns_actual_error(async_clie
         lines = [line async for line in resp.aiter_lines() if line]
 
     events = _extract_events(lines)
-    # The last event the client sees should contain the actual rate_limit error
+
     last_event = events[-1] if events else {}
     error = last_event.get("response", {}).get("error", {})
     assert error.get("code") != "no_accounts", "Client received generic no_accounts instead of actual error"
@@ -524,7 +508,7 @@ async def test_stream_rate_limit_on_last_attempt_returns_actual_error(async_clie
 
 @pytest.mark.asyncio
 async def test_stream_mid_stream_error_is_surfaced_without_failover(async_client, monkeypatch):
-    """Once bytes/events are emitted downstream, failover is forbidden; surface the mid-stream error."""
+
     await _import_account(async_client, "acc_midstream_a", "midstreama@example.com")
     await _import_account(async_client, "acc_midstream_b", "midstreamb@example.com")
 
@@ -561,7 +545,7 @@ async def test_stream_mid_stream_error_is_surfaced_without_failover(async_client
 
 @pytest.mark.asyncio
 async def test_v1_responses_protocol_only_truncation_retries_before_public_output(async_client, monkeypatch):
-    """Hermes-style lifecycle-only failures are hidden and retried for /v1/responses streams."""
+
     await _import_account(async_client, "acc_public_protocol", "public-protocol@example.com")
 
     call_count = 0
@@ -612,7 +596,7 @@ async def test_v1_responses_protocol_only_truncation_retries_before_public_outpu
 
 @pytest.mark.asyncio
 async def test_v1_responses_visible_output_failure_is_not_replayed(async_client, monkeypatch):
-    """Once public semantic output is visible, retry would duplicate text and must stay disabled."""
+
     await _import_account(async_client, "acc_public_visible", "public-visible@example.com")
 
     call_count = 0
@@ -649,7 +633,7 @@ async def test_v1_responses_visible_output_failure_is_not_replayed(async_client,
 
 @pytest.mark.asyncio
 async def test_stream_http_500_after_text_is_surfaced_without_same_account_replay(async_client, monkeypatch):
-    """A transport/status exception after visible text must not restart the answer on retry."""
+
     await _import_account(async_client, "acc_midtext_500", "midtext500@example.com")
 
     call_count = 0
@@ -684,7 +668,7 @@ async def test_stream_http_500_after_text_is_surfaced_without_same_account_repla
 
 @pytest.mark.asyncio
 async def test_stream_http_429_after_text_is_surfaced_without_account_failover(async_client, monkeypatch):
-    """A quota/rate-limit exception after visible text cannot be hidden by replaying on another account."""
+
     await _import_account(async_client, "acc_midtext_429_a", "midtext429a@example.com")
     await _import_account(async_client, "acc_midtext_429_b", "midtext429b@example.com")
 
@@ -721,9 +705,7 @@ async def test_stream_http_429_after_text_is_surfaced_without_account_failover(a
 
 @pytest.mark.asyncio
 async def test_v1_responses_non_streaming_500_preserves_http_status(async_client, monkeypatch):
-    """Non-streaming /v1/responses uses propagate_http_errors=True.
-    After exhausting transient retries, the HTTP 500 status must be preserved
-    (not swallowed into a generic SSE error)."""
+
     await _import_account(async_client, "acc_prop_500", "prop500@example.com")
 
     call_count = 0
@@ -742,21 +724,21 @@ async def test_v1_responses_non_streaming_500_preserves_http_status(async_client
 
     payload = {"model": "gpt-5.1", "input": "hi"}
     response = await async_client.post("/v1/responses", json=payload)
-    # Must preserve the upstream 500, not 503/502
+
     assert response.status_code == 500
     assert response.json()["error"]["code"] == "server_error"
-    # Should have retried on same account before giving up
+
     assert call_count == 3
 
 
-# ===========================================================================
-# Compact — HTTP 500 retry
-# ===========================================================================
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_compact_500_succeeds_on_second_try_same_account(async_client, monkeypatch):
-    """Compact 500 on 1st call → backoff retry → success on 2nd, same account."""
+
     await _import_account(async_client, "acc_c500_1", "c500@example.com")
 
     call_count = 0
@@ -788,7 +770,7 @@ async def test_compact_500_succeeds_on_second_try_same_account(async_client, mon
 
 @pytest.mark.asyncio
 async def test_compact_500_succeeds_on_third_try(async_client, monkeypatch):
-    """Compact 500 x2, success on 3rd — all same account."""
+
     await _import_account(async_client, "acc_c500_3", "c500_3@example.com")
 
     call_count = 0
@@ -819,7 +801,7 @@ async def test_compact_500_succeeds_on_third_try(async_client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_compact_500_exhausts_retries_then_failover(async_client, monkeypatch):
-    """Compact 500 x3 on account A → failover → success on account B."""
+
     await _import_account(async_client, "acc_cfo_a", "cfo_a@example.com")
     await _import_account(async_client, "acc_cfo_b", "cfo_b@example.com")
 
@@ -850,7 +832,7 @@ async def test_compact_500_exhausts_retries_then_failover(async_client, monkeypa
 
 @pytest.mark.asyncio
 async def test_compact_quota_exceeded_transparent_failover(async_client, monkeypatch):
-    """quota_exceeded on A should fail over to B before response write."""
+
     await _import_account(async_client, "acc_compact_quota_a", "compactquotaa@example.com")
     await _import_account(async_client, "acc_compact_quota_b", "compactquotab@example.com")
 
@@ -884,7 +866,7 @@ async def test_compact_quota_exceeded_transparent_failover(async_client, monkeyp
 
 @pytest.mark.asyncio
 async def test_compact_500_all_accounts_exhausted(async_client, monkeypatch):
-    """500 on all accounts → error returned to client."""
+
     await _import_account(async_client, "acc_call_a", "call_a@example.com")
 
     async def fake_compact(payload, headers, access_token, account_id):
@@ -899,13 +881,13 @@ async def test_compact_500_all_accounts_exhausted(async_client, monkeypatch):
 
     payload = {"model": "gpt-5.1", "instructions": "hi", "input": []}
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
-    # After exhausting all accounts, the load balancer returns 503 no_accounts
+
     assert response.status_code in (500, 503)
 
 
 @pytest.mark.asyncio
 async def test_compact_non_500_error_not_retried_as_transient(async_client, monkeypatch):
-    """A 400 error should NOT be retried via the transient retry path."""
+
     await _import_account(async_client, "acc_c400", "c400@example.com")
 
     call_count = 0
@@ -925,13 +907,13 @@ async def test_compact_non_500_error_not_retried_as_transient(async_client, monk
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
     assert response.status_code == 400
 
-    # Should NOT retry — only 1 call
+
     assert call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_compact_502_still_uses_safe_retry_budget(async_client, monkeypatch):
-    """502 errors should still use the existing safe_retry_budget (not transient path)."""
+
     await _import_account(async_client, "acc_c502", "c502@example.com")
 
     call_count = 0
@@ -956,7 +938,7 @@ async def test_compact_502_still_uses_safe_retry_budget(async_client, monkeypatc
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
     assert response.status_code == 200
 
-    # safe_retry_budget=1 → retried once, same account
+
     assert call_count == 2
     assert seen_account_ids[0] == seen_account_ids[1]
 

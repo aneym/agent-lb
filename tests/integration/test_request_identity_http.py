@@ -1,4 +1,4 @@
-"""Request logs carry who and where through the real HTTP stack and every U2 writer."""
+
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ async def _create_key(*, name: str, member_name: str | None = None, account_id: 
     async with SessionLocal() as session:
         member_id = None
         if member_name is not None:
-            # Unique per test: the member-name cache outlives a test's database.
+
             member_id = f"member-{uuid4().hex}"
             session.add(TeamMember(id=member_id, name=member_name, created_at=utcnow(), updated_at=utcnow()))
             await session.commit()
@@ -156,12 +156,12 @@ async def test_proxy_request_logs_carry_caller_identity(identity_env, async_clie
             {"authorization": f"Bearer {member_key}"},
             ("member-a", "member", "box-1", "local"),
         ),
-        # A key's own name is never a person: this key has no member, so the owner rule applies.
+
         "identity-named-key": (
             {"authorization": f"Bearer {named_key}"},
             ("owner-a", "owner-machine", "box-1", "local"),
         ),
-        # Serve-shaped: the tailnet peer is not an owner machine and is not in the node cache.
+
         "identity-keyless-tailnet": (
             {"x-forwarded-for": TAILNET_PEER, "x-forwarded-proto": "https"},
             ("unknown", "unknown", "tailnet-unknown", "tailnet"),
@@ -184,7 +184,7 @@ async def test_proxy_request_logs_carry_caller_identity(identity_env, async_clie
 
 @pytest.mark.asyncio
 async def test_signed_owner_forward_keeps_origin_machine_and_member(identity_env, async_client, monkeypatch):
-    """The owner must log the origin's caller, not the peer socket of the relay."""
+
     from app.modules.proxy.service import ProxyService
 
     member_key = await _create_key(name="key-label-forward", member_name="member-forward")
@@ -228,7 +228,7 @@ async def test_signed_owner_forward_keeps_origin_machine_and_member(identity_env
 
 @pytest.mark.asyncio
 async def test_owner_forward_without_identity_records_no_machine(identity_env, async_client, monkeypatch):
-    """An origin on an older build sends no identity; the owner must not log its own view of the relay."""
+
     from app.modules.proxy.service import ProxyService
 
     member_key = await _create_key(name="key-label-legacy-forward", member_name="member-legacy-forward")

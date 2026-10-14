@@ -1,4 +1,4 @@
-# Ordered request overrides precede session prompt/title hints.
+
 [[rules]]
 name = "warmup"
 field = "request_kind"

@@ -1,9 +1,4 @@
-"""add request kind column
 
-Revision ID: 20260427_130000_add_warmup_model_and_request_kind
-Revises: 20260424_000000_merge_dashboard_session_ttl_and_request_log_heads
-Create Date: 2026-04-27
-"""
 
 from __future__ import annotations
 

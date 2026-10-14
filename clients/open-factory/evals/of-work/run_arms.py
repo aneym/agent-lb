@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Run of-work arms as concurrent Harbor jobs, one job dir per arm, then summarize.
 
-    python3 run_arms.py <run-name> --arms A2-cc-sonnet,A4-codex-sol [-k 1] [-n 3] [--tasks DIR]
-
-Writes ~/.agent-lb/of/runs/<run-name>/<arm>/ and <run-name>/summary.json. Check `route pools`
-first: the arms spend the pooled subscriptions.
-"""
 
 from __future__ import annotations
 

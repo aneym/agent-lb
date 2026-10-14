@@ -1,4 +1,4 @@
-"""Best-first picks through the installed policy table and stubbed pool endpoint."""
+
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def test_low_codex_goes_soft_behind_devin_while_composer_is_gated(
     ("implement", "swe2-high"), ("mechanical", "swe2-medium"), ("explore", "swe2-medium"),
 ])
 def test_empty_cursor_falls_back(tmp_path: Path, task: str, rung: str) -> None:
-    # Gates reopened so the exhausted pool, not a gate, is what skips the Cursor rungs.
+
     env, _ = installed_policy(tmp_path, cursor_open=True)
     pool_update(env, "cursor-models", status="exhausted", eligibleAccounts=0)
     selected = installed_pick(env, task)
@@ -69,7 +69,7 @@ def test_empty_cursor_falls_back(tmp_path: Path, task: str, rung: str) -> None:
     ("implement", "swe2-high"), ("mechanical", "swe2-medium"), ("explore", "swe2-medium"),
 ])
 def test_empty_codex_and_cursor_fall_back_to_swe(tmp_path: Path, task: str, rung: str) -> None:
-    # Gates reopened so the exhausted pool, not a gate, is what skips the Cursor rungs.
+
     env, _ = installed_policy(tmp_path, cursor_open=True)
     for pool in ("openai-codex", "cursor-models"):
         pool_update(env, pool, status="exhausted", eligibleAccounts=0)

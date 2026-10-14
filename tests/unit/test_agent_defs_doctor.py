@@ -348,7 +348,7 @@ def test_cli_rechecks_cached_verdict_when_validator_is_upgraded_at_same_path(tmp
 
     source = (Path(__file__).resolve().parents[2] / "clients" / "agent-defs-doctor").read_text()
     validator = tmp_path / "agent-defs-doctor"
-    # Reproduce the historical pre-family-alias validator's model predicate.
+
     validator.write_text(source.replace(" and not _FAMILY_ALIAS.fullmatch(model)", ""))
     agent = tmp_path / ".claude" / "agents" / "worker.md"
     agent.parent.mkdir(parents=True)

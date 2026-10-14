@@ -1,10 +1,4 @@
-"""Muse passthrough: allowlisted wire paths stream through and are logged.
 
-The upstream is a real local HTTP server (third-party edge faked at the
-network boundary); the request-log writer is captured because no DB is
-available in unit tests — its call shape is the accounting contract
-(provider ``muse``, parsed token counts).
-"""
 
 from __future__ import annotations
 

@@ -1,8 +1,4 @@
-"""Workflow completion writes measured usage, never derives quota from tokens.
 
-The real hook and append-only file boundary protect missing completion records
-and accidental prompt logging; no existing test owns Workflow completion usage.
-"""
 import json
 import os
 from pathlib import Path

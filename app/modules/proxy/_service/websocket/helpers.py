@@ -683,7 +683,7 @@ def _websocket_request_can_rotate_account(
     request_state: _WebSocketRequestState,
     continuity_state: _WebSocketContinuityState | None,
 ) -> bool:
-    """Only a verified full resend can discard an account-local anchor."""
+
     if (
         request_state.file_required_preferred_account
         or request_state.downstream_visible
@@ -875,11 +875,11 @@ def _websocket_event_error_payload(
         error = payload.get("error")
         if isinstance(error, dict):
             return cast(dict[str, JsonValue], error)
-        # The ChatGPT-backed Codex websocket can emit OpenAI-style error
-        # details directly on the event frame instead of under an ``error``
-        # envelope. Normalize those fields into an error-detail object so the
-        # event discriminator ``type: error`` is not mistaken for the upstream
-        # error type.
+
+
+
+
+
         return _websocket_top_level_error_payload(payload)
     if event_type == "response.failed":
         response = payload.get("response")
@@ -1480,11 +1480,7 @@ def _is_websocket_response_create(payload: dict[str, JsonValue]) -> bool:
 
 
 def _websocket_response_create_text_from_bytes(data: bytes) -> str | None:
-    """The UTF-8 text of a binary frame that carries a response.create, else None.
 
-    Such a frame must take the text path so it is prepared, reserved and refused like any other
-    response.create; forwarded as raw bytes it would reach upstream with no limit check.
-    """
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:

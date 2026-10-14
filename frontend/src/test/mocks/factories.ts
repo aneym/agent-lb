@@ -22,7 +22,7 @@ import { AuthSessionSchema } from "@/features/auth/schemas";
 import type { DashboardSettings, UpstreamProxyAdmin } from "@/features/settings/schemas";
 import { DashboardSettingsSchema, UpstreamProxyAdminSchema } from "@/features/settings/schemas";
 
-// Backward-compatible type aliases
+
 export type DashboardAuthSession = AuthSession;
 export type OauthCompleteResponse = z.infer<typeof OauthCompleteResponseSchema>;
 

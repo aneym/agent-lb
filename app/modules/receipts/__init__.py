@@ -1,1 +1,1 @@
-"""Dashboard request receipts."""
+

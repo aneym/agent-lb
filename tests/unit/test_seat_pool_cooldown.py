@@ -1,4 +1,4 @@
-"""A Cursor monthly limit must leave the account's other pool routable."""
+
 
 from __future__ import annotations
 

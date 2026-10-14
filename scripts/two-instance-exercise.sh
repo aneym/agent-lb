@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Two-instance federation checkout/checkin round-trip exercise against two REAL
-# running agent-lb instances on localhost (aiohttp peer client + HTTP layer,
-# previously mock-only). Synthetic tokens only; servers bound to 127.0.0.1.
+
+
+
 set -u
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,14 +32,14 @@ START=$(date +%s)
 
 pass() { echo "PASS: $1"; PASSED=$((PASSED + 1)); }
 fail() { echo "FAIL: $1"; FAILED=$((FAILED + 1)); }
-assert_eq() { # label expected actual
+assert_eq() {
   if [ "$2" = "$3" ]; then pass "$1 ($2)"; else fail "$1 mismatch"; fi
 }
 
 cleanup() {
-  # Kill by listening port: PID_A/PID_B are the wrapper subshells, and killing
-  # only those orphans the uvicorn children (observed 2026-07-03 — stale
-  # servers then poison the next run's clean start).
+
+
+
   lsof -tiTCP:$PORT_A -tiTCP:$PORT_B -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null
   [ -n "$PID_A" ] && kill "$PID_A" 2>/dev/null
   [ -n "$PID_B" ] && kill "$PID_B" 2>/dev/null
@@ -52,7 +52,7 @@ trap cleanup EXIT
 hlp() { "$PY" "$HELPER" "$@"; }
 db_owner() { hlp owner "$1" "$ACCT"; }
 
-wait_http() { # port
+wait_http() {
   for _ in $(seq 1 60); do
     code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$1/api/federation/mirror" 2>/dev/null)
     [ "$code" != "000" ] && return 0
@@ -61,7 +61,7 @@ wait_http() { # port
   return 1
 }
 
-boot() { # dir port instance_id extra_env_file
+boot() {
   local dir="$1" port="$2" iid="$3" logf="$4"
   shift 4
   ( cd "$REPO" && env \
@@ -82,18 +82,18 @@ boot() { # dir port instance_id extra_env_file
       >"$logf" 2>&1 ) &
 }
 
-# ---- setup ----
+
 rm -rf "$RUN"; mkdir -p "$A_DIR" "$B_DIR" "$LOGS"
 "$PY" -c "from cryptography.fernet import Fernet;open('$KEY_A','wb').write(Fernet.generate_key())"
 "$PY" -c "from cryptography.fernet import Fernet;open('$KEY_B','wb').write(Fernet.generate_key())"
 chmod 600 "$KEY_A" "$KEY_B"
 
-# Synthetic tokens (access = unsigned JWT with far-future exp so mirror rows read fresh)
+
 A_ACCESS0=$(hlp mkjwt 86400); A_REFRESH0="refresh-seed-$("$PY" -c 'import secrets;print(secrets.token_hex(6))')"
 A_ACCESS1=$(hlp mkjwt 86400); A_REFRESH1="refresh-rot1-$("$PY" -c 'import secrets;print(secrets.token_hex(6))')"
 A_ACCESS2=$(hlp mkjwt 86400); A_REFRESH2="refresh-rot2-$("$PY" -c 'import secrets;print(secrets.token_hex(6))')"
 
-# Preflight: refuse to run against leftovers from a previous exercise.
+
 if lsof -tiTCP:$PORT_A -tiTCP:$PORT_B -sTCP:LISTEN >/dev/null 2>&1; then
   echo "FATAL: ports $PORT_A/$PORT_B already in use (stale exercise servers?) — kill them first." >&2
   exit 1
@@ -114,7 +114,7 @@ if ! wait_http "$PORT_A"; then fail "alpha did not become reachable"; echo "--- 
 if ! wait_http "$PORT_B"; then fail "beta did not become reachable"; echo "--- beta.log ---"; tail -30 "$LOGS/beta.log"; exit 1; fi
 echo "Both instances reachable."
 
-# Seed ALPHA's DB with one synthetic, locally-owned account.
+
 hlp seed "$DB_A" "$KEY_A" "$ACCT" "$A_ACCESS0" "$A_REFRESH0" \
   && echo "Seeded ALPHA account $ACCT (owner_instance=NULL)" \
   || { fail "seed failed"; tail -20 "$LOGS/alpha.log"; exit 1; }
@@ -129,7 +129,7 @@ done
 if [ -n "$mirror_ok" ]; then pass "a: beta mirrored account owner_instance=alpha within ~2 intervals"; \
   else fail "a: mirror did not materialize (exists=$(hlp exists "$DB_B" "$ACCT") owner=$(db_owner "$DB_B"))"; tail -20 "$LOGS/beta.log"; fi
 
-do_checkout() { # label
+do_checkout() {
   local resp confirmed
   resp=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"account_id\":\"$ACCT\"}" "http://127.0.0.1:$PORT_B/api/federation/checkout/execute")
@@ -139,7 +139,7 @@ do_checkout() { # label
   assert_eq "$1: DB_A owner=beta after checkout" "beta" "$(db_owner "$DB_A")"
 }
 
-do_checkin() { # label exp_access exp_refresh
+do_checkin() {
   local resp settled dec da dr
   resp=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"account_id\":\"$ACCT\"}" "http://127.0.0.1:$PORT_B/api/federation/checkin/execute")

@@ -1,11 +1,4 @@
-"""add credits cap and spent on usage history
 
-Revision ID: 20260918_000000_add_usage_credits_window
-Revises: 20260909_120000_add_reset_credit_attempts
-Create Date: 2026-09-18
-
-Existing rows stay null. The credits window is balance plus cap, not a used percent.
-"""
 
 from __future__ import annotations
 

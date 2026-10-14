@@ -46,9 +46,7 @@ def _build_service(entry: AdditionalUsageHistory) -> AccountsService:
 
 @pytest.mark.asyncio
 async def test_additional_quotas_include_fable_scoped_weekly():
-    """Regression: the Fable scoped-weekly marker is stored outside the
-    additional-quota registry, so registry-driven enumeration must still
-    surface it — clients read the Fable remaining percent from this row."""
+
     clear_account_caches()
     service = _build_service(_fable_entry(used_percent=57.0))
 

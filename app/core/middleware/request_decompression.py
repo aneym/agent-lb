@@ -58,7 +58,7 @@ def _decompress_deflate(data: bytes, max_size: int) -> bytes:
     chunk_size = 64 * 1024
     for start in range(0, len(data), chunk_size):
         chunk = data[start : start + chunk_size]
-        # Bound output growth to avoid oversized allocations.
+
         while chunk:
             remaining = max_size - len(buffer)
             if remaining == 0:
@@ -117,7 +117,7 @@ def _replace_request_body(request: Request, body: bytes) -> None:
         headers.append((key, value))
     headers.append((b"content-length", str(len(body)).encode("ascii")))
     request.scope["headers"] = headers
-    # Ensure subsequent request.headers reflects the updated scope headers.
+
     request.__dict__.pop("_headers", None)
 
 

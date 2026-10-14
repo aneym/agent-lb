@@ -1,8 +1,4 @@
-"""Launcher boundary: rollout tags reach the dry run without changing launch args.
 
-Existing proxy tests own header delivery; these cases own installed policy and
-registry resolution, including exclusions and fail-open malformed input.
-"""
 from __future__ import annotations
 
 import importlib.machinery

@@ -32,7 +32,7 @@ from app.modules.usage.schemas import (
 )
 
 _BUCKET_COUNT = 28
-_BUCKET_SECONDS = 21600  # 6 hours
+_BUCKET_SECONDS = 21600
 
 
 @dataclass(frozen=True)
@@ -74,9 +74,9 @@ def build_trends_from_buckets(
     bucket_count: int = _BUCKET_COUNT,
     top_error: str | None = None,
 ) -> tuple[MetricsTrends, ActivityMetricsSummary, ActivityCostSummary]:
-    # Align slots so the last slot contains "now" (since + window).
-    # Use floor to snap since to a bucket boundary, then shift by 1
-    # so that recent data falls within the slot range.
+
+
+
     first_bucket = align_bucket_window_start(since, bucket_seconds)
     first_bucket_epoch = (
         int(first_bucket.replace(tzinfo=timezone.utc).timestamp())
@@ -86,7 +86,7 @@ def build_trends_from_buckets(
     slots = [first_bucket_epoch + i * bucket_seconds for i in range(bucket_count)]
     slot_set = set(slots)
 
-    # Accumulate per-bucket values
+
     bucket_requests: dict[int, int] = defaultdict(int)
     bucket_errors: dict[int, int] = defaultdict(int)
     bucket_tokens: dict[int, int] = defaultdict(int)
@@ -204,8 +204,8 @@ def build_usage_summary_response(
     cost_override: UsageCostSummary | None = None,
 ) -> UsageSummaryResponse:
     account_map = {account.id: account for account in accounts}
-    # OpenAI removed the codex 5h limit (2026-07): a codex-only scope has no
-    # primary window at all, so report null instead of an empty 0% snapshot.
+
+
     codex_only = bool(accounts) and all(account.provider.lower() == OPENAI_PROVIDER_NAME for account in accounts)
     primary_window = None if codex_only else usage_core.summarize_usage_window(primary_rows, account_map, "primary")
     secondary_window = usage_core.summarize_usage_window(secondary_rows, account_map, "secondary")
@@ -396,23 +396,23 @@ def _metrics_summary_to_model(metrics: UsageMetricsSummary) -> UsageMetrics:
     )
 
 
-# ---------------------------------------------------------------------------
-# Additional usage aggregation
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @dataclass(frozen=True)
 class AdditionalWindowSummary:
-    """Summary for one window (primary or secondary) of an additional rate limit."""
 
-    used_percent: float  # average across accounts
-    reset_at: int | None  # max reset_at across accounts
-    window_minutes: int | None  # max window_minutes
+
+    used_percent: float
+    reset_at: int | None
+    window_minutes: int | None
 
 
 @dataclass(frozen=True)
 class AdditionalQuotaSummary:
-    """Aggregated summary for one additional rate limit (e.g., codex_other)."""
+
 
     limit_name: str
     metered_feature: str
@@ -423,22 +423,14 @@ class AdditionalQuotaSummary:
 def build_additional_usage_summary(
     additional_usage_data: dict[str, dict[str, dict[str, AdditionalUsageHistory]]],
 ) -> list[AdditionalQuotaSummary]:
-    """Build aggregated additional quota summaries from per-account data.
 
-    Args:
-        additional_usage_data: Nested mapping of
-            ``limit_name -> window_key -> account_id -> AdditionalUsageHistory``.
-
-    Returns:
-        One :class:`AdditionalQuotaSummary` per *limit_name* present in the input.
-    """
     results: list[AdditionalQuotaSummary] = []
 
     for limit_name, windows in additional_usage_data.items():
         primary_entries = windows.get("primary", {})
         secondary_entries = windows.get("secondary", {})
 
-        # Derive metered_feature from any available entry
+
         metered_feature = _metered_feature_from_entries(primary_entries, secondary_entries)
 
         primary_window = _aggregate_additional_window(primary_entries)
@@ -459,11 +451,7 @@ def build_additional_usage_summary(
 def _aggregate_additional_window(
     entries: dict[str, AdditionalUsageHistory],
 ) -> AdditionalWindowSummary | None:
-    """Aggregate per-account entries into a single window summary.
 
-    Averaging ``used_percent``, using the earliest ``reset_at`` (min) and the
-    largest ``window_minutes`` (max) for consistent pool behavior.
-    """
     if not entries:
         return None
 
@@ -491,7 +479,7 @@ def _metered_feature_from_entries(
     primary: dict[str, AdditionalUsageHistory],
     secondary: dict[str, AdditionalUsageHistory],
 ) -> str:
-    """Extract ``metered_feature`` from the first available entry."""
+
     for entries in (primary, secondary):
         for entry in entries.values():
             return entry.metered_feature

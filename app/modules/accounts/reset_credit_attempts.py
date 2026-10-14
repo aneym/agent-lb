@@ -1,4 +1,4 @@
-"""Commit reset intent before network I/O and serialize competing redemptions."""
+
 
 from __future__ import annotations
 
@@ -35,12 +35,7 @@ class ResetCreditAttemptsRepository:
         return result.scalar_one()
 
     async def count_applied_since(self, since: datetime) -> int:
-        """Automatic redemptions applied since ``since`` (the daily allowance).
 
-        Counts ``trigger="auto"`` rows only: expiry-sweep redemptions are
-        use-it-or-lose-it and operator-initiated ones are a human decision, so
-        neither spends the automatic allowance.
-        """
         result = await self._session.execute(
             select(func.count())
             .select_from(ResetCreditAttempt)

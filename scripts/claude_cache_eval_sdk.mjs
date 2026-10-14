@@ -1,4 +1,4 @@
-// SDK arm of scripts/claude_cache_eval.py. One query() for T1–T4, then a resumed query() for T5.
+
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';

@@ -229,9 +229,9 @@ class _HTTPBridgeStreamingMixin:
         client_session_id: str | None = None,
     ) -> AsyncIterator[str]:
         _maybe_log_proxy_request_payload("stream_http", payload, headers)
-        # Forward only the agent-lb key this request was authenticated with, so an
-        # owner instance attributes it to the member; a client's ChatGPT bearer
-        # never leaves this instance.
+
+
+
         proxy_api_authorization = select_member_key_authorization(
             _header_value_case_insensitive(headers, "authorization"),
             _header_value_case_insensitive(headers, "x-api-key"),
@@ -263,8 +263,8 @@ class _HTTPBridgeStreamingMixin:
     async def _stream_with_forwarded_identity(
         stream: AsyncIterator[str], identity: RequestIdentity
     ) -> AsyncIterator[str]:
-        # Startup probing and StreamingResponse may resume this generator in
-        # different tasks. Set/reset around each step, not across a yield.
+
+
         try:
             while True:
                 token = set_request_identity(identity)
@@ -590,10 +590,10 @@ class _HTTPBridgeStreamingMixin:
             )
         file_required_preferred_account = False
         if request_state.preferred_account_id is None:
-            # ``input_file.file_id`` references must land on the account
-            # that registered the upload (chatgpt-account-id-scoped).
-            # The helper returns ``None`` when stronger affinity signals
-            # are present, so this never overrides existing routing.
+
+
+
+
             if rewritten_file_account_id is not None:
                 request_state.preferred_account_id = rewritten_file_account_id
                 file_required_preferred_account = True
@@ -605,14 +605,14 @@ class _HTTPBridgeStreamingMixin:
         if proxy_injected_previous_response_id:
             request_state.proxy_injected_previous_response_id = True
             request_state.fresh_upstream_request_text = fresh_upstream_request_text or text_data
-            # Durable-anchor injection actually runs when the incoming
-            # payload is *not* a full resend (see the
-            # ``not _http_bridge_payload_looks_like_full_resend(payload)``
-            # guard above), so the captured unanchored text is typically
-            # just a short follow-up. Replaying it as a fresh turn would
-            # drop the conversational context the anchor was pointing at.
-            # Only the trim branch below (which verifies the stored prefix
-            # fingerprint) is allowed to flip this flag to ``True``.
+
+
+
+
+
+
+
+
             request_state.fresh_upstream_request_is_retry_safe = False
         try:
             session_or_forward = await self._get_or_create_http_bridge_session(
@@ -880,24 +880,24 @@ class _HTTPBridgeStreamingMixin:
             session.last_completed_response_id = durable_lookup.latest_response_id
             session.last_completed_input_count = durable_full_resend_anchor_count
             session.last_completed_input_prefix_fingerprint = durable_full_resend_anchor_fingerprint
-        # --- Session-level previous_response_id injection ---
-        # If the client didn't send previous_response_id and the durable
-        # lookup didn't inject one, but this bridge session is carrying
-        # Codex-style conversational continuity and has already completed a
-        # request on this logical conversation, inject the session's last
-        # completed response ID so the trim branch below can strip the
-        # already-stored prefix.
-        #
-        # Correctness guards:
-        # - Soft affinity reuse (for example prompt cache / sticky-thread
-        #   sharing) must stay self-contained, so only true Codex
-        #   continuity sessions opt in.
-        # - Injecting an anchor when the incoming payload is a full-resend
-        #   whose prefix cannot be safely trimmed (non-list input, prefix
-        #   mismatch, or shorter-than-stored history) would send both the
-        #   full history *and* the anchor upstream, which duplicates
-        #   context and distorts output/cost. Gate injection so it only
-        #   fires when the trim branch below would actually succeed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         incoming_input_preview = effective_payload.input
         stored_count_preview = session.last_completed_input_count
         stored_fingerprint_preview = session.last_completed_input_prefix_fingerprint
@@ -934,20 +934,20 @@ class _HTTPBridgeStreamingMixin:
             request_state.preferred_account_id = durable_lookup.account_id if durable_lookup is not None else None
             request_state.proxy_injected_previous_response_id = True
             request_state.fresh_upstream_request_text = fresh_upstream_request_text
-            # Session-level anchor injection may be attached to a payload
-            # that relied on the anchor for context (for example a
-            # single-item follow-up turn whose prior history is only
-            # represented by ``previous_response_id``). Replaying without
-            # the anchor would silently turn it into a fresh turn and drop
-            # conversational context, so opt this path out of fresh-upstream
-            # fresh-turn replay.
+
+
+
+
+
+
+
             request_state.fresh_upstream_request_is_retry_safe = False
             logger.info(
                 "session_anchor_injected request_id=%s response_id=%s",
                 request_id,
                 session.last_completed_response_id,
             )
-        # Trim already-stored prefix when previous_response_id anchors context.
+
         has_previous_response_id = (
             proxy_injected_previous_response_id or effective_payload.previous_response_id is not None
         )
@@ -990,12 +990,12 @@ class _HTTPBridgeStreamingMixin:
                 if proxy_injected_previous_response_id:
                     request_state.proxy_injected_previous_response_id = True
                     request_state.fresh_upstream_request_text = fresh_upstream_request_text
-                    # The trim branch only fires when the untrimmed payload
-                    # is a true full resend whose prefix exactly matches the
-                    # already-stored context, so the unanchored request text
-                    # is a safe fresh-turn replay target regardless of
-                    # whether the anchor came from the durable or
-                    # session-level injection path.
+
+
+
+
+
+
                     request_state.fresh_upstream_request_is_retry_safe = True
                 logger.info(
                     "store_context_input_trimmed request_id=%s original_items=%s trimmed_to=%s previous_response_id=%s",
@@ -1310,28 +1310,7 @@ class _HTTPBridgeStreamingMixin:
         self: Any,
         session: "_HTTPBridgeSession",
     ) -> None:
-        """Steer the next attempt for this bridge key away from the dead account.
 
-        A first-event timeout means the account's upstream Codex path swallowed
-        a ``response.create`` without ever answering. Retiring the bridge alone
-        is not enough: sticky selection re-pins the same account seconds later
-        and the fresh bridge hangs identically. So additionally:
-
-        1. Classify the failure via ``_handle_stream_error``, which treats
-           ``bridge_first_event_timeout`` as ACCOUNT-NEUTRAL — it does NOT
-           record an account-health error / increment ``error_count``, because
-           a zero-event upstream is almost always upstream slowness (e.g. a
-           large compaction payload) rather than an account fault, and
-           penalizing it drained the codex pool to a spurious ``no_accounts``
-           503. Steering is therefore done ENTIRELY by steps 2-3 below, not by
-           account-health backoff.
-        2. Pin a short-lived cooldown for this bridge key so the next bridge
-           creation excludes the failed account from selection — which also
-           makes ``_select_with_stickiness`` rebind the sticky mapping to the
-           newly chosen account.
-        3. Delete the sticky mapping directly so a retry after cooldown expiry
-           does not re-pin via stale stickiness.
-        """
         try:
             await self._handle_stream_error(
                 session.account,
@@ -1441,13 +1420,13 @@ class _HTTPBridgeStreamingMixin:
                                     True,
                                 )
                             ):
-                                # Degraded retry: account-bound reasoning
-                                # ``encrypted_content`` blobs are the known
-                                # cause of upstream accepting response.create
-                                # and never answering. If the payload still
-                                # carries any (e.g. it bypassed prepare-time
-                                # stripping), retry once with them removed
-                                # before surfacing the failure.
+
+
+
+
+
+
+
                                 first_event_degraded_retry_attempted = True
                                 (
                                     degraded_text,
@@ -1542,11 +1521,11 @@ class _HTTPBridgeStreamingMixin:
                                     _extract_model_class(session.request_model) if session.request_model else None
                                 ),
                             )
-                            # Capture the exact upstream payload for diagnosis:
-                            # a request that upstream accepts but never answers
-                            # is content-specific, and the body is not
-                            # persisted anywhere else. Dumps land in
-                            # ~/.agent-lb/debug/response-create-dumps/.
+
+
+
+
+
                             try:
                                 _service_write_response_create_dump(
                                     request_state,
@@ -1670,20 +1649,20 @@ class _HTTPBridgeStreamingMixin:
                 await self._detach_http_bridge_request(session, request_state=request_state)
                 session.last_used_at = _service_time().monotonic()
                 if first_event_timed_out:
-                    # Self-heal: a bridge whose first turn never produced an
-                    # upstream event is poisoned (the upstream response.create
-                    # appears to have been silently dropped). The first-event
-                    # timeout is account-NEUTRAL (no health penalty); steering
-                    # relies solely on breaking the sticky binding and cooling
-                    # the account down for THIS bridge key so the next attempt
-                    # selects a different account instead of re-pinning the
-                    # dead one.
+
+
+
+
+
+
+
+
                     if session.account.id not in first_event_quarantined_account_ids:
                         await self._quarantine_http_bridge_first_event_account(session)
-                    # Then retire the bridge and its durable session lease so
-                    # the *next* request with the same bridge key starts a
-                    # fresh upstream session instead of re-hitting the dead
-                    # one.
+
+
+
+
                     try:
                         await self._retire_stale_pending_http_bridge_session(
                             session,

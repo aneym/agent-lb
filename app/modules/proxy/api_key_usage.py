@@ -28,11 +28,7 @@ _INPUT_BUDGET_EXCLUDED_FIELDS = frozenset(
 
 
 def estimate_api_key_request_usage(payload: ApiKeyUsageEstimableRequest) -> ApiKeyRequestUsageBudget:
-    """Return a bounded local usage budget for API-key reservation admission.
 
-    ``None`` means the proxy cannot size that side of the request locally, so
-    API-key enforcement should use its conservative default for that dimension.
-    """
 
     upstream_payload = payload.to_payload()
     return ApiKeyRequestUsageBudget(

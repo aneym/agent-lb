@@ -215,7 +215,7 @@ async def _applied_auto_attempt(credit_id: str, *, applied_ago: timedelta) -> No
 
 
 async def test_daily_allowance_counts_only_applied_auto_redemptions(db_setup):
-    """The rolling-24h allowance is read from the durable ledger."""
+
     await _account()
     await _applied_auto_attempt("credit-1", applied_ago=timedelta(hours=2))
     await _applied_auto_attempt("credit-2", applied_ago=timedelta(hours=30))
@@ -229,8 +229,8 @@ async def test_daily_allowance_counts_only_applied_auto_redemptions(db_setup):
 
     async with SessionLocal() as session:
         journal = ResetCreditAttemptsRepository(session)
-        # Yesterday's redemption, the expiry sweep and the no-op all fall out:
-        # only the one applied auto redemption inside the window counts.
+
+
         assert await journal.count_applied_since(utcnow() - timedelta(days=1)) == 1
 
 
@@ -258,7 +258,7 @@ async def test_scheduler_stops_after_the_daily_allowance_is_spent(db_setup, monk
 
 
 async def test_scheduler_grants_the_relimit_reset_within_the_same_day(db_setup, monkeypatch):
-    """One reset already spent today must not block the same-day second."""
+
     await _account()
     await _applied_auto_attempt("credit-1", applied_ago=timedelta(hours=6))
     leader = AsyncMock()

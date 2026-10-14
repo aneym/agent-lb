@@ -105,7 +105,7 @@ describe("LimitRuleCard", () => {
       <LimitRuleCard rule={tokenRule()} onChange={vi.fn()} onRemove={onRemove} />,
     );
 
-    // Find the ghost/trash button specifically (data-variant="ghost")
+
     const buttons = screen.getAllByRole("button");
     const trashButton = buttons.find((b) => b.getAttribute("data-variant") === "ghost");
     expect(trashButton).toBeDefined();
@@ -122,7 +122,7 @@ describe("LimitRuleCard", () => {
       />,
     );
 
-    // ModelMultiSelect uses useModels which fetches from MSW
+
     await waitFor(() => {
       expect(screen.getByText("All models")).toBeInTheDocument();
     });

@@ -1,13 +1,4 @@
-"""E3-r6 scenario: a Codex reviewer cannot launch a second companion from inside its own run.
 
-Written by the spec author (specs/E3-r6.md). Copy verbatim to agent-lb
-tests/integration/test_e3_r6_nested_companion.py; the implementer may not edit it.
-2026-10-05, model-traffic-exempt-fix2: the read-only reviewer read the codex-verifier seat file, ran
-codex-companion.mjs task itself, hit EROFS on /tmp/codex-companion and returned no verdict.
-The plugin is a copy of the installed one with the repo's patches applied by the repo's own script.
-Only `codex` is a fake on PATH: it answers the companion's probes and records every call with
-CODEX_COMPANION_DEPTH.
-"""
 import json
 import os
 from pathlib import Path

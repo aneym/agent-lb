@@ -1,10 +1,4 @@
-"""COST_USD caps meter Claude traffic at list price (bops S16 spend floor, 2026-10-07).
 
-Before the fix, cap accounting priced every Claude request at $0, so a capped
-caller never tripped. The upstream is faked at the network edge only; the API
-key, its limits, the reservation and its settlement run through the real HTTP
-route and database.
-"""
 
 from __future__ import annotations
 
@@ -33,8 +27,8 @@ pytestmark = pytest.mark.integration
 
 PRICED_MODEL = "claude-sonnet-4-5-20250929"
 UNPRICED_MODEL = "claude-unpriced-test-0"
-# Names a wildcard alias would once price (claude-sonnet-4*, claude-opus-5*) and a blank model:
-# each is refused under a cost cap, not sent upstream (fix round, 2026-10-07).
+
+
 REFUSED_UNDER_CAP = [UNPRICED_MODEL, "claude-sonnet-4-99", "claude-opus-5-99", ""]
 INPUT_TOKENS = 1_000
 CACHE_READ_TOKENS = 4_000
@@ -127,7 +121,7 @@ async def _insert_anthropic_account() -> None:
 
 
 def _list_price_microdollars() -> int:
-    # Computed from the price table and the token counts, independently of the cap code.
+
     price = DEFAULT_PRICING_MODELS["claude-sonnet-4-5"]
     usd = (
         INPUT_TOKENS * price.input_per_1m
@@ -234,7 +228,7 @@ async def test_cost_cap_trips_on_claude_list_price_refuses_unpriced_and_leaves_u
 
 @pytest.mark.asyncio
 async def test_cost_cap_keeps_reservation_for_usage_it_cannot_price(db_setup):
-    """A model-less request that consumed tokens is billed its reservation, never $0; one that consumed none is not."""
+
     del db_setup
     budget = ApiKeyRequestUsageBudget(input_tokens=8_192, output_tokens=2_048)
     async with SessionLocal() as session:
@@ -255,5 +249,5 @@ async def test_cost_cap_keeps_reservation_for_usage_it_cannot_price(db_setup):
     async with SessionLocal() as session:
         limits = await ApiKeysRepository(session).get_limits_by_key(created.id)
     cost_limit = next(limit for limit in limits if limit.limit_type == LimitType.COST_USD)
-    # The unknown-model reserve for 8,192 in + 2,048 out is ceil(2 USD * 10,240 / 16,384) = 1.25 USD.
+
     assert cost_limit.current_value == 1_250_000

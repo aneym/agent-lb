@@ -1,16 +1,4 @@
-"""Muse (Meta) passthrough proxy.
 
-Muse speaks the Responses wire already: ``GET {base}/muse-code/models``
-and ``POST {base}/responses`` (SSE), authenticated with the client's own
-Meta bearer token. There is a single Muse seat today, so agent-lb does not
-pool or inject credentials; it forwards the client's token untouched to
-``https://api.meta.ai`` and records each ``/responses`` call in the request
-log under provider ``muse`` with no accounts-table association so Muse
-shows up in accounting next to the other providers.
-
-Base URL for clients: ``http://127.0.0.1:2455/muse-api`` (via the launcher
-``muse-lb-launch`` / zsh ``mx``). Upstream override: ``MUSE_UPSTREAM_BASE_URL``.
-"""
 
 from __future__ import annotations
 
@@ -30,8 +18,8 @@ logger = logging.getLogger(__name__)
 UPSTREAM_BASE_URL = os.environ.get("MUSE_UPSTREAM_BASE_URL", "https://api.meta.ai/v1").rstrip("/")
 PROVIDER = "muse"
 
-# Only the two endpoints Muse actually calls. Everything else 404s so this
-# router can never become an open proxy to api.meta.ai.
+
+
 ALLOWED: dict[str, set[str]] = {
     "responses": {"POST"},
     "muse-code/models": {"GET"},
@@ -51,7 +39,7 @@ def upstream_url(path: str) -> str:
 
 
 def parse_usage_from_sse_tail(tail: bytes) -> tuple[int | None, int | None]:
-    """Best-effort (input, output) tokens from a Responses SSE tail."""
+
     input_tokens: int | None = None
     output_tokens: int | None = None
     for line in tail.decode("utf-8", "replace").splitlines():
@@ -90,7 +78,7 @@ async def _log_call(
         input_tokens, output_tokens = parse_usage_from_sse_tail(tail)
         async with SessionLocal() as session:
             await RequestLogsRepository(session).add_log(
-                account_id=None,  # unattributed: no accounts-table row for muse (see module docstring)
+                account_id=None,
                 request_id=str(uuid.uuid4()),
                 model=model or "muse",
                 input_tokens=input_tokens,
@@ -103,7 +91,7 @@ async def _log_call(
                 provider=PROVIDER,
                 upstream_status_code=upstream_status,
             )
-    except Exception:  # logging must never break the stream
+    except Exception:
         logger.exception("muse request log failed")
 
 

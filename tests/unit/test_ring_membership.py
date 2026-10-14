@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 async def async_session_factory() -> AsyncIterator[Callable[[], AsyncSession]]:
-    """Create in-memory SQLite database for testing."""
+
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -37,13 +37,13 @@ async def async_session_factory() -> AsyncIterator[Callable[[], AsyncSession]]:
 
 @pytest.fixture
 async def ring_service(async_session_factory: Callable[[], AsyncSession]) -> RingMembershipService:
-    """Create RingMembershipService with test session factory."""
+
     return RingMembershipService(async_session_factory)
 
 
 @pytest.mark.asyncio
 async def test_register_and_list_active(ring_service: RingMembershipService) -> None:
-    """Register 3 pods, list_active() returns all 3 in sorted order."""
+
     await ring_service.register("pod-c")
     await ring_service.register("pod-a")
     await ring_service.register("pod-b")
@@ -64,7 +64,7 @@ async def test_list_active_can_require_advertised_endpoint(ring_service: RingMem
 
 @pytest.mark.asyncio
 async def test_unregister(ring_service: RingMembershipService) -> None:
-    """Register then unregister, list_active() returns empty."""
+
     await ring_service.register("pod-1")
     assert await ring_service.list_active() == ["pod-1"]
 
@@ -74,10 +74,10 @@ async def test_unregister(ring_service: RingMembershipService) -> None:
 
 @pytest.mark.asyncio
 async def test_stale_heartbeat_excluded(ring_service: RingMembershipService) -> None:
-    """Register pod, set last_heartbeat_at to 200s ago, list_active(120) → empty."""
+
     await ring_service.register("pod-stale")
 
-    # Manually update the heartbeat to be stale
+
     async with ring_service._session() as session:
         from sqlalchemy import update
 
@@ -90,11 +90,11 @@ async def test_stale_heartbeat_excluded(ring_service: RingMembershipService) -> 
         await session.execute(stmt)
         await session.commit()
 
-    # With 120s threshold, stale pod should be excluded
+
     active = await ring_service.list_active(stale_threshold_seconds=120)
     assert active == []
 
-    # With 300s threshold, stale pod should be included
+
     active = await ring_service.list_active(stale_threshold_seconds=300)
     assert active == ["pod-stale"]
 
@@ -117,7 +117,7 @@ async def test_mark_stale_keeps_member_visible_until_grace_window_elapses(
 
 @pytest.mark.asyncio
 async def test_ring_fingerprint_deterministic(ring_service: RingMembershipService) -> None:
-    """Same members → same fingerprint."""
+
     await ring_service.register("pod-1")
     await ring_service.register("pod-2")
     await ring_service.register("pod-3")
@@ -126,12 +126,12 @@ async def test_ring_fingerprint_deterministic(ring_service: RingMembershipServic
     fp2 = await ring_service.ring_fingerprint()
 
     assert fp1 == fp2
-    assert len(fp1) == 64  # SHA256 hex digest length
+    assert len(fp1) == 64
 
 
 @pytest.mark.asyncio
 async def test_ring_fingerprint_changes_on_membership_change(ring_service: RingMembershipService) -> None:
-    """Different members → different fingerprint."""
+
     await ring_service.register("pod-1")
     await ring_service.register("pod-2")
     fp1 = await ring_service.ring_fingerprint()
@@ -144,10 +144,10 @@ async def test_ring_fingerprint_changes_on_membership_change(ring_service: RingM
 
 @pytest.mark.asyncio
 async def test_heartbeat_updates_timestamp(ring_service: RingMembershipService) -> None:
-    """Heartbeat updates last_heartbeat_at."""
+
     await ring_service.register("pod-hb")
 
-    # Get initial heartbeat
+
     async with ring_service._session() as session:
         from sqlalchemy import select
 
@@ -155,13 +155,13 @@ async def test_heartbeat_updates_timestamp(ring_service: RingMembershipService) 
         member1 = result.scalar_one()
         initial_hb = member1.last_heartbeat_at
 
-    # Wait a tiny bit and call heartbeat
+
     import asyncio
 
     await asyncio.sleep(0.01)
     await ring_service.heartbeat("pod-hb")
 
-    # Get updated heartbeat
+
     async with ring_service._session() as session:
         from sqlalchemy import select
 

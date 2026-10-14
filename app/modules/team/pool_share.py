@@ -1,15 +1,4 @@
-"""Estimate pool share from this instance's request logs only.
 
-Usage snapshots report global account consumption, but request logs are local.
-ONLY while all of a member's traffic lands on this instance, the local estimate
-is an upper bound on the share computed with global logs (the safe direction).
-With mixed priced and unpriced rows, remote priced traffic can change the
-imputation rate, so the bound uses the larger of the local priced-cost fraction
-and the local unpriced-token fraction instead of a local blended rate. Members
-must use a single LB URL without fallback until federation usage reports feed
-both the numerator and denominator. A fallback can put member traffic on
-another instance and understate the true share.
-"""
 
 from __future__ import annotations
 
@@ -64,7 +53,7 @@ def reset_pool_share_cache() -> None:
 
 
 def _cache_put(key: tuple[str, float], value: tuple[float, list[PoolWindow]], now: float) -> None:
-    # Expired entries do not need to consume the bounded cache indefinitely.
+
     for expired in [entry for entry, (deadline, _) in _members.items() if deadline <= now]:
         _members.pop(expired, None)
     if len(_members) >= _CACHE_SIZE:
@@ -83,10 +72,10 @@ def _totals(row: tuple[object, ...] | None) -> _Totals:
 
 
 def _local_upper_fraction(member: _Totals, account: _Totals) -> float:
-    # A remote priced row can change the global imputation rate arbitrarily.
-    # The global blended fraction is a weighted average of these two local
-    # fractions (with nonnegative remote traffic added only to its denominator).
-    # Thus their maximum remains an upper bound when the member is local.
+
+
+
+
     if account.priced_rows == 0:
         total = account.priced_tokens + account.unpriced_tokens
         return (member.priced_tokens + member.unpriced_tokens) / total if total else 0.0
@@ -149,7 +138,7 @@ async def _snapshots(session: AsyncSession, account_ids: set[str], now: datetime
             reset_at = datetime.fromtimestamp(reset, tz=timezone.utc).replace(tzinfo=None)
             start = reset_at - timedelta(minutes=length)
             current = reset_at > now and row.recorded_at.replace(tzinfo=None) >= start
-            # A rolled window remains eligible at zero even if the last sample is old.
+
             rolled = reset_at <= now
             if not current and not rolled:
                 continue
@@ -166,7 +155,7 @@ async def _aggregate(
 ) -> dict[tuple[str, int], _Totals]:
     if not snapshots:
         return {}
-    # VALUES in a CTE avoids SQLite's 500-term limit for compound SELECTs.
+
     windows = (
         values(column("account_id", String), column("length", Integer), column("start", DateTime))
         .data([(snapshot.account_id, snapshot.length, snapshot.start) for snapshot in snapshots])
@@ -187,8 +176,8 @@ async def _aggregate(
             RequestLog,
             and_(RequestLog.account_id == windows.c.account_id, RequestLog.requested_at >= windows.c.start),
         )
-        # Sargable bounds so the planner can use the requested_at / account_id
-        # indexes instead of scanning all of request_logs on the admission path.
+
+
         .where(
             RequestLog.account_id.in_({snapshot.account_id for snapshot in snapshots}),
             RequestLog.requested_at >= min(snapshot.start for snapshot in snapshots),
@@ -213,8 +202,8 @@ async def pool_share_windows(session: AsyncSession, member_id: str, limit: float
     accounts = await _reachable_accounts(session, member_id)
     snapshots = await _snapshots(session, accounts, now)
     current = [snapshot for snapshot in snapshots if snapshot.current]
-    # Keep both aggregates local to this evaluation: invalidation during an await
-    # cannot remove a denominator, and no result can inherit a stale cache TTL.
+
+
     denominators = await _aggregate(session, current)
     members = await _aggregate(session, current, member_id=member_id)
     grouped: dict[int, list[tuple[_Snapshot, float]]] = {}

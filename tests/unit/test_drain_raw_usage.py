@@ -14,7 +14,7 @@ _DRAIN_STRATEGIES = ["reset_drain", "sequential_drain"]
 
 
 def _pressured_state(account_id: str, raw_used: float, raw_secondary: float) -> AccountState:
-    # Effective usage is pinned at 100 by lease pressure; upstream usage is below it.
+
     return AccountState(
         account_id,
         AccountStatus.ACTIVE,

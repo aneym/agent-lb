@@ -26,12 +26,7 @@ pytestmark = pytest.mark.integration
 )
 @pytest.mark.parametrize("outcome", ["success", "ambiguous", "permanent"])
 async def test_eligible_exchange_recovers_without_reset(db_setup, monkeypatch, entrypoint, provider, outcome):
-    """Real DB + HTTP: fresh access/usage must not strand a mature first exchange.
 
-    Existing exchange-flow tests call refresh directly and miss the normal auth
-    and periodic lifecycle gates. A second ambiguous replay must remain fenced.
-    No production seam or own-code mock is needed.
-    """
     requests = []
 
     async def token(request):
@@ -85,8 +80,8 @@ async def test_eligible_exchange_recovers_without_reset(db_setup, monkeypatch, e
                 replay=False,
             )
         )
-        # The near-reset branch suppresses ordinary refresh, independently of
-        # this already-fresh usage entry. Recovery must run before either gate.
+
+
         session.add(
             UsageHistory(
                 account_id=account_id,
@@ -146,7 +141,7 @@ async def test_eligible_exchange_recovers_without_reset(db_setup, monkeypatch, e
 @pytest.mark.asyncio
 @pytest.mark.parametrize("guard", ["replay", "unsaved", "recent", "missing", "mismatch", "mirror", "permanent"])
 async def test_automatic_recovery_preserves_closed_exchange_guards(db_setup, monkeypatch, guard):
-    """Real DB + loopback HTTP guards recovery's admission independently of token age."""
+
     requests = []
 
     async def forbidden(request):
@@ -196,8 +191,8 @@ async def test_automatic_recovery_preserves_closed_exchange_guards(db_setup, mon
         async with SessionLocal() as session:
             repo = AccountsRepository(session)
             account = await repo.get_by_id(account_id)
-            # Permanent failure races are guarded even if a stale worker tries
-            # the previously eligible replay directly at the database fence.
+
+
             if guard == "permanent":
                 assert not await repo.begin_exchange(
                     account_id,

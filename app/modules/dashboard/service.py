@@ -39,9 +39,6 @@ from app.modules.usage.depletion_service import (
 )
 from app.modules.usage.mappers import usage_history_to_window_row
 
-# Mirrored in app/modules/accounts/service.py, app/modules/proxy/anthropic_service.py,
-# and app/modules/usage/updater.py — all must agree on the quota_key/window
-# identifying Anthropic's dedicated Fable-scoped weekly limit marker.
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 
@@ -235,8 +232,8 @@ async def _load_projection_histories(
     secondary_usage: dict[str, UsageHistory],
     now: datetime,
 ) -> tuple[dict[str, list[UsageHistory]], dict[str, list[UsageHistory]]]:
-    # Compute depletion separately for primary-window and secondary-window
-    # accounts so the aggregate is not skewed by mixing different window durations.
+
+
     primary_rows_raw = _rows_from_latest(primary_usage)
     secondary_rows_raw = _rows_from_latest(secondary_usage)
     primary_rows, _ = usage_core.normalize_weekly_only_rows(
@@ -246,8 +243,8 @@ async def _load_projection_histories(
     normalized_primary_ids = {row.account_id for row in primary_rows}
     all_account_ids = set(primary_usage.keys()) | set(secondary_usage.keys())
 
-    # Batch fetch: collect account IDs and determine the widest lookback per
-    # window so we can issue at most 2 bulk queries instead of O(N).
+
+
     pri_fetch_ids: list[str] = []
     sec_fetch_ids: list[str] = []
     pri_since = now
@@ -351,7 +348,7 @@ def _build_depletion_by_window(
     dict[str, DepletionResponse] | None,
     dict[str, DepletionResponse] | None,
 ]:
-    """Compute depletion per window: pool-level plus per-provider breakdowns."""
+
     active_cache_keys = {(account_id, "standard", "primary") for account_id in primary_history}
     active_cache_keys.update((account_id, "standard", "secondary") for account_id in secondary_history)
     providers = providers_by_account or {}

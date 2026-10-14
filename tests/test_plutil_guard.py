@@ -1,4 +1,4 @@
-"""Exercise the shell hook through its real JSON stdin/stdout boundary."""
+
 import json
 from pathlib import Path
 import subprocess

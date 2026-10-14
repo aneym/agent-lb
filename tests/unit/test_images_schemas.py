@@ -1,4 +1,4 @@
-"""Unit tests for the OpenAI Images API schema and validation matrix."""
+
 
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ from app.core.openai.images import (
     validate_image_size,
 )
 
-# ---------------------------------------------------------------------------
-# Pydantic shape validation
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class TestV1ImagesGenerationsRequest:
@@ -82,9 +82,9 @@ class TestV1ImageResponse:
         assert dumped["usage"] == {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30}
 
 
-# ---------------------------------------------------------------------------
-# is_supported_image_model
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class TestIsSupportedImageModel:
@@ -103,9 +103,9 @@ class TestIsSupportedImageModel:
         assert is_supported_image_model(model) is False
 
 
-# ---------------------------------------------------------------------------
-# validate_image_size
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class TestValidateImageSize:
@@ -131,25 +131,25 @@ class TestValidateImageSize:
         validate_image_size("gpt-image-2", "1024x1024")
         validate_image_size("gpt-image-2", "2048x2048")
         validate_image_size("gpt-image-2", "1024x1536")
-        # Exactly the 3:1 ratio should be allowed (3072x1024 = 3145728 px).
+
         validate_image_size("gpt-image-2", "3072x1024")
 
     @pytest.mark.parametrize(
         "size,expected_param",
         [
-            # Edges that aren't multiples of 16
+
             ("1000x1000", "size"),
             ("1024x1023", "size"),
-            # Exceeds max edge of 3840
+
             ("3856x1024", "size"),
-            # Aspect ratio > 3:1 (e.g. 3328:1024 ≈ 3.25:1)
+
             ("3328x1024", "size"),
-            # Below min pixels
+
             ("512x512", "size"),
-            # Above max pixels (2880x2880 = 8_294_400 ✓ at exact boundary,
-            # so push slightly higher)
+
+
             ("2896x2896", "size"),
-            # Malformed
+
             ("1024", "size"),
             ("not-a-size", "size"),
         ],
@@ -160,13 +160,13 @@ class TestValidateImageSize:
         assert excinfo.value.param == expected_param
 
 
-# ---------------------------------------------------------------------------
-# validate_image_request_parameters (cross-field matrix)
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def _validate_default(**overrides: object) -> None:
-    """Convenience wrapper that fills in every required argument."""
+
     kwargs: dict[str, object] = {
         "model": "gpt-image-2",
         "quality": "auto",
@@ -196,10 +196,7 @@ class TestValidateImageRequestParameters:
 
     @pytest.mark.parametrize("n,expect_ok", [(1, True), (0, False), (2, False), (5, False)])
     def test_n_bounds(self, n: int, expect_ok: bool) -> None:
-        """``n`` is hard-capped at 1 today regardless of ``images_max_n``
-        because client-side fan-out is not implemented yet. The cap is
-        relaxed in the same change that introduces fan-out.
-        """
+
         if expect_ok:
             _validate_default(n=n)
         else:
@@ -208,9 +205,7 @@ class TestValidateImageRequestParameters:
             assert excinfo.value.param == "n"
 
     def test_n_greater_than_one_is_unconditionally_rejected(self) -> None:
-        """There is no operator-tunable knob that can promote silent drop:
-        ``n > 1`` is hard-rejected as long as fan-out is unimplemented.
-        """
+
         with pytest.raises(ClientPayloadError) as excinfo:
             _validate_default(n=2)
         assert excinfo.value.param == "n"
@@ -313,10 +308,7 @@ class TestValidateImageRequestParameters:
 
 
 class TestImagePricingPresent:
-    """Cost-based API key quotas would resolve to $0 if pricing entries
-    are missing for ``gpt-image-*`` models. These tests pin the pricing
-    table so the quota actually bites.
-    """
+
 
     def test_gpt_image_2_pricing_is_defined(self) -> None:
         from app.core.usage.pricing import get_pricing_for_model
@@ -330,8 +322,8 @@ class TestImagePricingPresent:
     def test_gpt_image_2_alias_resolves(self) -> None:
         from app.core.usage.pricing import get_pricing_for_model
 
-        # ``gpt-image-2-2026-04-21`` (a hypothetical date-pinned snapshot)
-        # should resolve via the alias entry.
+
+
         result = get_pricing_for_model("gpt-image-2-2026-04-21")
         assert result is not None
         canonical, _ = result
@@ -363,17 +355,14 @@ class TestImagePricingPresent:
 
 class TestQualityAndFidelityEdgeCases:
     def test_legacy_quality_does_not_accept_dalle_only_values(self) -> None:
-        """``standard``/``hd`` are DALL·E-only quality values and must NOT
-        be accepted by any ``gpt-image-*`` model."""
+
         for invalid_quality in ("standard", "hd"):
             with pytest.raises(ClientPayloadError) as excinfo:
                 _validate_default(model="gpt-image-1.5", quality=invalid_quality, size="1024x1024")
             assert excinfo.value.param == "quality"
 
     def test_input_fidelity_rejected_on_gpt_image_1_mini_edits(self) -> None:
-        """``gpt-image-1-mini`` does not accept ``input_fidelity`` even on
-        the edits path, so we reject it at the API boundary instead of
-        relying on an upstream round-trip."""
+
         with pytest.raises(ClientPayloadError) as excinfo:
             _validate_default(
                 model="gpt-image-1-mini",
@@ -384,7 +373,7 @@ class TestQualityAndFidelityEdgeCases:
         assert excinfo.value.param == "input_fidelity"
 
     def test_input_fidelity_still_accepted_on_gpt_image_1_edits(self) -> None:
-        # Sanity: the supported models still pass.
+
         _validate_default(
             model="gpt-image-1",
             size="1024x1024",

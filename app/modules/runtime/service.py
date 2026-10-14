@@ -25,7 +25,7 @@ _VERSION_RE = re.compile(
 
 
 class _NoPublishedRelease(Exception):
-    """GitHub answered 404 for the latest release: the repo has none."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,9 +79,9 @@ class RuntimeVersionService:
         try:
             latest_version = await self._fetch_latest_release_version()
         except _NoPublishedRelease:
-            # Expected for a fork or a repo without releases: nothing to compare
-            # against, so this is a settled answer (normal TTL), not a failure
-            # worth a traceback every failure_ttl.
+
+
+
             logger.info("No published agent-lb release on GitHub; update checks report current only")
             return _RuntimeVersionSnapshot(
                 current_version=self._current_version,

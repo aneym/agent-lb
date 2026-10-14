@@ -21,10 +21,10 @@ CCGPT_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
 CCGPT_SERVICE_TIER = "priority"
 _SIGNATURE_PREFIX = "codex:"
 
-# Claude Code's harness only reactive-compacts when the failed turn's error
-# message contains this phrase (case-insensitive); any other envelope is either
-# retried (server_overload) or non-compacting, which storms identical
-# over-limit requests. See openspec/changes/fix-ccdex-context-compaction.
+
+
+
+
 _PROMPT_TOO_LONG = "Prompt is too long"
 _CONTEXT_OVERFLOW_CODE = "context_length_exceeded"
 _CONTEXT_OVERFLOW_MESSAGE_MARKERS = (
@@ -61,15 +61,7 @@ def _anthropic_error_payload(code: str | None, message: str) -> JsonObject:
 
 
 def _error_fields_from_event(event: JsonObject) -> tuple[str | None, str]:
-    """Pull (code, message) from a Responses error frame.
 
-    Covers the three upstream nestings seen on this route: the standard
-    ``{"error": {...}}`` envelope, a ``response.failed`` event carrying
-    ``response.error``, and the ChatGPT-backed Codex ``error`` frame that puts
-    the detail fields (``code``/``message``) directly on the event root instead
-    of under an ``error`` object. Missing the last shape forwarded context
-    overflows as a generic ``api_error`` and broke reactive compaction.
-    """
     error = event.get("error")
     if not isinstance(error, dict):
         response = event.get("response")
@@ -89,7 +81,7 @@ def _error_fields_from_event(event: JsonObject) -> tuple[str | None, str]:
 
 
 def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
-    """Translate the Claude Messages shapes emitted by Claude Code to Responses input."""
+
     raw = payload.model_dump(mode="json", exclude_none=True)
     input_items: list[JsonValue] = []
 
@@ -185,15 +177,15 @@ def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
     )
 
 
-# Claude Code's Workflow harness opens every workflow subagent with two user
-# turns: the launching session's latest chat message, framed as the only user
-# voice that "wins" over the task, then the agent's own brief framed as script
-# output with "no user authority". A bridged seat (Sol through this route) has
-# no lead to defer to: when the lead's chat moved on, every seat in run
-# wf_7d1bfe12-263 refused its brief as a "scope mismatch". A seat's brief is its
-# only request, so the bridge drops the relayed chat and states that plainly in
-# the brief's frame. Only text that opens with the harness's exact frame header
-# is touched; the indented brief body passes through verbatim.
+
+
+
+
+
+
+
+
+
 _RELAYED_REQUEST_HEADER = "[Workflow harness \u2014 user request]"
 _COMPUTED_TASK_HEADER = "[Workflow harness \u2014 computed task]"
 _COMPUTED_TASK_LEAD_IN = "The computed task text follows:"
@@ -206,7 +198,7 @@ _SEAT_TASK_FRAME = (
 
 
 def _seat_messages(messages: list[JsonObject]) -> list[JsonObject]:
-    """Drop the harness-relayed lead chat and reframe the brief as the seat's only request."""
+
     kept: list[JsonObject] = []
     for message in messages:
         if message.get("role") != "user":
@@ -255,7 +247,7 @@ def _reasoning_effort(payload: Mapping[str, JsonValue]) -> str:
 
 
 def estimate_claude_input_tokens(payload: Mapping[str, JsonValue]) -> int:
-    """Return a safe local estimate; this route never calls Anthropic token counting."""
+
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return max(1, math.ceil(len(encoded) / 4))
 
@@ -263,7 +255,7 @@ def estimate_claude_input_tokens(payload: Mapping[str, JsonValue]) -> int:
 async def responses_to_claude_events(
     source: AsyncIterator[bytes | str], model: str = CCGPT_MODEL, input_tokens_estimate: int = 0
 ) -> AsyncIterator[JsonObject]:
-    """Translate an upstream Responses SSE byte stream into Anthropic Messages events."""
+
     state = _ClaudeStreamState(actual_model=model, input_tokens_estimate=input_tokens_estimate)
     buffer = ""
     async for chunk in source:
@@ -294,11 +286,11 @@ async def format_claude_events(events: AsyncIterator[JsonObject]) -> AsyncIterat
         yield format_sse_event(event)
 
 
-# Anthropic Messages frames that mark the assistant turn as having real, visible
-# content. Once one of these has streamed, a later terminal error is a genuine
-# mid-stream failure and stays in-band; before then, a terminal error must be
-# surfaced as a non-200 HTTP response so Claude Code reactive-compacts instead of
-# creating an assistant turn it will silently drop.
+
+
+
+
+
 _CONTENT_FRAME_TYPES = frozenset({"content_block_start", "content_block_delta"})
 
 _ERROR_STATUS_BY_TYPE: Mapping[str, int] = {
@@ -313,7 +305,7 @@ _ERROR_STATUS_BY_TYPE: Mapping[str, int] = {
 
 
 def anthropic_status_for_error(error_frame: JsonObject) -> int:
-    """Map a translated Anthropic ``error`` frame to an HTTP status code."""
+
     error = error_frame.get("error")
     error_type = error.get("type") if isinstance(error, dict) else None
     if isinstance(error_type, str):
@@ -326,12 +318,12 @@ async def _empty_events() -> AsyncIterator[JsonObject]:
     yield  # pragma: no cover - makes this a (never-yielding) async generator
 
 
-# Claude Code logs a slow first byte after 30 s without a stream chunk and
-# aborts the request (then retries it) after ~180 s without response headers.
-# The startup peek below holds the headers, so it is bounded on both sides:
-# a stream that never produces a frame fails fast with an Anthropic error, and
-# a stream that has started (``message_start`` buffered) but is still reasoning
-# releases its headers after a short grace instead of waiting for content.
+
+
+
+
+
+
 STARTUP_FIRST_FRAME_TIMEOUT_SECONDS = 90.0
 STARTUP_CONTENT_GRACE_SECONDS = 10.0
 
@@ -342,24 +334,7 @@ async def split_startup_error(
     first_frame_timeout_seconds: float = STARTUP_FIRST_FRAME_TIMEOUT_SECONDS,
     content_grace_seconds: float = STARTUP_CONTENT_GRACE_SECONDS,
 ) -> tuple[JsonObject | None, AsyncIterator[JsonObject]]:
-    """Peek the translated stream for a terminal error before any assistant content.
 
-    Claude Code only reactive-compacts on a non-200 HTTP response received before
-    it creates the assistant turn; an ``error`` frame delivered after
-    ``message_start`` under HTTP 200 is silently dropped, so the harness storms
-    identical over-limit retries. The pre-stream HTTP probe upstream of this bridge
-    can miss an overflow that arrives after a fast ``response.created``, leaving it
-    as an in-band ``error`` frame.
-
-    Buffer until the first ``content_block_*`` frame, the first terminal ``error``
-    frame, or the end of the content grace after the first frame, whichever comes
-    first. If the error wins, return it so the caller can surface an HTTP error and
-    drop the stream. Otherwise return a replay iterator that yields the buffered
-    frames then the rest of the stream unchanged, preserving genuine mid-stream
-    failures. If no frame at all arrives within ``first_frame_timeout_seconds``,
-    close the stream and return a timeout error so the client fails fast instead
-    of hanging on a request that upstream never answered.
-    """
     iterator = events.__aiter__()
     loop = asyncio.get_running_loop()
     deadline = loop.time() + first_frame_timeout_seconds
@@ -511,10 +486,10 @@ def _text_message(role: str, text: str) -> JsonObject:
     }
 
 
-# Claude Code's first system block is a billing attestation for Anthropic whose
-# cch/cc_prompt_id change on every request. Leading the GPT instructions, it made
-# every prompt prefix unique: no upstream prompt caching, and a new derived
-# prompt_cache_key (so a new account) on every turn.
+
+
+
+
 BILLING_HEADER_PREFIX = "x-anthropic-billing-header:"
 
 
@@ -608,9 +583,9 @@ class _ClaudeStreamState:
     emitted_text: bool = False
     emitted_tool: bool = False
     actual_model: str = CCGPT_MODEL
-    # Upstream usage arrives only with response.completed, but Claude Code can
-    # record a turn's content blocks with message_start's usage before
-    # message_delta lands; a 0/0 start shows up as "0 tok".
+
+
+
     input_tokens_estimate: int = 0
 
     def consume(self, event: JsonObject) -> list[JsonObject]:
@@ -777,8 +752,8 @@ class _ClaudeStreamState:
             if isinstance(details, dict):
                 cache_tokens = _int_value(details.get("cached_tokens"))
         stop_reason = "tool_use" if self.emitted_tool else "end_turn"
-        # OpenAI's input_tokens include the cached ones; Anthropic's exclude cache
-        # reads. OpenAI does not report cache writes.
+
+
         message_usage: JsonObject = {
             "input_tokens": max(0, input_tokens - cache_tokens),
             "cache_read_input_tokens": cache_tokens,

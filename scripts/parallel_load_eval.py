@@ -1,29 +1,5 @@
 #!/usr/bin/env python3
-"""Parallel-capacity eval: a staircase of concurrent tiny requests per path.
 
-Fires N requests at once (N = 25, 50, 100, 200 by default) on each path and
-records, per step, client latency and time to first byte, errors by type, the
-accounts that served the step, and how much of each request's time was spent
-outside the LB's own request timer. Prompts are "reply ok" with a small token
-cap, so a full staircase costs a few cents.
-
-Each step models one Claude Code session fanning out N subagents: the message
-paths share one session id per step, and every request carries its own prompt
-("reply ok (agent i)"); --same-prompt sends the identical prompt N times instead.
-
-Paths:
-  ccgpt      POST /v1/messages, model luna-latest-low (Claude Code on GPT via the bridge)
-  codex      websocket /backend-api/codex/responses, response.create (how Codex CLI calls it)
-  anthropic  POST /v1/messages, model claude-haiku-4-5
-
-  python3 scripts/parallel_load_eval.py                       # all paths, 25..200
-  python3 scripts/parallel_load_eval.py --paths codex --steps 100,200
-
-The account and LB-timer columns come from the request log; pass the LB's
-database URL in AGENT_LB_DATABASE_URL (never on the command line) to get them.
-Account ids are reported as short hashes. Receipts land in
-~/.agent-lb/evals/parallel-load/receipts/<utc>.json.
-"""
 
 from __future__ import annotations
 
@@ -83,7 +59,7 @@ async def _messages(
         "max_tokens": 16,
         "stream": True,
         "messages": [{"role": "user", "content": _prompt(index, same)}],
-        # One Claude Code session fanning out N subagents: shared session id.
+
         "metadata": {"user_id": json.dumps({"session_id": session_id})},
     }
     headers = {"content-type": "application/json", "anthropic-version": "2023-06-01", "user-agent": USER_AGENT}
@@ -109,7 +85,7 @@ async def _messages(
                     kind = event.get("type")
                     if kind == "message_start":
                         message_id = str(event.get("message", {}).get("id", ""))
-                        # The GPT bridge logs the upstream response id; its message id carries it.
+
                         if message_id.startswith("msg_") and path == "ccgpt":
                             res.request_ids.append("resp_" + message_id[4:])
                     elif kind == "content_block_delta":
@@ -209,7 +185,7 @@ def _error_code(detail: str) -> str:
 
 
 async def _sample_loop_lag(base: str, session: aiohttp.ClientSession, stop: asyncio.Event, out: list[float]) -> None:
-    """Poll the LB's event-loop lag gauge (metrics port 9090) while a step runs."""
+
     url = os.environ.get("AGENT_LB_METRICS_URL", "http://127.0.0.1:9090/metrics")
     while not stop.is_set():
         try:
@@ -229,10 +205,10 @@ async def _log_rows(request_ids: list[str]) -> dict[str, dict[str, Any]]:
     dsn = os.environ.get("AGENT_LB_DATABASE_URL", "")
     if not dsn or not request_ids:
         return {}
-    import asyncpg  # the LB's own venv has it
+    import asyncpg
 
     dsn = dsn.replace("postgresql+asyncpg://", "postgresql://")
-    for _ in range(10):  # request logs are written asynchronously after the stream ends
+    for _ in range(10):
         conn = await asyncpg.connect(dsn)
         try:
             rows = await conn.fetch(

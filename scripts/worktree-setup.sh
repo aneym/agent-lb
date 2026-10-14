@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run from any directory; existing local environments are deliberately retained.
+
 exec python3 - "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)" <<'PY'
 import fcntl
 import hashlib

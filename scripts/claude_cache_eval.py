@@ -1,29 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end prompt-cache eval for Claude Code through agent-lb.
 
-Runs a real headless Claude Code session through `claude-lb-launch`: a few main
-turns, one subagent with several turns, then more main turns. It then reads the
-session's own transcripts and checks that every steady turn (not the first call
-of a conversation) read its context from cache instead of rewriting it.
-
-A turn "busts" when it writes more than 20k tokens and more than half its
-context to cache: the cached prefix changed and the whole context was paid for
-again. Pass = no busts and every conversation made at least 3 calls.
-
-`--arm sdk` drives the same launcher through `@anthropic-ai/claude-agent-sdk`
-(one process for T1–T4, then a resumed process for T5). A T3 bust, or T3 with
-no usage records, fails that arm; idle and resume are reported and do not fail
-the run. The sdk arm reads transcripts from `--config-dir` (default ~/.claude)
-and ignores an inherited CLAUDE_CONFIG_DIR; the cli arm still honors that env.
-
-Run after any deploy that touches app/core/anthropic or app/modules/proxy:
-
-    python3 scripts/claude_cache_eval.py            # sonnet, cheap
-    python3 scripts/claude_cache_eval.py --model opus
-
-Writes a JSON receipt to ~/.agent-lb/evals/cache-eval/receipts/ and exits 1 on
-failure. Costs one short session (about 250k cached tokens, mostly reads).
-"""
 
 from __future__ import annotations
 

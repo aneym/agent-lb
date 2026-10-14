@@ -1,7 +1,4 @@
-"""Real CLI and reservation HTTP service: pool health cannot hide an actual full
-lease. Existing reserve tests deliberately used an advisory-only pick contract;
-this regression protects the new board item 5 contract, without mocking our code.
-"""
+
 import json
 import subprocess
 import sys
@@ -15,7 +12,7 @@ from tests.unit.test_route_ladder import SCRIPT
 
 def test_pick_skips_a_vendor_whose_reservation_refuses(tmp_path: Path, server: str):  # noqa: F811
     env = scenario_env(tmp_path, server, "pick-leases")
-    # Put Devin first, independent of changing weekly pace, with Sol as fallback.
+
     table = Path(env["ROUTE_TABLE"])
     policy = json.loads(table.read_text())
     rungs = {row["id"]: row for row in policy["ladders"][policy["ladder"]]["implement"]}
@@ -48,11 +45,7 @@ def test_pick_skips_a_vendor_whose_reservation_refuses(tmp_path: Path, server: s
 
 @pytest.mark.parametrize("snapshot", [None, {"live": []}])
 def test_fixture_pick_ignores_live_holds(tmp_path: Path, server: str, snapshot: dict | None):  # noqa: F811
-    """The real CLI must use fixture leases, even when the HTTP service holds Devin full.
 
-    Guards fixture isolation and ledger ownership at the subprocess boundary;
-    the live fallback test above separately owns actual lease admission.
-    """
     env = scenario_env(tmp_path, server, "fixture-isolation")
     table = Path(env["ROUTE_TABLE"])
     policy = json.loads(table.read_text())

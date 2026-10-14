@@ -31,13 +31,7 @@ router = APIRouter(
 
 
 def _require_oauth_owner() -> None:
-    """Block OAuth on a federation follower.
 
-    A follower mirrors the owner's accounts but never receives refresh
-    tokens for them (app/modules/federation/schemas.py), so completing OAuth
-    here would persist a local-only credential the owner can never pick up.
-    Fail visibly and point at the owner instead of silently accepting it.
-    """
     peer_url = get_settings().federation_peer_url
     if peer_url:
         raise DashboardConflictError(

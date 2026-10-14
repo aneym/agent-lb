@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate that GitHub commit contributors are listed in all-contributors."""
+
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def fetch_contributor_logins(repository: str, token: str | None) -> set[str]:
 
 
 def local_commit_author_logins() -> set[str]:
-    """Best-effort local check for PR commits that are not in GitHub contributors yet."""
+
     try:
         result = subprocess.run(
             ["git", "log", "--format=%ae", "--no-merges"],

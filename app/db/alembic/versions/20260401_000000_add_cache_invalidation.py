@@ -1,9 +1,4 @@
-"""add cache invalidation table
 
-Revision ID: 20260401_000000_add_cache_invalidation
-Revises: 20260330_020000_add_bridge_ring_members
-Create Date: 2026-04-01
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260401_000000_add_cache_invalidation"
 down_revision = "20260330_020000_add_bridge_ring_members"
 branch_labels = None

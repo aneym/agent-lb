@@ -1,9 +1,4 @@
-"""add api_key_limits reset_at index
 
-Revision ID: 20260423_120000_add_api_key_limit_reset_at_index
-Revises: 20260421_120000_merge_request_log_lookup_and_plan_type_heads
-Create Date: 2026-04-23
-"""
 
 from __future__ import annotations
 

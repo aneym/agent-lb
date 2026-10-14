@@ -1,9 +1,4 @@
-"""soft delete request_logs on account delete
 
-Revision ID: 20260515_000000_soft_delete_request_logs_on_account_delete
-Revises: 20260514_000000_add_request_logs_api_key_time_index
-Create Date: 2026-05-15
-"""
 
 from __future__ import annotations
 

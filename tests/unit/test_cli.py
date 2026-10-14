@@ -17,8 +17,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def _stub_runtime_logging(monkeypatch):
-    """cli.main() configures process-wide logging; keep that out of the test
-    process unless a test replaces the stub itself."""
+
     monkeypatch.setattr(cli, "_configure_logging", lambda: {})
 
 
@@ -46,8 +45,8 @@ def test_main_passes_timestamped_log_config(monkeypatch):
 
     kwargs = captured["kwargs"]
     assert isinstance(kwargs, dict)
-    # The CLI applies the config itself (its queue listeners must be started
-    # in-process); uvicorn must not re-apply one.
+
+
     assert kwargs["log_config"] is None
     assert len(applied) == 1
     formatters = applied[0]["formatters"]

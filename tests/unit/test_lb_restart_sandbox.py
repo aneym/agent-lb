@@ -1,9 +1,4 @@
-"""lb-restart --sandbox: the guard and the constant rebinding.
 
-Unit level on purpose: the guard is a decision table with many edge cases, and
-a CLI test that got past a broken guard could restart the live agent-lb. The
-real restart of a sandbox is proven by scripts/lb-sandbox-check on Studio.
-"""
 
 from __future__ import annotations
 
@@ -119,7 +114,7 @@ def test_sandbox_root_must_be_below_sandboxes(tmp_path: Path) -> None:
         tmp_path / ".agent-lb" / "runtime",
         tmp_path / ".agent-lb" / "sandboxes" / "r1" / "nested",
     ):
-        # Paths relative to the root, so only the root rule can refuse (not a path outside it).
+
         inside = {"plist": "launchd/x.plist", "runtime": "runtime", "state_dir": "state"}
         with pytest.raises(lb.SandboxRefused, match="not directly under|not under"):
             lb.sandbox_bindings(_config(tmp_path, root=str(root), **inside), home=tmp_path)
@@ -148,7 +143,7 @@ def test_sandbox_guard_refuses_symlinks_out_of_the_root(tmp_path: Path, planted:
 
 @pytest.mark.parametrize("flags", [["--reload-plist"], ["--backup", "/tmp/x"], ["--from", "/tmp", "--files", "a"]])
 def test_sandbox_flag_refuses_live_deploy_flags(tmp_path: Path, flags: list[str]) -> None:
-    # The config does not exist, so a broken flag check still stops at the config guard, never at the live LB.
+
     proc = subprocess.run(
         [sys.executable, str(SCRIPT), "--reason", "unit", "--sandbox", str(tmp_path / "missing.json"), *flags],
         capture_output=True,
@@ -167,7 +162,7 @@ def test_sandbox_mode_signals_only_processes_of_its_root(tmp_path: Path) -> None
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", str(tmp_path / "elsewhere")])
     mine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", str(root / "runtime")])
     try:
-        assert lb.owned_by_sandbox(other.pid) is True  # no --sandbox: lb-restart behaves as before
+        assert lb.owned_by_sandbox(other.pid) is True
         lb.__dict__.update(lb.sandbox_bindings(_config(tmp_path), home=tmp_path))
         assert lb.owned_by_sandbox(other.pid) is False
         assert lb.owned_by_sandbox(mine.pid) is True
@@ -177,7 +172,7 @@ def test_sandbox_mode_signals_only_processes_of_its_root(tmp_path: Path) -> None
             proc.wait(10)
 
 
-# ---------------------------------------------------------------- fix round 2 (review FAIL on 41a2f667)
+
 
 
 @pytest.mark.parametrize(
@@ -192,7 +187,7 @@ def test_sandbox_mode_signals_only_processes_of_its_root(tmp_path: Path) -> None
     ],
 )
 def test_sandbox_guard_refuses_hard_links_to_live_state(tmp_path: Path, planted: str) -> None:
-    """Finding: an in-root lb-restart.lock hard-linked to the live front-preferred-port passed the path guard."""
+
     lb = _load()
     root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
     live = tmp_path / ".agent-lb" / "state" / "front-preferred-port"
@@ -206,17 +201,17 @@ def test_sandbox_guard_refuses_hard_links_to_live_state(tmp_path: Path, planted:
 
 
 def test_lock_taken_after_the_guard_never_truncates_a_hard_link(tmp_path: Path) -> None:
-    """The same link planted after the guard ran: lock acquisition refuses instead of overwriting live state."""
+
     lb = _load()
     root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
     root.mkdir(parents=True, mode=0o700)
-    root.chmod(0o700)  # as lb-sandbox start makes it; the pinned root must be 0700 and ours
-    root.parent.chmod(0o700)  # and the sandboxes dir, whatever the umask
+    root.chmod(0o700)
+    root.parent.chmod(0o700)
     live = tmp_path / ".agent-lb" / "state" / "front-preferred-port"
     live.parent.mkdir(parents=True)
     live.write_text("2457\n")
     lb.__dict__.update(lb.sandbox_bindings(_config(tmp_path), home=tmp_path))
-    lb._root_on_own_volume = lambda root_info, sandboxes_info: True  # a tmp dir; see _apply
+    lb._root_on_own_volume = lambda root_info, sandboxes_info: True
     os.link(live, root / "lb-restart.lock")
     with pytest.raises(lb.SandboxRefused):
         with lb.Lock("unit", 1):
@@ -224,17 +219,15 @@ def test_lock_taken_after_the_guard_never_truncates_a_hard_link(tmp_path: Path) 
     (root / "state").mkdir()
     os.link(live, root / "state" / "front-preferred-port.tmp")
     with pytest.raises(lb.SandboxRefused):
-        lb.set_preferred(2472)  # its temp file, hard-linked to live state, must not be truncated
+        lb.set_preferred(2472)
     assert live.read_text() == "2457\n"
     os.unlink(root / "lb-restart.lock")
-    with lb.Lock("unit", 1):  # control: a fresh lock of its own is taken
+    with lb.Lock("unit", 1):
         pass
 
 
 def test_state_writes_never_follow_a_state_dir_swapped_for_a_link(tmp_path: Path) -> None:
-    """Finding: with state/ swapped for a link to live state after the guard, the absolute-path rename replaced
-    the live front-preferred-port and the pidfile cleanup unlinked the live lb-standby.pid. Both now go through
-    a descriptor for the real state dir under the root, and refuse a link."""
+
     lb = _load()
     root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
     (root / "state").mkdir(parents=True)
@@ -244,7 +237,7 @@ def test_state_writes_never_follow_a_state_dir_swapped_for_a_link(tmp_path: Path
     for name, text in files.items():
         (live / name).write_text(text)
     lb.__dict__.update(lb.sandbox_bindings(_config(tmp_path), home=tmp_path))
-    lb._root_on_own_volume = lambda root_info, sandboxes_info: True  # a tmp dir; see _apply
+    lb._root_on_own_volume = lambda root_info, sandboxes_info: True
     (root / "state").rmdir()
     (root / "state").symlink_to(live, target_is_directory=True)
     with pytest.raises(lb.SandboxRefused):
@@ -255,8 +248,7 @@ def test_state_writes_never_follow_a_state_dir_swapped_for_a_link(tmp_path: Path
 
 
 def _bootstrap(home: Path) -> Path:
-    """A stand-in for the lb-sandbox installed beside lb-restart (never run here): a private single-link file
-    outside the sandboxes. Tests point lb.sandbox_bootstrap at it; a checkout may be group-writable."""
+
     path = home / "installed-bin" / "lb-sandbox"
     if not os.path.lexists(path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -317,14 +309,14 @@ def _plist(root: Path, **overrides) -> dict:
         {"ProgramArguments": ["/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb", "--port", "2471"]},
         {"Label": "com.aneyman.agent-lb"},
         {"WorkingDirectory": "/h/.agent-lb/runtime/agent-lb"},
-        # S2 fix round: a live port without a scheme, a path that climbs out, a key launchd runs instead.
+
         {"env": {"AGENT_LB_FEDERATION_PEER_HOST": "127.0.0.1:2457"}},
         {"env": {"AGENT_LB_PORT": "2455"}},
         {"env": {"AGENT_LB_FEDERATION_PUSH_PATH": "../../../../state/federation-push.json"}},
         {"env": {"AGENT_LB_CONVERSATION_ARCHIVE_DIR": "~/.agent-lb/conversation-archive"}},
         {"Program": "/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb"},
         {"StandardOutPath": "/h/.agent-lb/agent-lb.log"},
-        # S2-3 (M1): code loaded into the interpreter before any guard: a library, a startup hook, a module path.
+
         {"env": {"DYLD_INSERT_LIBRARIES": "lib/hook.dylib"}},
         {"env": {"PYTHONSTARTUP": "runtime/hook.py"}},
         {"env": {"PYTHONPATH": "runtime/elsewhere"}},
@@ -332,16 +324,16 @@ def _plist(root: Path, **overrides) -> dict:
     ],
 )
 def test_sandbox_plist_must_run_serve_against_its_own_store(tmp_path: Path, overrides: dict) -> None:
-    """Finding: an in-root plist with a live DB URL or key path was trusted, so the standby booted on live."""
+
     lb = _load()
     root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
     _use_bootstrap(lb, root.parent.parent.parent)
-    lb.check_sandbox_plist(_plist(root), root, "com.agent-lb.drill.sbx-r1", 2471)  # control
+    lb.check_sandbox_plist(_plist(root), root, "com.agent-lb.drill.sbx-r1", 2471)
     with pytest.raises(lb.SandboxRefused):
         lb.check_sandbox_plist(_plist(root, **overrides), root, "com.agent-lb.drill.sbx-r1", 2471)
 
 
-# ---------------------------------------------------------------- S2 fix round (lb-restart only)
+
 
 
 def _load_sandbox() -> ModuleType:
@@ -355,12 +347,11 @@ def _load_sandbox() -> ModuleType:
 
 
 def test_the_plist_lb_sandbox_writes_passes_the_restart_guard(tmp_path: Path) -> None:
-    """Parity: the stricter guard must still accept the plist lb-sandbox start writes, or every
-    sandbox restart refuses. A new env var in lb-sandbox that names a live port or an outside path fails here."""
+
     lb, lbs = _load(), _load_sandbox()
     root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
     root.mkdir(parents=True, mode=0o700)
-    root.parent.chmod(0o700)  # lb-sandbox start makes the sandboxes dir 0700, whatever the umask
+    root.parent.chmod(0o700)
     ports = {"front": 2470, "primary": 2471, "standby": 2472, "gate": 2473, "edge_anthropic": 2474, "edge_openai": 2475}
     primary, _aux = lbs.write_plists(root, "r1", ports, "http")
     data = plistlib.loads(primary.read_bytes())
@@ -371,10 +362,7 @@ def test_the_plist_lb_sandbox_writes_passes_the_restart_guard(tmp_path: Path) ->
 def test_the_standby_runs_only_the_installed_lb_sandbox(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plant: str
 ) -> None:
-    """M2 (S2-3, lb-restart:1007,256): the standby ran <root>/bin/lb-sandbox, checked for shape (one link, a
-    regular file) but not identity, so a regular Python file put there wrote live state before any confinement.
-    The program is now the lb-sandbox installed beside lb-restart, outside every root; a plist naming the root's
-    copy is refused, and the installed file must be a private single-link regular file. Popen is the OS edge."""
+
     lb = _load()
     config = _built_sandbox(tmp_path)
     root = config.parent
@@ -385,12 +373,12 @@ def test_the_standby_runs_only_the_installed_lb_sandbox(
         pid = 424242
 
     monkeypatch.setattr(lb.subprocess, "Popen", lambda args, **kwargs: started.append(list(args)) or _Proc())
-    lb.start_standby(1)  # control: the installed lb-sandbox, run with -I
+    lb.start_standby(1)
     assert started and started[0][1:4] == ["-I", str(_bootstrap(tmp_path)), "_serve"]
     started.clear()
     installed = _bootstrap(tmp_path)
     if plant == "in-root-copy":
-        # A regular single-link Python file in the root that would write live state (text only, never run).
+
         (root / "bin").mkdir()
         (root / "bin" / "lb-sandbox").write_text("open('/h/.agent-lb/state/front-preferred-port', 'w')\n")
         plist = _plist(root)
@@ -410,8 +398,7 @@ def test_the_standby_runs_only_the_installed_lb_sandbox(
 
 
 def test_the_restart_guard_refuses_a_bootstrap_inside_the_sandboxes_dir(tmp_path: Path) -> None:
-    """M2: even named as the installed copy, a bootstrap that sits inside the sandboxes dir is the root's to
-    rewrite and is refused."""
+
     lb = _load()
     root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
     (root / "bin").mkdir(parents=True)
@@ -422,17 +409,13 @@ def test_the_restart_guard_refuses_a_bootstrap_inside_the_sandboxes_dir(tmp_path
     with pytest.raises(lb.SandboxRefused, match="inside the sandboxes dir"):
         lb.check_sandbox_bootstrap(root)
     _use_bootstrap(lb, tmp_path)
-    lb.check_sandbox_bootstrap(root)  # control
+    lb.check_sandbox_bootstrap(root)
 
 
 def test_a_startup_hook_planted_on_the_plist_pythonpath_never_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """M1 (S2-3, lb-restart:1013, lb-sandbox:1555): the plist's PYTHONPATH names <root>/runtime, so a planted
-    <root>/runtime/sitecustomize.py ran at interpreter start, before _serve or _boot reached a guard. Integration
-    with the real interpreter: the argv and env start_standby builds are run with the stand-in interpreter
-    swapped for this one and the bootstrap for a script that only reports it ran. The hook must not run; the
-    control (the same argv without -I) shows the plant would have fired."""
+
     lb = _load()
     config = _built_sandbox(tmp_path)
     root = config.parent
@@ -448,7 +431,7 @@ def test_a_startup_hook_planted_on_the_plist_pythonpath_never_runs(
 
     monkeypatch.setattr(lb.subprocess, "Popen", record)
     lb.start_standby(1)
-    monkeypatch.undo()  # the real Popen again, for the real interpreter below
+    monkeypatch.undo()
     args, env = built[0]
     assert env["PYTHONPATH"] == str(root / "runtime") and args[1] == "-I"
     hook_ran, script_ran = tmp_path / "hook-ran", tmp_path / "script-ran"
@@ -461,28 +444,26 @@ def test_a_startup_hook_planted_on_the_plist_pythonpath_never_runs(
 
     run([sys.executable, args[1], str(script), *args[3:]])
     assert script_ran.exists() and not hook_ran.exists(), "a planted sitecustomize.py ran before any guard"
-    run([sys.executable, str(script), *args[3:]])  # control: without -I the plant fires
+    run([sys.executable, str(script), *args[3:]])
     assert hook_ran.exists()
 
 
-# ---------------------------------------------------------------- S2 fix round 3 (review FAIL on ea866e22)
+
 
 
 def _venv_python(home: Path) -> Path:
-    """Where the installed runtime's venv python sits for this home (what every sandbox job must run)."""
+
     return home / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
 
 
 def _native_head() -> bytes:
-    """The first bytes of the interpreter running this test: what a native executable starts with here."""
+
     with open(os.path.realpath(sys.executable), "rb") as fh:
         return fh.read(4)
 
 
 def _install_venv_python(home: Path) -> Path:
-    """A stand-in for the installed venv's interpreter (never run here): bin/python -> a private file outside the
-    sandboxes that starts like a native executable, in the dir the venv's pyvenv.cfg names as its home, as the
-    real venv's python leads to its base interpreter."""
+
     python = _venv_python(home)
     python.parent.mkdir(parents=True, exist_ok=True)
     base = home / "base-python" / "python3"
@@ -491,13 +472,13 @@ def _install_venv_python(home: Path) -> Path:
     base.write_bytes(_native_head() + bytes(60))
     base.chmod(0o755)
     (python.parent.parent / "pyvenv.cfg").write_text(f"home = {base.parent}\nversion_info = 3.14\n")
-    (python.parent.parent / "pyvenv.cfg").chmod(0o644)  # what a venv writes, whatever the umask
+    (python.parent.parent / "pyvenv.cfg").chmod(0o644)
     python.symlink_to(base)
     return python
 
 
 def _built_sandbox(tmp_path: Path, name: str = "r1") -> Path:
-    """A sandbox laid out as lb-sandbox start leaves it (config, plist, bootstrap); returns the config path."""
+
     root = tmp_path / ".agent-lb" / "sandboxes" / name
     config = _config(
         tmp_path,
@@ -507,8 +488,8 @@ def _built_sandbox(tmp_path: Path, name: str = "r1") -> Path:
         state_dir=str(root / "state"),
     )
     (root / "launchd").mkdir(parents=True)
-    root.chmod(0o700)  # lb-sandbox start makes the root 0700; the pinned root must be
-    root.parent.chmod(0o700)  # and the sandboxes dir 0700, whatever the umask
+    root.chmod(0o700)
+    root.parent.chmod(0o700)
     (root / "runtime").mkdir()
     Path(config["plist"]).write_bytes(plistlib.dumps(_plist(root)))
     if not os.path.lexists(_venv_python(tmp_path)):
@@ -519,10 +500,7 @@ def _built_sandbox(tmp_path: Path, name: str = "r1") -> Path:
 
 
 def _apply(lb: ModuleType, config: Path, home: Path, own_volume: bool = True) -> None:
-    """apply_sandbox with the test's home in place of the real one (the guard reads it from pwd).
 
-    own_volume: these roots are plain directories in tmp_path, so the rule that a root is its own volume (an
-    attached image, as lb-sandbox start leaves it) is taken as met; its own tests below pass False and mount one."""
     lb._real_home = lambda: home
     _use_bootstrap(lb, home)
     if own_volume:
@@ -531,12 +509,10 @@ def _apply(lb: ModuleType, config: Path, home: Path, own_volume: bool = True) ->
 
 
 def test_a_sandboxes_dir_swapped_for_a_link_after_the_guard_never_reaches_live_state(tmp_path: Path) -> None:
-    """Finding (lb-restart:333): a valid sandbox named 'runtime'; after validation the sandboxes dir becomes a
-    link to ~/.agent-lb, so <root>/lb-restart.lock names the live runtime/lb-restart.lock, which lock
-    acquisition truncated. Every write now goes through the pinned root, and exec-by-path is refused."""
+
     lb = _load()
     config = _built_sandbox(tmp_path, "runtime")
-    live = tmp_path / ".agent-lb" / "runtime"  # the live runtime dir the swapped path would name
+    live = tmp_path / ".agent-lb" / "runtime"
     live.mkdir(exist_ok=True)
     for name, text in (("lb-restart.lock", "pid=1 live\n"), ("sync.log", "live log\n")):
         (live / name).write_text(text)
@@ -545,7 +521,7 @@ def test_a_sandboxes_dir_swapped_for_a_link_after_the_guard_never_reaches_live_s
     sandboxes = tmp_path / ".agent-lb" / "sandboxes"
     sandboxes.rename(tmp_path / ".agent-lb" / "moved")
     sandboxes.symlink_to(tmp_path / ".agent-lb")
-    # Every state operation re-checks that the root path still names the pinned root (S2-2): the run stops.
+
     with pytest.raises(lb.SandboxRefused):
         with lb.Lock("unit", 1):
             pass
@@ -555,13 +531,12 @@ def test_a_sandboxes_dir_swapped_for_a_link_after_the_guard_never_reaches_live_s
     assert (live / "sync.log").read_text() == "live log\n"
     assert not (tmp_path / ".agent-lb" / "moved" / "runtime" / "logs").exists()
     with pytest.raises(lb.SandboxRefused):
-        lb.verify_sandbox_ancestry()  # what start_standby runs before it execs anything by path
+        lb.verify_sandbox_ancestry()
 
 
 @pytest.mark.parametrize("via", ["moved", "sandboxes"])
 def test_a_sandboxes_dir_that_is_already_a_link_is_refused(tmp_path: Path, via: str) -> None:
-    """The same swap before the guard: resolving made ~/.agent-lb/runtime look directly under the sandboxes.
-    via: the config named where it was moved, or by its own path through the link (which names live runtime)."""
+
     lb = _load()
     _built_sandbox(tmp_path, "runtime")
     sandboxes = tmp_path / ".agent-lb" / "sandboxes"
@@ -580,8 +555,7 @@ def test_a_sandboxes_dir_that_is_already_a_link_is_refused(tmp_path: Path, via: 
     "planted", ["lb-restart.lock", "state/front.json", "watchdog.pause", "launchd/com.agent-lb.drill.sbx-r1.plist"]
 )
 def test_an_in_root_symlink_is_refused_before_anything_is_written(tmp_path: Path, planted: str) -> None:
-    """Finding (lb-restart:176): the guard resolved paths first, so lb-restart.lock -> lb-restart.json passed
-    as an in-root single-link file and lock acquisition overwrote the config. The link itself is refused."""
+
     lb = _load()
     config = _built_sandbox(tmp_path)
     root = config.parent
@@ -626,8 +600,7 @@ def test_an_in_root_symlink_planted_after_the_guard_is_refused_at_use(tmp_path: 
     ],
 )
 def test_the_reaper_refuses_any_argument_list_it_did_not_write(tmp_path: Path, argv: list[str]) -> None:
-    """Finding (lb-restart:874): '--reap <live standby pid> 0 --sandbox=<config>' skipped binding, kept the live
-    standby port and SIGKILLed the live standby. A stand-in that looks like the live standby must survive."""
+
     standin = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)", "agent-lb", "--port", "2459"],
         start_new_session=True,
@@ -640,7 +613,7 @@ def test_the_reaper_refuses_any_argument_list_it_did_not_write(tmp_path: Path, a
             text=True,
             timeout=60,
             check=False,
-            env={**os.environ, "HOME": str(tmp_path)},  # a broken parser logs to this home, never the live one
+            env={**os.environ, "HOME": str(tmp_path)},
         )
         assert proc.returncode == 2, proc.stderr
         assert standin.poll() is None, "the stand-in standby was signalled"
@@ -658,11 +631,11 @@ def test_the_reaper_reads_back_exactly_what_spawn_reaper_writes() -> None:
             lb.parse_reaper_args(bad)
 
 
-# ---------------------------------------------------------------- S2-2 fix round (M5, Codex live-safety review of S1)
+
 
 
 def _live_state(tmp_path: Path) -> Path:
-    """A stand-in for the live ~/.agent-lb/state: a preference, a leftover preference temp file and a pidfile."""
+
     live = tmp_path / ".agent-lb" / "state"
     live.mkdir(parents=True)
     (live / "front-preferred-port").write_text("2457\n")
@@ -674,9 +647,7 @@ def _live_state(tmp_path: Path) -> Path:
 def test_a_state_dir_swapped_between_write_and_rename_never_replaces_the_live_preference(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """M5 (lb-restart:484): after the temp file is written, state/ becomes a link to the live state dir. A rename
-    by path then moved the live front-preferred-port.tmp over the live preference. The rename now goes through
-    the state dir's descriptor (the real sandbox dir), and the swap is refused."""
+
     lb = _load()
     config = _built_sandbox(tmp_path)
     root = config.parent
@@ -697,26 +668,25 @@ def test_a_state_dir_swapped_between_write_and_rename_never_replaces_the_live_pr
     monkeypatch.setattr(os, "replace", real_replace)
     assert (live / "front-preferred-port").read_text() == "2457\n"
     assert (live / "front-preferred-port.tmp").read_text() == "2459\n"
-    assert (root / "state.moved" / "front-preferred-port").read_text() == "2472\n"  # renamed in the sandbox's own dir
+    assert (root / "state.moved" / "front-preferred-port").read_text() == "2472\n"
 
 
 def test_a_state_dir_swapped_before_pidfile_cleanup_never_unlinks_the_live_pidfile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """M5 (lb-restart:1028): state/ swapped for a link to the live state dir before the standby pidfile is
-    cleaned up. An unlink by path removed the live lb-standby.pid; now the walk refuses the link."""
+
     lb = _load()
     config = _built_sandbox(tmp_path)
     root = config.parent
     live = _live_state(tmp_path)
     _apply(lb, config, tmp_path)
-    monkeypatch.setattr(lb, "listener_pid", lambda port: None)  # no standby left: the cleanup-only branch
+    monkeypatch.setattr(lb, "listener_pid", lambda port: None)
     (root / "state").symlink_to(live)
     with pytest.raises(lb.SandboxRefused):
         lb.stop_leftover_standby(0)
     assert (live / "lb-standby.pid").read_text() == "4242\n"
     with pytest.raises(lb.SandboxRefused):
-        lb.front_routes_to(2471, timeout=0)  # a read through the swapped dir is refused too
+        lb.front_routes_to(2471, timeout=0)
 
 
 def test_a_hard_linked_pidfile_is_refused_not_removed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -734,13 +704,13 @@ def test_a_hard_linked_pidfile_is_refused_not_removed(tmp_path: Path, monkeypatc
     assert (root / "state" / "lb-standby.pid").exists()
     (root / "state" / "lb-standby.pid").unlink()
     (root / "state" / "lb-standby.pid").write_text("1\n")
-    lb.stop_leftover_standby(0)  # control: its own single-link pidfile is removed
+    lb.stop_leftover_standby(0)
     assert not (root / "state" / "lb-standby.pid").exists()
 
 
 @pytest.mark.parametrize("which,mode", [("root", 0o755), ("root", 0o710), ("sandboxes", 0o777)])
 def test_a_root_lb_sandbox_did_not_make_is_refused(tmp_path: Path, which: str, mode: int) -> None:
-    """p13D: the root must be one lb-sandbox made (0700, ours) in a sandboxes dir no one else can write."""
+
     lb = _load()
     config = _built_sandbox(tmp_path)
     before = config.read_bytes()
@@ -753,14 +723,14 @@ def test_a_root_lb_sandbox_did_not_make_is_refused(tmp_path: Path, which: str, m
         target.chmod(0o700)
     assert lb.SANDBOX_ROOT is None and lb.LOCK_FILE == lb.LIVE_BINDINGS["LOCK_FILE"]
     assert not (config.parent / "lb-restart.lock").exists() and config.read_bytes() == before
-    _apply(lb, config, tmp_path)  # control: the same root at 0700 is accepted
+    _apply(lb, config, tmp_path)
     with lb.Lock("unit", 1):
         pass
 
 
-# ---------------------------------------------------------------- S2-2 fix round 4 (live-safety review, cf915e10)
 
-# What a shim on the interpreter path would run: a kickstart of the live service (text only, never executed).
+
+
 SHIM_BODY = "#!/bin/sh\nlaunch" + "ctl kick" + "start -k gui/$UID/com.aneyman.agent-lb\n"
 
 
@@ -771,13 +741,7 @@ SHIM_BODY = "#!/bin/sh\nlaunch" + "ctl kick" + "start -k gui/$UID/com.aneyman.ag
 def test_a_shim_on_the_interpreter_path_is_refused_and_never_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shim: str
 ) -> None:
-    """M1 (lb-restart:285,969): the guard checked only the text <root>/runtime/.venv/bin/python, so a shim there
-    (one that kickstarts the live agent-lb) passed and Popen ran it. The program is now the installed venv's
-    python and what it leads to is checked just before the exec. subprocess.Popen is the OS edge, recorded.
 
-    S2-3 (M3, lb-restart:294): a private same-user mode-0755 shell script outside the sandboxes passed every
-    shape check. The interpreter is now checked for identity: a native executable in the dir the venv's
-    pyvenv.cfg names, so a script (private-script) or a native file anywhere else (native-elsewhere) is refused."""
     lb = _load()
     config = _built_sandbox(tmp_path)
     root = config.parent
@@ -792,7 +756,7 @@ def test_a_shim_on_the_interpreter_path_is_refused_and_never_run(
         return _Proc()
 
     monkeypatch.setattr(lb.subprocess, "Popen", record)
-    lb.start_standby(1)  # control: the installed venv's python is accepted
+    lb.start_standby(1)
     assert [args[0] for args in started] == [str(_venv_python(tmp_path))]
     started.clear()
     shim_file = root / "shim"
@@ -842,9 +806,7 @@ def test_a_shim_on_the_interpreter_path_is_refused_and_never_run(
 def test_a_kickstart_never_runs_a_loaded_job_on_another_interpreter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """M1, launchd's side: a kickstart execs the job launchd loaded, not the plist file. The loaded job's program
-    and arguments (from the job manager's print, the OS edge, faked here) must be the checked interpreter on
-    `lb-sandbox _serve <root>`, else nothing is kickstarted."""
+
     lb = _load()
     config = _built_sandbox(tmp_path)
     root = config.parent
@@ -860,14 +822,14 @@ def test_a_kickstart_never_runs_a_loaded_job_on_another_interpreter(
 
     monkeypatch.setattr(lb.subprocess, "run", job_print)
     monkeypatch.setattr(lb.subprocess, "Popen", lambda argv, **kwargs: kicked.append(list(argv)))
-    lb.kickstart_primary(wait=False)  # control
+    lb.kickstart_primary(wait=False)
     assert len(kicked) == 1 and kicked[0][-1] == f"gui/{os.getuid()}/{lb.LABEL}"
     kicked.clear()
     in_root = str(root / "runtime" / ".venv" / "bin" / "python")
     for program, arguments in (
         (in_root, [in_root, *shown["arguments"][1:]]),
         (python, [python, "/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb", "--port", "2471"]),
-        # S2-3: a job loaded without -I (a planted sitecustomize.py runs) or on the root's own copy (M2).
+
         (python, [python, str(_bootstrap(tmp_path)), "_serve", str(root)]),
         (python, [python, "-I", str(root / "bin" / "lb-sandbox"), "_serve", str(root)]),
     ):
@@ -880,9 +842,7 @@ def test_a_kickstart_never_runs_a_loaded_job_on_another_interpreter(
 def test_front_state_replaced_between_open_and_fstat_is_read_not_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression (09a842e65..cf915e10, lb-restart:564): the front replaces front.json atomically
-    (agent-lb-front.mjs:191). Replaced after our open, the inode we hold has st_nlink 0, which read as "not a
-    single link" and made a legitimate sandbox restart exit 2. A second hard link is still refused."""
+
     lb = _load()
     config = _built_sandbox(tmp_path)
     root = config.parent
@@ -896,7 +856,7 @@ def test_front_state_replaced_between_open_and_fstat_is_read_not_refused(
     def open_then_front_replaces(path, flags, *args, **kwargs):
         fd = real_open(path, flags, *args, **kwargs)
         if path == "front.json" and not replaced:
-            replaced.append(True)  # what the front does: write front.json.tmp, rename over front.json
+            replaced.append(True)
             (state / "front.json.tmp").write_text('{"preferred": 2472}')
             os.replace(state / "front.json.tmp", state / "front.json")
         return fd
@@ -910,15 +870,13 @@ def test_front_state_replaced_between_open_and_fstat_is_read_not_refused(
         lb.read_state(lb.FRONT_STATE)
 
 
-# ---------------------------------------------------------------- lbsb-4 fix round (S2-3 review, parked findings)
+
 
 
 def _job_print(
     label: str, plist: dict, program: str | None = None, arguments: list[str] | None = None, submitted: bool = False
 ) -> str:
-    """`launchctl print gui/<uid>/<label>` for a job loaded from plist, in the layout launchd prints on macOS 26
-    (taken from a real print of a throwaway com.agent-lb.drill.* job): program and arguments, working directory,
-    stream paths, the three environment blocks, then launchd's own fields."""
+
     argv = arguments if arguments is not None else list(plist["ProgramArguments"])
     lines = [f"gui/{os.getuid()}/{label} = {{", "\tactive count = 0", "\tpath = /x/job.plist", "\ttype = LaunchAgent"]
     lines += ["\tstate = not running", "", f"\tprogram = {program or argv[0]}", "\targuments = {"]
@@ -934,7 +892,7 @@ def _job_print(
     lines += ["\tenvironment = {", *(f"\t\t{k} => {v}" for k, v in env.items()), "\t}", ""]
     lines += ["\tdomain = gui/501 [100023]", "\truns = 0", "\tresource coalition = {", "\t\tID = 1", "\t}"]
     lines += ["", "\tproperties = inferred program"]
-    if submitted:  # a job handed to launchd by value (SMJobSubmit), as lb-sandbox start loads every sandbox job
+    if submitted:
         lines[2:4] = ["\tpath = (submitted by python3.14[4242])", "\ttype = Submitted"]
         lines += ["", "\tsubmitted job. ignore execute allowed", ""]
     lines += ["}"]
@@ -954,14 +912,7 @@ def _job_print(
     ],
 )
 def test_a_kickstart_never_runs_a_loaded_job_other_than_its_checked_plist(tmp_path: Path, hostile: dict) -> None:
-    """S2-3 review (lb-restart:1242): the loaded-job guard checked only the program and the argv prefix. A job
-    loaded from a hostile plist with the expected argv plus DYLD_INSERT_LIBRARIES, or with a stderr path into
-    live state, and the plist on disk restored afterwards, passed and was kickstarted. The loaded job's whole
-    argv, effective environment, working directory and stream paths must be the checked plist's.
 
-    Integration with the real launchd: each job is bootstrapped for real (never started: no RunAtLoad, no
-    KeepAlive, and the program is a stand-in), the guard reads it with the real `launchctl print`, and the job is
-    booted out in all cases."""
     lb = _load()
     config = _built_sandbox(tmp_path)
     label = f"com.agent-lb.drill.sbx-unit{os.getpid()}"
@@ -970,7 +921,7 @@ def test_a_kickstart_never_runs_a_loaded_job_other_than_its_checked_plist(tmp_pa
     config.write_text(json.dumps(data))
     disk = Path(data["plist"])
     clean = {**plistlib.loads(disk.read_bytes()), "Label": label}
-    disk.write_bytes(plistlib.dumps(clean))  # what stays on disk: the checked plist
+    disk.write_bytes(plistlib.dumps(clean))
     _apply(lb, config, tmp_path)
     live = tmp_path / ".agent-lb" / "state" / "front.json"
     loaded = json.loads(json.dumps(clean))
@@ -995,7 +946,7 @@ def test_a_kickstart_never_runs_a_loaded_job_other_than_its_checked_plist(tmp_pa
 
     try:
         load(clean)
-        lb.check_loaded_sandbox_job()  # control: the job loaded from the checked plist passes
+        lb.check_loaded_sandbox_job()
         unload()
         load(loaded)
         with pytest.raises(lb.SandboxRefused, match="loaded job"):
@@ -1008,22 +959,20 @@ def test_a_kickstart_never_runs_a_loaded_job_other_than_its_checked_plist(tmp_pa
 @pytest.mark.parametrize(
     "forged",
     [
-        "\n\t}\n\tforged = {\n\t\tDYLD_INSERT_LIBRARIES => /x/hook.dylib",  # hides an entry in a block of its own
-        "\n\tstderr path = /x/live.log",  # a stream path of its own
-        "\n\t\tDYLD_INSERT_LIBRARIES => /x/hook.dylib",  # an entry past the end of the block
+        "\n\t}\n\tforged = {\n\t\tDYLD_INSERT_LIBRARIES => /x/hook.dylib",
+        "\n\tstderr path = /x/live.log",
+        "\n\t\tDYLD_INSERT_LIBRARIES => /x/hook.dylib",
     ],
 )
 def test_a_value_with_a_line_break_cannot_pass_for_launchd_structure(tmp_path: Path, forged: str) -> None:
-    """launchctl print shows values raw, so a loaded value with a line break in it could make an entry read as
-    outside the environment block (unchecked). Such a print is refused, and a plist value with a control
-    character is refused before anything is loaded. Golden-style: the print layout is launchd's (see _job_print)."""
+
     lb = _load()
     config = _built_sandbox(tmp_path)
     _apply(lb, config, tmp_path)
     plist = plistlib.loads(Path(json.loads(config.read_text())["plist"]).read_bytes())
     python = _venv_python(tmp_path)
     want = list(plist["ProgramArguments"])
-    lb.check_loaded_job_print(_job_print(lb.LABEL, plist), plist, python, want)  # control
+    lb.check_loaded_job_print(_job_print(lb.LABEL, plist), plist, python, want)
     text = _job_print(lb.LABEL, plist).replace(
         "\t\tPYTHONPATH => ", "\t\tAGENT_LB_X => x" + forged + "\n\t\tPYTHONPATH => "
     )
@@ -1036,9 +985,7 @@ def test_a_value_with_a_line_break_cannot_pass_for_launchd_structure(tmp_path: P
 
 
 def test_a_sandbox_restart_never_prints_a_live_launchd_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Custody floor (lbsb-5 review FIRST): `launchctl print` shows a job's whole environment, and the live
-    agent-lb's holds its federation token. With --sandbox, lb-restart prints only the sandbox's own label; a live
-    label is refused before launchctl runs. launchctl is the faked OS edge (it records what it is asked)."""
+
     lb = _load()
     _apply(lb, _built_sandbox(tmp_path), tmp_path)
     asked: list[list[str]] = []
@@ -1054,15 +1001,15 @@ def test_a_sandbox_restart_never_prints_a_live_launchd_job(tmp_path: Path, monke
         with pytest.raises(lb.SandboxRefused):
             lb.job_loaded(label)
     assert asked == [], "launchctl was asked to print a live job"
-    assert lb.launchd_pid(lb.LABEL) == 4242  # control: the sandbox's own job is printed
+    assert lb.launchd_pid(lb.LABEL) == 4242
     assert asked == [["launchctl", "print", f"gui/{os.getuid()}/{lb.LABEL}"]]
 
 
-# ---------------------------------------------------------------- lbsb fix round 6 (codex-verifier FAIL on ef7ceb98)
+
 
 
 def _fake_live_front(tmp_path: Path) -> Path:
-    """A single-link stand-in for live ~/.agent-lb/state/front.json, on the home volume."""
+
     live = tmp_path / "live-home" / "state" / "front.json"
     live.parent.mkdir(parents=True)
     live.write_text('{"preferred": 2457}')
@@ -1073,11 +1020,7 @@ def _fake_live_front(tmp_path: Path) -> Path:
 def test_a_config_swapped_for_a_link_to_live_state_is_never_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: str
 ) -> None:
-    """M1 (lb-restart:464 at ef7ceb98): with a running sandbox's lb-restart.json replaced by a symlink to live
-    state/front.json, `--sandbox <config>` read the live file (Path.read_text follows links) before any guard
-    refused its contents. The config is now opened only by name inside the pinned root with O_NOFOLLOW (a symlink
-    fails the open), and must be a single-link file of the root's volume before a byte is read (a hard link is
-    refused at fstat). The spies record, by inode, every file io.open opened and every os.read: none may be live."""
+
     import io
 
     lb = _load()
@@ -1112,7 +1055,7 @@ def test_a_config_swapped_for_a_link_to_live_state_is_never_read(
     assert live_id not in read, "lb-restart read live state through the sandbox config"
     assert lb.SANDBOX_ROOT is None and lb.LOCK_FILE == lb.LIVE_BINDINGS["LOCK_FILE"]
     assert live.read_text() == '{"preferred": 2457}'
-    config.unlink()  # control: the sandbox's own config, a plain file in the root, is read through the same spies
+    config.unlink()
     config.write_text(json.dumps(_config(tmp_path)))
     monkeypatch.setattr(os, "read", os_read)
     monkeypatch.setattr(io, "open", io_open)
@@ -1122,7 +1065,7 @@ def test_a_config_swapped_for_a_link_to_live_state_is_never_read(
 
 
 def _attach_volume(image: Path, mountpoint: Path) -> list[str]:
-    """A small APFS sparse image attached at mountpoint (owned by this user); returns its devices for detach."""
+
     create = ["/usr/bin/hdiutil", "create", "-quiet", "-size", "64m", "-type", "SPARSE", "-fs", "APFS"]
     subprocess.run([*create, "-volname", "lbrestart-unit", str(image)], check=True, timeout=180)
     attach = ["/usr/bin/hdiutil", "attach", "-plist", "-nobrowse", "-noautoopen", "-owners", "on", "-mountpoint"]
@@ -1133,14 +1076,7 @@ def _attach_volume(image: Path, mountpoint: Path) -> list[str]:
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil is macOS")
 def test_a_root_that_is_not_its_own_volume_is_refused_before_its_lock_is_touched(tmp_path: Path) -> None:
-    """M4 (lb-restart:549 at ef7ceb98): any 0700 directory of this user under the sandboxes dir passed as a root,
-    with no proof lb-sandbox made it. A root built by hand with a valid config and plist, and live state/front.json
-    renamed (one link, so the single-link check passes) to its lb-restart.lock: the guards accepted it and lock
-    acquisition truncated the live inode before any loaded-job check. A root must now be its own volume, as start
-    leaves every root: rename(2) and link(2) never cross volumes, so no live file can reach one.
 
-    The control is the same sandbox on a real attached volume: accepted, its lock taken, and the move of a live
-    file into it fails with EXDEV."""
     import errno
 
     lb = _load()
@@ -1177,10 +1113,7 @@ def test_a_root_that_is_not_its_own_volume_is_refused_before_its_lock_is_touched
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="launchd is macOS")
 def test_a_job_start_submitted_by_value_passes_the_loaded_job_check(tmp_path: Path) -> None:
-    """Fix round 6 live check (run-14358): start now hands launchd its jobs by value (SMJobSubmit), and launchd
-    prints such a job with one bare line, `submitted job. ignore execute allowed`, which the parser refused as a
-    mangled key, so every sandbox restart exited 2 before its standby. That exact line is accepted once at the top
-    level; the same text inside a block, a variant of it or a second copy is still refused."""
+
     lb = _load()
     config = _built_sandbox(tmp_path)
     _apply(lb, config, tmp_path)

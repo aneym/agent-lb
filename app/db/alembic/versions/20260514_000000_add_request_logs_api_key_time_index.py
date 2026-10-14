@@ -1,9 +1,4 @@
-"""add request_logs api_key time index
 
-Revision ID: 20260514_000000_add_request_logs_api_key_time_index
-Revises: 20260424_000000_merge_dashboard_session_ttl_and_request_log_heads
-Create Date: 2026-05-14
-"""
 
 from __future__ import annotations
 

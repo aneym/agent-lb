@@ -6,13 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PKG = Path(__file__).resolve().parent
-# common.py -> open_factory/ -> open-factory/ -> clients/
+
 REPO_CLIENTS = PKG.parents[1]
 LOCAL_BIN = Path.home() / ".local" / "bin"
 
 
 def resolve_bin(name: str) -> str | None:
-    """Prefer this checkout's clients, then ~/.local/bin, then PATH (never zsh function wrappers)."""
+
     override = os.environ.get("OF_BIN_" + name.upper().replace("-", "_"))
     if override:
         return override

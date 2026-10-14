@@ -1,4 +1,4 @@
-"""Assess fresh standard quota without treating model-only limits as exhaustion."""
+
 
 from __future__ import annotations
 

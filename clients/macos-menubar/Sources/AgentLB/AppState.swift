@@ -24,14 +24,14 @@ final class AppState {
   var lastSyncAt: Date?
   var sectionErrors: Set<Section> = []
   var statusIcon = StatusIconRenderer.icon(for: .healthy, primaryPercent: nil, longWindowPercent: nil)
-  // Fable focus ring: true while a Claude app (com.anthropic.*) is frontmost —
-  // the status icon gains a third circle showing pool Fable remaining %.
+
+
   var isClaudeFrontmost = false
   var isRefreshing = false
   var isRestarting = false
   var startupError: String?
-  // §9.2/§13: mirrors RootView's @AppStorage("providerScope") so every fetch
-  // scopes to whatever the header segmented control has selected.
+
+
   var providerScope: ProviderScope = {
     ProviderScope(rawValue: UserDefaults.standard.string(forKey: "providerScope") ?? "") ?? .all
   }()
@@ -52,7 +52,7 @@ final class AppState {
   var remoteHost: String { baseURL.host() ?? "remote" }
   var dashboardURL: URL { baseURL.appending(path: "dashboard") }
 
-  // MARK: - Polling
+
 
   func startBackgroundPolling() {
     startFrontmostObservation()
@@ -63,13 +63,13 @@ final class AppState {
         if !popoverIsOpen {
           await checkHealth()
           if tick.isMultiple(of: 4) {
-            // §8.1: the 120 s tick also fetches the usage summary so the
-            // status-bar ring arc tracks weekly/monthly pool usage while the popover is closed.
-            // Accounts + recent are kept warm too: the MenuBarExtra panel
-            // sizes itself from whatever data exists at the moment it first
-            // lays out and macOS 26 never re-measures it spontaneously (see
-            // RootView's panel-resize driver), so the first paint after an
-            // open must already have rows to size against.
+
+
+
+
+
+
+
             await fetchSummarySilently()
             await fetchAccountsSilently()
             await fetchMakerData(silently: true)
@@ -87,12 +87,12 @@ final class AppState {
     }
   }
 
-  // MARK: - Claude focus (Fable ring)
 
-  /// Tracks the frontmost app so the status icon can show the Fable circle
-  /// only while a Claude app is focused. NSWorkspace activation notifications
-  /// need no TCC grant; the bundle id is extracted before hopping actors
-  /// because NSRunningApplication is not Sendable.
+
+
+
+
+
   private func startFrontmostObservation() {
     guard frontmostObserver == nil else { return }
     setClaudeFrontmost(
@@ -144,9 +144,9 @@ final class AppState {
     isRefreshing = false
   }
 
-  /// §9.2/§13: RootView calls this when its @AppStorage-backed segmented
-  /// control changes — AppState owns the fetch/recompute side effects,
-  /// RootView's @AppStorage still owns persistence (this never writes it).
+
+
+
   func scopeChanged(_ scope: ProviderScope) {
     providerScope = scope
     Task {
@@ -161,8 +161,8 @@ final class AppState {
       recomputeStatusIcon()
       return
     }
-    // These are the heaviest dashboard reads. Sequencing them avoids a
-    // self-induced timeout storm when a remote service is under query load.
+
+
     await fetchSummary()
     await fetchAccounts()
     await fetchMakerData()
@@ -178,7 +178,7 @@ final class AppState {
     recomputeStatusIcon()
   }
 
-  // MARK: - Health
+
 
   private func checkHealth() async {
     guard serviceStatus != .starting else { return }
@@ -217,13 +217,13 @@ final class AppState {
     return .unreachable
   }
 
-  // MARK: - Fetches
 
-  /// Closing/reopening the popover cancels the open-poll task and its child
-  /// fetches; those cancellations are popover lifecycle, not fetch outcomes,
-  /// so they must neither set nor clear sectionErrors. Cancellation surfaces
-  /// as CancellationError, a cancelled URLError, or the APIClient transport
-  /// wrapper around one.
+
+
+
+
+
+
   nonisolated static func isCancellation(_ error: any Error) -> Bool {
     if error is CancellationError { return true }
     if let urlError = error as? URLError { return urlError.code == .cancelled }
@@ -231,9 +231,9 @@ final class AppState {
     return false
   }
 
-  /// Applies the section-error contract in one testable place: successful
-  /// completed fetches repair stale errors, lifecycle cancellation is neutral,
-  /// and genuine completed failures become visible.
+
+
+
   nonisolated static func updateSectionError(
     _ section: Section,
     error: (any Error)?,
@@ -251,8 +251,8 @@ final class AppState {
     let scope = providerScope
     do {
       let fetched = try await client.usageSummary(provider: scope.providerParam)
-      // Stale-response guard: a fetch started for the previous scope must
-      // never overwrite the newer scope's data if it lands after the switch.
+
+
       guard scope == providerScope else { return }
       summary = fetched
       lastSyncAt = .now
@@ -305,9 +305,9 @@ final class AppState {
     }
   }
 
-  /// Closed-state summary fetch: drives the status-bar ring arc. Failures
-  /// stay silent (closed-state failures must not alert), but a success
-  /// clears any stale pool error — fresh data disproves the failure state.
+
+
+
   private func fetchSummarySilently() async {
     let scope = providerScope
     guard let fetched = try? await client.usageSummary(provider: scope.providerParam) else { return }
@@ -317,8 +317,8 @@ final class AppState {
     Self.updateSectionError(.pool, error: nil, in: &sectionErrors)
   }
 
-  /// Closed-state warm fetches (panel pre-sizing) — silent like the above,
-  /// with the same success-repairs-stale-error rule.
+
+
   private func fetchAccountsSilently() async {
     guard let fetched = try? await client.accounts() else { return }
     accounts = fetched.accounts
@@ -339,11 +339,11 @@ final class AppState {
     version = (try? await client.runtimeVersion()) ?? version
   }
 
-  // MARK: - Account actions
 
-  /// Returns false when the POST fails so the row can surface the failure
-  /// inline; accounts are only refreshed on success (a successful follow-up
-  /// GET must not mask a failed action via the fetch-oriented sectionErrors).
+
+
+
+
   @discardableResult
   func pause(accountId: String) async -> Bool {
     do {
@@ -366,14 +366,14 @@ final class AppState {
     return true
   }
 
-  /// On-demand re-verification for one row (e.g. after resubscribing at the
-  /// vendor). Same contract as pause/reactivate: false on failure — including
-  /// the server's 409 `account_not_probable` — so the row hints inline.
+
+
+
   @discardableResult
   func refresh(accountId: String, via action: AccountRefreshAction) async -> Bool {
-    // The server answers 200 even when the upstream re-check confirms the
-    // account is still broken (working=false / non-2xx probe) — the success
-    // hint must reflect the upstream verdict, not the HTTP action.
+
+
+
     let verdict: Bool
     do {
       switch action {
@@ -390,10 +390,10 @@ final class AppState {
     return verdict
   }
 
-  /// Spends one banked reset credit on an account. The verdict comes from the
-  /// upstream `code`, not the HTTP status: `nothing_to_reset` and `no_credit`
-  /// answer 200 while resetting nothing, and must surface as a row failure so
-  /// the operator does not read a no-op as recovered capacity.
+
+
+
+
   @discardableResult
   func redeemResetCredit(accountId: String) async -> Bool {
     guard resetCreditAccountsInFlight.insert(accountId).inserted else {
@@ -410,7 +410,7 @@ final class AppState {
     return verdict
   }
 
-  // MARK: - Service actions
+
 
   func startService() async {
     startupError = nil
@@ -425,8 +425,8 @@ final class AppState {
       recomputeStatusIcon()
       return
     }
-    // Wall-clock deadline (§1.3: poll every 1 s, 30 s timeout) — iteration
-    // counting would stretch past 30 s when startupComplete() itself is slow.
+
+
     let deadline = ContinuousClock.now.advanced(by: .seconds(30))
     while ContinuousClock.now < deadline {
       if (try? await client.startupComplete()) == true {
@@ -478,7 +478,7 @@ final class AppState {
     recomputeStatusIcon()
   }
 
-  // MARK: - Status icon
+
 
   private func recomputeStatusIcon() {
     let state: StatusIconRenderer.IconState
@@ -495,9 +495,9 @@ final class AppState {
         state = .healthy
       }
     }
-    // §8.1: the icon shows BOTH windows at once — outer arc the primary 5-hour
-    // window, inner arc the weekly/monthly window — and follows the selected
-    // provider scope, since `summary` is already fetched scoped.
+
+
+
     let percents = Self.statusIconPercents(from: summary)
     statusIcon = StatusIconRenderer.icon(
       for: state,
@@ -508,10 +508,10 @@ final class AppState {
     )
   }
 
-  /// Pool-level Fable runway for the focus ring: mean scoped-weekly remaining
-  /// % across routable Anthropic accounts reporting the Fable-scoped window.
-  /// Exhausted-but-routable accounts stay in the denominator — their capacity
-  /// is gone until reset, so dropping them would overstate what's left.
+
+
+
+
   nonisolated static func fablePoolPercent(accounts: [Account]) -> Double? {
     let remaining = accounts
       .filter(\.isRoutable)

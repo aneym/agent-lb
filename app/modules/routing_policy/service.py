@@ -27,7 +27,7 @@ def _live_paths() -> tuple[Path, Path]:
     managed_decider = managed.with_name("decider.json")
     if _readable(managed_decider):
         return table, managed_decider
-    # The runtime copy has no clients/open-factory; follow the installed launcher to the checkout it runs from.
+
     launcher = Path.home() / ".local/bin/open-factory"
     installed = launcher.resolve().parents[1] / "open_factory/decider.json" if launcher.exists() else None
     decider = (
@@ -39,7 +39,7 @@ def _live_paths() -> tuple[Path, Path]:
 
 
 def _readable(path: Path) -> bool:
-    # launchd services may be denied /Volumes; treat that like a missing file.
+
     try:
         return path.is_file()
     except OSError:

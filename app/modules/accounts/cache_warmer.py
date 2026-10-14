@@ -13,14 +13,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class AccountsCacheWarmer:
-    """Keeps GET /api/accounts off cold loads.
 
-    ``start`` fills the accounts read caches (additional quotas and request usage)
-    before the app takes traffic, so the first request after a blue/green swap is a
-    cache hit, then reloads the additional quotas every ``interval_seconds`` so a
-    one-shot reader (cc banner, route pools) never sees a value older than that.
-    Request usage stays stale-while-revalidate: only the dashboard reads it.
-    """
 
     interval_seconds: float
     startup_timeout_seconds: float

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check statically visible Workflow agent options; ambiguous scripts fail open, unreadable input fails closed."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -18,7 +18,7 @@ class ParseError(ValueError):
 
 
 def literal_end(script: str, start: int, interpolations: list[str] | None = None) -> int:
-    """Consume a literal, collecting template code separately from literal text."""
+
     quote = script[start]
     i = start + 1
     while i < len(script):
@@ -74,7 +74,7 @@ def literal_end(script: str, start: int, interpolations: list[str] | None = None
 
 
 def tokens(script: str, interpolations: list[str]) -> list[tuple[str, str]]:
-    """Tokenize code and collect template expressions for recursive inspection."""
+
     result: list[tuple[str, str]] = []
     i = 0
     while i < len(script):
@@ -96,7 +96,7 @@ def tokens(script: str, interpolations: list[str]) -> list[tuple[str, str]]:
             quote, start = c, i
             i = literal_end(script, start, interpolations)
             raw = script[start + 1:i - 1]
-            # Escaped values are not safe to interpret as static options.
+
             result.append(('string' if quote != '`' and '\\' not in raw else 'opaque', raw))
             continue
         if c == '/' and (not result or result[-1][1] in ('=', '(', '[', '{', ',', ':', '!', '?', ';', 'return', '=>', '&&', '||')):
@@ -167,8 +167,7 @@ def split(items: list[tuple[str, str]], pairs: dict[int, int], start: int, end: 
 
 
 def retired_for(table: dict, seat: str | None = None) -> list[str]:
-    """Retired patterns plus each readmitted alias (astra-latest-high reaches Astra through the
-    bridge); the readmitted seat itself is exempt from its own family (routing-table.json)."""
+
     readmitted = table.get('readmitted') if isinstance(table.get('readmitted'), dict) else {}
     names = [entry['alias'] + '*' for entry in readmitted.values()
              if isinstance(entry, dict) and isinstance(entry.get('alias'), str) and entry['alias']]
@@ -187,7 +186,7 @@ def is_retired(value: str, table: dict, seat: str | None = None) -> bool:
 
 
 def definition_model(seat: str) -> str | None:
-    """The model a seat definition pins, which agent() runs when it passes no `model`."""
+
     if not seat or '/' in seat or seat.startswith('.'):
         return None
     agents = Path(os.environ.get('SEAT_GUARD_AGENTS_DIR') or Path.home() / '.claude' / 'agents')
@@ -200,7 +199,7 @@ def definition_model(seat: str) -> str | None:
 
 
 def record_explicit(models: list[str]) -> None:
-    """Log explicit agent() requests for off-ladder models to the routing ledger; never fail."""
+
     ledger = Path(os.environ.get('ROUTE_LEDGER') or os.environ.get('DISPATCH_LEDGER')
                   or Path.home() / '.claude' / 'logs' / 'dispatch.jsonl')
     try:
@@ -215,21 +214,19 @@ def record_explicit(models: list[str]) -> None:
 
 
 def is_blocked(value: str, table: dict) -> bool:
-    """Gone upstream: denied even on explicit request (Alex, 2026-10-05)."""
+
     return any(fnmatch.fnmatchcase(value, pattern) for pattern in table.get('blocked') or ())
 
 
 def retired_in_args(value, table: dict, path: str = 'args') -> str | None:
-    """Seat options a script reads from Workflow args (`route workflow-args`) never reach the static scan.
 
-    Only a `model` beside a seat key counts, so data that merely mentions an old model passes."""
     if isinstance(value, dict):
         seat_like = any(key in value for key in ('agentType', 'seat', 'implementer'))
         seat = next((value[key] for key in ('agentType', 'seat', 'implementer')
                      if isinstance(value.get(key), str)), None)
         agent_type = value.get('agentType') if isinstance(value.get('agentType'), str) else None
         if agent_type and value.get('model') is None:
-            # No model: the seat definition's pin runs, a silent default when it is off the ladder.
+
             pinned = definition_model(agent_type)
             if pinned and (is_blocked(pinned, table) or is_retired(pinned, table, agent_type)):
                 return (f'Workflow args run {agent_type!r} at {path}, defined on {pinned!r}, and nothing asked '
@@ -251,10 +248,7 @@ def retired_in_args(value, table: dict, path: str = 'args') -> str | None:
 
 
 def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str | None, bool]:
-    """(first warn reason, warning). A literal retired model id is an explicit request
-    (Alex, 2026-10-05): it is allowed and appended to `explicit`; a blocked id, a
-    harness alias that silently resolves to a retired model, or a seat whose definition
-    pins one with no `model` given, is denied."""
+
     explicit = [] if explicit is None else explicit
     interpolations: list[str] = []
     items = tokens(script, interpolations)
@@ -291,7 +285,7 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
             if kind not in ('word', 'string'):
                 uncertain = True
                 continue
-            if a + 1 == b:  # shorthand property
+            if a + 1 == b:
                 keys[key] = None
             elif items[a + 1] == ('punct', ':'):
                 keys[key] = items[a + 2] if a + 3 == b else None
@@ -306,7 +300,7 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
         seat = seat_token[1] if seat_token and seat_token[0] == 'string' else None
         model = keys.get('model')
         if model in (('word', 'undefined'), ('word', 'null')):
-            # `model: undefined` leaves the definition's model in effect, as if no model were given.
+
             keys.pop('model')
             model = None
         if model and model[0] == 'string':
@@ -317,7 +311,7 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
             elif is_retired(model[1], table, seat):
                 explicit.append(model[1])
         elif 'model' not in keys and seat:
-            # No model: the seat definition's pin runs, a silent default when it is off the ladder.
+
             pinned = definition_model(seat)
             if pinned and (is_blocked(pinned, table) or is_retired(pinned, table, seat)):
                 reasons.append(f'agent() runs {seat!r}, defined on {pinned!r}, and nothing asked for it: '
@@ -332,9 +326,9 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
 
 def main() -> None:
     output = {'hookEventName': 'PreToolUse'}
-    # A floor guard reads its input with checked status (S44, 2026-10-08): input, script or routing table it cannot
-    # read, and a scanner that fails, refuse the launch; before, each allowed it with an advisory. A script whose
-    # agent() options are only known at run time is still allowed with a warning (that is not a failure).
+
+
+
     try:
         payload = json.load(sys.stdin)
         tool_input = payload['tool_input']
@@ -352,7 +346,7 @@ def main() -> None:
         explicit: list = []
         if not reason:
             reason, warning = inspect(script, table, explicit)
-        if reason:  # warn only, never deny (guard trim, Alex 2026-10-08 09:18 ET)
+        if reason:
             output['additionalContext'] = 'workflow-seat-guard (warn only, not blocked): ' + reason
         elif explicit:
             record_explicit(sorted(set(explicit)))
@@ -370,6 +364,6 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-    # The receipt the dispatcher asks for (HOOK_FLOOR_RECEIPT): an exit 0 without it is refused there.
+
     if os.environ.get('HOOK_FLOOR_RECEIPT'):
         print('floor-ok workflow-seat-guard.py')

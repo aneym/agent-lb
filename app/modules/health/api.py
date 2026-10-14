@@ -63,10 +63,10 @@ async def health_ready() -> HealthCheckResponse:
                 checks = {"database": "ok"}
                 status = "ok"
 
-                # Upstream health (degradation flag, circuit breaker) is NOT
-                # checked here — only infrastructure readiness matters.
-                # Mixing upstream state into readiness causes permanent
-                # pod eviction after transient upstream failures.
+
+
+
+
 
                 bridge_ring = await _get_bridge_ring_info(session)
                 failure_detail = _bridge_readiness_failure_detail(bridge_ring)
@@ -93,13 +93,7 @@ async def health_ready() -> HealthCheckResponse:
 
 
 async def _require_trusted_drain_client(request: Request) -> None:
-    """Gate the unauthenticated drain endpoints the way team mode gates the dashboard.
 
-    ``_is_internal_client_host`` reads the raw socket peer, which is loopback for every
-    request arriving through the local reverse proxy — so on its own it would let any
-    tailnet peer stop the service. In team mode the caller must also be trusted by
-    resolved IP.
-    """
     settings = await get_settings_cache().get()
     if getattr(settings, "team_mode_enabled", False) and not is_trusted_client(request):
         raise HTTPException(status_code=403, detail="Internal access required")
@@ -159,7 +153,7 @@ async def internal_drain_status(request: Request) -> HealthCheckResponse:
 
 @router.get("/internal/oauth/pending", include_in_schema=False)
 async def internal_oauth_pending(request: Request) -> dict[str, object]:
-    """How many sign-ins this process holds in memory, for lb-restart. Count and ages only."""
+
     client_host = request.client.host if request.client is not None else None
     if not _is_internal_client_host(client_host):
         raise HTTPException(status_code=403, detail="Internal access required")

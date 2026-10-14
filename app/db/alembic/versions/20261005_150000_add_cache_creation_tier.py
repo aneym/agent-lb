@@ -1,4 +1,4 @@
-"""Record Anthropic cache writes with their TTL tier."""
+
 
 from __future__ import annotations
 

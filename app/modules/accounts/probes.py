@@ -23,8 +23,8 @@ DEFAULT_GLM_PROBE_MODEL = "glm-5.2"
 DEFAULT_KIMI_PROBE_MODEL = "kimi-k3"
 PROBE_REQUEST_TIMEOUT_SECONDS = 30.0
 PROBE_CONNECT_TIMEOUT_SECONDS = 10.0
-# Sentinel status for transport-level probe failures (DNS, TLS, timeout): no
-# HTTP response was received, so no real status code applies.
+
+
 PROBE_NETWORK_FAILURE_STATUS = 0
 _PROBE_ERROR_MESSAGE_LIMIT = 500
 
@@ -33,8 +33,8 @@ class AdaptiveThinking(TypedDict):
     type: Literal["adaptive"]
 
 
-# Upstream error-message fragments that identify a subscription-level refusal:
-# the OAuth tokens are valid, but the organization has no active subscription.
+
+
 SUBSCRIPTION_REFUSED_MARKERS = ("oauth authentication is currently not allowed",)
 
 
@@ -46,14 +46,7 @@ class ProbeVerdict(str, Enum):
 
 
 def classify_probe_result(status: int, message: str | None) -> ProbeVerdict:
-    """Map a probe HTTP status + upstream error message to an account verdict.
 
-    Only explicit signals change account state: a 2xx proves the account is
-    usable, a 401 proves the credentials are rejected, and a 403 carrying a
-    known subscription-refusal marker proves the org is unsubscribed. Anything
-    else (400s from contract drift, 403s without a marker, 429s, 5xx, network
-    failures) is inconclusive and must not transition the account.
-    """
     if 200 <= status < 300:
         return ProbeVerdict.HEALTHY
     if status == 401:
@@ -99,7 +92,7 @@ async def send_openai_probe_with_error_code(
     chatgpt_account_id: str | None,
     model: str,
 ) -> tuple[int, str | None]:
-    """POST a one-token codex/responses; returns (status, upstream error code on a 4xx/5xx)."""
+
     url = f"{_openai_backend_base()}/codex/responses"
     headers = _openai_auth_headers(access_token, chatgpt_account_id, accept="text/event-stream")
     headers["Content-Type"] = "application/json"
@@ -112,8 +105,8 @@ async def send_openai_probe_with_error_code(
                 "content": [{"type": "input_text", "text": "."}],
             }
         ],
-        # The codex/responses upstream rejects ``max_output_tokens``
-        # ("Unsupported parameter") — the probe must not send it.
+
+
         "stream": True,
         "store": False,
     }
@@ -124,8 +117,8 @@ async def send_openai_probe_with_error_code(
     try:
         async with lease_http_session() as session:
             async with session.post(url, headers=headers, json=body, timeout=timeout) as resp:
-                # Initiating the request is enough to wake the upstream
-                # rate-limiter; we do not consume a successful SSE body.
+
+
                 if resp.status >= 400:
                     return resp.status, await read_probe_error_code(resp)
                 return resp.status, None
@@ -139,11 +132,7 @@ async def send_openai_probe_with_error_code(
 
 
 async def send_openai_auth_check(*, access_token: str, chatgpt_account_id: str | None) -> int:
-    """GET /wham/usage: an auth-only call that proves whether the token itself is accepted.
 
-    Used to confirm a codex/responses 401 before an account is marked disconnected,
-    since that endpoint can reject every account at once for upstream reasons.
-    """
     url = f"{_openai_backend_base()}/wham/usage"
     headers = _openai_auth_headers(access_token, chatgpt_account_id, accept="application/json")
     timeout = aiohttp.ClientTimeout(
@@ -205,10 +194,7 @@ async def send_messages_probe(
 
 
 async def list_anthropic_models(*, access_token: str, base_url: str) -> tuple[int, list[str]]:
-    """Upstream ``GET /v1/models`` through one Anthropic account: (HTTP status, model ids).
 
-    Only ids are kept; an error body is never read, so nothing an upstream echoes is logged.
-    """
     settings = get_settings()
     url = urljoin(base_url.rstrip("/") + "/", "v1/models?limit=1000")
     headers = {
@@ -236,8 +222,7 @@ async def list_anthropic_models(*, access_token: str, base_url: str) -> tuple[in
 
 
 async def read_probe_error_code(resp: aiohttp.ClientResponse) -> str | None:
-    """The upstream ``error.code`` (or ``error.type``), never the message: OpenAI's
-    messages can echo part of a key."""
+
     try:
         raw = await resp.read()
         parsed = json.loads(raw) if raw else None

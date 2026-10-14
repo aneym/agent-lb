@@ -1,17 +1,4 @@
-"""G3: a write-mode Codex seat in a linked git worktree gets that worktree's git dirs as writable roots,
-on top of the writable roots the user already configured.
 
-2026-10-06, PR 5053: codex-sol ran `git fetch origin` in a worktree with sandbox workspace-write and hit
-"FETCH_HEAD: Operation not permitted"; FETCH_HEAD, refs and objects live under <main>/.git, outside the
-workspace. The first fix sent the git dirs as a `config` override, and Codex replaces arrays on override,
-so a user's own `sandbox_workspace_write.writable_roots` were dropped (codex-verifier FAIL).
-
-The plugin is a copy of the installed one with the repo's patches applied by the repo's own script. `codex`
-is the real Codex app-server with a temp CODEX_HOME whose config.toml carries the user's roots; a recorder
-tees its JSON-RPC both ways, and a local stub answers model calls, so nothing leaves the host. The assertions
-read the sandbox the app-server itself reports for thread/start and thread/resume.
-Sandbox enforcement (fetch, commit and a write in the configured root) is the scenario in results/G3-report.md.
-"""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -36,7 +23,7 @@ fi
 
 
 class ModelStub(BaseHTTPRequestHandler):
-    """Answers every Responses call with one finished assistant message."""
+
 
     def do_POST(self):
         self.rfile.read(int(self.headers['Content-Length']))
@@ -81,8 +68,8 @@ def world():
         tmp = Path(t).resolve()
         plugin = tmp / 'plugin'
         shutil.copytree(INSTALLED, plugin, ignore=shutil.ignore_patterns('node_modules', '.git'), symlinks=True)
-        # The installed plugin may already carry this repo's patches. Strip them so the repo's patch files
-        # alone must produce the behavior; a deployed G3 change left behind with no patch file fails here.
+
+
         for patch in sorted((REPO / 'patches/codex-plugin-cc').glob('*.patch'), reverse=True):
             if subprocess.run(['git', 'apply', '--reverse', '--check', str(patch)], cwd=plugin,
                               capture_output=True, timeout=30).returncode == 0:
@@ -123,7 +110,7 @@ def world():
             (codex_home / 'config.toml').write_text(config)
 
         def task(cwd, *flags):
-            """Run one companion task; return {method: sandbox the app-server reported} for start/resume."""
+
             rpc_in.write_text('')
             rpc_out.write_text('')
             run = subprocess.run(['node', str(plugin / 'plugins/codex/scripts/codex-companion.mjs'), 'task', *flags,

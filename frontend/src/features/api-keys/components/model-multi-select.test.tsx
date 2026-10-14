@@ -65,7 +65,7 @@ describe("ModelMultiSelect", () => {
     await waitFor(() => {
       expect(screen.getByText("All models")).toBeInTheDocument();
     });
-    // No badge X buttons should be present
+
     expect(screen.queryByRole("button", { name: /×/ })).not.toBeInTheDocument();
   });
 
@@ -76,12 +76,12 @@ describe("ModelMultiSelect", () => {
       <ModelMultiSelect value={["gpt-5.1", "gpt-4o-mini"]} onChange={onChange} />,
     );
 
-    // Wait for render
+
     await waitFor(() => {
       expect(screen.getByText("gpt-5.1")).toBeInTheDocument();
     });
 
-    // Click X button on first badge
+
     const badges = screen.getAllByRole("button").filter((b) => b.closest(".gap-1"));
     if (badges.length > 0) {
       await user.click(badges[0]);
@@ -90,12 +90,12 @@ describe("ModelMultiSelect", () => {
   });
 
   it("shows loading state while models are being fetched", () => {
-    // Before models load, the button should show loading
+
     renderWithProviders(
       <ModelMultiSelect value={[]} onChange={vi.fn()} />,
     );
 
-    // The button should initially be disabled or show loading text
+
     const button = screen.getByRole("button");
     expect(button).toBeInTheDocument();
   });

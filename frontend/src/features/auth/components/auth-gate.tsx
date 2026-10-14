@@ -41,7 +41,7 @@ export function AuthGate({ children }: PropsWithChildren) {
     }
     return (
       <div className="relative flex min-h-screen items-center justify-center p-4">
-        {/* Background decoration */}
+        {                           }
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div className="absolute -top-1/4 -right-1/4 h-[600px] w-[600px] rounded-full bg-primary/5 blur-3xl" />
           <div className="absolute -bottom-1/4 -left-1/4 h-[500px] w-[500px] rounded-full bg-primary/3 blur-3xl" />

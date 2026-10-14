@@ -94,7 +94,7 @@ def test_import_session_with_postgres_url_does_not_error() -> None:
 
 @pytest.mark.asyncio
 async def test_sqlite_mixed_writers_do_not_wedge_connection_pool(monkeypatch, tmp_path) -> None:
-    """Exercise the edge incident against a real bounded SQLite connection pool."""
+
     url = f"sqlite+aiosqlite:///{tmp_path / 'mixed-writers.db'}"
     engine = create_async_engine(url, pool_size=2, max_overflow=0, pool_timeout=2)
     sessions = async_sessionmaker(engine)
@@ -126,7 +126,7 @@ async def test_sqlite_mixed_writers_do_not_wedge_connection_pool(monkeypatch, tm
         readers = [asyncio.create_task(query_first(index)) for index in range(4)]
         await asyncio.gather(*(event.wait() for event in readers_ready))
         fresh_writers = [asyncio.create_task(section_first()) for _ in range(4)]
-        # Queue fresh writers before the two connection holders request the lock.
+
         await asyncio.sleep(0)
         release_readers.set()
         await asyncio.sleep(0)
@@ -240,12 +240,7 @@ def test_background_pool_settings_can_override_main_pool(monkeypatch) -> None:
 
 
 def test_postgres_engine_kwargs_enable_pre_ping_and_recycle(monkeypatch) -> None:
-    """Regression for #672: PostgreSQL engines MUST validate pooled connections
-    on checkout (``pool_pre_ping``) and recycle them within the configured
-    window (``pool_recycle``). Without these the pool serves stale connections
-    after the server idles them out, causing
-    ``asyncpg.InterfaceError: connection is closed`` on the first real query.
-    """
+
     monkeypatch.setenv("AGENT_LB_TEST_DATABASE_URL", "")
     monkeypatch.delenv("AGENT_LB_TEST_DATABASE_URL", raising=False)
     monkeypatch.setattr(
@@ -288,10 +283,7 @@ def test_postgres_engine_kwargs_honor_custom_recycle(monkeypatch) -> None:
 
 
 def test_postgres_engine_kwargs_use_nullpool_under_test_db_url(monkeypatch) -> None:
-    """The AGENT_LB_TEST_DATABASE_URL escape hatch keeps NullPool semantics —
-    pool_pre_ping/recycle are irrelevant when each session opens a fresh
-    connection.
-    """
+
     monkeypatch.setenv("AGENT_LB_TEST_DATABASE_URL", "1")
     monkeypatch.setattr(
         session_module,

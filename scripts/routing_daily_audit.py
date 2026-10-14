@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only daily routing observations; proposals never change the ladder."""
+
 from __future__ import annotations
 
 import argparse
@@ -70,7 +70,7 @@ def job(row):
 
 
 def dispatch(path, since, until, errors):
-    """Port E16's dispatch/closeout merge and same-worktree redo heuristic."""
+
     records = {}
     try:
         with path.open() as source:
@@ -99,7 +99,7 @@ def dispatch(path, since, until, errors):
 
 
 def store(path, since, until, errors):
-    """SQLite backup folds committed WAL; only allowlisted columns leave the copy."""
+
     requests, usage = [], []
     try:
         with tempfile.TemporaryDirectory(prefix="routing-audit-") as temporary:
@@ -129,8 +129,8 @@ def store(path, since, until, errors):
     except (OSError, sqlite3.Error) as exc:
         errors.append(f"store: {type(exc).__name__}")
     if path == Path.home() / ".agent-lb/store.db" and not any(r.get("provider") == "anthropic" for r in usage):
-        # Studio's live service is PostgreSQL; the SQLite store can be an old
-        # OpenAI-only mirror. Query only accounting columns, never accounts.
+
+
         query = "SELECT json_agg(r) FROM (SELECT account_id,provider,\"window\",recorded_at,used_percent,reset_at "
         query += "FROM usage_history WHERE \"window\" IN ('secondary','weekly','7d') "
         query += "AND recorded_at < '" + until.isoformat() + "' ORDER BY recorded_at) r;"
@@ -167,7 +167,7 @@ def timestamp_rows(rows, field, name, errors=None):
 
 
 def quota_points(requests, usage, since, errors=None):
-    """Positive same-reset weekly deltas, token-weighted across matching requests."""
+
     requests = timestamp_rows(requests, "requested_at", "requests", errors)
     usage = timestamp_rows(usage, "recorded_at", "usage", errors)
     points, previous = defaultdict(lambda: defaultdict(float)), {}
@@ -186,7 +186,7 @@ def quota_points(requests, usage, since, errors=None):
         if not before or stamp < since or before["reset_at"] != sample["reset_at"]:
             continue
         start = date(before["recorded_at"])
-        # A boundary-spanning sample cannot be attributed from a truncated request window.
+
         if start < since:
             continue
         times = account_times.get((key[0], key[1]), [])
@@ -268,7 +268,7 @@ def prs(since, until, errors):
     if any((failure.startswith("PR comments:") or failure.startswith("PR list:"))
            and "row limit" not in failure for failure in errors):
         errors.append("verdict fallback: queue_pr.py stores verdicts in GitHub issue comments, not a local store")
-    # Bodies/titles and arbitrary comment data must never appear in the output.
+
     return verdicts, [{"number": p["number"], "mergedAt": p.get("mergedAt"),
                        "headRefName": p.get("headRefName")} for p in entries], reverts
 
@@ -277,7 +277,7 @@ ACCEPTED_OUTCOMES = ("accepted", "held_pass", "override")
 
 
 def load_outcomes(path, since, until, errors):
-    """Outcome ledger for the audit window. A missing file is an empty source, not an error."""
+
     if not path.exists():
         return "none yet", []
     records = []
@@ -321,7 +321,7 @@ def _median(values):
 
 
 def summarize_outcomes(records):
-    """Per rung (seat + model): acceptance excludes infra_blocked; override counts as accepted and itself."""
+
     groups = defaultdict(list)
     for row in records:
         kind = str(row.get("job") or "implement").lower()
@@ -368,7 +368,7 @@ def _rung_name(entry):
 
 
 def resolve_rungs(rungs, errors):
-    """Resolve each ladder alias once. A failed resolve leaves that rung unmatched."""
+
     cache = {}
     resolved = []
     for rung in rungs:
@@ -386,7 +386,7 @@ def resolve_rungs(rungs, errors):
 
 
 def row_matches_rung(row, rung):
-    """Seat must match. Cursor and Devin also need the resolved model; other seats allow a null model."""
+
     if not isinstance(rung, dict) or row.get("seat") != rung.get("seat"):
         return False
     resolved = rung.get("resolved")
@@ -426,7 +426,7 @@ def _combine_rungs(matches):
 
 
 def overlay_outcomes(rows, rungs):
-    """Outcome counts replace the dispatch/PR acceptance join for a rung that has ledger rows."""
+
     grouped = defaultdict(list)
     for rung in rungs:
         grouped[(rung["model"], rung["job"])].append(rung)
@@ -578,8 +578,8 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, er
         sid = run.get("session_id")
         quota = points.get((sid, run.get("model")), {})
         if not quota:
-            # Launcher sessions own workflow requests; dispatch child sessions
-            # do not always equal the billing session. Allocate by model and time.
+
+
             matching = []
             for request in request_models[run.get("model")]:
                 request_stamp = date(request["requested_at"])
@@ -607,7 +607,7 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, er
         if vendor in ("cursor", "devin"):
             row[vendor + "_envelope_tokens"] += sum(number(run.get(k)) for k in ("tokens_in", "tokens_out"))
         run["_group"] = (model, kind)
-    # Each PR's chronological FAIL -> PASS transition is counted once, not on each dispatch run.
+
     for pr, items in by_pr.items():
         items.sort(key=lambda item: date(item["ts"]))
         sessions = {v.get("session_id") or v.get("session") for v in items} - {None}
@@ -790,7 +790,7 @@ def _keyed_count(records, rows, key, predicate):
 
 
 def daily_report(report, outcome_records_for_day, rungs, percent, errors):
-    """C5 factory line for the routing source. Counts and model ids only."""
+
     records = [row for row in outcome_records_for_day if isinstance(row, dict)]
     implement = _implement_rows(records)
     order = rungs.get("implement", []) if isinstance(rungs, dict) else list(rungs or [])
@@ -897,7 +897,7 @@ def main():
     pool_rows = pools.get("pools", []) if isinstance(pools, dict) else []
     cursor = next((p for p in pool_rows if p.get("id") == "cursor-models"), {})
     percent = cursor.get("percentUsed", cursor.get("percent_used"))
-    # Read canonical ordering without importing the routing CLI or editing its table.
+
     ladder = {}
     try:
         table = json.loads((home / ".agents/policy/coding-agents/routing-table.json").read_text())
@@ -925,7 +925,7 @@ def main():
     day_records = [row for row in outcome_records if since <= date(row["ts"]) < until]
     et_day = until.astimezone(ZoneInfo("America/New_York")).date().isoformat()
     report_root = args.out if args.out else home / ".agent-rails/factory"
-    # 2026-10-01: the C5 file is due by 07:20 ET and needs none of the PR data, so write it before prs().
+
     try:
         payload = daily_report(
             {"since": since.isoformat(), "until": until.isoformat()},
@@ -935,7 +935,7 @@ def main():
         errors.append(f"daily report: {type(exc).__name__}")
     verdicts, merges, reverts = prs(min(since, rolling), until, errors)
     joined = fold_acceptance(home, runs, errors)
-    # PR branch fallback is read-only and only joins existing worktrees.
+
     for run in runs:
         if job(run) == "review" or "accepted" in run or not run.get("cwd"):
             continue
@@ -976,7 +976,7 @@ def main():
                   notes=notes, errors=errors, line=line, outcomes_source=outcomes_source,
                   outcome_rungs=daily_rungs)
     out = args.out or home / ".agent-lb/audits/routing"
-    # An explicit output directory is a dry-run boundary: do not overwrite the published page.
+
     page = out / "routing-daily-audit.html" if args.out else home / ".claude/pretty-docs/routing-daily-audit.html"
     write_outputs(report, out, page)
     try:

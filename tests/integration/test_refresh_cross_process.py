@@ -1,18 +1,4 @@
-"""Two agent-lb processes must never present the same OpenAI refresh token.
 
-lb-restart runs a standby and a draining primary against one database. Each
-process has its own refresh singleflight, so without a database-level lock both
-can read the same refresh token and both call the token endpoint. OpenAI refresh
-tokens are single use: the second call gets refresh_token_reused and the account
-is marked reauth_required, which needs a human re-login.
-
-Each AuthManager here stands for one process: its own session, and
-refresh_account called directly (the in-process singleflight sits above it).
-The fake token endpoint rotates like OpenAI's: a token works once.
-
-Needs Postgres (the lock is a Postgres advisory lock):
-AGENT_LB_TEST_DATABASE_URL=postgresql+asyncpg://.../<scratch db> pytest tests/integration/test_refresh_cross_process.py
-"""
 
 from __future__ import annotations
 
@@ -41,7 +27,7 @@ pytestmark = [
 
 
 class _RotatingTokenEndpoint:
-    """OpenAI-style refresh: each refresh token is accepted once, then rejected as reused."""
+
 
     def __init__(self) -> None:
         self.presented: list[str] = []
@@ -52,7 +38,7 @@ class _RotatingTokenEndpoint:
         if refresh_token in self._spent:
             raise RefreshError("refresh_token_reused", "Refresh token was reused", True)
         self._spent.add(refresh_token)
-        await asyncio.sleep(0.5)  # network time: long enough for a second process to overlap
+        await asyncio.sleep(0.5)
         n = len(self._spent)
         return TokenRefreshResult(
             access_token=f"access-{n}",
@@ -110,7 +96,7 @@ async def test_two_processes_refreshing_one_account_present_the_token_once(db_se
 
 @pytest.mark.asyncio
 async def test_lost_refresh_lock_does_not_replay_spent_token(db_setup, monkeypatch):
-    """A killed advisory-lock backend must not permit a second exchange."""
+
     from sqlalchemy import text
 
     from app.db import session as db_session
@@ -152,7 +138,7 @@ async def test_lost_refresh_lock_does_not_replay_spent_token(db_setup, monkeypat
 
     first = asyncio.create_task(worker())
     await asyncio.wait_for(entered.wait(), 5)
-    # Kill only the disposable database's lock-holder backend, never a service connection.
+
     key = auth_module._refresh_lock_key("acc-lost-lock")
     unsigned_key = key % (1 << 64)
     async with db_session.engine.connect() as conn:
@@ -174,8 +160,8 @@ async def test_lost_refresh_lock_does_not_replay_spent_token(db_setup, monkeypat
         await asyncio.wait_for(worker(), 10)
     assert second.value.code == "exchange_uncertain"
     release.set()
-    # The lost advisory-lock connection can raise on context exit even though
-    # the independent repository transaction durably stored the live token.
+
+
     with pytest.raises(Exception):
         await asyncio.wait_for(first, 10)
     assert len(presented) == 1
@@ -223,7 +209,7 @@ async def test_checkout_waits_for_refresh_and_exports_rotated_token(db_setup, mo
     await asyncio.wait_for(entered.wait(), 5)
 
     async def checkout():
-        # The taker's reservation lives in its own database, not this giver's database.
+
         nonce = secrets.token_hex(24)
         async with SessionLocal() as session:
             return await FederationService(FederationRepository(session)).checkout(
@@ -242,7 +228,7 @@ async def test_checkout_waits_for_refresh_and_exports_rotated_token(db_setup, mo
 
 @pytest.mark.asyncio
 async def test_preflight_rejection_releases_fence_and_reauthorization_clears_stale_intent(db_setup, monkeypatch):
-    """No token left the process: a rejected admission must not poison later refreshes."""
+
     from app.db.models import AccountExchangeIntent
 
     encryptor = TokenEncryptor()
@@ -314,7 +300,7 @@ async def test_preflight_rejection_releases_fence_and_reauthorization_clears_sta
 
 @pytest.mark.asyncio
 async def test_lost_lock_checkout_before_intent_cannot_spend_exported_token(db_setup):
-    """The intent insert must recheck owner even if the advisory lock was lost."""
+
     from app.db.models import AccountExchangeIntent
     from app.modules.federation.repository import FederationRepository
     from app.modules.federation.service import FederationService
@@ -345,7 +331,7 @@ async def test_lost_lock_checkout_before_intent_cannot_spend_exported_token(db_s
 
 @pytest.mark.asyncio
 async def test_operator_reset_waits_for_window_then_replays(async_client, db_setup):
-    """An operator cannot reset until the provider's old exchange window has passed."""
+
     from app.db.models import AccountExchangeIntent
 
     encryptor = TokenEncryptor()
@@ -390,7 +376,7 @@ async def test_operator_reset_waits_for_window_then_replays(async_client, db_set
 
 @pytest.mark.asyncio
 async def test_checkin_waits_for_refresh_and_returns_rotated_token(db_setup, monkeypatch):
-    """A returning taker cannot export the token while its provider exchange is in flight."""
+
     from app.core.config.settings import Settings
     from app.db.models import AccountTransferDirection
     from app.modules.federation.peer_client import CheckinPeerResult

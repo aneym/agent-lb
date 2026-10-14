@@ -160,8 +160,8 @@ async def test_reconcile_recoverable_account_statuses_keeps_rate_limited_until_r
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = 1_700_000_000.0
-    # 82ed714b: a live refusal persists a bounded retry (60s on first failure), so
-    # an unexpired cooldown is one inside that interval, not a legacy hour-long reset.
+
+
     blocked_at = int(now - 30)
     future_reset = blocked_at + 60
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
@@ -634,7 +634,7 @@ async def test_reconcile_recoverable_account_statuses_recovers_quota_exceeded_de
         accounts=[account],
     )
 
-    # 82ed714b: secondary reset cannot extend expired real-quota retry.
+
     assert recovered == 1
     assert account.status == AccountStatus.ACTIVE
     assert account.reset_at is None

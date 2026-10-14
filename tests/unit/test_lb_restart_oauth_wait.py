@@ -31,11 +31,7 @@ class _Standby:
 
 
 def _fake_swap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pending_polls: dict[int, list[int]]) -> tuple:
-    """lb-restart with every process, launchd and front action replaced by a recorder.
 
-    pending_polls maps a port to the pending-flow counts its /internal/oauth/pending
-    returns on successive polls (the last value repeats).
-    """
     lb = _load_lb_restart()
     events: list[str] = []
     polls: dict[int, int] = {}
@@ -61,7 +57,7 @@ def _fake_swap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pending_polls: d
 
     def pid_alive(pid: int | None) -> bool:
         if pid == 111 and alive["old"]:
-            alive["old"] = False  # the old primary exits once asked
+            alive["old"] = False
             return True
         return False
 
@@ -105,7 +101,7 @@ def _args(**overrides: object) -> argparse.Namespace:
 
 
 def test_pending_sign_in_holds_each_front_move_until_it_finishes(monkeypatch, tmp_path) -> None:
-    # A sign-in on the primary, then one started on the standby during the swap.
+
     pending = {2457: [1, 1, 1, 0], 2459: [1, 0]}
     lb, events, polls = _fake_swap(monkeypatch, tmp_path, pending)
 

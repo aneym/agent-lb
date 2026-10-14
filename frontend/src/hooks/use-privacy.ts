@@ -3,9 +3,9 @@ import { create } from "zustand";
 const PRIVACY_STORAGE_KEY = "agent-lb-privacy";
 
 type PrivacyState = {
-  /** Whether emails are blurred across the dashboard. */
+
   blurred: boolean;
-  /** Toggle email blur on/off and persist to localStorage. */
+
   toggle: () => void;
 };
 
@@ -23,7 +23,7 @@ function persist(value: boolean): void {
   try {
     window.localStorage.setItem(PRIVACY_STORAGE_KEY, value ? "1" : "0");
   } catch {
-    /* Storage blocked — silently ignore. */
+
   }
 }
 

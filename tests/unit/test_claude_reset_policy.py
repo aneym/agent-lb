@@ -1,4 +1,4 @@
-"""The pure quota/runway algorithm needs boundary cases; CLI tests use files and subprocesses."""
+
 
 from __future__ import annotations
 
@@ -126,7 +126,7 @@ def test_cli_synthetic_state_never_applies(tmp_path, remaining, word):
     ],
 )
 def test_live_cli_applies_only_redeem(tmp_path, remaining, inventory_status, history, expected_reason):
-    """Real CLI HTTP boundary with a local service stand-in, no production mocks."""
+
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from threading import Thread
 
@@ -151,7 +151,7 @@ def test_live_cli_applies_only_redeem(tmp_path, remaining, inventory_status, his
         if history != "missing"
         else []
     )
-    # Too-recent observations must not displace the eligible ten-minute sample.
+
     stored.append(
         {
             "account_id": "claude-a",
@@ -261,10 +261,7 @@ def test_live_cli_applies_only_redeem(tmp_path, remaining, inventory_status, his
 
 
 def test_above_threshold_never_requests_inventory(tmp_path, monkeypatch, capsys):
-    """A pool-wide threshold must gate inventory even for the first low account.
 
-    The brief requires a fake _request to detect any attempted inventory call.
-    """
     from argparse import Namespace
 
     from app import reset_cli

@@ -1,4 +1,4 @@
-"""Bounded, read-only projection of the routing ledger."""
+
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _tail(path: Path, budget: int) -> tuple[list[dict[str, Any]], bool]:
         start = max(0, size - budget)
         stream.seek(start)
         if start:
-            stream.readline()  # discard the partial first row
+            stream.readline()
         rows = []
         for line in stream:
             try:
@@ -66,7 +66,7 @@ def _closeout_matches(dispatch: dict, closeout: dict) -> bool:
 
 
 def _candidate(row: dict) -> Candidate:
-    # of_decision writes candidate IDs, not expanded seat metadata.
+
     return Candidate(
         seat=_string(row.get("seat") or row.get("id")),
         model=_string(row.get("model")),
@@ -110,7 +110,7 @@ def _projection(row: dict, index: int, closeout: dict | None, match: str) -> Dec
         duration_s=_number(closeout.get("duration_s")) if closeout else None,
         tokens_in=closeout.get("tokens_in") if closeout and isinstance(closeout.get("tokens_in"), int) else None,
         tokens_out=closeout.get("tokens_out") if closeout and isinstance(closeout.get("tokens_out"), int) else None,
-        # Raw closeout errors may contain a final response or prompt. Never expose them.
+
         error="subagent failed" if closeout and closeout.get("ok") is not True else None,
         match=match,
     )
@@ -157,7 +157,7 @@ def read_decisions(
 ) -> DecisionsResponse:
     path = Path(os.environ.get("ROUTE_LEDGER") or Path.home() / ".claude/logs/dispatch.jsonl").expanduser()
     rows, truncated = _tail(path, byte_budget)
-    # Iterate forward so a closeout can only consume a preceding, unambiguous dispatch.
+
     open_rows: list[tuple[int, dict]] = []
     paired: dict[int, tuple[dict, str]] = {}
     ambiguous: set[int] = set()
@@ -168,7 +168,7 @@ def read_decisions(
             if row.get("matched") is False or row.get("match") == "prompt_hash_ambiguous":
                 continue
             matches = [(i, d) for i, d in open_rows if _closeout_matches(d, row)]
-            # A name or seat can disambiguate a digest, but never guess between identical keys.
+
             for field in ("subagent_type", "name"):
                 wanted = row.get(field)
                 if len(matches) > 1 and wanted:

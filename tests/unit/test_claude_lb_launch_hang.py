@@ -346,7 +346,7 @@ def test_late_work_process_keeps_idle_session_alive(monkeypatch, tmp_path, capsy
 
 def test_early_shell_tool_keeps_idle_session_alive(tmp_path, capsys):
     launcher = load_launcher_module()
-    # A bare `sleep 3` is exec-optimized by macOS sh and leaves no shell to detect.
+
     script = "import subprocess; subprocess.run(['/bin/sh', '-c', 'sleep 3; :'], check=True)"
 
     assert launcher.run_supervised(

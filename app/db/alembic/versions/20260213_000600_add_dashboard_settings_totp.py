@@ -1,9 +1,4 @@
-"""add totp fields to dashboard_settings
 
-Revision ID: 20260213_000600_add_dashboard_settings_totp
-Revises: 20260213_000500_add_dashboard_settings
-Create Date: 2026-02-13
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260213_000600_add_dashboard_settings_totp"
 down_revision = "20260213_000500_add_dashboard_settings"
 branch_labels = None

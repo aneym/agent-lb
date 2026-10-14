@@ -181,10 +181,10 @@ async def test_response_translation_maps_mid_stream_overflow_to_prompt_too_long(
 
 @pytest.mark.asyncio
 async def test_response_translation_maps_top_level_error_frame_overflow() -> None:
-    # ChatGPT-backed Codex emits terminal errors as a top-level frame with the
-    # detail fields on the event root (``code``/``message``/``error_type``)
-    # instead of under an ``error`` envelope or ``response.error``. The
-    # converter must still classify these as context overflow.
+
+
+
+
     async def source():
         yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
         yield (
@@ -204,8 +204,8 @@ async def test_response_translation_maps_top_level_error_frame_overflow() -> Non
 
 @pytest.mark.asyncio
 async def test_response_translation_keeps_top_level_generic_error_as_api_error() -> None:
-    # A generic top-level error frame (no overflow signal) must stay api_error
-    # so Claude Code does not spuriously reactive-compact on unrelated failures.
+
+
     async def source():
         yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
         yield (
@@ -223,9 +223,9 @@ async def test_response_translation_keeps_top_level_generic_error_as_api_error()
 
 @pytest.mark.asyncio
 async def test_split_startup_error_catches_terminal_error_before_content() -> None:
-    # An overflow that arrives before any assistant content is returned as a
-    # startup error frame (for the caller to surface as a non-200 HTTP error) and
-    # NOT replayed into the stream.
+
+
+
     async def source():
         yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
         yield (
@@ -246,9 +246,9 @@ async def test_split_startup_error_catches_terminal_error_before_content() -> No
 
 @pytest.mark.asyncio
 async def test_split_startup_error_replays_stream_when_content_precedes_error() -> None:
-    # Once real content has streamed, a later overflow is a genuine mid-stream
-    # failure: no startup error is reported and every frame (message_start,
-    # content, the error event) is replayed in order.
+
+
+
     async def source():
         yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
         yield 'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
@@ -269,8 +269,8 @@ async def test_split_startup_error_replays_stream_when_content_precedes_error() 
 
 @pytest.mark.asyncio
 async def test_split_startup_error_replays_empty_success() -> None:
-    # A completed-but-empty turn (no content, no error) is not a startup error;
-    # its normal message_start/message_delta/message_stop frames are replayed.
+
+
     async def source():
         yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
         yield 'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":0}}}\n\n'
@@ -284,9 +284,9 @@ async def test_split_startup_error_replays_empty_success() -> None:
 
 @pytest.mark.asyncio
 async def test_split_startup_error_releases_headers_while_upstream_is_still_reasoning() -> None:
-    # A started turn that is still reasoning (no content yet) must release
-    # message_start after the content grace; holding it until content made
-    # Claude Code abort the request after ~180 s with no response headers.
+
+
+
     stalled = asyncio.Event()
 
     async def source():
@@ -315,9 +315,9 @@ async def test_split_startup_error_releases_headers_while_upstream_is_still_reas
 
 @pytest.mark.asyncio
 async def test_split_startup_error_fails_fast_when_upstream_never_answers() -> None:
-    # Upstream accepting the request and never emitting a frame must become an
-    # Anthropic error the caller returns as non-200, and the upstream stream
-    # must be closed, not left pending.
+
+
+
     closed = asyncio.Event()
 
     async def source():
@@ -363,12 +363,7 @@ def _input_texts(translated) -> list[str]:
 
 @pytest.mark.parametrize("as_parts", [False, True])
 def test_seat_sees_only_its_brief_when_workflow_harness_relays_lead_chat(as_parts: bool) -> None:
-    """Golden: the Workflow harness frames captured from run wf_7d1bfe12-263.
 
-    Every seat in that run refused its brief because the relayed lead chat was
-    framed as the authoritative request. The bridge must drop the relayed chat
-    and keep the brief's body verbatim, in both content shapes Claude Code sends.
-    """
     fx = _workflow_relay_fixture()
     reminder = "<system-reminder>CLAUDE.md contents</system-reminder>"
 

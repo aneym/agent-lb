@@ -1,6 +1,4 @@
-"""A factory box has no agent-lb on 127.0.0.1:2455 (ax42, 2026-10-06: `route reservations` got "Connection refused",
-so `seat run --class` could not reserve). The box's lb-proxy install writes its proxy URL to
-~/.config/agent-lb/client.env; route reads it when AGENT_LB_URL is not in the environment, and the environment wins."""
+
 
 from __future__ import annotations
 

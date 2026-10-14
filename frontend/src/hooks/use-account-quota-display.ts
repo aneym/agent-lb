@@ -30,7 +30,7 @@ function persistPreference(preference: AccountQuotaDisplayPreference): void {
   try {
     window.localStorage.setItem(QUOTA_DISPLAY_STORAGE_KEY, preference);
   } catch {
-    /* Storage blocked - silently ignore. */
+
   }
 }
 

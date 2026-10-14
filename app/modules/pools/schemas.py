@@ -21,13 +21,13 @@ class PoolRefill(DashboardModel):
 
 
 class PoolSummary(DashboardModel):
-    """One routable capacity pool, as the router's `route pick` reads it."""
+
 
     id: str
     provider: str
     kind: str
-    # Every account the pool draws from, including ones excluded from the
-    # numbers below (canceled, deactivated, paused, re-auth).
+
+
     accounts: int
     eligible_accounts: int
     weekly_empty_accounts: int = Field(default=0, exclude=True)
@@ -44,29 +44,29 @@ class PoolSummary(DashboardModel):
     def usable_accounts(self) -> int:
         return self.eligible_accounts
 
-    # The best single account's remaining percent — what one more request can
-    # actually use. Null when no account in the pool is usable.
+
+
     headroom_percent: float | None = None
     aggregate_remaining_percent: float | None = None
-    # Reset of the window belonging to the account that supplies the headroom.
+
     reset_at: datetime | None = None
     five_hour_remaining_percent: float | None = None
     five_hour_reset_at: datetime | None = None
     window_label: str | None = Field(default=None, pattern=r"^(week|month)$")
     status: str = Field(pattern=r"^(ok|low|exhausted)$")
     unavailable_reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
-    # Fable pool only: which signal the numbers came from.
+
     source: str | None = None
-    # Weekly pools only: the mean weekly (secondary) remaining over usable accounts,
-    # not capped by the five-hour window, and the earliest weekly reset among them.
-    # `route pick` paces spend against the weekly cycle with these.
+
+
+
     weekly_remaining_percent: float | None = None
     weekly_reset_at: datetime | None = None
-    # Mean per-account weekly pace: remaining% minus the share of the 168 h cycle
-    # still ahead of that account's own reset. Positive = more budget than time.
+
+
     weekly_pace_percent: float | None = None
-    # CLI seat pools only (Cursor, Devin): runs and tokens the `seat` CLI observed in
-    # the last 24 h, since neither vendor exposes a usage window to read.
+
+
     observed_runs: int | None = None
     observed_tokens: int | None = None
     spent_usd: float | None = Field(default=None, exclude_if=lambda value: value is None)

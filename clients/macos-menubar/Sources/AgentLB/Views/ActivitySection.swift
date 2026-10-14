@@ -1,7 +1,7 @@
 import SwiftUI
 
-// `expanded` is owned by RootView (@AppStorage("recentExpanded")) because
-// the disclosure changes the deterministic panel height (PanelLayout).
+
+
 struct ActivitySection: View {
   let entries: [RequestLogEntry]
   let hasError: Bool
@@ -18,7 +18,7 @@ struct ActivitySection: View {
           Text("No recent requests")
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
-            // PanelMetrics.recentEmptyLine — enforced for PanelLayout.
+
             .frame(height: PanelMetrics.recentEmptyLine)
         } else {
           card
@@ -45,13 +45,13 @@ struct ActivitySection: View {
       .contentShape(.rect)
     }
     .buttonStyle(.plain)
-    // PanelMetrics.recentHeader — enforced so PanelLayout stays exact.
+
     .frame(height: PanelMetrics.recentHeader)
   }
 
   private var card: some View {
-    // One 30 s timeline for the whole card keeps the trailing relative ages
-    // (§8.2) fresh without per-row timers.
+
+
     TimelineView(.periodic(from: .now, by: 30)) { context in
       VStack(spacing: 0) {
         ForEach(entries.prefix(5)) { entry in
@@ -94,7 +94,7 @@ struct ActivityRow: View {
         .monospacedDigit()
         .foregroundStyle(.secondary)
       }
-      // §8.2: trailing relative age ("2m"), tertiary, mono.
+
       Text(Format.shortAge(entry.requestedAt, relativeTo: now))
         .font(.system(size: 10, design: .monospaced))
         .monospacedDigit()

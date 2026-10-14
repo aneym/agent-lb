@@ -64,12 +64,7 @@ class UtcAccessFormatter(AccessFormatter):
 
 
 class ArgsPreservingQueueHandler(logging.handlers.QueueHandler):
-    """Queue records without clearing ``args``.
 
-    Uvicorn's access formatter unpacks the record's args while formatting.
-    Stock ``QueueHandler.prepare`` sets ``args`` to None after merging the
-    message, so the listener drops the access line.
-    """
 
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
         record = copy.copy(record)
@@ -194,9 +189,9 @@ def build_log_config() -> LogConfig:
             "use_colors": None,
         }
 
-    # Uvicorn's stock config only wires uvicorn.* loggers. Attach the same
-    # default handler to the root logger so application loggers such as
-    # app.core.balancer.logic surface in docker logs at INFO.
+
+
+
     handlers.setdefault(
         "default", {"class": "logging.StreamHandler", "formatter": "default", "stream": "ext://sys.stderr"}
     )
@@ -208,22 +203,14 @@ def build_log_config() -> LogConfig:
     return cast(LogConfig, config)
 
 
-# Names of the stream handlers uvicorn's config defines; both write to a
-# launchd-redirected file in production.
+
+
 _QUEUED_HANDLER_NAMES = ("default", "access")
 _STREAM_SUFFIX = "_stream"
 
 
 def _queue_stream_handlers(handlers: dict[str, object]) -> None:
-    """Put every stream handler behind a QueueHandler/QueueListener pair.
 
-    ``StreamHandler.emit`` is a blocking ``write`` to stderr/stdout, and under
-    launchd those are files on a disk the whole host is contending for. A
-    single slow write parks the event loop with every stream in flight
-    (sampled mid-stall at ``logging.emit`` on 2026-09-10, 2026-09-12). The
-    QueueHandler makes emit a ``queue.put_nowait``; the listener thread does
-    the write. ``configure_runtime_logging()`` starts the listeners.
-    """
     for name in _QUEUED_HANDLER_NAMES:
         stream = handlers.get(name)
         if not isinstance(stream, dict) or str(stream.get("class", "")).endswith("QueueHandler"):
@@ -243,7 +230,7 @@ def _queue_stream_handlers(handlers: dict[str, object]) -> None:
 
 
 def start_log_listeners() -> list[logging.handlers.QueueListener]:
-    """Start the QueueListener behind each queued handler (idempotent)."""
+
     started: list[logging.handlers.QueueListener] = []
     for name in _QUEUED_HANDLER_NAMES:
         handler = logging.getHandlerByName(name)
@@ -266,11 +253,7 @@ def _stop_listener(listener: logging.handlers.QueueListener) -> None:
 
 
 def configure_runtime_logging() -> LogConfig:
-    """Apply build_log_config() to the process and start its listeners.
 
-    The CLI calls this before uvicorn.run() and passes ``log_config=None`` so
-    uvicorn does not re-apply a config whose listeners nobody started.
-    """
     config = build_log_config()
     logging.config.dictConfig(cast(dict[str, object], config))
     start_log_listeners()

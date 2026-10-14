@@ -113,7 +113,7 @@ class _RingMembershipReader(Protocol):
 
 
 def _resolve_static_asset_path(static_root: Path, requested_path: str) -> Path | None:
-    """Return a filesystem path for a SPA asset only when it stays under static_root."""
+
     normalized = PurePosixPath(requested_path)
     if normalized.is_absolute() or ".." in normalized.parts:
         return None
@@ -309,8 +309,8 @@ async def lifespan(app: FastAPI):
         set_cache_invalidation_poller(cache_poller)
         await cache_poller.start()
 
-    # Fill the accounts read caches before uvicorn binds, so the first request after
-    # a blue/green swap does not pay for a cold load (bounded by a startup timeout).
+
+
     async with startup_recorder.phase("accounts_cache_warm"):
         accounts_cache_warmer = build_accounts_cache_warmer()
         await accounts_cache_warmer.start()
@@ -346,7 +346,7 @@ async def lifespan(app: FastAPI):
             except Exception:
                 logger.warning("Failed to close HTTP bridge sessions during shutdown", exc_info=True)
 
-        # Cancel heartbeat and age the shared ring row near expiry.
+
         if heartbeat_task is not None:
             heartbeat_task.cancel()
             try:
@@ -406,8 +406,8 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    # Install the bulk-transfer pacer before any client session opens a connection;
-    # holds never pace model API traffic (incident 2026-10-05).
+
+
     upload_throttle.install()
     settings = get_settings()
     register_stack_dump_signal()
@@ -525,8 +525,8 @@ def create_app() -> FastAPI:
         if not index_html.is_file():
             raise HTTPException(status_code=503, detail=frontend_build_hint)
 
-        # index.html must revalidate on every load or browsers heuristically
-        # cache it and keep loading stale hashed bundles after a rebuild.
+
+
         return FileResponse(
             index_html,
             media_type="text/html",

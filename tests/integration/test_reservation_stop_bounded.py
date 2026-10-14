@@ -1,17 +1,4 @@
-"""A4d-6 (Opus-written 2026-10-06, from the review of a4d-5 at ede08980): a stopped run ends its processes through
-their process group only and answers inside seat's stop grace; no process table is read.
 
-1. On a host without /proc (macOS), route's stop does not list its own scanner as a member of the group it waits on:
-   the hold is released and route says "cancelled" inside seat's stop grace.
-2. A pid route read from a process table may belong to an unrelated process by the time its SIGKILL lands. Route
-   signals only its listing's process group, so an outsider survives a stop even when every pid-addressed SIGKILL
-   would hit it.
-3. On Linux a thread group whose leader is a zombie can still run threads. Neither route nor seat takes such a
-   process for gone: its threads are ended before the hold or lease is released.
-4. However slow agent-lb answers, route's stop prints its answer before seat's 10 s grace ends.
-
-Fakes: the model listing and the vendor CLI, an agent-lb stand-in for 4, and for 1 and 2 a launcher that runs the real
-clients/route with /proc hidden or with pid-addressed signals redirected to an outsider."""
 
 from __future__ import annotations
 
@@ -34,8 +21,8 @@ pytestmark = pytest.mark.timeout(600)
 
 SEAT_STOP_GRACE_S = 10.0
 
-# Runs the real route with one platform condition emulated: "no-proc" hides /proc as on macOS; "pid-reused" sends
-# every SIGKILL that route addresses to a single pid to OUTSIDER_PID instead, as if that pid had been reused.
+
+
 LAUNCHER = """import os, pathlib, runpy, signal, sys
 mode = os.environ["ROUTE_TEST_EMULATE"]
 if mode == "no-proc":
@@ -48,8 +35,8 @@ sys.argv = sys.argv[1:]
 runpy.run_path(sys.argv[0], run_name="__main__")
 """
 
-# A process that ignores SIGTERM, keeps a thread appending to STRAY_BEATS, and ends its main thread, leaving a zombie
-# thread-group leader with a live thread. It writes STRAY_READY once in that state is imminent.
+
+
 STRAY = """import ctypes, os, signal, threading, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 def beat():
@@ -64,7 +51,7 @@ with open(os.environ["STRAY_READY"], "w") as ready:
 ctypes.CDLL(None).pthread_exit(None)
 """
 
-# A model listing that leaves the stray behind (holding none of its pipes) and lists slowly.
+
 STRAY_DISCOVERY = """#!/usr/bin/env python3
 import os, subprocess, sys, time
 subprocess.Popen([sys.executable, os.environ["STRAY_SCRIPT"]], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -73,7 +60,7 @@ time.sleep(20)
 print("grok-4.7-low - Grok 4.7 Low")
 """
 
-# A vendor CLI that leaves the stray in its process group and exits once the stray is in place.
+
 STRAY_CURSOR = """#!/usr/bin/env python3
 import json, os, subprocess, sys, time
 if sys.argv[1:] == ["models"]:
@@ -93,8 +80,7 @@ print(json.dumps({"type": "result", "is_error": False, "result": "done", "sessio
 
 
 def stop_during_listing(argv: list[str], env: dict[str, str], marker: Path) -> tuple[int, dict, float]:
-    """Start route in its own session as seat does, stop its group once `marker` exists, and return route's exit
-    code, last JSON line and the seconds from the stop to its exit."""
+
     process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
                                start_new_session=True)
     HOLDERS.append(process)
@@ -206,7 +192,7 @@ def test_seat_releases_only_once_a_zombie_leaders_threads_are_gone(env: dict[str
 
 
 class SlowLookupLB(FakeLB):
-    """FakeLB whose listing of holds answers only after route's read timeout once a hold exists."""
+
 
     def __init__(self) -> None:
         super().__init__()

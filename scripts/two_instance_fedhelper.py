@@ -1,9 +1,5 @@
 #!/usr/bin/env python
-"""DB helper for the two-instance federation exercise.
 
-Subcommands operate directly on a per-instance sqlite file with that
-instance's own encryption key. Never touches real credentials.
-"""
 
 from __future__ import annotations
 

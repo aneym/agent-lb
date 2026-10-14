@@ -136,7 +136,7 @@ class DashboardSessionStore:
         return state.totp_verified
 
     def delete(self, session_id: str | None) -> None:
-        # Stateless: deletion is handled by clearing the cookie client-side.
+
         return
 
 
@@ -160,7 +160,7 @@ class DashboardAuthService:
         else:
             authenticated = password_authenticated
 
-        # Surface the TOTP prompt only for password-authenticated sessions.
+
         totp_required_on_login = bool(totp_required and password_authenticated)
         return DashboardAuthSessionResponse(
             authenticated=authenticated,
@@ -280,12 +280,12 @@ class DashboardAuthService:
             AuditService.log_async("login_failed", actor_ip=actor_ip, details={"method": "totp"})
             raise TotpInvalidCodeError("Invalid TOTP code")
         AuditService.log_async("login_success", actor_ip=actor_ip, details={"method": "totp"})
-        # Honor the existing password-session expiry so that a TTL change
-        # mid-flow (between password login and TOTP submission) cannot extend
-        # or shorten an already-issued session. We use the state captured by
-        # _require_active_password_session_with_state above so a second
-        # store.get() race cannot turn a near-expiry password session into a
-        # full-length ttl_seconds session.
+
+
+
+
+
+
         now = int(time())
         inherited_ttl = max(1, existing_state.expires_at - now)
         new_session_id = self._session_store.create(

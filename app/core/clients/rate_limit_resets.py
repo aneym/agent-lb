@@ -1,15 +1,4 @@
-"""Upstream client for ChatGPT saved rate-limit reset credits.
 
-Endpoint contract mirrors the open-source Codex CLI backend client
-(``codex-rs/backend-client/src/client/rate_limit_resets.rs``):
-
-- ``GET  {base}/backend-api/wham/rate-limit-reset-credits``
-- ``POST {base}/backend-api/wham/rate-limit-reset-credits/consume``
-
-Calls are pinned to a single account's credentials and sent directly
-upstream, matching the account probe precedent in
-``app/modules/accounts/probes.py``.
-"""
 
 from __future__ import annotations
 

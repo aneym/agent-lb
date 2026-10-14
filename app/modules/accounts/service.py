@@ -93,23 +93,23 @@ from app.modules.usage.updater import AdditionalUsageRepositoryPort, UsageUpdate
 logger = logging.getLogger(__name__)
 
 _SPARKLINE_DAYS = 7
-_DETAIL_BUCKET_SECONDS = 3600  # 1h → 168 points
+_DETAIL_BUCKET_SECONDS = 3600
 
-# Probe senders and defaults live in app.modules.accounts.probes so background
-# schedulers can reuse them; re-exported here for the existing import surface.
+
+
 DEFAULT_PROBE_MODEL = probes.DEFAULT_PROBE_MODEL
 DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = probes.DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL
 DEFAULT_GLM_PROBE_MODEL = probes.DEFAULT_GLM_PROBE_MODEL
 DEFAULT_KIMI_PROBE_MODEL = probes.DEFAULT_KIMI_PROBE_MODEL
 PROBE_REQUEST_TIMEOUT_SECONDS = probes.PROBE_REQUEST_TIMEOUT_SECONDS
-# The upstream Anthropic model list is read through one pooled account and kept an hour; a failed
-# refresh serves the last good list, marked stale (2026-09-28, dynamic `*-latest` aliases).
+
+
 ANTHROPIC_MODELS_TTL_SECONDS = 3600.0
 ANTHROPIC_MODELS_MAX_ACCOUNTS = 3
-# A limited account lists with its stored token and is never refreshed here, so listing cannot mark it active.
+
 _LIMITED_LISTABLE_STATUSES = (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED)
 _anthropic_models: tuple[float, datetime, list[str]] | None = None
-# One lock per live event loop: an asyncio.Lock binds to the loop that first waits on it.
+
 _anthropic_models_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
     weakref.WeakKeyDictionary()
 )
@@ -120,12 +120,12 @@ def _anthropic_models_refresh_lock() -> asyncio.Lock:
 PROBE_CONNECT_TIMEOUT_SECONDS = probes.PROBE_CONNECT_TIMEOUT_SECONDS
 PROBE_NETWORK_FAILURE_STATUS = probes.PROBE_NETWORK_FAILURE_STATUS
 
-# Stale-while-revalidate caches for the two expensive parts of GET /api/accounts
-# (see read_cache.py): a read never waits on a recompute once a value exists.
-# request-usage is a cumulative token/cost tally over all of request_logs (~2-3s on
-# the live table) that only the dashboard asks for (?fresh=1). The additional-quota
-# windows are ~28 serial DB round-trips that the menubar, cc banner and pools read;
-# AccountsCacheWarmer keeps them fresh between reads and warms both at startup.
+
+
+
+
+
+
 _REQUEST_USAGE_CACHE_TTL_SECONDS = 60.0
 _request_usage_cache: StaleWhileRevalidate[dict[str, AccountRequestUsage]] = StaleWhileRevalidate(
     "request_usage", ttl_seconds=_REQUEST_USAGE_CACHE_TTL_SECONDS
@@ -137,37 +137,32 @@ _additional_quotas_cache: StaleWhileRevalidate[dict[str, list[AccountAdditionalQ
 
 _T = TypeVar("_T")
 
-# Mirrored in app/modules/proxy/anthropic_service.py and app/modules/usage/updater.py
-# — all three must agree on the quota_key/window identifying Anthropic's
-# dedicated Fable-scoped weekly limit marker.
+
+
+
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 
 
 def clear_account_caches() -> None:
-    """Clear the in-process accounts read caches (used by tests for isolation)."""
+
     _request_usage_cache.clear()
     _additional_quotas_cache.clear()
 
 
 def invalidate_additional_quotas_cache() -> None:
-    """Drop cached additional-quota windows; the next read reloads them.
 
-    Each window carries its routingPolicy from dashboard settings, so a settings
-    write must invalidate it rather than serve the old policy until the TTL.
-    Clearing also discards any background refresh already in flight.
-    """
     _additional_quotas_cache.clear()
 
 
 async def cancel_account_cache_refreshes() -> None:
-    """Stop background cache refreshes so none holds a DB session past shutdown."""
+
     await _request_usage_cache.cancel_refresh()
     await _additional_quotas_cache.cancel_refresh()
 
 
 async def with_background_accounts_service(load: Callable[[AccountsService], Awaitable[_T]]) -> _T:
-    """Run a background cache refresh on its own session; the request's is closed by then."""
+
     async with get_background_session() as session:
         service = AccountsService(
             AccountsRepository(session),
@@ -183,15 +178,15 @@ class InvalidAuthJsonError(Exception):
 
 
 class AccountNotProbableError(Exception):
-    """Raised when an account is in a status that disallows probing."""
+    pass
 
 
 class AccountResetCreditsUnavailableError(Exception):
-    """Raised when an account cannot list or redeem rate-limit reset credits."""
+    pass
 
 
 class AccountStateTransitionError(Exception):
-    """Raised when an operator action is not valid for the account state."""
+    pass
 
 
 def _additional_quota_window(
@@ -201,9 +196,9 @@ def _additional_quota_window(
 ) -> AccountAdditionalWindow | None:
     if entry is None:
         return None
-    # An exhausted window (used_percent >= 100) with no bounded reset horizon —
-    # either already elapsed or persisted as None — is a stale block that must
-    # not display as permanently 100% consumed. Present it as re-admitted.
+
+
+
     if float(entry.used_percent) >= 100.0 and (entry.reset_at is None or entry.reset_at <= now_epoch):
         return AccountAdditionalWindow(
             used_percent=0.0,
@@ -255,9 +250,9 @@ class AccountsService:
         last_primed_by_account = (
             await self._limit_warmup_repo.last_primed_by_account(account_ids) if self._limit_warmup_repo else {}
         )
-        # request-usage is an aggregation over the full request_logs history consumed
-        # only by the dashboard token/cost columns, not the cc banner or menubar.
-        # Compute (cached) only when asked for via GET /api/accounts?fresh=1.
+
+
+
         request_usage_by_account: dict[str, AccountRequestUsage] = {}
         if include_request_usage:
             request_usage_by_account = await self._request_usage_by_account(account_ids)
@@ -280,8 +275,7 @@ class AccountsService:
         )
 
     async def _fable_scoped_weekly_by_account(self, account_ids: list[str]) -> dict[str, AdditionalUsageHistory]:
-        """Single batched lookup mirroring the routing path's eligibility read
-        (app/modules/proxy/anthropic_service.py) — one query, no N+1."""
+
         if not self._additional_usage_repo:
             return {}
         additional_usage_repo = cast(AdditionalUsageRepository, self._additional_usage_repo)
@@ -292,7 +286,7 @@ class AccountsService:
         )
 
     async def warm_read_caches(self, *, include_request_usage: bool) -> None:
-        """Reload the cached parts of list_accounts now (startup warm, warmer loop)."""
+
         account_ids = [account.id for account in await self._repo.list_accounts()]
         if not account_ids:
             return
@@ -305,7 +299,7 @@ class AccountsService:
             await _request_usage_cache.refresh_now(key, lambda: self._load_request_usage(account_ids))
 
     async def _request_usage_by_account(self, account_ids: list[str]) -> dict[str, AccountRequestUsage]:
-        """Per-account cumulative request-usage, stale-while-revalidate cached."""
+
         return await _request_usage_cache.get(
             frozenset(account_ids),
             load=lambda: self._load_request_usage(account_ids),
@@ -329,7 +323,7 @@ class AccountsService:
     async def _additional_quotas_by_account(
         self, account_ids: list[str], account_id_set: set[str]
     ) -> dict[str, list[AccountAdditionalQuota]]:
-        """Per-account additional-quota windows, stale-while-revalidate cached."""
+
         return await _additional_quotas_cache.get(
             frozenset(account_ids),
             load=lambda: self._load_additional_quotas(account_ids, account_id_set),
@@ -346,9 +340,9 @@ class AccountsService:
         if additional_usage_repo:
             additional_quota_routing_overrides = await self._repo.additional_quota_routing_policy_overrides()
             quota_keys = [definition.quota_key for definition in list_additional_quota_definitions()]
-            # The Fable scoped-weekly marker is written outside the registry
-            # (see app/modules/usage/updater.py); clients read its percent from
-            # additionalQuotas, so enumerate it explicitly.
+
+
+
             if _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY not in quota_keys:
                 quota_keys.append(_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY)
             now_epoch = int(time.time())
@@ -438,7 +432,7 @@ class AccountsService:
 
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
         refresh_token = self._encryptor.decrypt(account.refresh_token_encrypted)
-        # Anthropic OAuth issues no id_token; the column is NULL for those rows.
+
         id_token = self._encryptor.decrypt(account.id_token_encrypted) if account.id_token_encrypted else ""
         expires = token_expiry_epoch_ms(access_token) or 0
 
@@ -841,14 +835,7 @@ class AccountsService:
         account_id: str,
         model: str | None = None,
     ) -> AccountProbeResponse | None:
-        """Send a minimal upstream ``responses.create`` pinned to one account.
 
-        Bypasses load-balancer scoring so an operator can wake the upstream
-        rate-limiter for a stuck account (see upstream issues #676 / #677).
-        Triggers an immediate usage refresh after the probe and returns the
-        before/after snapshot so the operator can see whether the upstream
-        state changed.
-        """
         account = await self._repo.get_by_id(account_id)
         if account is None:
             return None
@@ -972,11 +959,7 @@ class AccountsService:
         trigger: str = "manual",
         override_daily_limit: bool = False,
     ) -> AccountResetCreditConsumeResponse | None:
-        """Consume one banked upstream reset credit and refresh usage state.
 
-        ``already_redeemed`` is idempotent success per the Codex app-server
-        contract, so both it and ``reset`` trigger the post-redeem refresh.
-        """
         account = await self._repo.get_by_id(account_id)
         if account is None:
             return None
@@ -1036,8 +1019,8 @@ class AccountsService:
                 windows_reset=attempt.windows_reset,
             )
         else:
-            # Inventory and usage must be reconciled before re-sending a
-            # pending attempt. The same committed ID protects uncertain calls.
+
+
             inventory = await rate_limit_resets.fetch_reset_credits(
                 access_token=access_token,
                 chatgpt_account_id=credit_account.chatgpt_account_id,
@@ -1068,7 +1051,7 @@ class AccountsService:
                 )
 
             if payload.code in ("reset", "already_redeemed"):
-                # Never allow a later refresh failure to hide consumed credit.
+
                 await attempts.applied(attempt, payload.code, payload.windows_reset)
             else:
                 await attempts.settle(attempt, payload.code)
@@ -1095,8 +1078,8 @@ class AccountsService:
                 recovered = await refresh_standard_capacity(credit_account, self._usage_updater, self._usage_repo)
                 get_account_selection_cache().invalidate()
                 if recovered is not True:
-                    # Upstream usage can remain stale until one real request
-                    # wakes its limiter. Applied attempts cannot consume again.
+
+
                     await self.probe_account(account_id)
                     recovered = await refresh_standard_capacity(credit_account, self._usage_updater, self._usage_repo)
                 if recovered is True:
@@ -1135,8 +1118,8 @@ class AccountsService:
             if not await attempts.acquire(attempt):
                 raise AccountResetCreditsUnavailableError("Reset recovery is already running or cooling down")
             if attempt.state != "applied":
-                # Unlike Codex, Claude's already_used is not an idempotent
-                # success receipt. Do not retry an indeterminate POST.
+
+
                 raise AccountResetCreditsUnavailableError(
                     "Claude reset outcome is unresolved; no additional credit will be consumed"
                 )
@@ -1156,8 +1139,8 @@ class AccountsService:
                     secondary_used_percent_before=secondary_before,
                     secondary_used_percent_after=secondary_before,
                 )
-            # The globally unique active slot serializes manual and automatic
-            # requests before checking the rolling daily spend allowance.
+
+
             attempt_trigger = "manual_override" if override_daily_limit else trigger
             attempt = await attempts.create(account_id, grant.id, attempt_trigger)
             if attempt is None:
@@ -1241,11 +1224,11 @@ class AccountsService:
         )
 
     async def list_anthropic_models(self) -> AnthropicModelsResponse:
-        """Upstream Anthropic model ids, cached for an hour; the last good list when a refresh fails."""
+
         cached = _anthropic_models
         if cached is not None and time.monotonic() - cached[0] < ANTHROPIC_MODELS_TTL_SECONDS:
             return AnthropicModelsResponse(models=cached[2], fetched_at=cached[1])
-        # One refresh at a time: a request that waited reuses the list the first one stored.
+
         async with _anthropic_models_refresh_lock():
             return await self._refresh_anthropic_models()
 
@@ -1267,10 +1250,10 @@ class AccountsService:
                 fresh = account
                 if account.status == AccountStatus.ACTIVE and self._auth_manager:
                     fresh = await self._auth_manager.ensure_fresh(account, force=False)
-                    if fresh.status != AccountStatus.ACTIVE:  # paused or sent to re-auth meanwhile
+                    if fresh.status != AccountStatus.ACTIVE:
                         continue
                 access_token = self._encryptor.decrypt(fresh.access_token_encrypted)
-            except Exception as exc:  # a refresh failure moves on to the next account
+            except Exception as exc:
                 error = f"account token unavailable ({type(exc).__name__})"
                 continue
             status, ids = await probes.list_anthropic_models(

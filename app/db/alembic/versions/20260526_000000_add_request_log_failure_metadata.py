@@ -1,9 +1,4 @@
-"""add request log failure metadata
 
-Revision ID: 20260526_000000_add_request_log_failure_metadata
-Revises: 20260525_000000_add_usage_raw_window_latest_index
-Create Date: 2026-05-26
-"""
 
 from __future__ import annotations
 

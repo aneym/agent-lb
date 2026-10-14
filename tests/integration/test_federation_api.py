@@ -78,21 +78,21 @@ async def _get_account(account_id: str) -> Account:
 
 @pytest.mark.asyncio
 async def test_mirror_requires_bearer_auth(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Federation entirely off (no token configured): 403.
+
     response = await async_client.get("/api/federation/mirror")
     assert response.status_code == 403
 
     _enable_federation(monkeypatch)
 
-    # Missing bearer credentials: 403.
+
     response = await async_client.get("/api/federation/mirror")
     assert response.status_code == 403
 
-    # Wrong bearer token: 403.
+
     response = await async_client.get("/api/federation/mirror", headers={"Authorization": "Bearer wrong-token"})
     assert response.status_code == 403
 
-    # Correct token: 200.
+
     response = await async_client.get("/api/federation/mirror", headers=_auth_headers())
     assert response.status_code == 200
 
@@ -415,7 +415,7 @@ async def test_checkout_happy_path_and_idempotent_retry(async_client, monkeypatc
     account_after_release = await _get_account("acc_checkout")
     assert account_after_release.owner_instance == _TAKER_INSTANCE_ID
 
-    # Retry (lost response): same taker, same nonce, same payload — no double transfer.
+
     second = await async_client.post(
         "/api/federation/checkout",
         json={
@@ -559,9 +559,9 @@ async def test_checkin_retry_after_success_does_not_reimport(async_client, monke
     encryptor = TokenEncryptor()
     assert encryptor.decrypt(account_after_first.access_token_encrypted) == "payload-a-access"
 
-    # Deliberately different payload on "retry" with the same nonce — proves
-    # the second call is a no-op lookup, not a re-import, since a real T
-    # retry would resend identical content anyway (its gate stayed closed).
+
+
+
     payload_b = dict(payload_a)
     payload_b["auth"] = dict(payload_a["auth"])
     payload_b["auth"]["access_token"] = "payload-b-access-should-not-apply"
@@ -667,7 +667,7 @@ async def test_reclaim_only_unsettled_handoff(async_client, monkeypatch: pytest.
         headers=_transfer_headers(),
     )
     nonce = checkout.json()["nonce"]
-    # The answering side has no outbound credential and cannot roll back itself.
+
     assert (await async_client.post("/api/federation/reclaim/reclaim-account", json={})).status_code == 503
     assert (await _get_account("reclaim-account")).owner_instance == _TAKER_INSTANCE_ID
     assert (
@@ -704,8 +704,8 @@ async def test_postgres_checkout_crash_before_and_after_commit_retries_without_d
     encryptor = TokenEncryptor()
     retry_nonce = ""
     for crash_before_commit in (True, False):
-        # The first attempt crashes either before the only commit or just
-        # after it; a new session models the next process on retry.
+
+
         async with SessionLocal() as session:
             repo = FederationRepository(session)
             original_commit = session.commit
@@ -753,7 +753,7 @@ async def test_postgres_checkout_crash_before_and_after_commit_retries_without_d
             assert rows[0].nonce == (retry.nonce if crash_before_commit else retry_nonce)
             assert (await repo.get_account("checkout-crash")).owner_instance == _TAKER_INSTANCE_ID
         if crash_before_commit:
-            # Prepare the second scenario from the pristine state again.
+
             async with SessionLocal() as session:
                 from sqlalchemy import delete
 
@@ -818,8 +818,8 @@ async def test_postgres_checkin_crash_before_commit_preserves_owner_and_old_toke
     account = await _get_account("checkin-crash")
     assert account.owner_instance == _TAKER_INSTANCE_ID
     assert TokenEncryptor().decrypt(account.refresh_token_encrypted) == "seed-refresh"
-    # On the pre-fix path the first commit happens *before* import, so this
-    # assertion exposes the real crash window rather than passing vacuously.
+
+
     async with SessionLocal() as session:
         rows = (
             (
@@ -845,7 +845,7 @@ async def test_postgres_checkin_crash_before_commit_preserves_owner_and_old_toke
 
 @pytest.mark.asyncio
 async def test_pending_checkout_mirror_keeps_retryable_token(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The mirror is not the confirmation; only confirmation erases the exported token."""
+
     _enable_federation(monkeypatch)
     await _seed_account("pending-mirror", owner_instance=None, refresh_token="still-live")
     first = await async_client.post(
@@ -900,7 +900,7 @@ async def test_outbound_transfer_token_does_not_enable_inbound_routes(
             headers={"Authorization": f"Bearer {token}"},
         )
         assert denied.status_code == 403
-    # A renamed legacy mirror credential must not become a transfer credential.
+
     monkeypatch.setenv("AGENT_LB_FEDERATION_TAKER_INSTANCE_IDS", _TAKER_INSTANCE_ID)
     from pydantic import ValidationError
 
@@ -917,7 +917,7 @@ async def test_outbound_transfer_token_does_not_enable_inbound_routes(
 async def test_postgres_checkin_has_no_committed_import_before_owner_change(
     db_setup: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A crash on the old second commit cannot expose a new token with the old owner."""
+
     from app.core.config.settings import Settings
     from app.db.models import AccountTransferDirection
     from app.modules.federation.schemas import FederationAuthPayload
@@ -980,7 +980,7 @@ async def test_postgres_checkin_has_no_committed_import_before_owner_change(
 
 @pytest.mark.asyncio
 async def test_mirror_snapshot_cannot_overwrite_concurrent_local_checkout(db_setup: bool) -> None:
-    """A stale mirror read must not blank a token after the owner changes."""
+
     from sqlalchemy import update
 
     if SessionLocal.kw["bind"].dialect.name != "postgresql":
@@ -988,8 +988,8 @@ async def test_mirror_snapshot_cannot_overwrite_concurrent_local_checkout(db_set
     await _seed_account("mirror-owner-race", owner_instance="peer", refresh_token="local-live")
     encryptor = TokenEncryptor()
     async with SessionLocal() as mirror_session:
-        # Hold an old identity-map snapshot while another transaction takes
-        # ownership, then exercise the real mirror update with that session.
+
+
         await mirror_session.get(Account, "mirror-owner-race")
         async with SessionLocal() as owner_session:
             await owner_session.execute(

@@ -94,12 +94,12 @@ class TestClassifyUpstreamFailure:
         assert result["failure_class"] == "retryable_transient"
 
     def test_overloaded_error(self) -> None:
-        # Regression for #565: upstream "Our servers are currently overloaded.
-        # Please try again later" is delivered with code=overloaded_error and
-        # may surface without a 5xx status (e.g. on streamed responses where
-        # the HTTP status was already 200 before the error envelope).
-        # Classifying it as non_retryable made the agent stop mid-task instead
-        # of failing over to another account or surfacing a retryable error.
+
+
+
+
+
+
         result = classify_upstream_failure(
             error_code="overloaded_error",
             error=UpstreamError(message="Our servers are currently overloaded. Please try again later"),
@@ -109,10 +109,10 @@ class TestClassifyUpstreamFailure:
         assert result["failure_class"] == "retryable_transient"
 
     def test_server_is_overloaded_error(self) -> None:
-        # The OpenAI Codex backend spells the same shed condition
-        # code=server_is_overloaded (streamed error envelope, no 5xx status).
-        # It must classify as retryable_transient so failover engages instead
-        # of surfacing the raw error to the client on the first attempt.
+
+
+
+
         result = classify_upstream_failure(
             error_code="server_is_overloaded",
             error=UpstreamError(message="Our servers are currently overloaded. Please try again later."),

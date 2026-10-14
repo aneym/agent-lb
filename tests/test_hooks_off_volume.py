@@ -1,9 +1,4 @@
-"""Integration: rendered hook settings survive an unavailable repository volume.
 
-Regression: a sync restores repo-backed desktop/unblock hooks or the agent PATH.
-Existing dispatcher parity does not exercise installation paths or a broken factory
-symlink. This uses the installer CLI and real installed guard, without test seams.
-"""
 import hashlib
 import json
 import os
@@ -88,8 +83,8 @@ def test_rendered_hooks_survive_missing_factory(tmp_path):
 
 
 def test_factory_installer_uses_stable_links(tmp_path):
-    # The guard and cua shim hooks run the manifest's ~/.local links, which the factory runtime and the open-factory
-    # engine plus overlay both install, so neither the repo volume nor a runtime swap can strand them.
+
+
     env = dict(os.environ, HOME=str(tmp_path))
     result = subprocess.run([sys.executable, str(FACTORY / "bin/desktop-guard-install")],
                             env=env, capture_output=True, text=True, timeout=10)
@@ -104,10 +99,10 @@ def test_factory_installer_uses_stable_links(tmp_path):
 
 
 def test_floor_guards_render_to_stable_links_and_check_catches_drift(tmp_path):
-    # rm-dynamic-deny and stash-guard (kept floors) ran from factory-runtime; a cutover that moves the runtime would
-    # leave the hook naming a missing script. The rendered hook must name the manifest's ~/.local/bin link, an intact
-    # revision-pinned registry must not be edited (the dispatcher refuses one whose entries no longer hash to its
-    # rev), and --check-hook-paths must fail on a release-scoped path or a missing guard target.
+
+
+
+
     home = tmp_path / "home"
     claude = home / ".claude"
     claude.mkdir(parents=True)

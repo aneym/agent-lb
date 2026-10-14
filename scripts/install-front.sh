@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# install-front.sh — install/restart the agent-lb TCP front as a launchd agent.
-#
-# The front (scripts/agent-lb-front.mjs) holds the public localhost port and
-# retries the upstream app port while the app restarts, so deploys stop being
-# client-visible 502 windows. Install order for an existing single-port host:
-#   1. move the app to the internal port (install-service plist --port), then
-#   2. run this script — it binds the public port once the app releases it.
-#
-# Usage:
-#   scripts/install-front.sh              # install or restart the front
-#   scripts/install-front.sh --uninstall  # bootout + remove the plist
-#
+
+
+
+
+
+
+
+
+
+
+
+
 set -euo pipefail
 
 LABEL="com.aneyman.agent-lb-front"

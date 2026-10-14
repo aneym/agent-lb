@@ -59,9 +59,9 @@ class _CancelThenRetryUpstreamWebSocket:
             return
 
         if len(self.sent_text) == 2:
-            # Late anonymous output from request #1. Without the drain barrier,
-            # the HTTP bridge routes this into request #2 because request #2 is
-            # the only unresolved pending request.
+
+
+
             await self._messages.put(
                 _FakeUpstreamMessage(
                     "text",
@@ -205,10 +205,10 @@ async def test_cancelled_http_bridge_stream_retires_before_retry_can_share_upstr
         assert isinstance(first_payload, dict)
         assert first_payload["type"] == "response.created"
 
-        # Simulate downstream cancellation before request #1 reaches terminal.
-        # The bridge must retire the shared upstream instead of sending a retry
-        # behind the unterminated upstream response and guessing anonymous-frame
-        # ownership.
+
+
+
+
         await first_stream.aclose()
     finally:
         if session.upstream_reader is not None:

@@ -1,32 +1,4 @@
-"""E2E tests: real OpenAI Python SDK across all supported agent-lb /v1 surfaces.
 
-The companion file ``test_v1_responses_openai_sdk.py`` already covers
-``client.responses.stream(...)`` in detail (G1/G3/G4 normalisation). This
-file widens the surface to **every other** OpenAI SDK method that maps to
-a agent-lb route, plus a parametrised audit of routes the proxy does NOT
-expose — so that a regression to either layer (agent-lb routing or
-``app.modules.proxy.service``) shows up in CI without standing up a real
-upstream account.
-
-Surfaces covered:
-
-- ``client.chat.completions.create(...)`` — streaming, non-streaming,
-  tool-call, multi-turn
-- ``client.responses.parse(text_format=PydanticModel)`` — structured
-  output through the real SDK parser
-- ``client.responses.create(...)`` non-streaming (extra coverage on top
-  of ``test_v1_responses_openai_sdk.py``)
-- ``client.models.list()``
-- ``client.audio.transcriptions.create(file=..., model=...)``
-- ``client.images.generate(...)`` (best-effort against the
-  ``tool_usage.image_gen`` translation path)
-- Unsupported surfaces (embeddings, moderations, files, batches,
-  fine_tuning, ``responses.retrieve/cancel/delete``) — assert the SDK
-  receives a clean 4xx, not a 500.
-
-All upstream interactions are mocked via ``monkeypatch`` on the proxy
-service so these tests run hermetically (no network).
-"""
 
 from __future__ import annotations
 
@@ -57,9 +29,9 @@ TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
 IMAGE_MODEL = "gpt-image-2"
 
 
-# ---------------------------------------------------------------------------
-# SSE helpers (mirror test_v1_responses_openai_sdk.py to stay independent)
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def _sse(payload: dict) -> str:
@@ -230,9 +202,9 @@ def _function_call_output_block(call_id: str, name: str, args: str, output_index
     ]
 
 
-# ---------------------------------------------------------------------------
-# Fixtures: openai.AsyncOpenAI bound to the ASGI app
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def _make_upstream_model(slug: str, *, modalities: tuple[str, ...] = ("text",)) -> UpstreamModel:
@@ -265,12 +237,7 @@ async def sdk_client(
     create_api_key,
     import_test_account,
 ):
-    """Real ``openai.AsyncOpenAI`` bound to the in-process FastAPI app.
 
-    The client uses the same ASGI transport that ``e2e_client`` already
-    set up, so the SDK's HTTP traffic exercises the real agent-lb routing
-    layer end-to-end.
-    """
     await setup_dashboard_password(e2e_client)
     await enable_api_key_auth(e2e_client)
     created = await create_api_key(e2e_client, name="e2e-sdk-compat")
@@ -334,9 +301,9 @@ def _patch_upstream_stream(monkeypatch, blocks: list[str]) -> None:
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
 
 
-# ---------------------------------------------------------------------------
-# chat.completions
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class TestChatCompletions:
@@ -443,8 +410,7 @@ class TestChatCompletions:
 
     @pytest.mark.asyncio
     async def test_multi_turn_payload_round_trip(self, sdk_client, monkeypatch):
-        """Multi-turn input must reach the proxy untouched and the SDK
-        must parse the reply normally."""
+
         resp_id = "resp_chat_multi"
         seen_payload: dict[str, Any] = {}
 
@@ -471,15 +437,15 @@ class TestChatCompletions:
         )
 
         assert result.choices[0].message.content == "ack"
-        # The chat.completions endpoint translates to a Responses payload
-        # before forwarding. Verify the multi-turn history survived.
+
+
         forwarded = seen_payload["payload"]
         assert hasattr(forwarded, "input") or "input" in (forwarded if isinstance(forwarded, dict) else {})
 
 
-# ---------------------------------------------------------------------------
-# responses.parse (Pydantic structured output)
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class _CityForecast(BaseModel):
@@ -490,10 +456,7 @@ class _CityForecast(BaseModel):
 class TestResponsesParse:
     @pytest.mark.asyncio
     async def test_parse_with_pydantic_text_format(self, sdk_client, monkeypatch):
-        """The SDK's ``responses.parse(text_format=Model)`` issues a normal
-        ``responses.create`` then parses the returned ``output_text`` into the
-        Pydantic model. The proxy must produce a stream whose final
-        ``output_text`` is valid JSON that the SDK can hydrate."""
+
         resp_id = "resp_parse_struct"
         payload = json.dumps({"city": "Seoul", "temperature_c": 21})
         _patch_upstream_stream(
@@ -512,16 +475,16 @@ class TestResponsesParse:
             text_format=_CityForecast,
         )
 
-        # ``output_parsed`` is the SDK-hydrated Pydantic instance.
+
         assert result.output_parsed == _CityForecast(
             city="Seoul",
             temperature_c=21,
         )
 
 
-# ---------------------------------------------------------------------------
-# models.list
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class TestModels:
@@ -532,9 +495,9 @@ class TestModels:
         assert DEFAULT_MODEL in ids
 
 
-# ---------------------------------------------------------------------------
-# audio.transcriptions
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def _make_wav_bytes(*, seconds: float = 0.05, sample_rate: int = 16_000) -> bytes:
@@ -555,11 +518,9 @@ class TestAudioTranscriptions:
         sdk_client,
         monkeypatch,
     ):
-        """``client.audio.transcriptions.create`` must reach the
-        ``/v1/audio/transcriptions`` route and return the SDK's
-        ``Transcription`` object with ``.text``."""
-        # Patch the proxy service's transcribe method so we don't hit
-        # the upstream Codex transcription endpoint.
+
+
+
         captured: dict[str, Any] = {}
 
         async def fake_transcribe(self, *, audio_bytes, filename, content_type, prompt, headers, api_key):
@@ -581,12 +542,12 @@ class TestAudioTranscriptions:
         assert captured["bytes_len"] == len(wav)
 
 
-# ---------------------------------------------------------------------------
-# images.generate / edit / variation
-# ---------------------------------------------------------------------------
 
-# A 1x1 transparent PNG, base64-decoded. Small enough to embed inline and large
-# enough that ``UploadFile`` round-trips it as a real binary payload.
+
+
+
+
+
 _PNG_1X1_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII="
 _PNG_1X1_BYTES = base64.b64decode(_PNG_1X1_B64)
 
@@ -603,15 +564,7 @@ def _patch_images_upstream(
     output_tokens: int = 17,
     captured: dict[str, Any] | None = None,
 ) -> None:
-    """Patch the upstream Codex stream to emit the minimum SSE sequence the
-    images service needs to translate to a successful images.generate /
-    images.edit / images.variation response: an ``image_generation_call``
-    ``output_item.done`` followed by ``response.completed`` carrying
-    ``tool_usage.image_gen`` tokens.
 
-    Also patches ``_ensure_fresh_with_budget`` so the call path skips
-    upstream account refresh (which would otherwise hit a real network).
-    """
 
     async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
         del headers, access_token, base_url, raise_for_status, kwargs
@@ -668,11 +621,7 @@ def _patch_images_upstream(
 class TestImages:
     @pytest.mark.asyncio
     async def test_generate_returns_b64_image(self, sdk_client, monkeypatch):
-        """``client.images.generate(...)`` must reach
-        ``/v1/images/generations`` and return an ``ImagesResponse`` whose
-        ``data[0].b64_json`` matches the upstream tool result. By default
-        the OpenAI SDK requests ``response_format='b64_json'`` for
-        ``gpt-image-*`` models, which is what the proxy emits."""
+
         captured: dict[str, Any] = {}
         _patch_images_upstream(
             monkeypatch,
@@ -691,10 +640,10 @@ class TestImages:
 
         assert result.data
         assert result.data[0].b64_json == "GENERATED_B64"
-        # ``revised_prompt`` survives the translation layer.
+
         assert result.data[0].revised_prompt == "a clean red circle"
-        # Image routes hide the host model behind ``images_host_model``;
-        # ensure the upstream call really used the configured host model.
+
+
         assert captured["model"] not in {None, ""}
         tools = captured["tools"]
         assert tools, "image_generation tool must be forwarded to upstream"
@@ -703,12 +652,9 @@ class TestImages:
 
     @pytest.mark.asyncio
     async def test_edit_returns_b64_image(self, sdk_client, monkeypatch):
-        """``client.images.edit(image=..., prompt=...)`` posts multipart
-        form-data to ``/v1/images/edits``. The proxy must accept the
-        single ``image`` field, forward the bytes upstream, and return
-        the translated b64 image."""
-        # gpt-image-2 does not accept image edits; switch model for this
-        # case to one that does.
+
+
+
         _patch_images_upstream(
             monkeypatch,
             result_b64="EDITED_B64",
@@ -728,9 +674,7 @@ class TestImages:
 
     @pytest.mark.asyncio
     async def test_variation_is_clean_4xx(self, sdk_client):
-        """The proxy does not implement an image-variation translation
-        path; ``client.images.create_variation(...)`` should yield a
-        clean 4xx through the SDK."""
+
         with pytest.raises(openai.APIStatusError) as ei:
             await sdk_client.images.create_variation(
                 model="gpt-image-1",
@@ -741,18 +685,13 @@ class TestImages:
         assert 400 <= ei.value.status_code < 500, f"images.variation returned non-4xx: {ei.value.status_code}"
 
 
-# ---------------------------------------------------------------------------
-# Unsupported routes — SDK must receive a clean 4xx (NotFoundError)
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class TestUnsupportedSurfaces:
-    """The proxy intentionally does not expose these OpenAI surfaces.
-    Calling them through the SDK must yield a clean 4xx
-    (``NotFoundError`` / 405 ``APIStatusError``) rather than a 500 or
-    hang. Accepting any 4xx (and asserting ``< 500``) keeps the test
-    robust to FastAPI's choice of 404 vs 405 depending on whether a
-    different HTTP verb is registered on the same path."""
+
 
     @staticmethod
     def _assert_clean_4xx(exc: openai.APIStatusError) -> None:

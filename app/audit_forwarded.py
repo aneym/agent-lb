@@ -1,4 +1,4 @@
-"""Compare requested values with logged forwarded values, not upstream confirmation."""
+
 
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ def run(args):
             for row in forwarded:
                 print(f"forwarded: {row['model']} effort={row['effort']} count={row['count']}")
     except ValueError as exc:
-        # Only our validation messages are safe; never display database or settings exceptions.
+
         message = str(exc)
         safe = ("Live PostgreSQL database URL is not resolvable; configure AGENT_LB_DATABASE_URL.",
                 "Model alias could not be resolved.", "--since must be an ISO timestamp.")

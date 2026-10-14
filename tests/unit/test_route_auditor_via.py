@@ -1,4 +1,4 @@
-"""Mechanical work keeps a reviewer when Claude is short but Cursor can run Sonnet."""
+
 
 from __future__ import annotations
 

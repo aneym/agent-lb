@@ -1,10 +1,4 @@
-"""Read-only local status observation for the agent-lb command line.
 
-This module deliberately uses only the standard library.  Importing the normal
-application pulls in the server and its configuration, which is both slow and
-the wrong side effect for a command whose only job is to observe a running
-local service.
-"""
 
 from __future__ import annotations
 
@@ -28,11 +22,11 @@ STATUS_CACHE_MAX_AGE_SECONDS = 600
 
 
 class StatusObservationError(Exception):
-    """A safe-to-display failure while observing the local service."""
+    pass
 
 
 def run(args: Any) -> None:
-    """Observe the running service and exit nonzero only when observation fails."""
+
     base_url = args.base_url or os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL)
     provider = args.provider
     model = args.model
@@ -107,10 +101,10 @@ def observe(
     return result
 
 
-# Healthy hours (2026-09-17..20, and after the 2026-09-25 billing-block fix)
-# read 93-98% of Anthropic input from cache; every broken hour during the
-# 2026-09-21..25 cache incidents read under 90%. The old 50% line stayed quiet
-# through a day where 35% of steady-state turns rewrote their whole context.
+
+
+
+
 CACHE_ALERT_READ_PERCENT = 90
 CACHE_ALERT_MIN_REQUESTS = 50
 
@@ -141,8 +135,8 @@ def _anthropic_cache_observation(summary: Any) -> dict[str, Any]:
         return observation
     observation["ratio_percent"] = 100 * read / denominator
     if count < CACHE_ALERT_MIN_REQUESTS:
-        # A handful of new sessions writing their first prompt can pull a quiet
-        # hour under the line without anything being wrong.
+
+
         observation["state"] = "ok"
     else:
         observation["state"] = "alert" if read * 100 < CACHE_ALERT_READ_PERCENT * denominator else "ok"
@@ -173,7 +167,7 @@ def _validated_base_url(value: str) -> str:
 
 def _get_json(url: str, timeout: float) -> Any:
     headers = {"Accept": "application/json"}
-    # Supplying this is an explicit operator choice. Never print it or an HTTP body.
+
     if cookie := os.getenv("AGENT_LB_STATUS_COOKIE"):
         headers["Cookie"] = cookie
     request = Request(url, headers=headers, method="GET")
@@ -317,7 +311,7 @@ def _account_usability(status: str, subscription: str | None, account: dict[str,
         ("primaryRemainingPercent", "resetAtPrimary"),
         ("secondaryRemainingPercent", "resetAtSecondary"),
     ):
-        # A null window is one the provider does not report (OpenAI has no 5h window).
+
         if usage.get(key) is None:
             continue
         remaining = _number(usage.get(key))

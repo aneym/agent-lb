@@ -100,7 +100,7 @@ def test_selection_error_extras_carry_diagnostics_and_reset_hint() -> None:
         "reauth_required",
     }
     assert diagnostics["earliest_recovery_at"] == datetime.fromtimestamp(now + 600, tz=timezone.utc).isoformat()
-    # Retry-After derives from resets_in_seconds at the response layer.
+
     assert retry_after_seconds_from_error_detail(detail) >= 0
 
 
@@ -116,7 +116,7 @@ def test_identity_mismatch_escalates_after_threshold_and_resets_on_success() -> 
     try:
         for _ in range(ESCALATION_THRESHOLD - 1):
             record_identity_mismatch(account_id, stored_plan_type="pro", payload_plan_type="free")
-        assert get_identity_mismatch(account_id) is None  # below threshold
+        assert get_identity_mismatch(account_id) is None
 
         record_identity_mismatch(account_id, stored_plan_type="pro", payload_plan_type="free")
         escalated = get_identity_mismatch(account_id)

@@ -4,10 +4,10 @@ import XCTest
 
 @testable import AgentLB
 
-// Scenario (Opus, 2026-10-01; the implementer does not edit this file).
-// Alex, 07:47 ET: the all-model pool status shows on every tab and overlaps
-// ACCOUNTS. Pools belong on the All tab only, in the compact card design, and
-// must fit the height PanelLayout reserves for the pool section.
+
+
+
+
 final class PoolTilesScenarioTests: XCTestCase {
   private let zone = TimeZone(identifier: "America/New_York")!
 
@@ -26,8 +26,8 @@ final class PoolTilesScenarioTests: XCTestCase {
     renderer.scale = 1
     renderer.proposedSize = ProposedViewSize(width: 292, height: nil)
     let image = try XCTUnwrap(renderer.nsImage)
-    // PanelLayout.poolHeight without the 12 pt section padding: label,
-    // spacing, the fixed card, spacing, one metrics line (summary is nil).
+
+
     let reserved = PanelMetrics.poolLabel + PanelMetrics.poolSpacing
       + PanelMetrics.poolCard + PanelMetrics.poolSpacing + PanelMetrics.metricsLine
     XCTAssertLessThanOrEqual(image.size.height, reserved + 0.5)

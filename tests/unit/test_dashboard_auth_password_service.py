@@ -147,10 +147,10 @@ async def test_verify_totp_inherits_existing_password_session_expiry(monkeypatch
     encryptor = TokenEncryptor()
     repository.settings.totp_secret_encrypted = encryptor.encrypt(secret)
 
-    # Issue an existing password session with the previous TTL setting
-    # (12 hours), then change the TTL setting on the operator side and submit
-    # TOTP. The new session must inherit the original session's remaining
-    # lifetime, not adopt the new TTL.
+
+
+
+
     original_ttl = 12 * 60 * 60
     new_ttl_after_change = 24 * 60 * 60
     password_session_id = store.create(
@@ -158,7 +158,7 @@ async def test_verify_totp_inherits_existing_password_session_expiry(monkeypatch
         totp_verified=False,
         ttl_seconds=original_ttl,
     )
-    expected_remaining = original_ttl  # nothing has elapsed yet
+    expected_remaining = original_ttl
 
     code = pyotp.TOTP(secret).at(current["value"])
     new_session_id, applied_ttl = await service.verify_totp(
@@ -198,13 +198,13 @@ async def test_verify_totp_does_not_call_session_store_get_twice(
     encryptor = TokenEncryptor()
     repository.settings.totp_secret_encrypted = encryptor.encrypt(secret)
 
-    # Regression for the race between two store.get(session_id) calls in
-    # verify_totp: the inherited-TTL path must reuse the live state captured
-    # during the active-session check rather than re-querying the store.
-    # Asserting that store.get is called exactly once during verify_totp
-    # locks in that single-lookup contract; previously the inherited-TTL
-    # branch could mint a fresh full-length session if the second lookup
-    # raced the clock past the original session's expiry.
+
+
+
+
+
+
+
     original_ttl = 12 * 60 * 60
     new_ttl_after_change = 24 * 60 * 60
     password_session_id = store.create(

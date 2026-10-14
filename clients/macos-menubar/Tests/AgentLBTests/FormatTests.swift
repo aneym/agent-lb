@@ -3,19 +3,19 @@ import XCTest
 
 final class FormatTests: XCTestCase {
 
-  // Fixed reference point: avoids time-dependent flakiness
+
   private let now = Date(timeIntervalSince1970: 1_000_000)
 
-  // MARK: - countdown
+
 
   func testCountdownUnderHour() {
-    // +15 min → "0:15" (0 hours, 15 minutes, h:mm format)
+
     let target = now.addingTimeInterval(15 * 60)
     XCTAssertEqual(Format.countdown(to: target, relativeTo: now), "0:15")
   }
 
   func testCountdownOverHour() {
-    // +205 min = 3h 25m
+
     let target = now.addingTimeInterval(205 * 60)
     XCTAssertEqual(Format.countdown(to: target, relativeTo: now), "3h 25m")
   }
@@ -30,7 +30,7 @@ final class FormatTests: XCTestCase {
     XCTAssertEqual(Format.countdown(to: past, relativeTo: now), "0:00")
   }
 
-  // MARK: - countdownCompact (§9.3 account-row window grid)
+
 
   func testCountdownCompactUnderHour() {
     let target = now.addingTimeInterval(15 * 60)
@@ -38,13 +38,13 @@ final class FormatTests: XCTestCase {
   }
 
   func testCountdownCompactHours() {
-    // 23h 30m → "23h" (whole hours only)
+
     let target = now.addingTimeInterval(23.5 * 3600)
     XCTAssertEqual(Format.countdownCompact(to: target, relativeTo: now), "23h")
   }
 
   func testCountdownCompactDays() {
-    // 60h → "2d" (≥ 48h switches to days)
+
     let target = now.addingTimeInterval(60 * 3600)
     XCTAssertEqual(Format.countdownCompact(to: target, relativeTo: now), "2d")
   }
@@ -54,7 +54,7 @@ final class FormatTests: XCTestCase {
     XCTAssertEqual(Format.countdownCompact(to: past, relativeTo: now), "0:00")
   }
 
-  // MARK: - relativeAge
+
 
   func testRelativeAgeSeconds() {
     let past = now.addingTimeInterval(-12)
@@ -71,14 +71,14 @@ final class FormatTests: XCTestCase {
     XCTAssertEqual(Format.relativeAge(past, relativeTo: now), "2h ago")
   }
 
-  // MARK: - usd
+
 
   func testUsdLargeValue() {
     XCTAssertEqual(Format.usd(6159.252347), "$6,159.25")
   }
 
   func testUsdSmallValue() {
-    // Values < 0.01 use 4 decimal places: 0.009603 → $0.0096
+
     XCTAssertEqual(Format.usd(0.009603), "$0.0096")
   }
 
@@ -86,7 +86,7 @@ final class FormatTests: XCTestCase {
     XCTAssertEqual(Format.usd(0.0210), "$0.02")
   }
 
-  // MARK: - compact
+
 
   func testCompactBelowThreshold() {
     XCTAssertEqual(Format.compact(999), "999")
@@ -97,20 +97,20 @@ final class FormatTests: XCTestCase {
   }
 
   func testCompactDesignExample() {
-    // Design doc: compact(60805) == "60.8k" (floor, not round)
+
     XCTAssertEqual(Format.compact(60805), "60.8k")
   }
 
-  // MARK: - percent
+
 
   func testPercentRendersInteger() {
-    // Design §1.1 shows integer percents ("95%", "62%") — never one decimal
+
     XCTAssertEqual(Format.percent(95.73), "96%")
     XCTAssertEqual(Format.percent(62.0), "62%")
     XCTAssertEqual(Format.percent(0), "0%")
   }
 
-  // MARK: - latency
+
 
   func testLatencySeconds() {
     XCTAssertEqual(Format.latency(12200), "12.2s")
@@ -124,7 +124,7 @@ final class FormatTests: XCTestCase {
     XCTAssertEqual(Format.latency(1000), "1.0s")
   }
 
-  // MARK: - tokens
+
 
   func testTokensSmall() {
     XCTAssertEqual(Format.tokens(713), "713 tok")
@@ -134,7 +134,7 @@ final class FormatTests: XCTestCase {
     XCTAssertEqual(Format.tokens(1200), "1.2k tok")
   }
 
-  // MARK: - shortAge (§8.2 header chip + Recent trailing age)
+
 
   func testShortAgeSeconds() {
     XCTAssertEqual(Format.shortAge(now.addingTimeInterval(-1), relativeTo: now), "1s")
@@ -148,10 +148,10 @@ final class FormatTests: XCTestCase {
     XCTAssertEqual(Format.shortAge(now.addingTimeInterval(-7200), relativeTo: now), "2h")
   }
 
-  // MARK: - compactLarge (§8.2 token counts)
+
 
   func testCompactLargeBillions() {
-    // summary.json fixture value: tokensSecondaryWindow
+
     XCTAssertEqual(Format.compactLarge(3_834_168_753), "3.8B")
   }
 
@@ -167,10 +167,10 @@ final class FormatTests: XCTestCase {
     XCTAssertEqual(Format.compactLarge(999), "999")
   }
 
-  // MARK: - credits (§8.2 pool cards)
+
 
   func testCompactCreditsRoundsToOneDecimal() {
-    // 7467 → "7.5k" per the §8.2 example (rounded, unlike compact's floor)
+
     XCTAssertEqual(Format.compactCredits(7467), "7.5k")
     XCTAssertEqual(Format.compactCredits(7800), "7.8k")
   }
@@ -183,7 +183,7 @@ final class FormatTests: XCTestCase {
     XCTAssertEqual(Format.credits(remaining: 7467, capacity: 7800), "7.5k / 7.8k cr")
   }
 
-  // MARK: - cachedPercent (§8.2 metrics strip)
+
 
   func testCachedPercentFromFixtureValues() {
     XCTAssertEqual(
@@ -196,7 +196,7 @@ final class FormatTests: XCTestCase {
     XCTAssertNil(Format.cachedPercent(cached: 100, total: 0))
   }
 
-  // MARK: - multiple (§11 arbitrage line)
+
 
   func testMultiple() {
     XCTAssertEqual(Format.multiple(27.0), "27×")
@@ -206,7 +206,7 @@ final class FormatTests: XCTestCase {
     XCTAssertEqual(Format.multiple(9.94), "9.9×")
   }
 
-  // MARK: - usdCompact (§11 arbitrage line)
+
 
   func testUsdCompact() {
     XCTAssertEqual(Format.usdCompact(6234.9), "$6.2k")

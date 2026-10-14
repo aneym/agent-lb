@@ -3,9 +3,9 @@ import XCTest
 
 final class AccountFilterTests: XCTestCase {
 
-  // Fixed "now" between the fixture's past rateLimitResetAt
-  // (2026-06-05T22:17:58Z, openai a4-other@example.com) and the future one
-  // (2026-06-10T18:20:00Z, anthropic a1-owner@example.com).
+
+
+
   private let now = Format.iso8601.date(from: "2026-06-10T17:00:00Z")!
 
   private var accounts: [Account] = []
@@ -56,7 +56,7 @@ final class AccountFilterTests: XCTestCase {
     )
   }
 
-  // MARK: - Provider filter
+
 
   func testProviderFilterAll() {
     let filter = AccountFilter()
@@ -107,7 +107,7 @@ final class AccountFilterTests: XCTestCase {
     XCTAssertEqual(AccountFilter.classify(canceled, now: now), .unsubscribed)
   }
 
-  // MARK: - Status filter
+
 
   func testFutureResetMetadataDoesNotMakeActiveAccountRateLimited() {
     let filter = AccountFilter(status: .rateLimited)
@@ -189,7 +189,7 @@ final class AccountFilterTests: XCTestCase {
     XCTAssertEqual(AccountFilter.classify(account, now: now), .active)
   }
 
-  // MARK: - Query filter
+
 
   func testQueryMatchesSubstringCaseInsensitively() {
     let filter = AccountFilter(query: "KINETIC")
@@ -215,13 +215,13 @@ final class AccountFilterTests: XCTestCase {
     XCTAssertFalse(filter.hasActiveFilters)
   }
 
-  // MARK: - Sorting
 
-  // Earliest future reset per fixture account at now = 17:00Z:
-  //   ddb5ff1a… 21:50:00 < a2-second 23:00:10 < 2c436b54… 23:49:59
-  //   < a4-other/anthropic 23:50:00 < openai a1-owner 23:55:02
-  //   < a4-other/openai 00:29:22+1d < a3-work/openai 02:15:22+1d
-  //   < yahoo 02:15:29+1d
+
+
+
+
+
+
   func testSortResetSoonest() {
     let filter = AccountFilter(sort: .resetSoonest)
     let result = filter.apply(to: accounts, now: now)
@@ -326,7 +326,7 @@ final class AccountFilterTests: XCTestCase {
     )
   }
 
-  // MARK: - Provider counts
+
 
   func testProviderCountsUnfiltered() {
     let counts = AccountFilter().providerCounts(in: accounts, now: now)
@@ -336,8 +336,8 @@ final class AccountFilterTests: XCTestCase {
   }
 
   func testProviderCountsApplyStatusAndQueryButNotProvider() {
-    // Counts must reflect the other active filters (query) while ignoring
-    // the provider selection itself — chips preview what switching yields.
+
+
     let filter = AccountFilter(provider: .anthropic, query: "work")
     let counts = filter.providerCounts(in: accounts, now: now)
     XCTAssertEqual(counts[.all], 2)
@@ -369,7 +369,7 @@ final class AccountFilterTests: XCTestCase {
     XCTAssertEqual(counts[.openai], 1)
   }
 
-  // MARK: - hasActiveFilters
+
 
   func testHasActiveFilters() {
     XCTAssertFalse(AccountFilter().hasActiveFilters)

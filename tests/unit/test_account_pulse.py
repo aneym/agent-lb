@@ -155,17 +155,17 @@ def _build_scheduler(
             probe_calls.append(account.id)
         return probe_results[account.id]
 
-    # An OpenAI probe 401 is confirmed with an auth-only call; unless a test says
-    # otherwise the token is rejected there too (the pre-confirmation behavior).
+
+
     async def openai_auth_check_sender(account: Account, access_token: str) -> int:
         del access_token
         if auth_check_calls is not None:
             auth_check_calls.append(account.id)
         return (auth_check_results or {}).get(account.id, 401)
 
-    # Fable-probe fakes never touch the DB: weekly_usage defaults to "no
-    # weekly data" so existing tests that don't opt in stay isolated and
-    # never reach fable_probe_sender/fable_marker_writer.
+
+
+
     async def weekly_usage_lookup(account_id: str) -> tuple[float, int | None] | None:
         if weekly_usage is None:
             return None
@@ -401,7 +401,7 @@ async def test_pulse_marks_ledger_canceled_on_subscription_refusal() -> None:
     assert len(repo.ledger_updates) == 1
     assert repo.ledger_updates[0]["status"] == "canceled"
     assert _OAUTH_REFUSED_MESSAGE in repo.ledger_updates[0]["notes"]
-    # Credentials are intact: account status must stay untouched.
+
     assert repo.status_updates == []
 
 
@@ -421,8 +421,8 @@ async def test_pulse_marks_reauth_required_on_credential_rejection() -> None:
 
 @pytest.mark.asyncio
 async def test_openai_probe_401_with_a_working_token_is_inconclusive(caplog: pytest.LogCaptureFixture) -> None:
-    # 2026-09-25 22:42Z: codex/responses answered 401 invalid_api_key for every OpenAI
-    # account while their tokens still worked on /wham/usage; nothing is disconnected.
+
+
     accounts = [_account(f"acc_openai_{n}", provider="openai") for n in range(3)]
     repo = _Repo(accounts)
     auth_check_calls: list[str] = []
@@ -494,8 +494,8 @@ async def test_non_openai_probe_401_needs_no_auth_check() -> None:
 
 @pytest.mark.asyncio
 async def test_recovery_lane_restores_openai_account_only_once_the_probe_passes() -> None:
-    # The accounts wrongly disconnected at 22:42Z come back through the recovery lane,
-    # not a manual DB flip: held while codex/responses still 401s, restored on a 2xx.
+
+
     account = _account(status=AccountStatus.REAUTH_REQUIRED, provider="openai")
     repo = _Repo([account])
     during_outage = _build_scheduler(
@@ -518,8 +518,8 @@ async def test_pulse_corrects_stale_auth_failure_to_unsubscribed() -> None:
 
     await scheduler.pulse_once()
 
-    # Probe authenticated → the deactivated status is stale; ledger goes
-    # canceled so the account stays out of the routable pool.
+
+
     assert repo.status_updates == [(account.id, AccountStatus.ACTIVE, None)]
     assert len(repo.ledger_updates) == 1
     assert repo.ledger_updates[0]["status"] == "canceled"
@@ -538,9 +538,7 @@ async def test_pulse_reactivates_recovered_account() -> None:
 
 @pytest.mark.asyncio
 async def test_pulse_clears_stale_deactivation_reason_on_active_account() -> None:
-    """Regression: an active account can carry a leftover deactivation reason
-    (a recovery path restored status without clearing it); clients render a
-    non-null reason as disconnected, so a healthy probe must reconcile it."""
+
     account = _account(status=AccountStatus.ACTIVE)
     account.deactivation_reason = "Authentication failed: invalid_api_key"
     repo = _Repo([account])
@@ -581,7 +579,7 @@ async def test_pulse_inconclusive_probe_makes_no_writes_and_backs_off() -> None:
 
     assert repo.status_updates == []
     assert repo.ledger_updates == []
-    # Second pass is skipped by the failure backoff.
+
     assert probe_calls == [account.id]
 
 
@@ -653,13 +651,13 @@ async def test_recovery_pass_backoff_is_capped_at_recovery_interval() -> None:
     )
 
     await scheduler.recovery_pulse_once()
-    # An immediate re-pass is skipped: a still-failing account is probed at
-    # most once per recovery interval.
+
+
     await scheduler.recovery_pulse_once()
     assert probe_calls == [account.id]
 
-    # Simulate the recovery interval elapsing. The raw backoff (7200s base)
-    # would block for hours; the recovery lane caps it at its own cadence.
+
+
     failure = scheduler._failures[account.id]
     failure.recorded_monotonic -= scheduler.recovery_interval_seconds + 1
     assert failure.retry_after_monotonic > time.monotonic()
@@ -678,7 +676,7 @@ async def test_run_loop_probes_recovery_pending_accounts_on_fast_cadence() -> No
         repo,
         probe_results={
             healthy.id: (200, None),
-            # Still refused upstream: the account stays recovery-pending.
+
             pending.id: (403, _OAUTH_REFUSED_MESSAGE),
         },
         probe_calls=probe_calls,
@@ -688,16 +686,16 @@ async def test_run_loop_probes_recovery_pending_accounts_on_fast_cadence() -> No
 
     await scheduler.start()
     try:
-        # Poll instead of a fixed sleep so a loaded runner cannot flake the
-        # cadence assertion; the loop normally satisfies this within ~2s.
+
+
         deadline = time.monotonic() + 10.0
         while probe_calls.count(pending.id) < 2 and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
     finally:
         await scheduler.stop()
 
-    # The first wake is a full pass; every later wake within the full
-    # interval is a recovery pass that only re-probes the canceled account.
+
+
     assert probe_calls.count(healthy.id) == 1
     assert probe_calls.count(pending.id) >= 2
 
@@ -793,8 +791,8 @@ async def test_pulse_fable_probe_refusal_writes_marker_with_weekly_reset_and_lea
     await scheduler.pulse_once()
 
     assert marker_writes == [(account.id, 100.0, weekly_reset_at)]
-    # A refused Fable probe must never change account status or the
-    # subscription ledger.
+
+
     assert repo.status_updates == []
     assert repo.ledger_updates == []
 

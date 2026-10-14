@@ -1,4 +1,4 @@
-"""Artificial Analysis snapshots and non-routing model evidence."""
+
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def fetch_models(key: str) -> dict[str, Any]:
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = response.read().decode("utf-8")
-        # An upstream echo of the credential must never reach disk or output.
+
         if key in payload:
             raise ValueError("Artificial Analysis response contains credential")
         data = json.loads(payload)
@@ -56,7 +56,7 @@ def fetch_models(key: str) -> dict[str, Any]:
             raise ValueError("Artificial Analysis returned an invalid models response")
         return data
     except (OSError, ValueError):
-        # urllib exception strings may contain server-controlled text, including headers.
+
         raise ValueError("Artificial Analysis fetch failed or returned invalid JSON") from None
 
 
@@ -130,7 +130,7 @@ def sync(*, dry_run: bool = False, fixture: Path | None = None, force: bool = Fa
 
 
 def evidence(alias: str) -> list[dict[str, Any]] | None:
-    """Read fresh AA evidence for an alias, or None when unavailable or stale."""
+
     snapshot = _read_snapshot(snapshot_dir() / "latest.json")
     if snapshot is None:
         return None

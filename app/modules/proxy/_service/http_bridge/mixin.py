@@ -428,12 +428,7 @@ class _HTTPBridgeMixin(
             return stale_key
 
     async def _http_bridge_account_still_servable(self, account) -> bool:
-        """Whether a bridge session's account can still take a turn.
 
-        The session holds the Account captured when it opened. A pause or a
-        spent window lands on the row and the usage history, not on that
-        object, so reuse has to read both before keeping the upstream.
-        """
         if account is None:
             return False
         if getattr(account, "id", None) is None:
@@ -1563,10 +1558,10 @@ class _HTTPBridgeMixin(
 
     def _prune_http_bridge_sessions_locked(self) -> list["_HTTPBridgeSession"]:
         now = _service_time().monotonic()
-        # This full-registry scan runs synchronously under _http_bridge_lock on
-        # every session get-or-create; unthrottled it blocked the event loop
-        # for seconds under load (2026-07-16 stalls). Idle TTLs are far longer
-        # than the throttle, so a bounded cadence changes nothing observable.
+
+
+
+
         if now - self._http_bridge_last_idle_prune_monotonic < _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS:
             return []
         self._http_bridge_last_idle_prune_monotonic = now
@@ -1935,20 +1930,20 @@ class _HTTPBridgeMixin(
             if _service_time().monotonic() >= cooldown.expires_at:
                 self._http_bridge_account_cooldowns.pop(key, None)
             elif cooldown.account_id != preferred_account_id:
-                # This bridge key just hit a first-event timeout on the
-                # cooled-down account: exclude it so selection (including the
-                # sticky path, which rebinds the mapping once the pinned
-                # account leaves the candidate pool) picks a different
-                # account. Requests that prefer the failed account
-                # (previous-response continuity anchors) are exempt —
-                # continuity wins over cooldown.
+
+
+
+
+
+
+
                 excluded_account_ids.add(cooldown.account_id)
         retry_same_account_once = preferred_account_id is not None
         preferred_candidate_id = preferred_account_id
         selected_account_lease: AccountLease | None = None
-        # An account-level rejection (403, or a refresh that needs reauth) moves the
-        # connect to another account; it reaches the client only when no account
-        # is left. Claude Code reads a 401/403 as "run /login".
+
+
+
         account_rejection: ProxyResponseError | None = None
         while True:
             select_kwargs = {

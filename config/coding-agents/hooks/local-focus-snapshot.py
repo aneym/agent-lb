@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bound host snapshot capture and sandbox reads; never return a fake snapshot."""
+
 import json
 import os
 from pathlib import Path
@@ -33,7 +33,7 @@ def main():
             os.killpg(child.pid, signal.SIGKILL) if child.poll() is None else None
             child.communicate()
             destination.write_text(json.dumps({'error':'host snapshot unavailable or timed out'})+'\n')
-            # The worker can report unrelated checks, but snapshot reads fail closed.
+
             return 0
     if sys.argv[1:] != ['snapshot']:
         return fail('telemetry runs in the lead shell; only host-captured snapshot reads are supported')

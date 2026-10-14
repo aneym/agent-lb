@@ -165,8 +165,8 @@ _SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
 )
 _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS = 5.0
 _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
-# Remote-compaction v2 expects exactly one compaction output item; a small cap
-# bounds accumulator memory if upstream ever misbehaves.
+
+
 _COMPACTION_OUTPUT_ITEM_CAP = 8
 
 
@@ -381,13 +381,13 @@ class _HTTPBridgeUpstreamEventsMixin:
                     matched_request_state.suppress_next_created_downstream = False
                     suppress_downstream_event = True
                 if matched_request_state.is_compaction_request and payload is not None:
-                    # Remote-compaction v2: the upstream websocket protocol
-                    # streams the compaction item as ``response.output_item.done``
-                    # but sends ``response.completed`` with an empty ``output``
-                    # array. The Codex CLI counts compaction items from the
-                    # terminal envelope, so re-inject the streamed items there
-                    # ("expected exactly one compaction output item, got 0
-                    # from 0 output items" otherwise).
+
+
+
+
+
+
+
                     if event_type == "response.output_item.done":
                         done_item = payload.get("item")
                         if (
@@ -706,14 +706,14 @@ class _HTTPBridgeUpstreamEventsMixin:
                 ) = _build_stream_incomplete_terminal_event_for_request(status_request_state)
 
         if event_type == "response.completed" and terminal_request_state is not None:
-            # Record the completed response id regardless of input shape so
-            # subsequent turns (including ones that never populated
-            # input_item_count, e.g. string inputs) can still reuse this
-            # anchor for continuity lookups.
+
+
+
+
             if response_id is not None:
                 session.last_completed_response_id = response_id
-            # Prefix trimming is only meaningful for list-shaped inputs, so
-            # keep the input-count / fingerprint update scoped to that path.
+
+
             if terminal_request_state.input_item_count > 0:
                 session.last_completed_input_count = terminal_request_state.input_item_count
                 session.last_completed_input_prefix_fingerprint = terminal_request_state.input_full_fingerprint

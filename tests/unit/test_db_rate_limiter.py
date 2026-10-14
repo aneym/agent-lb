@@ -102,26 +102,26 @@ def test_migration_upgrade_downgrade_upgrade_is_reversible(tmp_path: Path) -> No
         engine.dispose()
 
 
-# Regression tests guarding the contract that successful logins must not
-# count toward lockout. The previous implementation incremented the
-# attempts counter on every check(), so eight successful logins would
-# trip the same lockout threshold as eight failures.
+
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_successful_login_not_counted_toward_lockout(
     async_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """8 successful logins must NOT cause lockout; only failures count."""
+
     limiter = DatabaseRateLimiter(max_attempts=8, window_seconds=60, type="password")
 
     async with async_session_factory() as session:
-        # Simulate 8 successful logins: check (no record) then clear on success
+
         for _ in range(8):
             await limiter.check("ip:success-test", session)
             await limiter.clear_for_key("ip:success-test", session)
 
-        # A 9th successful login must still be allowed — counter stays at 0
+
         await limiter.check("ip:success-test", session)
 
 
@@ -129,19 +129,19 @@ async def test_successful_login_not_counted_toward_lockout(
 async def test_clear_for_key_resets_lockout(
     async_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Successful login should reset the rate limit counter via clear_for_key."""
+
     limiter = DatabaseRateLimiter(max_attempts=8, window_seconds=60, type="password")
 
     async with async_session_factory() as session:
-        # Record 8 failed attempts
+
         for _ in range(8):
             await limiter.check_and_record("ip:clear-test", session)
 
-        # clear_for_key (defined in app/core/rate_limiter/db_rate_limiter.py)
-        # resets the lockout window for the given key.
+
+
         await limiter.clear_for_key("ip:clear-test", session)
 
-        # After clearing, should be able to attempt again
+
         await limiter.check_and_record("ip:clear-test", session)
 
 
@@ -149,15 +149,15 @@ async def test_clear_for_key_resets_lockout(
 async def test_check_only_does_not_increment_counter(
     async_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """check() should only read, not write to the attempts table."""
+
     limiter = DatabaseRateLimiter(max_attempts=2, window_seconds=60, type="password")
 
     async with async_session_factory() as session:
-        # check() without recording — 10 checks should NOT block
+
         for _ in range(10):
             await limiter.check("ip:check-only", session)
 
-        # Still able to record
+
         await limiter.check_and_record("ip:check-only", session)
 
 
@@ -165,19 +165,19 @@ async def test_check_only_does_not_increment_counter(
 async def test_record_failure_only_counts_failures(
     async_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """record_failure() should be the method called only when authentication fails."""
+
     limiter = DatabaseRateLimiter(max_attempts=3, window_seconds=60, type="password")
 
     async with async_session_factory() as session:
-        # 2 failures recorded explicitly
+
         await limiter.record_failure("ip:failure-test", session)
         await limiter.record_failure("ip:failure-test", session)
 
-        # 1 success (clear) in between
+
         await limiter.clear_for_key("ip:failure-test", session)
 
-        # 1 more failure after success — should only be 1 total
+
         await limiter.record_failure("ip:failure-test", session)
 
-        # Should NOT be blocked (only 1 failure since last success)
+
         await limiter.check("ip:failure-test", session)

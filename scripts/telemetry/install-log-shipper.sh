@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# install-log-shipper.sh — install/restart the agent-lb log shipper as a
-# launchd agent. Tails every ~/.agent-lb log file on this host and ships them
-# to PostHog Logs (OTLP/HTTP) via vector, independent of the agent-lb /
-# agent-lb-front service lifecycle.
-#
-# Usage:
-#   scripts/telemetry/install-log-shipper.sh              # install or restart
-#   scripts/telemetry/install-log-shipper.sh --uninstall   # bootout + remove
-#
-# INSTANCE defaults from hostname (studio* -> studio, else macbook). Override
-# with: AGENT_LB_TELEMETRY_INSTANCE=studio scripts/telemetry/install-log-shipper.sh
+
+
+
+
+
+
+
+
+
+
+
 set -euo pipefail
 
 LABEL="com.aneyman.agent-lb-vector"
@@ -46,7 +46,7 @@ fi
 
 mkdir -p "$LOG_DIR" "$DATA_DIR" "$(dirname "$PLIST")"
 
-# Validate the config before installing so a bad edit never gets bootstrapped.
+
 INSTANCE="$INSTANCE" "$VECTOR_BIN" validate --no-environment "$VECTOR_CONFIG" >/dev/null
 
 cat >"$PLIST" <<PLIST_EOF

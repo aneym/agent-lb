@@ -53,7 +53,7 @@ def test_a_yielding_hold_steps_aside_only_while_its_target_is_fresh(_state: Path
     upload_throttle.write_state(enabled=True, owner="p6-gaming", bytes_per_sec=200_000, yields_to="gaming-adaptive")
     upload_throttle.write_state(enabled=True, owner="gaming-adaptive", bytes_per_sec=500_000)
     assert upload_throttle.read_state() == (True, 500_000.0)
-    # Omitting yields_to on a later enable keeps the yield that was already stored.
+
     upload_throttle.write_state(enabled=True, owner="p6-gaming", bytes_per_sec=200_000, reason="still")
     assert upload_throttle.read_policy()["holds"]["p6-gaming"]["yields_to"] == "gaming-adaptive"
     state = json.loads(_state.read_text())
@@ -111,7 +111,7 @@ async def test_writes_are_paced_to_the_configured_rate() -> None:
     elapsed = time.monotonic() - started
     assert sum(size for _, size in fake.writes) == 400_000
     assert max(size for _, size in fake.writes) <= upload_throttle.BURST_BYTES
-    # 400 KB at 1 MB/s with a 64 KB bucket: at least ~0.33 s, close is deferred until drained.
+
     assert elapsed >= 0.3
 
 
@@ -155,16 +155,16 @@ async def test_installed_client_upload_is_paced_end_to_end(monkeypatch: pytest.M
     finally:
         await runner.cleanup()
     assert received == [400_000]
-    # 400 KB at 0.5 MB/s: well over half a second when paced (unpaced loopback is ~ms).
+
     assert elapsed >= 0.6
 
 
 @pytest.mark.asyncio
 async def test_a_paced_upload_leaves_the_event_loop_free(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 2026-09-23, gaming mode on: the bucket released the few bytes that trickled
-    # in between calls, so a paced upload became a busy loop of 1-byte writes that
-    # held the event loop for the whole upload (stall dumps up to 13.9 s in the
-    # drain's ssl write; every other stream on the proxy froze with it).
+
+
+
+
     upload_throttle.write_state(enabled=True, bytes_per_sec=500_000)
     monkeypatch.setattr(upload_throttle, "_LOCAL_HOSTS", frozenset())
     upload_throttle.install()
@@ -201,7 +201,7 @@ async def test_a_paced_upload_leaves_the_event_loop_free(monkeypatch: pytest.Mon
         done.set()
         await ticker
         await runner.cleanup()
-    # The upload itself takes ~0.7 s at 0.5 MB/s; the loop must keep turning meanwhile.
+
     assert worst_lag < 0.1
 
 
@@ -265,7 +265,7 @@ async def test_connections_built_for_an_upstream_proxy_are_left_raw(monkeypatch:
     finally:
         upload_throttle._IN_PROXY_CONNECTION.reset(token)
         await runner.cleanup()
-    # Paced at 0.2 MB/s this would take 2 s; the proxy leg is not wrapped.
+
     assert elapsed < 1.0
 
 
@@ -276,16 +276,16 @@ async def test_real_and_queue_pauses_merge_into_one_pause_and_one_resume() -> No
     protocol = _FakeProtocol()
     fake.get_protocol = lambda: protocol  # type: ignore[method-assign]
     transport = upload_throttle.ThrottledTransport(fake, asyncio.get_running_loop())
-    protocol.pause_writing()  # the real transport's socket buffer fills
+    protocol.pause_writing()
     with upload_throttle.bulk_transfer():
-        transport.write(b"x" * 600_000)  # the queue also wants a pause
-    assert transport.get_write_buffer_size() > upload_throttle.PAUSE_HIGH_BYTES  # the queue really holds it
+        transport.write(b"x" * 600_000)
+    assert transport.get_write_buffer_size() > upload_throttle.PAUSE_HIGH_BYTES
     assert protocol.events == ["pause"]
     while transport.get_write_buffer_size() > upload_throttle.PAUSE_LOW_BYTES:
         await asyncio.sleep(0.01)
     await asyncio.sleep(0.05)
-    assert protocol.events == ["pause"]  # the socket is still full: no resume yet
-    protocol.resume_writing()  # the real transport drains
+    assert protocol.events == ["pause"]
+    protocol.resume_writing()
     assert protocol.events == ["pause", "resume"]
     transport.abort()
 

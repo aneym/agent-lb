@@ -1,9 +1,4 @@
-"""add service_tier to request_logs
 
-Revision ID: 20260306_000000_add_request_logs_service_tier
-Revises: 20260228_030000_add_api_firewall_allowlist
-Create Date: 2026-03-06
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260306_000000_add_request_logs_service_tier"
 down_revision = "20260228_030000_add_api_firewall_allowlist"
 branch_labels = None

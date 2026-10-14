@@ -16,15 +16,15 @@ final class AccountRefreshTests: XCTestCase {
     )
   }
 
-  // MARK: - Endpoint choice
+
 
   func testCanceledSubscriptionChecksSubscription() {
     let account = makeTestAccount(status: "active", subscription: canceledSubscription())
     XCTAssertEqual(AccountRefreshAction.action(for: account), .checkSubscription)
   }
 
-  /// Mirrors the row's presentation priority: a canceled ledger wins over
-  /// paused, so the control re-verifies the subscription (probe would 409).
+
+
   func testCanceledSubscriptionWinsOverPaused() {
     let account = makeTestAccount(status: "paused", subscription: canceledSubscription())
     XCTAssertEqual(AccountRefreshAction.action(for: account), .checkSubscription)
@@ -54,8 +54,8 @@ final class AccountRefreshTests: XCTestCase {
     )
   }
 
-  // Paused/disconnected rows must not surface the control: the server
-  // deterministically rejects their probes with 409 account_not_probable.
+
+
   func testPausedAccountHasNoAction() {
     XCTAssertNil(AccountRefreshAction.action(for: makeTestAccount(status: "paused")))
   }
@@ -70,11 +70,11 @@ final class AccountRefreshTests: XCTestCase {
     )
   }
 
-  // MARK: - Response decoding
+
 
   func testProbeResponseDecoding() throws {
-    // Full server shape — extra fields (usage before/after, status
-    // before/after) must be ignored without error.
+
+
     let json = """
     {
       "status": "probed",

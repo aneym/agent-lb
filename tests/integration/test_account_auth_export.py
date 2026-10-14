@@ -92,7 +92,7 @@ async def test_export_account_auth_anthropic_without_id_token(async_client) -> N
         plan_type="claude",
         access_token_encrypted=encryptor.encrypt("anthropic-access"),
         refresh_token_encrypted=encryptor.encrypt("anthropic-refresh"),
-        # Anthropic OAuth issues no id_token; the column stays NULL.
+
         id_token_encrypted=None,
         last_refresh=utcnow(),
         status=AccountStatus.ACTIVE,

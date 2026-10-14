@@ -1,9 +1,4 @@
-"""add cache-locality settings fields to dashboard_settings
 
-Revision ID: 20260330_000000_add_cache_locality_settings
-Revises: 20260325_000000_add_request_log_cost
-Create Date: 2026-03-30
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260330_000000_add_cache_locality_settings"
 down_revision = "20260325_000000_add_request_log_cost"
 branch_labels = None

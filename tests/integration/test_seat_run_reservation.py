@@ -1,22 +1,4 @@
-"""A4d scenario (Opus-written 2026-10-06; the implementer may not edit this file). The devin-seat and cursor-seat
-forwarders call `seat run --class <class>` directly, never factory seat-run, so A4a's reservations do nothing for them
-unless `seat run` takes one itself (complaint 2026-10-05 21:51 ET: nine Devin jobs, one usable account, all nine
-silent for 55 minutes). With Cursor capacity 1, a second `seat run --class` exits 4 at once with a capacity envelope
-and never starts the vendor CLI, not even `cursor-agent models`; the first run's heartbeat keeps its lease past the
-TTL; its release on exit frees the slot; a failed run releases `failed`; SIGTERM and Ctrl-C release `cancelled` and
-stop the CLI; a refusal and agent-lb down launch nothing; a lost lease stops the CLI. No `--class` and a pinned
-`--account` run unreserved, as today, with the reason in the dispatch row. `--class verify` carries the author vendor.
 
-Runs a real agent-lb server (fresh data dir), the real clients/route as ROUTE_BIN and the real clients/seat; the only
-stand-in is the vendor CLI (a fake `cursor-agent`, as in test_seat_cli.py). Pools come from route's fixture dir.
-
-Fix round (review of 726658ca, 2026-10-06): the last tests swap in a scripted route to put a signal or a thread-start
-failure at exact points of the reserve and release, which a real route cannot time.
-
-Fix round 2 (review of 21d53dbf, 2026-10-06, Opus): with a cold model cache no vendor model listing runs before the hold
-(route lists only once it holds capacity); a stop waits for SIGTERM-resistant descendants; a stop before the first
-attempt, or during a model listing, ends with the cancellation envelope and the signal's exit code; the run uses the
-reserved model or refuses (a verify for xAI work never runs Grok); liveness is checked portably."""
 
 from __future__ import annotations
 
@@ -111,7 +93,7 @@ def env(tmp_path: Path, server: str) -> Iterator[dict[str, str]]:  # noqa: F811
                             str(key)], capture_output=True, text=True, timeout=60, env=base, check=False)
     assert added.returncode == 0, added.stderr
     yield base
-    # A holder a failed assertion left running would keep the shared server's slot and fail every later test.
+
     while HOLDERS:
         holder = HOLDERS.pop()
         if holder.poll() is None:
@@ -123,7 +105,7 @@ def env(tmp_path: Path, server: str) -> Iterator[dict[str, str]]:  # noqa: F811
                 holder.communicate()
 
 
-# The Cursor model on the mechanical ladder (rung grok-low); route reserves the rung that runs it.
+
 MODEL = "grok-latest-low"
 
 
@@ -185,8 +167,8 @@ def test_a_second_seat_run_waits_without_launching_and_release_frees_the_slot(en
     assert (lease["seat"], lease["capacity_key"], lease["host"]) == ("cursor-seat", "cursor", "host-a"), lease
     assert lease["job"].startswith("seat/host-a/seat-"), lease
 
-    # Capacity 1 is taken: the second run exits 4 with a capacity envelope and never starts the CLI, not even to
-    # list models.
+
+
     models = invocations(env).count("models")
     rc, waited = run_seat(env, "second", "--class", "mechanical")
     assert rc == 4, waited
@@ -195,13 +177,13 @@ def test_a_second_seat_run_waits_without_launching_and_release_frees_the_slot(en
     assert waited["attempts"] == [] and waited["account"] is None, waited
     assert "second" not in invocations(env) and invocations(env).count("models") == models
 
-    # The holder outlives its 4 s TTL on heartbeats; a third caller still waits.
+
     time.sleep(6)
     assert [row["reservation_id"] for row in mine(reservations(env)["live"])] == [lease["reservation_id"]]
     rc, still = run_seat(env, "third", "--class", "mechanical")
     assert rc == 4 and "third" not in invocations(env) and invocations(env).count("models") == models, still
 
-    # No --class, or a pinned account, runs unreserved as today and says why in the dispatch row.
+
     rc, plain = run_seat(env, "plain")
     assert rc == 0 and plain["ok"], plain
     rc, pinned = run_seat(env, "pinned", "--class", "mechanical", "--account", "cursor-a")
@@ -211,7 +193,7 @@ def test_a_second_seat_run_waits_without_launching_and_release_frees_the_slot(en
     assert dispatch[pinned["run_id"]]["reservation"] is None and "--account" in dispatch[pinned["run_id"]]["why"]
     assert len(mine(reservations(env)["live"])) == 1
 
-    # The holder finishes ok: its lease is released `ok` and the slot is free for the next run.
+
     open_gate(env, "hold1")
     out, err = holder.communicate(timeout=90)
     assert holder.returncode == 0, out + err
@@ -227,8 +209,8 @@ def test_a_second_seat_run_waits_without_launching_and_release_frees_the_slot(en
 
 
 def test_a_python_route_runs_under_the_interpreter_not_by_exec(env: dict[str, str], tmp_path: Path) -> None:
-    # Studio, 2026-10-06: a stuck syspolicyd held every script exec for over an hour while interpreter runs started
-    # at once. A route seat cannot exec (no x bit) must still reserve, run and release the slot.
+
+
     route = tmp_path / "route-noexec"
     route.write_text(f"#!/usr/bin/env python3\nimport runpy, sys\nsys.argv[0] = {str(ROUTE)!r}\n"
                      f"runpy.run_path({str(ROUTE)!r}, run_name='__main__')\n")
@@ -269,7 +251,7 @@ def vendor_alive(env: dict[str, str], prompt: str, suffix: str = "pid") -> bool:
 
 
 def pid_alive(pid: int) -> bool:
-    """os.kill(pid, 0) on every platform; a zombie (reported by ps on macOS and Linux alike) counts as dead."""
+
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -310,8 +292,8 @@ def test_ctrl_c_cancels_and_a_refusal_launches_nothing(env: dict[str, str]) -> N
 def test_a_lost_lease_stops_the_vendor_cli(env: dict[str, str]) -> None:
     holder = start_seat(env, "hold4")
     [lease] = mine(reservations(env)["live"])
-    # The lease ends behind the holder's back, as after an outage past its TTL: the slot is free for another run, so
-    # the holder must stop its CLI on the next heartbeat, not run on unreserved.
+
+
     rc, _ = route(env, "release", lease["reservation_id"], "--outcome", "failed")
     assert rc == 0
     out, err = holder.communicate(timeout=30)
@@ -333,9 +315,9 @@ def test_a_stop_waits_for_descendants_that_ignore_sigterm(env: dict[str, str], s
     child = int(child_file.read_text())
     [lease] = mine(reservations(env)["live"])
     try:
-        # The leader dies on SIGTERM and its pipes close; the child ignores SIGTERM. The run must not end, and its
-        # capacity must not be released, until SIGKILL has taken the child too: after the grace, or at once on a
-        # second stop signal.
+
+
+
         started = time.monotonic()
         holder.send_signal(signal.SIGTERM)
         if stops == 2:
@@ -372,9 +354,9 @@ def test_verify_carries_the_author_vendor_and_runs_only_the_reserved_model(env: 
     assert (ended["seat"], ended["outcome"]) == ("cursor-seat", "ok"), ended
     assert launched_model(env, "verify1") == ended["model"] == reviewed["model"] == sonnet
 
-    # Grok reviewing xAI's own work: Cursor's only verify rung runs Sonnet, so route reserves nothing for Grok and the
-    # run is refused without starting the vendor CLI. With a cold cache route can tell only once it holds the rung, so
-    # it releases the hold before it refuses.
+
+
+
     for cache in ("cold", "warm"):
         if cache == "cold":
             cold_cursor_cache(env)
@@ -391,8 +373,8 @@ def test_verify_carries_the_author_vendor_and_runs_only_the_reserved_model(env: 
     assert "verify2" not in invocations(env)
 
 
-# Stands in for `cursor-agent --list-models` (route's discovery): logs how many of this host's seat reservations are
-# live when it runs, then lists the fixture models.
+
+
 DISCOVERY = """#!/usr/bin/env python3
 import json, os, urllib.request
 with urllib.request.urlopen(os.environ["AGENT_LB_URL"] + "/api/pools/reservations", timeout=10) as response:
@@ -415,11 +397,11 @@ def test_a_cold_model_cache_is_listed_only_under_the_hold(env: dict[str, str], t
 
     cold_cursor_cache(env)
     holder = start_seat(env, "hold5")
-    # Route listed Cursor's models for the holder only once its reservation was live.
+
     assert listings() and all(line != "live=0" for line in listings()), listings()
     assert launched_model(env, "hold5") == "grok-4.7-low"
 
-    # A run that waits for capacity lists nothing at all, cold cache or not.
+
     cold_cursor_cache(env)
     before = listings()
     rc, waited = run_seat(env, "second5", "--class", "mechanical")
@@ -431,7 +413,7 @@ def test_a_cold_model_cache_is_listed_only_under_the_hold(env: dict[str, str], t
     assert holder.returncode == 0, out + err
 
 
-# A scripted route: it logs each call and, where told, signals seat at an exact point of the reserve or release.
+
 SCRIPTED_ROUTE = """#!/bin/sh
 echo "$*" >> "$ROUTE_CALLS"
 case "$1" in
@@ -453,7 +435,7 @@ case "$1" in
 esac
 """
 
-# Runs seat with Thread.start failing, as when the host is out of threads.
+
 NO_THREADS = """import runpy, sys, threading
 def refuse(self):
     raise RuntimeError("can't start new thread")
@@ -501,8 +483,8 @@ def test_a_signal_during_the_reserve_releases_and_launches_nothing(scripted: dic
     assert invocations(env) == []
 
 
-# Runs seat with a SIGTERM to itself as it builds the first vendor command: after the account loop's stop check and
-# before the attempt's own.
+
+
 STOP_BEFORE_FIRST_ATTEMPT = """import os, signal, sys
 path = sys.argv[1]
 sys.argv = sys.argv[1:]
@@ -562,8 +544,8 @@ def test_a_signal_during_a_model_listing_stops_it_and_lists_no_other_account(scr
     finally:
         if process.poll() is None:
             process.kill()
-    # The listing's group is stopped at once, no second account is listed, and a half-done listing never turns the
-    # stop into a "not a Cursor model" refusal.
+
+
     assert process.returncode == 128 + signal.SIGTERM, out + err
     assert time.monotonic() - started < 15, "the model listing ran to the end after the stop"
     assert invocations(env) == ["models"], invocations(env)
@@ -578,9 +560,9 @@ def test_a_failed_first_release_is_retried(scripted: dict[str, str]) -> None:
     assert [line.split()[0] for line in calls].count("release") == 2 and "released ok" in calls, calls
 
 
-# a4d-4 (review of 594c1d9d, 2026-10-06, Opus): route refused the forwarders' own default models, so every
-# cursor-seat and devin-seat run with --class exited 2. A family alias names its rung at any effort (the ladder sets the
-# effort); another family is still refused.
+
+
+
 def test_a_forwarder_default_alias_runs_its_rung_at_the_ladder_effort(env: dict[str, str]) -> None:
     rc, ran = run_seat(env, "default1", "--class", "mechanical", model="grok-latest")
     assert rc == 0 and ran["ok"], ran
@@ -592,13 +574,13 @@ def test_a_forwarder_default_alias_runs_its_rung_at_the_ladder_effort(env: dict[
         assert rc == 0 and (held["rung"], held["model"]) == ("swe2-medium", "swe-2-medium"), (task_class, held)
         assert route(env, "release", held["reservation_id"], "--outcome", "ok")[0] == 0
 
-    # Cursor's only explore rung runs Composer: Grok there is another family, refused with what the rung runs.
+
     rc, refused = route(env, "reserve", "explore", "--job", "grok-explore", "--prefer", "cursor-seat",
                         "--model", "grok-latest-low", "--reason", "scouting")
     assert rc == 2 and refused["status"] == "refused" and "composer-latest" in refused["reason"], refused
 
 
-# Stands in for a slow `cursor-agent --list-models`: records its pid, then lists after ROUTE_TEST_LIST_SLEEP seconds.
+
 SLOW_DISCOVERY = """#!/usr/bin/env python3
 import os, time
 from pathlib import Path
@@ -629,7 +611,7 @@ def test_a_stop_during_the_model_listing_under_the_hold_ends_it_and_releases(env
     stopped = time.monotonic()
     process.send_signal(signal.SIGTERM)
     out, err = process.communicate(timeout=60)
-    # Route's listing stops with the run, well before it would have finished, and the hold it ran under is released.
+
     assert time.monotonic() - stopped < 5, "the model listing under the hold ran on after the stop"
     assert process.returncode == 128 + signal.SIGTERM, out + err
     assert json.loads(out)["error"] == "cancelled by signal SIGTERM", out
@@ -640,7 +622,7 @@ def test_a_stop_during_the_model_listing_under_the_hold_ends_it_and_releases(env
 
 
 def test_a_hold_that_expires_during_the_model_listing_runs_nothing(env: dict[str, str], tmp_path: Path) -> None:
-    # The fixture TTL is 4 s and seat's heartbeats start only once route returns: a 6 s listing outlives the hold.
+
     env = slow_discovery(env, tmp_path, 6)
     rc, refused = run_seat(env, "expired1", "--class", "mechanical")
     assert rc == 2 and refused["ok"] is False and "lost while its models were listed" in refused["error"], refused
@@ -661,8 +643,8 @@ def test_the_reservation_stores_the_model_resolved_under_the_hold(env: dict[str,
 
 def test_an_implement_rung_whose_only_reviewer_does_not_resolve_is_not_held(env: dict[str, str],
                                                                             tmp_path: Path) -> None:
-    # Claude and Codex are spent, so Cursor's Sonnet is the only reviewer for Devin's work; Cursor's list (cold until
-    # the hold) has no Sonnet. Devin's own list is warm, so only the reviewer waits on discovery.
+
+
     path = Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json"
     document = json.loads(path.read_text())
     for pool in document["pools"]:
@@ -685,8 +667,8 @@ def test_a_signal_during_the_alias_resolution_returns_the_cancellation_envelope(
     assert "released cancelled" in route_calls(env) and invocations(env) == []
 
 
-# Runs seat with a short grace and with its process group reported alive while SURVIVOR exists, as when a descendant
-# is blocked in uninterruptible I/O and outlives SIGKILL.
+
+
 UNKILLABLE = """import os, sys
 path = sys.argv[1]
 sys.argv = sys.argv[1:]
@@ -721,7 +703,7 @@ def test_a_stop_never_releases_while_a_process_survives_sigkill(scripted: dict[s
     assert "released cancelled" in route_calls(env), route_calls(env)
 
 
-# A stand-in agent-lb whose release always fails, and which hands a job its live hold back as real agent-lb does.
+
 class FailingReleaseLB:
     def __init__(self) -> None:
         import http.server
@@ -765,9 +747,9 @@ class FailingReleaseLB:
 
 def test_a_provisional_hold_that_cannot_be_released_is_never_reported_as_another_rung(env: dict[str, str],
                                                                                      tmp_path: Path) -> None:
-    # A concrete Grok id with a cold cache: route provisionally holds Composer (the first Cursor rung), lists, finds
-    # Composer runs composer-2.5, and must give that hold up. Its release fails; agent-lb would hand the next reserve
-    # for the job the Composer hold back, so route must stop, not report Composer as the Grok reservation.
+
+
+
     lb = FailingReleaseLB()
     try:
         env = {**slow_discovery(env, tmp_path, 0), "AGENT_LB_URL": lb.url}

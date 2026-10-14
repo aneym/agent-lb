@@ -1,4 +1,4 @@
-"""Slow model discovery and unavailable workers must not stall the factory ladder."""
+
 from __future__ import annotations
 
 import json
@@ -41,7 +41,7 @@ def test_hung_model_list_skips_rung_and_caches_failure(tmp_path: Path, vendor: s
     assert pick(env, table, task, *args)["pool"] == "openai-codex"
     assert time.monotonic() - started < 2
     assert not calls.exists()
-    # A negative result expires after five minutes, not after the success cache's day.
+
     cached = json.loads(cache.read_text())
     cached["ts"] = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
     cache.write_text(json.dumps(cached))

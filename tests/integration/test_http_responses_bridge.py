@@ -1597,8 +1597,8 @@ async def test_v1_responses_http_bridge_codex_session_uses_extended_idle_ttl(asy
         max_sessions=8,
     )
 
-    # The idle prune scans at most once per interval (c488fab5); step past that window before
-    # each scan so both TTL checks actually run.
+
+
     session.last_used_at = time.monotonic() - 300.0
     service._http_bridge_last_idle_prune_monotonic -= _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS + 1.0
     async with service._http_bridge_lock:
@@ -3930,7 +3930,7 @@ async def test_v1_responses_http_bridge_reuses_upstream_websocket_and_preserves_
     assert second.status_code == 200
     second_body = second.json()
 
-    # Request-log persistence can finish after the SSE terminal event.
+
     for _ in range(50):
         async with SessionLocal() as session:
             rows = (
@@ -6062,10 +6062,10 @@ async def test_v1_responses_http_bridge_does_not_evict_queued_session_when_pool_
         monkeypatch,
         enabled=True,
         max_sessions=1,
-        # This test verifies pool accounting for a queued request. Keep the
-        # synthetic request queued long enough on slow CI hosts so the
-        # response-create gate timeout does not drain it before the pool-full
-        # assertion runs.
+
+
+
+
         admission_wait_timeout_seconds=30.0,
     )
     account_id = await _import_account(
@@ -9556,10 +9556,7 @@ async def test_prepare_http_bridge_request_preserves_existing_client_metadata(ap
 
 
 class _CompactionBridgeUpstreamWebSocket(_FakeBridgeUpstreamWebSocket):
-    """Upstream that answers a remote-compaction v2 turn the way the ChatGPT
-    websocket backend does: the compaction item streams as
-    ``response.output_item.done`` while the terminal ``response.completed``
-    envelope carries an empty ``output`` array."""
+
 
     compaction_item = {
         "type": "compaction",
@@ -9610,10 +9607,7 @@ async def test_backend_responses_http_bridge_reinjects_compaction_items_into_com
     async_client,
     monkeypatch,
 ):
-    """Remote-compaction v2 regression: the Codex CLI counts compaction items
-    from ``response.completed.response.output``; the bridge must re-inject the
-    streamed compaction item when the upstream websocket terminal envelope
-    arrives with an empty ``output`` array."""
+
     _install_bridge_settings(monkeypatch, enabled=True)
     account_id = await _import_account(
         async_client,
@@ -9713,7 +9707,7 @@ async def test_backend_responses_http_bridge_reinjects_compaction_items_into_com
     assert [item.get("type") for item in completed_output] == ["compaction"]
     assert completed_output[0]["encrypted_content"] == "opaque-account-bound-blob"
 
-    # The compaction trigger must reach upstream untouched.
+
     upstream_payload = json.loads(fake_upstream.sent_text[0])
     assert {"type": "compaction_trigger"} in upstream_payload["input"]
 
@@ -9723,8 +9717,7 @@ async def test_backend_responses_http_bridge_leaves_nonempty_completed_output_un
     async_client,
     monkeypatch,
 ):
-    """A terminal envelope that already carries output items (direct-HTTP
-    upstream shape) must pass through unmodified on compaction turns."""
+
     _install_bridge_settings(monkeypatch, enabled=True)
     account_id = await _import_account(
         async_client,
@@ -9805,9 +9798,9 @@ async def test_backend_responses_http_bridge_leaves_nonempty_completed_output_un
 @pytest.mark.asyncio
 @pytest.mark.parametrize("rejection", ["upstream_403", "refresh_needs_reauth"])
 async def test_ccgpt_turn_moves_to_another_account_when_its_account_rejects_it(async_client, monkeypatch, rejection):
-    # Claude Code answers a 401/403 with "run /login" and stops. When the account a
-    # bridged turn lands on rejects it (an upstream 403, or a token refresh that
-    # needs reauth) and another account is usable, the turn must run there instead.
+
+
+
     _install_bridge_settings(monkeypatch, enabled=True)
     await _import_account(async_client, "acc_ccgpt_reject_a", "ccgpt-reject-a@example.com")
     await _import_account(async_client, "acc_ccgpt_reject_b", "ccgpt-reject-b@example.com")
@@ -9851,11 +9844,11 @@ async def test_ccgpt_turn_moves_to_another_account_when_its_account_rejects_it(a
 async def test_ccgpt_session_survives_its_account_needing_reauth_across_a_blue_green_swap(
     async_client, app_instance, monkeypatch
 ):
-    # A conversation's account can lose its sign-in mid-session, and a blue/green
-    # restart hands the next turn to a fresh process that knows only the database.
-    # Every turn must still succeed, the conversation must re-pin to a usable
-    # account, and the disconnected account must leave rotation without anyone
-    # being asked to sign it back in.
+
+
+
+
+
     from app.main import create_app
 
     _install_bridge_settings(monkeypatch, enabled=True)

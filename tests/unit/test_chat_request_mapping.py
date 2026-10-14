@@ -123,16 +123,7 @@ def test_chat_messages_require_objects():
 
 
 def test_chat_unknown_message_keys_are_dropped():
-    """Unknown keys on a message object must not reach the Responses input.
 
-    OpenAI's own /v1/chat/completions parses the known chat-message fields
-    and ignores everything else on the message object — it never forwards
-    arbitrary client-supplied keys. agent-lb must match that: a Responses
-    API input message item only has `role` + `content`, and forwarding any
-    other key makes the upstream Responses API reject the whole request
-    with an `unknown_parameter` error (which then poisons every later
-    request that replays the same message history).
-    """
     payload = {
         "model": "gpt-5.2",
         "messages": [
@@ -156,13 +147,7 @@ def test_chat_unknown_message_keys_are_dropped():
 
 
 def test_chat_message_name_field_is_dropped():
-    """The standard chat `name` field has no Responses input-item equivalent.
 
-    `name` is a documented optional field on OpenAI chat messages, but the
-    Responses API input message item does not accept it. It must be dropped
-    during coercion rather than forwarded (forwarding it triggers an
-    upstream `unknown_parameter` rejection).
-    """
     payload = {
         "model": "gpt-5.2",
         "messages": [
@@ -179,12 +164,7 @@ def test_chat_message_name_field_is_dropped():
 
 
 def test_chat_assistant_tool_call_message_drops_unknown_keys():
-    """The message item emitted alongside decomposed tool calls is also clean.
 
-    When an assistant message carries both content and tool_calls, the
-    content half is emitted as a separate input message item. That item
-    must carry only `role` + `content`, same as any other message item.
-    """
     payload = {
         "model": "gpt-5.2",
         "messages": [

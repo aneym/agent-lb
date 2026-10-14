@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the persistent loopback HTTPS proxy used by Claude Desktop.
+
 set -euo pipefail
 
 LABEL="com.aneyman.agent-lb-claude-desktop-proxy"
@@ -368,7 +368,7 @@ command -v launchctl >/dev/null 2>&1 || fail "launchctl is required"
 command -v lsof >/dev/null 2>&1 || fail "lsof is required"
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 
-# Validate every target before changing launchd or user settings.
+
 plist_is_owned
 settings_action preflight
 if [[ ! -e "$PLIST" ]] && label_loaded; then
@@ -418,8 +418,8 @@ if ! wait_for_proxy; then
   fail "desktop proxy did not pass proxied health readiness; Claude settings were not changed"
 fi
 
-# Recheck for a concurrent settings edit, then make the ownership checkpoint and
-# settings cutover atomically per file. On failure, restore the prior agent.
+
+
 if ! settings_action install; then
   rollback_agent
   fail "Claude settings changed during installation; LaunchAgent was rolled back"

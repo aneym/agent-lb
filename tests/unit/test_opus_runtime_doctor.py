@@ -517,8 +517,8 @@ def test_installer_prints_pinned_nightly_job(tmp_path: Path) -> None:
 
 
 def test_installer_rejects_external_volume_launcher(tmp_path: Path) -> None:
-    # A fixed /Volumes path, never created: the refusal must not depend on where
-    # pytest's tmp_path or this checkout lives, or on the volume being mounted.
+
+
     launcher = "/Volumes/ExternalDisk/agent-lb/clients/claude-lb-launch"
     completed = subprocess.run(
         [str(ROOT / "scripts" / "install-opus-doctor.sh")],

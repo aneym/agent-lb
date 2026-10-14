@@ -10,10 +10,10 @@ import {
 
 import { cn } from "@/lib/utils";
 
-/**
- * Monochrome status vocabulary (DESIGN.md §Status vocabulary).
- * Status = icon shape + text label, both ink. Never color-coded.
- */
+
+
+
+
 export type AccountStatus =
   | "active"
   | "paused"
@@ -26,11 +26,11 @@ export type AccountStatus =
 type StatusConfig = {
   icon: LucideIcon;
   label: string;
-  /** Filled glyph (fill="currentColor") instead of outline. */
+
   filled?: boolean;
-  /** Rendered in muted-foreground ink instead of full ink. */
+
   muted?: boolean;
-  /** Label rendered semibold to carry urgency without hue. */
+
   semibold?: boolean;
 };
 

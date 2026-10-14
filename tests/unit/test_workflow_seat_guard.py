@@ -17,7 +17,7 @@ HOOK = POLICY / 'hooks/workflow-seat-guard.py'
 
 
 def warned(output):
-    """Guard trim (Alex, 2026-10-08 09:18 ET): the workflow seat guard warns in one line and never denies."""
+
     return 'permissionDecision' not in output and output.get('additionalContext', '').startswith(
         'workflow-seat-guard (warn only, not blocked): ')
 
@@ -103,12 +103,12 @@ ROUTED = "agent(p, {...R.seats.implement.opts, label: 'x'})"
     ({'route': {'seats': {'implement': {'opts': {'agentType': 'opus-seat', 'model': 'claude-opus-5-5'}}}}}, False),
     ({'rows': [{'model': 'claude-sonnet-5', 'requests': 3}]}, False),
     ('not an object', False),
-    # Generated args are a default, not a request: Astra's bridge alias runs only on its readmitted seat.
+
     ({'route': {'seats': {'plan': {'opts': {'agentType': 'sol-consult', 'model': 'astra-latest-high'}}}}}, True),
     ({'route': {'seats': {'plan': {'opts': {'agentType': 'astra-consult', 'model': 'astra-latest-high'}}}}}, False),
 ])
 def test_seat_options_in_workflow_args_are_checked(args, denied):
-    """Options a script reads from args are invisible to the static scan; `route workflow-args` output lands here."""
+
     output = invoke(ROUTED, args=args)
     assert warned(output) is denied
     if denied:
@@ -116,7 +116,7 @@ def test_seat_options_in_workflow_args_are_checked(args, denied):
 
 
 def test_retired_args_are_warned_even_when_script_cannot_be_parsed():
-    """The hook must enforce args retirement before its fail-open script parser."""
+
     output = invoke(
         'if (false) /[)]/.test(")"); await agent("x", args.opts);',
         args={'opts': {'agentType': 'opus-seat', 'model': 'claude-sonnet-5'}},
@@ -131,7 +131,7 @@ def test_retired_args_are_warned_even_when_script_cannot_be_parsed():
     "agent(p, {'agentType': 'opus-seat', 'model': 'gpt-5.6-sol'})",
 ])
 def test_a_literal_retired_model_is_an_explicit_request_and_runs(script):
-    # Alex, 2026-10-05: allow a model off the ladder when it is asked for; only blocked ids are refused.
+
     output = invoke(script)
     assert 'permissionDecision' not in output
     assert 'explicitly requests a model off the default ladder' in output['additionalContext']
@@ -154,14 +154,14 @@ def test_alias_is_checked_against_resolved_retirement(tmp_path, alias):
 
 @pytest.mark.parametrize('script', ["agent(p, {label: 'y'}", "agent(p, {label: 'unterminated})", '/* unclosed'])
 def test_parse_errors_warn(script):
-    """S44 (hook-dispatcher-5, 2026-10-08): a floor guard denies when its scanner fails; it used to allow."""
+
     output = invoke(script)
     assert warned(output)
     assert 'read or parsed' in output['additionalContext']
 
 
 def test_missing_files_and_invalid_hook_json_warn(tmp_path):
-    """S44: input, script or routing table the guard cannot read denies the launch; it used to allow."""
+
     for output in [
         invoke(script_path=tmp_path / 'missing'),
         invoke('agent(p, {label: x})', table=tmp_path / 'missing'),
@@ -212,6 +212,6 @@ def test_a_seat_defined_off_the_ladder_needs_a_request_and_the_request_is_logged
     [record] = [json.loads(line) for line in ledger.read_text().splitlines()]
     assert (record['event'], record['explicit_models']) == ('workflow_dispatch', [
         {'model': 'astra-latest-high', 'source': 'workflow'}, {'model': 'claude-fable-5-1', 'source': 'workflow'}])
-    # Readmitted seats run their own family without asking.
+
     assert 'permissionDecision' not in invoke("agent(p, {agentType: 'fable-orchestrator'})")
     assert 'permissionDecision' not in invoke("agent(p, {agentType: 'astra-consult'})")

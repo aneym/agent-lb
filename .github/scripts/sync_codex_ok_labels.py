@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synchronize GitHub Codex review labels from current-head Codex reviews."""
+
 
 from __future__ import annotations
 
@@ -159,7 +159,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
 
 
 class GhError(RuntimeError):
-    """A GitHub CLI call failed."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -734,7 +734,7 @@ def unresolved_codex_finding_thread_urls(
 
 
 def is_github_app_write_denial(exc: BaseException) -> bool:
-    """Return True when GitHub rejected a write from the current token."""
+
 
     text = str(exc)
     return "Resource not accessible by integration" in text and "HTTP 403" in text
@@ -745,7 +745,7 @@ def write_warning(action: str, exc: BaseException) -> str:
 
 
 def is_missing_issue_label(exc: BaseException) -> bool:
-    """Return True when GitHub reports that an issue label is already absent."""
+
 
     text = str(exc)
     return "HTTP 404" in text and "Label does not exist" in text

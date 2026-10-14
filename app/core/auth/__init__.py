@@ -185,7 +185,7 @@ def generate_unique_account_id(
 
 
 def fallback_account_id(email: str | None) -> str:
-    """Generate a fallback account ID when no OpenAI account ID is available."""
+
     if email and email != DEFAULT_EMAIL:
         digest = hashlib.sha256(email.encode()).hexdigest()[:12]
         return f"email_{digest}"

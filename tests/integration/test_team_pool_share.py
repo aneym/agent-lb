@@ -157,7 +157,7 @@ async def test_pool_share_window_start_and_invalidation(db_setup):
         await _seed_account(session, "a", now, used=60, length=300, reset=now + timedelta(hours=1))
         await session.flush()
         session.add(ApiKey(id="key", name="member", member_id="member", key_hash="hash", key_prefix="sk-clb-key"))
-        # This row falls just before the new window; it must not dilute the member's share.
+
         session.add(_log("a", None, now - timedelta(hours=4, seconds=1), 90, 0))
         session.add(_log("a", "key", now, 10, 0))
         await session.commit()

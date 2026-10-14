@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the repository's complete CI gate locally in an isolated worktree."""
+
 
 from __future__ import annotations
 

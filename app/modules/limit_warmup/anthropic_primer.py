@@ -18,9 +18,9 @@ _PRIMER_TOTAL_TIMEOUT_SECONDS = 30.0
 _DEFAULT_ANTHROPIC_PRIMER_PROMPT = "OK"
 _ERROR_MESSAGE_LIMIT = 1000
 
-# Anthropic OAuth (Bearer) credentials are only honored when the first system
-# block is the Claude Code identity line (CLAUDE_CODE_IDENTITY); a synthetic
-# primer must supply it itself or the upstream rejects the request.
+
+
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,13 +41,7 @@ async def send_anthropic_primer(
     request_id: str,
     warmup_header: str,
 ) -> AnthropicPrimerResult:
-    """Send a minimal Messages primer to anchor an Anthropic account's usage window.
 
-    Mirrors the authentication that ``AnthropicProxyService`` uses for real
-    traffic (Bearer access token + ``anthropic-version``) and adds the OAuth beta
-    header that the proxy normally relies on the inbound Claude Code client to
-    supply. Success is defined as the upstream stream completing with a 2xx.
-    """
     settings = get_settings()
     url = urljoin(settings.anthropic_upstream_base_url.rstrip("/") + "/", "v1/messages")
     headers = {

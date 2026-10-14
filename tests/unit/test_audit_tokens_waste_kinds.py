@@ -1,4 +1,4 @@
-"""Waste attribution contracts at the transcript-to-report boundary."""
+
 
 import json
 from datetime import UTC, datetime, timedelta
@@ -65,7 +65,7 @@ def test_compact_boundary_owns_next_cache_write(tmp_path, monkeypatch, boundary_
 
 @pytest.mark.parametrize("repeats,expected", [(19, False), (20, True)])
 def test_identical_tools_in_fifty_call_window(tmp_path, monkeypatch, repeats, expected):
-    # Different JSON key order is still the same tool input.
+
     calls = [
         [{"command": "status", "timeout": 1} if i % 2 else {"timeout": 1, "command": "status"}]
         if i < repeats else [{"command": f"distinct-{i}"}]

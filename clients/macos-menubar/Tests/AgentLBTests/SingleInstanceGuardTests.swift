@@ -28,10 +28,10 @@ final class SingleInstanceGuardTests: XCTestCase {
     let lockURL = tempDirectory.appendingPathComponent("menubar.lock")
     XCTAssertTrue(SingleInstanceGuard.acquire(lockURL: lockURL))
 
-    // flock is associated with the open file description, not the process,
-    // so a second fd on the same file conflicts even from within this
-    // process. attempts: 1 avoids paying the retry delay for an expected
-    // failure.
+
+
+
+
     XCTAssertFalse(SingleInstanceGuard.acquire(lockURL: lockURL, attempts: 1))
   }
 

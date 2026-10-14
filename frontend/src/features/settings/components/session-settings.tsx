@@ -21,8 +21,8 @@ const INTEGER_HOURS_PATTERN = /^\d+$/;
 
 function formatStoredHours(ttlSeconds: number): string {
   const hours = ttlSeconds / 3600;
-  // Preserve sub-hour TTLs without silently rounding them when the backend
-  // already accepts any value >= MIN_TTL_SECONDS.
+
+
   return Number.isInteger(hours) ? String(hours) : hours.toFixed(2);
 }
 

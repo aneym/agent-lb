@@ -187,7 +187,7 @@ async def test_anthropic_compat_concurrent_balance_failures_fail_over(async_clie
     monkeypatch.setattr(AccountsRepository, "get_by_id", concurrent_snapshot)
     monkeypatch.setattr(AccountsRepository, "update_status_if_current", count_park)
     monkeypatch.setattr(AnthropicProxyService, "_open_upstream_response", upstream)
-    # Pin each initial request to the exhausted credential; production retry excludes it.
+
     original_select = AnthropicProxyService._select_account
 
     async def select_empty_first(self, model, **kwargs):

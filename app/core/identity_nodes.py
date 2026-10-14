@@ -1,8 +1,4 @@
-"""Background tailnet node discovery for request attribution.
 
-Only node IPs and short DNS labels leave this module. In particular, status JSON's
-User and login fields are never inspected, retained or logged.
-"""
 
 from __future__ import annotations
 
@@ -69,7 +65,7 @@ def _nodes_from_status(raw: bytes) -> dict[str, str]:
 
 
 class IdentityNodeCache:
-    """Lifespan-owned refresher; requests only read its last successful snapshot."""
+
 
     def __init__(self, settings: Settings) -> None:
         self._enabled = settings.identity_enabled

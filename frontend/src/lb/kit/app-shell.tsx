@@ -24,7 +24,7 @@ export function AppShell() {
   const version = useRuntimeVersion().data?.currentVersion;
   const pools = usePools().data;
   const sessions = useStickySessions().data;
-  // Policy versions are shown by the routing page once available.
+
   const links = nav.map((link) => (
     <Link
       key={link.path}

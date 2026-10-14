@@ -1,12 +1,4 @@
-"""Incident 2026-10-05: an upload hold must never delay or refuse a model request.
 
-`game-mode on` set a 0.2 MB/s agent-lb upload hold, and Claude Code calls failed with
-"API Error: 503 upload throttle on at 200 KB/s; 3.4 MB queued ahead; waited 30 s > limit 30 s".
-Holds are for bulk transfers only. This drives /v1/messages through the real proxy route, the
-real aiohttp upstream client and the installed upload pacer, against a local stand-in for the
-Anthropic API reached by a non-loopback host name, with the slowest accepted hold on.
-Only the network edge is faked: name resolution and the upstream server.
-"""
 
 from __future__ import annotations
 
@@ -31,10 +23,10 @@ from app.db.session import SessionLocal
 pytestmark = pytest.mark.integration
 
 UPSTREAM_HOST = "model-upstream.test"
-HOLD_BYTES_PER_SEC = 65_000  # the slowest hold `agent-lb throttle on` accepts
+HOLD_BYTES_PER_SEC = 65_000
 BODY_BYTES = 400_000
 REQUESTS = 2
-# Paced at the hold, the bodies alone need about 12 s; unpaced over loopback they need well under 1 s.
+
 PACED_SECONDS = REQUESTS * BODY_BYTES / HOLD_BYTES_PER_SEC
 NOT_DELAYED_SECONDS = PACED_SECONDS / 3
 

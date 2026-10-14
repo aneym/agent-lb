@@ -1,7 +1,7 @@
 #!/bin/sh
-# Run after each `claude plugin update codex-plugin-cc` or reinstall.
-# No agent-lb-owned plugin install/update path exists (repository search,
-# 2026-09-22). This is an explicit post-update step, not an automatic hook.
+
+
+
 set -eu
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 plugin_dir=${CODEX_PLUGIN_CC_DIR:-"$HOME/.agent-lb/plugins/codex-plugin-cc"}
@@ -10,8 +10,8 @@ if [ ! -d "$plugin_dir/plugins/codex/scripts" ]; then
     exit 1
 fi
 for patch_file in "$repo_dir"/patches/codex-plugin-cc/*.patch; do
-# git apply without --reject is atomic across the patch. Do not use --3way,
-# --unsafe-paths, or whitespace relaxation to conceal upstream drift.
+
+
 if git -C "$plugin_dir" apply --reverse --check "$patch_file" 2>/dev/null; then
     echo "Already patched: $plugin_dir ($(basename "$patch_file"))"
     continue

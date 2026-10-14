@@ -648,19 +648,7 @@ async def test_durable_bridge_closed_session_purge_drains_multiple_batches(db_se
 
 @pytest.mark.asyncio
 async def test_sticky_sessions_api_deletes_filtered_chunks_large_match_set(async_client):
-    """Regression test for the agent-lb #787 (D) bug: POST
-    /api/sticky-sessions/delete-filtered used to issue a single
-    DELETE...OR (key=:k AND kind=:t)... statement whose bind-parameter
-    count grew with the match-set size, and trip SQLite's
-    SQLITE_LIMIT_VARIABLE_NUMBER (999 on older libsqlite, 32766 on
-    newer) with a 500 internal_error.
 
-    Insert significantly more rows than the
-    ``_DELETE_ENTRIES_CHUNK_SIZE`` constant guards against (250 pairs ->
-    500 bind parameters per chunk) and assert the endpoint returns 200
-    with the full delete count, proving the chunk loop ran without
-    overflow.
-    """
 
     accounts = await _create_accounts()
     await _set_affinity_ttl(60)

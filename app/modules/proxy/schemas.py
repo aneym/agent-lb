@@ -15,13 +15,7 @@ from app.modules.proxy.types import (
 
 
 class FileCreateRequest(BaseModel):
-    """Inbound payload for ``POST /backend-api/files``.
 
-    Mirrors upstream ChatGPT ``/backend-api/files`` registration body. The
-    proxy enforces the upstream-side ``OPENAI_FILE_UPLOAD_LIMIT_BYTES``
-    (512 MiB) at the edge so a misbehaving client does not allocate an
-    oversized SAS upload URL on a shared account.
-    """
 
     model_config = ConfigDict(extra="allow")
 
@@ -184,10 +178,10 @@ class ModelMetadata(BaseModel):
 
 
 class ModelListItem(BaseModel):
-    # Cursor's local-provider discovery reads OpenAI-compatible /v1/models
-    # entries and preserves provider-specific model capability fields. Keep
-    # allowing those extras so clients can learn the model context window and
-    # trigger their own compaction instead of relying on provider-side failures.
+
+
+
+
     model_config = ConfigDict(extra="allow")
 
     id: str
@@ -202,12 +196,12 @@ class ModelListResponse(BaseModel):
 
     object: str = "list"
     data: list[ModelListItem]
-    # Codex CLI 0.155+ points its provider at ``<base>/v1`` and deserializes
-    # this route into its own ``ModelsResponse``, which has a single required
-    # ``models`` field. Without it every run prints "failed to refresh available
-    # models: missing field `models`" and falls back to its built-in catalog.
-    # Carrying both keys keeps OpenAI-compatible clients (Cursor, SDKs) on
-    # ``data`` and satisfies Codex, with no user-agent sniffing.
+
+
+
+
+
+
     models: list[CodexModelEntry] = []
 
 

@@ -431,7 +431,7 @@ export function AccountPage() {
       setExportData(await mutations.exportAuthMutation.mutateAsync(accountId));
       setExportOpen(true);
     } catch {
-      /* Mutation reports the error. */
+
     }
   };
   const saveAlias = async () => {
@@ -439,7 +439,7 @@ export function AccountPage() {
       await mutations.setAliasMutation.mutateAsync({ accountId, alias: alias.trim() || null });
       setRenameOpen(false);
     } catch {
-      /* Mutation reports the error. */
+
     }
   };
   const remove = async () => {
@@ -447,7 +447,7 @@ export function AccountPage() {
       await mutations.deleteMutation.mutateAsync({ accountId, deleteHistory: false });
       navigate("/");
     } catch {
-      /* Mutation reports the error. */
+
     }
   };
   return (

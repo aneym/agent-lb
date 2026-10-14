@@ -1,11 +1,4 @@
-"""The `seat` CLI's account failover, as the router sees it through /api/pools.
 
-The vendor CLI is the only stand-in: a script that answers like `cursor-agent`, and
-reports a usage limit for the API keys listed in a control file. Everything else is
-the real path: `seat add` registers the accounts, `seat run` picks, fails over and
-writes the ledger and state, and the LB's pool reader turns that state into the
-`cursor` pool that `route pick` skips when it is exhausted.
-"""
 
 from __future__ import annotations
 
@@ -34,8 +27,8 @@ print(json.dumps({"type": "result", "is_error": False, "result": "done", "sessio
                   "usage": {"inputTokens": 120, "outputTokens": 7, "cacheReadTokens": 0}}))
 """
 
-# `seat run --class` holds a reservation first (A4d); this stand-in grants it, for the rung that runs grok-latest (seat
-# runs only the reserved model). The real route and server are in test_seat_run_reservation.py.
+
+
 FAKE_ROUTE = """#!/bin/sh
 case "$1" in
   reserve) echo '{"status": "reserved", "reservation_id": "rsv-000000000001", "rung": "grok-medium",'\
@@ -76,8 +69,8 @@ def test_limit_fails_over_then_exhausts_the_pool(tmp_path: Path) -> None:
         added = _seat(env, "add", f"cursor-{account_id}", "--vendor", "cursor", "--api-key-file", str(key_file))
         assert added.returncode == 0, added.stderr
 
-    # Both accounts idle: the first registered goes first, hits its limit, and the run
-    # completes on the second.
+
+
     first = _seat(
         env,
         "run",
@@ -109,8 +102,8 @@ def test_limit_fails_over_then_exhausts_the_pool(tmp_path: Path) -> None:
     assert (closeout["account"], closeout["ok"], closeout["tokens_in"]) == ("cursor-b", True, 120)
     assert rows[0]["session_id"] == closeout["session_id"]
 
-    # A Cursor limit cools only the pool the model draws on (cursor-pool-truth), so
-    # cursor-a stays ready account-wide and the vendor pool still counts it.
+
+
     seats = read_seat_accounts(tmp_path / "seats" / "state.json")
     by_id = {account.id: account for account in seats.accounts}
     assert by_id["cursor-a"].cooldown_until is None and by_id["cursor-a"].ready
@@ -119,8 +112,8 @@ def test_limit_fails_over_then_exhausts_the_pool(tmp_path: Path) -> None:
     (pool,) = cli_seat_pools(seats)
     assert (pool.id, pool.status, pool.eligible_accounts, pool.observed_runs) == ("cursor", "ok", 2, 2)
 
-    # The cooling account is not retried for that pool; once the other one is limited
-    # too the run reports no account, and both hold a cursor-models cooldown.
+
+
     limited.write_text("key-a\nkey-b\n")
     second = _seat(env, "run", "--vendor", "cursor", "--model", "grok-latest", "--cwd", str(tmp_path), "--", "x")
     assert second.returncode == 2

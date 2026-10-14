@@ -175,7 +175,7 @@ async def test_validate_proxy_websocket_request_allows_explicit_socket_peer_when
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", fake_denial)
     monkeypatch.setattr(auth_dependencies, "get_settings_cache", lambda: SimpleNamespace(get=fake_dashboard_settings))
-    # The CIDR allowlist is read through request_locality now, so patch it there too.
+
     fake_settings = SimpleNamespace(
         proxy_unauthenticated_client_cidrs=["192.168.65.1/32"],
         firewall_trust_proxy_headers=False,
@@ -206,7 +206,7 @@ async def test_validate_proxy_websocket_request_rejects_remote_socket_peer_outsi
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", fake_denial)
     monkeypatch.setattr(auth_dependencies, "get_settings_cache", lambda: SimpleNamespace(get=fake_dashboard_settings))
-    # The CIDR allowlist is read through request_locality now, so patch it there too.
+
     fake_settings = SimpleNamespace(
         proxy_unauthenticated_client_cidrs=["192.168.65.1/32"],
         firewall_trust_proxy_headers=False,
@@ -305,12 +305,12 @@ async def test_validate_internal_bridge_api_key_attributes_a_forwarded_member_ke
         assert api_key is member_key
         assert response is None
     elif expected == "refused":
-        # A forwarded member key that fails validation is refused, never downgraded to keyless.
+
         assert seen == ["Bearer sk-clb-member"]
         assert api_key is None
         assert response is not None and response.status_code == 401
     else:
-        # Anything that is not a bearer sk-clb key stays keyless for peers.
+
         assert (api_key, response, seen) == (None, None, [])
 
 

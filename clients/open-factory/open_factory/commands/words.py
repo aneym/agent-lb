@@ -1,4 +1,4 @@
-"""Warn about retired words without changing repositories."""
+
 
 import json
 import subprocess

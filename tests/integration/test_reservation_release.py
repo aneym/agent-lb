@@ -1,15 +1,4 @@
-"""A4d-5 (Opus-written 2026-10-06, from the codex review of a4d-4 at cabb23d8): a reservation hold is released only once
-nothing of its run is alive, and a hold route cannot account for is never reported gone.
 
-1. A heartbeat under the hold that times out or fails (HTTP 500) says nothing about the hold: route releases it before
-   it walks on, so the next reserve is not handed the skipped rung back and the capacity is not stranded.
-2. A stop during the model listing under the hold releases only once a listing descendant that ignores SIGTERM is gone.
-3. A process group left holding only zombies (its reaper never reaps them) counts as drained: the run ends and the
-   lease is released instead of renewing forever.
-4. A stop retries a failed lookup or release, and says "error", not "cancelled", while the hold may still be live.
-
-Route runs in its own session, as seat runs it. Fakes: the vendor CLI and model listing, and for 1 and 4 an agent-lb
-stand-in whose reservation endpoints fail on cue."""
 
 from __future__ import annotations
 
@@ -33,9 +22,7 @@ pytestmark = pytest.mark.timeout(600)
 
 
 class FakeLB:
-    """agent-lb's reservation endpoints, handing a job its live hold back as agent-lb does, failing on cue: the first
-    `list_failures` listings and `release_failures` releases answer 500, and heartbeats answer 500 ("500") or only
-    after route's read timeout ("slow")."""
+
 
     def __init__(self, *, heartbeat: str = "ok", list_failures: int = 0, release_failures: int = 0) -> None:
         self.holds: dict[str, dict] = {}
@@ -100,8 +87,7 @@ def reserve_argv(job: str) -> list[str]:
 
 
 def stop_route_during_listing(env: dict[str, str], job: str, marker: Path) -> tuple[int, dict]:
-    """Start `route reserve` in its own session, wait until its listing under the hold has started (marker exists),
-    stop the whole group as seat does, and return route's exit code and last JSON line."""
+
     process = subprocess.Popen(reserve_argv(job), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
                                start_new_session=True)
     HOLDERS.append(process)
@@ -128,7 +114,7 @@ def test_a_failed_heartbeat_under_the_hold_releases_it_before_walking_on(env: di
         result = subprocess.run(reserve_argv("beat-failed"), capture_output=True, text=True, timeout=90, env=env,
                                 check=False)
         body = json.loads(result.stdout.strip().splitlines()[-1])
-        # The first hold (rsv-...0) is given up, released "failed", and never reported back as this job's reservation.
+
         assert ("rsv-000000000000", "failed") in lb.released, (lb.released, body)
         assert body.get("reservation_id") != "rsv-000000000000", body
         assert "rsv-000000000000" not in [row["reservation_id"] for row in lb.holds.values()], lb.holds
@@ -136,7 +122,7 @@ def test_a_failed_heartbeat_under_the_hold_releases_it_before_walking_on(env: di
         lb.server.shutdown()
 
 
-# A model listing that leaves a SIGTERM-ignoring descendant (holding none of the listing's pipes) and lists slowly.
+
 STUBBORN_DISCOVERY = """#!/usr/bin/env python3
 import subprocess, sys, time
 # The descendant writes its pid only once SIGTERM is ignored, so the stop cannot land before.
@@ -191,8 +177,8 @@ def test_a_stop_whose_release_keeps_failing_is_not_reported_cancelled(env: dict[
         lb.server.shutdown()
 
 
-# A vendor CLI whose child exits at once and is never reaped by its parent, so once the CLI exits the child is a
-# zombie handed to the nearest subreaper.
+
+
 ZOMBIE_CURSOR = """#!/usr/bin/env python3
 import json, os, sys, time
 if sys.argv[1:] == ["models"]:
@@ -208,7 +194,7 @@ print(json.dumps({"type": "result", "is_error": False, "result": "done", "sessio
                   "usage": {"inputTokens": 10, "outputTokens": 2, "cacheReadTokens": 0}}))
 """
 
-# Runs seat under a subreaper that reaps only seat, as a supervisor that never reaps orphans would.
+
 NON_REAPING_SUBREAPER = """import ctypes, subprocess, sys
 if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
     raise SystemExit("prctl failed")

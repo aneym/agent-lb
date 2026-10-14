@@ -237,7 +237,7 @@ class ApiKeysRepository:
         return summaries
 
     async def get_usage_summary_by_key_id(self, key_id: str) -> ApiKeyUsageSummary:
-        """Return aggregate usage totals for a single API key (zeroes if no logs)."""
+
         stmt = select(
             func.count(RequestLog.id).label("request_count"),
             func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
@@ -348,7 +348,7 @@ class ApiKeysRepository:
     async def rollback(self) -> None:
         await self._session.rollback()
 
-    # ── Limit operations ──
+
 
     async def get_limits_by_key(self, key_id: str) -> list[ApiKeyLimit]:
         result = await self._session.execute(select(ApiKeyLimit).where(ApiKeyLimit.api_key_id == key_id))

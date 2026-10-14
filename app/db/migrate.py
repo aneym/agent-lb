@@ -211,10 +211,10 @@ def _read_current_revisions_from_connection(connection: Connection) -> tuple[str
     try:
         rows = connection.execute(text(f"SELECT {_ALEMBIC_VERSION_COLUMN} FROM {_ALEMBIC_VERSION_TABLE}")).fetchall()
     except (sa_exc.ProgrammingError, sa_exc.OperationalError) as exc:
-        # PostgreSQL can still raise UndefinedTable here on a fresh database if
-        # the alembic_version table is absent when startup migration state is
-        # re-read. SQLite raises OperationalError for the same missing-table
-        # path. Treat both the same as "no revision yet".
+
+
+
+
         message = str(exc).lower()
         if _ALEMBIC_VERSION_TABLE in message and (
             "does not exist" in message or "undefinedtable" in message or "no such table" in message
@@ -510,7 +510,7 @@ def inspect_migration_state(database_url: str) -> MigrationState:
     if has_alembic:
         needs_upgrade = current != head_revision
     else:
-        # Missing alembic_version always requires bootstrap and/or upgrade.
+
         needs_upgrade = True
 
     return MigrationState(
@@ -662,9 +662,9 @@ def _upgrade_with_existing_column_revision_skips(
         command.upgrade(config, revision)
         return
 
-    # Metadata-created or partially bootstrapped schemas can already have these
-    # columns while still needing older data migrations. Run up to each affected
-    # parent, stamp the schema-only add-column revision, then continue normally.
+
+
+
     for skip_revision, parent_revision, required_columns in _EXISTING_COLUMN_REVISION_SKIPS:
         current_revision = _read_current_revision(sync_database_url)
         if not _revision_is_pending(current_revision, skip_revision):
@@ -748,12 +748,7 @@ def current_revision(database_url: str) -> str | None:
 
 
 def downgrade_refresh_intent_for_rollback(database_url: str) -> str:
-    """Undo this migration with the new build before booting an older build.
 
-    Only the exact stage-1 head is eligible; an older build cannot recognize
-    that revision, while a generic downgrade command could discard unrelated
-    future schema or data.
-    """
     config = _build_alembic_config(database_url)
     revision = "20260926_000000_refresh_intent_expiry"
     parent = ScriptDirectory.from_config(config).get_revision(revision).down_revision

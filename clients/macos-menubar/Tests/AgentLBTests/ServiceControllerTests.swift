@@ -4,7 +4,7 @@ import Darwin
 
 final class ServiceControllerTests: XCTestCase {
 
-  // MARK: - Command builders
+
 
   func testStatusCommand() {
     XCTAssertEqual(
@@ -17,13 +17,13 @@ final class ServiceControllerTests: XCTestCase {
     let cmd = ServiceController.startCommand(loaded: true)
     XCTAssertEqual(cmd[0], "launchctl")
     XCTAssertEqual(cmd[1], "kickstart")
-    // domainTarget uses runtime uid — assert prefix and suffix, not literal 501
+
     let target = try? XCTUnwrap(cmd.last)
     XCTAssertTrue(target?.hasPrefix("gui/") ?? false,
                   "Expected domainTarget to start with 'gui/'")
     XCTAssertTrue(target?.hasSuffix("com.aneyman.agent-lb") ?? false,
                   "Expected domainTarget to end with the label")
-    // Must NOT be "load" (that's for unloaded path)
+
     XCTAssertFalse(cmd.contains("load"))
   }
 
@@ -60,7 +60,7 @@ final class ServiceControllerTests: XCTestCase {
                   "domainTarget must embed the runtime uid, not a hardcoded value")
   }
 
-  // MARK: - PID-column parser
+
 
   func testPIDParserLoaded() {
     XCTAssertTrue(ServiceController.parsePIDColumn("123\t0\tcom.aneyman.agent-lb"))

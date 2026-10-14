@@ -27,7 +27,7 @@
   --shadow: 0 1px 2px oklch(0 0 0 / 0.05), 0 8px 24px -8px oklch(0 0 0 / 0.12);
   --sans: "Geist", ui-sans-serif, system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, monospace;
-  /* meaning tints: text, soft chip background, bar fill (text passes 4.5:1 on its chip) */
+
   --ok: oklch(0.47 0.12 150);
   --ok-bg: oklch(0.95 0.045 150);
   --ok-fill: oklch(0.62 0.15 150);
@@ -2206,12 +2206,12 @@ html.dark .lb {
   gap: 4px;
   white-space: nowrap;
 }
-/* Kimi's letter is black; the page theme is a class, not the system scheme, so flip it here */
+
 html.dark .lb img.logo[src$="kimi-color.svg"] {
   filter: invert(1) hue-rotate(180deg);
 }
 
-/* meaning tints (team-lead 2026-09-25): soft chips for state, tinted fills for limits */
+
 .lb .tone {
   display: inline-flex;
   align-items: center;

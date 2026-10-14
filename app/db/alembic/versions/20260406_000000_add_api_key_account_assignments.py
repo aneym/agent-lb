@@ -1,9 +1,4 @@
-"""add api key account assignments
 
-Revision ID: 20260406_000000_add_api_key_account_assignments
-Revises: 20260403_000000_add_credit_api_key_limit_values
-Create Date: 2026-04-06
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260406_000000_add_api_key_account_assignments"
 down_revision = "20260403_000000_add_credit_api_key_limit_values"
 branch_labels = None

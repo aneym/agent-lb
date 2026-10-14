@@ -83,10 +83,10 @@ async def test_account_trends_endpoint(async_client):
     assert "secondary" in data
     assert len(data["primary"]) > 0
     assert len(data["secondary"]) > 0
-    # At least one bucket should have actual usage data (not all 100%)
+
     primary_values = [p["v"] for p in data["primary"]]
     assert any(v != 100.0 for v in primary_values), "Expected at least one non-default value"
-    # remaining = 100 - 25 = 75
+
     assert any(abs(v - 75.0) < 0.01 for v in primary_values)
 
 
@@ -106,6 +106,6 @@ async def test_account_trends_no_data(async_client):
     assert response.status_code == 200
     data = response.json()
     assert data["accountId"] == account_id
-    # No usage data → empty lists
+
     assert data["primary"] == []
     assert data["secondary"] == []

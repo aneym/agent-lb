@@ -1,9 +1,4 @@
-"""add relative availability routing settings to dashboard_settings
 
-Revision ID: 20260426_000000_add_dashboard_relative_availability_settings
-Revises: 20260513_000000_add_accounts_alias
-Create Date: 2026-04-26
-"""
 
 from __future__ import annotations
 

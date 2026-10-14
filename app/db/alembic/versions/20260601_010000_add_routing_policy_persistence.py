@@ -1,9 +1,4 @@
-"""add routing policy persistence
 
-Revision ID: 20260601_010000_add_routing_policy_persistence
-Revises: 20260509_000000_add_api_key_traffic_class
-Create Date: 2026-06-01 18:30:00.000000
-"""
 
 from __future__ import annotations
 
@@ -59,9 +54,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # The columns are owned by earlier active revisions in the merged graph:
-    # 20260506_000000_add_account_routing_policy and
-    # 20260509_010000_add_additional_quota_routing_policies. This revision only
-    # keeps upgrade idempotent for branches that replayed the fields, so its
-    # downgrade must not remove schema required by those earlier revisions.
+
+
+
+
+
     return

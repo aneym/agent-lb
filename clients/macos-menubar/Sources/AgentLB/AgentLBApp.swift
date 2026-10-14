@@ -20,9 +20,9 @@ struct AgentLBApp: App {
     StatusItemWatch.schedule()
   }
 
-  // AGENTLB_DEBUG_WINDOWS=1: dump NSApp.windows + AppState data counts so a
-  // headless session can tell whether the status item exists, the panel's
-  // frame, and whether the open-state fetches actually populated the model.
+
+
+
   private static func scheduleWindowDiagnostics(_ state: AppState) {
     guard ProcessInfo.processInfo.environment["AGENTLB_DEBUG_WINDOWS"] == "1" else { return }
     Task { @MainActor in
@@ -53,9 +53,9 @@ struct AgentLBApp: App {
     }
   }
 
-  // Renders the menu bar panel's content view to /tmp/agentlb-panel.png and
-  // returns its AppKit subtree (type + frame per view) — works even when the
-  // panel window is occluded (e.g. locked screen during headless QA).
+
+
+
   @MainActor
   private static func panelDump() -> String {
     guard
@@ -85,9 +85,9 @@ struct AgentLBApp: App {
 
   var body: some Scene {
     MenuBarExtra {
-      // §9.1: 460 pt wide; height is deterministic — RootView pins itself
-      // to the PanelLayout-computed height (≤ 720) and PanelResizer keeps
-      // the panel window in sync (macOS 26 panels never re-measure alone).
+
+
+
       RootView()
         .environment(appState)
         .frame(width: PanelMetrics.width)

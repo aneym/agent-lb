@@ -248,9 +248,9 @@ def normalize_weekly_only_rows(
     primary_rows: Iterable[UsageWindowRow],
     secondary_rows: Iterable[UsageWindowRow],
 ) -> tuple[list[UsageWindowRow], list[UsageWindowRow]]:
-    # Some plans (notably free) can report only one weekly window in the
-    # primary slot. Re-map those rows into secondary so downstream 5h/7d
-    # consumers operate on consistent semantics.
+
+
+
     primary_by_account = {row.account_id: row for row in primary_rows}
     normalized_secondary_by_account = {row.account_id: row for row in secondary_rows}
 
@@ -286,7 +286,7 @@ def _should_prefer_primary_row(primary_row: UsageWindowRow, secondary_row: Usage
     elif secondary_row.reset_at is not None:
         return False
 
-    # Keep weekly-only semantics stable when timestamps are unavailable.
+
     return True
 
 

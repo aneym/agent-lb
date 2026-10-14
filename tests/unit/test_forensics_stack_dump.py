@@ -14,8 +14,8 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def _reset_registration(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Each test registers against its own tmp path; the module guards against
-    # double-registration, so the global must be cleared between tests.
+
+
     monkeypatch.setattr(forensics, "_stack_dump_file", None)
     yield
     if forensics._stack_dump_file is not None:

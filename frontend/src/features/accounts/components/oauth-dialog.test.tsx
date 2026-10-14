@@ -344,7 +344,7 @@ describe("OauthDialog", () => {
 
     expect(screen.getByText("OAuth failed unexpectedly")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
-    // Dialog footer has both "Try again" and "Close" buttons (plus the dialog's X close button)
+
     const closeButtons = screen.getAllByRole("button", { name: "Close" });
     expect(closeButtons.length).toBeGreaterThanOrEqual(1);
   });

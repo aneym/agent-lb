@@ -1,22 +1,5 @@
 #!/usr/bin/env python3
-"""Agent PreToolUse routing telemetry and the retired-model rule.
 
-Capacity is advisory: pool state is surfaced as status so the caller can
-choose deliberately. Model rule (Alex, 2026-10-05: "we shouldnt just block model
-usage, we shoudl allow them if we request or we want t escalate things"):
-- nothing is denied (guard trim, Alex 2026-10-08 09:18 ET: "dont have guards
-  that are too aggressive"): an exact pin (the dispatch's `model`, or the seat
-  definition) on the table's `blocked` list (no longer served upstream) is
-  logged and warned in one line; a regex hit in the brief's prose is logged
-  and surfaced as advice;
-- a model on the `retired` list is off the default ladder. A dispatch that
-  names one itself (`model`) or whose brief tells the seat to use one
-  (`--model <id>`, `model: <id>`) is an explicit request: it runs and the
-  ledger records it with the dispatch's description as the reason. A subagent
-  type whose definition pins one, with nothing asking for it, is a silent
-  default and is warned and logged, never denied. The `readmitted` map exempts named seats from named
-  patterns (2026-10-05: fable-orchestrator on Fable, astra-consult on Astra).
-"""
 
 from __future__ import annotations
 
@@ -29,8 +12,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Seats that bill a non-Anthropic pool (Codex, Cursor, Devin, or GPT through the
-# ccgpt bridge), so the Anthropic capacity snapshot does not apply to them.
+
+
 FORWARDER_SEATS = {
     "codex-sol",
     "codex-verifier",
@@ -43,9 +26,9 @@ FORWARDER_SEATS = {
     "sol-consult",
     "astra-consult",
 }
-# Seats that forward a brief naming a worktree through seat-submit, which places it only by its NEEDS line
-# (factory needs.py). NEEDS_MISSING is needs.NO_NEEDS_WARNING verbatim after "WARNING: " (open-factory b090a4b6).
-# Warn the lead at dispatch (harden audit 2026-10-10, Alex: "so factory still isnt hardened?").
+
+
+
 SUBMIT_SEATS = {"gpt-implementer", "sonnet-implementer"}
 WORKTREE_BRIEF = re.compile(r"worktree|-wt/", re.IGNORECASE)
 NEEDS_LINE = re.compile(r"^\ufeff?[ \t]*NEEDS:", re.MULTILINE)
@@ -61,7 +44,7 @@ CLASS_TAG = re.compile(r"^\s*\[class:([a-z0-9_-]+)\]", re.IGNORECASE)
 AGENT_MODEL = re.compile(r"^model:\s*(\S+)\s*$", re.MULTILINE)
 DEFAULT_RETIRED = ("claude-fable-*", "fable", "claude-planner", "gpt-*-astra", "gpt-*-astra-*", "gpt-5.6*", "gpt-5.5*")
 DEFAULT_BLOCKED = ("claude-planner", "gpt-5.4*", "gpt-5-*", "gpt-5")
-# A model id in a pin context: `--model X`, `model: X`, `model=X`, "model `X`".
+
 MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 
 
@@ -83,7 +66,7 @@ def emit_advisory(advisory: str) -> None:
 
 
 def emit_warning(reason: str) -> None:
-    """One line of context; the dispatch goes through (seat guard is not a floor; guard trim 2026-10-08)."""
+
     print(
         json.dumps(
             {
@@ -100,7 +83,7 @@ def emit_warning(reason: str) -> None:
 
 
 def retired_patterns(table: Path, subagent: str = "") -> tuple:
-    """The table's retired patterns, less any the `readmitted` map grants this subagent type."""
+
     try:
         loaded = json.loads(table.read_text())
     except Exception:
@@ -109,7 +92,7 @@ def retired_patterns(table: Path, subagent: str = "") -> tuple:
     if not (isinstance(configured, list) and configured and all(isinstance(item, str) for item in configured)):
         return DEFAULT_RETIRED
     readmitted = loaded.get("readmitted") if isinstance(loaded.get("readmitted"), dict) else {}
-    # A readmitted alias (astra-latest-high reaches Astra through the bridge) is as retired as its family.
+
     names = [entry["alias"] + "*" for entry in readmitted.values()
              if isinstance(entry, dict) and isinstance(entry.get("alias"), str) and entry["alias"]]
     entry = readmitted.get(subagent) if subagent else None
@@ -120,7 +103,7 @@ def retired_patterns(table: Path, subagent: str = "") -> tuple:
 
 
 def blocked_patterns(table: Path) -> tuple:
-    """Models no longer served upstream: denied even when a dispatch asks for them."""
+
     try:
         configured = json.loads(table.read_text()).get("blocked")
     except Exception:
@@ -135,10 +118,10 @@ def forbidden_model(model: str, patterns: tuple = DEFAULT_RETIRED) -> bool:
     return bool(bare) and any(fnmatch.fnmatchcase(bare, pattern) for pattern in patterns)
 
 
-# A pin is only a reference to drop, not an instruction to use, when a removal word
-# sits in the same clause right before it ("remove --model X", "replace model: X").
-# The clause ends at sentence punctuation or a new instruction verb, so "do not
-# remove it; use --model X" is still an instruction to use X.
+
+
+
+
 REMOVAL_CONTEXT = re.compile(
     r"\b(?:remove|removes|removing|replace|replaces|replacing|retire|drop|delete|strip|"
     r"instead of|no longer|never|used to|avoid|avoids|forbid|forbids|ban|bans)\b[^.;:!?\n]{0,40}$",
@@ -159,7 +142,7 @@ def retired_pins(prompt: str, patterns: tuple) -> list:
         clause = before[breaks[-1].end() :] if breaks else before
         if REMOVAL_CONTEXT.search(clause):
             continue
-        # "Do not use --model X" / "never use" / "avoid" prohibit the pin rather than ask for it.
+
         if breaks and PROHIBITION.search(before[: breaks[-1].end()]):
             continue
         found.append(candidate)
@@ -250,7 +233,7 @@ def snapshot_advisory(snapshot_path: Path) -> str | None:
 
 
 def emit_refusal(why: str) -> None:
-    """A floor guard that cannot read its input or crashes denies (S44, 2026-10-08); it allowed with an advisory."""
+
     print(
         json.dumps(
             {
@@ -319,9 +302,9 @@ def main() -> None:
     brief_pins = retired_pins(prompt, retired)
     blocked_pins = retired_pins(prompt, blocked)
     warn_reason = None
-    # Only an exact pin (the dispatch's model, the seat definition) warns. A regex hit in
-    # the brief's prose is advisory and logged: it denied a verifier at 19:51Z on a mention
-    # (rules-vs-agent audit, 2026-10-06).
+
+
+
     if forbidden_model(model, blocked):
         warn_reason = f"this dispatch pins {model!r}, which is no longer served"
     elif not model and pinned and forbidden_model(pinned, blocked):
@@ -367,8 +350,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    # A completed check (allow, advisory or deny) ends with the receipt line the dispatcher asks for
-    # (HOOK_FLOOR_RECEIPT); an exit 0 without it is refused there, so a crash never allows (S44, 2026-10-08).
+
+
     try:
         main()
     except Exception as error:

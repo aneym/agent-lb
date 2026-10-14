@@ -144,7 +144,7 @@ def test_collect_usage_from_chunk_detects_in_band_error_event():
         + "\n\n"
     ).encode("utf-8")
 
-    # Split mid-event to exercise the cross-chunk reassembly buffer.
+
     buffer = ""
     usage = None
     error = None
@@ -271,7 +271,7 @@ def test_pricing_resolves_current_generation_models():
     assert sonnet is not None
     assert sonnet[1].output_per_1m == 15.0
 
-    # Opus 4.5 must NOT inherit Opus-4's old $15/$75 via the shorter claude-opus-4* alias.
+
     opus = get_pricing_for_model("claude-opus-4-5-20251101")
     assert opus is not None
     assert opus[0] == "claude-opus-4-5"
@@ -280,7 +280,7 @@ def test_pricing_resolves_current_generation_models():
 
 
 def test_pricing_covers_claude_sonnet_5():
-    """Sonnet 5 was unpriced, so every Sonnet 5 request billed $0 against USD caps."""
+
     sonnet5 = get_pricing_for_model("claude-sonnet-5-20260219")
     assert sonnet5 is not None
     assert sonnet5[0] == "claude-sonnet-5"

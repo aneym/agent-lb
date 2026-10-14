@@ -62,7 +62,7 @@ def live_pools():
 
 @pytest.mark.asyncio
 async def test_live_plan_endpoint_and_cli(tmp_path, monkeypatch, capsys):
-    # The approved trial head is supplied as installed policy, not hard-coded by the plan.
+
     table, costs = inputs(head_maker="xai")
     path = tmp_path / "routing-table.json"
     path.write_text(json.dumps(table))
@@ -152,7 +152,7 @@ def test_policy_and_capacity_change_recommendations():
     plan = build_plan(pools, table, costs)
     assert next(a for a in plan["levels"]["balanced"]["accounts"] if a["pool"] == "cursor")["delta"] == 0
     assert next(a for a in plan["levels"]["budget"]["accounts"] if a["pool"] == "devin")["delta"] == 0
-    # A five-hour empty window is not a weekly-empty Claude account.
+
     pools = build_pools([_summary("short", primary_remaining=0, secondary_remaining=80)], generated_at=NOW)
     assert build_plan(pools, table, costs)["levels"]["unlimited"]["accounts"][0]["delta"] == 0
 
@@ -207,7 +207,7 @@ def test_active_policy_fallback_overrides_and_canonical_table():
                     if entry.get("gate", {"open": True}).get("open") is True)
     assert build_plan(live_pools(), canonical, costs)["levels"]["balanced"]["ladders"]["implement"][0]["id"] == expected
     pools = live_pools()
-    pools.pools[2].accounts = 3  # Only one drop is safe when two accounts must remain.
+    pools.pools[2].accounts = 3
     table, costs = inputs(head_maker="xai")
     plan = build_plan(pools, table, costs)
     assert plan["levels"]["budget"]["accounts"][1]["delta"] == -1
@@ -284,7 +284,7 @@ async def test_cursor_shared_plan_count_and_weekly_only_cli_output(tmp_path, mon
         monkeypatch.setenv(key, value)
     fixture = Path(env["ROUTE_FIXTURE_DIR"])
     (fixture / "api_pools.json").write_text(json.dumps(wire))
-    # Conflicting account cohorts must not replace the server's authoritative refills.
+
     (fixture / "api_accounts.json").write_text(json.dumps({"accounts": [{
         "provider": "anthropic", "status": "active", "resetAtSecondary": "2099-01-01T00:00:00Z",
         "usage": {"secondaryRemainingPercent": 0},

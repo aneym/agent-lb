@@ -111,7 +111,7 @@ def _is_server_error(exc: Exception) -> bool:
         return exc.status >= 500
     if isinstance(exc, (asyncio.TimeoutError, aiohttp.ServerTimeoutError)):
         return True
-    # ProxyResponseError wraps upstream HTTP responses — only 5xx is a server error.
+
     status_code = getattr(exc, "status_code", None)
     if status_code is not None:
         return status_code >= 500

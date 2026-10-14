@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the caller-owned lane boundary for local seat contracts."""
+
 import argparse
 import os
 from pathlib import Path

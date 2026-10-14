@@ -1,5 +1,4 @@
-"""Stand-in readers (routing scope {#failover}, 2026-09-30): route shows which sessions run on a stand-in, so a picker
-and a person both see that the factory is not on its intended models."""
+
 
 from __future__ import annotations
 
@@ -55,7 +54,7 @@ def test_route_says_who_is_standing_in_and_when_they_go_back(tmp_path: Path) -> 
     assert listed.returncode == 0 and json.loads(listed.stdout) == STANDING
     assert "routing" in route(env, "stand-ins").stdout
 
-    # agent-lb without the endpoint (older build): nothing standing in, and pick still works.
+
     older = env_for(tmp_path, "older", None)
     assert json.loads(route(older, "pick", "plan", "--json").stdout)["standing_in"] == []
     assert route(older, "stand-ins", "--json").returncode == 0

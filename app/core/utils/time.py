@@ -14,7 +14,7 @@ def to_utc_naive(value: datetime) -> datetime:
 
 
 def naive_utc_to_epoch(dt: datetime) -> int:
-    """Convert a naive-UTC datetime to Unix epoch seconds."""
+
     return int(dt.replace(tzinfo=timezone.utc).timestamp())
 
 

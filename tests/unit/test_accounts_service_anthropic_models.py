@@ -72,7 +72,7 @@ async def test_lists_through_an_anthropic_account_and_caches_for_the_ttl(monkeyp
 
     assert first.models == second.models == _MODELS
     assert not first.stale and first.error is None
-    # The active Anthropic account is used first; OpenAI and paused accounts never are; the cache holds for the TTL.
+
     assert calls == ["token-active"]
 
 
@@ -148,7 +148,7 @@ async def test_a_limited_account_lists_without_a_refresh_and_a_paused_one_is_dro
     result = await service.list_anthropic_models()
 
     assert result.models == _MODELS
-    # The active account came back paused from its refresh, so it is never used; the limited one is never refreshed.
+
     assert calls == ["token-b"]
     auth.ensure_fresh.assert_awaited_once_with(active, force=False)
 
@@ -189,7 +189,7 @@ def test_the_refresh_lock_follows_the_running_loop():
         await waiter
         lock.release()
 
-    # A lock that a waiter bound to the first loop must not be reused on the next one.
+
     asyncio.run(contend())
     asyncio.run(contend())
 
@@ -201,7 +201,7 @@ def test_the_refresh_lock_follows_the_running_loop():
 
             other = await asyncio.to_thread(asyncio.run, ask())
             assert other is not lock
-            # Loop A still gets its own held lock after loop B asked for one.
+
             assert service_module._anthropic_models_refresh_lock() is lock
             assert lock.locked()
 

@@ -1,11 +1,11 @@
 import { z } from "zod";
 
-// Mirrors backend `_MAX_PASSWORD_BYTES` in `app/modules/dashboard_auth/api.py`.
-// bcrypt only hashes the first 72 bytes of input; the backend rejects
-// anything longer with HTTP 422 `password_too_long`. Validate the same
-// budget on the client so users see the failure inline instead of after a
-// round-trip. Multi-byte characters (e.g. emoji) consume their UTF-8 byte
-// count, not the visible character count.
+
+
+
+
+
+
 export const MAX_DASHBOARD_PASSWORD_BYTES = 72;
 
 const dashboardPasswordByteLength = (value: string): number => new TextEncoder().encode(value).length;

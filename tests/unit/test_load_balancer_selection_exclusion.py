@@ -27,8 +27,7 @@ _OTHER_INSTANCE_ID = "laptop"
 
 
 def _jwt_with_exp(exp_epoch_seconds: float) -> str:
-    """An unsigned JWT-shaped string carrying only an `exp` claim — enough for
-    token_expiry_epoch_ms (which just base64-decodes the payload segment)."""
+
     payload = base64.urlsafe_b64encode(json.dumps({"exp": exp_epoch_seconds}).encode()).decode().rstrip("=")
     return f"header.{payload}.sig"
 
@@ -164,14 +163,14 @@ async def test_selection_excludes_non_owned_hard_expired_mirror(monkeypatch: pyt
 @pytest.mark.asyncio
 async def test_selection_keeps_fresh_mirror_and_owned_expired_account(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_local_instance_id(monkeypatch, _LOCAL_INSTANCE_ID)
-    # A mirror must have more than five minutes of access lifetime left.
+
     fresh_mirror = _make_account(
         "fresh-mirror",
         owner_instance=_OTHER_INSTANCE_ID,
         access_token=_jwt_with_exp(time.time() + 360),
     )
-    # Hard-expired but locally owned — the owner refreshes it on demand elsewhere;
-    # selection must not exclude owned accounts regardless of expiry.
+
+
     owned_expired = _make_account(
         "owned-expired",
         owner_instance=None,
@@ -221,9 +220,9 @@ async def test_excluded_mirror_absent_from_candidate_set_even_when_scoped_by_id(
     owned = _make_account("owned-account", owner_instance=None)
     balancer = LoadBalancer(lambda: _repo_factory([expired_mirror, owned]))
 
-    # Scoping account_ids to exactly the excluded mirror must still yield no
-    # selection — the exclusion happens upstream of the account_ids filter, so
-    # the excluded account is never part of the selection loop's candidate set.
+
+
+
     result = await balancer.select_account(account_ids=[expired_mirror.id])
 
     assert result.account is None

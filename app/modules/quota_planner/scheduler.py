@@ -86,10 +86,10 @@ class QuotaPlannerScheduler:
             )
             now = datetime.now(timezone.utc)
             demand_bins = await planner_repo.aggregate_demand_slots()
-            # Pure CPU work over thousands of rows and a 36h slot grid; keep
-            # it off the event loop so /health/ready and streaming stay
-            # responsive during the tick (5-7s loop stalls sampled here on
-            # 2026-09-16 under host load).
+
+
+
+
             forecast = await asyncio.to_thread(build_demand_forecast, settings=settings, bins=demand_bins, now=now)
             base_simulation = await asyncio.to_thread(
                 simulate_pool, settings=settings, states=states, demand_forecast=forecast, now=now

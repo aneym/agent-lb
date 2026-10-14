@@ -1,9 +1,4 @@
-"""add plan_type snapshot to request_logs
 
-Revision ID: 20260417_000000_add_request_log_plan_type
-Revises: 20260413_000000_add_accounts_blocked_at
-Create Date: 2026-04-17
-"""
 
 from __future__ import annotations
 

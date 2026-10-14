@@ -96,8 +96,8 @@ async def test_mirror_upsert_is_idempotent_and_updates_access_token(db_setup: bo
     assert second_applied is True
     account = await _get_account("acc_mirror_repeat")
     assert account.owner_instance == _OWNER_INSTANCE_ID
-    # Second cycle's fresher token wins; no duplicate row was created (a
-    # duplicate primary key would have raised, not silently no-opped).
+
+
     assert encryptor.decrypt(account.access_token_encrypted) == "mirrored-access-cycle-2"
 
 

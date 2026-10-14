@@ -1,9 +1,4 @@
-"""CLI integration tests for generated rules and preservation of local work.
 
-Existing installer tests cover agents/settings, not the models.md lifecycle.
-These catch missing generation, incorrect revisions, lost backups, and unsafe
-preview/uninstall behavior without adding a production test seam.
-"""
 from __future__ import annotations
 
 import hashlib
@@ -76,7 +71,7 @@ def test_models_install_lifecycle(tmp_path: Path, workspace: bytes | None) -> No
     assert "model: sol-latest-medium" in implementer
     assert "`AUTHORITY: <grant-id>`" in implementer and "factory-grant verify" in implementer
     assert "Do not commit, push" not in implementer
-    # Local coding seats must submit to the runtime with their Studio-pinned identity.
+
     for name in ("gpt-implementer", "sonnet-implementer"):
         local = (home / f".claude/agents/{name}-local.md").read_text()
         command = (
@@ -91,7 +86,7 @@ def test_models_install_lifecycle(tmp_path: Path, workspace: bytes | None) -> No
     assert backup.name in {f"models-md-handkept-{date}.md" for date in dates}
     assert backup.read_bytes() == original
     mirrored = home / ".agents/policy/coding-agents/WORKSPACE.md"
-    assert not mirrored.exists()  # WORKSPACE.md is installed by the private factory repo, not agent-lb
+    assert not mirrored.exists()
     installed = snapshot()
     assert "already converged" in install()
     assert snapshot() == installed

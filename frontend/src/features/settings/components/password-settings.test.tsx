@@ -50,7 +50,7 @@ describe("PasswordSettings", () => {
     render(<PasswordSettings />);
 
     await user.click(screen.getByRole("button", { name: "Set password" }));
-    // Dialog opens
+
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Password"), "new-password-1");

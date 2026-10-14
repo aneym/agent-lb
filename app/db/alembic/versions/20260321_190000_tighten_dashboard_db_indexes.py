@@ -1,16 +1,10 @@
-"""tighten dashboard db indexes
 
-Revision ID: 20260321_190000_tighten_dashboard_db_indexes
-Revises: 20260319_183000_normalize_sqlite_account_status_casing
-Create Date: 2026-03-21
-"""
 
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
 revision = "20260321_190000_tighten_dashboard_db_indexes"
 down_revision = "20260319_183000_normalize_sqlite_account_status_casing"
 branch_labels = None

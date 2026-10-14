@@ -26,7 +26,7 @@ import {
   type UpstreamProxyAdmin,
 } from "@/test/mocks/factories";
 
-// ── Zod schemas for mock request bodies ──
+
 
 const OauthStartPayloadSchema = z
   .object({
@@ -120,7 +120,7 @@ const SettingsPayloadSchema = z
   })
   .passthrough();
 
-// ── Helpers ──
+
 
 async function parseJsonBody<T>(
   request: Request,
@@ -1142,7 +1142,7 @@ export const handlers = [
       return HttpResponse.json(existing);
     }
 
-    // Build override with converted limits (create format → response format)
+
     const overrides: Partial<ApiKey> = {
       ...(payload.name !== undefined ? { name: payload.name } : {}),
       ...(payload.allowedModels !== undefined

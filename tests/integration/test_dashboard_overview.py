@@ -136,7 +136,7 @@ async def test_dashboard_overview_combines_data(async_client, db_setup):
     assert "requestLogs" not in payload
     assert payload["lastSyncAt"] == secondary_time.isoformat() + "Z"
 
-    # Verify trends are present and have 28 data points each
+
     assert "trends" in payload
     trends = payload["trends"]
     assert len(trends["requests"]) == 28
@@ -144,7 +144,7 @@ async def test_dashboard_overview_combines_data(async_client, db_setup):
     assert len(trends["cost"]) == 28
     assert len(trends["errorRate"]) == 28
 
-    # At least one trend point should have non-zero request count
+
     request_values = [p["v"] for p in trends["requests"]]
     assert any(v > 0 for v in request_values)
 
@@ -636,7 +636,7 @@ async def test_dashboard_projections_pool_risk_is_not_worst_account_and_splits_b
     payload = response.json()
     depletion = payload["depletionPrimary"]
     assert depletion is not None
-    # One hot account among five must not label the pool with its own risk.
+
     assert depletion["riskLevel"] in {"safe", "warning"}
     assert depletion["worstAccountId"] == "acc_hot"
     assert depletion["worstAccountEmail"] == "hot@example.com"

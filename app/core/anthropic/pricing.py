@@ -29,8 +29,8 @@ class AnthropicUsageCostBreakdown:
 
 
 DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
-    # Opus 5 and Fable 5.1 were priced in the deployed runtime but never landed
-    # in the repo; without them a clean deploy from main would bill both at $0.
+
+
     "claude-opus-5-5": AnthropicModelPrice(
         input_per_1m=4.0,
         cache_creation_5m_input_per_1m=5.0,
@@ -66,8 +66,8 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
         cache_read_input_per_1m=1.0,
         output_per_1m=50.0,
     ),
-    # Sonnet 5.5 shipped 2026-09-28 at Sonnet 5's price (DECISIONS.md); its own entry lets the
-    # cap guard's strict lookup accept it instead of reading -5 as an unknown version.
+
+
     "claude-sonnet-5-5": AnthropicModelPrice(
         input_per_1m=2.0,
         cache_creation_5m_input_per_1m=2.50,
@@ -82,8 +82,8 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
         cache_read_input_per_1m=0.20,
         output_per_1m=10.0,
     ),
-    # Opus 4.6-4.8 and Sonnet 4.6 (official price page, 2026-10-07); without their own entries
-    # claude-opus-4-6* fell through claude-opus-4* to Opus 4's $15/$75.
+
+
     "claude-opus-4-8": AnthropicModelPrice(
         input_per_1m=5.0,
         cache_creation_5m_input_per_1m=6.25,
@@ -192,8 +192,8 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
 }
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
-    # 4.5-generation patterns are longer than the 4.0 ones, so resolve_model_alias's
-    # longest-match wins — e.g. claude-opus-4-5-* maps to its own $5/$25 price, not Opus-4's $15/$75.
+
+
     "claude-opus-5-5*": "claude-opus-5-5",
     "claude-opus-5*": "claude-opus-5",
     "claude-fable-5-1*": "claude-fable-5-1",
@@ -254,8 +254,8 @@ def get_pricing_for_model(
     return None
 
 
-# What may follow a priced model's name and still be that model: a dated snapshot, -latest,
-# and a bracketed context tag such as [1m]. Anything else (claude-sonnet-4-99) is another model.
+
+
 _SNAPSHOT_SUFFIX = re.compile(r"(?:-\d{8}|-latest)?(?:\[[0-9a-z]+\])?")
 
 
@@ -264,12 +264,7 @@ def get_list_pricing_for_known_model(
     pricing: Mapping[str, AnthropicModelPrice] | None = None,
     aliases: Mapping[str, str] | None = None,
 ) -> tuple[str, AnthropicModelPrice] | None:
-    """Price ``model`` only when it is a model the table names, for the cost-cap guard.
 
-    ``get_pricing_for_model`` lets a wildcard alias price any name with a known prefix, so an
-    unreleased ``claude-opus-5-99`` reads as Opus 5. Here the text after the matched name must
-    be a snapshot suffix (``_SNAPSHOT_SUFFIX``); otherwise the model has no list price.
-    """
     if not model:
         return None
     pricing = pricing or DEFAULT_PRICING_MODELS

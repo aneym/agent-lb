@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""Build Harbor task dirs for of-work from a frozen candidate file.
 
-Each candidate is a merged commit whose tests fail at its parent and pass at the fix. The task
-gives the agent the parent tree (via `of-checkout`) and the instruction. The verifier restores the
-touched test files to the parent, applies the fix's test changes and runs the recorded
-FAIL_TO_PASS and PASS_TO_PASS node ids. The oracle applies the rest of the fix.
-
-Task dirs are written outside git: agent-rails is private and this repo is public.
-
-    python3 build_tasks.py ~/.agent-lb/of/dataset/v0/dev.json ~/.agent-lb/of/dataset/v0/tasks
-"""
 
 from __future__ import annotations
 
@@ -35,8 +25,8 @@ PYTEST = {
         ".venv/bin/python -m pytest -p no:cacheprovider -q"
     ),
 }
-# Agents reach agent-lb on the host and nothing else: agent-lb is public on GitHub, so open
-# egress would let a trial fetch the fix.
+
+
 ALLOWED_HOSTS = ["host.docker.internal"]
 
 
@@ -174,7 +164,7 @@ def build(candidate: dict, out: Path) -> dict:
         )
     )
     dockerfile = f"FROM {BASE_IMAGES[candidate['repo']]}\n"
-    # Tests and agents shell out to `python3`; the image has no system python.
+
     dockerfile += f"RUN of-checkout {base}\nWORKDIR /app\nENV PATH=/app/.venv/bin:$PATH\n"
     (task / "environment" / "Dockerfile").write_text(dockerfile)
     (task / "tests" / "tests.patch").write_text(git(repo, "diff", "--binary", base, fix, "--", *tests))

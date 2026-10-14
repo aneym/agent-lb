@@ -20,15 +20,7 @@ async def inject_sse_keepalives(
     *,
     keepalive_frame: str = SSE_KEEPALIVE_FRAME,
 ) -> AsyncIterator[str]:
-    """Wrap an SSE event iterator and emit comment heartbeats on idle gaps.
 
-    Comment frames (lines starting with ``:``) are mandated by the SSE spec to
-    be ignored by parsers, so they are safe to inject between event blocks.
-    They keep the TCP path warm so half-open sockets surface as write errors
-    instead of hanging forever, and let aggressive intermediaries see traffic.
-
-    A non-positive ``interval_seconds`` disables injection entirely.
-    """
     if interval_seconds <= 0:
         async for chunk in source:
             yield chunk

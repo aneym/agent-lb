@@ -22,9 +22,6 @@ from app.modules.public_usage.schemas import (
     PublicUsageTrend,
 )
 
-# Mirrors the warm-up exclusion used by the dashboard usage aggregations.
-# Source catches local limit-warmup rows. Forwarded copies are stored as
-# source=edge:<id>, so request_kind is what still identifies them.
 _INTERNAL_LIMIT_WARMUP_SOURCE = "limit_warmup"
 _WARMUP_REQUEST_KINDS = ("warmup", "limit_warmup")
 
@@ -64,11 +61,7 @@ def _top_model(model_cost: dict[str, float], model_req: dict[str, int]) -> str |
 
 
 async def build_public_usage(session: AsyncSession, days: int) -> PublicUsageResponse:
-    """Aggregate request_logs into the public, anonymized usage contract.
 
-    Only rolled-up numbers are returned — no account_id, email, api_key, request
-    bodies, IPs, or raw error text ever leaves this function.
-    """
     days = max(_MIN_DAYS, min(_MAX_DAYS, days))
     now = utcnow()
     cutoff = now - timedelta(days=days)

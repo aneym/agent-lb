@@ -184,10 +184,10 @@ async def test_select_account_100_concurrent_calls_avoid_serial_persist_latency(
     results = await asyncio.gather(*(balancer.select_account() for _ in range(100)))
     elapsed = time.perf_counter() - start
 
-    # The injected persist delay is 10ms per state, and each selection persists
-    # two states. A fully serialized implementation would therefore take about
-    # 2.0s for 100 selections. Allow extra scheduler slack for shared CI
-    # runners, but still require a comfortably sub-serialized runtime.
+
+
+
+
     assert elapsed < 1.25, f"Expected <1.25s for 100 concurrent selections, got {elapsed:.3f}s"
     assert all(result.account is not None for result in results)
 

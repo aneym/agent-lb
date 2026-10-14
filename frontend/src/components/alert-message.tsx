@@ -8,10 +8,10 @@ export type AlertMessageProps = {
   children: React.ReactNode;
 };
 
-/**
- * Monochrome alert (DESIGN.md): severity is carried by icon + weight, never hue.
- * All variants share the same ink-on-muted surface.
- */
+
+
+
+
 const variantStyles: Record<AlertMessageProps["variant"], string> = {
   error: "border bg-muted text-foreground font-semibold",
   success: "border bg-muted text-foreground",

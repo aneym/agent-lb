@@ -1,9 +1,4 @@
-"""add api key apply_to_codex_model flag
 
-Revision ID: 20260513_000000_add_api_key_apply_to_codex_model
-Revises: 20260518_000000_add_http_bridge_durable_input_prefix
-Create Date: 2026-05-13
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260513_000000_add_api_key_apply_to_codex_model"
 down_revision = "20260518_000000_add_http_bridge_durable_input_prefix"
 branch_labels = None

@@ -378,8 +378,8 @@ export function KeysPage() {
         payload: { name: payload.name, expiresAt: payload.expiresAt },
       });
       setCreated(result.key);
-      // Team issuance accepts only a name and expiry. Apply the remaining fields
-      // through the existing key update endpoint without ever logging the secret.
+
+
       const restrictions: ApiKeyUpdateRequest = { ...payload };
       delete restrictions.name;
       delete restrictions.expiresAt;
@@ -409,7 +409,7 @@ export function KeysPage() {
       setCreated(result.key);
       refresh();
     } catch {
-      /* mutation hook reports failure */
+
     }
   };
   const confirmRevoke = async () => {
@@ -420,7 +420,7 @@ export function KeysPage() {
       setRevokeRuns(false);
       refresh();
     } catch {
-      /* keep confirmation open if a revoke failed */
+
     }
   };
   const submitMember = async (payload: TeamMemberCreateRequest | TeamMemberUpdateRequest) => {
@@ -437,7 +437,7 @@ export function KeysPage() {
       setCreated(result.key);
       refresh();
     } catch {
-      /* hook reports failure */
+
     }
   };
   const error = [

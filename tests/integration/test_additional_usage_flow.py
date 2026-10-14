@@ -1,7 +1,4 @@
-"""Integration test: full additional-usage flow.
 
-Parse upstream payload -> write to DB -> read from dashboard API.
-"""
 
 from __future__ import annotations
 
@@ -39,9 +36,9 @@ def _make_account(account_id: str, email: str, plan_type: str = "plus") -> Accou
     )
 
 
-# ---------------------------------------------------------------------------
-# Scenario 1: Parse additional_rate_limits from upstream payload
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
@@ -58,9 +55,9 @@ async def test_parse_additional_rate_limits_from_fixture(db_setup):
         assert item.rate_limit is not None
 
 
-# ---------------------------------------------------------------------------
-# Scenario 2: UsageUpdater persists additional limits to DB
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
@@ -85,7 +82,7 @@ async def test_additional_usage_persisted_to_db(db_setup):
             recorded_at=now,
         )
 
-        # Query back via repository
+
         latest = await additional_repo.latest_by_account("codex_spark", "primary")
         assert account_id in latest
 
@@ -110,7 +107,7 @@ async def test_accounts_list_returns_additional_quotas(async_client, db_setup):
 
         await accounts_repo.upsert(_make_account(account_id, "dash_additional@example.com"))
 
-        # Seed primary usage so dashboard has data to render
+
         await usage_repo.add_entry(
             account_id,
             25.0,
@@ -118,7 +115,7 @@ async def test_accounts_list_returns_additional_quotas(async_client, db_setup):
             recorded_at=now - timedelta(minutes=1),
         )
 
-        # Seed additional usage
+
         await additional_repo.add_entry(
             account_id=account_id,
             limit_name="GPT-5.3-Codex-Spark",
@@ -191,7 +188,7 @@ async def test_dashboard_overview_omits_additional_quotas(async_client, db_setup
     data = response.json()
     assert "additionalQuotas" not in data
 
-    # depletion may be null (not enough data points) -- that is fine, not an error
+
     assert "depletionPrimary" in data
     assert data["depletionPrimary"] is None or isinstance(data["depletionPrimary"], dict)
 

@@ -1,4 +1,4 @@
-"""Request-log identity columns survive an existing row and a downgrade cycle."""
+
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def test_request_identity_migration_preserves_old_rows_and_round_trips(tmp_path,
         ):
             pytest.fail("PostgreSQL identity migration tests require a disposable identity scratch database")
 
-    # Start at head and step down, so the test behaves the same on a fresh or a reused scratch database.
+
     run_upgrade(db_url, "head", bootstrap_legacy=False)
     command.downgrade(_build_alembic_config(db_url), _PARENT)
     old_row = f"before-identity-{uuid4().hex}"

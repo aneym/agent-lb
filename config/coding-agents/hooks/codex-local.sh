@@ -1,6 +1,6 @@
 #!/bin/bash
-# Repo edits go through seat-run gpt-implementer / seat-exec, never codex-companion --write. The wrapper refuses repo paths outside the lane directory unless --allow-repo-write explicitly overrides the rule.
-# Studio-only foreground companion entrypoint. Keep admission, but never box placement.
+
+
 set -euo pipefail
 if [[ ${1:-} == --dry-run ]]; then
   shift
@@ -14,7 +14,7 @@ for arg in "$@"; do
   esac
 done
 [[ ${1:-} == task ]] || { echo 'usage: codex-local.sh [--dry-run] task [companion options]' >&2; exit 2; }
-# Render the same lane boundary for previews and real companion prompts.
+
 prompt_file=""
 args=("$@")
 for ((i=0; i<${#args[@]}; i++)); do
@@ -43,7 +43,7 @@ if [[ $(uname -s) != Darwin || $(hostname -s | tr '[:upper:]' '[:lower:]') != *s
   exit 75
 fi
 export BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only
-# Admission owns the wait. Re-enter only as its child, then capture immediately before launch.
+
 if [[ ${LOCAL_SEAT_ADMITTED:-0} != 1 && -x "$HOME/.local/bin/verify-slot" ]]; then
   exec "$HOME/.local/bin/verify-slot" codex-local -- env LOCAL_SEAT_ADMITTED=1 bash "$0" "$@"
 fi
@@ -62,7 +62,7 @@ if [[ -n $prompt_file ]]; then
   done
   set -- "${args[@]}"
 fi
-# Capture host telemetry before the worker; the sandbox never calls WindowServer.
+
 focus_dir=$(mktemp -d "${TMPDIR:-/tmp}/codex-local-focus.XXXXXX")
 export LOCAL_SEAT_FOCUS_BASELINE="$focus_dir/baseline.json"
 python3 "$(dirname "$0")/local-focus-snapshot.py" "$LOCAL_SEAT_FOCUS_BASELINE"

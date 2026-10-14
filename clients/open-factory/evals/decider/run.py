@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Live decider eval: does `open-factory route` land on the class default when it should?
 
-Each case runs the real router (live menu, real Jev) with its own ledger, so eval decisions
-stay out of ~/.claude/logs/dispatch.jsonl. The receipt goes to ~/.agent-lb/of/runs/.
-"""
 
 from __future__ import annotations
 

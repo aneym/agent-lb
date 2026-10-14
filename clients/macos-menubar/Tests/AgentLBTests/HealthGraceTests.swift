@@ -24,7 +24,7 @@ final class HealthGraceTests: XCTestCase {
   }
 
   func testRestartTimeoutWithoutSuccessMakesRunningServiceUnreachable() {
-    // A successful restart invalidates health from the old process before polling begins.
+
     XCTAssertEqual(
       AppState.statusAfterHealthFailure(
         currentStatus: .running, lastSuccessAge: nil, isRemote: false, isLoaded: true

@@ -121,7 +121,7 @@ describe("TotpSettings", () => {
 
     await user.click(screen.getByRole("button", { name: "Enable TOTP" }));
 
-    // Dialog opens with QR and secret
+
     expect(await screen.findByText("Secret: SECRET123")).toBeInTheDocument();
     expect(
       screen.getByRole("img", { name: "TOTP QR code" }),

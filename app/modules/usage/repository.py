@@ -26,9 +26,9 @@ from app.modules.usage.additional_quota_keys import (
 _PRIMARY_WINDOW_LITERAL = literal_column("'primary'")
 
 
-# Newest rows kept per account when bulk-loading depletion history. Recent
-# samples dominate the EWMA rate estimate; unbounded loads stall the event
-# loop at production row counts.
+
+
+
 BULK_HISTORY_MAX_ROWS_PER_ACCOUNT = 720
 
 
@@ -610,7 +610,7 @@ class UsageRepository:
         window: str,
         since: datetime,
     ) -> dict[str, list[UsageHistorySnapshot]]:
-        """Fetch minimal usage history fields for multiple accounts in a single query."""
+
         if not account_ids:
             return {}
         bind = self._session.get_bind()
@@ -625,10 +625,10 @@ class UsageRepository:
                 since,
             )
 
-        # Cap at the newest rows per account: the EWMA depletion estimate is
-        # dominated by recent samples, and hydrating every in-window row
-        # (observed >100k rows/poll in production) stalls the event loop with
-        # GC pressure for tens of seconds per dashboard poll.
+
+
+
+
         ranked = (
             select(
                 UsageHistory.id,
@@ -916,11 +916,7 @@ class AdditionalUsageRepository:
         *,
         metered_feature: str,
     ) -> bool:
-        """Append cleared state only while the observed cooldown is still latest.
 
-        The comparison and insert are one SQL statement so a newer concurrent
-        cooldown cannot be hidden by an older successful recovery probe.
-        """
         scope = _resolve_additional_quota_query_scope(quota_key=quota_key)
         if scope is None:
             raise ValueError("additional usage quota_key could not be determined")
@@ -1025,7 +1021,7 @@ class AdditionalUsageRepository:
         account_ids: Collection[str] | None = None,
         since: datetime | None = None,
     ) -> dict[str, AdditionalUsageHistory]:
-        """Returns the latest effective entry per account for a canonical quota key + window."""
+
         scope = _resolve_additional_quota_query_scope(
             quota_key=quota_key,
             limit_name=limit_name,
@@ -1042,10 +1038,10 @@ class AdditionalUsageRepository:
             conditions.append(AdditionalUsageHistory.recorded_at >= since)
         bind = self._session.get_bind()
         if bind is not None and bind.dialect.name == "postgresql" and account_ids:
-            # PostgreSQL rows are canonicalized on write/backfill. Avoid the
-            # legacy lower(limit_name/metered_feature) OR branches here: they
-            # prevent the composite quota/window/account index from serving
-            # this hot-path lookup.
+
+
+
+
             conditions[0] = AdditionalUsageHistory.quota_key.in_(
                 tuple(scope.quota_key_match_values or {scope.quota_key})
             )
@@ -1170,7 +1166,7 @@ class AdditionalUsageRepository:
         *,
         limit_name: str | None = None,
     ) -> list[AdditionalUsageHistory]:
-        """Returns time-series entries for EWMA computation."""
+
         scope = _resolve_additional_quota_query_scope(
             quota_key=quota_key,
             limit_name=limit_name,
@@ -1191,7 +1187,7 @@ class AdditionalUsageRepository:
         return list(result.scalars().all())
 
     async def latest_recorded_at_for_account(self, account_id: str) -> datetime | None:
-        """Return the most recent recorded_at for any additional usage entry of this account."""
+
         stmt = select(func.max(AdditionalUsageHistory.recorded_at)).where(
             AdditionalUsageHistory.account_id == account_id
         )
@@ -1199,7 +1195,7 @@ class AdditionalUsageRepository:
         return result.scalar_one_or_none()
 
     async def latest_recorded_at(self) -> datetime | None:
-        """Return the most recent recorded_at across all additional usage entries."""
+
         stmt = select(func.max(AdditionalUsageHistory.recorded_at))
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()

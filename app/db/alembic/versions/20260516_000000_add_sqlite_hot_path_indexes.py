@@ -1,9 +1,4 @@
-"""add sqlite hot path indexes
 
-Revision ID: 20260516_000000_add_sqlite_hot_path_indexes
-Revises: 20260514_000000_add_request_logs_api_key_time_index
-Create Date: 2026-05-16
-"""
 
 from __future__ import annotations
 

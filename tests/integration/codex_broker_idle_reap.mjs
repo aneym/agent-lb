@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Real-process integration test; no production socket, config, or credentials.
-// Usage: node tests/integration/codex_broker_idle_reap.mjs [--standin-only|--delivery-only]
+
+
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -52,7 +52,7 @@ async function until(fn, timeout = 10000) {
   throw new Error(`Timed out after ${timeout}ms`);
 }
 fs.mkdirSync(plugin);
-// git archive reads committed sources only and never changes the installed copy.
+
 const archive = path.join(root, 'source.tar');
 command('git', ['-C', source, 'archive', '--format=tar', '-o', archive, 'HEAD']);
 command('tar', ['-xf', archive, '-C', plugin]);
@@ -67,7 +67,7 @@ const brokerFile = path.join(plugin, 'plugins/codex/scripts/app-server-broker.mj
 const clientFile = path.join(plugin, 'plugins/codex/scripts/lib/app-server.mjs');
 command('node', ['--check', brokerFile]);
 command('node', ['--check', clientFile]);
-// Remove patch, break a hunk, and prove rejection changes neither target.
+
 command('git', ['-C', plugin, 'apply', '--reverse', path.join(repo, 'patches/codex-plugin-cc/idle-reap.patch')]);
 const unpatched = fs.readFileSync(brokerFile, 'utf8');
 fs.writeFileSync(brokerFile, unpatched.replace('  const sockets = new Set();', '  const upstreamChangedSockets = new Set();'));
@@ -97,8 +97,8 @@ try {
   process.exit(1);
 }
 
-// A real, TERM-resistant process tree for escalation coverage. Only the
-// protocol responder is a stand-in; all spawning, sockets and signals are real.
+
+
 const fixture = path.join(root, 'fixture.mjs');
 fs.writeFileSync(fixture, `
 import fs from 'node:fs';
@@ -135,10 +135,10 @@ function safeGroupKill(pgid, signal) {
   assert(!preexisting.has(pgid), `Refusing pre-existing PGID ${pgid}`);
   try { process.kill(-pgid, signal); } catch (e) { if (e.code !== 'ESRCH') throw e; }
 }
-// A ps stub on the broker's PATH. 'fail' exits nonzero. 'mutate' answers the
-// first call truthfully, then reports a new start time for the pid in
-// mutate.pid: to the broker that pid now belongs to a different process, as
-// after pid reuse. Simulated, because real pid or group reuse is not forceable.
+
+
+
+
 function writePsStub(bin, dir, kind) {
   const stub = kind === 'fail' ? '#!/bin/sh\nexit 1\n' : `#!${process.execPath}
 import fs from 'node:fs';
@@ -199,7 +199,7 @@ TERM_LOG = ${JSON.stringify(termLog)}
     broker.once('error', error => { exited = true; reject(error); });
     broker.once('exit', (code, sig) => { exited = true; resolve({ code, sig }); });
   });
-  // Keep early spawn failures handled until the test awaits the exit result.
+
   exit.catch(() => {});
   const sockets = [];
   let appPid;
@@ -289,8 +289,8 @@ TERM_LOG = ${JSON.stringify(termLog)}
       fs.writeFileSync(path.join(dir, 'mutate.pid'), String(survivors[0]));
       console.log(`${label} ps stub reports a new start time for ${survivors[0]} after the first call (simulated pid reuse)`);
     }
-    // Codex puts MCP servers in their own groups, so the broker's tree, not
-    // one group, is what shutdown must reap.
+
+
     observed = snapshot(`${label} before shutdown`, descendants(broker.pid), [appPid]).map(p => p.pid).filter(pid => !survivors.includes(pid));
     if (fs.existsSync(pidLog)) {
       const fixturePids = fs.readFileSync(pidLog, 'utf8').trim().split('\n').map(Number);
@@ -333,7 +333,7 @@ TERM_LOG = ${JSON.stringify(termLog)}
       assert(pid > 1 && !preexisting.has(pid));
       try { process.kill(pid, 'SIGKILL'); } catch (e) { if (e.code !== 'ESRCH') throw e; }
     }
-    // Kill only groups created by this test, never discover-and-kill by name.
+
     if (appPid) safeGroupKill(appPid, 'SIGKILL');
     if (fs.existsSync(pidLog)) {
       for (const pid of fs.readFileSync(pidLog, 'utf8').trim().split('\n').map(Number)) {

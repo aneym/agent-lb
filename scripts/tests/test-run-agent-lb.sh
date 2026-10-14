@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Subprocess integration: boot logging and deadlines at the launcher boundary.
-# The old delimiter-first parser leaked userinfo; an unbounded pg_isready
-# could ignore the wait budget. No existing shell regression covers boot.
+
+
+
 root=$(cd "$(dirname "$0")/../.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/agent-lb-boot-test.XXXXXX")
 trap 'rm -rf "${tmp:?}"' EXIT
@@ -13,7 +13,7 @@ cat > "$tmp/home/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb" <<'STUB'
 echo runtime-started
 STUB
 chmod +x "$tmp/home/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb"
-# Credentials are synthetic regression fixtures, not account data.
+
 url='postgresql+asyncpg://fixture-user:fixture-prefix%2F%3F%23fixture-tail@127.0.0.1:1/db?password=fixture-query@fixture-query-host'
 HOME="$tmp/home" AGENT_LB_DATABASE_URL="$url" AGENT_LB_DB_WAIT_SECONDS=1 \
   bash "$root/scripts/run-agent-lb.sh" >"$tmp/log" 2>&1
@@ -35,8 +35,8 @@ elapsed=$(( $(date +%s) - start ))
 grep -q runtime-started "$tmp/log"
 echo "PASS: closed-port boot completed in ${elapsed}s (budget 3s, limit 6s)"
 
-# Exercise the external readiness tool's DNS-stall boundary when no installed
-# Homebrew probe takes priority. The launcher still runs unchanged.
+
+
 if [[ ! -x /opt/homebrew/bin/pg_isready && ! -x /opt/homebrew/opt/postgresql@17/bin/pg_isready ]]; then
   cat > "$tmp/bin/pg_isready" <<'PROBE'
 #!/bin/bash
@@ -54,7 +54,7 @@ else
   echo 'SKIP: stalled readiness stub (installed Homebrew probe takes priority)'
 fi
 
-# Verify the real probe reaches the authority, not a query's trailing @ value.
+
 python3 - "$tmp/port" "$tmp/connection" <<'SERVER' &
 import socket
 import sys
@@ -91,8 +91,8 @@ fi
 grep -q runtime-started "$tmp/log"
 echo 'PASS: query @ neither leaks nor redirects the real database probe'
 
-# Run the watchdog unchanged at its subprocess/configuration boundary. Fake
-# only launchd and HTTP: no service restarts or user sessions are touched.
+
+
 cat > "$tmp/bin/launchctl" <<'LAUNCHCTL'
 #!/bin/bash
 case "$1" in
@@ -120,12 +120,12 @@ run_watchdog() {
     bash "$root/scripts/watchdog.sh"
 }
 run_watchdog
-# Reaching kickstart proves db_ready returned 0 for the absent database key.
+
 grep -q kickstart "$tmp/actions"
 echo 'PASS: absent database key permits default SQLite recovery'
 
 rm -f "$tmp/actions" "$tmp/state" "$tmp/watchdog.log"
-# A present lookup tool that fails is different from a successfully absent key.
+
 cat > "$tmp/bin/python3" <<'LOOKUP'
 #!/bin/bash
 exit 1

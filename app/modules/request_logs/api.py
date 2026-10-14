@@ -111,7 +111,7 @@ async def list_request_log_filter_options(
     until: datetime | None = Query(default=None),
     context: RequestLogsContext = Depends(get_request_logs_context),
 ) -> RequestLogFilterOptionsResponse:
-    _ = status  # Keep input backward compatible but do not self-filter status facet.
+    _ = status
     parsed_options: list[ServiceRequestLogModelOption] | None = None
     if model_option:
         parsed = [_parse_model_option(value) for value in model_option]

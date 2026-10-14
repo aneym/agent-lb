@@ -1,9 +1,4 @@
-"""Exercise context delivery and managed-hook installation through their CLIs.
 
-Missing identity/ranking context or broken installer ownership would fail these
-scenarios. Existing model-policy tests do not cover SessionStart or this hook;
-all inputs use files and subprocess stdin, without mocks or production seams.
-"""
 from __future__ import annotations
 
 import json

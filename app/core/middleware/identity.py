@@ -7,11 +7,7 @@ from app.core.identity import reset_request_identity, resolve_scope_identity, se
 
 
 class IdentityMiddleware:
-    """Put the caller's machine (and keyless user) in the request context for request logging.
 
-    Resolved once per HTTP request and once per websocket connection. The request-log
-    writer adds the member from the validated key (see app.core.identity).
-    """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app

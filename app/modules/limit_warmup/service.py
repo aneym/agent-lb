@@ -69,10 +69,10 @@ _OPENAI_FAILURE_BRAKE_SECONDS = 6 * 3600
 _OPENAI_LOG_ERROR_CODE = re.compile(r"[a-z0-9_.:-]{1,64}", re.IGNORECASE)
 _ANTHROPIC_PRIMER_PROMPT = "OK"
 _ANTHROPIC_RESET_GRACE_SECONDS = 3
-# Usage telemetry older than this cannot prove the primary window is closed.
+
 _ANTHROPIC_TELEMETRY_MAX_AGE_SECONDS = 600
-# Anthropic starts a window at the request time floored to ten minutes, so a
-# primed window can reset up to ten minutes short of a full window length.
+
+
 _ANTHROPIC_PRIME_SPACING_SLACK = 900
 
 
@@ -418,9 +418,9 @@ class LimitWarmupService:
         now: datetime | None = None,
     ) -> None:
         selected_windows = _selected_windows(settings.limit_warmup_windows)
-        # The clock-aware seed path (Behavior 1) only needs a working-hours
-        # schedule, so it can run even when no reactive HOLD windows are
-        # selected. Without a schedule the service keeps its legacy behavior.
+
+
+
         if (
             not selected_windows
             and planner_settings is None
@@ -514,10 +514,10 @@ class LimitWarmupService:
 
             window_minutes = _primary_window_minutes(account, after_primary.get(account.id))
 
-            # Behavior 1 (SEED): a cold account inside the pre-work seed band gets
-            # exactly one primer that anchors its primary window to ~start. This is
-            # mutually exclusive with the reactive HOLD path below: a cold account
-            # never has an observed reset to react to.
+
+
+
+
             if planner_settings is not None and _within_seed_window(current, planner_settings, window_minutes):
                 if _primary_window_is_cold(account, after_primary.get(account.id), current):
                     enqueued = await self._enqueue_warmup_send(
@@ -534,9 +534,9 @@ class LimitWarmupService:
                         send_tasks[send_task] = attempt
                     continue
 
-            # Behavior 2 (HOLD): the existing reactive re-prime, now gated to the
-            # working day. Outside [seed_start, working_hours_end] the account is
-            # allowed to go cold so the next morning's seed re-establishes phase.
+
+
+
             if planner_settings is not None and not _within_hold_window(current, planner_settings, window_minutes):
                 continue
 
@@ -807,8 +807,8 @@ class LimitWarmupService:
                 error_message=_truncate(outcome.error_message),
             )
 
-        # Persist the upstream outcome first. A request-log or confirmation
-        # failure after a 2xx must never turn a sent primer into a retry.
+
+
         status = "sent_unconfirmed" if result.success else "failed"
         completed = await self._warmup_repo.complete_attempt(
             outcome.attempt.id,
@@ -1007,20 +1007,7 @@ def _anthropic_prime_key(
     latest_attempt: AccountLimitWarmup | None,
     now: datetime,
 ) -> int | None:
-    """Return the dedup key for priming a closed primary window, or None.
 
-    Priming is decided from the current state, not from observing the reset
-    edge: after a five-hour reset the usage endpoint reports the primary window
-    with ``used_percent == 0`` and no ``reset_at`` until the next request opens
-    it, and that closed state can last for hours. The key is the start of the
-    fixed window-length bucket containing ``now``. Anthropic floors a window's
-    start to ten minutes and buckets are ten-minute aligned, so a window opened
-    in one bucket resets in a later one, and each closed period gets one key.
-    A primer that was sent but did not visibly open a window blocks another for
-    most of a window length, so a bucket boundary cannot cause a second send.
-    The weekly window rolls on a fixed per-account schedule, so it needs no
-    primer of its own.
-    """
     if primary is None or weekly is None:
         return None
     now_epoch = _as_utc(now).timestamp()
@@ -1032,7 +1019,7 @@ def _anthropic_prime_key(
     if primary.used_percent != 0 or weekly.used_percent >= 100:
         return None
     if primary.reset_at is not None and primary_recorded < primary.reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
-        return None  # The window is open, or the sample predates its reset.
+        return None
     if standard is not None and standard.used_percent >= 100:
         if standard.reset_at is None or standard.reset_at > now_epoch:
             return None
@@ -1058,15 +1045,7 @@ def _openai_prime_key(
     latest_attempt: AccountLimitWarmup | None,
     now: datetime,
 ) -> int | None:
-    """Return an hourly claim key for an unstarted OpenAI quota window.
 
-    An unstarted window reports zero usage and a reset that drifts forward with
-    each sample, about one full window length after its recorded time. A started
-    window has a fixed reset, whose lead shrinks. Hourly buckets permit another
-    primer after a later reset in the same week (including reset credits), while
-    repeating a 2xx that did not start the window at most hourly. This path
-    intentionally ignores working hours and prior exhaustion.
-    """
     now_epoch = _as_utc(now).timestamp()
     fresh = [
         sample
@@ -1109,13 +1088,7 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _primary_window_minutes(account: Account, primary_entry: UsageHistory | None) -> int:
-    """Resolve the account's primary-window length in minutes.
 
-    The brief references ``account.window_minutes_primary``; that column does
-    not exist on ``Account`` (it is derived from the primary ``UsageHistory``
-    row). Prefer an explicit attribute if a future schema adds one, then the
-    observed primary window, then the conventional 5-hour default.
-    """
     explicit = getattr(account, "window_minutes_primary", None)
     if isinstance(explicit, int) and explicit > 0:
         return explicit
@@ -1129,7 +1102,7 @@ def _primary_window_is_cold(
     primary_entry: UsageHistory | None,
     current: datetime,
 ) -> bool:
-    """A primary window is cold when there is no reset in the future."""
+
     reset_at = primary_entry.reset_at if primary_entry is not None else None
     if reset_at is None:
         reset_at = getattr(account, "reset_at", None)
@@ -1143,14 +1116,7 @@ def _planner_day_bounds(
     planner: PlannerSettings,
     window_minutes: int,
 ) -> tuple[datetime, datetime, datetime, datetime, datetime]:
-    """Return (local_now, seed_start, work_start, work_end, target_reset) in planner tz.
 
-    ``target_reset`` is ``working_hours_start + seed_target_offset_minutes`` — the
-    moment we want the seeded window to reset. We fire the seed one window-length
-    earlier (``seed_start``) so a cold account's fresh window expires at the target.
-    Offsetting the reset past start (default +120m) lets the account present a
-    loaded window at start AND still cycle twice within a ~9h day (3 windows vs 2).
-    """
     local_now = _to_planner_tz(current, planner.timezone)
     work_start = datetime.combine(
         local_now.date(),
@@ -1168,29 +1134,19 @@ def _planner_day_bounds(
 
 
 def _within_seed_window(current: datetime, planner: PlannerSettings, window_minutes: int) -> bool:
-    """now ∈ [target_reset − window_minutes, working_hours_start).
 
-    Seeding only fires before the workday begins so a loaded window greets the
-    user; the window-length lead means the fresh window resets at ``target_reset``.
-    """
     local_now, seed_start, work_start, _, _ = _planner_day_bounds(current, planner, window_minutes)
     return seed_start <= local_now < work_start
 
 
 def _within_hold_window(current: datetime, planner: PlannerSettings, window_minutes: int) -> bool:
-    """now ∈ [seed_start, working_hours_end]."""
+
     local_now, seed_start, _, work_end, _ = _planner_day_bounds(current, planner, window_minutes)
     return seed_start <= local_now <= work_end
 
 
 def _seed_reset_at(current: datetime, planner: PlannerSettings) -> int:
-    """Epoch seconds of today's target reset (working_hours_start + offset) in planner tz.
 
-    Used as the deterministic ``reset_at`` anchor for the seed attempt so the
-    ``(account_id, window, reset_at)`` uniqueness constraint prevents a second
-    seed on the same working day. Independent of ``window_minutes`` since the
-    target is a fixed clock time.
-    """
     _, _, _, _, target_reset = _planner_day_bounds(current, planner, _DEFAULT_PRIMARY_WINDOW_MINUTES)
     return int(target_reset.timestamp())
 

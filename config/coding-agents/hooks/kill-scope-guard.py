@@ -1,23 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash) guard: a pattern kill must not reach other agents' processes.
 
-Why (factory-operations 60): on 2026-10-07 23:55 ET comms-lead ran `pgrep -f 'no:cacheprovider' | xargs kill` and
-SIGTERMed three other agents' pytest runs. Every agent on this machine shares one user, so a pattern kill reaches
-every session's processes.
-
-What it judges: the commands that run (heredoc bodies written to files, quoted text, echo and commit messages, and
-ssh arguments are data): `pkill`/`killall`, `pgrep ... | xargs kill`, and `kill $(pgrep ...)` or backticks. It
-evaluates the pattern against the live process table (`ps -axo pid=,ppid=,command=`):
-- every match is this session's own process (the agent's Claude process and its descendants) or carries this
-  session's id in its command line: allow;
-- a match is another session's process: deny, naming the floor;
-- the pattern cannot be evaluated (built at run time, unreadable options): warn and allow.
-`pkill -P $$` and other parent-scoped kills of the session's own tree are allowed.
-
-Fixed contract: the Claude Code hook JSON on stdin; exit 0 to allow (a warning is a one-line hookSpecificOutput
-additionalContext), exit 2 with a BLOCKED line on stderr to deny. Test seam: KILL_GUARD_PS names a JSON file of
-[{pid, ppid, command}] used instead of ps, and KILL_GUARD_SELF the pid the session walk starts from.
-"""
 import json
 import os
 import re
@@ -31,12 +13,12 @@ SHELLS = {"bash", "sh", "zsh", "dash"}
 KEYWORDS = {"if", "then", "do", "while", "until", "else", "elif", "!", "{", "}", "fi", "done"}
 OPERATORS = "<>;&|()"
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(\\?)(['\"]?)([A-Za-z0-9_.-]+)\2")
-# pgrep/pkill options that take a value (macOS and procps).
+
 VALUED = set("FGgPstUu")
 
 
 class Doubt(Exception):
-    """The command cannot be read."""
+    pass
 
 
 def unquoted(line, quote):
@@ -78,7 +60,7 @@ def first_word(prefix):
 
 
 def split_heredocs(text):
-    """Text without heredoc bodies; unquoted bodies (their $( ) runs); bodies fed to a shell (they run)."""
+
     text = text.replace("\\\n", "")
     out, live, shell, ends, quote = [], [], [], [], None
     for line in text.split("\n"):
@@ -105,7 +87,7 @@ def split_heredocs(text):
 
 
 def substitutions(text):
-    """(body, kill_before) for each $( ) and backtick body outside single quotes."""
+
     found, quote, k = [], None, 0
     while k < len(text):
         c = text[k]
@@ -139,7 +121,7 @@ def substitutions(text):
 
 
 def pipelines(text):
-    """Each pipeline as a list of argv lists."""
+
     if any(0xE000 <= ord(c) < 0xE000 + len(OPERATORS) for c in text):
         raise Doubt
     free, _ = unquoted(text, None)
@@ -193,7 +175,7 @@ def shell_string(args):
 
 
 def selector(argv):
-    """A pgrep/pkill/killall argv as a selection: {full, exact, ignore, parents, pattern} or None if unreadable."""
+
     name = os.path.basename(argv[0])
     sel = {"full": False, "exact": name == "killall", "ignore": False, "parents": None, "pattern": None,
            "tool": name}
@@ -204,7 +186,7 @@ def selector(argv):
             rest = args[i + 1:]
             sel["pattern"] = rest[-1] if rest else None
             break
-        if arg.startswith("-") and len(arg) > 1 and not re.fullmatch(r"-\d+|-(SIG)?[A-Z]{2,}[0-9]*", arg):  # a signal is not an option
+        if arg.startswith("-") and len(arg) > 1 and not re.fullmatch(r"-\d+|-(SIG)?[A-Z]{2,}[0-9]*", arg):
             flags = arg[1:]
             for j, flag in enumerate(flags):
                 if flag in VALUED and name != "killall":
@@ -224,7 +206,7 @@ def selector(argv):
 
 
 def kills(text, depth=0):
-    """Every pattern kill that runs in this text, as selections."""
+
     if depth > 4:
         raise Doubt
     text, live, shell = split_heredocs(text)
@@ -277,7 +259,7 @@ def process_table():
 
 
 def session_root(table, start):
-    """The agent's Claude process above this hook, or the hook's parent when none is found."""
+
     pid, seen = start, set()
     while pid in table and pid not in seen and pid > 1:
         seen.add(pid)
@@ -322,7 +304,7 @@ def main():
     try:
         payload = json.load(sys.stdin)
     except ValueError:
-        return 0  # not a hook payload this guard can read; the kill-guard wrapper still checks pkill at run time
+        return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
     if not re.search(r"\b(pkill|killall|pgrep)\b", command):
         return 0

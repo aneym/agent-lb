@@ -1,4 +1,4 @@
-# Staging environment — based on the external DB install mode with moderate scale and monitoring enabled.
+
 replicaCount: 2
 
 autoscaling:

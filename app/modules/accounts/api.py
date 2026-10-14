@@ -110,7 +110,7 @@ def build_availability_response(accounts: list[AccountSummary]) -> AvailabilityR
 async def list_anthropic_models(
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AnthropicModelsResponse:
-    """Upstream Anthropic model ids (cached an hour), so `route` resolves Claude family aliases."""
+
     return await context.service.list_anthropic_models()
 
 
@@ -118,7 +118,7 @@ async def list_anthropic_models(
 async def get_availability(
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AvailabilityResponse:
-    """Fleet-wide per-provider account availability plus degradation state."""
+
     accounts = await context.service.list_accounts(include_request_usage=False)
     return build_availability_response(accounts)
 
@@ -128,8 +128,8 @@ async def list_accounts(
     fresh: bool = False,
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountsResponse:
-    # Default (cc banner, menubar) skips the expensive request-usage aggregation;
-    # the dashboard opts in with ?fresh=1 for its per-account token/cost columns.
+
+
     state_path = get_settings().federation_push_sources_path.with_name("federation-push-state.json")
     try:
         source_bindings = load_binding(state_path)
@@ -261,7 +261,7 @@ async def import_api_key_account(
 async def reset_uncertain_exchange(
     account_id: str, context: AccountsContext = Depends(get_accounts_context)
 ) -> dict[str, str]:
-    """Allow a deliberate retry after the provider can no longer process the prior exchange."""
+
     settings = get_settings()
     timeout_seconds = max(settings.oauth_timeout_seconds, settings.token_refresh_timeout_seconds, 30.0)
     async with _cross_process_refresh_lock(account_id):
@@ -338,8 +338,8 @@ async def probe_account(
     if result is None:
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     if result.probe_status_code == 200:
-        # Use the existing request-serving selector only. A pinned probe proves
-        # transient failures recovered; it does not override quota or cooldowns.
+
+
         account = await context.repository.get_by_id(account_id)
         service = getattr(request.app.state, "anthropic_proxy_service", None)
         if account is not None and account.provider != "openai" and service is not None:

@@ -65,8 +65,8 @@ def _build_service(
     usage_repo.latest_entry_for_account.side_effect = _latest_entry_for_account
 
     service = AccountsService(repo=repo, usage_repo=usage_repo, auth_manager=auth_manager)
-    # Stop the real UsageUpdater from running — the unit test asserts the
-    # service-level orchestration, not the refresh internals.
+
+
     usage_updater = AsyncMock()
     usage_updater.force_refresh = AsyncMock(return_value=True)
     service._usage_updater = usage_updater
@@ -192,7 +192,7 @@ async def test_probe_account_never_logs_access_token(monkeypatch, caplog):
     service = _build_service(account=account, primary_pct=5.0, secondary_pct=5.0)
 
     async def _fake_probe(**kwargs):
-        # Simulate an upstream-side success without revealing the token.
+
         return 200
 
     monkeypatch.setattr(service, "_send_probe_request", _fake_probe)
@@ -209,7 +209,7 @@ async def test_probe_account_surfaces_network_failure_status(monkeypatch):
     service = _build_service(account=account, primary_pct=0.0, secondary_pct=0.0)
 
     async def _fake_probe(**kwargs):
-        return 0  # PROBE_NETWORK_FAILURE_STATUS sentinel
+        return 0
 
     monkeypatch.setattr(service, "_send_probe_request", _fake_probe)
 

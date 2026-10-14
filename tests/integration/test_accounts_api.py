@@ -166,8 +166,8 @@ async def test_import_glm_api_key_account_uses_unchanged_defaults(async_client):
 
 @pytest.mark.asyncio
 async def test_import_glm_api_key_account_rejects_refresh_token(async_client):
-    # GLM is a static-API-key provider: the key is both access and refresh, so
-    # a caller must not be able to split them via the generalized endpoint.
+
+
     response = await async_client.post(
         "/api/accounts/import/api-key",
         json={"provider": "glm", "apiKey": "zai-key", "refreshToken": "zai-other"},
@@ -182,8 +182,8 @@ async def test_import_glm_api_key_account_rejects_refresh_token(async_client):
 
 @pytest.mark.asyncio
 async def test_import_glm_api_key_account_explicit_null_alias_leaves_alias_unset(async_client):
-    # Pre-generalization the alias default lived on the schema field, so an
-    # explicitly null alias skipped the alias write entirely.
+
+
     response = await async_client.post(
         "/api/accounts/import/api-key",
         json={"provider": "glm", "apiKey": "zai-null-alias-key", "alias": None},
@@ -670,26 +670,26 @@ async def test_set_and_clear_account_alias(async_client):
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
-    # Default summary uses the email since no alias is set yet.
+
     listing = await async_client.get("/api/accounts")
     matched = next(a for a in listing.json()["accounts"] if a["accountId"] == expected_account_id)
     assert matched["alias"] is None
     assert matched["displayName"] == email
 
-    # Setting an alias updates both `alias` and `displayName`.
+
     set_response = await async_client.put(
         f"/api/accounts/{expected_account_id}/alias",
         json={"alias": "  Personal Plus  "},
     )
     assert set_response.status_code == 200
     body = set_response.json()
-    assert body["alias"] == "Personal Plus"  # whitespace-trimmed
+    assert body["alias"] == "Personal Plus"
     listing = await async_client.get("/api/accounts")
     matched = next(a for a in listing.json()["accounts"] if a["accountId"] == expected_account_id)
     assert matched["alias"] == "Personal Plus"
     assert matched["displayName"] == "Personal Plus"
 
-    # Empty alias clears the value and the display name falls back to email.
+
     clear_response = await async_client.put(
         f"/api/accounts/{expected_account_id}/alias",
         json={"alias": "   "},
@@ -704,13 +704,7 @@ async def test_set_and_clear_account_alias(async_client):
 
 @pytest.mark.asyncio
 async def test_list_accounts_flags_email_duplicates(async_client):
-    """Pin agent-lb #787 (B): after a token-invalidation cascade, the
-    re-add OAuth flow creates a second account row with the same email
-    but a fresh accountId for the same ChatGPT account identity and workspace
-    slot. /api/accounts surfaces that pair via isEmailDuplicate=true on both
-    rows so the dashboard can flag the operator's "stale + fresh" pair without
-    forcing them to group by email, ChatGPT identity, and workspace themselves.
-    """
+
     from app.core.crypto import TokenEncryptor
     from app.core.utils.time import utcnow
     from app.db.models import Account, AccountStatus
@@ -765,7 +759,7 @@ async def test_list_accounts_flags_email_duplicates(async_client):
 
 @pytest.mark.asyncio
 async def test_list_accounts_surfaces_owner_instance(async_client, monkeypatch, tmp_path):
-    """GET /api/accounts labels pushed owners and falls back for pull mirrors."""
+
     from app.core.config.settings import get_settings
     from app.core.utils.time import utcnow
     from app.modules.accounts.repository import AccountsRepository
@@ -794,8 +788,8 @@ async def test_list_accounts_surfaces_owner_instance(async_client, monkeypatch, 
     async with SessionLocal() as session:
         repo = AccountsRepository(session)
         await repo.upsert(_account("owner-null", None), merge_by_email=False)
-        # Not a real hostname, so it can never equal the test process's
-        # local_instance_id (which defaults to the machine hostname).
+
+
         await repo.upsert(_account("owner-remote", "federation-other-instance"), merge_by_email=False)
         await repo.upsert(_account("owner-pushed", "nates-host"), merge_by_email=False)
 
@@ -834,10 +828,7 @@ async def test_list_accounts_surfaces_owner_instance(async_client, monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_client):
-    """GET /api/accounts renders fableEligible from Anthropic's dedicated
-    Fable-scoped weekly limit (fresh <=6h) in preference to the overall-weekly
-    heuristic, in both directions, and falls back to the heuristic once the
-    scoped row goes stale (see openspec/changes/fable-scoped-weekly-limit)."""
+
     from datetime import timedelta
 
     from app.core.utils.time import utcnow
@@ -893,20 +884,20 @@ async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_c
 
     now = utcnow()
     async with SessionLocal() as session:
-        # Overall weekly headroom (30%, under the 50% heuristic) but a fresh
-        # scoped entry AT the scoped threshold (100%) — scoped must exclude.
+
+
         session.add(_anthropic_account("acc-scoped-hot", "scoped-hot@example.com"))
         session.add(_weekly_usage("acc-scoped-hot", 30.0))
         session.add(_fable_scoped_weekly("acc-scoped-hot", 100.0, now))
 
-        # Overall weekly over the 50% heuristic (62%) but a fresh scoped
-        # entry with headroom (45%) — scoped must admit.
+
+
         session.add(_anthropic_account("acc-scoped-cool", "scoped-cool@example.com"))
         session.add(_weekly_usage("acc-scoped-cool", 62.0))
         session.add(_fable_scoped_weekly("acc-scoped-cool", 45.0, now))
 
-        # Non-routable rows must not advertise Fable eligibility even when
-        # old/fresh usage data says the Fable-scoped budget has headroom.
+
+
         session.add(
             _anthropic_account(
                 "acc-scoped-reauth",
@@ -927,8 +918,8 @@ async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_c
         session.add(_weekly_usage("acc-scoped-canceled", 10.0))
         session.add(_fable_scoped_weekly("acc-scoped-canceled", 45.0, now))
 
-        # Overall weekly headroom (30%) with a scoped-exhausted (100%) row
-        # recorded over 6h ago — stale, so the heuristic (eligible) applies.
+
+
         session.add(_anthropic_account("acc-scoped-stale", "scoped-stale@example.com"))
         session.add(_weekly_usage("acc-scoped-stale", 30.0))
         session.add(_fable_scoped_weekly("acc-scoped-stale", 100.0, now - timedelta(hours=7)))

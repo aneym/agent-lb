@@ -1,4 +1,4 @@
-"""`open-factory aa-sync`: Artificial Analysis snapshots as routing evidence, key never exposed."""
+
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def test_dry_run_maps_fixture_slugs_without_key_or_writes(tmp_path: Path) -> Non
 
 @pytest.fixture
 def served(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
-    """Serve the fixture as AA's API, recording the key each call sent."""
+
     sent: list[str] = []
 
     def urlopen(request, timeout):  # noqa: ANN001

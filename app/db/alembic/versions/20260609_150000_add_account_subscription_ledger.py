@@ -1,9 +1,4 @@
-"""add account subscription ledger columns
 
-Revision ID: 20260609_150000_add_account_subscription_ledger
-Revises: 20260609_120000_merge_provider_and_useragent_heads
-Create Date: 2026-06-09 15:00:00.000000
-"""
 
 from __future__ import annotations
 

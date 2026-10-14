@@ -1,8 +1,4 @@
-"""Add nullable caller seat to request logs.
 
-Revision ID: 20261001_180000_add_request_log_caller_seat
-Revises: 20260926_210000_add_request_log_identity
-"""
 
 from __future__ import annotations
 
@@ -18,10 +14,10 @@ _COLUMNS = (("caller_seat", 64),)
 
 
 def upgrade() -> None:
-    # Re-runnable if an older revision is remapped and this revision replays.
+
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        # An ALTER waiting for ACCESS EXCLUSIVE must not queue live inserts behind it.
+
         op.execute("SET LOCAL lock_timeout = '5s'")
     existing = {column["name"] for column in sa.inspect(bind).get_columns("request_logs")}
     with op.batch_alter_table("request_logs") as batch_op:
@@ -33,7 +29,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        # An ALTER waiting for ACCESS EXCLUSIVE must not queue live inserts behind it.
+
         op.execute("SET LOCAL lock_timeout = '5s'")
     existing = {column["name"] for column in sa.inspect(bind).get_columns("request_logs")}
     with op.batch_alter_table("request_logs") as batch_op:

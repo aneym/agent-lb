@@ -1,4 +1,4 @@
-"""Exercise the public CLI guard before it can reach launchd or Postgres."""
+
 
 import subprocess
 import sys

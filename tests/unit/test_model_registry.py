@@ -189,7 +189,7 @@ async def test_update_merges_models_across_plans():
 async def test_partial_update_preserves_stale_plans():
     registry = ModelRegistry(ttl_seconds=60.0)
 
-    # First full update with both plans
+
     await registry.update(
         {
             "plus": [_model("shared"), _model("plus-only")],
@@ -197,7 +197,7 @@ async def test_partial_update_preserves_stale_plans():
         }
     )
 
-    # Partial update: only plus succeeds, pro fails (not in per_plan_results)
+
     await registry.update(
         {
             "plus": [_model("shared"), _model("plus-new")],
@@ -207,14 +207,14 @@ async def test_partial_update_preserves_stale_plans():
     snapshot = registry.get_snapshot()
     assert snapshot is not None
 
-    # pro-only should be preserved from previous snapshot
+
     assert "pro-only" in snapshot.models
     assert "pro" in snapshot.model_plans.get("pro-only", frozenset())
 
-    # plus-only should be gone (not in new plus results)
+
     assert "plus-only" not in snapshot.models
 
-    # plus-new should be present
+
     assert "plus-new" in snapshot.models
     assert "plus" in snapshot.model_plans["plus-new"]
 
@@ -237,7 +237,7 @@ async def test_needs_refresh_true_after_ttl(monkeypatch):
     await registry.update({"plus": [_model("a")]})
     assert registry.needs_refresh() is False
 
-    # Simulate time passage by adjusting fetched_at
+
     snapshot = registry.get_snapshot()
     assert snapshot is not None
     snapshot.fetched_at = time.monotonic() - 2.0

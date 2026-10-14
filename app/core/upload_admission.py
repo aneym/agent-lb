@@ -281,7 +281,7 @@ class Admission:
             waiter.admitted = True
             waiter.event.set()
             return True
-        return fits  # Large heads earn enough credit across rounds.
+        return fits
 
     def _drain(self) -> None:
         enabled, rate = upload_throttle.read_state()
@@ -306,8 +306,8 @@ class Admission:
         upload_class: str = "batch",
     ) -> AsyncIterator[None]:
         if not upload_throttle.is_bulk():
-            # Model requests are never queued or refused for upload room
-            # (incident 2026-10-05); holds apply to bulk transfers only.
+
+
             yield
             return
         enabled, rate = upload_throttle.read_state()

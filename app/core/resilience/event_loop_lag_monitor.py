@@ -18,17 +18,7 @@ _STALL_DUMP_RATE_LIMIT_SECONDS = 60.0
 
 @dataclass(slots=True)
 class EventLoopLagMonitor:
-    """Samples asyncio scheduling drift once per second and exports it.
 
-    A blocked event loop (sync I/O, CPU-bound work, GC pauses) shows up as
-    positive lag between the requested wake time and the actual wake time.
-
-    A companion watchdog *thread* observes the same heartbeat from outside the
-    loop: the in-loop sampler can only report a stall after it ends, so the
-    watchdog captures an all-threads stack dump while the stall is still in
-    progress (the 2026-07-16 stalls left no forensic evidence because the
-    SIGUSR2 dump path was manual-only).
-    """
 
     warning_threshold_seconds: float = 0.5
     check_interval_seconds: float = 1.0

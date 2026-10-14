@@ -213,7 +213,7 @@ _ANTHROPIC_SESSION_ROUTE_AFFINITY_QUOTA_KEYS: Final[frozenset[str]] = frozenset(
         "anthropic_standard",
         "anthropic_top",
         "anthropic_top_thinking",
-        # Fable-class variants: see _default_anthropic_affinity_quota_key.
+
         "anthropic_standard_fable",
         "anthropic_top_fable",
         "anthropic_top_thinking_fable",
@@ -233,11 +233,11 @@ _PUBLIC_RESPONSE_OUTPUT_ITEM_TYPES = frozenset(
         "mcp_approval_request",
         "mcp_list_tools",
         "output_image",
-        # Native server-side compaction (``context_management``): the provider
-        # seals summarized context into ``encrypted_content`` and the client
-        # replays that exact blob on later turns. It carries no text, so the
-        # normalization below would find nothing to extract and drop the item —
-        # leaving OpenAI SDK clients unable to obtain a checkpoint at all.
+
+
+
+
+
         "compaction",
     }
 )
@@ -354,10 +354,10 @@ def _default_anthropic_affinity_quota_key(model: str, quota_key: str) -> str:
         resolved = "anthropic_standard"
     else:
         resolved = "anthropic_top_thinking"
-    # Fable-class traffic gets its own affinity family (see
-    # anthropic_service._messages_affinity_quota_key) so a mixed-model
-    # session doesn't ping-pong one sticky pin between accounts on every
-    # model switch.
+
+
+
+
     return f"{resolved}_fable" if _is_fable_model(model) else resolved
 
 
@@ -381,8 +381,8 @@ _UNAVAILABLE_SELECTION_ERROR_CODES = {
     "no_additional_quota_eligible_accounts",
 }
 _STREAM_STARTUP_ERROR_PROBE_SECONDS = 0.05
-# Keep bridge startup probing above tiny event-loop scheduling jitter:
-# PostgreSQL-backed failures may need a DB round trip before the first item.
+
+
 _HTTP_BRIDGE_STARTUP_ERROR_PROBE_SECONDS = 2.0
 _CHAT_COMPLETIONS_STARTUP_ERROR_PROBE_SECONDS = 2.0
 _CURSOR_CHAT_COMPLETIONS_STARTUP_ERROR_PROBE_SECONDS = 15.0
@@ -395,10 +395,10 @@ _V1_MAX_OUTPUT_TOKEN_OVERRIDES: Final[dict[str, int]] = {
 }
 _OPPORTUNISTIC_RETRY_AFTER_SECONDS = 60
 
-# OpenAI error ``type`` -> HTTP status for the /v1/images/* non-streaming
-# error path. The /v1/responses path has its own ``_status_for_error``
-# helper that operates on a parsed ``OpenAIError`` model; the image
-# adapter works with raw envelope dicts so we map directly here.
+
+
+
+
 _IMAGE_ERROR_TYPE_STATUS: Final[dict[str, int]] = {
     "invalid_request_error": 400,
     "authentication_error": 401,
@@ -408,8 +408,8 @@ _IMAGE_ERROR_TYPE_STATUS: Final[dict[str, int]] = {
     "insufficient_quota": 429,
 }
 
-# OpenAI error ``code`` -> HTTP status, applied as a higher-precedence
-# override before the type-based mapping above.
+
+
 _IMAGE_ERROR_CODE_STATUS: Final[dict[str, int]] = {
     "content_policy_violation": 400,
     "rate_limit_exceeded": 429,
@@ -466,14 +466,7 @@ def _compaction_retry_breaker_response(
     request: Request,
     payload: Mapping[str, JsonValue],
 ) -> JSONResponse | None:
-    """Reject a compaction turn whose fingerprint has repeated past the
-    breaker's threshold within its window, before any account is selected.
 
-    A healthy client never resends the identical compaction turn many times
-    - a successful compact changes the conversation input - so this catches
-    a stuck client retrying a turn that never lands before it drains the
-    account pool. Returns ``None`` (admit) unless the breaker opens.
-    """
     fingerprint = compaction_fingerprint(payload.get("model"), payload.get("input"))
     admission = get_compaction_retry_breaker().admit(fingerprint)
     if admission.should_audit:
@@ -648,12 +641,7 @@ async def codex_alpha_search(
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    """Codex's built-in `web_search` tool posts here.
 
-    Without this route the SPA catch-all (``@app.get("/{path:path}")`` in
-    ``app/main.py``) is the only match for the path, so the POST comes back
-    405 and every Codex seat behind agent-lb loses web search.
-    """
     return await _codex_control_proxy(request, "alpha/search", context, api_key)
 
 
@@ -699,11 +687,11 @@ async def responses(
         if breaker_response is not None:
             return breaker_response
     openai_sdk_request = _is_openai_sdk_request(request, payload)
-    # No OpenAI SDK caller sends a compaction_trigger input item, and the
-    # public-contract normalizer strips the "compaction" output item the
-    # Codex CLI requires, so compaction turns must never be treated as
-    # OpenAI-SDK requests even when they otherwise look like one (e.g.
-    # remote-compaction v2 turns that omit top-level "instructions").
+
+
+
+
+
     if openai_sdk_request and is_compaction_turn:
         openai_sdk_request = False
     openai_compat_payload = _has_openai_responses_shape(payload)
@@ -727,9 +715,9 @@ async def responses(
         codex_session_affinity=True,
         openai_cache_affinity=True,
         prefer_http_bridge=True,
-        # The Codex CLI consumes codex.* vendor events and the upstream's
-        # native event ordering, while OpenAI SDK clients pointed at this
-        # compatibility route need the same SSE contract enforcement as /v1.
+
+
+
         enforce_openai_sdk_contract=openai_sdk_request,
     )
 
@@ -859,10 +847,10 @@ async def v1_messages(
     if refusal is not None:
         return refusal
     try:
-        # Only API-key traffic is reservation-limited; OAuth sessions skip the
-        # estimate entirely. The raw body is already buffered by Starlette, so
-        # sizing it is O(1) instead of re-serializing a multi-MB 1M-context
-        # request on the event loop (sampled mid-stall 2026-09-16).
+
+
+
+
         request_usage_budget = (
             _estimate_anthropic_request_usage(payload, raw_body=await request.body()) if api_key is not None else None
         )
@@ -1018,13 +1006,13 @@ async def v1_messages_count_tokens(
     validate_model_access(api_key, model)
     profile = get_anthropic_compat_profile(resolved_request.provider_name)
     if not profile.supports_upstream_count_tokens:
-        # This vendor answers count_tokens with a non-Anthropic 404, so serve
-        # the local estimate rather than forwarding a broken envelope.
+
+
         return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
-    # Token counting is quota-free upstream, so this route never creates an
-    # api-key reservation, settles usage, or writes response-driven account
-    # error-health; the raw body is forwarded and the envelope returned
-    # verbatim. Credential refresh may still mark the account, as everywhere.
+
+
+
+
     try:
         result = await context.service.count_tokens(payload, request.headers, model=model)
     except AnthropicProxyError as exc:
@@ -1032,13 +1020,13 @@ async def v1_messages_count_tokens(
     return Response(content=result.body, status_code=result.status_code, media_type=result.media_type)
 
 
-# GPT model names accepted directly on /v1/messages, resolved against the served
-# model list so a new gpt-* release routes with no code change. A name is a served
-# gpt-* slug or a family alias (sol-latest: the newest served gpt-<version>-sol),
-# optionally suffixed with a pinned reasoning effort; None defers to the request's
-# own output_config.effort (bridge default: high).
+
+
+
+
+
 CCGPT_EFFORTS = ("low", "medium", "high", "xhigh")
-# astra: the astra-consult seat only (readmitted 2026-10-05, routing-table.json `readmitted`).
+
 CCGPT_LATEST_FAMILIES = ("sol", "luna", "astra")
 
 
@@ -1046,7 +1034,7 @@ def resolve_ccgpt_model(name: str | None) -> tuple[str, str | None] | None:
     if not name:
         return None
     served = {slug for slug in get_model_registry().get_models_with_fallback() if slug.startswith("gpt-")}
-    # The bridge's own models stay routable while the registry is still bootstrapping.
+
     served.update((CCGPT_MODEL, CCGPT_WORKER_MODEL))
     if name in served:
         return name, None
@@ -1076,7 +1064,7 @@ async def v1_ccgpt_messages(
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    """Run Claude Code's Messages protocol through the bridge; Claude names lock to Codex Sol."""
+
     resolved = resolve_ccgpt_model(payload.model)
     if resolved is None and not payload.model.startswith("claude-"):
         return _anthropic_error_response(
@@ -1096,12 +1084,12 @@ async def _ccgpt_messages_response(
     alias_effort: str | None = None,
     locked_model: str | None = None,
 ) -> Response:
-    # Claude Code's message-threads beta (first-party host only, which the
-    # desktop MITM proxy looks like) sends `thread: continue` turns carrying just
-    # the delta and leaves system/tools/history to server-side thread state the
-    # bridge does not keep. Translating that delta upstream hangs: no tools, no
-    # history, an orphan function_call_output. This error code makes Claude Code
-    # resend the turn stateless and keep this model stateless for the session.
+
+
+
+
+
+
     thread = (payload.model_extra or {}).get("thread")
     if thread is not None:
         return _anthropic_error_response(
@@ -1121,14 +1109,14 @@ async def _ccgpt_messages_response(
     responses_payload = claude_to_responses(payload)
     responses_payload.model = locked_model
     if client_session_id:
-        # One key per conversation in a Claude Code session: it pins the conversation
-        # to one Codex account (prompt-cache affinity), scopes the upstream cache and
-        # names the bridge session, which runs one turn at a time. Subagents share the
-        # session id, and a workflow fans out many with the same first message, so a
-        # subagent is named by the agent id Claude Code sends; only a conversation
-        # without one (the main thread) falls back to its first message's whole text,
-        # not a prefix (every subagent's opens with the same CLAUDE.md reminder) and
-        # not its JSON (cache_control markers move off it after turn 1).
+
+
+
+
+
+
+
+
         agent_id = request.headers.get("x-claude-code-agent-id", "").strip()
         if agent_id:
             conversation = f"agent:{agent_id}"
@@ -1168,9 +1156,9 @@ async def _ccgpt_messages_response(
         body = getattr(upstream, "body", b"")
         body_bytes = body if isinstance(body, bytes) else str(body).encode()
         if upstream.status_code in (401, 403):
-            # The caller's key passed validation above, so this is a Codex account
-            # rejecting us after failover ran out of accounts. Claude Code answers
-            # a 401/403 with "run /login" and stops; a 503 makes it retry.
+
+
+
             return _anthropic_error_response(
                 503,
                 "api_error",
@@ -1179,11 +1167,11 @@ async def _ccgpt_messages_response(
         error = anthropic_error_from_response(upstream.status_code, body_bytes)
         return JSONResponse(content=error, status_code=upstream.status_code)
 
-    # A terminal overflow can slip past _stream_responses' pre-stream HTTP probe
-    # when it arrives after a fast response.created. Peek the translated stream: a
-    # terminal error before any assistant content must become a non-200 HTTP error
-    # (Claude Code only reactive-compacts on a failed HTTP request received before
-    # it creates the assistant turn), while a failure after content stays in-band.
+
+
+
+
+
     startup_error, events = await split_startup_error(
         responses_to_claude_events(
             upstream.body_iterator,
@@ -1311,16 +1299,16 @@ async def internal_bridge_responses(
         forwarded_downstream_turn_state=forwarded_request_context.context.downstream_turn_state,
         forwarded_affinity_kind=forwarded_request_context.context.original_affinity_kind,
         forwarded_affinity_key=forwarded_request_context.context.original_affinity_key,
-        # The OpenAI-SDK contract rewrites (drop ``codex.*``, backfill terminal
-        # output, synthesize ``response.created``) MUST be applied by the
-        # origin instance — the one that actually responds to the client — so
-        # they can honour the original route's ``enforce_openai_sdk_contract``
-        # decision. This handler runs on the owner instance after the origin
-        # forwarded the request via the internal bridge; if we re-applied them
-        # here, a forwarded ``/backend-api/codex/responses`` request would
-        # lose ``codex.*`` events (and gain a synthetic ``response.created``)
-        # before the origin ever sees the stream. Forward verbatim and let
-        # the origin run its own normalization.
+
+
+
+
+
+
+
+
+
+
         enforce_openai_sdk_contract=False,
     )
 
@@ -1697,9 +1685,9 @@ async def backend_transcribe(
     )
 
 
-# Synthetic ``model`` strings used for API-key limit accounting +
-# request-log filtering on the file upload protocol. They never reach
-# upstream -- this is a proxy-internal name only.
+
+
+
 _FILES_CREATE_LIMIT_MODEL: Final = "files-create"
 _FILES_FINALIZE_LIMIT_MODEL: Final = "files-finalize"
 
@@ -1711,15 +1699,7 @@ async def backend_files_create(
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> JSONResponse:
-    """Forward a `POST /backend-api/files` upload registration to upstream.
 
-    Accepts ``{file_name, file_size, use_case}`` and returns the upstream
-    JSON verbatim (typically ``{file_id, upload_url}``) so callers can
-    PUT the bytes directly to the SAS upload URL without going through
-    the proxy. The 16 MiB websocket ceiling on ``/responses`` does not
-    apply here -- upstream caps file size at 512 MiB which we enforce in
-    ``FileCreateRequest``.
-    """
     reservation = await _enforce_request_limits(
         api_key,
         request_model=_FILES_CREATE_LIMIT_MODEL,
@@ -1758,13 +1738,7 @@ async def backend_files_finalize(
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> JSONResponse:
-    """Forward a `POST /backend-api/files/{file_id}/uploaded` finalize call.
 
-    The upstream contract returns ``{status: success|retry|failed,
-    download_url, file_name, mime_type, ...}``. ``service.finalize_file``
-    polls upstream for up to 30 s while ``status == "retry"``; we return
-    the final payload verbatim so the caller sees what upstream saw.
-    """
     reservation = await _enforce_request_limits(
         api_key,
         request_model=_FILES_FINALIZE_LIMIT_MODEL,
@@ -1838,17 +1812,17 @@ async def v1_images_generations(
 @v1_router.post("/images/edits", response_model=None)
 async def v1_images_edits(
     request: Request,
-    # All typed form fields below are bound as raw strings so FastAPI
-    # never 422s on malformed input (e.g. ``n=abc``). Pydantic on
-    # ``V1ImagesEditsForm`` coerces and validates them and surfaces any
-    # failure as an OpenAI-shape ``invalid_request_error`` envelope.
+
+
+
+
     model: str | None = Form(None),
     prompt: str = Form(...),
-    # Accept either the OpenAI canonical ``image`` form key (single or
-    # repeated) or the ``image[]`` array-style key that some OpenAI SDKs
-    # / HTTP clients emit when sending multiple files. Both are bound as
-    # ``list[UploadFile] = File(None)`` and merged below; at least one
-    # entry must be present after the merge.
+
+
+
+
+
     image: list[UploadFile] | None = File(None),
     image_brackets: list[UploadFile] | None = File(None, alias="image[]"),
     mask: UploadFile | None = File(None),
@@ -1877,10 +1851,10 @@ async def v1_images_edits(
         "input_fidelity": input_fidelity,
         "user": user,
     }
-    # Pydantic coerces these scalar fields from strings on its own as
-    # long as the value is a valid representation (e.g. "1", "true");
-    # invalid values land in ValidationError below and we map to
-    # ``invalid_request_error`` rather than letting FastAPI 422.
+
+
+
+
     if n is not None:
         raw_form["n"] = n
     else:
@@ -1900,9 +1874,9 @@ async def v1_images_edits(
     except ValidationError as exc:
         return _logged_error_json_response(request, 400, openai_validation_error(exc))
 
-    # Merge ``image`` and ``image[]`` into a single ordered list. Both
-    # form keys are accepted so OpenAI SDKs and HTTP clients that pick
-    # either convention work without modification.
+
+
+
     merged_images: list[UploadFile] = []
     if image:
         merged_images.extend(image)
@@ -1967,12 +1941,12 @@ async def v1_images_variations(
     request: Request,
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    # ``api_key`` is captured purely so the standard
-    # ``Security(validate_proxy_api_key)`` dependency runs and rejects
-    # unauthenticated callers with the same policy as every other
-    # /v1/images/* route (and the rest of /v1). Without it, this
-    # endpoint would return a public 404 even when proxy API-key auth
-    # is enabled, which is an inconsistent auth surface.
+
+
+
+
+
+
     del api_key
     return _logged_error_json_response(
         request,
@@ -1990,16 +1964,7 @@ async def _prime_upstream_stream(
     *,
     on_error: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[AsyncIterator[str] | None, Response | None]:
-    """Pull the first chunk from ``upstream`` so any error raised before the
-    first SSE event is surfaced as a structured OpenAI error envelope
-    instead of a broken/truncated stream.
 
-    Returns ``(primed_iterator, None)`` on success, where the returned
-    iterator yields the captured first chunk followed by the rest of
-    ``upstream``. Returns ``(None, error_response)`` when the upstream
-    raised before yielding anything; in that case ``on_error`` is called
-    so the caller can release reservations.
-    """
     iterator = upstream.__aiter__()
     try:
         first_chunk = await iterator.__anext__()
@@ -2031,15 +1996,15 @@ async def _proxy_images_generation_request(
     context: ProxyContext,
     api_key: ApiKeyData | None,
 ) -> Response:
-    # Apply the API key's enforced model BEFORE running the cross-field
-    # validation matrix. Otherwise a request that passes validation
-    # under the client-supplied ``model`` (e.g. gpt-image-2 with a 16-
-    # multiple custom size) could silently be swapped to a different
-    # ``gpt-image-*`` variant whose validation matrix it does not
-    # satisfy, leading to a non-canonical upstream failure instead of
-    # a deterministic 400 at the API boundary.
+
+
+
+
+
+
+
     settings = proxy_service_module.get_settings()
-    requested_model = payload.model  # may be None; resolved below.
+    requested_model = payload.model
     effective_model = _effective_model_for_api_key(
         api_key,
         requested_model or settings.images_default_model,
@@ -2056,9 +2021,9 @@ async def _proxy_images_generation_request(
             ),
         )
     if effective_model != requested_model:
-        # Rebind ``payload.model`` so the validation matrix below, the
-        # downstream translation, request logging, and tool config all
-        # see the enforced (or default-resolved) value.
+
+
+
         payload = payload.model_copy(update={"model": effective_model})
 
     try:
@@ -2073,7 +2038,7 @@ async def _proxy_images_generation_request(
     try:
         validate_model_access(api_key, effective_model)
     except Exception:
-        # Re-raise so the global handler maps to 403.
+
         raise
 
     rate_limit_headers = await context.service.rate_limit_headers()
@@ -2094,18 +2059,18 @@ async def _proxy_images_generation_request(
             headers=rate_limit_headers,
         )
 
-    # We always need an upstream stream because tool_usage.image_gen only
-    # appears on response.completed. For non-streaming clients we drain the
-    # stream and translate to a JSON envelope.
-    # Pass ``api_key_reservation=None`` so the standard stream settlement
-    # in ``_settle_stream_api_key_usage`` does NOT release/finalize the
-    # reservation from ``response.usage`` (which is typically empty for
-    # the image_generation tool path). The image route owns the
-    # reservation lifecycle and finalizes it from the captured
-    # ``tool_usage.image_gen`` tokens via ``_finalize_image_reservation``,
-    # which avoids the double-billing scenario where standard settlement
-    # would charge ``response.usage`` and we would also charge the image
-    # tokens.
+
+
+
+
+
+
+
+
+
+
+
+
     upstream = context.service.stream_responses(
         responses_payload,
         request.headers,
@@ -2116,18 +2081,18 @@ async def _proxy_images_generation_request(
         api_key_reservation=None,
     )
 
-    # ``images_service`` populates ``response_id`` once the upstream stream
-    # surfaces the Responses id, so we can rewrite the request log's model
-    # column from the internal host model to the public ``gpt-image-*``
-    # value the client actually requested.
+
+
+
+
     captured: dict[str, object] = {}
 
-    # Prime the upstream stream so that errors raised before the first
-    # chunk (e.g. exhausted retries propagating a ProxyResponseError) are
-    # surfaced as structured OpenAI error envelopes instead of broken /
-    # truncated SSE streams. ``_prime_upstream_stream`` returns either
-    # ``(primed_iterator, None)`` on success or ``(None, error_response)``
-    # when the upstream raised before yielding anything.
+
+
+
+
+
+
     primed_upstream, prime_error = await _prime_upstream_stream(
         request,
         upstream,
@@ -2148,19 +2113,19 @@ async def _proxy_images_generation_request(
                 async for chunk in translated:
                     yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
             finally:
-                # Run the request-log model rewrite even when the stream
-                # is cancelled mid-flight (e.g. client disconnect). Without
-                # this, an interrupted SSE response would leave the
-                # request_logs row pinned to the internal host model.
+
+
+
+
                 response_id = captured.get("response_id")
                 if response_id and isinstance(response_id, str):
                     await context.service.rewrite_request_log_model(response_id, public_model)
-                # Finalize the reservation from the captured
-                # ``tool_usage.image_gen`` tokens (or release if
-                # upstream never produced a usable image). This is the
-                # single point where the image API charges API-key
-                # limits; standard stream settlement is bypassed via
-                # ``api_key_reservation=None`` above.
+
+
+
+
+
+
                 _input = captured.get("image_input_tokens")
                 _output = captured.get("image_output_tokens")
                 _cached = captured.get("image_cached_input_tokens")
@@ -2237,10 +2202,10 @@ async def _proxy_images_edit_request(
     context: ProxyContext,
     api_key: ApiKeyData | None,
 ) -> Response:
-    # Apply the API key's enforced model BEFORE validating the
-    # cross-field matrix, so the matrix is checked against the model we
-    # will actually send upstream. See the matching comment in
-    # ``_proxy_images_generation_request``.
+
+
+
+
     settings = proxy_service_module.get_settings()
     requested_model = payload.model
     effective_model = _effective_model_for_api_key(
@@ -2302,9 +2267,9 @@ async def _proxy_images_edit_request(
             headers=rate_limit_headers,
         )
 
-    # See ``_proxy_images_generation_request`` for why we pass
-    # ``api_key_reservation=None`` and finalize via
-    # ``_finalize_image_reservation`` instead.
+
+
+
     upstream = context.service.stream_responses(
         responses_payload,
         request.headers,
@@ -2337,19 +2302,19 @@ async def _proxy_images_edit_request(
                 async for chunk in translated:
                     yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
             finally:
-                # Run the request-log model rewrite even when the stream
-                # is cancelled mid-flight (e.g. client disconnect). Without
-                # this, an interrupted SSE response would leave the
-                # request_logs row pinned to the internal host model.
+
+
+
+
                 response_id = captured.get("response_id")
                 if response_id and isinstance(response_id, str):
                     await context.service.rewrite_request_log_model(response_id, public_model)
-                # Finalize the reservation from the captured
-                # ``tool_usage.image_gen`` tokens (or release if
-                # upstream never produced a usable image). This is the
-                # single point where the image API charges API-key
-                # limits; standard stream settlement is bypassed via
-                # ``api_key_reservation=None`` above.
+
+
+
+
+
+
                 _input = captured.get("image_input_tokens")
                 _output = captured.get("image_output_tokens")
                 _cached = captured.get("image_cached_input_tokens")
@@ -2563,7 +2528,7 @@ def _to_codex_model_entry(model: UpstreamModel, *, visibility: str | None = None
         if key not in skip_keys and isinstance(value, (bool, int, float, str, type(None), list, Mapping)):
             extra[key] = value
 
-    # If context_window is overridden, also override max_context_window to match
+
     effective_cw = _effective_context_window(model)
     if effective_cw != model.context_window and "max_context_window" in extra:
         extra["max_context_window"] = effective_cw
@@ -2691,14 +2656,14 @@ async def v1_chat_completions(
     try:
         responses_shaped_payload = not payload.messages and payload.input is not None
         if not responses_shaped_payload:
-            # Validate strict function tool schemas against the *original* request
-            # ``tools`` list before ``to_responses_request()`` runs. The chat
-            # normalizer (``_normalize_chat_tools``) silently drops invalid
-            # entries (non-dict tools, function tools with missing/empty
-            # ``name``), so validating the normalized output would surface
-            # ``tools[i].function.parameters`` with an ``i`` that no longer maps
-            # to the client's inbound payload. Using ``payload.tools`` keeps the
-            # error envelope's ``param`` aligned with what the client sent.
+
+
+
+
+
+
+
+
             enforce_strict_function_tools_format(
                 payload.tools,
                 param_template="tools[{index}].function.parameters",
@@ -3274,13 +3239,7 @@ def _cursor_context_limit_usage_stream(
     *,
     headers: Mapping[str, str] | None = None,
 ) -> StreamingResponse:
-    """Return a successful empty stream with over-limit usage so Cursor can compact.
 
-    Cursor's custom-provider path wraps provider errors before the agent loop can
-    classify them as its internal InputTokenLimitError. For Cursor only, preserve
-    the original request history and report token usage beyond the advertised
-    model window instead of returning an OpenAI error.
-    """
     response_id = f"chatcmpl_{time.time_ns()}"
     created = int(time.time())
     model = payload.model
@@ -3690,9 +3649,9 @@ def _logged_error_json_response(
     effective_headers = dict(headers or {})
     if status_code == 429 and is_local_overload_error_code(code):
         effective_headers = merge_retry_after_headers(effective_headers)
-    # Selection failures carry the pool's earliest recovery as
-    # error.resets_in_seconds; surface it as a standard Retry-After so
-    # clients can defer instead of blind-retrying (see selection_diagnostics).
+
+
+
     if status_code in (429, 503) and "Retry-After" not in effective_headers:
         error_detail = public_content.get("error") if isinstance(public_content, Mapping) else None
         retry_after = retry_after_seconds_from_error_detail(error_detail)
@@ -3706,10 +3665,10 @@ def _logged_error_json_response(
         message,
         category="proxy_error_response",
     )
-    # codeql[py/stack-trace-exposure] This is an OpenAI-compatible proxy boundary:
-    # upstream/provider error envelopes intentionally preserve diagnostics for
-    # clients, while internal exception handlers construct generic error
-    # envelopes before reaching this response helper.
+
+
+
+
     return JSONResponse(status_code=status_code, content=public_content, headers=effective_headers or None)
 
 
@@ -3778,8 +3737,8 @@ async def _validate_internal_bridge_api_key(
     dashboard_settings = await get_settings_cache().get()
     try:
         if not dashboard_settings.api_key_auth_enabled:
-            # Peers stay keyless, but a forwarded member key is still validated so the
-            # owner attributes the request to it (team usage and pool share).
+
+
             member_authorization = select_member_key_authorization(request.headers.get("authorization"), None)
             if member_authorization is None:
                 return None, None
@@ -3868,7 +3827,7 @@ async def _opportunistic_admission_denial(
     if not message.startswith("opportunistic burn window closed"):
         message = f"opportunistic burn window closed: {message}"
     if getattr(api_key, "member_id", None):
-        # A member is a person reading this in Codex or Claude Code, not an operator.
+
         message = (
             "The shared accounts are busy right now, so this request was held back. "
             f"Try again in a minute. {MEMBER_CONTACT_LINE}"
@@ -3884,16 +3843,7 @@ async def _opportunistic_admission_denial(
 def _estimate_anthropic_request_usage(
     payload: AnthropicMessageRequest, *, raw_body: bytes | None = None
 ) -> ApiKeyRequestUsageBudget:
-    """Bounded input budget for API-key reservation admission.
 
-    The budget is the serialized request size capped at
-    API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET (8k), so any body past the cap
-    resolves to the cap. With ``raw_body`` the size comes from the bytes the
-    client sent (a few bytes above the old model/max_tokens/stream-stripped
-    serialization, still a conservative reservation) without re-serializing
-    the payload; the re-serialization stays only as the fallback for callers
-    that have no raw body.
-    """
     if raw_body is not None:
         size = len(raw_body)
     else:
@@ -3924,9 +3874,9 @@ def _anthropic_error_response(
     }
     if code is not None:
         error["code"] = code
-    # Upstream's structured `details` is what clients classify on. Claude Code
-    # reads `thread_not_found` out of it to replay a stateful thread; without
-    # it the client sees a bare 404 and reports the selected model as missing.
+
+
+
     if details is not None:
         error["details"] = details
     return JSONResponse(
@@ -3949,9 +3899,9 @@ def _retry_headers(retry_at: int | None) -> dict[str, str] | None:
 
 
 def _anthropic_proxy_error_response(exc: AnthropicProxyError) -> JSONResponse:
-    # Exhaustion with a known reset is an upstream rate limit regardless of the
-    # internal status; surface Claude Code's native shape so it can show the
-    # reset time or ride out short waits with its own retry loop.
+
+
+
     if exc.retry_at is not None or exc.status_code == 429:
         return _anthropic_error_response(429, "rate_limit_error", exc.message, retry_at=exc.retry_at)
     response = _anthropic_error_response(exc.status_code, exc.code, exc.message, details=exc.details)
@@ -3973,7 +3923,7 @@ async def _anthropic_stream_error_guard(
     streaming: bool,
     api_key_reservation: ApiKeyUsageReservationData | None = None,
 ) -> AsyncIterator[bytes]:
-    """Surface mid-stream proxy failures as structured errors instead of truncation."""
+
     try:
         async for chunk in body:
             yield chunk
@@ -4009,24 +3959,7 @@ async def _finalize_image_reservation(
     output_tokens: int | None,
     cached_input_tokens: int | None = None,
 ) -> None:
-    """Finalize the API-key usage reservation for a ``/v1/images/*`` call.
 
-    The image adapter bypasses the standard stream settlement (``stream_responses``
-    is invoked with ``api_key_reservation=None``) because the ``image_generation``
-    tool path typically leaves ``response.usage`` empty; charging from
-    ``tool_usage.image_gen`` is the only source of truth. This helper
-    finalizes the reservation with the captured image tokens when present,
-    otherwise releases it. Calling this exactly once per request prevents
-    the double-billing scenario where both the standard settlement and
-    the post-hoc image record_usage path increment limits.
-
-    Persistence errors are caught and logged so a transient DB/session
-    failure during the tail accounting cannot turn a successfully
-    generated image into a user-facing 500 (non-streaming) or an
-    abrupt stream termination (streaming). This mirrors the
-    best-effort accounting policy used by
-    ``ProxyService._settle_stream_api_key_usage``.
-    """
     if reservation is None:
         return
     try:
@@ -4169,49 +4102,36 @@ async def _normalize_public_responses_stream(
     *,
     enforce_openai_sdk_contract: bool = True,
 ) -> AsyncIterator[str]:
-    """Normalize the upstream SSE event stream for the public /v1 surface.
 
-    Args:
-        stream: the upstream SSE event blocks (post-error-conversion).
-        enforce_openai_sdk_contract: when True (the default, used for /v1),
-            apply OpenAI Responses SSE contract enforcement: drop Codex
-            vendor events (codex.*), backfill terminal output from streamed
-            item events, and synthesize a leading response.created event
-            when the upstream stream's first standard event is not
-            response.created. When False (used for /backend-api/codex/*,
-            which feeds the Codex CLI), all events including codex.* are
-            forwarded verbatim and no synthesis happens — the Codex CLI
-            relies on the upstream's native event shape.
-    """
     terminal_seen = False
     done_seen = False
     contract_violation_kind: str | None = None
     seen_text_delta_keys: set[tuple[str | None, int | None]] = set()
-    # Collect output items from streamed ``response.output_item.added`` /
-    # ``response.output_item.done`` events so the terminal
-    # ``response.completed`` / ``response.incomplete`` payload can be
-    # backfilled when the upstream Codex backend leaves ``response.output``
-    # empty. This mirrors the existing non-streaming behavior in
-    # ``_collect_responses_payload`` so OpenAI SDK consumers calling
-    # ``stream.get_final_response().output`` see the same items the
-    # non-streaming endpoint returns.
+
+
+
+
+
+
+
+
     output_items: dict[int, dict[str, JsonValue]] = {}
-    # Track whether the first standard ``response.*`` event the public stream
-    # emits is ``response.created``. The OpenAI Responses SSE contract requires
-    # ``response.created`` to be the first event. The upstream Codex backend
-    # sometimes drops straight to a terminal event (e.g. ``response.failed``
-    # when upstream rejects the request mid-stream) without emitting
-    # ``response.created`` first, which makes the OpenAI SDK's
-    # ``_create_initial_response`` raise ``RuntimeError``. When that happens
-    # we synthesize a ``response.created`` snapshot from the terminal event's
-    # ``response`` envelope so the SDK parser can complete the stream.
+
+
+
+
+
+
+
+
+
     created_emitted = False
-    # Anonymous pre-created events cannot be made SDK-safe until a response
-    # envelope arrives: the public OpenAI SDK requires response.created first.
-    # Buffer them temporarily. Once an envelope arrives, replay only lightweight
-    # visible content events (text/content-part deltas) after the created event;
-    # drop unowned output_item lifecycle events so cancelled-request orphans are
-    # not attached to the later response.
+
+
+
+
+
+
     pre_created_buffer: list[dict[str, JsonValue]] = []
 
     def formatted_payloads_with_synthetic_deltas(payload: dict[str, JsonValue]) -> list[str]:
@@ -4515,8 +4435,8 @@ def _format_legacy_pre_created_payloads(
             normalized["item_id"] = item_id
             formatted.append(format_sse_event(normalized))
         else:
-            # Preserve legacy unindexed non-text content_part.done events for
-            # raw SSE clients. They are not used to assemble SDK output.
+
+
             formatted.append(format_sse_event(payload))
 
     if text_item_opened:
@@ -4566,15 +4486,15 @@ def _normalize_public_stream_payload(
     enforce_openai_sdk_contract: bool = True,
 ) -> tuple[dict[str, JsonValue] | None, str | None]:
     event_type = payload.get("type")
-    # Drop Codex-internal vendor events on the public /v1 surface only. The
-    # upstream Codex backend emits non-standard events (notably
-    # ``codex.rate_limits``, which is throttled per rate-limit window and so
-    # leaks intermittently before ``response.created``). The OpenAI Responses
-    # SSE contract does not define any ``codex.*`` event type, and the OpenAI
-    # SDK's stream parser raises ``RuntimeError`` if any other event arrives
-    # first. The Codex CLI routes under ``/backend-api/codex/*`` legitimately
-    # consume these events and pass ``enforce_openai_sdk_contract=False`` so
-    # they continue to forward unchanged.
+
+
+
+
+
+
+
+
+
     if enforce_openai_sdk_contract and isinstance(event_type, str) and event_type.startswith("codex."):
         return None, None
     if event_type == "error":
@@ -4593,13 +4513,13 @@ def _normalize_public_stream_payload(
         return payload, None
     if event_type in ("response.completed", "response.incomplete"):
         if not enforce_openai_sdk_contract:
-            # Codex-native surface (/backend-api/codex/*): forward the upstream
-            # terminal envelope verbatim. The Codex CLI consumes its own output
-            # item types — notably the ``compaction`` item produced by
-            # remote-compaction v2, which carries ``encrypted_content`` instead
-            # of text. The public-contract normalization below would drop or
-            # re-type such items, leaving the Codex CLI with zero compaction
-            # output items ("expected exactly one compaction output item").
+
+
+
+
+
+
+
             return payload, None
         response = payload.get("response")
         if not is_json_mapping(response):
@@ -4631,8 +4551,8 @@ def _normalize_public_stream_payload(
         return normalized_payload, violation_kind
     if event_type in ("response.output_item.added", "response.output_item.done"):
         if not enforce_openai_sdk_contract:
-            # Codex-native surface: forward output items verbatim so the Codex
-            # CLI receives its native item types (e.g. ``compaction``) unaltered.
+
+
             return payload, None
         item = payload.get("item")
         if not is_json_mapping(item):
@@ -4653,21 +4573,7 @@ def _normalize_public_stream_payload(
 def _synthetic_response_created_envelope(
     payload: Mapping[str, JsonValue],
 ) -> dict[str, JsonValue] | None:
-    """Synthesize a ``response.created`` SSE payload from a non-created event.
 
-    Used by ``_normalize_public_responses_stream`` when the upstream's first
-    standard event is not ``response.created`` (for example, the Codex backend
-    sometimes jumps straight to ``response.failed`` when upstream rejects the
-    request mid-stream). The OpenAI Responses SSE contract requires
-    ``response.created`` to be the first event the stream emits — the OpenAI
-    Python SDK's ``ResponseStreamState._create_initial_response`` raises
-    ``RuntimeError`` otherwise.
-
-    Returns ``None`` when no ``response`` envelope is available on the source
-    event (in that case the caller forwards the event verbatim; the SDK
-    consumer will still see a parser error, but the stream contract is at
-    least not silently violated by our synthesis logic).
-    """
     response = payload.get("response")
     if not is_json_mapping(response):
         return None
@@ -4995,13 +4901,7 @@ def _status_for_error(error_value: OpenAIError | None) -> int:
 
 
 def _status_for_image_error_envelope(envelope: object) -> int:
-    """Map an OpenAI-shape error envelope dict to its canonical HTTP status
-    for the ``/v1/images/*`` non-streaming response path.
 
-    Returns 502 when no specific mapping matches (e.g. server_error or an
-    unrecognised type), so transport-level failures still surface as
-    upstream errors. Code matches take precedence over type matches.
-    """
     if not isinstance(envelope, Mapping):
         return 502
     error = cast(Mapping[str, object], envelope).get("error")

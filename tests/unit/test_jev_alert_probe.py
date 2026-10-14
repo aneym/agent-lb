@@ -1,4 +1,4 @@
-"""Subprocess integration at the hook/file boundary; only the curl API edge is fake."""
+
 import datetime
 import json
 import os
@@ -66,7 +66,7 @@ def test_proxy_isolation_and_timeout(setup):
 
 
 def age_first_failure(home, seconds):
-    """Fake the clock at the state-file boundary: the recorded first failure happened `seconds` ago."""
+
     state_path = home / '.jev/alert-state.json'
     state = json.loads(state_path.read_text())
     state['firstFailureAt'] -= seconds
@@ -74,7 +74,7 @@ def age_first_failure(home, seconds):
 
 
 def test_failures_inside_a_minute_are_quiet(setup):
-    """2026-10-08: two failures seconds apart (one blip seen by launchd and a prompt refresh) alerted."""
+
     for _ in range(3):
         assert run(setup, 'health-check.sh', FAIL='1').returncode == 0
         assert not (setup[0] / '.jev/ALERT').exists()
@@ -90,8 +90,7 @@ def test_two_failures_a_minute_apart_alert(setup):
 
 
 def test_install_policy_installs_the_hooks_executable_and_restores_a_lost_mode(tmp_path):
-    """install-policy owns ~/.jev/hooks: the installed bytes are the repo hooks, mode 0755, and a hook that lost
-    its exec bit (launchd then fails to run health-check.sh) is repaired by the next install."""
+
     home = tmp_path / 'home'
     home.mkdir()
     env = {k: v for k, v in os.environ.items() if not k.startswith(('ROUTE_', 'HOOK_DISPATCH_'))}
@@ -128,7 +127,7 @@ def test_stale_hook_does_not_wait_for_network(setup):
     result = run(setup, 'route.sh', DELAY='6')
     assert result.returncode == 0 and result.stdout == ''
     assert time.monotonic() - started < 1
-    # Wait for our detached child before the temporary HOME is removed.
+
     deadline = time.monotonic() + 10
     while not (setup[0] / '.jev/status.json').exists() and time.monotonic() < deadline:
         time.sleep(.05)
@@ -136,7 +135,7 @@ def test_stale_hook_does_not_wait_for_network(setup):
 
 
 def test_concurrent_probes_count_one_failure(setup):
-    """The subprocess/file boundary must serialize overlapping failed refreshes."""
+
     _, hooks, env = setup
     env = {**env, 'FAIL': '1', 'DELAY': '4'}
     children = [subprocess.Popen(['bash', str(hooks / 'health-check.sh')], env=env)]
@@ -153,10 +152,7 @@ def test_concurrent_probes_count_one_failure(setup):
 
 
 def test_real_http_slow_success(setup):
-    """Real curl must accept a healthy API taking longer than the old eight-second budget.
 
-    The network edge is a local server; no production collaborator is mocked.
-    """
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import threading
 

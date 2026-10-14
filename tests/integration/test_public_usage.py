@@ -82,8 +82,8 @@ async def test_public_usage_aggregates_without_auth(async_client):
         status="error",
         latency_ms=100,
     )
-    # Forwarded edge copies keep request_kind and replace source with edge:<id>,
-    # so a source-only warmup filter would count them.
+
+
     for kind in ("limit_warmup", "warmup"):
         await _insert_log(
             request_id=f"edge-{kind}",
@@ -97,7 +97,7 @@ async def test_public_usage_aggregates_without_auth(async_client):
             request_kind=kind,
         )
 
-    # No auth headers — this surface is public.
+
     response = await async_client.get("/api/usage/public?days=30")
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "*"
@@ -121,24 +121,24 @@ async def test_public_usage_aggregates_without_auth(async_client):
     assert body["byProvider"]["anthropic"]["requests"] == 1
     assert body["byProvider"]["anthropic"]["costUsd"] == pytest.approx(0.01)
 
-    # byModel: descending by cost, with humanized label.
+
     by_model = body["byModel"]
     assert [m["model"] for m in by_model] == ["gpt-5.4-mini", "claude-haiku-4-5-20251001"]
     claude = next(m for m in by_model if m["provider"] == "anthropic")
     assert claude["label"] == "Claude Haiku 4.5"
 
-    # daily is ascending and gap-free.
+
     dates = [d["date"] for d in body["daily"]]
     assert dates == sorted(dates)
     assert len(dates) == len(set(dates))
     days_with_data = {d["date"]: d for d in body["daily"] if d["requests"] > 0}
     assert days_with_data[now.strftime("%Y-%m-%d")]["topModel"] == "gpt-5.4-mini"
-    # Contract conformance: website types declare topModel:string and avgLatencyMs:number (non-null).
+
     empty_days = [d for d in body["daily"] if d["requests"] == 0]
     assert empty_days and all(d["topModel"] == "" for d in empty_days)
     assert isinstance(totals["avgLatencyMs"], (int, float))
 
-    # Anonymization contract: no per-account / identifying fields anywhere in the payload.
+
     raw = json.dumps(body)
     for forbidden in ("accountId", "account_id", "apiKey", "api_key", "email"):
         assert forbidden not in raw

@@ -12,7 +12,7 @@ for key, info in checks.items():
     canvas = Image.new("RGB", (width_px, round(total * dpr)), "white")
     for c in info["chunks"]:
         img = Image.open(src / c["name"]).convert("RGB")
-        # rows of this chunk that start at the wanted offset (the last scroll is clamped)
+
         skip = round((c["want"] - c["y"]) * dpr)
         part = img.crop((0, skip, min(width_px, img.width), img.height))
         canvas.paste(part, (0, round(c["want"] * dpr)))

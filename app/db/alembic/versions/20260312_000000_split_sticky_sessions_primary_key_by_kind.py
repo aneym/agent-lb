@@ -1,9 +1,4 @@
-"""split sticky session primary key by kind
 
-Revision ID: 20260312_000000_split_sticky_sessions_primary_key_by_kind
-Revises: 20260310_120000_add_sticky_session_kinds_and_affinity_ttl
-Create Date: 2026-03-12
-"""
 
 from __future__ import annotations
 
@@ -12,7 +7,6 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260312_000000_split_sticky_sessions_primary_key_by_kind"
 down_revision = "20260310_120000_add_sticky_session_kinds_and_affinity_ttl"
 branch_labels = None

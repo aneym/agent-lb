@@ -1,6 +1,6 @@
 #!/bin/zsh
-# Publishes anonymized aggregate LLM usage to a public GitHub repo (durable backup + CDN-served).
-# Pushes via a repo-scoped SSH deploy key. Idempotent, single-flight, fail-soft.
+
+
 set -euo pipefail
 LOG="$HOME/.agent-lb/llm-usage-publish.log"
 LOCK="$HOME/.agent-lb/.llm-usage-publish.lock"
@@ -19,8 +19,8 @@ for d in 7 30 90 365; do
 done
 [ -f usage-365.json ] && cp usage-365.json usage.json
 if [ "$ok" = "0" ]; then echo "$(date -u +%FT%TZ) error: all fetches failed; keeping last snapshot" >>"$LOG"; exit 0; fi
-# Idempotency: revert any snapshot whose ONLY change vs HEAD is the generatedAt
-# timestamp, so unchanged usage does not churn a commit on every cron tick.
+
+
 for f in usage.json usage-7.json usage-30.json usage-90.json usage-365.json; do
   [ -f "$f" ] || continue
   git cat-file -e "HEAD:$f" 2>/dev/null || continue

@@ -403,7 +403,7 @@ async def test_api_key_update_rolls_back_base_fields_when_assignment_write_fails
 
 @pytest.mark.asyncio
 async def test_api_keys_crud_with_legacy_weekly_limit(async_client):
-    """Legacy weeklyTokenLimit field is auto-converted to a limit rule."""
+
     create = await async_client.post(
         "/api/api-keys/",
         json={
@@ -424,7 +424,7 @@ async def test_api_keys_crud_with_legacy_weekly_limit(async_client):
 
 @pytest.mark.asyncio
 async def test_api_keys_update_limits(async_client):
-    """Updating limits replaces the entire set."""
+
     create = await async_client.post(
         "/api/api-keys/",
         json={
@@ -808,10 +808,10 @@ async def test_api_key_usage_tracking_and_request_log_link(async_client, monkeyp
         assert row is not None
         assert row.last_used_at is not None
 
-        # Verify usage tracked in limits table
+
         limits = await repo.get_limits_by_key(key_id)
         assert len(limits) == 1
-        assert limits[0].current_value == 15  # 10 input + 5 output
+        assert limits[0].current_value == 15
 
         result = await session.execute(select(RequestLog).order_by(RequestLog.requested_at.desc()))
         latest_log = result.scalars().first()
@@ -1248,7 +1248,7 @@ async def test_api_key_limit_applies_to_compact_responses(async_client, monkeypa
         repo = ApiKeysRepository(session)
         limits = await repo.get_limits_by_key(key_id)
         assert len(limits) == 1
-        assert limits[0].current_value == 12  # 7 input + 5 output
+        assert limits[0].current_value == 12
 
 
 @pytest.mark.asyncio
@@ -2399,14 +2399,14 @@ async def test_allowed_but_unsupported_model_is_exposed(async_client):
     assert _HIDDEN_MODEL in ids
 
 
-# ---------------------------------------------------------------------------
-# Reservation lifecycle regression tests (fix-api-key-reservation-leak)
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_stream_401_retry_success_finalizes_once(async_client, monkeypatch):
-    """401 refresh retry 성공 시 finalize 1회만 호출되어 usage가 정확히 반영된다."""
+
     enable = await async_client.put(
         "/api/settings",
         json={
@@ -2464,18 +2464,18 @@ async def test_stream_401_retry_success_finalizes_once(async_client, monkeypatch
         assert response.status_code == 200
         _ = [line async for line in response.aiter_lines() if line]
 
-    assert call_count["value"] == 2  # first failed, second succeeded
+    assert call_count["value"] == 2
 
     async with SessionLocal() as session:
         repo = ApiKeysRepository(session)
         limits = await repo.get_limits_by_key(key_id)
         assert len(limits) == 1
-        assert limits[0].current_value == 30  # 20 input + 10 output, finalized once
+        assert limits[0].current_value == 30
 
 
 @pytest.mark.asyncio
 async def test_stream_no_accounts_releases_reservation(async_client, monkeypatch):
-    """no_accounts 즉시 종료 시 reservation이 release되어 quota가 원복된다."""
+
     enable = await async_client.put(
         "/api/settings",
         json={
@@ -2501,7 +2501,7 @@ async def test_stream_no_accounts_releases_reservation(async_client, monkeypatch
     key = payload["key"]
     key_id = payload["id"]
 
-    # Intentionally NOT importing any accounts → no_accounts path
+
 
     async with async_client.stream(
         "POST",
@@ -2517,12 +2517,12 @@ async def test_stream_no_accounts_releases_reservation(async_client, monkeypatch
         repo = ApiKeysRepository(session)
         limits = await repo.get_limits_by_key(key_id)
         assert len(limits) == 1
-        assert limits[0].current_value == 0  # reservation released
+        assert limits[0].current_value == 0
 
 
 @pytest.mark.asyncio
 async def test_compact_unexpected_exception_releases_reservation(async_client, monkeypatch):
-    """compact에서 ProxyResponseError 외 일반 예외 발생 시 reservation이 release된다."""
+
     enable = await async_client.put(
         "/api/settings",
         json={
@@ -2555,7 +2555,7 @@ async def test_compact_unexpected_exception_releases_reservation(async_client, m
 
     monkeypatch.setattr(proxy_module, "core_compact_responses", raising_compact)
 
-    # ASGITransport propagates unhandled exceptions directly in tests
+
     with pytest.raises(RuntimeError, match="unexpected internal error"):
         await async_client.post(
             "/v1/responses/compact",
@@ -2563,17 +2563,17 @@ async def test_compact_unexpected_exception_releases_reservation(async_client, m
             json={"model": _TEST_MODELS[0], "instructions": "hi", "input": []},
         )
 
-    # Despite the unhandled exception, the finally block should have released the reservation
+
     async with SessionLocal() as session:
         repo = ApiKeysRepository(session)
         limits = await repo.get_limits_by_key(key_id)
         assert len(limits) == 1
-        assert limits[0].current_value == 0  # reservation released despite unexpected error
+        assert limits[0].current_value == 0
 
 
 @pytest.mark.asyncio
 async def test_stream_without_api_key_auth_skips_settlement(async_client, monkeypatch):
-    """API key auth 비활성 시 정산 로직이 스킵되고 에러 없이 동작한다."""
+
     enable = await async_client.put(
         "/api/settings",
         json={
@@ -2601,4 +2601,4 @@ async def test_stream_without_api_key_auth_skips_settlement(async_client, monkey
     ) as response:
         assert response.status_code == 200
         lines = [line async for line in response.aiter_lines() if line]
-        assert len(lines) >= 1  # stream completed without error
+        assert len(lines) >= 1

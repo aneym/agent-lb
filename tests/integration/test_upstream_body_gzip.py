@@ -1,10 +1,4 @@
-"""Large model-call bodies leave agent-lb gzipped (uplink incident 2026-10-05).
 
-Studio's uplink delivers about 8 Mbps; a 700 KB Messages body took about 15 s
-to upload under load. A real local HTTP server stands in for the upstream, so
-these tests see the bytes on the wire: they fail if a large body goes out
-uncompressed or if the gzipped body decodes to anything but the request.
-"""
 
 from __future__ import annotations
 
@@ -47,7 +41,7 @@ CODEX_SSE = (
     b'data: {"type":"response.completed","response":{"id":"resp_1","usage":'
     b'{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n'
 )
-# Repetitive enough to compress the way real transcripts do, and well over the threshold.
+
 LARGE_TEXT = "tool_result: src/app.py line 42 returned ok\n" * (4 * UPSTREAM_GZIP_MIN_BYTES // 44)
 
 
@@ -56,7 +50,7 @@ async def upstream() -> AsyncIterator[tuple[str, list[dict[str, Any]]]]:
     seen: list[dict[str, Any]] = []
 
     async def handler(request: web.Request) -> web.StreamResponse:
-        # aiohttp inflates gzip request bodies itself; Content-Length is the size on the wire.
+
         body = await request.read()
         seen.append(
             {
@@ -207,8 +201,7 @@ async def test_gzip_off_switch_sends_large_body_uncompressed(upstream, monkeypat
 
 @pytest.mark.asyncio
 async def test_budget_spent_waiting_for_compression_fails_before_upload(upstream):
-    """Release-review settling check: with every gzip worker busy, a request whose
-    budget runs out fails at its deadline and never reaches the upstream."""
+
     base_url, seen = upstream
     tokens = push_stream_timeout_overrides(total_timeout_seconds=0.05)
     started = time.monotonic()
@@ -228,8 +221,7 @@ async def test_budget_spent_waiting_for_compression_fails_before_upload(upstream
 async def test_anthropic_budget_spent_waiting_for_compression_is_a_timeout_and_releases_the_reservation(
     async_client, upstream, monkeypatch
 ):
-    """Post-merge review of 9321d954: on the Anthropic paths the deadline used to
-    escape as a bare 500 and leave the API-key reservation reserved."""
+
     base_url, seen = upstream
     monkeypatch.setenv("AGENT_LB_ANTHROPIC_UPSTREAM_BASE_URL", base_url)
     monkeypatch.setenv("AGENT_LB_PROXY_REQUEST_BUDGET_SECONDS", "0.05")
@@ -284,9 +276,7 @@ async def test_anthropic_budget_spent_waiting_for_compression_is_a_timeout_and_r
 
 @pytest.mark.asyncio
 async def test_a_compression_deadline_after_an_overloaded_account_stays_a_timeout(async_client, monkeypatch):
-    """Post-merge review of 4abb84af: the first account answers 529, the gzip workers
-    then stay busy past the second attempt's budget. The 504 timeout used to be
-    rewritten as 529 overloaded_error by the after-529s branch."""
+
     calls: list[str] = []
     release = threading.Event()
     blockers: list[asyncio.Future[bool]] = []

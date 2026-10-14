@@ -4,7 +4,7 @@ import type { AccountProvider } from "@/features/accounts/schemas";
 import { ProviderIcon } from "@/features/accounts/components/provider-icon";
 import { providerLabel } from "@/features/accounts/components/provider-label";
 
-/** Monochrome provider badge: outline style, ink text (DESIGN.md §Components). */
+
 export function ProviderBadge({
   provider,
   className,

@@ -1,9 +1,4 @@
-"""add reset-confirmed limit warm-up trigger
 
-Revision ID: 20260522_000000_add_limit_warmup_trigger
-Revises: 20260520_010000_add_request_logs_api_key_account_index
-Create Date: 2026-05-22
-"""
 
 from __future__ import annotations
 

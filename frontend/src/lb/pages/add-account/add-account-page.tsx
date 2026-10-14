@@ -80,7 +80,7 @@ export function AddAccountPage() {
       await accounts.probeMutation.mutateAsync({ accountId: id });
       await accounts.accountsQuery.refetch();
     } catch {
-      /* Probe can be retried; never hide the newly added account. */
+
     } finally {
       setReading(false);
     }

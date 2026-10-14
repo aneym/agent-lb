@@ -1,9 +1,4 @@
-"""add api_key_limits table and migrate legacy weekly limits
 
-Revision ID: 20260214_000000_add_api_key_limits
-Revises: 20260213_000800_add_api_keys
-Create Date: 2026-02-14
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260214_000000_add_api_key_limits"
 down_revision = "20260213_000800_add_api_keys"
 branch_labels = None
@@ -62,7 +56,7 @@ def upgrade() -> None:
             unique=False,
         )
 
-    # Migrate existing weekly_token_limit data to api_key_limits rows
+
     api_keys_cols = _columns(bind, "api_keys")
     if "weekly_token_limit" in api_keys_cols:
         api_keys = sa.table(
@@ -105,7 +99,7 @@ def upgrade() -> None:
                 )
             )
 
-        # Drop legacy columns (batch for SQLite compatibility)
+
         with op.batch_alter_table("api_keys") as batch_op:
             batch_op.drop_column("weekly_token_limit")
             batch_op.drop_column("weekly_tokens_used")
@@ -115,7 +109,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
 
-    # Re-add legacy columns
+
     api_keys_cols = _columns(bind, "api_keys")
     with op.batch_alter_table("api_keys") as batch_op:
         if "weekly_token_limit" not in api_keys_cols:

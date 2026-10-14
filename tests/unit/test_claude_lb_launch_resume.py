@@ -1,6 +1,4 @@
-"""Scenario (2026-09-29, recruiter desktop 06:05Z): a headless turn that resumes a Claude Code
-session must not get an injected --session-id. Claude Code exits 1 on --session-id with
---resume/--continue (without --fork-session), which broke every second desktop chat turn."""
+
 
 from __future__ import annotations
 

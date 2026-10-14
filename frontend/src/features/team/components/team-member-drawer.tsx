@@ -108,7 +108,7 @@ export function TeamMemberDrawer({
   const [form, setForm] = useState<FormState>(() => toFormState(member));
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
-  // Reset the form whenever the drawer opens, for a new member or the same one again.
+
   const openFor = open ? (member?.id ?? "new") : null;
   if (openFor !== loadedFor) {
     setLoadedFor(openFor);

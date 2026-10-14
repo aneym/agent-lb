@@ -1,8 +1,4 @@
-"""Record the client's own session id on request logs.
 
-Revision ID: 20260925_000000_add_request_log_client_session_id
-Revises: 20260923_000000_add_limit_warmup_retry_count
-"""
 
 from __future__ import annotations
 
@@ -16,7 +12,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Re-runnable: a legacy revision id remaps to an older ancestor and replays this.
+
     columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("request_logs")}
     if "client_session_id" in columns:
         return

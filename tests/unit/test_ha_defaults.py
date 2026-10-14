@@ -1,4 +1,4 @@
-"""Tests that verify production high-availability defaults are set correctly."""
+
 
 from __future__ import annotations
 

@@ -88,13 +88,13 @@ def _normalize_usage(usage: UsageTokens | ResponseUsage | None) -> UsageTokens |
 
 
 DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
-    # GPT-6 Astra: $10 input / $1 cached input / $50 output per 1M. Fast
-    # ("priority") is 2x standard, which matches the service tier the Codex
-    # model catalog advertises for Astra ("2x speed, increased usage").
-    # Long-context (>272k input) follows the same 2x input / 1.5x output rule
-    # as the 5.6 tiers; 272k is also the context_window the catalog reports.
-    # Batch/flex rates are unconfirmed, so flex traffic falls back to standard
-    # (over-bills rather than under-bills a cost cap).
+
+
+
+
+
+
+
     "gpt-6-astra": ModelPrice(
         input_per_1m=10.0,
         cached_input_per_1m=1.0,
@@ -107,16 +107,16 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
         long_context_cached_input_per_1m=2.0,
         long_context_output_per_1m=75.0,
     ),
-    # GPT-6 Sol / Luna: agent-lb serves these through ChatGPT subscriptions, so
-    # there is no per-token bill. These are OpenAI's published API list prices
-    # (developers.openai.com/api/docs/models/gpt-6-sol and gpt-6-luna, read
-    # 2026-09-25), recorded as the subscription-equivalent cost so arms and
-    # members can be compared in dollars. Cached input is 10% of input; >272k
-    # input bills the whole request at 2x input / 1.5x output. Priority rates are
-    # unpublished, so priority traffic falls back to standard rates.
-    # OpenAI list price read 2026-09-29 (openai.com/index/introducing-gpt-6-1-sol).
-    # Cached input is 95% off input; unpublished long-context rates assume the
-    # same 2x input / 1.5x output rule as gpt-6-sol.
+
+
+
+
+
+
+
+
+
+
     "gpt-6.1-sol": ModelPrice(
         input_per_1m=2.0,
         cached_input_per_1m=0.10,
@@ -144,10 +144,10 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
         long_context_cached_input_per_1m=0.02,
         long_context_output_per_1m=0.75,
     ),
-    # GPT-5.6 tier rates as of the 2026-07-30 price cut (Terra -20%, Luna -80%,
-    # Sol unchanged); cache reads are 90% off input. Long-context (>272k input)
-    # bills the whole request at 2x input / 1.5x output. Priority rates are
-    # unpublished for 5.6, so priority traffic falls back to standard rates.
+
+
+
+
     "gpt-5.6-sol": ModelPrice(
         input_per_1m=5.0,
         cached_input_per_1m=0.5,
@@ -329,19 +329,19 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
         priority_cached_input_per_1m=0.25,
         priority_output_per_1m=20.0,
     ),
-    # OpenAI Images token-based pricing (per 1M tokens, USD).
-    # gpt-image-2 (April 2026):
-    #   text input  $5.00, image input $8.00, image cached input $2.00,
-    #   image output $30.00.
-    # The current ``ModelPrice`` shape carries a single input rate, so we
-    # use the text-input rate as the dominant input cost (text dominates
-    # the input side for typical prompts) and the image-output rate as
-    # the output cost. Cached input maps to the image-cached rate.
-    # The legacy gpt-image-1.5 / gpt-image-1 / gpt-image-1-mini entries
-    # mirror gpt-image-2 today; they will be split out once OpenAI
-    # publishes per-model deltas. Without these entries cost-based API
-    # key quotas would resolve every /v1/images/* call to $0 and the
-    # quota would never bite.
+
+
+
+
+
+
+
+
+
+
+
+
+
     "gpt-image-2": ModelPrice(
         input_per_1m=5.0,
         cached_input_per_1m=2.0,
@@ -365,18 +365,18 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
 }
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
-    # Effort-suffixed slugs ("gpt-6-astra-xhigh", "gpt-6-astra-fast") share the
-    # base model's rates. No bare "gpt-6*" alias: only Astra is published, and a
-    # guessed catch-all would silently misprice a future tier.
+
+
+
     "gpt-6-astra*": "gpt-6-astra",
-    # GPT-6 Sol / Luna: only the effort suffixes share the base price. No
-    # "gpt-6-sol*" catch-all, which would bill a pro or 6.1 variant at Sol rates.
+
+
     **{
         f"{model}-{suffix}": model
         for model in ("gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol")
         for suffix in ("minimal", "low", "medium", "high", "xhigh", "fast")
     },
-    # Bare "gpt-5.6" is OpenAI's alias for Sol; the tier patterns win by length.
+
     "gpt-5.6-sol*": "gpt-5.6-sol",
     "gpt-5.6-terra*": "gpt-5.6-terra",
     "gpt-5.6-luna*": "gpt-5.6-luna",

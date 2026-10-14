@@ -1,9 +1,4 @@
-"""add reauth_required account status
 
-Revision ID: 20260604_000000_add_reauth_required_account_status
-Revises: 20260602_080000_merge_upstream_proxy_and_quota_planner_heads
-Create Date: 2026-06-04
-"""
 
 from __future__ import annotations
 

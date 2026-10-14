@@ -150,21 +150,21 @@ class _MergedAdditionalWindow:
     window_minutes: int | None
 
 
-# Module-level freshness cache for additional-only accounts (no main UsageHistory
-# entry). Used as a fast path to avoid DB queries on every pass within the same
-# process. Updated only after a successful refresh that wrote data.
+
+
+
 _last_successful_refresh: dict[str, datetime] = {}
 _usage_refresh_auth_cooldowns: dict[str, float] = {}
-# Consecutive usage-endpoint 429s per account. A 429 on the usage endpoint is
-# upstream throttling the poll, not a credential problem; without a cooldown the
-# stale entry was refetched every loop tick (~3/min per account, all 429, for
-# days, 2026-10-06). Back off exponentially with jitter; a success clears it.
+
+
+
+
 _usage_refresh_rate_limit_strikes: dict[str, int] = {}
 _USAGE_REFRESH_RATE_LIMIT_BASE_SECONDS = 60.0
 _USAGE_REFRESH_RATE_LIMIT_MAX_SECONDS = 900.0
 _USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME})
-# Mirrored in app/modules/proxy/anthropic_service.py (read side) — both must
-# agree on the quota_key/window identifying the Fable-scoped weekly marker.
+
+
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 
@@ -263,7 +263,7 @@ class UsageUpdater:
         accounts: list[Account],
         latest_usage: Mapping[str, UsageHistory],
     ) -> bool:
-        """Refresh usage for all accounts. Returns True if usage rows were written."""
+
         settings = get_settings()
         if not settings.usage_refresh_enabled:
             return False
@@ -283,13 +283,13 @@ class UsageUpdater:
             bypass_freshness = _quota_recovery_should_bypass_freshness(account, latest=latest)
             if not bypass_freshness and _latest_usage_is_fresh(latest, now=now, interval_seconds=interval):
                 continue
-            # Additional-only accounts have no main UsageHistory entry.
-            # Check DB-backed freshness (works across workers/restarts)
-            # with process-local cache as a fast path.
-            # NOTE: When a successful fetch returns empty additional data
-            # (all rows deleted), the DB has no timestamp to consult.
-            # Cross-worker may re-fetch; process-local cache (line ~138)
-            # prevents redundant calls within the same worker.
+
+
+
+
+
+
+
             if latest is None:
                 last_ok = _last_successful_refresh.get(account.id)
                 if not bypass_freshness and last_ok and (now - last_ok).total_seconds() < interval:
@@ -305,9 +305,9 @@ class UsageUpdater:
                     ):
                         _last_successful_refresh[account.id] = additional_fresh_at
                         continue
-            # NOTE: AsyncSession is not safe for concurrent use. Run sequentially
-            # within the request-scoped session to avoid PK collisions and
-            # flush-time warnings (SAWarning: Session.add during flush).
+
+
+
             try:
                 result = await _USAGE_REFRESH_SINGLEFLIGHT.run(
                     account.id,
@@ -319,9 +319,9 @@ class UsageUpdater:
                 )
                 await self._sync_account_from_repo(account)
                 refreshed = refreshed or result.usage_written
-                # Only cache when the upstream fetch actually succeeded.
-                # Transient errors (401 retry failure, 5xx, etc.) must not
-                # suppress retries within the interval.
+
+
+
                 if result.fetch_succeeded:
                     _last_successful_refresh[account.id] = now
                     _clear_usage_refresh_auth_cooldown(account.id)
@@ -333,12 +333,12 @@ class UsageUpdater:
                     exc,
                     exc_info=True,
                 )
-                # swallow per-account failures so the whole refresh loop keeps going
+
                 continue
         return refreshed
 
     async def force_refresh(self, account: Account) -> bool:
-        """Refresh one account regardless of cached/fresh usage rows."""
+
         settings = get_settings()
         if not settings.usage_refresh_enabled:
             return False
@@ -495,10 +495,10 @@ class UsageUpdater:
             else:
                 reset_credit_cache.record_count(account.id, payload.reset_credits_available)
         elif account.provider == OPENAI_PROVIDER_NAME:
-            # /wham/usage carries the banked-credit count on every poll, so the
-            # dashboard count stays fresh between hourly expiry sweeps and is
-            # known within one poll of a restart. An absent summary keeps the
-            # last listed count.
+
+
+
+
             reset_summary = payload.rate_limit_reset_credits
             if reset_summary is not None and reset_summary.available_count is not None:
                 reset_credit_cache.record_count(account.id, reset_summary.available_count)
@@ -576,8 +576,8 @@ class UsageUpdater:
                 self._additional_usage_repo is not None and payload.additional_rate_limits is not None
             ) or fable_scoped_written
             return AccountRefreshResult(usage_written=additional_synced)
-        # Treat both None and empty rate_limit (both windows absent) as
-        # additional-only to avoid falling through to window processing.
+
+
         normalized_windows = usage_core.normalize_rate_limit_windows(
             rate_limit.primary_window,
             rate_limit.secondary_window,
@@ -1150,8 +1150,8 @@ def _reset_at(reset_at: int | None, reset_after_seconds: int | None, now_epoch: 
     return now_epoch + max(0, int(reset_after_seconds))
 
 
-# Fallback horizon for an exhausted window whose upstream payload omitted both
-# reset_at and reset_after_seconds and carried no usable limit_window_seconds.
+
+
 _DEFAULT_EXHAUSTION_HORIZON_SECONDS = 3600
 
 
@@ -1162,16 +1162,7 @@ def _bounded_exhaustion_reset_at(
     limit_window_seconds: int | None,
     now_epoch: int,
 ) -> int | None:
-    """Resolve a reset horizon, synthesizing a bounded one for exhausted windows.
 
-    Upstream sometimes reports a fully-consumed window (used_percent >= 100) while
-    omitting both reset_at and reset_after_seconds. Persisting reset_at=None for
-    such a row makes the exhaustion self-perpetuating: routing gates read a None
-    reset on a 100% window as "cooling down forever" and permanently exclude the
-    account. Synthesize a bounded, self-expiring horizon instead so the account
-    re-admits; if it is still exhausted upstream, the next 429 tripwire writes a
-    fresh bounded cooldown.
-    """
     resolved = _reset_at(reset_at, reset_after_seconds, now_epoch)
     if resolved is not None:
         return resolved
@@ -1185,9 +1176,9 @@ def _bounded_exhaustion_reset_at(
     return now_epoch + horizon
 
 
-# The usage endpoint can return 403 for accounts that are still otherwise usable
-# for proxy traffic, so treat it as a refresh failure instead of a permanent
-# account-level deactivation signal.
+
+
+
 _DEACTIVATING_USAGE_STATUS_CODES = {402, 404}
 _DEACTIVATING_USAGE_MESSAGE_HINTS = (
     "your openai account has been deactivated",

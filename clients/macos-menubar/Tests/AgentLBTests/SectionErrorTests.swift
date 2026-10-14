@@ -3,14 +3,14 @@ import XCTest
 
 @testable import AgentLB
 
-/// Pins the cancellation classifier that keeps popover-lifecycle fetch
-/// cancellation from mutating section error state. Covers every form the
-/// client currently emits: direct CancellationError, a cancelled URLError,
-/// and the APIClient transport wrapper around a cancelled URLError — plus
-/// genuine failures (timeout, HTTP status, other transport errors) that
-/// must still register as real fetch failures.
+
+
+
+
+
+
 final class SectionErrorTests: XCTestCase {
-  // MARK: - Cancellation forms are neutral
+
 
   func testDirectCancellationErrorIsCancellation() {
     XCTAssertTrue(AppState.isCancellation(CancellationError()))
@@ -24,7 +24,7 @@ final class SectionErrorTests: XCTestCase {
     XCTAssertTrue(AppState.isCancellation(APIError.transport(URLError(.cancelled))))
   }
 
-  // MARK: - Genuine completed failures stay failures
+
 
   func testTimeoutIsNotCancellation() {
     XCTAssertFalse(AppState.isCancellation(APIError.timeout))
@@ -48,7 +48,7 @@ final class SectionErrorTests: XCTestCase {
     XCTAssertFalse(AppState.isCancellation(APIError.serviceDown))
   }
 
-  // MARK: - Section state follows the latest completed outcome
+
 
   func testCancellationPreservesExistingSectionState() {
     var errors: Set<AppState.Section> = [.pool]

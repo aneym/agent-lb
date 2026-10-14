@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that release-managed files agree with the release tag/version."""
+
 
 from __future__ import annotations
 

@@ -67,7 +67,7 @@ async def app_client():
 
 
 def run(coro):
-    # Pytest collection must keep the database configured by tests/conftest.py.
+
     os.environ["AGENT_LB_DATABASE_URL"] = f"sqlite+aiosqlite:///{_DB_PATH}"
     os.environ["AGENT_LB_UPSTREAM_BASE_URL"] = "https://example.invalid/backend-api"
     os.environ["AGENT_LB_USAGE_REFRESH_ENABLED"] = "false"

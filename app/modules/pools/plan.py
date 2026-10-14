@@ -178,13 +178,13 @@ def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[
     claude = pools.get("anthropic-general")
     openai = pools.get("openai-codex")
     cursor = pools.get("cursor-models")
-    # Claude is never dropped; Unlimited replaces exactly the weekly-empty windows,
-    # not accounts temporarily held by a five-hour limit or an auth problem.
+
+
     empty = claude.weekly_empty_accounts if claude else 0
-    # Devin is dropped only when the trial ranks its rung last on minutes per unit.
+
     slowest = max((row["minutesPerUnit"] for row in costs), default=0)
     drop_devin = any(row["harness"] == "Devin" and row["minutesPerUnit"] == slowest for row in costs)
-    # Cursor's warning is about cycle day, not a fixed calendar date.
+
     cursor_over = False
     if cursor and cursor.cycle_reset_at and cursor.percent_used is not None:
         reset = cursor.cycle_reset_at
@@ -205,7 +205,7 @@ def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[
                     reason = f"Add until no week runs dry. {empty} of {counts[vendor]} are out today."
             elif vendor == "openai":
                 reason = "Keep. Sol shifts to reviews and reading."
-                # Budget drops two OpenAI accounts only when OpenAI is not the maker at the head.
+
                 if level == "budget" and head_maker != "openai":
                     delta = -min(2, max(0, counts[vendor] - 2))
                     reason = (
@@ -213,13 +213,13 @@ def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[
                         if delta
                         else f"Keep {counts[vendor]} for Sol reviews and reading."
                     )
-                # Unlimited buys one more OpenAI account below 25% aggregate remaining.
+
                 remaining = openai.aggregate_remaining_percent if openai else None
                 if level == "unlimited" and remaining is not None and remaining < 25:
                     delta, reason = 1, "Add 1 for Sol reviews of Claude work."
             elif vendor == "cursor":
                 reason = "Flag a second plan if Cursor models passes 60% before day 20 of the cycle."
-                # Balanced keeps everything, except the already-triggered Cursor warning.
+
                 if level == "balanced" and cursor_over:
                     delta = 1
                 elif level == "budget":
@@ -228,7 +228,7 @@ def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[
                         if cursor and cursor.percent_used is not None
                         else "Keep."
                     )
-                # Unlimited adds Cursor only when the real implementation head uses Cursor.
+
                 elif level == "unlimited":
                     if head_pool == "cursor":
                         delta, reason = 1, "Add 1 once Grok holds at 20 units."
@@ -252,7 +252,7 @@ def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[
                     "reason": reason,
                 }
             )
-        # Ladders follow installed routing; Budget removes only entirely dropped pools.
+
         dropped = {row["pool"] for row in accounts if row["change"] == "drop" and row["count"] + row["delta"] == 0}
         ladders = {
             job: [_entry(rung, table, costs) for rung in rungs if _pool_for(rung, table) not in dropped]

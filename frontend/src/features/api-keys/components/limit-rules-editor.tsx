@@ -24,7 +24,7 @@ function makeDefaultRule(): LimitRuleCreate {
 export function LimitRulesEditor({ rules, onChange }: LimitRulesEditorProps) {
   const [advanced, setAdvanced] = useState(() => {
     if (rules.length === 0) return false;
-    // If any non-standard rule exists, start in advanced mode
+
     return rules.some(
       (r) =>
         (r.limitType !== "total_tokens" && r.limitType !== "cost_usd") ||
@@ -33,7 +33,7 @@ export function LimitRulesEditor({ rules, onChange }: LimitRulesEditorProps) {
     );
   });
 
-  // Derive basic mode values from rules
+
   const weeklyTokenRule = rules.find(
     (r) => r.limitType === "total_tokens" && r.limitWindow === "weekly" && !r.modelFilter,
   );

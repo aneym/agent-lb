@@ -1,23 +1,4 @@
-"""Auto-redeem banked rate-limit reset credits on full pool exhaustion.
 
-Standing operator rule (2026-07-17): a banked OpenAI reset credit may only be
-spent when **all** subscription-usable OpenAI accounts are used up. While any
-account can still serve, credits stay banked. The scheduler encodes that rule
-deterministically; redemption itself reuses
-``AccountsService.redeem_rate_limit_reset_credit`` so the post-redeem usage
-refresh and selection-cache invalidation apply.
-
-Automatic exhaustion redemptions also draw on a daily allowance
-(``reset_credit_auto_redeem_max_per_day``, default 2): one reset per rolling
-24h as the baseline, plus one more if the pool hits the limit again the same
-day. The count comes from the durable attempt ledger, so a restart cannot lift
-it, and ``reset_credit_auto_redeem_cooldown_seconds`` is the minimum spacing
-between two automatic redemptions — without it a single exhaustion episode
-read through a stale usage snapshot could burn the whole allowance at once.
-The expiry sweep is exempt — a credit inside its expiry window is
-use-it-or-lose-it — and so are operator-initiated redemptions from the
-dashboard and menubar.
-"""
 
 from __future__ import annotations
 
@@ -51,7 +32,7 @@ from app.modules.usage.updater import UsageUpdater
 logger = logging.getLogger(__name__)
 
 _SERVING_STATUSES = frozenset({AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED})
-# ISO timestamps sort lexicographically; missing expiry sorts last.
+
 _NO_EXPIRY_SORT_KEY = "9999"
 
 
@@ -81,12 +62,7 @@ def serving_openai_pool(accounts: list[Account]) -> list[Account]:
 
 
 def exhausted_pool_or_none(accounts: list[Account]) -> list[Account] | None:
-    """Return redemption candidates iff the whole serving pool is exhausted.
 
-    ``None`` means "do not redeem": the pool is empty or at least one account
-    is still active. Candidates come back ordered ``quota_exceeded`` first —
-    weekly-dead accounts recover slowest, so a full reset buys the most there.
-    """
     pool = serving_openai_pool(accounts)
     if not pool:
         return None
@@ -143,11 +119,7 @@ class ResetCreditAutoRedeemScheduler:
         return (utcnow() - self._last_redeemed_at).total_seconds() < self.cooldown_seconds
 
     async def _daily_allowance_exhausted(self, attempts: ResetCreditAttemptsRepository) -> bool:
-        """True when the rolling-24h automatic allowance is already spent.
 
-        ``max_per_day <= 0`` disables automatic exhaustion redemption outright,
-        matching the ``enabled`` kill switch.
-        """
         if self.max_per_day <= 0:
             return True
         used = await attempts.count_applied_since(utcnow() - timedelta(days=1))
@@ -202,8 +174,8 @@ class ResetCreditAutoRedeemScheduler:
                             continue
                         available = await refresh_standard_capacity(account, updater, usage_repo)
                         if available is not False:
-                            # Unknown refresh or any recovered capacity keeps
-                            # credits banked and lets ordinary failover recover.
+
+
                             break
                     else:
                         candidates = exhausted_pool_or_none(await repo.list_accounts(refresh_existing=True))
@@ -220,13 +192,7 @@ class ResetCreditAutoRedeemScheduler:
         repo: AccountsRepository,
         accounts: list[Account],
     ) -> None:
-        """Redeem credits about to lapse, regardless of pool capacity.
 
-        Safe to attempt early: upstream ``nothing_to_reset`` leaves the credit
-        banked (only ``reset`` consumes one), so unredeemable attempts retry on
-        the next sweep until the credit expires or the account has usage to
-        wipe.
-        """
         pool = serving_openai_pool(accounts)
         if not pool:
             return
@@ -252,8 +218,8 @@ class ResetCreditAutoRedeemScheduler:
             expiring = [credit for credit in available if _expires_within(credit.expires_at, now, window)]
             for credit in expiring:
                 await self._redeem_expiring(service, account, credit.id, credit.expires_at)
-                # A second expiry reset needs a new inventory/usage sweep.
-                # This also prevents unknown results from fanning out.
+
+
                 return
 
     async def _redeem_expiring(self, service, account: Account, credit_id: str, expires_at: str | None) -> None:  # noqa: ANN001
@@ -367,15 +333,7 @@ class ResetCreditAutoRedeemScheduler:
 
 
 async def _wake_upstream_limiter(service, account: Account) -> None:  # noqa: ANN001
-    """Probe the account after a redemption so ``/wham/usage`` re-evaluates.
 
-    Upstream serves stale pre-reset usage until a real request wakes the
-    limiter (the account-probe endpoint exists for exactly this). Without the
-    wake, a redeemed account can keep reporting ``quota_exceeded`` locally —
-    which the exhaustion rule would misread as "still exhausted" and, after
-    cooldown, spend another credit on. Best-effort: probe failure only delays
-    recovery until organic traffic or the next probe.
-    """
     try:
         await service.probe_account(account.id)
     except Exception:
@@ -401,11 +359,7 @@ async def _rank_candidates_by_credit_expiry(
     candidates: list[Account],
     encryptor: TokenEncryptor,
 ) -> list[tuple[Account, str]]:
-    """Pair each candidate with its earliest-expiring available credit.
 
-    Preserves the quota_exceeded-first account ordering as the primary key and
-    orders by credit expiry within each status group.
-    """
     ranked: list[tuple[int, str, Account, str]] = []
     for account in candidates:
         if not _locally_owned(account):
@@ -434,8 +388,8 @@ async def _rank_candidates_by_credit_expiry(
 
 
 def _build_accounts_service(repo: AccountsRepository, session: AsyncSession):  # noqa: ANN202
-    # Deferred imports: app.dependencies imports module routers at load time,
-    # and importing it at module scope from here would cycle through main.py.
+
+
     from app.dependencies import _accounts_repo_context
     from app.modules.accounts.auth_manager import AuthManager
     from app.modules.accounts.service import AccountsService

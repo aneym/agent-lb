@@ -185,7 +185,7 @@ async def test_proxy_compact_reaches_upstream_despite_exhausted_additional_quota
     monkeypatch.setattr(proxy_module, "core_compact_responses", fake_compact)
     payload = {"model": "gpt-5.3-codex-spark", "instructions": "hi", "input": []}
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
-    # 82ed714b: exhausted additional usage does not deny a live compact attempt.
+
     assert response.status_code == 200
     assert attempted_accounts == [raw_account_id]
 

@@ -1,7 +1,7 @@
 import Foundation
 
-/// Pure presentation rules for quota reset state. A reset timestamp marks a
-/// window boundary, not a promise that more allowance will become available.
+
+
 enum ResetDisplay {
   static func isKnownFull(_ window: UsageWindow) -> Bool {
     if let capacity = window.capacityCredits, capacity <= 0 { return false }
@@ -31,8 +31,8 @@ enum ResetDisplay {
     return values.percent.map { $0 >= 100 } ?? false
   }
 
-  /// A scoped card is full only when every routable account has known-full
-  /// telemetry for that window. Missing telemetry deliberately remains unknown.
+
+
   static func allKnownFull(_ accounts: [Account], window: ProviderScope.Window) -> Bool {
     let routable = accounts.filter { $0.isRoutable }
     return !routable.isEmpty && routable.allSatisfy { isKnownFull($0, window: window) }

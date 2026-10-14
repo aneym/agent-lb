@@ -46,7 +46,7 @@ def invoke(
         env=os.environ
         | {"LIMIT_WATCH_SNAPSHOT": str(snapshot_path), "DISPATCH_LEDGER": str(ledger), "ROUTE_TABLE": str(TABLE)},
     )
-    # An admitted dispatch with nothing to report prints nothing.
+
     output = json.loads(result.stdout)["hookSpecificOutput"] if result.stdout.strip() else {}
     record = json.loads(ledger.read_text()) if ledger.exists() else None
     return output, record
@@ -87,7 +87,7 @@ def test_capacity_states_are_advisory_and_remain_telemetry(
 
 
 def test_a_retired_model_named_on_the_dispatch_runs_and_is_logged(tmp_path: Path) -> None:
-    # Alex, 2026-10-05: "we shouldnt just block model usage, we shoudl allow them if we request".
+
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="claude-fable-5-1")
     assert "permissionDecision" not in output
     assert "explicit request for a model off the default ladder (claude-fable-5-1)" in output["additionalContext"]
@@ -96,7 +96,7 @@ def test_a_retired_model_named_on_the_dispatch_runs_and_is_logged(tmp_path: Path
 
 
 def test_a_blocked_model_is_warned_and_logged_never_denied(tmp_path: Path) -> None:
-    # Guard trim (Alex, 2026-10-08 09:18 ET): the seat guard logs the pick and warns in one line; it never denies.
+
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="claude-planner")
     assert "permissionDecision" not in output
     assert output["additionalContext"].startswith("seat-guard (warn only, not blocked): ")
@@ -116,7 +116,7 @@ def test_a_blocked_model_is_warned_and_logged_never_denied(tmp_path: Path) -> No
 def test_readmitted_seats_use_their_own_family_without_asking(
     tmp_path: Path, subagent: str, model: str, explicit: bool
 ) -> None:
-    # Elsewhere the same model runs only as a logged explicit request.
+
     payload = json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": subagent, "model": model, "prompt": "x"}})
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
     assert "permissionDecision" not in output
@@ -148,7 +148,7 @@ def test_a_brief_that_names_an_off_ladder_model_runs_and_is_logged(tmp_path: Pat
     assert record["why"] == "escalate after two failures"
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=brief("gpt-5.4-mini"),
                             ledger_path=tmp_path / "blocked.jsonl")
-    # Prose is advisory even for a model gone upstream (a prose hit denied a verifier at 19:51Z, 2026-10-05).
+
     assert "permissionDecision" not in output
     assert "no longer served upstream" in output["additionalContext"]
     assert record and "denied" not in record
@@ -182,7 +182,7 @@ def test_brief_that_only_mentions_a_retired_model_is_admitted(tmp_path: Path) ->
     ],
 )
 def test_brief_that_asks_to_remove_a_retired_pin_is_admitted(tmp_path: Path, brief: str) -> None:
-    # A pin the brief removes or forbids is not a request, so nothing is logged as one.
+
     payload = json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": "cursor-seat", "prompt": brief}})
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
     assert "permissionDecision" not in output
@@ -204,8 +204,7 @@ def test_opus_dispatch_is_admitted(tmp_path: Path) -> None:
 
 
 def test_malformed_input_is_a_permission_denial(tmp_path: Path) -> None:
-    """S44 (hook-dispatcher-5, 2026-10-08): the seat guard is a floor guard, so input it cannot read denies the
-    dispatch; it used to allow with an advisory. Telemetry trouble below still never denies."""
+
     output, record = invoke(tmp_path, snapshot=None, raw_input="not json")
     assert output["permissionDecision"] == "deny"
     assert "fails closed" in output["permissionDecisionReason"]
@@ -221,9 +220,9 @@ def test_telemetry_write_failure_is_never_a_permission_denial(tmp_path: Path) ->
     assert record is None
 
 
-# settings.json runs this hook as `/usr/bin/python3` (3.9 on macOS). A PEP 604
-# annotation evaluated at import crashed it there, so every dispatch after
-# 2026-09-21 went unrecorded behind "routing telemetry unavailable".
+
+
+
 SYSTEM_PYTHON = Path("/usr/bin/python3")
 
 

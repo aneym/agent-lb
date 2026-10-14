@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a beta release version bump in the working tree."""
+
 
 from __future__ import annotations
 

@@ -40,8 +40,8 @@ from app.modules.usage.repository import AdditionalUsageRepository, UsageReposit
 logger = logging.getLogger(__name__)
 
 _FABLE_PROBE_MODEL = "claude-fable-5-1"
-# Mirrored in anthropic_service.py's _provider_quota_eligibility read side —
-# both must agree on the quota_key/window identifying this marker.
+
+
 ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"
 _ANTHROPIC_FABLE_PROBE_FEATURE = "anthropic_fable_probe"
 _ANTHROPIC_FABLE_PROBE_WINDOW = "primary"
@@ -63,15 +63,8 @@ class AnthropicQuotaCooldown:
 
 
 def _classify_fable_probe(status: int, message: str | None) -> FableProbeVerdict:
-    """Map a claude-fable-5 probe HTTP status to a Fable-capability verdict.
 
-    Unlike the general account-health probe, a 4xx here is a real signal:
-    the probe body is fixed and known-good, so a model/permission refusal
-    (400/403/404) means Anthropic rejected Fable specifically for this
-    account. 429/5xx/network failures stay inconclusive and must not write
-    a marker — the account keeps its prior state until a decisive probe.
-    """
-    del message  # reserved for future refinement of refusal detection
+    del message
     if 200 <= status < 300:
         return FableProbeVerdict.CAPABLE
     if status in (400, 403, 404):
@@ -80,13 +73,7 @@ def _classify_fable_probe(status: int, message: str | None) -> FableProbeVerdict
 
 
 def _is_fable_probe_routable(account: Account) -> bool:
-    """Same routable notion selection uses (see load_balancer.selectable_accounts):
 
-    excludes reauth-required, deactivated, and paused rows, and canceled
-    subscriptions — those can never serve Fable traffic regardless of a
-    probe outcome, so probing them is pointless until the main pulse probe
-    (not this one) restores them.
-    """
     return account.status not in (
         AccountStatus.REAUTH_REQUIRED,
         AccountStatus.DEACTIVATED,
@@ -138,10 +125,10 @@ _RepoFactory = Callable[[], AbstractAsyncContextManager[_AccountsRepositoryLike]
 _AuthManagerFactory = Callable[[_AccountsRepositoryLike], _AuthManagerLike]
 _LeaderElectionFactory = Callable[[], _LeaderElectionLike]
 _ProbeSender = Callable[[Account, str], Awaitable[tuple[int, str | None]]]
-# Status of an auth-only upstream call made with the account's token.
+
 _AuthCheckSender = Callable[[Account, str], Awaitable[int]]
-# (used_percent, reset_at) of the account's latest weekly (secondary) usage
-# entry, or None when no such entry exists.
+
+
 _WeeklyUsageLookup = Callable[[str], Awaitable[tuple[float, int | None] | None]]
 _FableMarkerWriter = Callable[[str, float, int | None], Awaitable[None]]
 _ActiveQuotaCooldownLookup = Callable[[str], Awaitable[list[AnthropicQuotaCooldown]]]
@@ -158,31 +145,7 @@ class _FailureBackoff:
 
 @dataclass(slots=True)
 class AccountPulseScheduler:
-    """Periodically verifies every non-paused account with a real upstream probe.
 
-    Classification is deliberately conservative (see ``classify_probe_result``):
-    only a 2xx, a 401, or a 403 carrying a known subscription-refusal marker
-    changes account state. The pulse keeps three dashboard-visible states
-    truthful without operator action:
-
-    - authenticated + subscribed (``active`` with a usable subscription),
-    - authenticated but unsubscribed (subscription ledger ``canceled``,
-      credentials intact),
-    - disconnected (``reauth_required`` — credentials rejected upstream).
-
-    An OpenAI probe 401 is confirmed with an auth-only call (``/wham/usage``)
-    before the account is marked disconnected: codex/responses has rejected
-    every account at once for upstream reasons while the tokens were valid.
-    If the auth-only call succeeds, the verdict is inconclusive.
-
-    Paused accounts are operator intent and are never probed.
-
-    Between full passes a fast recovery lane re-probes only recovery-pending
-    accounts (subscription ledger ``canceled`` or status
-    ``reauth_required``/``deactivated``) every ``recovery_interval_seconds``,
-    so an account fixed upstream re-enters the routable pool within minutes
-    instead of waiting for the next full pass.
-    """
 
     interval_seconds: int
     enabled: bool
@@ -231,10 +194,10 @@ class AccountPulseScheduler:
             self._task = None
 
     async def _run_loop(self) -> None:
-        # Wakes happen at the recovery cadence; each wake runs the fast
-        # recovery lane unless a full interval has elapsed since the last
-        # full pass. With recovery_interval_seconds >= interval_seconds the
-        # loop degrades to the original single-cadence behavior.
+
+
+
+
         wake_seconds = min(self.interval_seconds, self.recovery_interval_seconds)
         next_full_pass_monotonic = time.monotonic()
         while not self._stop.is_set():
@@ -270,9 +233,9 @@ class AccountPulseScheduler:
         if not await self.leader_election_factory().try_acquire():
             return
         async with self._lock:
-            # Candidate filtering must happen inside the repo session: the ORM
-            # instances detach once the session closes and attribute access
-            # raises DetachedInstanceError. Only ids may escape this block.
+
+
+
             async with self.repo_factory() as repo:
                 accounts = await repo.list_accounts(refresh_existing=True)
                 candidate_ids = [
@@ -281,8 +244,8 @@ class AccountPulseScheduler:
             if not candidate_ids:
                 return
             semaphore = asyncio.Semaphore(max(1, self.concurrency))
-            # return_exceptions keeps sibling probes awaited (never orphaned
-            # past the lock) when one candidate raises unexpectedly.
+
+
             results = await asyncio.gather(
                 *(self._pulse_candidate(account_id, semaphore) for account_id in candidate_ids),
                 return_exceptions=True,
@@ -302,10 +265,10 @@ class AccountPulseScheduler:
             return not self._in_backoff(account.id)
         if not _is_recovery_pending(account):
             return False
-        # The recovery lane caps the effective failure backoff at its own
-        # cadence: a transient failure on a recovery-pending account must
-        # never push recovery detection past the full interval, while the
-        # wake cadence still bounds probes to one per recovery interval.
+
+
+
+
         return not self._in_backoff(account.id, max_delay_seconds=float(self.recovery_interval_seconds))
 
     async def _pulse_candidate(self, account_id: str, semaphore: asyncio.Semaphore) -> None:
@@ -355,9 +318,9 @@ class AccountPulseScheduler:
                 ):
                     verdict = await self._confirm_openai_rejection(fresh_account, access_token, status, message)
                 await self._apply_verdict(repo, fresh_account, verdict, status, message)
-                # Runs after the normal verdict is fully applied, and is
-                # internally exception-safe, so a Fable-probe failure can
-                # never suppress or alter the handling above.
+
+
+
                 await self._maybe_probe_fable_access(fresh_account, access_token)
                 await self._reconcile_fable_quota_cooldowns(fresh_account, access_token)
 
@@ -368,7 +331,7 @@ class AccountPulseScheduler:
         status: int,
         code: str | None,
     ) -> probes.ProbeVerdict:
-        """A codex/responses 401 counts only if the token also fails an auth-only call."""
+
         check_status = await self.openai_auth_check_sender(account, access_token)
         if check_status == 401:
             return probes.ProbeVerdict.DISCONNECTED
@@ -383,7 +346,7 @@ class AccountPulseScheduler:
         return probes.ProbeVerdict.INCONCLUSIVE
 
     async def _reconcile_fable_quota_cooldowns(self, account: Account, access_token: str) -> None:
-        """Clear only model cooldowns disproved by exact quota-shaped probes."""
+
         try:
             if normalize_provider_name(account.provider) != ANTHROPIC_PROVIDER_NAME:
                 return
@@ -417,14 +380,7 @@ class AccountPulseScheduler:
             )
 
     async def _maybe_probe_fable_access(self, account: Account, access_token: str) -> None:
-        """Send an additional tiny claude-fable-5 probe to routable Anthropic
-        accounts at/over the Fable weekly threshold and record the outcome as
-        a Fable-access marker (see ANTHROPIC_FABLE_ACCESS_QUOTA_KEY).
 
-        This never changes account status, the subscription ledger, or any
-        other routing state — it only feeds the marker that
-        ``_provider_quota_eligibility`` reads to decide Fable eligibility.
-        """
         from app.core.config.settings import get_settings
 
         try:
@@ -514,9 +470,9 @@ class AccountPulseScheduler:
                 )
                 logger.info("Account pulse reactivated account_id=%s", account.id)
             elif account.status == AccountStatus.ACTIVE and account.deactivation_reason is not None:
-                # A healthy probe proves any stored deactivation reason is stale
-                # (a recovery path restored status without clearing it); clients
-                # treat a non-null reason as disconnected, so reconcile it away.
+
+
+
                 updated = await repo.update_status_if_current(
                     account.id,
                     AccountStatus.ACTIVE,
@@ -545,9 +501,9 @@ class AccountPulseScheduler:
         if verdict is probes.ProbeVerdict.UNSUBSCRIBED:
             self._failures.pop(account.id, None)
             if account.status in (AccountStatus.DEACTIVATED, AccountStatus.REAUTH_REQUIRED):
-                # The probe authenticated, so a stored auth-failure status is
-                # stale — the account is unsubscribed, not disconnected. The
-                # canceled ledger keeps it out of the routable pool.
+
+
+
                 updated = await repo.update_status_if_current(
                     account.id,
                     AccountStatus.ACTIVE,
@@ -711,9 +667,9 @@ async def _default_openai_auth_check_sender(account: Account, access_token: str)
 
 
 async def _default_fable_probe_sender(account: Account, access_token: str) -> tuple[int, str | None]:
-    # Reuses the exact probe machinery POST /api/accounts/{id}/probe and the
-    # main pulse probe use (probes.send_messages_probe, max_tokens=4), just
-    # pinned to the Fable model instead of the subscription-check model.
+
+
+
     del account
     from app.core.config.settings import get_settings
 

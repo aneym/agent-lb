@@ -154,7 +154,7 @@ function ManualCallbackInputBody({
       await onSubmit(callbackUrl.trim());
       setCallbackUrl("");
     } catch {
-      // Parent state renders the error stage/message.
+
     } finally {
       setSubmitting(false);
     }
@@ -273,7 +273,7 @@ export function OauthDialog({
           ) : null}
         </DialogHeader>
 
-        {/* Intro stage */}
+        {                 }
         {stage === "intro" ? (
           <div className="space-y-3">
             <div className="space-y-1.5">
@@ -348,7 +348,7 @@ export function OauthDialog({
           </div>
         ) : null}
 
-        {/* Browser stage */}
+        {                   }
         {stage === "browser" ? (
           <div className="min-w-0 space-y-3 text-sm">
             <div className="space-y-1.5">
@@ -406,7 +406,7 @@ export function OauthDialog({
           </div>
         ) : null}
 
-        {/* Device stage */}
+        {                  }
         {stage === "device" ? (
           <div className="space-y-3 text-sm">
             <ol className="list-inside list-decimal space-y-1 text-xs text-muted-foreground">
@@ -455,7 +455,7 @@ export function OauthDialog({
           </div>
         ) : null}
 
-        {/* Success stage */}
+        {                   }
         {stage === "success" ? (
           <div className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-3 text-sm text-foreground">
             <Check className="h-4 w-4 shrink-0" />
@@ -463,7 +463,7 @@ export function OauthDialog({
           </div>
         ) : null}
 
-        {/* Error stage */}
+        {                 }
         {stage === "error" ? (
           <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive">
             <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />

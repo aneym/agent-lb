@@ -1,4 +1,4 @@
-"""Node discovery retains only tailnet names and does not block request resolution."""
+
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ async def test_refresh_keeps_only_node_handles_and_last_good_snapshot(monkeypatc
             await cache._refresh()
             assert cache._nodes == {TAIL_A: "box-1", TAIL_MISS: "box-2"}
             assert resolve_identity(headers, "127.0.0.1", settings=settings).caller_machine == "box-1"
-            assert calls == 1  # resolution reads only the snapshot
+            assert calls == 1
             assert (
                 resolve_identity(
                     {"x-forwarded-for": str(ipaddress.ip_network("100.64.0.0/10")[9])}, "127.0.0.1", settings=settings

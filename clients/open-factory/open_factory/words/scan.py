@@ -1,4 +1,4 @@
-"""Token-aware scanning of tracked text and added diff lines."""
+
 
 import re
 import subprocess

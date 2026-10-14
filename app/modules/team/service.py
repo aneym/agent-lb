@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 _AGGREGATE_CACHE_TTL_SECONDS = 5.0
 _NEAR_CAP_RATIO = 0.8
-# Members are people, not agents: every refusal they see ends with who to ask.
+
 MEMBER_CONTACT_LINE = "Text Alex if you have any questions."
 
 GATE_OK = "ok"
@@ -61,7 +61,7 @@ def reset_team_usage_cache() -> None:
 
 
 def invalidate_team_member_caches() -> None:
-    """Drop cached member aggregates and force api-key cache re-reads."""
+
 
     reset_team_usage_cache()
     reset_pool_share_cache()
@@ -169,7 +169,7 @@ class TeamMemberWindowStatus:
 
 @dataclass(frozen=True, slots=True)
 class TeamMemberSelfStatus:
-    """What a member key is allowed to learn about its own member."""
+
 
     id: str
     name: str
@@ -193,7 +193,7 @@ class TeamMemberUsageDetail:
 
 
 def serialize_allowed_models(models: list[str] | None) -> str | None:
-    """Same encoding the api_keys module uses for ``allowed_models``."""
+
 
     if not models:
         return None
@@ -216,19 +216,7 @@ _MODEL_CONTEXT_SUFFIX = re.compile(r"(?:\[[^\]]*\]|-1m)$")
 
 
 def _model_match_keys(model: str) -> set[str]:
-    """Every spelling of ``model`` that one allowlist entry has to cover.
 
-    Clients name the same upstream model several ways. Claude Code appends a
-    context marker (``claude-opus-5[1m]``, ``claude-opus-5-1m``) and Codex
-    appends a reasoning-effort token (``gpt-5.6-sol-xhigh``). The key-level
-    check already collapses the effort aliases before comparing; the member
-    allowlist has to collapse the same ones, or an allowlist naming the base
-    model refuses the client's own spelling of that very model.
-
-    Collapsing the context marker means an entry is a decision about the model,
-    not about its context window: allowing ``claude-opus-5`` allows the 1M form
-    too, and vice versa.
-    """
 
     normalized = model.strip().lower()
     if not normalized:
@@ -258,15 +246,15 @@ class TeamService:
     def __init__(self, repository: TeamRepository) -> None:
         self._repository = repository
 
-    # ── Gate ──
+
 
     async def check_member_gate(self, api_key: ApiKeyData, model: str | None) -> None:
         try:
             await self._check_member_gate(api_key, model)
         except (TeamMemberSuspendedError, TeamModelNotAllowedError, TeamMemberOverCapError) as exc:
-            # Websocket refusals never reach the HTTP error handler or request_logs; this line is
-            # the one record of every gate refusal, whatever the transport. %r keeps a client-sent
-            # model name with a newline on one log line.
+
+
+
             logger.warning(
                 "team_gate_refused key_id=%s model=%r code=%s message=%r",
                 getattr(api_key, "id", None),
@@ -333,7 +321,7 @@ class TeamService:
             return []
         return await pool_share_windows(self._repository._session, member.id, float(member.pool_share_percent), now=now)
 
-    # ── CRUD ──
+
 
     async def list_members(self) -> list[TeamMemberData]:
         members = await self._repository.list_all()
@@ -459,13 +447,7 @@ class TeamService:
         )
 
     async def get_member_self_status(self, member_id: str) -> TeamMemberSelfStatus | None:
-        """Caps, usage and gate for one member, for that member's own key.
 
-        Returns ``None`` when the member row is gone, so a key whose member was
-        deleted degrades to "no member" instead of failing the usage call. Reads
-        usage through the same short-lived cache the gate uses, so a tray client
-        polling this endpoint cannot turn into a per-poll aggregate query.
-        """
 
         member = await self._repository.get_by_id(member_id)
         if member is None:
@@ -544,7 +526,7 @@ def _over_cap_error(window: str, now: datetime, detail: str) -> TeamMemberOverCa
 
 
 def _reset_text(reset_at: datetime) -> str:
-    # Window ends are naive UTC; say so, since the reader is a person in another zone.
+
     return reset_at.strftime("%a %H:%M UTC")
 
 

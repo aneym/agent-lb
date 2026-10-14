@@ -922,13 +922,13 @@ async def test_connect_responses_websocket_maps_invalid_proxy(monkeypatch):
     assert _proxy_error_code(exc_info.value) == "upstream_unavailable"
 
 
-# The upstream edge rejects websocket handshakes with a bare 403 (no JSON error
-# body) when too many open from one address in a short time: live evals on
-# 2026-09-25 saw it hit every account in the same second at 100+ parallel agents,
-# and a burst could stay rejected for over a minute. That is a rate limit, so the
-# handshake is retried with backoff for minutes, not a fixed handful of tries. A
-# 403 carrying an OpenAI error body is about the account and must still surface on
-# the first answer.
+
+
+
+
+
+
+
 async def _serve_handshakes(monkeypatch, answers: list[tuple[int, bytes, str] | None]):
     attempts: list[int] = []
 
@@ -970,8 +970,8 @@ _ACCOUNT_403 = (
 
 @pytest.mark.asyncio
 async def test_edge_rejected_handshake_is_retried_until_it_connects(monkeypatch):
-    # Eight rejections in a row: at 200 parallel agents the edge kept rejecting
-    # past the six tries (about 30 s) the first version allowed.
+
+
     server, attempts = await _serve_handshakes(monkeypatch, [_EDGE_403] * 8 + [None])
     try:
         websocket = await connect_responses_websocket(

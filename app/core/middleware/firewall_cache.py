@@ -5,12 +5,6 @@ from dataclasses import dataclass
 
 import anyio
 
-# Default TTL when the firewall cache is constructed before settings are
-# resolved. The application normally tunes this via
-# ``firewall_ip_cache_ttl_seconds`` (env ``AGENT_LB_FIREWALL_IP_CACHE_TTL_SECONDS``),
-# read lazily on first access in :func:`get_firewall_ip_cache`. The default is
-# intentionally well above the worst-case request-handling latency so the cache
-# provides real relief on hot paths under load.
 DEFAULT_FIREWALL_IP_CACHE_TTL_SECONDS = 30
 
 
@@ -63,12 +57,7 @@ _firewall_ip_cache: FirewallIPCache | None = None
 
 
 def _resolve_configured_ttl() -> int:
-    """Read the configured TTL from settings, falling back to the default.
 
-    Settings access is wrapped because the cache may be constructed before the
-    settings module is fully initialised (e.g. during early module-import in
-    tests).
-    """
     try:
         from app.core.config.settings import get_settings
 
@@ -85,7 +74,6 @@ def get_firewall_ip_cache() -> FirewallIPCache:
 
 
 def reset_firewall_ip_cache_for_testing() -> None:
-    """Drop the cached singleton so the next ``get_firewall_ip_cache()`` call
-    re-reads settings. Test-only helper."""
+
     global _firewall_ip_cache
     _firewall_ip_cache = None

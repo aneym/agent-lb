@@ -1,9 +1,4 @@
-"""add api key assignment scope flag
 
-Revision ID: 20260406_010000_add_api_key_assignment_scope_flag
-Revises: 20260406_000000_add_api_key_account_assignments
-Create Date: 2026-04-06
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260406_010000_add_api_key_assignment_scope_flag"
 down_revision = "20260406_000000_add_api_key_account_assignments"
 branch_labels = None

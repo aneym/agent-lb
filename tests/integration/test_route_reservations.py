@@ -1,13 +1,4 @@
-"""A4a scenario (Opus-written 2026-10-06; the implementer may not edit this file). Provider capacity is a lease held
-in agent-lb, not a count each caller makes alone (complaint 2026-10-05 21:51 ET: nine jobs on Devin with one usable
-account, all nine silent for 55 minutes). Nine concurrent `route reserve` callers from two hosts get exactly what the
-fixture pools allow and the rest wait; a holder that never releases loses its lease at expiry; a heartbeat keeps it;
-a failed release frees at once; a pinned request waits or is refused, never moved to another seat; agent-lb down
-means nothing is reserved; `route pick` remains advisory but observes reservation availability
-(user-directed board item 5, 10/06/2026).
 
-Runs a real agent-lb server (fresh data dir) and the real clients/route; pools come from the route fixture dir,
-reservations never do."""
 
 from __future__ import annotations
 
@@ -123,7 +114,7 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     env = scenario_env(tmp_path, server, "main")
     _, advisory_before = route(env, "pick", "implement")
 
-    # Nine at once from two hosts: Sol has 2 accounts x 3, Devin 1 x 1. Seven reserve, two wait; none is lost.
+
     def reserve(index: int) -> tuple[int, dict]:
         return route(env, "reserve", "implement", "--job", f"j{index}", host="host-a" if index % 2 else "host-b")
     with ThreadPoolExecutor(max_workers=9) as pool:
@@ -144,18 +135,18 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     rows = live(env)
     assert len(rows) == 7 and {row["host"] for row in rows} == {"host-a", "host-b"}, rows
 
-    # The same job asking again gets its own lease back, not a second one.
+
     first_sol = next(body for body in reserved if body["seat"] == "gpt-implementer")
     rc, again = route(env, "reserve", "implement", "--job", first_sol["job"])
     assert rc == 0 and again["reservation_id"] == first_sol["reservation_id"], again
     assert len(live(env)) == 7
 
-    # A pin on a full rung waits; it is never moved to another seat.
+
     rc, pinned = route(env, "reserve", "implement", "--job", "pin1", "--prefer", "devin-seat", "--reason", "A4a pin")
     assert rc == 75 and pinned["status"] == "wait" and "seat" not in pinned, pinned
     assert len(live(env)) == 7
 
-    # A failed run's release frees its capacity at once; a second release changes nothing.
+
     rc, released = route(env, "release", devin["reservation_id"], "--outcome", "failed")
     assert rc == 0 and (released["status"], released["outcome"]) == ("released", "failed"), released
     rc, pinned = route(env, "reserve", "implement", "--job", "pin1", "--prefer", "devin-seat", "--reason", "A4a pin")
@@ -163,7 +154,7 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     rc, twice = route(env, "release", devin["reservation_id"], "--outcome", "ok")
     assert rc == 0 and twice["outcome"] == "failed", twice
 
-    # A holder that dies without releasing holds its capacity only until expiry.
+
     rc, freed = route(env, "release", first_sol["reservation_id"], "--outcome", "ok")
     assert rc == 0 and freed["outcome"] == "ok"
     rc, dead = route(env, "reserve", "implement", "--job", "dead1", "--ttl", "5")
@@ -177,7 +168,7 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     expired = [row for row in listing["recent"] if row["job"] == "dead1"]
     assert expired and expired[0]["outcome"] == "expired", listing
 
-    # A heartbeat keeps a lease past its first expiry; a released lease cannot be renewed.
+
     route(env, "release", after["reservation_id"], "--outcome", "cancelled")
     rc, beating = route(env, "reserve", "implement", "--job", "hb1", "--ttl", "4")
     assert rc == 0, beating
@@ -191,8 +182,8 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     rc, gone = route(env, "heartbeat", beating["reservation_id"])
     assert rc == 2 and gone["status"] == "gone", gone
 
-    # Board item 5 supersedes the original advisory-only pick oracle: picks observe
-    # holds but do not acquire one. Sol still has room; Devin's pinned hold is full.
+
+
     before = len(live(env))
     _, advisory_after = route(env, "pick", "implement")
     assert advisory_after["seat"] == advisory_before["seat"] == "gpt-implementer"

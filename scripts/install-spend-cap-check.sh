@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the spend-cap scenario from the landed ref, without restarting agent-lb.
+
 set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 bindir=${AGENT_LB_BIN_DIR:-"$HOME/.agent-lb/bin"}

@@ -17,10 +17,10 @@ from app.modules.api_keys.service import (
 pytestmark = pytest.mark.unit
 
 
-# Regression for #619: every user-facing api_keys validation failure must
-# raise the typed ApiKeyValidationError so API routes can catch the
-# typed exception and unrelated programming errors that happen to be
-# ValueError no longer get silently converted into HTTP 4xx.
+
+
+
+
 
 
 def test_normalize_name_raises_typed_validation_error_on_blank_input() -> None:
@@ -79,7 +79,7 @@ def test_build_limit_rows_for_update_raises_typed_validation_error_on_duplicate_
 
 
 def test_api_key_validation_error_is_value_error_subclass_for_back_compat() -> None:
-    # Existing transitive callers that catch ValueError must continue
-    # to work; only the api routes have been narrowed to the typed
-    # exception. Subclass relationship preserves that contract.
+
+
+
     assert issubclass(ApiKeyValidationError, ValueError)

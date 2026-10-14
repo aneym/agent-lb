@@ -154,12 +154,7 @@ async def test_unrefreshable_account_serving_margin(monkeypatch, owner_instance,
 
 @pytest.mark.asyncio
 async def test_ensure_fresh_detached_refresh_owns_session_on_caller_cancel(monkeypatch):
-    """Regression: a client disconnect during a forced token refresh must not
-    strand a background-pool connection. The shielded refresh task must write
-    via its OWN session (from refresh_repo_factory), never the request-scoped
-    repo that the cancelled caller closes. Pre-fix this leaked one pooled
-    connection per disconnect-during-refresh (agent-lb pool-exhaustion spiral).
-    """
+
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -207,23 +202,23 @@ async def test_ensure_fresh_detached_refresh_owns_session_on_caller_cancel(monke
     )
 
     caller = asyncio.create_task(manager.ensure_fresh(account, force=True))
-    await started.wait()  # refresh is in-flight
-    caller.cancel()  # simulate the client disconnecting mid-refresh
+    await started.wait()
+    caller.cancel()
     with pytest.raises(asyncio.CancelledError):
         await caller
 
-    # The shielded refresh task survives the caller's cancellation; let it finish.
+
     release.set()
     for _ in range(200):
         if owned_repo.tokens_payload is not None and scope_state["closed"]:
             break
         await asyncio.sleep(0.005)
 
-    # The refresh wrote through its OWN session and never the request-scoped one.
+
     assert owned_repo.tokens_payload is not None
     assert owned_repo.tokens_payload["account_id"] == "acc_disconnect"
     assert request_repo.tokens_payload is None
-    # The owned session was opened and deterministically closed (connection returned).
+
     assert scope_state["opened"] is True
     assert scope_state["closed"] is True
 
@@ -992,16 +987,13 @@ async def test_refresh_account_deactivates_when_repo_only_reencrypted_same_refre
 
 @pytest.mark.asyncio
 async def test_refresh_account_requires_reauth_when_upstream_returns_token_expired(monkeypatch):
-    """Regression for #383: a ``token_expired`` code from the OAuth refresh
-    endpoint must classify as a permanent failure and block the account,
-    not loop retries forever while the account stays ``ACTIVE``.
-    """
+
 
     async def _fake_refresh(_: str, **_kwargs: object) -> TokenRefreshResult:
-        # Real upstream-observed shape: HTTP 4xx body whose error code is
-        # ``token_expired`` and message is the user-facing "Provided
-        # authentication token is expired" wording. classify_refresh_error
-        # must surface this as ``is_permanent=True``.
+
+
+
+
         from app.core.auth.refresh import classify_refresh_error
 
         assert classify_refresh_error("token_expired") is True

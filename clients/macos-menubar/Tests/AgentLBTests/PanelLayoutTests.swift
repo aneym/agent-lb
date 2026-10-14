@@ -2,14 +2,14 @@ import XCTest
 
 @testable import AgentLB
 
-/// Deterministic §9.1 panel sizing. Expectations are HAND-COMPUTED from
-/// PanelMetrics (never derived by re-running the production formula):
-///
-///   header 72 · scope bar 36 · divider 1 · footer 52
-///   pool   = 12 + 14 + 8 + 128 + 8 + metrics(14 | 31 | 48)   → 184 | 201 | 218
-///   accounts fixed = 12 + 22 + 6 (+30 search)                → 40 | 70
-///   recent = 12 + 16 (+6 + rows×18 + 8 when expanded)        → 28 | 132@5
-///   list   = rows × 52 + 8
+
+
+
+
+
+
+
+
 final class PanelLayoutTests: XCTestCase {
 
   private func inputs(
@@ -32,10 +32,10 @@ final class PanelLayoutTests: XCTestCase {
     return inputs
   }
 
-  // MARK: - Fixed modes
+
 
   func testServiceDown() {
-    // 72 + 1 + 252 + 1 + 52
+
     let layout = PanelLayout.compute(inputs(mode: .serviceDown))
     XCTAssertEqual(layout.panelHeight, 378)
     XCTAssertEqual(layout.listRows, 0)
@@ -43,7 +43,7 @@ final class PanelLayoutTests: XCTestCase {
   }
 
   func testLoading() {
-    // 72 + 1 + 434 + 1 + 52
+
     XCTAssertEqual(PanelLayout.compute(inputs(mode: .loading)).panelHeight, 560)
   }
 
@@ -53,12 +53,12 @@ final class PanelLayoutTests: XCTestCase {
     XCTAssertEqual(PanelLayout.compute(i).panelHeight, 584)
   }
 
-  // MARK: - Content: row counts vs budget
-  // base(recent expanded, 5 recent rows, 2 metric lines)
-  //   = 72+36+1 + 201 + 1 + 40 + 1 + 132 + 1+52 = 537
+
+
+
 
   func testThreeRowsRecentExpanded() {
-    // budget = 720-537-8 = 175 → 3 rows fit → list 164 → 537+164 = 701
+
     let layout = PanelLayout.compute(inputs(filtered: 3))
     XCTAssertEqual(layout.listRows, 3)
     XCTAssertEqual(layout.listHeight, 164)
@@ -66,7 +66,7 @@ final class PanelLayoutTests: XCTestCase {
   }
 
   func testEightRowsCompressToBudget() {
-    // 8 filtered, but only 3 fit under the 720 cap with recent expanded
+
     let layout = PanelLayout.compute(inputs(scoped: 8, filtered: 8))
     XCTAssertEqual(layout.listRows, 3)
     XCTAssertEqual(layout.panelHeight, 701)
@@ -79,8 +79,8 @@ final class PanelLayoutTests: XCTestCase {
   }
 
   func testRecentCollapsedFreesRowsForTheList() {
-    // base(collapsed) = 72+36+1 + 201 + 1 + 40 + 1 + 28 + 53 = 433
-    // budget = 720-433-8 = 279 → 5 rows → list 268 → 701
+
+
     let layout = PanelLayout.compute(inputs(scoped: 8, filtered: 8, recentExpanded: false))
     XCTAssertEqual(layout.listRows, 5)
     XCTAssertEqual(layout.listHeight, 268)
@@ -88,34 +88,34 @@ final class PanelLayoutTests: XCTestCase {
   }
 
   func testThreeRowsRecentCollapsed() {
-    // 433 + 164 = 597 — panel hugs content well below the cap
+
     let layout = PanelLayout.compute(inputs(filtered: 3, recentExpanded: false))
     XCTAssertEqual(layout.listRows, 3)
     XCTAssertEqual(layout.panelHeight, 597)
   }
 
   func testSearchFieldShrinksTheBudget() {
-    // base 537+30 = 567 → budget 145 → 2 rows → list 112 → 679
+
     let layout = PanelLayout.compute(inputs(scoped: 8, filtered: 8, searchVisible: true))
     XCTAssertEqual(layout.listRows, 2)
     XCTAssertEqual(layout.panelHeight, 679)
   }
 
   func testSingleMetricsLine() {
-    // pool 184; base = 109+184+1+40+1+28+53 = 416 → +list 112 (2 rows) = 528
+
     let layout = PanelLayout.compute(
       inputs(metricsLines: 1, scoped: 2, filtered: 2, recentExpanded: false))
     XCTAssertEqual(layout.listRows, 2)
     XCTAssertEqual(layout.panelHeight, 528)
   }
 
-  // MARK: - Content: three metrics lines (cost + tokens + value)
-  // pool(3 lines) = 12+14+8+128+8 + (3×14 + 2×3) = 218
-  // base(3 lines, scope bar, recent expanded 5 rows)
-  //   = 72+36+1 + 218+1+40+1+132+1+52 = 554
+
+
+
+
 
   func testThreeMetricsLines() {
-    // budget = 720-554-8 = 158 → 3 rows fit → list 164 → 554+164 = 718
+
     let layout = PanelLayout.compute(inputs(metricsLines: 3, scoped: 3, filtered: 3))
     XCTAssertEqual(layout.listRows, 3)
     XCTAssertEqual(layout.listHeight, 164)
@@ -123,14 +123,14 @@ final class PanelLayoutTests: XCTestCase {
   }
 
   func testThreeMetricsLinesCompressEight() {
-    // 8 filtered, but only 3 fit under the 720 cap with the third metrics line
+
     let layout = PanelLayout.compute(inputs(metricsLines: 3, scoped: 8, filtered: 8))
     XCTAssertEqual(layout.listRows, 3)
     XCTAssertEqual(layout.panelHeight, 718)
   }
 
   func testThreeMetricsLinesWithSearch() {
-    // base 554+30 = 584 → budget 128 → 2 rows → list 112 → 696
+
     let layout = PanelLayout.compute(
       inputs(metricsLines: 3, scoped: 8, filtered: 8, searchVisible: true))
     XCTAssertEqual(layout.listRows, 2)
@@ -139,7 +139,7 @@ final class PanelLayoutTests: XCTestCase {
   }
 
   func testThreeMetricsLinesRecentCollapsed() {
-    // base = 72+36+1 + 218+1+40+1+28+1+52 = 450 → 3 rows → list 164 → 614
+
     let layout = PanelLayout.compute(
       inputs(metricsLines: 3, filtered: 3, recentExpanded: false))
     XCTAssertEqual(layout.listRows, 3)
@@ -147,10 +147,10 @@ final class PanelLayoutTests: XCTestCase {
     XCTAssertEqual(layout.panelHeight, 614)
   }
 
-  // MARK: - Content: empty blocks
+
 
   func testZeroAccountsShowsEmptyState() {
-    // 537 + 110 = 647
+
     let layout = PanelLayout.compute(inputs(scoped: 0, filtered: 0))
     XCTAssertEqual(layout.listRows, 0)
     XCTAssertEqual(layout.listHeight, 0)
@@ -158,11 +158,11 @@ final class PanelLayoutTests: XCTestCase {
   }
 
   func testFilteredToZeroShowsNoMatches() {
-    // 537 + 76 = 613
+
     XCTAssertEqual(PanelLayout.compute(inputs(scoped: 3, filtered: 0)).panelHeight, 613)
   }
 
-  // MARK: - Invariants
+
 
   func testNeverExceedsMaxHeight() {
     for metricsLines in [1, 2, 3] {
@@ -181,8 +181,8 @@ final class PanelLayoutTests: XCTestCase {
   }
 
   func testAtLeastOneRowWheneverAccountsExist() {
-    // Pathological: search open + errors everywhere + recent expanded —
-    // the list still shows at least one row rather than vanishing.
+
+
     var i = inputs(scoped: 8, filtered: 8, searchVisible: true)
     i.poolHasError = true
     i.accountsHaveError = true

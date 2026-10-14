@@ -1,9 +1,4 @@
-"""Rename legacy free-account usage windows before monthly rollout.
 
-Revision ID: 20260603_000000_free_account_monthly_window
-Revises: 20260604_000000_add_reauth_required_account_status
-Create Date: 2026-06-03 00:00:00.000000
-"""
 
 from __future__ import annotations
 

@@ -16,7 +16,7 @@ import { RoutingLayout } from "@/lb/pages/routing/routing-layout";
 import { SettingsPage } from "@/lb/pages/settings/settings-page";
 import { UsagePage } from "@/lb/pages/usage/usage-page";
 
-// Paths from the previous dashboard, kept so bookmarks and the menubar app still land somewhere useful.
+
 const REDIRECTS: Record<string, string> = {
   "/dashboard": "/",
   "/accounts": "/",

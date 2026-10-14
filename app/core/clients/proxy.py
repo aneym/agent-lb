@@ -187,15 +187,15 @@ _WEBSOCKET_HANDSHAKE_ERROR_HINTS = (
 
 logger = logging.getLogger(__name__)
 
-# The upstream edge answers a burst of websocket handshakes from one address with
-# a bare 403 (no JSON error body), on every account at once: 127 of 200 parallel
-# Codex requests on 2026-09-25, and all of a follow-up burst for about a minute.
-# It limits the rate of new connections, not how many stay open: 210 held-open
-# sockets opened 70 at a time drew no rejection, while one burst of 200 kept 30
-# rejected past 30 s of retries. So the handshake is retried with jittered
-# exponential backoff for up to three minutes instead of failing the agent; the
-# 30 s cap keeps rejected retries from eating the budget as it refills.
-# A 403 with an OpenAI error body is about the account and is never retried.
+
+
+
+
+
+
+
+
+
 _EDGE_REJECT_RETRY_WINDOW_SECONDS = 180.0
 _EDGE_REJECT_FIRST_BACKOFF_SECONDS = 1.0
 _EDGE_REJECT_MAX_BACKOFF_SECONDS = 30.0
@@ -287,7 +287,7 @@ async def _service_circuit_breaker_context(
     settings: Settings | None = None,
     account_id: str | None = None,
 ) -> AsyncIterator[aiohttp.ClientResponse]:
-    """Wrap an async context manager with circuit breaker protection."""
+
     effective_settings = settings or get_settings()
     cb = get_circuit_breaker_for_account(account_id, effective_settings) if account_id else None
     is_probe = False
@@ -503,9 +503,9 @@ def _build_upstream_transcribe_headers(
     access_token: str,
     account_id: str | None,
 ) -> dict[str, str]:
-    # Minimal header set matching Codex CLI ``/transcribe`` fingerprint.
-    # Omit Accept, x-request-id, and bulk-forwarded inbound headers to
-    # avoid upstream WAF rejection.
+
+
+
     headers: dict[str, str] = {}
     headers["Authorization"] = f"Bearer {access_token}"
     if account_id:
@@ -644,12 +644,7 @@ def _infer_websocket_handshake_error_code(status: int | None, message: str) -> s
 
 
 def edge_rejection_retry_delay(attempt: int, rejected_for: float, *, budget: float | None = None) -> float | None:
-    """Seconds to wait before retrying a handshake the edge refused, or None to give up.
 
-    ``attempt`` counts refused handshakes so far and ``rejected_for`` is the time since
-    the first refusal. The retry stops at the edge window or at ``budget``, whichever
-    is shorter.
-    """
     ceiling = min(_EDGE_REJECT_MAX_BACKOFF_SECONDS, _EDGE_REJECT_FIRST_BACKOFF_SECONDS * 2 ** (attempt - 1))
     delay = random.uniform(ceiling / 2, ceiling)
     limit = _EDGE_REJECT_RETRY_WINDOW_SECONDS if budget is None else min(_EDGE_REJECT_RETRY_WINDOW_SECONDS, budget)
@@ -659,7 +654,7 @@ def edge_rejection_retry_delay(attempt: int, rejected_for: float, *, budget: flo
 
 
 def _is_bare_edge_rejection(exc: aiohttp.WSServerHandshakeError) -> bool:
-    """A 403 without an OpenAI error body: the edge refusing the handshake, not the account."""
+
     if exc.status != 403:
         return False
     extracted = _extract_json_object_from_text(exc.message or "")
@@ -1182,9 +1177,9 @@ def _payload_uses_image_generation_tool(payload: Mapping[str, JsonValue]) -> boo
 
 
 def _ws_transport_payload_budget_bytes(settings: Settings | object) -> int:
-    # Subtract 2 MiB headroom for control frames + envelope. ``getattr`` fallback
-    # keeps unit tests that pass narrowed ``SimpleNamespace`` settings working
-    # without forcing every fake to redeclare ``max_sse_event_bytes``.
+
+
+
     max_sse_event_bytes = getattr(settings, "max_sse_event_bytes", 16 * 1024 * 1024)
     return max(1 * 1024 * 1024, max_sse_event_bytes - _WEBSOCKET_TRANSPORT_HEADROOM_BYTES)
 
@@ -2242,9 +2237,9 @@ async def _stream_responses_with_session(
     if route is None and route_trace is not None:
         route_trace.record_direct()
     pre_request_started_at = time.monotonic()
-    # Keep a default total timeout so direct callers cannot hang forever before
-    # response headers or the first SSE event. ProxyService stream attempts clamp
-    # this further by installing per-attempt overrides from the remaining budget.
+
+
+
     request_total_timeout = _effective_stream_timeout(
         settings.proxy_request_budget_seconds,
         "total",
@@ -2286,7 +2281,7 @@ async def _stream_responses_with_session(
     else:
         upstream_headers = _build_upstream_headers(headers, access_token, account_id)
         method = "POST"
-    # Websocket streams fall back to HTTP on a rejected handshake, so compress either way.
+
     try:
         gzipped_payload = await upstream_body.gzip_body(
             payload_json.encode("utf-8"),

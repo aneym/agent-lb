@@ -1,9 +1,4 @@
-"""Scenario tests for the federation push SENDER (openspec add-federation-account-push).
 
-The sender owns and refreshes its accounts and pushes access tokens only. These tests drive the
-fixed seams: load_push_targets, build_push_request, FederationPushScheduler.push_once,
-AiohttpFederationPeerClient.push_accounts and the `push` CLI main().
-"""
 
 from __future__ import annotations
 
@@ -50,8 +45,8 @@ pytestmark = pytest.mark.unit
 _LOCAL = "nate-sender-unit-test"
 _OTHER = "laptop-owner-unit-test"
 
-# Every token the seeds write. None may ever appear in CLI output or in a response record,
-# and no refresh token may ever appear in a push payload.
+
+
 _ACCESS = {
     "acc_push_a": "access-token-a-DO-NOT-LEAK",
     "acc_push_b": "access-token-b-DO-NOT-LEAK",
@@ -87,7 +82,7 @@ def _account(account_id: str, *, email: str, provider: str, owner_instance: str 
 
 
 async def _seed_owned_and_mirrored() -> None:
-    """a (owner NULL = local) and b (owner = local) are owned; m is mirrored from another LB."""
+
     async with SessionLocal() as session:
         session.add(_account("acc_push_a", email="a@example.com", provider="anthropic", owner_instance=None))
         session.add(_account("acc_push_b", email="b@example.com", provider="openai", owner_instance=_LOCAL))
@@ -117,7 +112,7 @@ def _response(*, source: str = "nate", accepted: list[str] | None = None, usage=
 
 
 class _RecordingPeer:
-    """Stands in for the network only. Fails for URLs listed in `failing`."""
+
 
     def __init__(self, *, responses: dict[str, FederationPushResponse] | None = None) -> None:
         self.responses = responses or {}
@@ -152,7 +147,7 @@ def _scheduler(
     )
 
 
-# --- load_push_targets -------------------------------------------------------------------------
+
 
 
 def test_load_push_targets_missing_file_is_empty(tmp_path: Path) -> None:
@@ -191,12 +186,12 @@ def test_load_push_targets_valid_file(tmp_path: Path) -> None:
     ]
 
 
-# --- build_push_request ------------------------------------------------------------------------
+
 
 
 @pytest.mark.asyncio
 async def test_build_push_request_sends_only_owned_matched_accounts_without_refresh_tokens(db_setup: bool) -> None:
-    """Spec scenario: Only owned, matched accounts are sent."""
+
     del db_setup
     await _seed_owned_and_mirrored()
     target = PushTarget(
@@ -216,7 +211,7 @@ async def test_build_push_request_sends_only_owned_matched_accounts_without_refr
     assert request.instance_id == _LOCAL
     by_id = {account.account_id: account for account in request.accounts}
     assert sorted(by_id) == ["acc_push_a", "acc_push_b"]
-    # Each pushed account is exactly what the owner's own mirror export says about it.
+
     exported: dict[str, FederationMirrorAccount] = {account.account_id: account for account in mirror_export.accounts}
     assert by_id["acc_push_a"] == exported["acc_push_a"]
     assert by_id["acc_push_b"] == exported["acc_push_b"]
@@ -232,12 +227,12 @@ async def test_build_push_request_sends_only_owned_matched_accounts_without_refr
     assert _ACCESS["acc_push_m"] not in serialized
 
 
-# --- FederationPushScheduler.push_once ---------------------------------------------------------
+
 
 
 @pytest.mark.asyncio
 async def test_push_once_without_config_sends_nothing(tmp_path: Path) -> None:
-    """Spec scenario: No config file, no pushes."""
+
     peer = _RecordingPeer()
     scheduler = _scheduler(path=tmp_path / "absent.json", peer=peer)
 
@@ -247,7 +242,7 @@ async def test_push_once_without_config_sends_nothing(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_push_once_stores_returned_usage_under_target_name(db_setup: bool, tmp_path: Path) -> None:
-    """Spec scenario: Returned usage is stored under the target name."""
+
     del db_setup
     await _seed_owned_and_mirrored()
     url = "https://studio.example"
@@ -287,7 +282,7 @@ async def test_push_once_stores_returned_usage_under_target_name(db_setup: bool,
 
 
 class _EmptyOwnedRepo:
-    """Scheduler-timing tests need no accounts; the real repository is covered above."""
+
 
     async def list_locally_owned_accounts(self, local_instance_id: str) -> list[Account]:
         del local_instance_id
@@ -303,7 +298,7 @@ async def _empty_repo_factory() -> AsyncIterator[_EmptyOwnedRepo]:
 
 
 class _FakeClock:
-    """Moves every clock the push module could read (wall, monotonic, loop time, utcnow) together."""
+
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._offset = 0.0
@@ -334,10 +329,7 @@ class _FakeClock:
 
 
 class _ScriptedPeer:
-    """t1 fails on every attempt except those listed in `t1_successes`; t2 always succeeds.
 
-    Records the fake-clock time of each attempt per URL.
-    """
 
     def __init__(self, clock: _FakeClock, *, t1: str, t1_successes: set[int]) -> None:
         self.clock = clock
@@ -358,13 +350,7 @@ class _ScriptedPeer:
 async def test_failing_target_backs_off_exponentially_capped_without_holding_others(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec scenario: A failing target backs off without holding others.
 
-    Driven through the background loop (start/stop) with the injected sleep moving a fake clock.
-    interval_seconds is 30, so the spec's min(1800, interval * 2^(n-1)) and a 30 s base agree.
-    Each cycle sleeps interval + 10 ms, so a retry lands on the first cycle after its backoff
-    whether the boundary check is < or <=.
-    """
     interval = 30
     t1, t2 = "https://t1.example", "https://t2.example"
     path = _write_targets(
@@ -372,7 +358,7 @@ async def test_failing_target_backs_off_exponentially_capped_without_holding_oth
         [{"name": "t1", "url": t1, "accounts": []}, {"name": "t2", "url": t2, "accounts": []}],
     )
     clock = _FakeClock(monkeypatch)
-    # Attempt 9 succeeds; every other t1 attempt fails.
+
     peer = _ScriptedPeer(clock, t1=t1, t1_successes={9})
     cycles_wanted = 300
     cycles_run = 0
@@ -401,15 +387,15 @@ async def test_failing_target_backs_off_exponentially_capped_without_holding_oth
     finally:
         await scheduler.stop()
 
-    # t2 is pushed every cycle regardless of t1.
+
     t2_times = peer.attempts[t2]
     assert len(t2_times) >= cycles_wanted
     assert max(b - a for a, b in zip(t2_times, t2_times[1:])) < interval + 1
 
     t1_times = peer.attempts[t1]
     gaps = [b - a for a, b in zip(t1_times, t1_times[1:])]
-    # Minimum wait after attempt k: failures 1..9 back off 30, 60, ... capped at 1800;
-    # attempt 9 succeeds (next cycle); attempts 10 and 11 fail again with a reset streak.
+
+
     expected_backoff = [30, 60, 120, 240, 480, 960, 1800, 1800, 1800, 0, 30, 60]
     assert len(gaps) >= len(expected_backoff), f"t1 attempted only {len(t1_times)} times"
     for k, backoff in enumerate(expected_backoff):
@@ -419,7 +405,7 @@ async def test_failing_target_backs_off_exponentially_capped_without_holding_oth
     assert isinstance(scheduler.last_results.get("t1"), dict) and scheduler.last_results["t1"]
 
 
-# --- AiohttpFederationPeerClient.push_accounts -------------------------------------------------
+
 
 
 @pytest.mark.asyncio
@@ -486,7 +472,7 @@ async def test_peer_client_push_accounts_raises_on_non_2xx_without_leaking_body(
     assert _ACCESS["acc_push_a"] not in str(raised.value)
 
 
-# --- CLI: python -m app.modules.federation.push status|once ------------------------------------
+
 
 
 @pytest.fixture
@@ -502,7 +488,7 @@ def cli_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_cli_status_lists_matches_and_unmatched_without_tokens(
     db_setup: bool, cli_settings: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Spec scenario: Status shows matches without tokens."""
+
     del db_setup
     asyncio.run(_seed_owned_and_mirrored())
     _write_targets(
@@ -539,7 +525,7 @@ def test_cli_status_lists_matches_and_unmatched_without_tokens(
 def test_cli_once_reports_each_target_and_exits_1_on_failure(
     db_setup: bool, cli_settings: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec scenario: Once reports per-target results and failures."""
+
     del db_setup
     asyncio.run(_seed_owned_and_mirrored())
     good, bad = "https://good.example", "https://bad.example"
@@ -576,8 +562,8 @@ def test_cli_once_reports_each_target_and_exits_1_on_failure(
     text = out.out + out.err
     for expected in ("good-target", "acc_push_a", "acc_push_b", "expired", "acc_push_gone", "bad-target"):
         assert expected in text
-    # The operator needs the peer's HTTP status (403 whois refusal, 409 binding conflict, 5xx down).
-    # FederationPeerRequestError.status_code is an int the client sets, never response body text.
+
+
     assert "502" in text, "once must print the failed target's HTTP status code"
     for token in _ALL_TOKENS:
         assert token not in text

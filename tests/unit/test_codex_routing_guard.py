@@ -182,8 +182,8 @@ def test_guard_requires_healthy_local_agent_lb_before_repair(tmp_path: Path) -> 
 
 
 def test_guard_accepts_seat_header_subtable_without_adding_duplicate(tmp_path: Path) -> None:
-    # Codex rewrites the inline env_http_headers as a sub-table; the guard must not add the
-    # inline key again (that duplicate key broke every codex start on 2026-10-04).
+
+
     config = tmp_path / "config.toml"
     original = """model_provider = "agent-lb"
 

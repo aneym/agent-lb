@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Close beta release PRs superseded by the current release train.
 
-The Sync Beta Release PR workflow creates release PRs from branches named
-``release/beta-X.Y.Z-beta.N``. When release-please retargets the stable train,
-older automation-created beta PRs can remain open. This script intentionally
-cleans up only PRs carrying the automation sentinel in their body so manually
-created beta branches are not touched by accident.
-"""
 
 from __future__ import annotations
 
@@ -54,7 +47,7 @@ def _head_owner(pr: Mapping[str, Any]) -> str:
 
 
 def is_cleanup_candidate(pr: Mapping[str, Any], *, current_branch: str, repo_owner: str) -> bool:
-    """Return whether an open PR is an automation-managed superseded beta PR."""
+
 
     head_ref = pr.get("headRefName")
     if not isinstance(head_ref, str):
@@ -88,7 +81,7 @@ def cleanup_plan(
     repo_owner: str,
     release_pr: str,
 ) -> list[CleanupAction]:
-    """Build the actions needed to close superseded beta release PRs."""
+
 
     actions: list[CleanupAction] = []
     for pr in prs:

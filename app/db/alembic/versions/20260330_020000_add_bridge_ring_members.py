@@ -1,9 +1,4 @@
-"""add bridge ring members table
 
-Revision ID: 20260330_020000_add_bridge_ring_members
-Revises: 20260330_010000_merge_scheduler_leader_and_cache_locality_heads
-Create Date: 2026-03-30
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260330_020000_add_bridge_ring_members"
 down_revision = "20260330_010000_merge_scheduler_leader_and_cache_locality_heads"
 branch_labels = None

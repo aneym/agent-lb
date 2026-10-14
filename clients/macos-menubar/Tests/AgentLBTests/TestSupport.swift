@@ -1,7 +1,7 @@
 import Foundation
 @testable import AgentLB
 
-/// Shared synthetic-account factory for filter/scope tests.
+
 func makeTestAccount(
   id: String = "synthetic",
   provider: String = "anthropic",
@@ -72,7 +72,7 @@ func makeFableScopedQuota(usedPercent: Double) -> AccountAdditionalQuota {
   )
 }
 
-/// Decodes the shared accounts fixture with the production decoder.
+
 func loadAccountsFixture() throws -> [Account] {
   guard
     let url = Bundle.module.url(

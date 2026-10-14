@@ -1,9 +1,4 @@
-"""add single-account routing setting
 
-Revision ID: 20260531_000000_add_single_account_routing
-Revises: 20260601_000000_merge_relative_availability_and_usage_raw_heads
-Create Date: 2026-05-31
-"""
 
 from __future__ import annotations
 

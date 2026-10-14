@@ -1,11 +1,4 @@
-"""Integration tests for the OpenAI Images API compatibility surface.
 
-These exercise ``POST /v1/images/generations`` and ``POST /v1/images/edits``
-end-to-end with a fake upstream Responses stream. They mirror the patterns
-from ``test_proxy_responses.py`` (account import + ``core_stream_responses``
-monkeypatch) so we cover the full request -> account selection -> SSE
-translation -> public response shape pipeline.
-"""
 
 from __future__ import annotations
 
@@ -97,9 +90,9 @@ def _disable_http_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(proxy_module, "get_settings", lambda: app_settings)
 
 
-# ---------------------------------------------------------------------------
-# /v1/images/generations
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
@@ -130,7 +123,7 @@ async def test_images_generations_rejects_transparent_background(async_client):
 
 @pytest.mark.asyncio
 async def test_images_generations_rejects_invalid_size_for_gpt_image_2(async_client):
-    # 1023x1024 is rejected because 1023 is not a multiple of 16.
+
     response = await async_client.post(
         "/v1/images/generations",
         json={
@@ -232,7 +225,7 @@ async def test_images_generations_returns_envelope_on_success(async_client, monk
     assert body["data"] == [{"b64_json": "b64-image-bytes", "revised_prompt": "a clean red circle"}]
     assert body["usage"] == {"input_tokens": 7, "output_tokens": 13, "total_tokens": 20}
 
-    # The host model is hidden from clients but appears in the upstream call.
+
     assert captured["model"] == "gpt-5.5"
     tools = cast(list[Any], captured["tools"])
     image_tool = cast(dict[str, Any], tools[0])
@@ -371,9 +364,9 @@ async def test_images_generations_failed_image_returns_5xx(async_client, monkeyp
     assert body["error"]["code"] in {"content_policy_violation", "image_generation_failed"}
 
 
-# ---------------------------------------------------------------------------
-# /v1/images/edits
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
@@ -430,8 +423,8 @@ async def test_images_edits_basic_round_trip(async_client, monkeypatch):
     body = response.json()
     assert body["data"] == [{"b64_json": "EDITED_B64", "revised_prompt": "edited"}]
 
-    # Verify the upstream payload contained the image as an input_image data
-    # URL alongside the prompt text.
+
+
     input_value = cast(list[Any], captured["input"])
     assert input_value
     first_message = cast(dict[str, Any], input_value[0])
@@ -480,9 +473,9 @@ async def test_images_edits_unsupported_model(async_client):
     assert body["error"]["type"] == "invalid_request_error"
 
 
-# ---------------------------------------------------------------------------
-# /v1/images/variations is explicitly not supported.
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
@@ -496,14 +489,14 @@ async def test_images_variations_returns_404(async_client):
     assert body["error"]["code"] == "not_found_error"
 
 
-# ---------------------------------------------------------------------------
-# Defaults, n>1 rejection, and stream priming.
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_images_generations_falls_back_to_default_model_when_omitted(async_client, monkeypatch):
-    """Omitting ``model`` should fall back to ``settings.images_default_model``."""
+
     await _import_account(async_client, "acc_images_default", "img-default@example.com")
 
     captured: dict[str, Any] = {}
@@ -538,7 +531,7 @@ async def test_images_generations_falls_back_to_default_model_when_omitted(async
     )
     assert response.status_code == 200, response.text
     image_tool = cast(dict[str, Any], cast(list[Any], captured["tools"])[0])
-    # Default falls back to images_default_model = "gpt-image-2".
+
     assert image_tool["model"] == "gpt-image-2"
 
 
@@ -556,11 +549,7 @@ async def test_images_generations_rejects_n_greater_than_one(async_client):
 
 @pytest.mark.asyncio
 async def test_images_generations_propagates_upstream_error_before_first_chunk(async_client, monkeypatch):
-    """When the upstream stream raises before any chunk is emitted, we
-    surface a structured OpenAI error envelope instead of a broken SSE
-    body. This guards against the prime-before-StreamingResponse path in
-    the route handler.
-    """
+
     from app.core.clients.proxy import ProxyResponseError
 
     await _import_account(async_client, "acc_images_prime", "img-prime@example.com")
@@ -592,10 +581,7 @@ async def test_images_generations_propagates_upstream_error_before_first_chunk(a
 
 @pytest.mark.asyncio
 async def test_images_edits_falls_back_to_default_model_when_omitted(async_client, monkeypatch):
-    """Omitting ``model`` on multipart edits should fall back to
-    ``settings.images_default_model`` instead of being rejected by the
-    FastAPI form parser with a 422.
-    """
+
     await _import_account(async_client, "acc_images_edit_default", "img-edit-default@example.com")
 
     captured: dict[str, Any] = {}
@@ -640,16 +626,14 @@ async def test_images_edits_falls_back_to_default_model_when_omitted(async_clien
 
 @pytest.mark.asyncio
 async def test_images_edits_invalid_n_returns_openai_error(async_client):
-    """A bad ``n`` form value must come back as an OpenAI-shaped 400, not
-    a FastAPI 422 with the framework's default error envelope.
-    """
+
     image_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
     response = await async_client.post(
         "/v1/images/edits",
         data={
             "model": "gpt-image-2",
             "prompt": "x",
-            "n": "abc",  # not a valid integer
+            "n": "abc",
         },
         files={"image": ("source.png", image_bytes, "image/png")},
     )
@@ -666,7 +650,7 @@ async def test_images_edits_invalid_stream_returns_openai_error(async_client):
         data={
             "model": "gpt-image-2",
             "prompt": "x",
-            "stream": "yesplz",  # not a valid bool
+            "stream": "yesplz",
         },
         files={"image": ("source.png", image_bytes, "image/png")},
     )
@@ -677,10 +661,7 @@ async def test_images_edits_invalid_stream_returns_openai_error(async_client):
 
 @pytest.mark.asyncio
 async def test_images_generations_maps_content_policy_to_400(async_client, monkeypatch):
-    """An upstream content policy violation must surface as HTTP 400, not
-    the previous hard-coded 502, so clients get the canonical OpenAI
-    status for client-originated failures.
-    """
+
     await _import_account(async_client, "acc_images_cp", "img-cp@example.com")
 
     async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
@@ -721,10 +702,7 @@ async def test_images_generations_maps_content_policy_to_400(async_client, monke
 
 @pytest.mark.asyncio
 async def test_images_generations_rejects_input_fidelity(async_client):
-    """``input_fidelity`` is an edit-only parameter; generations requests
-    must reject it deterministically at the API boundary instead of
-    silently dropping it via ``extra=ignore``.
-    """
+
     response = await async_client.post(
         "/v1/images/generations",
         json={
@@ -742,10 +720,7 @@ async def test_images_generations_rejects_input_fidelity(async_client):
 
 @pytest.mark.asyncio
 async def test_images_edits_accepts_image_brackets_form_key(async_client, monkeypatch):
-    """OpenAI SDKs/HTTP clients commonly send multiple files under
-    ``image[]`` instead of ``image``. Both keys must work for drop-in
-    compatibility.
-    """
+
     await _import_account(async_client, "acc_images_brackets", "img-brackets@example.com")
 
     captured: dict[str, Any] = {}
@@ -787,9 +762,9 @@ async def test_images_edits_accepts_image_brackets_form_key(async_client, monkey
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    # ``exclude_none=True`` drops missing revised_prompt from the public envelope.
+
     assert body["data"] == [{"b64_json": "B64_BRACKETS"}]
-    # Confirm the file was actually picked up and forwarded to upstream.
+
     input_value = cast(list[Any], captured["input"])
     first_message = cast(dict[str, Any], input_value[0])
     content = cast(list[Any], first_message["content"])
@@ -799,11 +774,7 @@ async def test_images_edits_accepts_image_brackets_form_key(async_client, monkey
 
 @pytest.mark.asyncio
 async def test_images_generations_succeeds_when_reservation_finalize_fails(async_client, monkeypatch):
-    """A successful image generation must NOT 500 when the post-hoc
-    API-key reservation finalize raises (e.g. transient DB failure).
-    The accounting failure is swallowed and logged; the client still
-    receives the image envelope.
-    """
+
     await _import_account(async_client, "acc_images_finalize_fail", "img-fin-fail@example.com")
 
     async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
@@ -837,7 +808,7 @@ async def test_images_generations_succeeds_when_reservation_finalize_fails(async
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
     monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh)
 
-    # Patch finalize to blow up so we can confirm the route still 200s.
+
     from app.modules.api_keys.service import ApiKeysService
 
     async def fake_finalize(self, *args, **kwargs):
@@ -855,7 +826,7 @@ async def test_images_generations_succeeds_when_reservation_finalize_fails(async
             "quality": "low",
         },
     )
-    # Even though finalize raised, the client still sees a 200 with the image.
+
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["data"] == [{"b64_json": "B64_FINFAIL"}]

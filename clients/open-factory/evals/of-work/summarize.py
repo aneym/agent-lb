@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize an of-work run: one Harbor job dir per arm, graded with CIs and agent-lb receipts.
 
-    python3 summarize.py <run-dir> [--reference A2] [--no-receipts]
-
-<run-dir> holds one Harbor job dir per arm, named after the arm. Writes <run-dir>/summary.json
-and prints a table. Pass rates carry a task-clustered bootstrap CI (trials of one task are not
-independent); arm differences are paired over shared tasks. A trial that errored counts as a
-failure and is also counted under `errors`. Receipts come from agent-lb by the agent's own session
-id (Claude Code session, Codex rollout), so concurrent trials never mix.
-"""
 
 from __future__ import annotations
 
@@ -36,7 +27,7 @@ def seconds(span: dict | None) -> float | None:
 
 
 def session_ids(trial: Path) -> list[str]:
-    """Claude Code names its transcript after the session; Codex names its rollout file after it."""
+
     ids = [p.stem for p in (trial / "agent" / "sessions" / "projects").glob("*/*.jsonl") if UUID.fullmatch(p.stem)]
     for rollout in (trial / "agent" / "sessions").glob("20*/*/*/rollout-*.jsonl"):
         found = UUID.findall(rollout.name)

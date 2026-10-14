@@ -1,9 +1,9 @@
 #!/bin/zsh
-# Publishes anonymized aggregate LLM usage to a public GitHub repo (durable backup + CDN-served).
-# Pushes via a repo-scoped SSH deploy key. Idempotent, single-flight, fail-soft.
-# Source of truth: <agent-lb repo>/scripts/llm-usage-publish.sh
-# Deployed copy: ~/.agent-lb/bin/llm-usage-publish.sh — the path named in
-# ~/Library/LaunchAgents/com.aneyman.llm-usage-publish.plist (StartInterval 900).
+
+
+
+
+
 set -euo pipefail
 LOG="$HOME/.agent-lb/llm-usage-publish.log"
 LOCK="$HOME/.agent-lb/.llm-usage-publish.lock"
@@ -13,9 +13,9 @@ ENDPOINT="http://127.0.0.1:2455/api/usage/public"
 REMOTE="git@github.com:aneym/llm-usage.git"
 export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/llm-usage-deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
-# Single-flight with stale-lock reaping. A publish takes seconds; a lock dir
-# older than 60 min is a leftover from a crash/reboot, not a live runner
-# (exactly this wedge froze publishing 2026-07-12 -> 2026-08-24).
+
+
+
 if ! mkdir "$LOCK" 2>/dev/null; then
   now=$(date +%s)
   lock_mtime=$(stat -f %m "$LOCK" 2>/dev/null || echo "$now")
@@ -38,8 +38,8 @@ for d in 7 30 90 365 730; do
 done
 [ -f usage-365.json ] && cp usage-365.json usage.json
 if [ "$ok" = "0" ]; then echo "$(date -u +%FT%TZ) error: all fetches failed; keeping last snapshot" >>"$LOG"; exit 0; fi
-# Idempotency: revert any snapshot whose ONLY change vs HEAD is the generatedAt
-# timestamp, so unchanged usage does not churn a commit on every cron tick.
+
+
 for f in usage.json usage-7.json usage-30.json usage-90.json usage-365.json usage-730.json; do
   [ -f "$f" ] || continue
   git cat-file -e "HEAD:$f" 2>/dev/null || continue
@@ -58,9 +58,9 @@ if git diff --cached --quiet; then
 else
   git -c user.name="llm-usage-bot" -c user.email="llm-usage-bot@users.noreply.github.com" commit -m "usage snapshot $(date -u +%FT%TZ)" >>"$LOG" 2>&1
 fi
-# Push whatever is unpushed (fresh commit or accumulated backlog). On failure,
-# log AND drop a marker file a health check can watch; commits keep accumulating
-# locally (fail-soft, snapshot history is never lost).
+
+
+
 ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 if [ "$ahead" -gt 0 ]; then
   if git push origin HEAD:main >>"$LOG" 2>&1; then

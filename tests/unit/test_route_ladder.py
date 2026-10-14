@@ -1,4 +1,4 @@
-"""The interim ladder (routing scope, approved 2026-09-30 02:35Z), through the real `route` CLI and the canonical table."""
+
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def table_copy(tmp_path: Path, name: str, edit) -> Path:
 
 
 def reopen_cursor(table: dict) -> None:
-    """Drop the out-of-usage gates on every Cursor rung, for tests of Cursor mechanics."""
+
     for rows in table["ladders"]["interim"].values():
         for row in rows if isinstance(rows, list) else ():
             if row.get("pool") == "cursor-models":
@@ -84,7 +84,7 @@ def pick(env: dict[str, str], table: Path, *args: str) -> dict:
 def test_best_first_ladder_starts_with_sol_even_when_codex_is_low(tmp_path: Path) -> None:
     env = setup(tmp_path)
 
-    # Low pace is advisory for Sol; Cursor rungs are out until the reset probe.
+
     held = pick(env, CANONICAL_TABLE, "implement")
     assert not any(row["rung"] in {"grok-medium", "composer"} for row in held["skipped"])
     assert (held["ladder"], held["rung"], held["seat"], held["model"]) == (
@@ -98,19 +98,19 @@ def test_best_first_ladder_starts_with_sol_even_when_codex_is_low(tmp_path: Path
     assert text.returncode == 0, text.stderr
     assert text.stdout.strip().splitlines()[-1] == "→ gpt-6.1-sol (openai-codex)"
 
-    # Grok's work never goes to Grok or to Sonnet's own pool twice: Sonnet high, then Sol high.
+
     review = pick(env, CANONICAL_TABLE, "verify", "--author-vendor", "xai")
     assert (review["rung"], review["seat"], review["model"]) == ("sonnet-high", "verifier", "claude-sonnet-5-5")
     retry = pick(env, CANONICAL_TABLE, "verify", "--author-vendor", "xai", "--skip", "sonnet-high")
     assert (retry["rung"], retry["seat"], retry["effort"]) == ("sol-high", "codex-verifier", "high")
 
-    # Mechanical work starts with Sol low, with Devin SWE medium overflow.
+
     mechanical = pick(env, CANONICAL_TABLE, "mechanical")
     assert (mechanical["rung"], mechanical["seat"], mechanical["model"]) == ("sol-low", "gpt-implementer", "gpt-6.1-sol")
     held = pick(env, CANONICAL_TABLE, "mechanical", "--skip", "sol-low")
     assert (held["rung"], held["seat"], held["model"]) == ("swe2-medium", "devin-seat", "swe-2-medium")
 
-    # Claude on its last account, Codex healthy: orchestrators keep Claude, and Grok's review moves to Sol high.
+
     last = setup(tmp_path, claude_eligible=1, codex_low=False)
     reserved = pick(last, CANONICAL_TABLE, "verify", "--author-vendor", "xai")
     assert reserved["rung"] == "sonnet-cursor-high"
@@ -118,7 +118,7 @@ def test_best_first_ladder_starts_with_sol_even_when_codex_is_low(tmp_path: Path
     assert {"rung": "sonnet-high", "reason": "reserved for orchestrators: 1 eligible account (keep 2)"} in reserved["skipped"]
     assert pick(last, CANONICAL_TABLE, "verify", "--author-vendor", "xai", "--skip", "sonnet-cursor-high")["rung"] == "sol-high"
 
-    # The switch: baseline gives tonight's pre-ladder pick back on the next call.
+
     baseline = table_copy(tmp_path, "baseline", lambda t: t.update(ladder="baseline"))
     back = pick(env, baseline, "implement")
     assert (back["seat"], back["model"]) == ("gpt-implementer", "gpt-6.1-sol")

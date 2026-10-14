@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Sustained /v1/responses streaming load reproducer.
 
-This script intentionally keeps credentials out of the repository. Provide the
-base URL and API key via environment variables when running it against a local
-or staging agent-lb deployment:
-
-  AGENT_LB_BASE_URL=https://example.test \
-  AGENT_LB_API_KEY=... \
-  uv run python scripts/reproduce_responses_stream_load.py --agents 6 --duration-seconds 3600
-"""
 
 from __future__ import annotations
 

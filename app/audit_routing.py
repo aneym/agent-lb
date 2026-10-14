@@ -1,4 +1,4 @@
-"""Read-only routing measurements using the receipt audit's quota allocation."""
+
 
 from __future__ import annotations
 

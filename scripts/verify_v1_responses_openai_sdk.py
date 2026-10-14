@@ -1,31 +1,5 @@
 #!/usr/bin/env python3
-"""Live verification of /v1/responses OpenAI SDK compatibility.
 
-Drives the official `openai` Python SDK against a running agent-lb instance
-and asserts the public /v1 surface is parseable across all request shapes:
-plain text, tool call, structured output, error stream, non-streaming.
-
-Usage:
-    # 1. Boot agent-lb locally (with the fix branch checked out)
-    cd ~/repos/agent-lb
-    .venv/bin/python -m app.main &
-    sleep 3
-
-    # 2. Run this script
-    .venv/bin/python scripts/verify_v1_responses_openai_sdk.py \\
-        --base-url http://127.0.0.1:2455/v1 \\
-        --api-key <agent-lb dashboard key> \\
-        --model gpt-5.5
-
-Or against the public deployment after the fix is deployed:
-    .venv/bin/python scripts/verify_v1_responses_openai_sdk.py \\
-        --base-url https://codex.nekos.me/v1 \\
-        --api-key $CODEX_NEKOS_API_KEY \\
-        --model gpt-5.5
-
-Exits 0 on full pass, non-zero on any failure (with a per-case PASS/FAIL
-summary printed before exit).
-"""
 
 from __future__ import annotations
 
@@ -47,12 +21,7 @@ class CaseResult:
 
 
 async def case_plain_streaming(client: openai.AsyncOpenAI, model: str) -> CaseResult:
-    """Plain text streaming. Asserts:
-    - SDK parser does NOT raise
-    - response.created is the first event
-    - codex.* events do NOT appear
-    - get_final_response().output is non-empty
-    """
+
     try:
         events: list[str] = []
         async with client.responses.stream(
@@ -76,10 +45,9 @@ async def case_plain_streaming(client: openai.AsyncOpenAI, model: str) -> CaseRe
 
 
 async def case_tool_call_streaming(client: openai.AsyncOpenAI, model: str) -> CaseResult:
-    """Tool-call streaming. Asserts get_final_response() carries a
-    function_call output item with parseable arguments."""
-    # ``Iterable[FunctionToolParam]`` is a ``TypedDict`` union; build the
-    # dict explicitly typed so ty/pyright accept the overload.
+
+
+
     from openai.types.responses import FunctionToolParam
 
     tools: list[FunctionToolParam] = [
@@ -91,10 +59,10 @@ async def case_tool_call_streaming(client: openai.AsyncOpenAI, model: str) -> Ca
                 "type": "object",
                 "properties": {"city": {"type": "string"}},
                 "required": ["city"],
-                # OpenAI Structured Outputs requires `additionalProperties: false`
-                # on every object schema when `strict: true`. Without it, real
-                # OpenAI returns 400 invalid_function_parameters; the Codex
-                # backend closes the websocket with close_code=1000.
+
+
+
+
                 "additionalProperties": False,
             },
             "strict": True,
@@ -133,7 +101,7 @@ async def case_tool_call_streaming(client: openai.AsyncOpenAI, model: str) -> Ca
 
 
 async def case_structured_output_streaming(client: openai.AsyncOpenAI, model: str) -> CaseResult:
-    """JSON-format streaming. Asserts the final text parses as JSON."""
+
     try:
         async with client.responses.stream(
             model=model,
@@ -169,10 +137,7 @@ async def case_structured_output_streaming(client: openai.AsyncOpenAI, model: st
 
 
 async def case_error_stream(client: openai.AsyncOpenAI, model: str) -> CaseResult:
-    """Error-stream case: send an invalid json_schema and expect the SDK to
-    iterate the stream WITHOUT raising RuntimeError. Whether the stream
-    surfaces as response.failed or HTTP 4xx depends on the upstream, but the
-    parser MUST NOT crash on the leading event."""
+
     try:
         events: list[str] = []
         try:
@@ -185,16 +150,16 @@ async def case_error_stream(client: openai.AsyncOpenAI, model: str) -> CaseResul
                 async for event in stream:
                     events.append(event.type)
         except openai.APIStatusError as e:
-            # Acceptable: upstream may reject pre-stream as an HTTP 4xx (the
-            # invalid schema is a client error). 5xx / auth / config errors
-            # are NOT a pass — those mean the proxy or upstream is broken,
-            # not that we successfully surfaced a client validation failure.
+
+
+
+
             status = getattr(e, "status_code", None)
             if isinstance(status, int) and 400 <= status < 500 and status not in (401, 403):
                 return CaseResult("error_stream", True, f"pre-stream HTTP {status} (acceptable client error)")
             return CaseResult("error_stream", False, f"unexpected HTTP {status}: {type(e).__name__}: {e}")
         except openai.APIConnectionError as e:
-            # Transport-level failure — never a pass.
+
             return CaseResult("error_stream", False, f"connection error: {e}")
         codex_events = [e for e in events if e.startswith("codex.")]
         if codex_events:
@@ -209,8 +174,7 @@ async def case_error_stream(client: openai.AsyncOpenAI, model: str) -> CaseResul
 
 
 async def case_non_streaming(client: openai.AsyncOpenAI, model: str) -> CaseResult:
-    """Non-streaming /v1/responses. Asserts SDK parses the response into a
-    valid Response object with populated output."""
+
     try:
         response = await client.responses.create(
             model=model,

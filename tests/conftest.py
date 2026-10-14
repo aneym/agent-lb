@@ -23,12 +23,12 @@ os.environ["AGENT_LB_STICKY_SESSION_CLEANUP_ENABLED"] = "false"
 os.environ["AGENT_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED"] = "false"
 os.environ["AGENT_LB_QUOTA_PLANNER_SCHEDULER_ENABLED"] = "false"
 os.environ["AGENT_LB_ACCOUNTS_CACHE_WARMER_ENABLED"] = "false"
-# The seat CLI state on the host (registered Cursor/Devin accounts) must not leak into /api/pools.
+
 os.environ["AGENT_LB_SEAT_STATE"] = str(Path(tempfile.gettempdir()) / "agent-lb-tests-no-seat-state.json")
-# Tests never run the host's real Cursor or Devin CLI. Under a test's temporary HOME, cursor-agent's startup
-# keychain probe finds no default keychain and macOS pops a "Keychain Not Found" dialog on the host (2026-09-27).
-# These stand-ins come first on PATH and fail the same way on every machine, so a test that forgets to set its
-# command (ROUTE_CURSOR_CMD, ROUTE_DEVIN_CMD, SEAT_CURSOR_BIN, ...) fails visibly instead of reaching the host CLI.
+
+
+
+
 VENDOR_CLI_STUBS = Path(tempfile.mkdtemp(prefix="agent-lb-vendor-cli-stubs-"))
 VENDOR_CLI_STUB_EXIT = 97
 for _name in ("cursor-agent", "agent", "devin", "muse"):
@@ -105,9 +105,9 @@ async def async_client(app_instance):
 
 @pytest.fixture(autouse=True)
 def _clear_account_read_caches():
-    # The accounts service keeps short-TTL in-process caches (request-usage,
-    # additional-quota windows); clear them between tests so cached results never
-    # leak across cases or mask freshly-written data.
+
+
+
     from app.modules.accounts.service import clear_account_caches
 
     clear_account_caches()
@@ -147,7 +147,7 @@ def _reset_codex_version_cache():
 
 
 def _reset_global_state() -> None:
-    """Reset global singletons that leak between tests."""
+
     try:
         from app.core.auth.api_key_cache import get_api_key_cache
 
@@ -188,7 +188,7 @@ def _reset_global_state() -> None:
 
 @pytest.fixture(autouse=True)
 def _reset_hot_path_caches():
-    """Reset T20 hot-path caches between tests to prevent state leakage."""
+
     _reset_global_state()
     yield
     _reset_global_state()

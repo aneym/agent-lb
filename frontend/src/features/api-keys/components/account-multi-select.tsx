@@ -75,10 +75,10 @@ function buildLimitChips(account: AccountSummary): LimitChip[] {
   return chips;
 }
 
-/**
- * Monochrome chip treatment (DESIGN.md): urgency is carried by weight,
- * never hue — below 20% remaining the chip turns semibold ink.
- */
+
+
+
+
 function chipToneClass(percent: number | null): string {
   if (percent === null) {
     return "border-border bg-muted text-muted-foreground";

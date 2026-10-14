@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Force a 429 and recovery through the isolated ASGI LB harness, never a live LB."""
+
 from __future__ import annotations
 
 import os

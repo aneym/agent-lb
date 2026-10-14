@@ -1,9 +1,4 @@
-"""The streamed Anthropic body is forwarded one whole SSE event at a time.
 
-`_sse_event_boundary` decides how much of the held-back buffer is complete events. The SSE
-grammar allows CRLF, LF or CR line endings, mixed freely; a CRLF split across reads must not
-be mistaken for a blank line. Final-diff review of a03ed2d0 found CR-only events withheld.
-"""
 
 from __future__ import annotations
 
@@ -27,19 +22,19 @@ FRAMINGS = [
     (b"data: x\n\r\n", b"data: x\n\r\n"),
     (b"data: x\r\n\n", b"data: x\r\n\n"),
     (b"data: x\r\r\n", b"data: x\r\r\n"),
-    # One CRLF ends one line, never a line and a blank line.
+
     (b"data: x\r\ny\r\n", b""),
     (b"data: x\r\n", b""),
-    # A CR may be the first half of a CRLF still in flight; it already ends the blank line.
+
     (b"data: x\r\n\r", b"data: x\r\n\r"),
     (b"data: x\n\r", b"data: x\n\r"),
-    # Blank lines pair off; a lone extra terminator may wait for the next read. It ends no event.
+
     (b"data: x\n\n\n\ndata: y\r\r\r", b"data: x\n\n\n\ndata: y\r\r"),
 ]
 
 
 def _releases(chunks: list[bytes]) -> list[bytes]:
-    """Feed reads the way the streaming loop does and return each forward it makes."""
+
     unsent = bytearray()
     scanned = 0
     released: list[bytes] = []
@@ -54,7 +49,7 @@ def _releases(chunks: list[bytes]) -> list[bytes]:
 
 
 def _events(stream: bytes) -> list[bytes]:
-    """Data payloads a WHATWG SSE parser dispatches from ``stream``."""
+
     events: list[bytes] = []
     data: list[bytes] = []
     for line in re.split(rb"\r\n|\r|\n", stream)[:-1]:
@@ -82,13 +77,13 @@ def test_any_split_into_reads_releases_the_same_events_and_never_half_of_one(buf
         assert buffer.startswith(released), chunks
         assert _events(released) == _events(complete), chunks
         for forward in forwards:
-            # Each forward on its own ends on a blank line, so no read sends half an event.
+
             assert _sse_event_boundary(forward) == len(forward), (chunks, forward)
 
 
 def test_one_huge_event_over_many_reads_is_scanned_once() -> None:
-    # Review of f6537a24: rescanning the whole unfinished event on every read
-    # took 7.5 s for one 4 MiB data line arriving in 8 KiB reads.
+
+
     event = b"data: " + b"x" * (4 * 1024 * 1024) + b"\n\n"
     chunks = [event[i : i + 8192] for i in range(0, len(event), 8192)]
     started = time.monotonic()

@@ -1,9 +1,4 @@
-"""add request_logs response lookup index
 
-Revision ID: 20260415_160000_add_request_logs_response_lookup_index
-Revises: 20260413_000000_add_accounts_blocked_at
-Create Date: 2026-04-15
-"""
 
 from __future__ import annotations
 

@@ -36,8 +36,8 @@ const ACCOUNTS_BASE_PATH = "/api/accounts";
 const OAUTH_BASE_PATH = "/api/oauth";
 
 export function listAccounts() {
-  // ?fresh=1 opts into the per-account request-usage token/cost columns; the
-  // server defers that ~2s aggregation by default so cc/menubar startup stays fast.
+
+
   return get(`${ACCOUNTS_BASE_PATH}?fresh=1`, AccountsResponseSchema);
 }
 
@@ -146,11 +146,11 @@ export function listAccountResetCredits(accountId: string) {
   );
 }
 
-/**
- * Spends one banked upstream reset credit, wiping the account's exhausted
- * usage windows. Credits are scarce and non-refundable, so callers must
- * confirm with the operator before firing this.
- */
+
+
+
+
+
 export function consumeAccountResetCredit(
   accountId: string,
   creditId?: string,

@@ -1,32 +1,4 @@
-"""OpenAI Images API (`/v1/images/*`) request/response schemas.
 
-These schemas describe the *public* surface that agent-lb exposes. They mirror
-the OpenAI Images API request shape so SDKs (e.g. ``openai`` Python client,
-the codex CLI image fallback) can target agent-lb without modification.
-
-The endpoints themselves are implemented as a thin translation layer over
-``/v1/responses`` with the built-in ``image_generation`` tool — see
-``app.modules.proxy.images_service``.
-
-Per-model validation matrix (kept here so request validation rejects the
-request *before* any upstream call is opened):
-
-- ``gpt-image-2`` (default):
-    * ``quality`` in ``{low, medium, high, auto}``
-    * ``size`` is either ``auto`` or ``WIDTHxHEIGHT`` where width and height
-      are multiples of 16, max edge is 3840 px, the aspect ratio is at most
-      3:1, and total pixel count is in ``[655_360, 8_294_400]``.
-    * ``input_fidelity`` MUST NOT be sent (rejected on both generations and
-      edits).
-    * ``background = "transparent"`` is rejected.
-- ``gpt-image-1.5`` / ``gpt-image-1`` / ``gpt-image-1-mini`` (legacy):
-    * ``size`` in ``{1024x1024, 1536x1024, 1024x1536, auto}``.
-    * ``input_fidelity`` in ``{low, high}`` is allowed but only on
-      ``/v1/images/edits``, and only for ``gpt-image-1`` / ``gpt-image-1.5``.
-      ``gpt-image-1-mini`` does NOT accept ``input_fidelity``.
-- Any other ``model`` value: rejected with OpenAI ``invalid_request_error``
-  and ``param: model``.
-"""
 
 from __future__ import annotations
 
@@ -38,26 +10,25 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.types import JsonValue
 
-#: Allowed public ``gpt-image-*`` family. Any other model is rejected up-front.
 GPT_IMAGE_MODEL_PREFIX: Final[str] = "gpt-image-"
 
-#: Models that take the constrained gpt-image-2 parameter matrix.
+
 _GPT_IMAGE_2_MODELS: Final[frozenset[str]] = frozenset({"gpt-image-2"})
 
-#: Models that take the legacy fixed-size matrix and allow ``input_fidelity``
-#: (only on edits).
+
+
 _LEGACY_GPT_IMAGE_MODELS: Final[frozenset[str]] = frozenset({"gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"})
 
 _GPT_IMAGE_2_QUALITY: Final[frozenset[str]] = frozenset({"low", "medium", "high", "auto"})
-# ``standard`` / ``hd`` are DALL-E-only quality values and are NOT valid for
-# any ``gpt-image-*`` model. Allowing them here would let invalid requests
-# bypass adapter-side validation and fail later with a less deterministic
-# upstream error.
+
+
+
+
 _LEGACY_QUALITY: Final[frozenset[str]] = frozenset({"low", "medium", "high", "auto"})
-# ``input_fidelity`` is supported on the gpt-image-1 / gpt-image-1.5 edit
-# paths, but ``gpt-image-1-mini`` does NOT accept it. Keeping a separate
-# allowlist ensures we reject the parameter at the API boundary instead of
-# relying on an upstream round-trip.
+
+
+
+
 _INPUT_FIDELITY_SUPPORTED_MODELS: Final[frozenset[str]] = frozenset({"gpt-image-1.5", "gpt-image-1"})
 _LEGACY_FIXED_SIZES: Final[frozenset[str]] = frozenset({"1024x1024", "1536x1024", "1024x1536", "auto"})
 _BACKGROUND_VALUES: Final[frozenset[str]] = frozenset({"transparent", "opaque", "auto"})
@@ -65,7 +36,7 @@ _OUTPUT_FORMATS: Final[frozenset[str]] = frozenset({"png", "jpeg", "webp"})
 _MODERATION_VALUES: Final[frozenset[str]] = frozenset({"auto", "low"})
 _INPUT_FIDELITY_VALUES: Final[frozenset[str]] = frozenset({"low", "high"})
 
-# gpt-image-2 size limits (per the upstream image_generation tool contract).
+
 _GPT_IMAGE_2_MAX_EDGE: Final[int] = 3840
 _GPT_IMAGE_2_MIN_PIXELS: Final[int] = 655_360
 _GPT_IMAGE_2_MAX_PIXELS: Final[int] = 8_294_400
@@ -78,7 +49,7 @@ _SIZE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^(\d+)x(\d+)$")
 def _images_invalid(
     message: str, *, param: str | None = None, code: str = "invalid_request_error"
 ) -> ClientPayloadError:
-    """Build a ``ClientPayloadError`` shaped as an OpenAI invalid_request_error."""
+
     return ClientPayloadError(
         message,
         param=param,
@@ -94,12 +65,7 @@ def is_supported_image_model(model: str) -> bool:
 
 
 def validate_image_size(model: str, size: str) -> None:
-    """Validate ``size`` for the requested public image model.
 
-    ``"auto"`` is always accepted. For gpt-image-2 the explicit
-    ``WIDTHxHEIGHT`` form is parsed and constrained; for legacy gpt-image
-    models the explicit form must match one of the fixed allowed sizes.
-    """
     if size == "auto":
         return
     match = _SIZE_PATTERN.match(size)
@@ -113,7 +79,7 @@ def validate_image_size(model: str, size: str) -> None:
     if model in _GPT_IMAGE_2_MODELS:
         _validate_gpt_image_2_size(width, height)
         return
-    # Legacy models: only the canonical fixed sizes are allowed.
+
     if size not in _LEGACY_FIXED_SIZES:
         raise _images_invalid(
             f"Invalid size '{size}' for model '{model}'. Allowed sizes: 1024x1024, 1536x1024, 1024x1536, auto.",
@@ -165,26 +131,22 @@ def validate_image_request_parameters(
     output_compression: int,
     images_max_partial_images: int,
 ) -> None:
-    """Apply the cross-field per-model validation matrix.
 
-    Raises :class:`ClientPayloadError` (which the API layer renders as an
-    OpenAI ``invalid_request_error`` envelope) on the first violation.
-    """
     if not is_supported_image_model(model):
         raise _images_invalid(
             f"Unsupported image model '{model}'. Use a 'gpt-image-*' model.",
             param="model",
         )
 
-    # ``n`` is unconditionally capped at 1: the upstream
-    # ``image_generation`` tool accepts only a single image per call and
-    # agent-lb does not yet implement client-side fan-out (multiple
-    # internal Responses calls whose ``image_generation_call`` results
-    # are concatenated into one public envelope). The cap will be
-    # relaxed in the same change that introduces fan-out, alongside a
-    # new configuration knob; we deliberately do not expose a
-    # ``images_max_n`` setting today since honoring it without fan-out
-    # would silently return fewer images than requested.
+
+
+
+
+
+
+
+
+
     if n < 1 or n > 1:
         raise _images_invalid(
             "n must be 1; multiple images per request are not supported by the "
@@ -241,7 +203,7 @@ def validate_image_request_parameters(
                 param="input_fidelity",
             )
     else:
-        # Legacy gpt-image-{1,1-mini,1.5}.
+
         if quality not in _LEGACY_QUALITY:
             raise _images_invalid(
                 f"Invalid quality '{quality}' for model '{model}'.",
@@ -267,19 +229,19 @@ def validate_image_request_parameters(
     validate_image_size(model, size)
 
 
-# ---------------------------------------------------------------------------
-# Request models
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class V1ImagesGenerationsRequest(BaseModel):
-    """OpenAI-compatible request body for ``POST /v1/images/generations``."""
+
 
     model_config = ConfigDict(extra="ignore")
 
-    #: Public model id. Optional; route handlers fall back to the configured
-    #: ``images_default_model`` when omitted. When provided, it must be a
-    #: ``gpt-image-*`` model.
+
+
+
     model: str | None = Field(default=None, min_length=1)
     prompt: str = Field(min_length=1)
     n: int = 1
@@ -291,9 +253,9 @@ class V1ImagesGenerationsRequest(BaseModel):
     moderation: str = "auto"
     partial_images: int | None = None
     stream: bool = False
-    # ``input_fidelity`` is an edit-only parameter; the field is captured
-    # here so that ``validate_generations_payload`` can reject requests
-    # that send it (instead of silently dropping it via ``extra=ignore``).
+
+
+
     input_fidelity: str | None = None
     user: str | None = None
 
@@ -308,17 +270,13 @@ class V1ImagesGenerationsRequest(BaseModel):
 
 
 class V1ImagesEditsForm(BaseModel):
-    """Form-encoded fields accepted by ``POST /v1/images/edits``.
 
-    The ``image`` and ``mask`` parts are bound separately by the FastAPI
-    route handler (since they are file uploads, not Pydantic-bound fields).
-    """
 
     model_config = ConfigDict(extra="ignore")
 
-    #: Public model id. Optional; route handlers fall back to the configured
-    #: ``images_default_model`` when omitted. When provided, it must be a
-    #: ``gpt-image-*`` model.
+
+
+
     model: str | None = Field(default=None, min_length=1)
     prompt: str = Field(min_length=1)
     n: int = 1
@@ -343,13 +301,13 @@ class V1ImagesEditsForm(BaseModel):
         return value
 
 
-# ---------------------------------------------------------------------------
-# Response models
-# ---------------------------------------------------------------------------
+
+
+
 
 
 class V1ImageData(BaseModel):
-    """One generated image entry on a non-streaming images response."""
+
 
     model_config = ConfigDict(extra="ignore")
 
@@ -358,18 +316,10 @@ class V1ImageData(BaseModel):
 
 
 class V1ImageUsage(BaseModel):
-    """Usage block on a non-streaming images response.
 
-    Sourced from upstream ``response.tool_usage.image_gen`` when present.
-    Total tokens are derived (``input_tokens + output_tokens``) when both
-    components are known. Nested ``input_tokens_details`` /
-    ``output_tokens_details`` objects are forwarded as-is so the public
-    response surface keeps the OpenAI Images usage shape (which exposes
-    a per-modality breakdown).
-    """
 
-    # Allow extra fields so future upstream additions to ``tool_usage.image_gen``
-    # propagate without a schema bump.
+
+
     model_config = ConfigDict(extra="allow")
 
     input_tokens: int | None = None
@@ -380,11 +330,7 @@ class V1ImageUsage(BaseModel):
 
 
 class V1ImageResponse(BaseModel):
-    """OpenAI-compatible non-streaming response for ``/v1/images/*``.
 
-    Shape matches the documented OpenAI Images response so SDKs can decode it
-    directly: ``{"created": ..., "data": [...], "usage": {...} }``.
-    """
 
     model_config = ConfigDict(extra="ignore")
 

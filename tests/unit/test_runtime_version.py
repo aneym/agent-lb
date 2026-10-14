@@ -154,8 +154,7 @@ async def test_runtime_version_refetches_failed_lookup_after_failure_ttl() -> No
 
 @pytest.mark.asyncio
 async def test_runtime_version_treats_missing_release_as_settled_not_failure(caplog) -> None:
-    """A 404 from the releases API means the repo publishes no releases: no
-    warning traceback, and the answer is cached for the normal TTL."""
+
     import logging
 
     service = RuntimeVersionService(current_version="1.19.0", ttl_seconds=60, failure_ttl_seconds=0)

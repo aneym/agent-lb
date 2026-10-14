@@ -1,9 +1,4 @@
-"""Real database and HTTP regressions for weekly exclusion and OAuth failover.
 
-Existing auth coverage keeps generic 403 recoverable; these cases cover the
-organization refusal and snapshot quota recovery without application mocks.
-No test-only production seams are required.
-"""
 
 import time
 

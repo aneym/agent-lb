@@ -1,4 +1,4 @@
-"""A Muse seat must surface as a cli_seat pool with unknown (null) headroom."""
+
 
 from __future__ import annotations
 

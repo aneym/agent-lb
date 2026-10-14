@@ -344,7 +344,7 @@ async def test_disabled_dashboard_auth_mode_bypasses_guard_and_disables_password
 
 @pytest.mark.asyncio
 async def test_trusted_header_proxy_auth_with_fallback_password_reports_no_active_session(async_client, monkeypatch):
-    """Proxy-authenticated user with configured fallback password must see passwordSessionActive=False."""
+
     _set_dashboard_auth_env(
         monkeypatch,
         mode=DashboardAuthMode.TRUSTED_HEADER,
@@ -558,7 +558,7 @@ async def test_codex_usage_allows_registered_chatgpt_account_id_with_bearer(asyn
     raw_chatgpt_account_id = "workspace_shared"
     async with SessionLocal() as session:
         repo = AccountsRepository(session)
-        # account.id can be extended while caller auth uses raw chatgpt_account_id.
+
         await repo.upsert(
             _make_account(
                 "workspace_shared_a1b2c3d4",

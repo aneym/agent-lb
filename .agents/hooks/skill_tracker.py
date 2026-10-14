@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""PostToolUse hook — track Skill tool invocations in session state.
 
-Matcher: Skill
-
-Records skill usage in skills-used-{session_id}.json so that
-skill_guard.py can check sessionSkillUsed and allow edits.
-"""
 
 import json
 import sys
@@ -20,7 +14,7 @@ except ImportError:
 
 
 def record_skill_used(session_id: str, skill_name: str) -> None:
-    """Record skill invocation in session state for skill_guard lookups."""
+
     hook_dir = Path(__file__).resolve().parent
     state_dir = hook_dir / "state"
     state_dir.mkdir(parents=True, exist_ok=True)

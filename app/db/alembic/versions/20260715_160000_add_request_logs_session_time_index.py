@@ -1,9 +1,4 @@
-"""add request logs session time index
 
-Revision ID: 20260715_160000_add_request_logs_session_time_index
-Revises: 20260703_000000_add_account_transfers
-Create Date: 2026-07-15 16:00:00.000000
-"""
 
 from __future__ import annotations
 

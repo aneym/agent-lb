@@ -1,8 +1,4 @@
-"""Interval estimates for eval results. No single-number claims (PROGRAM.md D8).
 
-Trials are clustered by task: attempts on one task are not independent, so every bootstrap
-resamples tasks first and attempts within each drawn task second.
-"""
 
 from __future__ import annotations
 
@@ -44,7 +40,7 @@ def cluster_bootstrap(
     reps: int = 10_000,
     seed: int = 0,
 ) -> dict[str, float]:
-    """Point estimate and 95% interval of `statistic` over all attempts, clustered by task."""
+
     tasks = [task for task, attempts in by_task.items() if attempts]
     if not tasks:
         raise ValueError("no attempts")
@@ -61,7 +57,7 @@ def paired_difference(
     reps: int = 10_000,
     seed: int = 0,
 ) -> dict[str, float]:
-    """Mean(a) - mean(b) over the tasks both arms ran, resampling shared tasks as pairs."""
+
     tasks = sorted(task for task in arm_a if arm_a[task] and arm_b.get(task))
     if not tasks:
         raise ValueError("no shared tasks")

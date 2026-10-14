@@ -1,4 +1,4 @@
-"""Read-only receipt accounting. Heuristics are candidates, never savings claims."""
+
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def add_parser(subparsers):
 
 
 class AuditUsageError(ValueError):
-    """Invalid audit arguments, safe to display without database details."""
+    pass
 
 
 def window(args):
@@ -104,7 +104,7 @@ def token_classes(row):
 
 
 def price_row(row):
-    """Return dollars, provenance and a class split reconciled to recorded price."""
+
     split = {key: 0.0 for key in CLASSES if key != "reasoning"}
     breakdown = None
     provider, model = row.get("provider"), row.get("model") or ""
@@ -158,7 +158,7 @@ def price_row(row):
 
 def safe_label(value, fallback="unknown"):
     value = str(value or fallback)
-    # Alias/title can contain an email; never persist it.
+
     return fallback if "@" in value else value[:160]
 
 
@@ -207,7 +207,7 @@ def session_index():
         if project.is_dir():
             for path in project.glob("*.jsonl"):
                 index[path.stem] = path
-    # Codex rollout filenames end with the session UUID. No content-wide grep.
+
     for path in (Path.home() / ".codex/sessions").glob("*/*/*/rollout-*.jsonl"):
         match = re.search(r"([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$", path.name)
         if match:
@@ -228,7 +228,7 @@ def prompt_text(content):
 
 
 def transcript_digest(path):
-    """Cache only attribution hints and deduplicated usage, never full messages."""
+
     stat = path.stat()
     signature = [str(path), stat.st_size, stat.st_mtime_ns, RULE_PATH.stat().st_mtime_ns, 8]
     cache = Path.home() / ".agent-lb/audit/transcript-cache" / (hashlib.sha1(str(path).encode()).hexdigest() + ".json")
@@ -251,7 +251,7 @@ def transcript_digest(path):
     events_by_id, tools_by_id, seen_tools = {}, defaultdict(list), set()
     with path.open() as stream:
         for line in stream:
-            # Metadata is sparse; avoid parsing tool results and assistant content without usage.
+
             if not any(
                 marker in line
                 for marker in (
@@ -322,7 +322,7 @@ def transcript_digest(path):
     for message_id, event in events_by_id.items():
         event["tool_calls"] = tools_by_id[message_id]
         event["compact_boundaries"] = result["compact_boundaries"]
-    # Persist only safe hints, never emails or complete prompt bodies.
+
     result["prompt"] = safe_label(result["prompt"], "") if "@" in result["prompt"] else result["prompt"]
     result["cwd"] = safe_label(result["cwd"], "")
     result["originator"] = safe_label(result["originator"], "")
@@ -438,7 +438,7 @@ def session_agents(path, since, until):
         except OSError:
             continue
         agent = agents.setdefault(key, {"key": key, "seat": seat, "kind": kind, "label": label, "events": []})
-        # Retain file identity for sequences even when several agents have the same seat.
+
         events = [
             event | {"sequence": str(file)}
             for event in digest["events"]
@@ -539,7 +539,7 @@ def cache_kind(row, previous):
 
 
 def waste_flags(row):
-    """Exactly one non-cache assignment; retries exclude the original attempt."""
+
     if row.get("retry_index", 1) > 1 and row.get("request_id"):
         return ["retried"]
     if row.get("status") != "success":
@@ -573,7 +573,7 @@ FROM base ORDER BY requested_at,id
 
 
 def quota_allocation(rows, snapshots, since, until):
-    """Allocate observed increments, ignoring jitter within a reset period."""
+
     with (RULE_PATH.parent / "openai_quota_weights.toml").open("rb") as stream:
         openai_weights = tomllib.load(stream)
 
@@ -693,7 +693,7 @@ def quota_allocation(rows, snapshots, since, until):
             previous = stamp
             previous_used = current_used
         if provider == "openai":
-            # A snapshot on an exact hour closes the preceding UTC bin.
+
             for stamp, delta in quota_bins.items():
                 candidates = receipt_bins[stamp]
                 weights = [row_weight(row) for _, row in candidates]
@@ -851,7 +851,7 @@ def merge(target, value):
 
 
 def allocate(value, agents):
-    """Reconcile each LB class exactly, with the floating remainder on the largest row."""
+
     positive = [agent for agent in agents if agent.get("weight", 0) > 0]
     if not positive:
         return [({"key": "lead", "seat": "lead", "kind": "lead"}, value)]
@@ -905,7 +905,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
         agent_key = (sid, lane, seat, key)
         merge(waste["agents"][agent_key], value)
 
-    # Transcript sequences, not interleaved session/model receipts, own cache events.
+
     for sid, agents in agents_by_session.items():
         indexed = row_index.get(sid, [])
         if not indexed:
@@ -1151,7 +1151,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
             key=lambda v: v["usd"],
             reverse=True,
         )[:10]
-    # Purpose and seat are always present in text/JSON, even with a custom --by.
+
     by = {
         dim: sorted(({"name": name, **v} for name, v in groups[dim].items()), key=lambda v: v["usd"], reverse=True)
         for dim in dict.fromkeys([*dimensions, "purpose", "seat"])
@@ -1420,6 +1420,6 @@ def run(args):
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from None
     except Exception as exc:
-        # DB errors may include connection credentials: never echo those exceptions.
+
         message = f"Token audit failed ({type(exc).__name__}); check local inputs and database availability."
         raise SystemExit(message) from None

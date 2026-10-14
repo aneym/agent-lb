@@ -153,9 +153,9 @@ def _ensure_password_management_enabled(request: Request) -> None:
         )
 
 
-# bcrypt enforces a hard 72-byte limit on the input password; anything longer
-# raises ``ValueError`` from ``bcrypt.hashpw`` and surfaces as a 500 to the
-# client. Validate the encoded length here so the API returns a clear 400.
+
+
+
 _MAX_PASSWORD_BYTES = 72
 
 

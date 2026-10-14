@@ -287,17 +287,17 @@ class TestDerivePromptCacheKey:
         key = _derive_prompt_cache_key(payload, _make_api_key(id="ak_12345678ABCD"))
         parts = key.split("-")
         assert len(parts) == 4
-        assert parts[0] == "std"  # model class prefix
+        assert parts[0] == "std"
         assert parts[1] == "ak_12345678ABCD"[:12]
-        assert len(parts[2]) == 12  # instructions hash
-        assert len(parts[3]) == 12  # input hash
+        assert len(parts[2]) == 12
+        assert len(parts[3]) == 12
 
     def test_different_model_classes_produce_different_keys(self):
         api_key = _make_api_key(id="ak_12345678ABCD")
         _instructions = "instructions here"
         _input: list[JsonValue] = [{"role": "user", "content": "hello"}]
 
-        # Test mini vs std
+
         payload_mini = ResponsesRequest(model="gpt-5.4-mini", instructions=_instructions, input=_input)
         payload_std = ResponsesRequest(model="gpt-5.4", instructions=_instructions, input=_input)
         key_mini = _derive_prompt_cache_key(payload_mini, api_key)
@@ -306,7 +306,7 @@ class TestDerivePromptCacheKey:
         assert key_mini.startswith("mini-")
         assert key_std.startswith("std-")
 
-        # Test codex vs std
+
         payload_codex = ResponsesRequest(model="gpt-5.3-codex", instructions=_instructions, input=_input)
         key_codex = _derive_prompt_cache_key(payload_codex, api_key)
         assert key_codex != key_std
@@ -326,7 +326,7 @@ class TestDerivePromptCacheKey:
         _instructions = "instructions here"
         _input: list[JsonValue] = [{"role": "user", "content": "hello"}]
 
-        # Test that two gpt-5.4 requests produce the same key
+
         payload_a = ResponsesRequest(model="gpt-5.4", instructions=_instructions, input=_input)
         payload_b = ResponsesRequest(model="gpt-5.4", instructions=_instructions, input=_input)
         key_a = _derive_prompt_cache_key(payload_a, api_key)

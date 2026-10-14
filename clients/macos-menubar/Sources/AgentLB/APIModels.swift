@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Accounts
+
 
 private let fableScopedWeeklyQuotaKey = "anthropic_fable_scoped_weekly"
 
@@ -22,7 +22,7 @@ struct Account: Decodable, Identifiable, Sendable, Equatable {
   let resetCreditsAvailable: Int?
   let additionalQuotas: [AccountAdditionalQuota]?
   let usage: AccountUsage
-  // §9.2: per-account credit sums drive the scoped pool windows.
+
   let remainingCreditsPrimary: Double?
   let capacityCreditsPrimary: Double?
   let remainingCreditsSecondary: Double?
@@ -101,11 +101,11 @@ extension Account {
     isHeadlineCountable && status != "paused"
   }
 
-  /// True when spending a banked reset credit would actually buy capacity: a
-  /// supported-provider row that is limit-blocked and holds a credit. Paused, disconnected
-  /// and unsubscribed rows cannot serve traffic, so a reset there would waste
-  /// a scarce credit; an already-active row has nothing to reset (upstream
-  /// answers `nothing_to_reset` and keeps the credit banked).
+
+
+
+
+
   var canRedeemResetCredit: Bool {
     guard ["openai", "anthropic"].contains(provider.lowercased()) else { return false }
     guard (resetCreditsAvailable ?? 0) > 0 else { return false }
@@ -135,9 +135,9 @@ enum FableAvailability: Sendable, Equatable {
 
 struct AccountSubscriptionLedger: Decodable, Sendable, Equatable {
   let status: String?
-  // §11: operator-entered monthly subscription price. Nil unless a human has
-  // recorded it on the account; the arbitrage view falls back to PlanPricing's
-  // list-price table (and marks the figure estimated) when it is absent.
+
+
+
   let amount: Double?
   let currency: String?
   let nextChargeAt: Date?
@@ -162,13 +162,13 @@ struct AccountAdditionalWindow: Decodable, Sendable, Equatable {
   let windowMinutes: Int?
 }
 
-// MARK: - Account Refresh
 
-/// Endpoint choice for the per-row refresh control. Unsubscribed rows must
-/// re-verify the subscription ledger (a probe never updates it); routable
-/// rows probe, which wakes the upstream rate limiter and refreshes usage.
-/// Paused/disconnected rows get no action — the server rejects their probes
-/// with 409 `account_not_probable`, and reactivation is the real fix.
+
+
+
+
+
+
 enum AccountRefreshAction: Sendable, Equatable {
   case checkSubscription
   case probe
@@ -186,10 +186,10 @@ struct AccountProbeResponse: Decodable, Sendable, Equatable {
   let probeStatusCode: Int
 }
 
-/// Result of spending one banked rate-limit reset credit. `code` carries the
-/// upstream verdict — `reset` wiped windows, `already_redeemed` is idempotent
-/// success, `nothing_to_reset` left the credit banked, `no_credit` means the
-/// bank was empty — so the row must read it rather than the HTTP status.
+
+
+
+
 struct AccountResetCreditConsumeResponse: Decodable, Sendable, Equatable {
   let status: String
   let accountId: String
@@ -207,7 +207,7 @@ struct AccountSubscriptionCheckResponse: Decodable, Sendable, Equatable {
   let subscription: AccountSubscriptionLedger?
 }
 
-// MARK: - Usage Summary
+
 
 struct UsageSummary: Decodable, Sendable, Equatable {
   let primaryWindow: UsageWindow?
@@ -238,7 +238,7 @@ struct SummaryMetrics: Decodable, Sendable, Equatable {
   let cachedTokensSecondaryWindow: Int?
 }
 
-// MARK: - Projections
+
 
 struct ProjectionsResponse: Decodable, Sendable, Equatable {
   let depletionPrimary: Depletion?
@@ -261,7 +261,7 @@ struct WeeklyCreditPace: Decodable, Sendable, Equatable {
   let confidence: String?
 }
 
-// MARK: - Request Logs
+
 
 struct RequestLogsResponse: Decodable, Sendable, Equatable {
   let requests: [RequestLogEntry]
@@ -283,7 +283,7 @@ struct RequestLogEntry: Decodable, Identifiable, Sendable, Equatable {
   var id: String { requestId }
 }
 
-// MARK: - Runtime Version
+
 
 struct RuntimeVersion: Decodable, Sendable, Equatable {
   let currentVersion: String?
@@ -292,13 +292,13 @@ struct RuntimeVersion: Decodable, Sendable, Equatable {
   let releaseUrl: String?
 }
 
-// MARK: - Health
+
 
 struct HealthResponse: Decodable, Sendable {
   let status: String
 }
 
-// MARK: - Maker accounts and pools
+
 
 struct SeatAccountsResponse: Decodable {
   let stateUpdatedAt: Date?

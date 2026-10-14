@@ -13,7 +13,7 @@ from app.core.utils.client_session import (
 
 
 class ClientSessionMiddleware:
-    """Expose the client's own session id and caller seat (see app.core.utils.client_session) to request logging."""
+
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app

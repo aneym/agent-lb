@@ -54,10 +54,7 @@ class PlannerAction:
 
 
 class DemandBinLike(Protocol):
-    """What build_demand_forecast() reads from a demand row. Per-account,
-    per-key and per-model dimensions are deliberately absent: the forecast
-    only sums units per time slot, so the repository can aggregate to
-    (slot, request_kind) and hand the loop ~6x fewer rows."""
+
 
     slot_epoch: int
     request_kind: str
@@ -145,9 +142,9 @@ def build_routing_costs(
                 reasons.append("expiring_active_window")
         elif _is_cold_window(state, current_ts):
             if _inside_work_block(current, settings):
-                # In work hours, availability wins. The planner only nudges
-                # routing toward already-active windows; it must not block work
-                # just because there is no historical forecast yet.
+
+
+
                 cost += 2.0
                 reasons.append("soft_cold_start_during_work")
             elif _inside_prewarm_band(current, settings):

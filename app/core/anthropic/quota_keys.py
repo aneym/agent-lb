@@ -1,4 +1,4 @@
-"""Separate Opus response cooldowns from legacy Fable/top-model markers."""
+
 
 
 def model_quota_key(model: str | None, quota_key: str) -> str:

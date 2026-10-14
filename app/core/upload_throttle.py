@@ -1,36 +1,4 @@
-"""Outbound upload cap for bulk transfers on the proxy's upstream connections.
 
-Model API traffic is never paced (incident 2026-10-05): a game-mode hold of
-0.2 MB/s queued Claude Code request bodies until upload admission answered 503
-("upload throttle on at 200 KB/s; 3.4 MB queued ahead"). Holds now apply only
-to writes made inside ``bulk_transfer()``; every other write, including every
-model request body and websocket frame, goes straight to the socket whatever
-the holds say. Game mode protects the shared uplink by pausing torrents,
-pacing box pushes and capping the gaming PC instead.
-
-Original design notes (2026-09-22), still true for bulk transfers:
-
-agent-lb sends whole model request bodies (hundreds of KB to several MB each)
-to Anthropic and OpenAI. On a home uplink of ~43 Mbps those bursts (measured
-5.9 MB/s on 2026-09-22) fill the modem's upload queue, and every other device
-on the network sees ping spikes (bufferbloat): a game on the same network
-stuttered. Pacing the upload below the uplink keeps the queue empty; the
-average agent-lb upload (~0.4 MB/s) is far below the cap, so throughput is
-barely touched while bursts are flattened.
-
-The cap is a single token bucket shared by every upstream connection. It sits
-on the transport of each aiohttp connection to a non-local host (HTTP bodies
-and websocket frames alike), so no request path has to opt in. Loopback
-connections are never shaped.
-
-State lives in a small JSON file so `agent-lb throttle on|off|status` changes
-it without a restart; the running service re-reads it at most once a second:
-
-    {"version": 2, "holds": {"manual": {"bytes_per_sec": 1500000}}, "rate": 1500000}
-
-With no file the cap is on at AGENT_LB_UPSTREAM_UPLOAD_BYTES_PER_SEC
-(default 1.5 MB/s).
-"""
 
 from __future__ import annotations
 
@@ -51,38 +19,38 @@ from typing import Any, Iterator
 logger = logging.getLogger(__name__)
 
 DEFAULT_BYTES_PER_SEC = 1_500_000
-# Largest single release: small enough that one write cannot itself burst the
-# uplink queue, large enough to keep per-write overhead negligible.
+
+
 BURST_BYTES = 64 * 1024
-# Smallest paced release: one full TLS record. Releasing whatever trickled in
-# since the previous call (about a byte per microsecond) turned each upload into
-# a busy loop of 1-byte writes that held the event loop for the whole upload.
+
+
+
 MIN_RELEASE_BYTES = 16 * 1024
 STATE_REFRESH_SECONDS = 1.0
-# A hold that yields_to another owner is ignored while that owner's "since" is this recent.
+
 ADAPTIVE_FRESH_SECONDS = 90
-# Accepted cap range; anything outside it (or not finite) falls back to the default.
+
 MIN_BYTES_PER_SEC = 65_000
 MAX_BYTES_PER_SEC = 1_000_000_000
-# Flow control: past HIGH queued bytes the protocol is paused, so aiohttp's
-# drain() waits instead of piling a whole upload into memory; it resumes once
-# the queue is back under LOW.
+
+
+
 PAUSE_HIGH_BYTES = 256 * 1024
 PAUSE_LOW_BYTES = 64 * 1024
-# Set while aiohttp builds a proxy connection: that leg is upgraded in place
-# with start_tls, which needs the loop's own transport.
+
+
 _IN_PROXY_CONNECTION: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "agent_lb_upload_throttle_in_proxy", default=False
 )
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
-# Set only around bulk transfers. Writes outside it (all model API traffic) are
-# never paced or queued by a hold.
+
+
 _BULK: contextvars.ContextVar[bool] = contextvars.ContextVar("agent_lb_upload_bulk", default=False)
 
 
 @contextlib.contextmanager
 def bulk_transfer() -> Iterator[None]:
-    """Mark the writes made inside this block (and tasks it starts) as bulk, so holds pace them."""
+
     token = _BULK.set(True)
     try:
         yield
@@ -105,7 +73,7 @@ def valid_rate(value: object) -> bool:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False
     try:
-        # A huge JSON integer cannot become a float; treat it as out of range.
+
         return math.isfinite(float(value)) and MIN_BYTES_PER_SEC <= value <= MAX_BYTES_PER_SEC
     except (OverflowError, ValueError):
         return False
@@ -217,7 +185,7 @@ def _hold_is_fresh(hold: dict[str, Any], now: datetime) -> bool:
 
 
 def _hold_yields(holds: dict[str, Any], hold: dict[str, Any], now: datetime) -> bool:
-    """True when this hold steps aside for a target owner whose hold is fresh."""
+
     target = hold.get("yields_to")
     if not isinstance(target, str) or not target:
         return False
@@ -226,7 +194,7 @@ def _hold_yields(holds: dict[str, Any], hold: dict[str, Any], now: datetime) -> 
 
 
 def read_state() -> tuple[bool, float]:
-    """Effective cap. A hold that yields to a fresh owner is skipped; the minimum of the rest wins."""
+
     policy = read_policy()
     holds = policy["holds"]
     if not holds:
@@ -260,8 +228,8 @@ def write_state(
     with Path(str(path) + ".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         policy = read_policy()
-        # With no persisted policy, the default protects uploads but is not an
-        # operator-owned hold to carry into a detector's first write.
+
+
         holds = policy["holds"] if policy["source"] != "default" or path.exists() else {}
         rate = policy["rate"]
         if clear_all:
@@ -292,7 +260,7 @@ def write_state(
 
 
 class _Bucket:
-    """Global token bucket; state is re-read at most once a second."""
+
 
     def __init__(self) -> None:
         self.enabled, self.rate = read_state()
@@ -306,7 +274,7 @@ class _Bucket:
             self.enabled, self.rate = read_state()
 
     def take(self, wanted: int) -> tuple[int, float]:
-        """Bytes that may go now, and the delay before more are available."""
+
         now = time.monotonic()
         self._refresh(now)
         if not self.enabled:
@@ -332,11 +300,7 @@ def bucket() -> _Bucket:
 
 
 class ThrottledTransport(asyncio.Transport):
-    """Paces writes to the wrapped transport through the shared bucket.
 
-    Writes are queued and released as tokens allow; close() waits for the
-    queue to drain, abort() drops it. Everything else is delegated.
-    """
 
     def __init__(self, transport: asyncio.Transport, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__()
@@ -352,7 +316,7 @@ class ThrottledTransport(asyncio.Transport):
         except Exception:  # pragma: no cover
             logger.debug("upload_throttle could not hook flow control", exc_info=True)
 
-    # --- writes -----------------------------------------------------------
+
     def write(self, data: bytes | bytearray | memoryview) -> None:
         if not data:
             return
@@ -360,9 +324,9 @@ class ThrottledTransport(asyncio.Transport):
             self._transport.write(data)
             return
         if not self._pending and not is_bulk():
-            # Model API traffic: never paced by a hold. Anything still queued
-            # from a bulk write on this connection keeps its place, so byte
-            # order holds.
+
+
+
             self._transport.write(data)
             return
         chunk = bytes(data)
@@ -377,13 +341,7 @@ class ThrottledTransport(asyncio.Transport):
         self._schedule(0.0)
 
     def _install_flow_control(self) -> None:
-        """Merge the real transport's pause state with the queue's.
 
-        uvloop pauses the aiohttp protocol when its socket buffer fills, and
-        the queue pauses it when too much is waiting here. Both go through
-        instance-level hooks so the protocol is paused while either wants it
-        and resumed only when neither does; it is never paused twice.
-        """
         protocol = self._transport.get_protocol()
         pause = getattr(protocol, "pause_writing", None)
         resume = getattr(protocol, "resume_writing", None)
@@ -448,8 +406,8 @@ class ThrottledTransport(asyncio.Transport):
     def _schedule(self, delay: float) -> None:
         if self._scheduled is not None:
             return
-        # Wake at least once per state refresh, so turning the cap off (or up)
-        # applies to an upload already waiting.
+
+
         delay = min(delay, STATE_REFRESH_SECONDS)
         if delay <= 0:
             self._scheduled = self._loop.call_soon(self._drain)
@@ -487,7 +445,7 @@ class ThrottledTransport(asyncio.Transport):
                 self._transport.write(self._pending.popleft())
             self._pending_size = 0
 
-    # --- lifecycle --------------------------------------------------------
+
     def close(self) -> None:
         if self._pending:
             self._close_after_drain = True
@@ -550,7 +508,7 @@ _INSTALLED = False
 
 
 def install() -> None:
-    """Wrap every aiohttp connection to a non-local host. Idempotent."""
+
     global _INSTALLED
     if _INSTALLED:
         return
@@ -565,8 +523,8 @@ def install() -> None:
             transport, protocol = await original_proxy(self, req, *args, **kwargs)
         finally:
             _IN_PROXY_CONNECTION.reset(token)
-        # The leg to the proxy stays raw through start_tls; the finished connection
-        # (plain or TLS inside the tunnel) is paced like a direct one.
+
+
         host = str(getattr(req, "host", "") or "").strip("[]").lower()
         if host in _LOCAL_HOSTS:
             return transport, protocol
@@ -579,12 +537,12 @@ def install() -> None:
         if _IN_PROXY_CONNECTION.get():
             return transport, protocol
         host = str(getattr(req, "host", "") or "").strip("[]").lower()
-        # Loopback is never shaped, and a CONNECT to an upstream proxy is left raw
-        # because start_tls upgrades that transport in place.
+
+
         if host in _LOCAL_HOSTS or str(getattr(req, "method", "")).upper() == "CONNECT":
             return transport, protocol
         throttled = ThrottledTransport(transport, asyncio.get_running_loop())
-        # aiohttp's writers reach the socket through protocol.transport.
+
         protocol.transport = throttled
         return throttled, protocol
 

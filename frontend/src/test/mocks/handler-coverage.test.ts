@@ -2,30 +2,30 @@ import { describe, expect, it } from "vitest";
 
 import { handlers } from "@/test/mocks/handlers";
 
-/**
- * Structural test that ensures the MSW handler set covers every API endpoint
- * consumed by the frontend. When a new endpoint is added to an api.ts file,
- * add the corresponding method+path here so this test forces the mock handler
- * to be created at the same time.
- */
+
+
+
+
+
+
 
 function extractHandlerPaths(): string[] {
 	return handlers.map((handler) => {
 		const { method, path } = handler.info;
-		// Normalize: MSW stores method in uppercase, path as the string literal
+
 		return `${String(method).toUpperCase()} ${String(path)}`;
 	});
 }
 
-// All API endpoints consumed by the frontend (method + MSW path pattern).
-// Parameterized segments use MSW `:param` syntax.
+
+
 const EXPECTED_ENDPOINTS = [
-	// health
+
 	"GET /health",
-	// runtime
+
 	"GET /api/runtime/version",
 	"GET /api/pools/plan",
-	// accounts
+
 	"GET /api/accounts",
 	"POST /api/accounts/import",
 	"PATCH /api/accounts/:accountId",
@@ -42,11 +42,11 @@ const EXPECTED_ENDPOINTS = [
 	"POST /api/accounts/:accountId/export",
 	"POST /api/accounts/:accountId/export/auth",
 	"DELETE /api/accounts/:accountId",
-	// oauth
+
 	"POST /api/oauth/start",
 	"GET /api/oauth/status",
 	"POST /api/oauth/complete",
-	// auth
+
 	"GET /api/dashboard-auth/session",
 	"POST /api/dashboard-auth/password/setup",
 	"POST /api/dashboard-auth/password/login",
@@ -57,7 +57,7 @@ const EXPECTED_ENDPOINTS = [
 	"POST /api/dashboard-auth/totp/verify",
 	"POST /api/dashboard-auth/totp/disable",
 	"POST /api/dashboard-auth/logout",
-	// settings
+
 	"GET /api/settings",
 	"PUT /api/settings",
 	"GET /api/settings/upstream-proxy",
@@ -69,13 +69,13 @@ const EXPECTED_ENDPOINTS = [
 	"POST /api/sticky-sessions/delete",
 	"POST /api/sticky-sessions/delete-filtered",
 	"POST /api/sticky-sessions/purge",
-	// firewall
+
 	"GET /api/firewall/ips",
 	"POST /api/firewall/ips",
 	"DELETE /api/firewall/ips/:ipAddress",
-	// models
+
 	"GET /api/models",
-	// api-keys
+
 	"GET /api/api-keys/",
 	"POST /api/api-keys/",
 	"PATCH /api/api-keys/:keyId",

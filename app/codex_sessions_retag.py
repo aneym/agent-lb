@@ -17,8 +17,8 @@ JsonObject = dict[str, object]
 ProgressLogger = Callable[[str], None]
 
 PROVIDER_RETAG_BACKUP_DIR = "provider-retag"
-# "codex-lb" is the legacy provider string written by older releases; accept it
-# for reading/retagging but always write "agent-lb" as the canonical provider tag.
+
+
 _SUPPORTED_PROVIDERS = {"openai", "codex-lb", "agent-lb"}
 _STATE_DB_PATTERN = "state_*.sqlite"
 
@@ -50,7 +50,7 @@ class RetagResult:
 
 
 def default_codex_home() -> Path:
-    """Pick the Codex data path for this command without changing app-wide settings."""
+
     env_path = os.getenv("CODEX_HOME")
     if env_path:
         return Path(env_path).expanduser()
@@ -87,8 +87,8 @@ def retag_codex_sessions(
     log(f"Using Codex home {codex_home}")
     log(f"Retagging Codex sessions from {source_provider} to {target_provider}")
 
-    # Build the full write set before taking a backup so dry-runs and real
-    # retags report the same targets.
+
+
     jsonl_files = tuple(_find_jsonl_session_files(sessions_dir))
     state_dbs = tuple(_find_state_dbs(codex_home))
     provider_counts_before = _provider_counts(codex_home)
@@ -159,8 +159,8 @@ def _validate_providers(source_provider: str, target_provider: str) -> None:
 
 
 def _running_in_container() -> bool:
-    # Keep cgroup marker detection scoped to this CLI command; app settings use
-    # their existing runtime checks.
+
+
     if Path("/.dockerenv").exists() or Path("/run/.containerenv").exists():
         return True
     return _cgroup_mentions_container(Path("/proc/1/cgroup"))
@@ -245,8 +245,8 @@ def _retag_jsonl_file(path: Path, source_provider: str, target_provider: str) ->
                     output_handle.write(raw_line)
                     continue
                 if isinstance(record, dict) and _retag_jsonl_record_provider(record, source_provider, target_provider):
-                    # Preserve invalid or unrelated JSONL lines verbatim; only
-                    # matched session records are normalized through json.dumps.
+
+
                     changed = True
                     output_handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
                 else:
@@ -326,9 +326,9 @@ def _update_sqlite_provider(db_path: Path, source_provider: str, target_provider
     except sqlite3.OperationalError as exc:
         if "unable to open database file" not in str(exc).casefold():
             raise
-        # Some bind mounts reject direct SQLite writes from inside a container.
-        # Updating a sibling copy and moving it back keeps the operation scoped
-        # to the mounted Codex home.
+
+
+
         return _update_sqlite_provider_via_copy(db_path, source_provider, target_provider)
 
 

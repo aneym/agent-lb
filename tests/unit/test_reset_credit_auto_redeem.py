@@ -89,7 +89,7 @@ class TestExhaustedPoolOrNone:
     def test_canceled_subscription_accounts_are_excluded(self):
         accounts = [
             _account("a1", AccountStatus.QUOTA_EXCEEDED),
-            # A canceled-but-active account must not suppress redemption.
+
             _account("a2", AccountStatus.ACTIVE, subscription_status="canceled"),
         ]
         result = exhausted_pool_or_none(accounts)
@@ -365,7 +365,7 @@ class TestExpirySweep:
 
 
 class TestDailyAutoRedeemAllowance:
-    """One automatic reset per rolling 24h, plus one more on same-day re-limit."""
+
 
     def test_default_allowance_is_two_per_day(self):
         scheduler = scheduler_module.build_reset_credit_auto_redeem_scheduler()
@@ -412,14 +412,14 @@ class TestDailyAutoRedeemAllowance:
 
     @pytest.mark.asyncio
     async def test_exhausted_allowance_suppresses_the_sweep(self, monkeypatch):
-        """A spent allowance must stop redemption even with credits banked."""
+
         scheduler = _scheduler()
         redeemed: list[str] = []
 
         async def _redeem(self, session, repo, candidates):  # noqa: ARG001, ANN001
             redeemed.append("called")
 
-        # slots=True dataclass: the override has to land on the class.
+
         monkeypatch.setattr(
             scheduler_module.ResetCreditAutoRedeemScheduler, "_redeem_first_available", _redeem
         )
@@ -459,6 +459,6 @@ class TestDailyAutoRedeemAllowance:
         scheduler = _scheduler()
         scheduler.expiry_enabled = True
         scheduler._last_redeemed_at = scheduler_module.utcnow()
-        # Use-it-or-lose-it credits must still be swept while the cap holds.
+
         assert scheduler._cooldown_active() is True
         assert scheduler._expiry_sweep_due() is True

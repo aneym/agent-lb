@@ -109,7 +109,7 @@ def _build_limit_inputs(payload: ApiKeyCreateRequest | ApiKeyUpdateRequest) -> l
         and "weekly_token_limit" in payload.model_fields_set
         and payload.weekly_token_limit is not None
     ):
-        # Legacy: convert weeklyTokenLimit to a limit rule
+
         limit_inputs.append(
             LimitRuleInput(
                 limit_type="total_tokens",

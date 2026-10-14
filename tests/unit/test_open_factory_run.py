@@ -1,5 +1,4 @@
-"""`of run` (Open Factory as a product, plan.md {#migrate}, Alex 2026-09-29 22:55 ET): one command picks a seat through
-route, runs the brief on the right CLI, stands in on the next seat when a pool is out, and leaves a receipt."""
+
 
 from __future__ import annotations
 
@@ -34,7 +33,7 @@ def world(tmp_path: Path) -> dict[str, str]:
          "weeklyPacePercent": 5.0},
         {"id": "cursor", "status": "ok", "accounts": 1, "eligibleAccounts": 1}]}))
     calls = tmp_path / "calls.jsonl"
-    # Each stub logs its argv and the intent tag, then answers like the real CLI would.
+
     log = f'printf \'%s\\n\' "$(python3 -c \'import json,os,sys; print(json.dumps({{"argv": sys.argv[1:], "intent": os.environ.get("AGENT_LB_INTENT")}}))\' "$0" "$@")" >> {calls}\n'
     env = {k: v for k, v in os.environ.items() if not k.startswith(("ROUTE_", "AGENT_LB_", "CLAUDE", "OF_"))}
     env.update(
@@ -42,7 +41,7 @@ def world(tmp_path: Path) -> dict[str, str]:
         ROUTE_TABLE=str(TABLE), ROUTE_FIXTURE_DIR=str(fixtures), ROUTE_MODELS_CACHE=str(tmp_path / "models.json"),
         ROUTE_LEDGER=str(tmp_path / "dispatch.jsonl"),
         ROUTE_CURSOR_MODELS_CMD="printf 'grok-4.7-medium - Grok\\ncomposer-2.5 - Composer\\n'",
-        # Codex is out of quota; Claude and Cursor answer.
+
         OF_BIN_CODEX=stub(bins / "codex", log + "echo 'ERROR: You have hit your usage limit (429)' >&2\nexit 1\n"),
         OF_BIN_CLAUDE_LB_LAUNCH=stub(bins / "claude-lb-launch", log + "echo '{\"result\": \"renamed\"}'\n"),
         OF_BIN_SEAT=stub(bins / "seat", log + "echo '{\"ok\": true, \"result\": \"renamed\"}'\n"),
@@ -63,7 +62,7 @@ def rows(env: dict[str, str], name: str) -> list[dict]:
 
 def test_of_run_stands_in_when_codex_is_out_and_leaves_a_receipt(tmp_path: Path) -> None:
     env = world(tmp_path)
-    # Grok, the implement head when its gate is open, is out of quota too; Composer answers.
+
     table = json.loads(TABLE.read_text())
     reopen_cursor(table)
     grok_open = tmp_path / "grok-open.json"
@@ -99,15 +98,15 @@ def test_of_run_stands_in_when_codex_is_out_and_leaves_a_receipt(tmp_path: Path)
     assert [(o["decision_id"], o["attempt"], o["outcome"]) for o in outcomes] == [
         (receipt["decision_id"], 1, "limit"), (receipt["decision_id"], 2, "ok")]
 
-    # --intended puts a job on the model it belongs on when the class menu has it: Composer through the seat CLI
-    # (the interim mechanical ladder's Cursor rung; its Grok rung is grok-latest-low, not the medium alias).
+
+
     comp = json.loads(of(env, "run", "mechanical", "--intended", "composer-2.5", "--json", "--", "Rename y to z").stdout)
     assert comp["ran"] == {"seat": "cursor-seat", "model": "composer-2.5"} and comp["standing_in"] is False
     assert comp["attempts"][0]["maker"] == "cursor"
     seat = rows(env, "CALLS")[-1]["argv"]
     assert seat[1:6] == ["run", "--vendor", "cursor", "--model", "composer-2.5"] and "--mode" not in seat
 
-    # An intended model the class menu lacks is recorded as intended, and route decides where the job runs.
+
     look = json.loads(of(env, "run", "explore", "--intended", "unavailable-model", "--json", "--", "Where is z?").stdout)
     assert look["intended"] == {"seat": None, "model": "unavailable-model"} and look["standing_in"] is True
     assert look["reason"] == "intended unavailable-model is not on the explore menu"
@@ -166,7 +165,7 @@ esac
 
 
 def test_a_seat_capacity_wait_stands_in_and_verify_carries_the_author(tmp_path: Path) -> None:
-    """A4d fix round: `seat run --class verify` needs the author vendor, and its exit 4 is a capacity wait."""
+
     env = world(tmp_path)
     cursor = {"seat": "cursor-seat", "model": "claude-sonnet-5-5-high", "pool": "cursor-other", "rung": "cursor"}
     sonnet = {"seat": "verifier", "model": "claude-sonnet-5-5", "pool": "anthropic-general", "rung": "sonnet"}
@@ -185,7 +184,7 @@ esac
     argv = next(call["argv"] for call in rows(env, "CALLS") if call["argv"][0].endswith("seat"))
     assert argv[argv.index("--author-vendor") + 1] == "openai"
 
-    # With nothing to stand in on, a wait is the run's answer: exit 4, not a job failure.
+
     env["OF_BIN_ROUTE"] = stub(tmp_path / "route", f"echo '{json.dumps(cursor)}'\n")
     waited = of(env, "run", "verify", "--author-vendor", "openai", "--json", "--", "Review the diff")
     assert waited.returncode == 4 and json.loads(waited.stdout)["ran"] is None, waited.stdout

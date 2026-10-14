@@ -1,18 +1,4 @@
-"""Unit tests for ``app.core.clients.files`` (file upload protocol).
 
-The client mirrors the upstream Codex CLI's three-step protocol:
-
-1. ``POST /files`` (``create_file``) -> registers a file and gets a SAS
-   ``upload_url``.
-2. ``PUT {upload_url}`` -- not in this module, the caller PUTs bytes
-   directly to the SAS URL.
-3. ``POST /files/{id}/uploaded`` (``finalize_file``) -- polls until the
-   upstream finalize loop returns ``status != "retry"``.
-
-These tests stub ``aiohttp.ClientSession.post`` so we never actually
-talk to the network, and exercise the success / retry / timeout / error
-paths.
-"""
 
 from __future__ import annotations
 
@@ -38,12 +24,7 @@ pytestmark = pytest.mark.unit
 
 
 class _FakeResponse:
-    """Minimal aiohttp.ClientResponse stand-in.
 
-    Returns the configured status / body text from ``.text()`` and
-    supports the ``async with session.post(...) as resp:`` context
-    manager protocol.
-    """
 
     def __init__(self, *, status: int, body: str) -> None:
         self.status = status
@@ -61,12 +42,7 @@ class _FakeResponse:
 
 
 class _FakeSession:
-    """``ClientSession``-shaped fake that returns a queued response per ``.post`` call.
 
-    ``responses`` is consumed FIFO; if the queue runs out the test fails
-    fast rather than blocking. Each ``.post`` call appends a ``call``
-    record with the URL and body so tests can assert on what was sent.
-    """
 
     def __init__(self, responses: Sequence[_FakeResponse | Exception]) -> None:
         self._responses: list[_FakeResponse | Exception] = list(responses)
@@ -107,7 +83,7 @@ async def test_create_file_returns_upstream_json_on_success() -> None:
     sent_headers = call["headers"]
     assert sent_headers["Authorization"] == "Bearer upstream-token"
     assert sent_headers["chatgpt-account-id"] == "acc_1"
-    # Forward UA + x-codex-* but NOT bulk inbound auth.
+
     assert sent_headers["User-Agent"] == "codex-cli/1.0"
     assert sent_headers["x-codex-version"] == "1.2.3"
     body = json.loads(call["data"])
@@ -260,8 +236,8 @@ async def test_finalize_file_retries_then_succeeds(monkeypatch: pytest.MonkeyPat
 
     assert result["status"] == "success"
     assert len(session.calls) == 3
-    # Two ``retry`` responses -> two inter-poll sleeps before the final
-    # success response. Both must be the 250 ms cadence.
+
+
     assert sleeps == [files_module._FILE_FINALIZE_POLL_DELAY_SECONDS] * 2
 
 
@@ -308,8 +284,8 @@ async def test_finalize_file_holds_shared_session_lease_across_poll_loop(monkeyp
 @pytest.mark.asyncio
 async def test_finalize_file_returns_last_retry_after_budget_exhaustion(monkeypatch: pytest.MonkeyPatch) -> None:
     retry_body = json.dumps({"status": "retry"})
-    # Provide more retry responses than we expect to consume so that if
-    # the budget is honored we stop early.
+
+
     session = _FakeSession([_FakeResponse(status=200, body=retry_body) for _ in range(8)])
 
     fake_now = [0.0]
@@ -318,8 +294,8 @@ async def test_finalize_file_returns_last_retry_after_budget_exhaustion(monkeypa
         return fake_now[0]
 
     async def _advance(seconds: float) -> None:
-        # Advance past the 30 s budget on the first sleep so we do exactly
-        # one upstream call then give up. (Budget = 30 s; advance 60 s.)
+
+
         fake_now[0] += 60.0
 
     monkeypatch.setattr(files_module.time, "monotonic", _monotonic)
@@ -335,11 +311,11 @@ async def test_finalize_file_returns_last_retry_after_budget_exhaustion(monkeypa
     )
 
     assert result == {"status": "retry"}
-    # Exactly one upstream call: the initial poll returned ``retry``,
-    # the inter-poll sleep pushed the clock past the 30 s budget, and
-    # the post-sleep deadline check stops the loop *before* issuing
-    # another ``POST``. This protects callers from one overshoot poll
-    # whose own request timeout could blow well past the budget.
+
+
+
+
+
     assert len(session.calls) == 1
 
 

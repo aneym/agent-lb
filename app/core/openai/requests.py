@@ -140,17 +140,7 @@ def _input_image_file_reference(item: Mapping[str, JsonValue]) -> str | None:
 
 
 def extract_input_file_ids(input_value: JsonValue) -> set[str]:
-    """Return all ``file_id`` strings referenced by ``input_file`` / ``input_image`` items.
 
-    Walks both top-level items and nested role-message ``content`` parts,
-    matching the shapes accepted by ``ResponsesRequest.input`` /
-    ``ResponsesCompactRequest.input``. Returns an empty set when the
-    input is a plain string or has no ``input_file`` parts. Used by the
-    ``/responses`` flow to look up account pins recorded by
-    ``POST /backend-api/files`` so the response request lands on the
-    upstream account that registered the file (the upstream contract is
-    account-scoped via ``chatgpt-account-id``).
-    """
     if not is_json_list(input_value):
         return set()
     file_ids: set[str] = set()
@@ -477,11 +467,11 @@ class ResponsesRequest(BaseModel):
     @field_validator("input")
     @classmethod
     def _validate_input_type(cls, value: JsonValue) -> JsonValue:
-        # ``input_file`` content items with a ``file_id`` are now allowed
-        # and forwarded verbatim. They reference uploads registered via
-        # ``POST /backend-api/files`` (see the file upload protocol),
-        # which lets large attachments bypass the 16 MiB websocket
-        # ceiling on `/responses`.
+
+
+
+
+
         if isinstance(value, str):
             normalized = _normalize_input_text(value)
             return _sanitize_input_items(normalized)
@@ -563,8 +553,8 @@ class ResponsesCompactRequest(BaseModel):
     @field_validator("input")
     @classmethod
     def _validate_input_type(cls, value: JsonValue) -> JsonValue:
-        # ``input_file`` content items with a ``file_id`` are forwarded
-        # verbatim; see ``ResponsesRequest._validate_input_type``.
+
+
         if isinstance(value, str):
             normalized = _normalize_input_text(value)
             return _sanitize_input_items(normalized)

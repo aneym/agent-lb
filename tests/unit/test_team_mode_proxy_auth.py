@@ -1,9 +1,4 @@
-"""Team mode changes the keyless proxy-auth fallback for untrusted clients.
 
-Trusted clients (local or in ``proxy_unauthenticated_client_cidrs``) keep working
-without a key.  With team mode on, every other client may still get in, but only
-by presenting a valid ``sk-clb-`` key.
-"""
 
 from __future__ import annotations
 
@@ -144,7 +139,7 @@ async def test_trusted_client_with_junk_bearer_stays_keyless(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("header", ["authorization", "x-api-key"])
 async def test_trusted_client_with_agent_lb_key_is_attributed(monkeypatch, header):
-    """Local harnesses (Harbor containers via host.docker.internal) pass a key for per-key attribution."""
+
     _patch_settings(monkeypatch, team_mode_enabled=True)
     _patch_client_trust(monkeypatch, trusted=True)
     seen = _patch_token_validation(monkeypatch)
@@ -290,12 +285,7 @@ async def test_settings_without_team_mode_attribute_keeps_old_behaviour(monkeypa
 
 @pytest.mark.asyncio
 async def test_loopback_tooling_without_forwarding_header_stays_keyless(monkeypatch):
-    """Deployment config: trust_proxy_headers on, loopback the only trusted proxy.
 
-    Local tooling sends no forwarding header, so the socket peer is the resolved client
-    and the loopback entry in proxy_unauthenticated_client_cidrs admits it keyless. Uses
-    the real trust helpers rather than stubs.
-    """
     _patch_settings(monkeypatch, team_mode_enabled=True)
     process_settings = SimpleNamespace(
         proxy_unauthenticated_client_cidrs=["127.0.0.1/32"],
@@ -315,7 +305,7 @@ async def test_loopback_tooling_without_forwarding_header_stays_keyless(monkeypa
 
 @pytest.mark.asyncio
 async def test_forwarded_public_client_is_still_rejected_in_deployment_config(monkeypatch):
-    """The hardening guarantee survives: a forwarded public IP is not the loopback entry."""
+
 
     _patch_settings(monkeypatch, team_mode_enabled=True)
     process_settings = SimpleNamespace(

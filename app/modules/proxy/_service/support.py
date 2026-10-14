@@ -34,11 +34,11 @@ _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS = 20
 _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS = 0.05
 _HARD_HTTP_BRIDGE_AFFINITY_KINDS = frozenset({"turn_state_header", "session_header"})
 _PROTOCOL_ONLY_RESPONSE_EVENT_TYPES = frozenset({"response.created", "response.in_progress", "response.queued"})
-# How long a bridge key keeps avoiding the account that just failed a
-# first-event timeout. The cooldown only needs to outlive the client's next
-# retry so the fresh bridge selects a different account (that selection also
-# rebinds the sticky mapping away from the dead account); after expiry normal
-# routing applies again.
+
+
+
+
+
 _HTTP_BRIDGE_FIRST_EVENT_COOLDOWN_SECONDS = 300.0
 
 
@@ -57,24 +57,7 @@ def _request_log_useragent_fields(headers: Mapping[str, str]) -> tuple[str | Non
 def strip_encrypted_reasoning_input_items(
     input_items: Sequence[JsonValue],
 ) -> tuple[list[JsonValue], int, int]:
-    """Drop replayed reasoning items whose transcript carries account-bound
-    ``encrypted_content``.
 
-    Reasoning ``encrypted_content`` blobs are encrypted by the upstream account
-    that minted them. When a long-lived ``store:false`` client session replays
-    its transcript through agent-lb, account rotation means those blobs can land
-    on an account that cannot decrypt them - upstream then accepts the
-    ``response.create`` and silently never answers (close 1000, zero events).
-
-    Bisection-verified semantics: when ANY reasoning item carries a blob, ALL
-    reasoning items are dropped - replaying a reasoning item by id without its
-    blob (``store:false``) black-holes upstream exactly the same way, so
-    keeping blob-stripped items is not safe. Payloads with no blobs at all are
-    returned unchanged.
-
-    Returns ``(sanitized_items, dropped_blob_item_count,
-    dropped_plain_item_count)``.
-    """
     reasoning_items = [
         cast(dict[str, JsonValue], item)
         for item in input_items
@@ -96,13 +79,7 @@ def strip_encrypted_reasoning_input_items(
 def strip_encrypted_reasoning_from_request_text(
     request_text: str,
 ) -> tuple[str | None, int, int]:
-    """Apply :func:`strip_encrypted_reasoning_input_items` to a serialized
-    ``response.create`` payload.
 
-    Returns ``(sanitized_text, stripped_item_count, dropped_item_count)``;
-    ``sanitized_text`` is ``None`` when the text is not a JSON object with a
-    list input or when no reasoning items carried ``encrypted_content``.
-    """
     try:
         payload = json.loads(request_text)
     except json.JSONDecodeError:
@@ -134,7 +111,7 @@ class _WebSocketConnectFailureEmitted(Exception):
 
 
 class _TransientStreamError(Exception):
-    """Transient upstream error (e.g. 500 server_error) - retry on same account first."""
+
 
     def __init__(self, code: str, error: UpstreamError) -> None:
         super().__init__(code)
@@ -156,7 +133,7 @@ class _ApiKeyReservationTouchState:
 
 @dataclass
 class _StreamSettlement:
-    """Populated by _stream_once(), consumed by _stream_with_retry() for reservation settlement."""
+
 
     status: str = "success"
     model: str = ""
@@ -242,14 +219,14 @@ class _WebSocketRequestState:
     proxy_injected_previous_response_id: bool = False
     expose_stale_previous_response_classifier: bool = False
     fresh_upstream_request_text: str | None = None
-    # True only when ``fresh_upstream_request_text`` contains a *safe* pre-
-    # injection form of this request that can be replayed as a fresh turn.
-    # Durable-anchor injection captures the original unanchored full-resend
-    # payload, so dropping the anchor and replaying is equivalent to the
-    # client's own retry. Session-level anchor injection does not set this:
-    # the original payload may have omitted history the conversation depended
-    # on, and dropping the anchor there would silently turn a continuation into
-    # a context-free fresh turn.
+
+
+
+
+
+
+
+
     fresh_upstream_request_is_retry_safe: bool = False
     request_stage: str = "first_turn"
     preferred_account_id: str | None = None
@@ -289,19 +266,18 @@ class _WebSocketRequestState:
     suppress_next_created_downstream: bool = False
     replay_downstream_response_id: str | None = None
     draining_until_terminal: bool = False
-    # Remote-compaction v2: the Codex CLI counts compaction output items from
-    # the terminal ``response.completed`` envelope, but the upstream websocket
-    # protocol streams items as ``response.output_item.done`` frames and sends
-    # a terminal envelope whose ``output`` array is empty. Track compaction
-    # turns so the bridge can re-inject the streamed compaction items into the
-    # terminal envelope before it reaches the client.
+
+
+
+
+
+
     is_compaction_request: bool = False
     compaction_output_items: list[JsonValue] = field(default_factory=list)
 
 
 def request_input_contains_compaction_trigger(input_items: JsonValue) -> bool:
-    """True when a ``response.create`` input carries a remote-compaction v2
-    ``compaction_trigger`` item."""
+
     if not isinstance(input_items, list):
         return False
     return any(isinstance(item, dict) and item.get("type") == "compaction_trigger" for item in input_items)
@@ -520,7 +496,7 @@ class _WebSocketReceiveTimeout:
 
 
 def is_first_output_event(event_type: str | None) -> bool:
-    """First Responses event that carries model output, for TTFT."""
+
     if not event_type:
         return False
     return event_type == "response.output_item.added" or event_type.endswith(".delta")

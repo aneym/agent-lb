@@ -136,7 +136,7 @@ class ReceiptsRepository:
             key = func.date(RequestLog.requested_at)
         else:
             key = group_expr[group_by]
-        # Mixed-provider accounts have no single provider; never split a requested group.
+
         provider = case(
             (func.min(RequestLog.provider) == func.max(RequestLog.provider), func.min(RequestLog.provider)),
             else_=None,
@@ -168,7 +168,7 @@ class ReceiptsRepository:
         async def percentile(fraction: float):
             if not latency_count:
                 return None
-            index = int((latency_count - 1) * fraction + 0.999999999)  # nearest rank
+            index = int((latency_count - 1) * fraction + 0.999999999)
             return (
                 await self.session.execute(
                     select(RequestLog.latency_ms)

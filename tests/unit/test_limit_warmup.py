@@ -891,7 +891,7 @@ async def _openai_tick(
 async def test_openai_partial_reset_primes_outside_working_hours_once_then_stops_when_started() -> None:
     account = _account()
     sender = FakeSender()
-    initial = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)  # 03:00 America/New_York
+    initial = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
     before = _openai_sample(
         account.id,
         used_percent=60,
@@ -1081,7 +1081,7 @@ async def test_openai_seed_primer_spaces_continuous_primer_for_thirty_minutes(
 ) -> None:
     account = _account()
     sender = FakeSender()
-    initial = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)  # 03:00 America/New_York
+    initial = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
     monkeypatch.setattr(limit_warmup_service, "utcnow", lambda: initial.replace(tzinfo=None))
     cold = _openai_sample(
         account.id,
@@ -1211,10 +1211,10 @@ def _anthropic_sample(
 
 @pytest.mark.asyncio
 async def test_anthropic_cold_primary_window_is_primed_once_per_window_across_restarts() -> None:
-    # Real telemetry after a five-hour reset: used_percent 0 and no reset_at
-    # until a request opens the next window, and usually no anthropic_standard
-    # sample for an idle account. The primer used to wait for a reset edge plus
-    # a fresh standard sample, so idle accounts were never primed.
+
+
+
+
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -1229,7 +1229,7 @@ async def test_anthropic_cold_primary_window_is_primed_once_per_window_across_re
         weekly = _anthropic_sample(
             account.id, used_percent=40, reset_at=weekly_reset, recorded_at=seen, window="secondary"
         )
-        async with sessions() as session:  # a fresh service per tick, as after a restart
+        async with sessions() as session:
             repo = LimitWarmupRepository(session)
             service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
             await service.run_after_usage_refresh(
@@ -1246,21 +1246,21 @@ async def test_anthropic_cold_primary_window_is_primed_once_per_window_across_re
             return latest.status if latest is not None else "none"
 
     try:
-        cold_at = datetime(2026, 9, 25, 10, 59, 5, tzinfo=timezone.utc)  # a minute before a 5h bucket boundary
-        assert await tick(cold_at, None, recorded_at=cold_at - timedelta(minutes=11)) == "none"  # stale sample
+        cold_at = datetime(2026, 9, 25, 10, 59, 5, tzinfo=timezone.utc)
+        assert await tick(cold_at, None, recorded_at=cold_at - timedelta(minutes=11)) == "none"
         assert await tick(cold_at, None) == "sent_unconfirmed"
         assert sender.calls == [(account.id, "claude-haiku-4-5")]
-        for seconds in (30, 85, 600):  # still reported closed, across the boundary: no second primer
+        for seconds in (30, 85, 600):
             await tick(cold_at + timedelta(seconds=seconds), None)
         assert len(sender.calls) == 1
 
-        # Anthropic floors the window start to ten minutes: 10:59 opens a window ending 15:50.
+
         opened_reset = int(datetime(2026, 9, 25, 15, 50, tzinfo=timezone.utc).timestamp())
         assert await tick(cold_at + timedelta(minutes=12), opened_reset) == "succeeded"
         assert len(sender.calls) == 1
 
         next_cold = datetime.fromtimestamp(opened_reset + 5, tz=timezone.utc)
-        assert await tick(next_cold, opened_reset) == "sent_unconfirmed"  # sampled after the reset, reset_at kept
+        assert await tick(next_cold, opened_reset) == "sent_unconfirmed"
         await tick(next_cold + timedelta(minutes=2), None)
         assert len(sender.calls) == 2
     finally:
@@ -1307,7 +1307,7 @@ async def test_anthropic_does_not_prime_open_window_or_exhausted_weekly_or_haiku
     await evaluate()
     assert sender.calls == []
     standard.used_percent = 0
-    primary.reset_at = int((current + timedelta(hours=3)).timestamp())  # opened by real traffic
+    primary.reset_at = int((current + timedelta(hours=3)).timestamp())
     await evaluate()
     assert sender.calls == []
     primary.reset_at = None
@@ -1540,8 +1540,8 @@ async def test_seed_fires_for_cold_account_inside_seed_window_and_is_idempotent(
     sender = FakeSender()
     service = LimitWarmupService(repo, logs, sender=sender)
     account = _account()
-    # Default offset 120 → target reset 11:00, seed band [06:00, 09:00).
-    seed_now = datetime(2026, 6, 10, 7, 0, 0)  # 07:00 UTC ∈ [06:00, 09:00)
+
+    seed_now = datetime(2026, 6, 10, 7, 0, 0)
 
     async def run() -> None:
         await service.run_after_usage_refresh(
@@ -1549,7 +1549,7 @@ async def test_seed_fires_for_cold_account_inside_seed_window_and_is_idempotent(
             settings=_settings(limit_warmup_cooldown_seconds=0),
             before_primary={},
             before_secondary={},
-            after_primary={},  # cold: no future reset
+            after_primary={},
             after_secondary={},
             planner_settings=_planner(),
             now=seed_now,
@@ -1562,8 +1562,8 @@ async def test_seed_fires_for_cold_account_inside_seed_window_and_is_idempotent(
     assert len(repo.rows) == 1
     assert repo.rows[0].window == "primary"
     assert repo.rows[0].status == "succeeded"
-    # Default offset 120 anchors the seed's reset to 11:00 in the planner tz so a
-    # cold account presents a loaded window at 09:00 AND cycles twice before EOD.
+
+
     expected_reset = int(datetime(2026, 6, 10, 11, 0, 0, tzinfo=timezone.utc).timestamp())
     assert repo.rows[0].reset_at == expected_reset
 
@@ -1574,7 +1574,7 @@ async def test_seed_offset_zero_reproduces_legacy_start_anchored_band() -> None:
     sender = FakeSender()
     service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
     account = _account()
-    # offset 0 → target reset == working_hours_start (09:00), seed band [04:00, 09:00).
+
     planner = _planner(seed_target_offset_minutes=0)
 
     await service.run_after_usage_refresh(
@@ -1585,7 +1585,7 @@ async def test_seed_offset_zero_reproduces_legacy_start_anchored_band() -> None:
         after_primary={},
         after_secondary={},
         planner_settings=planner,
-        now=datetime(2026, 6, 10, 5, 0, 0),  # 05:00 UTC ∈ [04:00, 09:00)
+        now=datetime(2026, 6, 10, 5, 0, 0),
     )
 
     assert len(sender.calls) == 1
@@ -1608,7 +1608,7 @@ async def test_seed_does_not_fire_outside_seed_window() -> None:
         after_primary={},
         after_secondary={},
         planner_settings=_planner(),
-        now=datetime(2026, 6, 10, 11, 0, 0),  # 11:00 UTC, after work start
+        now=datetime(2026, 6, 10, 11, 0, 0),
     )
 
     assert sender.calls == []
@@ -1621,7 +1621,7 @@ async def test_hold_path_skips_outside_working_hours() -> None:
     sender = FakeSender()
     service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
     account = _account()
-    # Valid reactive candidate (was exhausted, now reset to a future window).
+
     before = {account.id: _usage(account.id, used_percent=100, reset_at=9_000_000_000)}
     after = {account.id: _usage(account.id, used_percent=0, reset_at=9_999_999_999)}
 
@@ -1633,7 +1633,7 @@ async def test_hold_path_skips_outside_working_hours() -> None:
         after_primary=after,
         after_secondary={},
         planner_settings=_planner(),
-        now=datetime(2026, 6, 10, 22, 0, 0),  # 22:00 UTC, outside [06:00, 18:00]
+        now=datetime(2026, 6, 10, 22, 0, 0),
     )
 
     assert sender.calls == []
@@ -1657,7 +1657,7 @@ async def test_hold_path_sends_inside_working_hours() -> None:
         after_primary=after,
         after_secondary={},
         planner_settings=_planner(),
-        now=datetime(2026, 6, 10, 12, 0, 0),  # 12:00 UTC, inside [06:00, 18:00]
+        now=datetime(2026, 6, 10, 12, 0, 0),
     )
 
     assert len(sender.calls) == 1

@@ -245,11 +245,11 @@ def test_json_formatter_timestamp_is_iso_format(json_formatter):
 
 
 def test_build_log_config_uses_json_access_formatter_when_json(monkeypatch):
-    """build_log_config() should use JsonAccessFormatter when log_format == 'json'."""
+
     from typing import cast
 
     monkeypatch.setenv("AGENT_LB_LOG_FORMAT", "json")
-    # Clear lru_cache so the setting is re-read
+
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -257,12 +257,12 @@ def test_build_log_config_uses_json_access_formatter_when_json(monkeypatch):
     formatters = cast(dict, config.get("formatters", {}))
     access_formatter = cast(dict, formatters.get("access", {}))
     assert access_formatter.get("()") == "app.core.runtime_logging.JsonAccessFormatter"
-    # Restore
+
     get_settings.cache_clear()
 
 
 def test_build_log_config_uses_utc_access_formatter_when_text(monkeypatch):
-    """build_log_config() should use UtcAccessFormatter when log_format == 'text'."""
+
     from typing import cast
 
     monkeypatch.setenv("AGENT_LB_LOG_FORMAT", "text")
@@ -273,7 +273,7 @@ def test_build_log_config_uses_utc_access_formatter_when_text(monkeypatch):
     formatters = cast(dict, config.get("formatters", {}))
     access_formatter = cast(dict, formatters.get("access", {}))
     assert access_formatter.get("()") == "app.core.runtime_logging.UtcAccessFormatter"
-    # Restore
+
     get_settings.cache_clear()
 
 
@@ -316,8 +316,7 @@ def test_build_log_config_queues_stream_handlers(monkeypatch):
 
 
 def test_configure_runtime_logging_emits_through_listener(monkeypatch, capsys):
-    """A record logged on the caller's thread reaches stderr via the listener
-    thread, formatted by the stream handler (asctime + level + message)."""
+
     import logging as _logging
     import time as _time
 
@@ -333,7 +332,7 @@ def test_configure_runtime_logging_emits_through_listener(monkeypatch, capsys):
         configure_runtime_logging()
         queue_handler = _logging.getHandlerByName("default")
         assert queue_handler.__class__.__name__ == "QueueHandler"
-        listeners = start_log_listeners()  # idempotent: already started
+        listeners = start_log_listeners()
         assert listeners and all(getattr(item, "_thread", None) is not None for item in listeners)
         _logging.getLogger("app.test.queued").info("queued-hello %s", 42)
         deadline = _time.monotonic() + 5
@@ -354,12 +353,7 @@ def test_configure_runtime_logging_emits_through_listener(monkeypatch, capsys):
 
 
 def test_queued_access_line_keeps_request_args(monkeypatch, capsys):
-    """A uvicorn access record queued in text mode still formats on the listener.
 
-    Stock QueueHandler.prepare clears args after merging the message. The
-    access formatter unpacks that 5-tuple, so the line is dropped and stderr
-    reports a logging error.
-    """
     import logging.config
 
     monkeypatch.setenv("AGENT_LB_LOG_FORMAT", "text")

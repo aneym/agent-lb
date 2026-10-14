@@ -1,4 +1,4 @@
-"""Routing contracts: harness ownership, all-stage accepted costs and sample guards."""
+
 
 from datetime import UTC, datetime, timedelta
 

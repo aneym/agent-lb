@@ -53,7 +53,7 @@ class FederationService:
         self._encryptor = encryptor or TokenEncryptor()
         self._peer_client = peer_client or AiohttpFederationPeerClient()
 
-    # --- owner-side: exports current state / receives transfer requests ---
+
 
     async def accept_usage_report(
         self, instance_id: str, rollups: list[FederationUsageDayRollup]
@@ -130,19 +130,19 @@ class FederationService:
 
     async def _checkout_locked(self, account_id: str, taker_instance_id: str, nonce: str) -> FederationCheckoutResponse:
         local_id = self._settings.local_instance_id
-        # Discard the request-scoped identity map after waiting for a refresh.
+
         account = await self._repo.reload_account(account_id)
         if account is None:
             raise FederationNotFoundError(account_id)
         if await self._repo.has_exchange_intent(account_id):
             raise FederationConflictError(account_id, current_owner=account.owner_instance)
 
-        # Guarded UPDATE, not read-then-write: the ownership check is folded
-        # into the UPDATE's WHERE clause so two concurrent checkouts by
-        # different takers cannot both observe "locally owned" and both win
-        # (that would double-own the account). Owner's gate closes the
-        # instant this commits, before the payload is read back and
-        # returned — design.md ordering.
+
+
+
+
+
+
         transfer = await self._repo.release_for_checkout(
             account_id, taker_instance_id, local_instance_id=local_id, nonce=nonce
         )
@@ -207,7 +207,7 @@ class FederationService:
         peer_url, token = self._require_peer_config()
         transfer = await self._repo.get_open_transfer(account_id)
         if transfer is None:
-            # A settled checkout with lost confirm still needs the peer's gate closed.
+
             transfer = await self._repo.get_latest_transfer(account_id, direction=AccountTransferDirection.CHECKOUT)
             if transfer is None or transfer.state != AccountTransferState.SETTLED:
                 return False
@@ -239,7 +239,7 @@ class FederationService:
             raise RuntimeError(f"Inconsistent peer transfer state for account {account_id} nonce {nonce}")
         return True
 
-    # --- taker-side: operator-triggered, calls the configured peer ---
+
 
     async def execute_checkout(self, account_id: str) -> FederationCheckoutExecuteResponse:
         local_id = self._settings.local_instance_id
@@ -257,7 +257,7 @@ class FederationService:
         elif transfer.direction != AccountTransferDirection.CHECKOUT or transfer.state != AccountTransferState.PENDING:
             raise FederationConflictError(account_id, current_owner=None)
         nonce = transfer.nonce
-        # A committed import is never replayed. Only a pending reservation calls checkout.
+
         try:
             result = await self._peer_client.checkout(
                 peer_url=peer_url,
@@ -279,8 +279,8 @@ class FederationService:
         except ValueError as exc:
             raise FederationConflictError(account_id, current_owner=None) from exc
         except Exception:
-            # Preserve the reservation; reclaim is the only safe rollback when
-            # a peer may have committed its gate before losing the response.
+
+
             raise
         confirmed = False
         try:
@@ -328,8 +328,8 @@ class FederationService:
                 await self.reclaim(account_id)
             except Exception as reclaim_error:
                 raise RuntimeError(f"Checkin unresolved; reclaim {account_id} to retry") from reclaim_error
-            # A lost reply may have followed a committed peer import. Reclaim
-            # settles and blanks this copy in that case, so report success.
+
+
             latest = await self._repo.get_transfer_by_nonce(nonce)
             if latest is not None and latest.state == AccountTransferState.SETTLED:
                 return FederationCheckinExecuteResponse(account_id=account_id, nonce=nonce, settled=True)
@@ -337,7 +337,7 @@ class FederationService:
         await self._repo.settle_checkin_and_blank(nonce, encryptor=self._encryptor)
         return FederationCheckinExecuteResponse(account_id=account_id, nonce=nonce, settled=True)
 
-    # --- internal helpers ---
+
 
     @staticmethod
     def _totals(rollups: list[FederationUsageDayRollup]) -> FederationUsageTotals:

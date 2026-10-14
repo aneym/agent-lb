@@ -1,9 +1,4 @@
-"""add account workspace identity metadata
 
-Revision ID: 20260531_000000_add_account_workspace_identity
-Revises: 20260601_000000_merge_relative_availability_and_usage_raw_heads
-Create Date: 2026-05-31 18:00:00.000000
-"""
 
 from __future__ import annotations
 

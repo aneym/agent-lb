@@ -1,12 +1,4 @@
-"""Integration tests for ``POST /backend-api/files`` and the finalize endpoint.
 
-These tests stub the upstream client functions
-(``proxy_module.core_create_file`` / ``core_finalize_file``) so we
-exercise the full FastAPI route -> service -> account-selection ->
-upstream-client chain without hitting the real ChatGPT backend. The
-``async_client`` fixture lives in ``tests/conftest.py`` and gives us a
-fully-wired httpx client against the FastAPI app.
-"""
 
 from __future__ import annotations
 
@@ -258,9 +250,7 @@ async def test_backend_files_finalize_repeated_401_after_refresh_fails_over(asyn
 
 @pytest.mark.asyncio
 async def test_backend_files_finalize_propagates_retry_status(async_client, monkeypatch):
-    """Once the finalize loop in the upstream client gives up with a
-    final ``retry`` status, we return that payload verbatim so the
-    caller can decide what to do (mirrors upstream Codex CLI behaviour)."""
+
     await _import_account(async_client, "acc_files_finalize_retry", "files-finalize-retry@example.com")
 
     async def fake_finalize_file(*, file_id, headers, access_token, account_id, base_url=None, session=None, **kwargs):
@@ -321,14 +311,7 @@ async def test_backend_files_routes_require_api_key_when_enabled(async_client, e
 
 @pytest.mark.asyncio
 async def test_backend_files_finalize_pins_to_create_account(async_client, monkeypatch):
-    """Regression for cross-account finalize routing.
 
-    Two accounts are imported and the upstream contract is
-    account-scoped (``chatgpt-account-id``). After ``create_file``
-    routes through ``acc_pin_a``, the matching ``finalize_file`` for
-    the same ``file_id`` must be routed to ``acc_pin_a`` even if the
-    load balancer would otherwise pick a different account.
-    """
     await _import_account(async_client, "acc_pin_a", "pin-a@example.com")
     await _import_account(async_client, "acc_pin_b", "pin-b@example.com")
 
@@ -358,15 +341,15 @@ async def test_backend_files_finalize_pins_to_create_account(async_client, monke
     finalize_resp = await async_client.post("/backend-api/files/file_pinned/uploaded")
     assert finalize_resp.status_code == 200
     assert finalize_seen["file_id"] == "file_pinned"
-    # The pin from create_file must drive finalize routing to the same
-    # upstream chatgpt-account-id, regardless of which account the
-    # load balancer would have picked otherwise.
+
+
+
     assert finalize_seen["account_id"] == creating_account
 
 
 @pytest.mark.asyncio
 async def test_backend_files_finalize_pinned_401_retry_fails_closed(async_client, monkeypatch):
-    """Pinned finalize must not fail over to a different account after auth failure."""
+
 
     await _import_account(async_client, "acc_pin_401_a", "pin-401-a@example.com")
     await _import_account(async_client, "acc_pin_401_b", "pin-401-b@example.com")
@@ -412,16 +395,7 @@ async def test_backend_files_finalize_pinned_401_retry_fails_closed(async_client
 
 @pytest.mark.asyncio
 async def test_resolve_file_account_for_responses_returns_pin_when_no_other_affinity(async_client):
-    """Regression for cross-account ``input_file.file_id`` routing.
 
-    The upstream file API is account-scoped (``chatgpt-account-id``),
-    so a ``/v1/responses`` request that references a previously-uploaded
-    ``file_id`` must land on the same account that registered the file;
-    otherwise upstream rejects it with not-found / 401. The contract
-    is exercised at two layers: the standalone resolver helper
-    (used by HTTP / compact paths) and the websocket-prep code path
-    that mirrors the same lookup into ``request_state.preferred_account_id``.
-    """
     await _import_account(async_client, "acc_resp_a", "resp-a@example.com")
     await _import_account(async_client, "acc_resp_b", "resp-b@example.com")
 
@@ -429,8 +403,8 @@ async def test_resolve_file_account_for_responses_returns_pin_when_no_other_affi
     from app.dependencies import get_proxy_service_for_app
 
     service = get_proxy_service_for_app(async_client._transport.app)
-    # Simulate a successful POST /backend-api/files completing under
-    # acc_resp_a -- the pin table is the contract verified here.
+
+
     await service._pin_file_account("file_response_pin", "acc_resp_a")
 
     payload = ResponsesRequest.model_validate(
@@ -450,7 +424,7 @@ async def test_resolve_file_account_for_responses_returns_pin_when_no_other_affi
     )
     resolved = await service._resolve_file_account_for_responses(payload, {})
     assert resolved == "acc_resp_a"
-    # The websocket prep path also surfaces the pin via the same helper.
+
     ws_payload = dict(payload.to_payload())
     ws_payload["type"] = "response.create"
     prepared = await service._prepare_websocket_response_create_request(
@@ -467,14 +441,7 @@ async def test_resolve_file_account_for_responses_returns_pin_when_no_other_affi
 
 @pytest.mark.asyncio
 async def test_v1_responses_prompt_cache_key_overrides_file_id_pin(async_client, monkeypatch):
-    """An explicit ``prompt_cache_key`` is a stronger affinity signal
-    than the file_id pin and must continue to drive routing.
 
-    The pin still gets recorded by ``create_file``, but the
-    ``/v1/responses`` request with a ``prompt_cache_key`` is allowed to
-    land on a different account because a cache key implies an
-    existing conversation continuation.
-    """
     await _import_account(async_client, "acc_pck_a", "pck-a@example.com")
     await _import_account(async_client, "acc_pck_b", "pck-b@example.com")
 
@@ -517,11 +484,11 @@ async def test_v1_responses_prompt_cache_key_overrides_file_id_pin(async_client,
     )
     assert create_resp.status_code == 200
 
-    # Use the helper directly to verify the precedence rule rather than
-    # inspecting the load-balancer's choice (which depends on capacity
-    # weights / sticky tables that are repo-scoped). The contract:
-    # ``_resolve_file_account_for_responses`` must return ``None`` when
-    # a stronger affinity signal is set.
+
+
+
+
+
     from app.core.openai.requests import ResponsesRequest
     from app.dependencies import get_proxy_service_for_app
 
@@ -548,15 +515,7 @@ async def test_v1_responses_prompt_cache_key_overrides_file_id_pin(async_client,
 
 @pytest.mark.asyncio
 async def test_derived_prompt_cache_key_does_not_block_file_id_pin(async_client):
-    """Regression: a ``prompt_cache_key`` that the proxy itself derived
-    (via ``_sticky_key_for_responses_request`` when openai cache
-    affinity is on) must NOT block file-pin routing -- only an
-    *explicitly client-supplied* key should win.
 
-    We simulate the derivation by setting the field on the model
-    *programmatically* (without including it in ``model_fields_set``).
-    The helper must still return the file_id pin.
-    """
     await _import_account(async_client, "acc_derived_a", "derived-a@example.com")
 
     from app.core.openai.requests import ResponsesRequest
@@ -580,13 +539,13 @@ async def test_derived_prompt_cache_key_does_not_block_file_id_pin(async_client)
             ],
         }
     )
-    # Simulate the affinity helper deriving a cache key onto the
-    # payload without it being part of the original client input.
-    # The proxy's affinity-helper assigns to the attribute directly,
-    # but it does so without marking the field as explicitly set
-    # (the tracker is used to distinguish client-supplied keys
-    # from derived ones). Reproduce that contract by removing the
-    # field from ``model_fields_set`` after the assignment.
+
+
+
+
+
+
+
     payload.prompt_cache_key = "derived-key-load-balancer-set"
     payload.model_fields_set.discard("prompt_cache_key")
     assert "prompt_cache_key" not in payload.model_fields_set
@@ -597,15 +556,7 @@ async def test_derived_prompt_cache_key_does_not_block_file_id_pin(async_client)
 
 @pytest.mark.asyncio
 async def test_synthesized_turn_state_does_not_block_file_id_pin(async_client):
-    """Regression: ``ensure_downstream_turn_state`` synthesizes a
-    fresh ``x-codex-turn-state`` header on first turns when the client
-    did not supply one (websocket / HTTP entry points always inject
-    it). The file-pin resolver must treat that synthesizer-generated
-    placeholder as "no turn state" so first-turn upload-then-converse
-    flows still hit the file_id pin. A *client-supplied* turn-state
-    value (anything not matching the synthesizer prefix) must still
-    block the pin lookup.
-    """
+
     await _import_account(async_client, "acc_ts_a", "ts-a@example.com")
 
     from app.core.openai.requests import ResponsesRequest
@@ -631,16 +582,16 @@ async def test_synthesized_turn_state_does_not_block_file_id_pin(async_client):
         }
     )
 
-    # 1) Synthesizer-generated turn_state must NOT block the pin.
+
     synth_turn_state = ensure_downstream_turn_state({})
     assert synth_turn_state.startswith("turn_")
     headers_synth = {"x-codex-turn-state": synth_turn_state}
     resolved = await service._resolve_file_account_for_responses(payload, headers_synth)
     assert resolved == "acc_ts_a"
 
-    # 2) Client-supplied turn_state (anything not matching the
-    # synthesizer pattern) MUST still block the pin -- a real
-    # continuation marker takes precedence.
+
+
+
     headers_client = {"x-codex-turn-state": "client-conversation-handle-42"}
     resolved_blocked = await service._resolve_file_account_for_responses(payload, headers_client)
     assert resolved_blocked is None

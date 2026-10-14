@@ -1,7 +1,4 @@
-"""Compatibility shim for proxy warmup internals.
 
-New code should import from `app.modules.proxy._service.warmup`.
-"""
 
 from app.modules.proxy._service.warmup import (
     WarmupExecutionData as WarmupExecutionData,

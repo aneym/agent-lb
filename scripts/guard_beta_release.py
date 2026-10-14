@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Guard beta release PRs and publishing against unvalidated candidates.
 
-This script is intentionally stdlib-only so it can run early in GitHub Actions,
-before project dependencies are installed.
-"""
 
 from __future__ import annotations
 
@@ -53,7 +49,7 @@ _CHECKED_ITEM_RE = re.compile(
 
 
 class GuardError(RuntimeError):
-    """Raised when the release guard should fail the workflow."""
+    pass
 
 
 def run_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -245,9 +241,9 @@ def _commit_tree(root: Path, commit: str) -> str:
     if proc.returncode == 0:
         return proc.stdout.strip()
 
-    # GitHub's pull_request.closed checkout is normally on the merge commit, so
-    # the PR head commit may not be present locally. Fetch by object id before
-    # deciding the validated candidate cannot be compared.
+
+
+
     fetch = run_git(root, "fetch", "origin", commit, "--depth=1", check=False)
     if fetch.returncode != 0:
         raise GuardError(

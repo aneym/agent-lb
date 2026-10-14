@@ -266,9 +266,9 @@ async def test_usage_windows_aggregate_seeded_request_logs(async_client, db_setu
     day_start = window_start("day", now)
     month_start = window_start("month", now)
 
-    # Inside today's window.
+
     await _seed_request_log(api_key_id=issued["id"], created_at=day_start + timedelta(minutes=1), cost_usd=1.5)
-    # Before today, but inside this month (and skipped by the day window).
+
     before_today = day_start - timedelta(hours=1)
     in_month = before_today >= month_start
     await _seed_request_log(
@@ -279,7 +279,7 @@ async def test_usage_windows_aggregate_seeded_request_logs(async_client, db_setu
         input_tokens=10,
         output_tokens=5,
     )
-    # A log for a key that belongs to nobody must never count.
+
     await _seed_request_log(api_key_id="unrelated-key", created_at=day_start + timedelta(minutes=2), cost_usd=99.0)
 
     listed = (await async_client.get("/api/team/members")).json()[0]

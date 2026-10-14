@@ -1,9 +1,4 @@
-"""add sticky session kinds and prompt-cache affinity ttl
 
-Revision ID: 20260310_120000_add_sticky_session_kinds_and_affinity_ttl
-Revises: 20260310_000000_fix_postgresql_enum_value_casing
-Create Date: 2026-03-10
-"""
 
 from __future__ import annotations
 
@@ -13,7 +8,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260310_120000_add_sticky_session_kinds_and_affinity_ttl"
 down_revision = "20260310_000000_fix_postgresql_enum_value_casing"
 branch_labels = None
@@ -108,5 +102,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Downgrade intentionally keeps additive columns to avoid SQLite table rebuild risk.
+
     return

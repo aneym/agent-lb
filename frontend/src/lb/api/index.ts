@@ -70,7 +70,7 @@ const SummarySchema = z.object({
   totals: z.object({ requests: z.number(), costUsd: z.number(), errors: z.number() }),
   groups: z.array(
     z.object({
-      // null groups requests that never reached an account (rejected before routing)
+
       key: z.string().nullable(),
       provider: z.string().nullable(),
       requests: z.number(),

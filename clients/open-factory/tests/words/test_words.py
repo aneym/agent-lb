@@ -1,8 +1,4 @@
-"""CLI integration contracts using real tracked repositories, no internal mocks.
 
-These are the primary coverage for the new user commands: token false positives,
-classification, added-line isolation, warn-only errors and read-only plans.
-"""
 
 import json
 import os

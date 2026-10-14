@@ -266,7 +266,7 @@ async def test_proxy_sticky_switches_when_pinned_rate_limited(async_client, monk
     response = await async_client.post("/backend-api/codex/responses", json=payload)
     assert response.status_code == 200
 
-    # First attempt is pinned acc_a, which rate limits; retry should switch to acc_b and update stickiness.
+
     assert seen[:2] == [acc_a.id, acc_b.id]
 
 
@@ -344,7 +344,7 @@ async def test_proxy_compact_reallocates_sticky_mapping(async_client, monkeypatc
         "model": "gpt-5.1",
         "instructions": "summarize",
         "input": [],
-        "prompt_cache_key": thread_key,  # extra field accepted by ResponsesCompactRequest (extra="allow")
+        "prompt_cache_key": thread_key,
     }
     response = await async_client.post("/backend-api/codex/responses/compact", json=compact_payload)
     assert response.status_code == 200

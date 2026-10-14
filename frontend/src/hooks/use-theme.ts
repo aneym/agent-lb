@@ -5,12 +5,12 @@ const THEME_STORAGE_KEY = "agent-lb-theme";
 export type ThemePreference = "light" | "dark" | "auto";
 export type ResolvedTheme = "light" | "dark";
 
-/** @deprecated Use ThemePreference instead */
+
 export type Theme = ResolvedTheme;
 
 type ThemeState = {
   preference: ThemePreference;
-  /** The resolved (effective) theme — always "light" | "dark". */
+
   theme: ResolvedTheme;
   initialized: boolean;
   initializeTheme: () => void;

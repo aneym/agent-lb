@@ -127,7 +127,7 @@ def test_missing_transcript_writes_null_cost(interpreter: str, tmp_path: Path) -
 
 @pytest.mark.parametrize("interpreter", INTERPRETERS)
 def test_closeout_names_the_host_it_ran_on(interpreter: str, tmp_path: Path) -> None:
-    """A closeout records where the seat ran (2026-10-08): the placed box's name, else the machine's own."""
+
     transcript = tmp_path / "subagents" / "agent-1.jsonl"
     transcript.parent.mkdir()
     _write_transcript(transcript)
@@ -142,8 +142,7 @@ def test_closeout_names_the_host_it_ran_on(interpreter: str, tmp_path: Path) -> 
 
 
 def _tool_turn(message_id: str, call_id: str, name: str, tool_input: dict, result: str, is_error: bool) -> list:
-    """One assistant row per call plus its result. The call row is written twice,
-    as a streamed reply repeats rows that share a message id."""
+
     call = {
         "type": "assistant",
         "timestamp": "2026-09-22T10:00:30.000Z",
@@ -186,7 +185,7 @@ def test_closeout_records_navigation_counters(interpreter: str, tmp_path: Path) 
     rows += _tool_turn("m5", "t5", "Bash", {"command": "gh pr checks 12"}, "pass", False)
     rows += _tool_turn("m6", "t6", "Edit", {"file_path": "/repo/app.py"}, "ok", False)
     rows += _tool_turn("m7", "t7", "Bash", {"command": "rg -n x . | head"}, "app.py:1:x", False)
-    # Tailing a log a build is still writing twice is a status poll, not a repeat read.
+
     rows += _tool_turn("m8", "t8", "Bash", {"command": "tail -3 /tmp/build.log"}, "building", False)
     rows += _tool_turn("m9", "t9", "Bash", {"command": "tail -3 /tmp/build.log"}, "done", False)
     transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
@@ -196,9 +195,9 @@ def test_closeout_records_navigation_counters(interpreter: str, tmp_path: Path) 
     assert nav["calls"] == 9
     assert nav["nav"] == 7
     assert nav["nav_before_write"] == 4
-    # grep, cat and tail run through rtk; rg does not.
+
     assert nav["nav_rtk"] == 4
-    # A Read that succeeds on text quoting an error is not a failed lookup.
+
     assert nav["failed"] == {"zsh_glob": 1, "missing_path": 1, "cmd_not_found": 0, "too_large": 0}
     assert nav["failed_lookups"] == 2
     assert nav["repeat_reads"] == 1
@@ -210,7 +209,7 @@ def test_closeout_records_navigation_counters(interpreter: str, tmp_path: Path) 
 def test_a_huge_command_does_not_stall_the_closeout(interpreter: str, tmp_path: Path) -> None:
     transcript = tmp_path / "subagents" / "agent-1.jsonl"
     transcript.parent.mkdir()
-    # One line of repeated openers: uncapped, the edit and parser patterns took 10 s here.
+
     command = "python3 - <<EOF " + "open(json.load(" * 13000
     rows = [{"type": "user", "timestamp": "2026-09-22T10:00:00.000Z", "message": {"role": "user", "content": PROMPT}}]
     rows += _tool_turn("m1", "t1", "Bash", {"command": command}, "ok", False)
@@ -272,15 +271,15 @@ def test_identical_unnamed_prompts_are_marked_ambiguous(interpreter: str, tmp_pa
         "last_assistant_message": "Done.",
     }
     env = {key: value for key, value in os.environ.items() if key != "DISPATCH_LEDGER"}
-    # ROUTE_LEDGER alone must be honoured, as seat-guard honours it.
+
     env["ROUTE_LEDGER"] = str(ledger)
     subprocess.run([interpreter, str(HOOK)], input=json.dumps(payload), text=True, check=True, env=env)
     subprocess.run([interpreter, str(HOOK)], input=json.dumps(payload), text=True, check=True, env=env)
     closeouts = [json.loads(line) for line in ledger.read_text().splitlines() if '"closeout"' in line]
     assert len(closeouts) == 2
     for closeout in closeouts:
-        # Neither sibling's stop is pinned on a particular dispatch, and the first
-        # ambiguous closeout does not consume one on replay.
+
+
         assert closeout["match"] == "prompt_hash_ambiguous"
         assert closeout["matched"] is False
         assert closeout["prompt_sha256"] is None
@@ -316,7 +315,7 @@ def test_ambiguous_siblings_on_different_seats_share_no_seat(interpreter: str, t
     transcript = tmp_path / "subagents" / "agent-1.jsonl"
     transcript.parent.mkdir()
     _write_transcript(transcript)
-    # agent_type names neither seat (a caller-given name that no dispatch recorded).
+
     payload = {
         "session_id": SESSION,
         "agent_id": "x",
@@ -348,7 +347,7 @@ def test_replay_honours_a_historical_ambiguous_closeout_that_claimed_a_dispatch(
     rows = [
         {**base, "ts": "2026-09-22T10:00:00Z"},
         {**base, "ts": "2026-09-22T10:00:01Z"},
-        # Written by the previous hook: ambiguous, but pinned on the newest sibling.
+
         {
             "event": "closeout",
             "session_id": SESSION,
@@ -377,7 +376,7 @@ def test_replay_honours_a_historical_ambiguous_closeout_that_claimed_a_dispatch(
         env={**os.environ, "DISPATCH_LEDGER": str(ledger)},
     )
     closeout = [json.loads(line) for line in ledger.read_text().splitlines()][-1]
-    # One sibling is still open, so this stop joins it exactly.
+
     assert closeout["match"] == "prompt_hash"
     assert closeout["matched"] is True
 
@@ -410,7 +409,7 @@ def test_an_agent_type_equal_to_a_siblings_seat_does_not_fake_an_exact_join(inte
     transcript = tmp_path / "subagents" / "agent-1.jsonl"
     transcript.parent.mkdir()
     _write_transcript(transcript)
-    # agent_type is a caller name that happens to spell the other sibling's seat.
+
     payload = {
         "session_id": SESSION,
         "agent_id": "z",
@@ -455,7 +454,7 @@ def test_replay_closes_the_seat_a_historical_exact_closeout_named(interpreter: s
             "model": "grok",
             "prompt_sha256": digest,
         },
-        # An older hook joined this stop exactly to the OLDER opus-seat dispatch.
+
         {
             "event": "closeout",
             "session_id": SESSION,
@@ -484,7 +483,7 @@ def test_replay_closes_the_seat_a_historical_exact_closeout_named(interpreter: s
         env={**os.environ, "DISPATCH_LEDGER": str(ledger)},
     )
     closeout = [json.loads(line) for line in ledger.read_text().splitlines()][-1]
-    # Replay closed opus-seat, so the only open sibling is cursor-seat: an exact join.
+
     assert closeout["match"] == "prompt_hash"
     assert closeout["subagent_type"] == "cursor-seat"
     assert closeout["task_class"] == "mechanical"

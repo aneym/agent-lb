@@ -64,14 +64,14 @@ def resolve_connection_client_ip(
             if resolved is not None:
                 return resolved
 
-        # A forwarding header that is present but unusable stays a hard deny: something
-        # claimed to forward this request and we could not tell on whose behalf.
+
+
         if _has_forwarded_client_ip_hint(headers):
             return None
 
-        # No forwarding header at all. A trusted proxy always sets one, so this request
-        # cannot have come through it — the socket peer is the real client (local tooling
-        # on the box). Matches the firewall resolver in app/core/middleware/api_firewall.py.
+
+
+
         return socket_ip
     return socket_ip
 
@@ -206,13 +206,7 @@ def is_local_request(request: HTTPConnection) -> bool:
 
 
 def is_unauthenticated_client_allowed(request: HTTPConnection) -> bool:
-    """Return True if the resolved client IP is in the unauthenticated CIDR allowlist.
 
-    Uses the trusted-proxy-aware resolved client IP (honoring X-Forwarded-For only when
-    the socket peer is in ``firewall_trusted_proxy_cidrs``). This prevents a
-    misconfigured allowlist entry (e.g. 127.0.0.1/32) from accidentally granting access
-    to public traffic arriving through a local reverse proxy such as Tailscale Funnel.
-    """
     client_host = resolve_request_client_host(request)
     if client_host is None:
         return False
@@ -227,9 +221,5 @@ def is_unauthenticated_client_allowed(request: HTTPConnection) -> bool:
 
 
 def is_trusted_client(request: HTTPConnection) -> bool:
-    """True for local callers and for the configured unauthenticated CIDR allowlist.
 
-    The single definition of "trusted" that team mode gates on, shared by the dashboard
-    session check and the internal drain endpoints.
-    """
     return is_local_request(request) or is_unauthenticated_client_allowed(request)

@@ -1,21 +1,4 @@
-"""Pure Claude reset policy.
 
-Synthetic --state JSON uses this shape (timestamps must include a timezone)::
-
-    {"live_accounts": [{"id": "claude-a", "usable": true,
-      "primary_remaining_pct": 3, "primary_reset_at": "2026-10-13T18:00:00Z",
-      "weekly_remaining_pct": 20, "weekly_reset_at": null,
-      "burn_rate_pct_per_hour": 4, "reset_grants_available": 1,
-      "next_grant_id": "grant-a", "grant_expires_at": null,
-      "redeemable_now": true}],
-     "blocked_accounts": [{"id": "claude-b", "reset_at": "2026-10-13T17:00:00Z"}],
-     "codex": {"usable_count": 2, "banked_resets_total": 3}}
-
-A null remaining window does not apply. Missing quota/burn/reset telemetry
-holds. For full provider eligibility checks, supply reset_status using the
-ResetStatus fields in app.core.clients.anthropic_resets; it takes precedence
-over redeemable_now, which represents the service's redemption_blocker result.
-"""
 
 from __future__ import annotations
 

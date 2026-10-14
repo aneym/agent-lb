@@ -18,11 +18,11 @@ PERMANENT_FAILURE_CODES = {
     "refresh_token_invalidated": "Refresh token was revoked - re-login required",
     "invalid_grant": "Refresh token grant invalid - re-login required",
     "token_invalidated": "Authentication token invalidated - re-login required",
-    # ``token_expired`` from the OAuth refresh endpoint means the refresh
-    # request itself failed because the refresh token (or the session it
-    # belonged to) is no longer usable -- access-token-only expiry would have
-    # returned a fresh token pair instead. Treat it as a permanent failure so
-    # the account stops being routed to until it is re-authenticated.
+
+
+
+
+
     "token_expired": "Authentication token expired - re-login required",
     "account_session_expired": "ChatGPT session ended - re-login required",
     "account_auth_invalidated": "Authentication failed after token refresh - re-login required",
@@ -134,7 +134,7 @@ class AccountState:
     leased_tokens: float = 0.0
     routing_policy: str = ROUTING_POLICY_NORMAL
     ignore_standard_quota: bool = False
-    # Upstream usage before in-flight/lease pressure; exhaustion is decided from these.
+
     raw_used_percent: float | None = None
     raw_secondary_used_percent: float | None = None
 
@@ -160,7 +160,7 @@ class ExcludedAccount:
 
 @dataclass(frozen=True, slots=True)
 class RoutingCost:
-    """Request-scoped planner cost applied after hard eligibility filters."""
+
 
     total: float = 0.0
     reason: str | None = None
@@ -435,59 +435,7 @@ def select_account(
     primary_first_usage_weighted: bool = False,
     routing_costs: RoutingCostsByAccount | None = None,
 ) -> SelectionResult:
-    """Select an eligible account by applying availability checks and routing strategy.
 
-    This function filters out accounts that cannot currently serve traffic
-    (for example paused, deactivated, still rate-limited, or in active
-    cooldown), attempts controlled recovery from transient error backoff,
-    and then chooses a candidate using the configured balancing strategy.
-
-    Args:
-        states: Candidate account states to evaluate for the current request.
-        now: Unix timestamp in seconds used as the evaluation clock. If
-            ``None``, the current system time is used.
-        prefer_earlier_reset: Whether to bias selection toward accounts whose
-            configured quota window resets sooner.
-        prefer_earlier_reset_window: Quota window used for reset preference
-            (``"primary"`` for short window or ``"secondary"`` for weekly),
-            with the other window used as fallback when the configured reset is
-            unavailable.
-        routing_strategy: Balancing strategy used to pick from the effective
-            pool (``"capacity_weighted"``, ``"sequential_drain"``,
-            ``"reset_drain"``, ``"single_account"``, ``"relative_availability"``,
-            ``"fill_first"``, ``"round_robin"``, or ``"usage_weighted"``).
-        allow_backoff_fallback: Whether to allow a fallback attempt with the
-            backoff account nearest to recovery when no fully available
-            account exists.
-        deterministic_probe: Whether weighted strategies should use a
-            deterministic probe order instead of random weighted choice.
-        relative_availability_power: Exponent applied to normalized relative
-            availability weights.
-        relative_availability_top_k: Maximum number of highest-weight
-            relative-availability candidates retained before weighted draw.
-        usage_weighted_order: Whether usage-weighted routing ranks secondary
-            window pressure first, or primary-window pressure first for
-            budget-safe fallback selection.
-        traffic_class: Whether the request is normal foreground traffic or
-            opportunistic traffic that may only use explicitly expendable
-            account capacity.
-        ignore_standard_quota: Whether to ignore the account's standard
-            primary/secondary quota status. This is only for models that are
-            gated by a separate additional quota pool.
-        bypass_quota_exceeded: Backward-compatible alias for ignoring standard
-            quota status for gated quota selection.
-        bypass_quota_exceeded_account_ids: Optional narrower account-id scope
-            for the same bypass.
-        primary_first_usage_weighted: Whether usage-weighted routing should
-            rank by primary-window pressure before secondary-window pressure.
-        routing_costs: Optional request-scoped planner costs. Lower cost wins
-            after hard eligibility, health tier, and reset-bucket filtering.
-
-    Returns:
-        A ``SelectionResult`` containing the selected ``AccountState`` and no
-        error message when routing can proceed, or ``None`` plus a
-        human-readable error message when no account is eligible.
-    """
     current = now or time.time()
     available: list[AccountState] = []
     in_error_backoff: list[AccountState] = []
@@ -529,12 +477,12 @@ def select_account(
             if state.last_error_at and current - state.last_error_at < backoff:
                 in_error_backoff.append(state)
                 continue
-            # Error backoff expired — reset error state so recovery is
-            # not penalised by stale counts. The account has already
-            # been held back for the full backoff period; letting it
-            # re-enter the pool with a clean slate avoids the problem
-            # where a previously-high error_count causes an immediate
-            # return to maximum backoff on the very next transient error.
+
+
+
+
+
+
             state.error_count = 0
             state.last_error_at = None
         available.append(state)
@@ -669,7 +617,7 @@ def select_account(
         return _planner_cost(state, routing_costs), secondary_used, primary_used, last_selected, account_id
 
     def _round_robin_sort_key(state: AccountState) -> tuple[float, float, str]:
-        # Pick the least recently selected account, then stabilize by account_id.
+
         return _planner_cost(state, routing_costs), state.last_selected_at or 0.0, state.account_id
 
     if routing_strategy == "single_account":
@@ -754,7 +702,7 @@ def select_account(
 
 
 def _remaining_secondary_credits(state: AccountState) -> float:
-    """Return remaining absolute credits for the secondary (7-day) window."""
+
     capacity = (
         state.priority_capacity_credits if state.priority_capacity_credits is not None else state.capacity_credits
     )
@@ -1051,11 +999,11 @@ def _lowest_planner_cost_candidates(
 
 
 def _select_capacity_weighted(available: list[AccountState]) -> AccountState:
-    """Select an account with probability proportional to remaining secondary credits."""
+
     weights = [_remaining_secondary_credits(s) for s in available]
     total = sum(weights)
     if total <= 0.0:
-        # All accounts exhausted — fall back to deterministic usage-weighted
+
         return min(available, key=_usage_sort_key)
     return random.choices(available, weights=weights, k=1)[0]
 
@@ -1067,22 +1015,7 @@ def _fill_first_sort_key(state: AccountState) -> tuple[float, float, str]:
 
 
 def _select_fill_first(available: list[AccountState]) -> AccountState:
-    """Pick the eligible account with the highest primary 5h ``used_percent``.
 
-    Deterministic. ``None`` ``used_percent`` is treated as ``0.0`` so a
-    freshly refreshed account ties with an unknown-usage account.
-
-    When two or more candidates share the same primary ``used_percent``,
-    the account with the **higher** secondary (weekly) ``used_percent`` is
-    preferred — i.e. the one with the least remaining weekly capacity.
-    This drains the most-saturated account first and preserves the freshest
-    one for later cycles, matching operator intent for "fill first" behavior.
-    ``account_id`` ascending is the final stable tiebreaker.
-
-    Drained accounts are only reachable here when no healthy or probing
-    account exists, via the existing ``effective_pool`` ladder; this helper
-    introduces no new bypass.
-    """
     return min(available, key=_fill_first_sort_key)
 
 
@@ -1099,15 +1032,15 @@ def handle_rate_limit(state: AccountState, error: UpstreamError) -> None:
 
 QUOTA_EXCEEDED_COOLDOWN_SECONDS = 120.0
 
-# Upper bound for the user-visible "Try again in {N}s" hint that
-# ``select_account`` surfaces when zero candidates are selectable. The clamp
-# protects clients from waiting the worst-case persisted ``reset_at`` after
-# OpenAI-side reset events that propagate lazily through ``/wham/usage`` (see
-# https://github.com/Soju06/codex-lb/issues/676). codex-lb's background usage
-# refresh runs every ``usage_refresh_interval_seconds`` (default 60s) and the
-# per-status cooldowns are 120s, so a 300s ceiling lets clients reattempt
-# inside the auto-recovery window. The underlying ``AccountState.reset_at``
-# and ``AccountState.cooldown_until`` fields are not clamped.
+
+
+
+
+
+
+
+
+
 SELECTOR_RETRY_HINT_MAX_SECONDS = 300
 
 
@@ -1130,8 +1063,8 @@ def handle_quota_exceeded(state: AccountState, error: UpstreamError) -> None:
 
 
 def _live_quota_retry_at(error: UpstreamError, failures: int, *, now: float) -> float:
-    # The upstream reset is a ceiling for the retry, not an indefinite local
-    # quarantine: a real request gets another chance after bounded backoff.
+
+
     delays = (60, 300, 900, 3600)
     delay = delays[min(max(failures, 1) - 1, len(delays) - 1)]
     provider_reset = _extract_reset_at(error)

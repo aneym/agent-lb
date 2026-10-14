@@ -135,9 +135,9 @@ class Account(Base):
         server_default=false(),
         nullable=False,
     )
-    # NULL means this account is owned by the local instance (single-instance
-    # legacy default); a non-NULL value names the sole instance permitted to
-    # refresh this account's OAuth tokens (instance-federation ownership model).
+
+
+
     owner_instance: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     api_key_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(
@@ -439,13 +439,7 @@ class AccountLimitWarmup(Base):
 
 
 class AccountTransfer(Base):
-    """Durable instance-federation checkout/checkin handshake record.
 
-    Nonce-keyed idempotency: a checkout retry is looked up by
-    (account_id, counterparty_instance_id, state=pending); a checkin retry is
-    looked up by nonce. See openspec instance-federation design.md for the
-    full state machine.
-    """
 
     __tablename__ = "account_transfers"
 
@@ -461,8 +455,8 @@ class AccountTransfer(Base):
         ),
         nullable=False,
     )
-    # The other instance in the handshake: the taker for a checkout, the
-    # returning owner for a checkin.
+
+
     counterparty_instance_id: Mapped[str] = mapped_column(String, nullable=False)
     state: Mapped[AccountTransferState] = mapped_column(
         SqlEnum(
@@ -1010,10 +1004,10 @@ class QuotaPlannerSettings(Base):
     )
     prewarm_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     prewarm_lead_minutes: Mapped[int] = mapped_column(Integer, default=300, server_default=text("300"), nullable=False)
-    # Minutes after working_hours_start to aim the seeded window's reset. Offsetting
-    # the first reset into mid-morning (vs landing it exactly at start) lets a cold
-    # account present a loaded window at start AND still cycle twice before day's end —
-    # 3 quota windows in a ~9h day instead of 2. See limit_warmup.service seed math.
+
+
+
+
     seed_target_offset_minutes: Mapped[int] = mapped_column(
         Integer,
         default=120,

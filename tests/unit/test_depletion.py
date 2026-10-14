@@ -67,14 +67,13 @@ def test_ewma_zero_time_delta_is_skipped() -> None:
 
 
 def test_ewma_any_decrease_resets_state() -> None:
-    """Any decrease in used_percent (even small) triggers a reset because it
-    indicates a window rollover.  Post-reset the rate starts from None."""
+
     s1 = ewma_update(None, used_percent=60.0, timestamp=0.0)
     s2 = ewma_update(s1, used_percent=70.0, timestamp=100.0)
     s3 = ewma_update(s2, used_percent=69.0, timestamp=200.0)
 
     assert s2.rate is not None
-    # 70 -> 69 is a decrease: EWMA resets
+
     assert s3.rate is None
     assert s3.last_used_percent == 69.0
 

@@ -31,14 +31,14 @@ class AnthropicCompatProfile:
     default_probe_model: str
     upstream_base_url: str | None = None
     import_defaults: AnthropicCompatImportDefaults | None = None
-    # Some Anthropic-compatible vendors do not implement
-    # /v1/messages/count_tokens and answer it with a non-Anthropic 404
-    # envelope, which breaks Claude Code at startup. Those providers are
-    # served from the local estimator instead.
+
+
+
+
     supports_upstream_count_tokens: bool = True
-    # Only providers whose credentials are OAuth bundles may supply a
-    # separate refresh token on import; API-key providers must not, so their
-    # import contract stays exactly "the key is both access and refresh".
+
+
+
     supports_oauth_bundle_import: bool = False
 
     def balance_exhausted_code(self, payload: Any) -> str | None:
@@ -116,8 +116,8 @@ ANTHROPIC_COMPAT_PROFILES: tuple[AnthropicCompatProfile, ...] = (
         quota_cooldown_code="kimi_quota_cooldown",
         other_provider_routing_message="OpenAI and Anthropic accounts are not eligible for Kimi routing.",
         upstream_settings_attr="kimi_anthropic_upstream_base_url",
-        # ``k3-256k`` was retired upstream; ``kimi-k3`` is the current
-        # Anthropic-compatible model alias accepted by the Coding endpoint.
+
+
         default_probe_model="kimi-k3",
         import_defaults=AnthropicCompatImportDefaults(
             email="kimi@moonshot.ai",

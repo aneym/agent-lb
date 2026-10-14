@@ -1,10 +1,4 @@
-"""Merge quota planner and relative availability heads.
 
-Revision ID: 20260601_020000_merge_quota_planner_and_relative_availability_heads
-Revises: 20260520_040000_merge_quota_planner_and_request_log_index_heads,
-    20260601_000000_merge_relative_availability_and_usage_raw_heads
-Create Date: 2026-06-01
-"""
 
 from __future__ import annotations
 

@@ -149,7 +149,7 @@ function StateGlyph({ status }: { status: string }) {
       return <Circle {...props} />;
   }
 }
-/** Bar fill tone by remaining: green above 30%, amber from 10 to 30%, red below 10%. */
+
 const fillTone = (remaining: number) => (remaining > 30 ? "ok" : remaining >= 10 ? "warn" : "bad");
 const accountTone: Record<string, string> = {
   active: "ok",

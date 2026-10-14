@@ -1,9 +1,4 @@
-"""add request_logs api_key account index for account-cost breakdown
 
-Revision ID: 20260520_010000_add_request_logs_api_key_account_index
-Revises: 20260520_000000_merge_api_key_and_http_bridge_heads
-Create Date: 2026-05-20
-"""
 
 from __future__ import annotations
 

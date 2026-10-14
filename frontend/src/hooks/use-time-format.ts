@@ -30,7 +30,7 @@ function persistPreference(preference: TimeFormatPreference): void {
   try {
     window.localStorage.setItem(TIME_FORMAT_STORAGE_KEY, preference);
   } catch {
-    /* Storage blocked - silently ignore. */
+
   }
 }
 

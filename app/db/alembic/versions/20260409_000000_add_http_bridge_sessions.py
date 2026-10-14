@@ -1,9 +1,4 @@
-"""add durable http bridge session tables
 
-Revision ID: 20260409_000000_add_http_bridge_sessions
-Revises: 20260407_010000_merge_api_key_assignment_and_bridge_gateway_heads
-Create Date: 2026-04-09
-"""
 
 from __future__ import annotations
 

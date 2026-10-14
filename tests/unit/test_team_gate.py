@@ -117,8 +117,8 @@ async def test_model_outside_member_allowlist_is_rejected(caplog):
 
     assert excinfo.value.status_code == 403
     assert excinfo.value.error_type == "team_model_not_allowed"
-    # Websocket refusals have no other record, so the refusal itself must be logged, on one line
-    # even when the client-sent model name carries a newline.
+
+
     [line] = caplog.messages
     assert line.startswith(
         "team_gate_refused key_id=key-1 model='model-beta\\nforged line' code=team_model_not_allowed"
@@ -232,7 +232,7 @@ async def test_cached_over_cap_usage_does_not_cross_calendar_boundary(monkeypatc
 
 
 def test_utc_calendar_windows():
-    now = datetime(2026, 9, 18, 13, 45, 12)  # a Friday
+    now = datetime(2026, 9, 18, 13, 45, 12)
 
     assert window_start("day", now) == datetime(2026, 9, 18, 0, 0, 0)
     assert window_end("day", now) == datetime(2026, 9, 19, 0, 0, 0)
@@ -245,7 +245,7 @@ def test_utc_calendar_windows():
 
 @pytest.mark.asyncio
 async def test_proxy_enforce_request_limits_runs_the_gate_before_reserving(monkeypatch):
-    """The gate sits ahead of enforce_limits_for_request, so a blocked member never reserves."""
+
 
     import app.modules.proxy.api as proxy_api
 

@@ -1,9 +1,4 @@
-"""add dashboard_settings.routing_strategy
 
-Revision ID: 20260225_000000_add_dashboard_settings_routing_strategy
-Revises: 20260218_000100_add_import_without_overwrite_and_drop_accounts_email_unique
-Create Date: 2026-02-25
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260225_000000_add_dashboard_settings_routing_strategy"
 down_revision = "20260218_000100_add_import_without_overwrite_and_drop_accounts_email_unique"
 branch_labels = None
@@ -49,5 +43,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Downgrade intentionally keeps column to avoid SQLite table rebuild risk.
+
     return

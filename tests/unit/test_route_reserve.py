@@ -1,6 +1,4 @@
-"""The orchestrator reserve (routing scope, 2026-09-30; Alex: "orchestrators must never go down"). With Claude on its
-last usable account, or its best account under 40% headroom, only orchestrator-side classes start on Claude first;
-review, explore and the rest go to another pool, and fall back to Claude only when nothing else is open."""
+
 
 from __future__ import annotations
 
@@ -52,27 +50,27 @@ def pick(env: dict[str, str], *args: str) -> dict:
 def test_the_last_claude_account_is_kept_for_orchestrators(tmp_path: Path) -> None:
     last = env_for(tmp_path, "last", eligible=1, headroom=50.0)
 
-    # Tonight's live state: review used to start on Opus (plan-reviewer). Now it starts on Sol and says why.
+
     review = pick(last, "review")
     assert (review["seat"], review["pool"]) == ("codex-sol", "openai-codex")
     assert review["reserve"] == {"pool": "anthropic-general", "active": True, "admitted": False, "eligible": 1,
                                  "headroom": 50.0, "why": "1 eligible account (keep 2)"}
     assert review["fallbacks"][-1]["seat"] == "plan-reviewer"
 
-    # Planning is orchestrator work: it keeps Claude first.
+
     plan = pick(last, "plan")
     assert plan["seat"] == "planner" and plan["reserve"]["admitted"] is True
 
-    # Sol's work has no reviewer but Claude: the reserve bends rather than leave the work unreviewed, and says so.
+
     verify = pick(last, "verify", "--author-vendor", "openai")
     assert verify["seat"] == "verifier"
     assert verify["reason"].startswith("reserved for orchestrators: 1 eligible account (keep 2); no other rung open")
 
-    # Enough accounts but the best is under 40%: the same rule.
+
     thin = pick(env_for(tmp_path, "thin", eligible=3, headroom=35.0), "review")
     assert thin["seat"] == "codex-sol" and thin["reserve"]["why"] == "headroom 35% (keep 40%)"
 
-    # A healthy pool changes nothing.
+
     healthy = pick(env_for(tmp_path, "healthy", eligible=3, headroom=80.0), "review")
     assert healthy["seat"] == "plan-reviewer" and healthy["reserve"]["active"] is False
 

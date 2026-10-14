@@ -1,9 +1,4 @@
-"""One routing decision: menu from `route`, a pick from the decider, a host re-check, a receipt.
 
-The host owns the move (keel's decision architecture): the decider chooses among seats the
-host already vetted or abstains, the host re-checks the pick against a fresh menu, and every
-fallback is the host's. Each decision is one `of_decision` row in the dispatch ledger.
-"""
 
 from __future__ import annotations
 
@@ -92,7 +87,7 @@ def candidates_for(menu: dict[str, Any], task_class: str, policy: dict[str, Any]
 
 
 def ask_jev(task: str, context: str | None, candidates: list[dict[str, str]], timeout: float) -> dict[str, Any]:
-    """Jev's answer, or {"error": ...} when it is missing, unavailable, slow or malformed."""
+
     jev = resolve_bin("jev")
     if not jev:
         return {"error": "jev_missing"}
@@ -168,8 +163,8 @@ def decide(task: str, task_class: str, *, decider: str, context: str | None = No
                 receipt["validation"] = "unknown_id"
                 chosen = None
             elif chosen is not None and chosen != default:
-                # The class chain's head is the house default (quota split and the owner's
-                # steer live in its order). The decider may leave it only when it does not fit.
+
+
                 default_fit = (answer.get("fits") or {}).get(default)
                 receipt["default_fit"] = default_fit
                 if isinstance(default_fit, (int, float)) and default_fit >= float(policy.get("default_min_fit", 0.8)):

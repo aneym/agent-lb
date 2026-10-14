@@ -46,7 +46,7 @@ async def test_cache_recompute_after_ttl_expiry(monkeypatch: pytest.MonkeyPatch)
     first = await cache.get(compute)
     assert state["calls"] == 1
 
-    state["now"] = 161.0  # past 60s TTL
+    state["now"] = 161.0
     second = await cache.get(compute)
     assert second is not first
     assert state["calls"] == 2

@@ -93,7 +93,7 @@ async def test_probe_active_account_returns_snapshot(async_client, monkeypatch):
     async def _fake_probe(self, *, access_token, chatgpt_account_id, model):
         captured["model"] = model
         captured["chatgpt_account_id"] = chatgpt_account_id
-        # Do not capture the access token — only assert it was non-empty.
+
         captured["had_token"] = bool(access_token)
         return 200
 
@@ -140,7 +140,7 @@ async def test_probe_uses_default_model_when_body_omitted(async_client, monkeypa
 
     response = await async_client.post(f"/api/accounts/{account_id}/probe")
     assert response.status_code == 200, response.text
-    # The default model is service-owned; assert the helper was called with
-    # *some* model string rather than coupling the test to the constant.
+
+
     assert isinstance(captured["model"], str)
     assert captured["model"]

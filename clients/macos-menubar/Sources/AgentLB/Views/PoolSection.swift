@@ -1,17 +1,17 @@
 import SwiftUI
 
-// §9.2/§9.3: two separate window cards. scope == .all renders
-// /api/usage/summary verbatim; a provider scope recomputes each window from
-// the scoped accounts' credit sums (ProviderScope.summarizeWindow).
+
+
+
 struct PoolSection: View {
   @Environment(\.privacyMask) private var privacyMask
   let summary: UsageSummary?
   let projections: ProjectionsResponse?
   let scope: ProviderScope
   let scopedAccounts: [Account]
-  // §11: value multiple (nil when no value/priced accounts), scoped to the
-  // provider filter: the numerator comes from the provider-scoped summary
-  // fetch, the denominator from the scoped accounts.
+
+
+
   let arbitrage: ArbitrageStats?
   let hasError: Bool
   let retry: () -> Void
@@ -26,8 +26,8 @@ struct PoolSection: View {
     scope == .openai ? [.secondary] : [.primary, .secondary]
   }
 
-  // Heights are enforced per PanelMetrics so PanelLayout stays exact:
-  // label 14, cards 128, metric lines 14 (spacing 8/3).
+
+
   var body: some View {
     VStack(alignment: .leading, spacing: PanelMetrics.poolSpacing) {
       SectionLabel(showsPoolTiles ? "POOLS" : "POOL")
@@ -77,7 +77,7 @@ struct PoolSection: View {
           knownFull: knownFull(.primary),
           recoveredCredits: recovered(.primary, now: now),
           schedule: scheduleTooltip(.primary, now: now),
-          // §9.2 honesty: projections are pool-global — hide risk when scoped.
+
           status: isScoped ? nil : riskStatus
         )
       }
@@ -111,9 +111,9 @@ struct PoolSection: View {
       : summary?.secondaryWindow ?? summary?.monthlyWindow
   }
 
-  // §10: credits the pool gets back at the next reset. Knowable only when
-  // the card is computed from per-account credits — scope == all renders
-  // the server summary verbatim, which carries no per-reset recovery.
+
+
+
   private func recovered(_ window: ProviderScope.Window, now: Date) -> Double? {
     guard isScoped else { return nil }
     return ProviderScope.summarizeWindow(scopedAccounts, window: window, now: now)
@@ -128,8 +128,8 @@ struct PoolSection: View {
     return usage.map(ResetDisplay.isKnownFull) ?? false
   }
 
-  // §10: hover schedule — `<displayName> · <HH:mm> · +<n> cr`, soonest first.
-  // §12: names are swapped for pseudonyms in privacy mode.
+
+
   private func scheduleTooltip(_ window: ProviderScope.Window, now: Date) -> String {
     let byId = Dictionary(scopedAccounts.map { ($0.accountId, $0) }, uniquingKeysWith: { first, _ in first })
     return ProviderScope.resetSchedule(scopedAccounts, window: window, now: now)
@@ -151,7 +151,7 @@ struct PoolSection: View {
     return .init(text: "risk: \(level)", emphasized: elevated, warning: elevated)
   }
 
-  // §4 modeling notes: unknown pace statuses default to plain weight.
+
   private var paceStatus: WindowCard.Status? {
     guard summary?.secondaryWindow != nil,
           let status = projections?.weeklyCreditPace?.status else { return nil }
@@ -159,8 +159,8 @@ struct PoolSection: View {
     return .init(text: "pace: \(status)", emphasized: emphasized, warning: false)
   }
 
-  // §8.2: two 11 pt mono lines; §9.2 honesty: these stay global numbers
-  // from /api/usage/summary, so a scoped view tags them "· all providers".
+
+
   private var metricsStrip: some View {
     VStack(alignment: .leading, spacing: PanelMetrics.metricsSpacing) {
       HStack(alignment: .firstTextBaseline, spacing: 14) {
@@ -200,9 +200,9 @@ struct PoolSection: View {
     .lineLimit(1)
   }
 
-  // §11: the vanity headline — API-equivalent token value this week over what
-  // the subscriptions cost for the same 7 days. The multiple is emphasized by
-  // weight (never hue, per §2.3); the breakdown stays secondary/mono.
+
+
+
   private func arbitrageLine(_ stats: ArbitrageStats) -> some View {
     HStack(spacing: 6) {
       Text(stats.multipleLabel)
@@ -269,9 +269,9 @@ private struct WindowCard: View {
   let accountCount: Int
   let window: UsageWindow?
   let knownFull: Bool
-  /// §10: credits regained at the next reset; nil → recovery unknowable.
+
   let recoveredCredits: Double?
-  /// §10: per-account reset schedule, one line each, soonest first.
+
   let schedule: String
   let status: Status?
 
@@ -290,7 +290,7 @@ private struct WindowCard: View {
           .foregroundStyle(.tertiary)
           .lineLimit(1)
       }
-      // §8.2: 30 pt ring gauge (3 pt stroke) left of the 26 pt mono percent.
+
       HStack(alignment: .center, spacing: 9) {
         RingGauge(percent: window?.remainingPercent, lineWidth: 3)
           .frame(width: 30, height: 30)
@@ -318,12 +318,12 @@ private struct WindowCard: View {
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
-    // PanelMetrics.poolCard — both cards render at the same fixed height
-    // regardless of which optional lines are present, so PanelLayout stays
-    // exact (and the two cards always align).
+
+
+
     .frame(height: PanelMetrics.poolCard, alignment: .top)
     .background(.thinMaterial, in: .rect(cornerRadius: 8))
-    // §10: hover reveals the per-account reset schedule.
+
     .help(schedule)
   }
 
@@ -331,7 +331,7 @@ private struct WindowCard: View {
     (window?.remainingPercent ?? 100) < 15
   }
 
-  // "7.5k / 7.8k cr" — remaining/capacity credits (§8.2)
+
   @ViewBuilder
   private var creditsLine: some View {
     if let remaining = window?.remainingCredits, let capacity = window?.capacityCredits {
@@ -343,13 +343,13 @@ private struct WindowCard: View {
     }
   }
 
-  // §10: `next reset in <countdown> · +<n> cr` — the summed pool never
-  // resets at once, so the line names the NEXT per-account reset and what
-  // it gives back. Compact countdown + 10 pt mono: typical content
-  // ("next reset in 4:59 · +1.2k cr" → 179 pt) fits the 187 pt card budget
-  // outright (11 pt measured 197 pt — too wide); the worst realistic case
-  // ("0:59 · +252.3k cr" → 192 pt) lands on the scale belt at 0.976.
-  // lineLimit(1) makes wrapping impossible at any width.
+
+
+
+
+
+
+
   @ViewBuilder
   private var resetLine: some View {
     if knownFull {

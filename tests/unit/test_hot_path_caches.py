@@ -214,12 +214,12 @@ async def test_account_selection_cache_reuses_inputs_and_invalidates_on_refresh(
     def _repo_factory() -> _Repos:
         return _Repos(accounts_repo, usage_repo)
 
-    # Create cache with explicit TTL > 0 (not the global singleton which may be disabled in tests)
+
     from app.modules.proxy.account_cache import AccountSelectionCache
 
     cache = AccountSelectionCache(ttl_seconds=5)
     balancer = LoadBalancer(cast(ProxyRepoFactory, _repo_factory))
-    balancer._selection_inputs_cache = cache  # Override with test-specific cache
+    balancer._selection_inputs_cache = cache
 
     for _ in range(10):
         inputs = await balancer._load_selection_inputs(model=None)
@@ -243,20 +243,20 @@ async def test_account_selection_cache_reuses_inputs_and_invalidates_on_refresh(
     assert usage_repo.monthly_calls == 2
 
 
-# ---------------------------------------------------------------------------
-# API key cache invalidation regression coverage
-#
-# Earlier revisions of `ApiKeysService` mutated the api_keys table without
-# evicting the in-memory `ApiKeyCache`, so deleted / regenerated /
-# deactivated keys kept authorising requests until the cache TTL elapsed.
-# `app/modules/api_keys/service.py:433-449,464-467` now invalidates the
-# cache on those write paths; the tests below pin that contract.
-# ---------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_deleted_key_rejected_immediately() -> None:
-    """ApiKeyCache must be evicted when a key is deleted."""
+
     plain_key = "sk-clb-test-del-0001"
     key_hash = hashlib.sha256(plain_key.encode()).hexdigest()
     now = datetime.now(UTC)
@@ -289,15 +289,15 @@ async def test_deleted_key_rejected_immediately() -> None:
     service = ApiKeysService(cast(ApiKeysRepositoryProtocol, _DeleteOnlyRepo()))
     await service.delete_key("key-del-1")
 
-    # After deletion the cache must be empty so the next auth lookup falls
-    # through to the (now-missing) DB row instead of returning stale data.
+
+
     cached = await cache.get(key_hash)
     assert cached is None
 
 
 @pytest.mark.asyncio
 async def test_regenerated_key_old_token_rejected_immediately() -> None:
-    """Old key hash must be evicted from the cache when a key is regenerated."""
+
     plain_key = "sk-clb-test-regen-001"
     old_key_hash = hashlib.sha256(plain_key.encode()).hexdigest()
     now = datetime.now(UTC)
@@ -361,14 +361,14 @@ async def test_regenerated_key_old_token_rejected_immediately() -> None:
     service = ApiKeysService(cast(ApiKeysRepositoryProtocol, _RegenRepo()))
     await service.regenerate_key("key-regen-1")
 
-    # The old token must no longer authorise requests after regeneration.
+
     cached = await cache.get(old_key_hash)
     assert cached is None
 
 
 @pytest.mark.asyncio
 async def test_deactivated_key_rejected_immediately() -> None:
-    """Deactivated key (is_active=False) must be evicted from the cache so the next request is rejected."""
+
     plain_key = "sk-clb-test-deact-01"
     key_hash = hashlib.sha256(plain_key.encode()).hexdigest()
     now = datetime.now(UTC)
@@ -422,27 +422,27 @@ async def test_deactivated_key_rejected_immediately() -> None:
     service = ApiKeysService(cast(ApiKeysRepositoryProtocol, _UpdateOnlyRepo()))
     await service.update_key("key-deact-1", ApiKeyUpdateData(is_active=False, is_active_set=True))
 
-    # Deactivated key must be evicted; otherwise stale `is_active=True`
-    # data would keep authorising requests.
+
+
     cached = await cache.get(key_hash)
     assert cached is None
 
 
-# ---------------------------------------------------------------------------
-# Selection cache keying regression coverage
-#
-# `AccountSelectionCache` previously used a single slot, so a query for
-# (model=None) would mask a follow-up (model="gpt-4-no-filter") and a
-# query for (limit_name=None) would mask (limit_name="pro_tier"). The
-# cache is now keyed on the full (model, additional_limit_name) tuple
-# (`app/modules/proxy/account_cache.py:39-66`); the tests below pin
-# that contract.
-# ---------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
 
 
 @pytest.mark.asyncio
 async def test_different_models_get_different_cache_entries() -> None:
-    """First model query must not satisfy a second query for a different model."""
+
     from app.modules.proxy.account_cache import AccountSelectionCache
 
     cache = AccountSelectionCache(ttl_seconds=5)
@@ -479,19 +479,19 @@ async def test_different_models_get_different_cache_entries() -> None:
     balancer = LoadBalancer(cast(ProxyRepoFactory, _repo_factory))
     balancer._selection_inputs_cache = cache
 
-    # First call for model=None — loads from DB and caches
+
     await balancer._load_selection_inputs(model=None)
     assert accounts_repo.calls == 1
 
-    # Second call for a different model must load from DB again because the
-    # selection cache is keyed on (model, additional_limit_name).
+
+
     await balancer._load_selection_inputs(model="gpt-4-no-filter")
     assert accounts_repo.calls == 2
 
 
 @pytest.mark.asyncio
 async def test_same_model_reuses_cache() -> None:
-    """Same (model, limit_name) pair must reuse the cached result."""
+
     from app.modules.proxy.account_cache import AccountSelectionCache
 
     cache = AccountSelectionCache(ttl_seconds=5)
@@ -528,15 +528,15 @@ async def test_same_model_reuses_cache() -> None:
     balancer = LoadBalancer(cast(ProxyRepoFactory, _repo_factory))
     balancer._selection_inputs_cache = cache
 
-    # Two calls with same model — second should be served from cache
+
     await balancer._load_selection_inputs(model=None)
     await balancer._load_selection_inputs(model=None)
-    assert accounts_repo.calls == 1  # second call must be a cache hit
+    assert accounts_repo.calls == 1
 
 
 @pytest.mark.asyncio
 async def test_different_limit_names_get_different_cache_entries(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Queries with different additional_limit_name must each get their own cache slot."""
+
     from app.modules.proxy.account_cache import AccountSelectionCache
 
     cache = AccountSelectionCache(ttl_seconds=5)
@@ -579,19 +579,19 @@ async def test_different_limit_names_get_different_cache_entries(monkeypatch: py
     balancer = LoadBalancer(cast(ProxyRepoFactory, _repo_factory))
     balancer._selection_inputs_cache = cache
 
-    # First call with limit_name=None — loads and caches
+
     await balancer._load_selection_inputs(model=None, additional_limit_name=None)
     assert accounts_repo.calls == 1
 
-    # Second call with a different additional_limit_name must re-load from
-    # DB; the cache is keyed on (model, additional_limit_name).
+
+
     await balancer._load_selection_inputs(model=None, additional_limit_name="pro_tier")
     assert accounts_repo.calls == 2
 
 
 @pytest.mark.asyncio
 async def test_invalidate_clears_all_keyed_entries() -> None:
-    """invalidate() must clear all cached entries (single-slot or multi-key)."""
+
     from app.modules.proxy.account_cache import AccountSelectionCache
 
     cache = AccountSelectionCache(ttl_seconds=5)
@@ -628,16 +628,16 @@ async def test_invalidate_clears_all_keyed_entries() -> None:
     balancer = LoadBalancer(cast(ProxyRepoFactory, _repo_factory))
     balancer._selection_inputs_cache = cache
 
-    # Populate cache
+
     await balancer._load_selection_inputs(model=None)
     assert accounts_repo.calls == 1
 
-    # Invalidate should clear everything
+
     cache.invalidate()
 
-    # Next call must re-load from DB
+
     await balancer._load_selection_inputs(model=None)
-    assert accounts_repo.calls == 2  # must re-load after invalidation
+    assert accounts_repo.calls == 2
 
 
 def test_firewall_cache_singleton_reflects_configured_ttl(monkeypatch: pytest.MonkeyPatch) -> None:

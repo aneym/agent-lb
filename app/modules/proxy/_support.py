@@ -1,7 +1,4 @@
-"""Compatibility shim for proxy service support internals.
 
-New code should import from `app.modules.proxy._service.support`.
-"""
 
 from app.modules.proxy._service.support import (
     _HARD_HTTP_BRIDGE_AFFINITY_KINDS as _HARD_HTTP_BRIDGE_AFFINITY_KINDS,

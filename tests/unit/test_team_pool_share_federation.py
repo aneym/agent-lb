@@ -12,8 +12,8 @@ from app.modules.team.pool_share import pool_share_windows, reset_pool_share_cac
 pytestmark = pytest.mark.unit
 
 
-# Each tuple is (priced cost, priced tokens, unpriced tokens). Remote rows
-# belong to someone else; all member traffic stays on this LB instance.
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("member", "other", "remote"),
@@ -81,8 +81,8 @@ async def test_local_member_share_never_understates_when_all_member_traffic_is_l
         reset_pool_share_cache()
         local_share = (await pool_share_windows(session, "member", 50, now=now))[0].used_percent
 
-        # Independent global oracle: apply the spec's imputation formula to
-        # the local rows plus the remote instance's priced/unpriced rows.
+
+
         priced_cost = member[0] + other[0] + remote[0]
         priced_tokens = member[1] + other[1] + remote[1]
         unpriced_tokens = member[2] + other[2] + remote[2]
@@ -96,5 +96,5 @@ async def test_local_member_share_never_understates_when_all_member_traffic_is_l
         global_share = 80 * member_cost / total_cost / 2 if total_cost else 0
         assert local_share + 1e-9 >= global_share
         if member == (10, 10, 0) and other == (0, 0, 1_000):
-            assert global_share > 30  # A naive local-rate estimate would be below 1%.
+            assert global_share > 30
     reset_pool_share_cache()

@@ -1,9 +1,4 @@
-"""add blocked_at to accounts
 
-Revision ID: 20260413_000000_add_accounts_blocked_at
-Revises: 20260410_040000_merge_dashboard_defaults_and_import_default_heads
-Create Date: 2026-04-13
-"""
 
 from __future__ import annotations
 

@@ -705,7 +705,7 @@ def test_backend_responses_websocket_proxies_upstream_and_persists_log(app_insta
         return SimpleNamespace(id="acct_ws_proxy"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
-        # add_log reads the client's own session id from context; it must reach the websocket log call.
+
         log_calls.append({**kwargs, "client_session_id": get_client_session_id()})
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
@@ -1441,12 +1441,12 @@ def test_v1_responses_websocket_reuses_upstream_for_sequential_requests(app_inst
 
             websocket.send_text(json.dumps(second_request))
             second_events = [json.loads(websocket.receive_text()) for _ in range(2)]
-            # The upstream terminal event can arrive before its log write finishes.
+
             assert second_logged.wait(timeout=5), "second websocket turn log was not persisted"
 
     assert [event["type"] for event in first_events] == ["response.created", "response.completed"]
     assert [event["type"] for event in second_events] == ["response.created", "response.completed"]
-    # Both turns retain the websocket connection's real middleware identity.
+
     assert asyncio.run(persisted_turns()) == {
         "resp_ws_first": ("unknown", "unknown", "remote", "remote"),
         "resp_ws_second": ("unknown", "unknown", "remote", "remote"),
@@ -2208,22 +2208,7 @@ def test_v1_responses_websocket_marks_fresh_turn_as_retry_safe_at_prep_time(
     app_instance,
     monkeypatch,
 ):
-    """Regression for the codex-review P1 on the original branch revision.
 
-    A direct WebSocket turn whose semantic payload does **not** depend on the
-    upstream anchor (no client-supplied ``previous_response_id``, no
-    proxy-injected anchor) must be classified as retry-safe at
-    request-preparation time, with ``fresh_upstream_request_text`` and
-    ``fresh_upstream_request_is_retry_safe`` populated on the request state.
-
-    Without that classification, the single-previous-response-miss masking
-    path in ``_process_upstream_websocket_text`` (which gates its
-    reconnect-and-replay on exactly those two flags) would short-circuit
-    every direct-WebSocket recovery into ``stream_incomplete`` -- the
-    regression the codex review on this PR flagged. The HTTP-bridge path
-    already populates these fields at prep time; this test pins that the
-    direct WebSocket path now mirrors that classification.
-    """
 
     upstream_socket = _SequencedUpstreamWebSocket(
         [
@@ -2302,11 +2287,11 @@ def test_v1_responses_websocket_marks_fresh_turn_as_retry_safe_at_prep_time(
         )
         nonlocal connect_count
         connect_count += 1
-        # Pin the retry-safety classification at the moment the upstream
-        # is being connected. The masking path in
-        # ``_process_upstream_websocket_text`` reads these flags after a
-        # ``previous_response_not_found`` error and only reconnects when
-        # they are populated for this request.
+
+
+
+
+
         connect_record.append(
             {
                 "connect_count": connect_count,
@@ -2330,9 +2315,9 @@ def test_v1_responses_websocket_marks_fresh_turn_as_retry_safe_at_prep_time(
                         "model": "gpt-5.4",
                         "input": "hello",
                         "stream": True,
-                        # No client-supplied previous_response_id. This is a
-                        # full-resend / fresh-turn shape, so the direct
-                        # WebSocket prep path must mark it retry-safe.
+
+
+
                     }
                 )
             )
@@ -2341,11 +2326,11 @@ def test_v1_responses_websocket_marks_fresh_turn_as_retry_safe_at_prep_time(
 
     assert created["type"] == "response.created"
     assert completed["type"] == "response.completed"
-    # The direct-WebSocket retry-safety classification must run at request
-    # prep time so the masking path in
-    # ``_process_upstream_websocket_text`` (which gates its
-    # reconnect-and-replay on exactly these two fields) can recover the
-    # turn instead of short-circuiting to ``stream_incomplete``.
+
+
+
+
+
     assert len(connect_record) == 1
     assert connect_record[0]["fresh_upstream_request_is_retry_safe"] is True
     assert connect_record[0]["fresh_upstream_request_text_set"] is True

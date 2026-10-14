@@ -1,4 +1,4 @@
-"""Golden quota math using the recorded 2026-07-01 Anthropic overage response."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -11,11 +11,7 @@ from tests.unit.test_lb_cache import load_lb_cache
 
 
 def test_recorded_headers_through_parser_and_quota_report():
-    """Guard pure quota allocation math: missing tokens, resets, ties and partial windows.
 
-    Existing request-boundary tests own transport and persistence; this recorded
-    table guards allocation arithmetic they do not exercise, without a test seam.
-    """
     lb = load_lb_cache()
     headers = capture_unified_headers({**_OVERAGE_BILLING_HEADERS, 'authorization': 'excluded'})
     assert headers == _OVERAGE_BILLING_HEADERS
@@ -32,7 +28,7 @@ def test_recorded_headers_through_parser_and_quota_report():
                 'unified_5h_utilization': five, 'unified_7d_utilization': weekly,
                 'unified_headers': evidence}
 
-    # All surrounding utilization values are synthetic baselines, not live measurements.
+
     rows = [row(0, 'baseline', .9, .2), row(1, 'alpha', tokens=10),
             row(2, 'beta', recorded, .3, tokens=30, evidence=headers),
             row(3, 'alpha', tokens=None), row(4, 'beta', 1.1, .4),
@@ -55,7 +51,7 @@ def test_recorded_headers_through_parser_and_quota_report():
     assert data['coverage']['5h']['request_share_intervals'] == 1
     assert data['coverage']['5h']['unmeasured_requests'] >= 2
     assert '%5h' in lb.quota_display(data)
-    # A boundary inside the first interval keeps alpha's weight in the denominator.
+
     partial = lb.quota_report(rows, start.replace(minute=2), end)
     beta = next(r for r in partial['accounts'] if r['caller_seat'] == 'beta')
     assert beta['percent_5h'] == pytest.approx(22.5)

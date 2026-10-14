@@ -1,4 +1,4 @@
-"""Append Workflow completion usage without logging prompts, outputs or accounts."""
+
 import fcntl
 import json
 import os

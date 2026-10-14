@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared boot/watchdog parser. Never emit a URL or parser diagnostics.
+
 db_endpoint() {
   local endpoint
   if ! endpoint=$(python3 -c '

@@ -1,9 +1,4 @@
-"""add dashboard session ttl setting
 
-Revision ID: 20260421_000000_add_dashboard_session_ttl_setting
-Revises: 20260417_000000_add_request_log_plan_type
-Create Date: 2026-04-21
-"""
 
 from __future__ import annotations
 

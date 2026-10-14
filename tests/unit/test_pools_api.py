@@ -117,16 +117,14 @@ def test_one_fresh_marker_makes_the_pool_authoritative_and_mixes_per_account() -
     pool = _pool(build_pools(summaries), "anthropic-fable")
 
     assert pool.source == "scoped_marker"
-    # The fresh account is read from its marker (80 left), the stale one from
-    # its weekly window (40 left) — never from its ignored marker.
+
+
     assert pool.headroom_percent == 80.0
     assert pool.aggregate_remaining_percent == 60.0
 
 
 def test_a_held_account_marker_still_names_the_source() -> None:
-    """C1 reads `source` off any fresh marker, usable or not: a paused account
-    still proves the vendor's scoped signal is arriving, and the headroom must
-    keep coming from the usable accounts only."""
+
     summaries = [
         _summary("paused", status="paused", scoped_used_percent=20.0, secondary_remaining=100.0),
         _summary("live", secondary_remaining=40.0, fable_eligible=True),
@@ -292,7 +290,7 @@ def test_generated_at_is_honored_and_the_wire_shape_is_camel_case() -> None:
     ).model_dump(mode="json", by_alias=True)
 
     assert payload["generatedAt"] == "2026-09-19T21:00:00Z"
-    # 1175ed9b added five-hour and window-label fields; preserve the exact camelCase wire contract.
+
     assert set(payload["pools"][0]) == {
         "fiveHourResetAt",
         "fiveHourRemainingPercent",
@@ -318,9 +316,7 @@ def test_generated_at_is_honored_and_the_wire_shape_is_camel_case() -> None:
 
 
 def test_blocked_accounts_do_not_inflate_usable_count_or_headroom() -> None:
-    """Live 2026-09-22: `route pools` read 100% headroom while 4 of 6 Anthropic
-    accounts could not take a request. A spent 5-hour window or a limited status
-    blocks the account now, whatever its weekly window says."""
+
     summaries = [
         _summary("weekly-low", primary_remaining=98.0, secondary_remaining=31.0),
         _summary("fresh", primary_remaining=90.0, secondary_remaining=100.0),
@@ -344,8 +340,8 @@ def test_weekly_pool_reports_weekly_remaining_uncapped_by_the_five_hour_window()
 
     pool = _pool(build_pools(summaries), "anthropic-general")
 
-    # The aggregate is what can be served now (capped by the 5h window); the weekly
-    # figure is what the weekly cycle still has, which is what pacing needs.
+
+
     assert pool.aggregate_remaining_percent == 35.0
     assert pool.weekly_remaining_percent == 70.0
     assert pool.weekly_reset_at == _RESET
@@ -356,9 +352,9 @@ def test_weekly_pace_is_per_account_so_one_early_reset_cannot_lift_the_pool() ->
 
     now = datetime.now(timezone.utc)
     summaries = [
-        # Resets in a day with 50% left: well ahead (50 - 14.3).
+
         _summary("soon", secondary_remaining=50.0, reset_at_secondary=now + timedelta(hours=24)),
-        # Two accounts with a week nearly ahead and little left: far behind.
+
         _summary("late-1", secondary_remaining=20.0, reset_at_secondary=now + timedelta(hours=144)),
         _summary("late-2", secondary_remaining=20.0, reset_at_secondary=now + timedelta(hours=144)),
     ]

@@ -228,12 +228,12 @@ class _HTTPBridgeRequestSubmitMixin:
             and isinstance(payload.input, list)
             and getattr(_service_get_settings(), "http_bridge_strip_foreign_encrypted_reasoning", True)
         ):
-            # Replayed reasoning ``encrypted_content`` blobs are bound to the
-            # upstream account that minted them. On a first-turn (unanchored)
-            # request agent-lb cannot guarantee the selected account minted
-            # them, and a foreign blob makes upstream accept the request and
-            # silently never answer. Strip the blobs; drop reasoning items
-            # that are content-less without them (bisection-verified safe).
+
+
+
+
+
+
             unsanitized_input_items = cast(list[JsonValue], payload.input)
             sanitized_input_items, stripped_reasoning_count, dropped_reasoning_count = (
                 strip_encrypted_reasoning_input_items(unsanitized_input_items)
@@ -349,26 +349,12 @@ class _HTTPBridgeRequestSubmitMixin:
         text_data: str,
         request_state: _WebSocketRequestState,
     ) -> str:
-        """Inline external ``input_image`` URLs into ``data:`` URLs.
 
-        The HTTP direct-stream path already does this via
-        ``_inline_input_image_urls`` in :mod:`app.core.clients.proxy`, but the
-        HTTP bridge (WebSocket pool) path was missing the conversion.  The
-        upstream ChatGPT WebSocket only accepts ``data:image/…`` payloads; an
-        external ``https://`` image URL causes it to silently reject or hang
-        the request.
-
-        This method applies the same transformation to the already-serialised
-        ``text_data`` JSON that will be sent on the upstream WebSocket.
-        If any external image URLs survive inlining (because the fetch failed),
-        the request is rejected immediately with a 400 error rather than
-        allowing the upstream to hang.
-        """
         settings = _service_get_settings()
         if not settings.image_inline_fetch_enabled:
             return text_data
-        # Quick string-level pre-check: skip the parse/fetch cycle when the
-        # payload contains no ``input_image`` items with an ``http`` URL.
+
+
         if "input_image" not in text_data:
             return text_data
         try:
@@ -384,9 +370,9 @@ class _HTTPBridgeRequestSubmitMixin:
                 connect_timeout,
             )
             inlined = await _inline_top_level_input_image_urls(inlined, image_fetch_session, connect_timeout)
-        # After inlining, check if any external URLs survived (i.e. fetch
-        # failed).  The upstream WS only accepts data: URLs so sending an
-        # external URL would just cause a silent hang.
+
+
+
         remaining_external = _count_external_image_urls(inlined)
         if remaining_external > 0:
             raise ProxyResponseError(
@@ -473,14 +459,14 @@ class _HTTPBridgeRequestSubmitMixin:
                             cache_key_family=session.key.affinity_kind,
                             model_class=_extract_model_class(session.request_model) if session.request_model else None,
                         )
-                    # Try reconnecting the upstream websocket first.  For requests
-                    # carrying previous_response_id we only reconnect (send_request=
-                    # False) because the fresh upstream won't recognise the old
-                    # response id.  If reconnection itself fails, raise 502 so the
-                    # client retries with previous_response_id intact rather than
-                    # receiving 400 previous_response_not_found (which causes the
-                    # CLI to drop previous_response_id and resend the full
-                    # conversation history, inflating per-turn context by ~20x).
+
+
+
+
+
+
+
+
                     recovered = await self._retry_http_bridge_request_on_fresh_upstream(
                         session,
                         request_state=request_state,
@@ -647,11 +633,11 @@ class _HTTPBridgeRequestSubmitMixin:
                 await session.upstream.close()
             except Exception:
                 logger.debug("Failed to close HTTP bridge upstream websocket after send failure", exc_info=True)
-            # Always raise 502 so the client can retry with
-            # previous_response_id intact.  Returning 400
-            # previous_response_not_found causes the client to drop
-            # previous_response_id and resend the full conversation
-            # history, inflating per-turn context by ~20x.
+
+
+
+
+
             raise ProxyResponseError(
                 502,
                 openai_error("upstream_unavailable", str(exc) or "Upstream websocket closed"),
@@ -763,9 +749,9 @@ class _HTTPBridgeRequestSubmitMixin:
                         )
                         session.prewarmed = False
                         try:
-                            # The warmup request has already been sent upstream.  Close/reconnect the
-                            # socket while the warmup state is still attached so any late warmup
-                            # response cannot be assigned to the next visible request on this session.
+
+
+
                             await self._reconnect_http_bridge_session(
                                 session,
                                 request_state=request_state,
@@ -859,11 +845,11 @@ class _HTTPBridgeRequestSubmitMixin:
                 session.upstream_control.retire_after_drain = True
                 detached = True
         request_state.event_queue = None
-        # event_queue is nulled unconditionally because by the time
-        # _detach is called from the finally block in
-        # _stream_http_bridge_session_events, the terminal event has
-        # already been delivered via _pop_terminal_websocket_request_state.
-        # A late-arriving event on a nulled queue is a no-op.
+
+
+
+
+
         await _release_websocket_response_create_gate(request_state, session.response_create_gate)
         if not detached:
             return False
@@ -946,15 +932,15 @@ class _HTTPBridgeRequestSubmitMixin:
     ) -> bool:
         retry_text_data = text_data
         if request_state.previous_response_id is not None and send_request:
-            # After an ambiguous websocket send failure we cannot prove whether
-            # upstream already accepted the continuation. Re-sending the same
-            # previous_response_id request can fork continuity with duplicate
-            # child responses, so only reconnect-without-resend is allowed.
-            # The single exception is proxy-injected anchors on trim-safe
-            # full-resend payloads: dropping the anchor and replaying the
-            # original unanchored request is equivalent to the client's own
-            # retry. Session-level injections do not opt in because their
-            # payload may depend on the anchor for context preservation.
+
+
+
+
+
+
+
+
+
             if (
                 not request_state.proxy_injected_previous_response_id
                 or not request_state.fresh_upstream_request_text
@@ -1011,11 +997,11 @@ class _HTTPBridgeRequestSubmitMixin:
                 and request_state.fresh_upstream_request_is_retry_safe
                 and request_state.fresh_upstream_request_text
             ):
-                # Once a continuation is pending upstream, reconnecting without
-                # replay cannot complete the current request, while replaying it
-                # is unsafe without upstream idempotency guarantees. Proxy-
-                # injected retry-safe anchors are equivalent to the client's own
-                # full resend once the anchor is stripped.
+
+
+
+
+
                 return False
             close_classification = _classify_upstream_close(
                 session.last_upstream_close_code,

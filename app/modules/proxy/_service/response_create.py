@@ -87,7 +87,7 @@ def _oversized_response_create_dump_dir() -> Path:
 
 
 def _fingerprint_input_items(items: Sequence[JsonValue]) -> str:
-    """Return stable SHA-256 fingerprint for input list canonical JSON."""
+
     canonical = json.dumps(list(items), ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     return sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -107,7 +107,7 @@ def _json_value_contains_input_image_part(value: JsonValue) -> bool:
 
 
 def _responses_request_contains_input_image(payload: ResponsesRequest) -> bool:
-    """Return whether a Responses request carries any ``input_image`` part."""
+
     input_value = payload.input
     if not isinstance(input_value, list):
         return False
@@ -441,7 +441,7 @@ async def _inline_top_level_input_image_urls(
 
 
 def _count_external_image_urls(payload: dict[str, JsonValue]) -> int:
-    """Count input_image items that still reference an external (non data:) URL."""
+
     input_value = payload.get("input")
     if not isinstance(input_value, list):
         return 0

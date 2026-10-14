@@ -1,9 +1,4 @@
-"""lb-sandbox-check verdicts: when a run may count as proof that an agent-lb restart is safe.
 
-Unit level on purpose: each verdict is a decision table over lb-sandbox's JSON and the lb-restart log, with
-many ways to be wrong, and the live run that feeds it (launchd, the live pool) cannot run in CI. The check
-authorizes agent-lb restarts, so every row here is a way a run must fail rather than pass.
-"""
 
 from __future__ import annotations
 
@@ -59,7 +54,7 @@ def test_cutover_line_is_parsed_from_the_lb_restart_log() -> None:
 @pytest.mark.parametrize(
     "override",
     [
-        # The c957bb05e false pass: the stream finished before the cutover, so 0 were in flight.
+
         {"cutover": {"standby_port": 2472, "old_pid": 92640, "in_flight": 0}},
         {"cutover": {"standby_port": 2472, "old_pid": 92640, "in_flight": None}},
         {"cutover": None},
@@ -106,7 +101,7 @@ def test_a_scan_counts_only_when_complete_and_clean(rc, scan: dict) -> None:
 
 
 def test_a_keyed_scan_must_have_held_the_store_key() -> None:
-    """Without the key a store snapshot taken before a mirror cycle reads clean (finding on 41a2f667)."""
+
     check = _load()
     assert check.scan_problems("x", 0, {**GOOD_SCAN, "ciphertext_keys": 1}, keyed=True) == []
     assert check.scan_problems("x", 0, {**GOOD_SCAN, "ciphertext_keys": 0}, keyed=True) != []
@@ -118,8 +113,8 @@ def test_process_scan_must_read_every_named_process_environment() -> None:
     procs = {"found": False, "complete": True, "visible_pids": [10, 11, 12], "pids": [10, 11, 12]}
     good = {**GOOD_SCAN, "processes": procs}
     assert check.process_scan_problems(0, good, {"primary": 10, "aux": 11, "front": 12}) == []
-    assert check.process_scan_problems(0, good, {"primary": 10, "standby": 13}) != []  # env never shown
-    # Finding on 41a2f667: an extra run process (no named role) whose env ps did not show still passed.
+    assert check.process_scan_problems(0, good, {"primary": 10, "standby": 13}) != []
+
     extra = {**procs, "pids": [10, 11, 12, 13]}
     assert check.process_scan_problems(0, {**good, "processes": extra}, {"primary": 10}) != []
     hidden = {**procs, "invisible_pids": [14]}
@@ -147,7 +142,7 @@ GOOD_STOP = {
 @pytest.mark.parametrize(
     ("rc", "stop", "leftover", "labels"),
     [
-        # The c957bb05e false pass: teardown found a token, refused the export, deleted the root, said clean.
+
         (0, {**GOOD_STOP, "logs": {**GOOD_STOP["logs"], "scan_found": True, "copied": False}}, [], ""),
         (0, {**GOOD_STOP, "logs": {**GOOD_STOP["logs"], "scan_complete": False}}, [], ""),
         (0, {**GOOD_STOP, "logs": {k: v for k, v in GOOD_STOP["logs"].items() if k != "scan_scope"}}, [], ""),
@@ -158,7 +153,7 @@ GOOD_STOP = {
         (1, GOOD_STOP, [], ""),
         (0, {**GOOD_STOP, "clean": False}, [], ""),
         (0, GOOD_STOP, [123], ""),
-        # Finding on 41a2f667: the export was never rescanned; a link swap after the scan copied the key out.
+
         (0, {**GOOD_STOP, "logs": {**GOOD_STOP["logs"], "export_scanned": False}}, [], ""),
         (0, {**GOOD_STOP, "logs": {**GOOD_STOP["logs"], "export_found": True}}, [], ""),
         (0, {**GOOD_STOP, "logs": {**GOOD_STOP["logs"], "files_copied": 0}}, [], ""),
@@ -193,9 +188,7 @@ def test_custody_parity_wants_private_directories_and_key(tmp_path: Path) -> Non
 
 
 def test_a_run_refuses_an_out_dir_another_run_holds(tmp_path: Path) -> None:
-    """CLI boundary, run as a subprocess: two verifiers once shared one --out, overwrote each other's step files and
-    both failed on the other's output. A second run must refuse the dir, exit 2 and leave the first run's files
-    as they were. --lb-sandbox points nowhere, so even a run that wrongly proceeds starts no sandbox."""
+
     out = tmp_path / "run"
     out.mkdir()
     first = out / "result.json"
@@ -232,10 +225,7 @@ OTHER_LANE = (
 def test_a_live_restart_by_another_lane_during_the_run_is_infra_error_naming_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S3 run 2026-10-08: another lane's live lb-restart landed mid-run and live-untouched read as a bare fail.
-    A changed live identity with a live restart logged (runtime/sync.log, after the run's mark) or holding the
-    lock is infra_error naming it, never pass; with no such restart it stays a fail; a real failure elsewhere
-    keeps the run a fail."""
+
     check = _load()
     log = tmp_path / "sync.log"
     log.write_text("2026-10-07T23:21:45Z lb-restart ok reason='before the run' old_pid=77624 new_pid=39914\n")
@@ -263,9 +253,7 @@ def test_a_live_restart_by_another_lane_during_the_run_is_infra_error_naming_it(
 
 
 def test_live_identity_reads_the_launchd_table_never_a_job_print(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Custody floor (lbsb-5 review FIRST): the check's live identity used `launchctl print` of the live jobs, which
-    shows their whole environment (the federation token included). It reads pids from the bare `launchctl list`
-    table. launchctl, lsof and the front state are the faked edge; a print would answer with a token."""
+
     check = _load()
     table = f"PID\tStatus\tLabel\n4242\t0\t{check.LIVE_LABEL}\n4343\t0\t{check.LIVE_FRONT_LABEL}\n"
     asked: list[list[str]] = []

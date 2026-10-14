@@ -1,4 +1,4 @@
-# Bundled install mode — self-contained setup with the PostgreSQL sub-chart.
+
 replicaCount: 1
 
 autoscaling:

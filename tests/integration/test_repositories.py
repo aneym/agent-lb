@@ -459,12 +459,12 @@ async def test_accounts_upsert_merge_by_chatgpt_identity_reuses_deactivated_row(
         reauth.plan_type = "team"
         saved = await repo.upsert(reauth, merge_by_email=False, merge_by_chatgpt_identity=True)
 
-        # Reauth must return the original deterministic id, with the new
-        # plan and re-activated status, instead of an `__copyN` row.
-        # merge_by_email=False simulates an operator with
-        # `importWithoutOverwrite` enabled; identity-merge runs anyway
-        # because reauth is governed by upstream identity, not by the
-        # dashboard import setting.
+
+
+
+
+
+
         assert saved.id == "acc_canonical"
         assert saved.plan_type == "team"
         assert saved.status == AccountStatus.ACTIVE
@@ -494,8 +494,8 @@ async def test_accounts_upsert_merge_by_chatgpt_identity_picks_oldest_canonical(
         reauth.plan_type = "team"
         saved = await repo.upsert(reauth, merge_by_email=False, merge_by_chatgpt_identity=True)
 
-        # Reauth must land on the older canonical row, not the `__copy2`
-        # row, so the long-term usage history stays attached.
+
+
         assert saved.id == "acc_first"
         assert saved.plan_type == "team"
         rows = list(
@@ -808,10 +808,7 @@ async def test_accounts_upsert_merge_by_chatgpt_identity_creates_when_missing(db
 
 @pytest.mark.asyncio
 async def test_accounts_upsert_merge_by_chatgpt_identity_skips_without_upstream_id(db_setup):
-    """Falls back to deterministic-id behavior when the incoming row has
-    no ``chatgpt_account_id`` — e.g. legacy local accounts that were
-    seeded before the field was populated.
-    """
+
 
     async with SessionLocal() as session:
         repo = AccountsRepository(session)
@@ -823,8 +820,8 @@ async def test_accounts_upsert_merge_by_chatgpt_identity_skips_without_upstream_
         again.plan_type = "team"
         saved = await repo.upsert(again, merge_by_email=False, merge_by_chatgpt_identity=True)
 
-        # No upstream id means identity-merge has nothing to key on, so
-        # the standard side-by-side path runs and creates `__copy2`.
+
+
         assert saved.id.startswith("acc_no_id__copy")
 
 

@@ -1,10 +1,4 @@
-"""Sticky-affinity and prompt-cache key helpers for proxy routing.
 
-This module owns the pure request/header policy used by ``ProxyService`` to
-choose a sticky session family. Keeping it outside ``service.py`` makes the
-routing decisions testable without adding more responsibility to the proxy
-orchestration class.
-"""
 
 from __future__ import annotations
 
@@ -46,13 +40,7 @@ def _prompt_cache_key_from_request_model(payload: ResponsesRequest | ResponsesCo
 
 
 def _extract_model_class(model: str) -> str:
-    """Extract model class from model name for cache key prefix.
 
-    Classification:
-    - "mini" for gpt-5.4-mini
-    - "codex" for gpt-5.3-codex* (any variant)
-    - "std" for all others
-    """
     if "codex" in model:
         return "codex"
     if "mini" in model:
@@ -64,15 +52,7 @@ def _derive_prompt_cache_key(
     payload: ResponsesRequest | ResponsesCompactRequest,
     api_key: ApiKeyData | None,
 ) -> str:
-    """Derive a stable, session-scoped prompt_cache_key when the client does not provide one.
 
-    The generated key is scoped to (model-class, api-key, instructions-prefix,
-    instruction-role input, first-user-input) so that:
-    - Different model classes get *different* keys (prevents cache pollution).
-    - Parallel sessions from the same API key get *different* keys (different first input).
-    - Successive turns within one session get the *same* key (first input stays constant).
-    - Different API keys never collide.
-    """
     parts: list[str] = []
     model = getattr(payload, "model", None)
     model_class = _extract_model_class(model) if isinstance(model, str) and model else None
@@ -122,7 +102,7 @@ def _extract_instruction_input(payload: ResponsesRequest | ResponsesCompactReque
 
 
 def _extract_first_user_input(payload: ResponsesRequest | ResponsesCompactRequest) -> str | None:
-    """Return a text representation of the first user input item for cache key derivation."""
+
     input_value = getattr(payload, "input", None)
     if isinstance(input_value, str):
         return input_value[:512]
@@ -215,27 +195,21 @@ def _sticky_key_for_codex_control_request(
 
 
 def _owner_lookup_session_id_from_headers(headers: Mapping[str, str]) -> str | None:
-    # `x-codex-turn-state` is per conversation turn/thread and is more specific
-    # than `session_id`, which may be shared across multiple terminals.
+
+
     turn_state = _sticky_key_from_turn_state_header(headers)
     if turn_state is not None:
         return turn_state
     return _sticky_key_from_session_header(headers)
 
 
-# Pattern matching turn-state values synthesized by the helpers below.
-# A 32-char lowercase hex (uuid4().hex) suffix follows the prefix.
+
+
 _SYNTHESIZED_TURN_STATE_PATTERN = re.compile(r"^(?:http_)?turn_[0-9a-f]{32}$")
 
 
 def _is_synthesized_turn_state(value: str) -> bool:
-    """True when ``value`` matches a turn-state synthesized by agent-lb itself.
 
-    Used by the file-pin resolver to distinguish a client-supplied
-    continuation marker from a synthesizer-generated placeholder so
-    first-turn upload-then-converse requests still benefit from
-    file_id pin routing on the websocket / HTTP entry points.
-    """
     return bool(_SYNTHESIZED_TURN_STATE_PATTERN.match(value))
 
 
@@ -294,9 +268,9 @@ def _sticky_key_for_responses_request(
     sticky_threads_enabled: bool,
     api_key: ApiKeyData | None = None,
 ) -> _AffinityPolicy:
-    # This helper only classifies locality keys. Stored-object continuity such
-    # as `previous_response_id` is resolved later by ProxyService and must stay
-    # hard owner-bound even if this returns a prompt-cache affinity policy.
+
+
+
     cache_key, _ = _resolve_prompt_cache_key(
         payload,
         openai_cache_affinity=openai_cache_affinity,

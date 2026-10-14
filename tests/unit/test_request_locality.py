@@ -83,20 +83,15 @@ def test_trusted_proxy_mode_accepts_loopback_with_forwarded_hint(monkeypatch: py
     assert is_local_request(request) is True
 
 
-# ---------------------------------------------------------------------------
-# resolve_connection_client_ip — trusted proxy peer with and without forwarding
-# ---------------------------------------------------------------------------
+
+
+
 
 _LOOPBACK_TRUSTED = (ip_network("127.0.0.1/32"),)
 
 
 def test_trusted_proxy_peer_without_any_forwarding_header_resolves_to_the_socket_ip() -> None:
-    """Local tooling dials loopback directly and sends no forwarding header.
 
-    A trusted proxy always sets one, so a bare request cannot have come through it and
-    the socket peer is the real client. Resolving to None here locked local tooling out
-    of the dashboard and the keyless proxy path.
-    """
     assert (
         resolve_connection_client_ip(
             {},

@@ -1,10 +1,4 @@
-"""kill-scope-guard.py at its hook boundary: a PreToolUse payload on stdin, exit 2 and a BLOCKED line to deny.
 
-factory-operations 60 (2026-10-07 23:55 ET): a lead's `pgrep -f 'no:cacheprovider' | xargs kill` SIGTERMed three other
-agents' pytest runs. The process table is a recorded fake (KILL_GUARD_PS) so the guard's own selection, session walk
-and decision run for real; only `ps` is replaced. Session 100 is this agent (Claude 100, its shell 101, its pytest
-102); session 200 is another agent with its own pytest 202.
-"""
 import json
 import os
 import subprocess
@@ -37,7 +31,7 @@ def run(tmp_path, command, session="sess-aaaaaaaa"):
 
 
 @pytest.mark.parametrize("command", [
-    "pgrep -f 'no:cacheprovider' | xargs kill",  # the incident: 102 is ours, 202 is another agent's
+    "pgrep -f 'no:cacheprovider' | xargs kill",
     PKILL + " -f claude",
     PKILL + " -f pytest",
     "kill $(pgrep -f cacheprovider)",
@@ -54,8 +48,8 @@ def test_a_pattern_kill_that_reaches_another_session_is_denied(tmp_path, command
 
 
 @pytest.mark.parametrize("command", [
-    "pgrep -f tests/mine | xargs kill",  # only this session's pytest
-    "kill $(pgrep -f 'runner --owner sess-aaaaaaaa')",  # carries this session's marker
+    "pgrep -f tests/mine | xargs kill",
+    "kill $(pgrep -f 'runner --owner sess-aaaaaaaa')",
     PKILL + " -P $$",
     PKILL + " -f no-such-process-anywhere",
     "cat > notes.md <<'EOF'\n" + PKILL + " -f claude\npgrep -f pytest | xargs kill\nEOF",

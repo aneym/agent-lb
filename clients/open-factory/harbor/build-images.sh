@@ -1,32 +1,32 @@
 #!/usr/bin/env bash
-# Build the Open Factory Harbor images (local OrbStack/Docker daemon, no push).
-#
-#   build-images.sh [agents|agent-lb|agent-rails|all]   (default: agents + agent-lb)
-#
-#   of-work/agents:cc<CLAUDE>-codex<CODEX>, :latest
-#       Ubuntu 24.04 + pinned Claude Code, Codex and Node.
-#   of-work/agent-lb-base:<short-sha>, :latest
-#       of-work/agents + uv + Python + agent-lb at AGENT_LB_REF, dev deps synced.
-#   of-work/agent-rails-base:<short-sha>, :latest
-#       Same for agent-rails at AGENT_RAILS_REF (Python + npm workspaces).
-#
-# Pins (override via env): CLAUDE_CODE_VERSION, CODEX_VERSION, NODE_VERSION,
-# UV_VERSION, PYTHON_VERSION.
-#
-# agent-lb comes from the local checkout AGENT_LB_REPO, read only: history up to
-# AGENT_LB_REF is pushed into a scratch bare repo that is bind-mounted into the
-# build. The script does not fetch; run `git -C "$AGENT_LB_REPO" fetch origin`
-# first when origin/main must be current.
-#
-# agent-rails's local checkout is a blob:none partial clone, so its history
-# cannot be copied offline. The script makes a shallow clone
-# (AGENT_RAILS_DEPTH commits, default 300) of AGENT_RAILS_REF from GitHub with
-# GITHUB_TOKEN; tasks must use base commits inside that window.
-#
-# The base commit (AGENT_LB_REF, AGENT_RAILS_BASE) must contain every task
-# base commit, since of-checkout can only reach history the base holds. Build
-# at the newest task base_sha, not at the branch tip, so the base carries no
-# history past what the tasks need.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -64,7 +64,7 @@ new_context() {
   cp "$here/images/repo-base/Dockerfile" "$here/images/of-checkout" "$here/images/${name}-base/of-sync" "$ctx/"
 }
 
-# docker_build_base <name> <ctx> <sha> [extra docker args...]
+
 docker_build_base() {
   local name="$1" ctx="$2" sha="$3"
   shift 3
@@ -95,8 +95,8 @@ build_agent_rails() {
   local sha
   : "${GITHUB_TOKEN:?agent-rails is private; export GITHUB_TOKEN}"
   new_context agent-rails
-  # The helper reads the token from the environment, so it never appears in argv
-  # (visible to ps) or in the clone's config.
+
+
   git -c credential.helper= \
     -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f' \
     clone -q --bare --no-tags --depth "$AGENT_RAILS_DEPTH" --single-branch \

@@ -8,8 +8,6 @@ from app.db.session import get_session
 from app.modules.public_usage.schemas import PublicUsageResponse
 from app.modules.public_usage.service import build_public_usage
 
-# No dashboard-session dependency: this surface is intentionally anonymous and public.
-# It returns only aggregate numbers (never account_id / email / api_key / bodies / IPs).
 router = APIRouter(prefix="/api/usage", tags=["public"])
 
 

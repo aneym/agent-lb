@@ -1,12 +1,4 @@
-"""default accounts.limit_warmup_enabled to true for new rows
 
-Revision ID: 20260611_000000_default_enable_account_limit_warmup
-Revises: 20260610_180000_add_seed_target_offset_minutes
-Create Date: 2026-06-11 00:00:00.000000
-
-Existing rows are intentionally not backfilled; only the server default for
-newly inserted accounts changes.
-"""
 
 from __future__ import annotations
 

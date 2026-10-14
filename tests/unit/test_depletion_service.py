@@ -65,7 +65,7 @@ def test_depletion_metrics_dataclass_shape() -> None:
 
 def test_compute_depletion_insufficient_history() -> None:
     reset_ewma_state()
-    history = [_entry(10.0, BASE_TIME)]  # only 1 point
+    history = [_entry(10.0, BASE_TIME)]
     result = compute_depletion_for_account(
         "acc1", "codex_other", "primary", history, now=BASE_TIME + timedelta(minutes=5)
     )
@@ -89,7 +89,7 @@ def test_compute_depletion_sufficient_history() -> None:
 
 def test_compute_depletion_zero_rate_is_safe() -> None:
     reset_ewma_state()
-    # Flat usage — no increase → rate=0 → risk = used_percent/100
+
     history = [
         _entry(50.0, BASE_TIME),
         _entry(50.0, BASE_TIME + timedelta(minutes=1)),
@@ -99,22 +99,22 @@ def test_compute_depletion_zero_rate_is_safe() -> None:
         "acc1", "codex_other", "primary", history, now=BASE_TIME + timedelta(minutes=3)
     )
     assert result is not None
-    # used=50%, rate=0 → projected=50% → risk=0.5
+
     assert result.risk == pytest.approx(0.5, abs=0.01)
 
 
 def test_compute_depletion_window_reset_handled() -> None:
     reset_ewma_state()
-    # Usage drops from 90% to 5% — window reset
+
     history = [
         _entry(90.0, BASE_TIME),
         _entry(95.0, BASE_TIME + timedelta(minutes=1)),
-        _entry(5.0, BASE_TIME + timedelta(minutes=2)),  # reset
+        _entry(5.0, BASE_TIME + timedelta(minutes=2)),
     ]
     result = compute_depletion_for_account(
         "acc1", "codex_other", "primary", history, now=BASE_TIME + timedelta(minutes=3)
     )
-    # After reset, EWMA state resets — may return None or low risk
+
     if result is not None:
         assert 0.0 <= result.risk <= 1.0
 
@@ -160,7 +160,7 @@ def test_aggregate_depletion_pool_mean_with_worst_attribution() -> None:
     ]
     result = compute_aggregate_depletion(metrics)
     assert result is not None
-    # Pool risk is the mean across accounts, not the worst account.
+
     assert result.risk == pytest.approx((0.3 + 0.8 + 0.5) / 3)
     assert result.risk_level == "safe"
     assert result.burn_rate == pytest.approx((0.5 + 2.0 + 1.0) / 3)
@@ -199,7 +199,7 @@ def test_aggregate_depletion_one_hot_account_does_not_label_pool_critical() -> N
     assert result.risk_level == "safe"
     assert result.worst_account_id == "acc_hot"
     assert result.worst_risk_level == "critical"
-    # A calm pool must not render the hot account's exhaustion ETA.
+
     assert result.projected_exhaustion_at is None
     assert result.seconds_until_exhaustion is None
 
@@ -238,11 +238,11 @@ def test_reset_ewma_state_clears_state() -> None:
         _entry(10.0, BASE_TIME),
         _entry(20.0, BASE_TIME + timedelta(minutes=1)),
     ]
-    # First call — builds state
+
     compute_depletion_for_account("acc1", "codex_other", "primary", history, now=BASE_TIME + timedelta(minutes=2))
-    # Reset
+
     reset_ewma_state()
-    # After reset, single point returns None
+
     result = compute_depletion_for_account(
         "acc1", "codex_other", "primary", [_entry(10.0, BASE_TIME)], now=BASE_TIME + timedelta(minutes=3)
     )
@@ -250,7 +250,7 @@ def test_reset_ewma_state_clears_state() -> None:
 
 
 def test_repeated_calls_with_same_history_are_idempotent() -> None:
-    """R5-F1: Replaying the same history must not cause EWMA drift."""
+
     reset_ewma_state()
     history = [
         _entry(10.0, BASE_TIME),
@@ -259,11 +259,11 @@ def test_repeated_calls_with_same_history_are_idempotent() -> None:
     ]
     now = BASE_TIME + timedelta(minutes=3)
 
-    # First call computes initial metrics
+
     result1 = compute_depletion_for_account("acc1", "codex_other", "primary", history, now=now)
     assert result1 is not None
 
-    # Repeated calls with same history must return identical risk (no drift)
+
     result2 = compute_depletion_for_account("acc1", "codex_other", "primary", history, now=now)
     assert result2 is not None
     assert result2.risk == pytest.approx(result1.risk)
@@ -276,7 +276,7 @@ def test_repeated_calls_with_same_history_are_idempotent() -> None:
 
 
 def test_new_entries_still_update_ewma_state() -> None:
-    """R5-F1: New entries beyond the last timestamp must still be processed."""
+
     reset_ewma_state()
     history_batch1 = [
         _entry(10.0, BASE_TIME),
@@ -286,7 +286,7 @@ def test_new_entries_still_update_ewma_state() -> None:
     result1 = compute_depletion_for_account("acc1", "codex_other", "primary", history_batch1, now=now1)
     assert result1 is not None
 
-    # Second call with additional newer entries
+
     history_batch2 = history_batch1 + [
         _entry(25.0, BASE_TIME + timedelta(minutes=2)),
         _entry(35.0, BASE_TIME + timedelta(minutes=3)),
@@ -294,7 +294,7 @@ def test_new_entries_still_update_ewma_state() -> None:
     now2 = BASE_TIME + timedelta(minutes=4)
     result2 = compute_depletion_for_account("acc1", "codex_other", "primary", history_batch2, now=now2)
     assert result2 is not None
-    # Rate should be higher now (usage accelerated from 5%/min to 10%/min)
+
     assert result2.rate_per_second > result1.rate_per_second
 
 
@@ -328,8 +328,7 @@ def test_aged_out_samples_do_not_keep_stale_ewma_influence() -> None:
 
 
 def test_repeated_call_with_unchanged_history_skips_rebuild(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Issue #537: dashboard polls must reuse the cached EWMA state when the
-    in-window history is unchanged, instead of replaying every usage row."""
+
     from app.modules.usage import depletion_service
 
     reset_ewma_state()
@@ -356,8 +355,8 @@ def test_repeated_call_with_unchanged_history_skips_rebuild(monkeypatch: pytest.
     assert first is not None
     assert rebuild_calls == 1
 
-    # Subsequent polls with the exact same in-window history must not re-walk
-    # the history. The result must remain identical.
+
+
     second = compute_depletion_for_account("acc1", "codex_other", "primary", history, now=now)
     assert second is not None
     assert rebuild_calls == 1
@@ -370,7 +369,7 @@ def test_repeated_call_with_unchanged_history_skips_rebuild(monkeypatch: pytest.
 
 
 def test_signature_cache_stores_edges_not_per_row_content() -> None:
-    """The cache signature must stay O(1): edges only, no per-row digest walk."""
+
     from app.modules.usage import depletion_service
 
     reset_ewma_state()
@@ -388,7 +387,7 @@ def test_signature_cache_stores_edges_not_per_row_content() -> None:
 
 
 def test_changed_tail_row_invalidates_cache_and_rebuilds() -> None:
-    """Appending a row changes the edge signature and forces an EWMA rebuild."""
+
     reset_ewma_state()
     base_rows = [
         _entry(10.0, BASE_TIME),
@@ -406,8 +405,7 @@ def test_changed_tail_row_invalidates_cache_and_rebuilds() -> None:
 
 
 def test_prune_depletion_cache_drops_absent_account_window_entries() -> None:
-    """Dashboard lifecycle pruning prevents churned account/window keys from
-    accumulating in the EWMA and signature caches."""
+
     from app.modules.usage import depletion_service
 
     reset_ewma_state()
@@ -445,8 +443,7 @@ def test_prune_depletion_cache_drops_absent_account_window_entries() -> None:
 
 
 def test_new_history_row_invalidates_memoized_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When a new usage row lands the cache must rebuild so the rate reflects
-    the latest observations."""
+
     from app.modules.usage import depletion_service
 
     reset_ewma_state()
@@ -478,16 +475,14 @@ def test_new_history_row_invalidates_memoized_state(monkeypatch: pytest.MonkeyPa
         "acc1", "codex_other", "primary", appended_history, now=BASE_TIME + timedelta(minutes=3)
     )
     assert second is not None
-    # Signature changed (new row appended) -> rebuild executed.
+
     assert rebuild_calls == 2
-    # Rate must rise to reflect the steeper observation.
+
     assert second.rate_per_second > first.rate_per_second
 
 
 def test_aged_out_row_invalidates_memoized_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the leading row of the in-window history drops away the cache must
-    rebuild so the rate does not retain influence from samples now outside the
-    window."""
+
     from app.modules.usage import depletion_service
 
     reset_ewma_state()
@@ -527,16 +522,7 @@ def test_aged_out_row_invalidates_memoized_state(monkeypatch: pytest.MonkeyPatch
 def test_edge_visible_value_correction_invalidates_memoized_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Corrections that touch an edge row (here: the latest sample's
-    used_percent) must invalidate the cached EWMA state.
 
-    Contract change from #588: the signature is edges-only (row_count, first,
-    latest). A mutation confined to interior rows with identical edges is NOT
-    detected — accepted deliberately after the per-row content digest froze
-    the event loop for minutes per dashboard poll at production row counts
-    (2026-07-11 outage). No write path mutates interior usage-history rows;
-    the only UPDATE on these tables reassigns account_id during account
-    merges, which changes row membership and therefore the edge signature."""
     from app.modules.usage import depletion_service
 
     reset_ewma_state()
@@ -573,15 +559,14 @@ def test_edge_visible_value_correction_invalidates_memoized_state(
     second = compute_depletion_for_account("acc1", "codex_other", "primary", corrected_history, now=now)
     assert second is not None
     assert rebuild_calls == 2
-    # Rate must reflect the correction, not the stale cached state.
+
     assert second.rate_per_second != pytest.approx(first.rate_per_second)
 
 
 def test_inplace_reset_at_correction_invalidates_memoized_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Codex review on #588: corrections to value-bearing non-`used_percent`
-    fields (here `reset_at`) must also invalidate the cache."""
+
     from app.modules.usage import depletion_service
 
     reset_ewma_state()
@@ -609,9 +594,9 @@ def test_inplace_reset_at_correction_invalidates_memoized_state(
     assert first is not None
     assert rebuild_calls == 1
 
-    # Upstream extended the window — reset_at moved later on every row
-    # (per-row consistency keeps ewma_update from treating it as a mid-stream
-    # window change and dropping the rate).
+
+
+
     extended_reset = int((BASE_TIME + timedelta(minutes=90)).timestamp())
     corrected_history = _signed(
         [_entry(e.used_percent, e.recorded_at, reset_at=extended_reset, window_minutes=60) for e in history]
@@ -619,16 +604,16 @@ def test_inplace_reset_at_correction_invalidates_memoized_state(
     second = compute_depletion_for_account("acc1", "codex_other", "primary", corrected_history, now=now)
     assert second is not None
     assert rebuild_calls == 2
-    # Extending reset_at lengthens seconds_until_reset which lowers the
-    # sustainable_rate denominator in compute_burn_rate, so burn_rate must
-    # rise; the cached pre-correction state would have produced the old,
-    # lower burn_rate.
+
+
+
+
     assert second.burn_rate != pytest.approx(first.burn_rate)
     assert second.burn_rate > first.burn_rate
 
 
 def test_post_reset_window_returns_none() -> None:
-    """R30-F1: When reset_at is in the past, depletion should be None (window expired)."""
+
     reset_ewma_state()
     reset_epoch = int((BASE_TIME + timedelta(minutes=5)).timestamp())
     history = [
@@ -636,7 +621,7 @@ def test_post_reset_window_returns_none() -> None:
         _entry(50.0, BASE_TIME + timedelta(minutes=1), reset_at=reset_epoch, window_minutes=300),
         _entry(80.0, BASE_TIME + timedelta(minutes=2), reset_at=reset_epoch, window_minutes=300),
     ]
-    # 'now' is after the reset — the window has already expired
+
     now = BASE_TIME + timedelta(minutes=10)
     result = compute_depletion_for_account("acc1", "codex_other", "primary", history, now=now)
     assert result is None

@@ -1,4 +1,4 @@
-"""A forwarded bridge stream runs every step of the owner's work under the forwarded identity."""
+
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def _recording_stream(seen: list[object], *, fail_at: int | None = None, items: 
 async def test_each_step_sees_the_identity_and_the_caller_context_is_untouched(identity):
     seen: list[object] = []
     wrapped = wrap(_recording_stream(seen), identity)
-    # StreamingResponse may resume the generator from different tasks.
+
     items = [await asyncio.create_task(wrapped.__anext__()) for _ in range(3)]
     assert get_request_identity() is None
     with pytest.raises(StopAsyncIteration):

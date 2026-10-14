@@ -212,8 +212,8 @@ def _reference_logs_for_accounts(
     *,
     include_unattributed: bool,
 ) -> list[RequestLog]:
-    # Mirrors the old `app.modules.usage.service._logs_for_accounts` filter
-    # that `aggregate_usage_window` now replaces with SQL.
+
+
     if include_unattributed:
         return [log for log in logs if log.account_id is None or log.account_id in account_ids]
     return [log for log in logs if log.account_id in account_ids]
@@ -231,29 +231,29 @@ async def test_aggregate_usage_window_matches_python_reference(db_setup) -> None
         since = now - timedelta(days=7)
         account_ids = {"acc1", "acc2", "acc3"}
 
-        # (account_id, model, input_tokens, output_tokens, cached_input_tokens,
-        #  reasoning_tokens, status, error_code)
+
+
         rows_spec = [
             ("acc1", "gpt-5.1", 1000, 500, 200, None, "success", None),
-            ("acc1", "gpt-5.1", 300, None, 50, 120, "success", None),  # output falls back to reasoning
+            ("acc1", "gpt-5.1", 300, None, 50, 120, "success", None),
             ("acc1", "gpt-5.2", 10, 5, None, None, "error", "rate_limit_exceeded"),
-            ("acc1", "gpt-5.2", 20, 0, 500, None, "error", "rate_limit_exceeded"),  # cached clamps to input
+            ("acc1", "gpt-5.2", 20, 0, 500, None, "error", "rate_limit_exceeded"),
             ("acc2", "gpt-5.1", 400, 100, 0, None, "success", None),
             ("acc2", "gpt-5.1", 250, 50, None, None, "error", "quota_exceeded"),
-            ("acc2", "totally-unknown-model-zzz", 90, 10, 10, None, "error", "quota_exceeded"),  # null cost
-            ("acc2", "totally-unknown-model-zzz", 15, 5, None, None, "success", None),  # null cost
+            ("acc2", "totally-unknown-model-zzz", 90, 10, 10, None, "error", "quota_exceeded"),
+            ("acc2", "totally-unknown-model-zzz", 15, 5, None, None, "success", None),
             ("acc3", "gpt-5.2", 60, 40, 20, None, "success", None),
             ("acc3", "gpt-5.2", 5, None, None, 15, "error", "rate_limit_exceeded"),
-            ("acc4", "gpt-5.1", 1000, 1000, 100, None, "success", None),  # excluded account
-            (None, "gpt-5.1", 45, 15, 5, None, "success", None),  # unattributed
-            (None, "gpt-5.2", 70, 30, None, None, "error", "quota_exceeded"),  # unattributed
+            ("acc4", "gpt-5.1", 1000, 1000, 100, None, "success", None),
+            (None, "gpt-5.1", 45, 15, 5, None, "success", None),
+            (None, "gpt-5.2", 70, 30, None, None, "error", "quota_exceeded"),
             ("acc1", "gpt-5.1", 5, 5, None, None, "success", None),
             ("acc2", "gpt-5.2", 8, 2, None, None, "success", None),
             ("acc3", "gpt-5.1", 12, 3, None, None, "error", "server_error"),
-            ("acc1", "gpt-5.2", 33, 7, 40, None, "success", None),  # cached clamps to input
+            ("acc1", "gpt-5.2", 33, 7, 40, None, "success", None),
             ("acc2", "gpt-5.1", 9, 1, 3, None, "success", None),
             ("acc3", "gpt-5.2", 21, 4, None, None, "success", None),
-            ("acc1", "totally-unknown-model-zzz", 100, 100, 100, None, "error", "rate_limit_exceeded"),  # null cost
+            ("acc1", "totally-unknown-model-zzz", 100, 100, 100, None, "error", "rate_limit_exceeded"),
         ]
 
         for i, (account_id, model, input_tokens, output_tokens, cached, reasoning, status, error_code) in enumerate(

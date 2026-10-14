@@ -96,8 +96,8 @@ async def exchange_anthropic_authorization_code(
         "code_verifier": code_verifier,
         "redirect_uri": redirect_uri or settings.anthropic_oauth_redirect_uri,
     }
-    # Claude Code's token endpoint requires the state value (split from the
-    # `code#state` callback) echoed back in the exchange body.
+
+
     if state:
         payload["state"] = state
     payload_data = await _post_token_request(
@@ -188,8 +188,8 @@ async def _post_token_request(
     on_exchange_start: Callable[[], None] | None = None,
 ) -> AnthropicOAuthTokenPayload:
     settings = get_settings()
-    # Claude Code posts the token request as JSON; Anthropic rejects a
-    # form-urlencoded body with "Invalid request format".
+
+
     encoded = json.dumps(dict(payload))
     timeout = aiohttp.ClientTimeout(total=timeout_seconds or settings.oauth_timeout_seconds)
     headers = {
@@ -313,8 +313,8 @@ def _metadata_from_payload(payload: AnthropicOAuthTokenPayload) -> AnthropicToke
     )
     email = _first_text(
         payload.email,
-        # Claude Code's token response carries the address under
-        # account.email_address (not account.email).
+
+
         _nested_text(metadata, ("account", "email_address")),
         _nested_text(metadata, ("account", "email")),
         _nested_text(metadata, ("user", "email_address")),

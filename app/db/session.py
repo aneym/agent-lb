@@ -53,10 +53,10 @@ def _postgres_async_engine_kwargs(url: str, *, background: bool) -> dict[str, ob
         kwargs["pool_size"] = _database_pool_size(background=background)
         kwargs["max_overflow"] = _database_max_overflow(background=background)
         kwargs["pool_timeout"] = _settings.database_pool_timeout_seconds
-        # Detect server-side connection drops (idle timeout, restart, network reset)
-        # before the first real query, and cycle long-lived connections so they
-        # never reach an upstream keep-alive boundary. SQLite paths do not need
-        # either knob — aiosqlite has no analogous server-side disconnect.
+
+
+
+
         kwargs["pool_pre_ping"] = True
         kwargs["pool_recycle"] = _settings.database_pool_recycle_seconds
     return kwargs
@@ -137,8 +137,8 @@ def _ensure_sqlite_dir(url: str) -> None:
     if marker_index < 0:
         return
 
-    # Works for both relative (sqlite+aiosqlite:///./db.sqlite) and absolute
-    # paths (sqlite+aiosqlite:////var/lib/app/db.sqlite).
+
+
     path = url[marker_index + len(marker) :]
     path = path.partition("?")[0]
     path = path.partition("#")[0]
@@ -193,20 +193,16 @@ def _load_sqlite_backup_creator() -> _SqliteBackupCreator:
 
 
 def init_background_db(url: str | None = None) -> None:
-    """Initialize separate DB pool for background tasks (smaller pool).
 
-    Args:
-        url: Database URL. If None, uses settings.database_url.
-    """
     global _background_engine, _background_session_factory
     db_url = url or _settings.database_url
 
     if _is_sqlite_url(db_url):
         is_sqlite_memory = _is_sqlite_memory_url(db_url)
         if is_sqlite_memory:
-            # Reuse the main engine for in-memory SQLite — creating a second
-            # engine would open a separate, empty in-memory database with no
-            # schema, causing "no such table" errors in background tasks.
+
+
+
             _background_engine = engine
             _background_session_factory = SessionLocal
             return
@@ -231,10 +227,7 @@ def init_background_db(url: str | None = None) -> None:
 
 @asynccontextmanager
 async def get_background_session() -> AsyncIterator[AsyncSession]:
-    """Session provider for background tasks, schedulers, and auth dependencies.
 
-    Uses the separate background pool if initialized, otherwise falls back to main pool.
-    """
     factory = _background_session_factory or SessionLocal
     session = factory()
     try:
@@ -250,12 +243,12 @@ async def get_background_session() -> AsyncIterator[AsyncSession]:
 
 @asynccontextmanager
 async def sqlite_writer_section(session: AsyncSession) -> AsyncIterator[None]:
-    """Serialize local SQLite write transactions without throttling upstream work."""
+
     global _sqlite_writer_lock
     if not _is_sqlite_url(_settings.database_url) or _is_sqlite_memory_url(_settings.database_url):
         yield
         return
-    # Never hold the writer lock while waiting for a pooled connection.
+
     await session.connection()
     if _sqlite_writer_lock is None:
         _sqlite_writer_lock = anyio.Lock()

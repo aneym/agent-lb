@@ -1,18 +1,18 @@
 #!/bin/bash
-# PreToolUse Bash floor guard: `rm -rf /...` and `DROP DATABASE|TABLE` need explicit user approval.
-# Until 2026-10-08 this was an inline leaf in settings.json:
-#   bash -c 'CMD=$(cat | jq -r ".tool_input.command // empty"); [ -z "$CMD" ] && exit 0; echo "$CMD" | grep -qiE ...'
-# Review M3 (hook-dispatcher-5): with jq or grep failing, that shell turned the failure into exit 0 and allowed
-# `psql -c "DROP DATABASE app"`. S44 moved it here: install-policy.py installs this file and registers it in place of
-# the inline leaf, and the dispatcher runs it as a direct exec. Every read and the match are checked: jq must read
-# exactly one JSON input, grep must answer match (0) or no match (1); anything else refuses. An allow ends with the
-# receipt line `floor-ok dangerous-command-guard.sh` when the dispatcher asks for it (HOOK_FLOOR_RECEIPT); the
-# dispatcher refuses an exit 0 without it. The match is the inline leaf's, unchanged (hook-dispatch.py pf_dangerous
-# is its prefilter).
-# Guard trim (Alex, 2026-10-08 09:18 ET: "dont have guards that are too aggressive"): the recursive root delete
-# moved to rm-dynamic-deny, which reads the command that runs (this grep matched heredoc and ssh text). This guard
-# keeps the destructive-data floor, names it, and accepts the Rails CoS approval record: a trailing
-# `# alex-approval: <path>` naming an existing ~/.agent-rails/lanes/orchestrator-refs/alex-*-2026-*.md with a time.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 set -euo pipefail
 FLOOR="floor: destructive data with no approval on record"
 approved() {
@@ -68,7 +68,7 @@ allow() {
 }
 CMD=$(jq -n -r 'input | .tool_input.command // empty' 2>/dev/null) || refuse "could not read the hook input (jq exit $?)"
 [ -n "$CMD" ] || allow
-# Inspect executable argv, not provider names in data or ssh arguments. No token values leave this parser.
+
 PROVIDER=$(python3 - "$CMD" <<'PY'
 import os, re, shlex, sys
 providers = {

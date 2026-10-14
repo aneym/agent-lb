@@ -1,4 +1,4 @@
-"""Cursor transport and account misses recover at the seat CLI boundary."""
+
 from __future__ import annotations
 
 import json
@@ -21,7 +21,7 @@ def dispatch(tmp_path: Path):
     accounts = []
     for account_id in ("account-a", "account-b"):
         key = tmp_path / account_id
-        key.write_text(account_id)  # Synthetic identity, not a credential.
+        key.write_text(account_id)
         accounts.append({"id": account_id, "vendor": "cursor", "auth": "api-key", "key_file": str(key)})
     (seats / "accounts.json").write_text(json.dumps({"accounts": accounts}))
     cursor = tmp_path / "cursor"
@@ -94,7 +94,7 @@ def test_model_miss_fails_over_and_is_skipped_until_expiry(dispatch):
     state = json.loads((seats / "state.json").read_text())
     until = datetime.fromisoformat(state["accounts"]["account-a"]["model_unavailable"][MODEL])
     assert timedelta(minutes=59) < until - datetime.now(timezone.utc) <= timedelta(hours=1)
-    # Make B busier so a run-count ordering alone would choose A again.
+
     state["accounts"]["account-b"]["runs"] *= 3
     (seats / "state.json").write_text(json.dumps(state))
     result, calls = run()

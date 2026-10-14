@@ -1,8 +1,8 @@
 import XCTest
 @testable import AgentLB
 
-/// Routing scope 2026-09-30: All counts every account the router can use, LB and seat, and the
-/// Cursor and Devin scopes show their pools and accounts.
+
+
 final class MakerScopeTests: XCTestCase {
   private let seatsJSON = """
   {"stateUpdatedAt":"2026-09-30T02:40:00Z","source":"seat_state","accounts":[
@@ -32,7 +32,7 @@ final class MakerScopeTests: XCTestCase {
     let decoder = APIClient.makeDecoder()
     let seats = try decoder.decode(SeatAccountsResponse.self, from: Data(seatsJSON.utf8)).accounts
     let pools = try decoder.decode(PoolsDocument.self, from: Data(poolsJSON.utf8)).pools
-    var accounts = try loadAccountsFixture()  // 3 Claude, 5 Codex
+    var accounts = try loadAccountsFixture()
     accounts.append(makeTestAccount(id: "kimi-1", provider: "kimi"))
     accounts.append(makeTestAccount(id: "glm-1", provider: "glm"))
 

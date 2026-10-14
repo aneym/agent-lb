@@ -1,28 +1,28 @@
 #!/bin/bash
-# Refuse recursive grep/rg/find/fd (bare or through rtk) over /, $HOME, /Volumes/<disk> or ~/.agent-rails as a whole;
-# warn on the other wide roots (/System, /Library, the whole repos dir).
-# Such scans ran for minutes on 2026-09-25, pushed Studio load past 130 and tripped
-# the OrbStack NFS dialog. Scope to one repo or directory instead.
-# The comment "# wide-scan-ok" silences a warning; it never lifts a refusal.
-# A floor guard fails closed (hook-dispatcher-4, 2026-10-08): input it cannot read (jq missing or failing) and a
-# scanner that fails (python3 missing or crashing) refuse the call; before, both fell through to an allow.
-# S44 (2026-10-08): every read is checked (set -euo pipefail); a `cat` that fails or reads nothing refuses (review M2:
-# a missing cat left INPUT empty, jq read that as no command and the guard allowed `rg needle /`). An allow ends with
-# the receipt line `floor-ok wide-scan-guard.sh` when the dispatcher asks for it (HOOK_FLOOR_RECEIPT); the dispatcher
-# refuses an exit 0 without it, so a guard that stops early for any other reason never allows.
-# Warn only (guard trim, Alex 2026-10-08 09:18 ET: "dont have guards that are too aggressive"): a wide scan is not a
-# kept floor, so every finding is one line of context and the call goes through. Only a broken guard (input it cannot
-# read, a scanner that crashes) still refuses, as the dispatcher's fail-closed rule asks.
-# Refuse again for the roots that took Studio down (factory-burn-2026-10-12, Studio at 0% idle): a recursive grep, rg,
-# find or fd, bare or through rtk (rtk grep is recursive), over /, $HOME, /Volumes/<disk>, ~/.agent-rails or its
-# agents, evidence or lanes dir as a whole exits 2 with one line naming the house-tools rule and the scoped
-# replacement; no override comment. One lane, agent or repo dir stays allowed; the other wide roots (/System,
-# /Library) still only warn.
-# The repos root too (factory-burn 2026-10-12 19:43Z): `rtk grep -rln cost_cmd --include=*.py .` from cwd
-# /Volumes/StudioExt/repos ran 13 minutes over every repo and worktree on Studio. /Volumes/StudioExt/repos and each
-# worktree root /Volumes/StudioExt/repos/<repo>-wt (the directory itself, never a repo or worktree inside it), as a
-# path or as `.` with that cwd, bare or through rtk grep/rg, are refused with the same one line naming one repo or
-# worktree as the allowed scope.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 set -euo pipefail
 refuse() {
   echo "BLOCKED: wide-scan-guard $1, so this call is refused (the guard fails closed). Check cat, jq and python3 on PATH." >&2
@@ -41,8 +41,8 @@ INPUT=$(cat) || refuse "could not read the hook input (cat exit $?)"
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty') || refuse "could not read the hook input (jq exit $?)"
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty') || refuse "could not read the hook input (jq exit $?)"
 [ -n "$CMD" ] || allow
-# Check each grep separately: another command's -D skip cannot make it safe.
-# Tokenizing keeps quoted paths intact and distinguishes patterns from paths.
+
+
 SCAN=0
 SCAN_COMMAND="$CMD" SCAN_CWD="$CWD" python3 - <<'PY' || SCAN=$?
 import os

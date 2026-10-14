@@ -57,9 +57,9 @@ class AnthropicMessageRequestContentPart(BaseModel):
 class AnthropicMessageRequestMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    # Claude Code (Fable+) emits mid-conversation `system`-role messages that
-    # the upstream Messages API accepts; keep this permissive so the proxy never
-    # rejects a payload Anthropic itself would honor.
+
+
+
     role: StrictStr
     content: StrictStr | list[AnthropicMessageRequestContentPart]
 
@@ -214,7 +214,7 @@ AnthropicEvent: TypeAlias = Annotated[
 
 
 def cache_creation_1h_tokens(usage: AnthropicUsage | None) -> int | None:
-    """1-hour cache write tokens from Anthropic's ``usage.cache_creation`` breakdown, None when absent."""
+
     if usage is None:
         return None
     breakdown = (usage.model_extra or {}).get("cache_creation")

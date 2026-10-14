@@ -248,20 +248,7 @@ async def test_device_oauth_reauth_reuses_existing_row_for_same_chatgpt_identity
     async_client,
     monkeypatch,
 ):
-    """OAuth reauth for the same ChatGPT identity must reuse the existing
-    local row even when ``importWithoutOverwrite`` is enabled.
 
-    Before #788, this code path created an ``__copyN`` row whenever the
-    operator had toggled ``importWithoutOverwrite`` on, because the
-    dashboard's side-by-side import setting was incorrectly conflated
-    with reauth.
-
-    The ``importWithoutOverwrite`` setting now governs the dashboard
-    import path only (side-by-side rows when importing twice). The
-    reauth path always reconciles to one local row per upstream
-    ChatGPT identity, so a refresh-token-revoked account picks up the
-    new tokens onto its historical row instead of forking a duplicate.
-    """
 
     await oauth_module._OAUTH_STORE.reset()
 
@@ -342,8 +329,8 @@ async def test_device_oauth_reauth_reuses_existing_row_for_same_chatgpt_identity
     assert len(data) == 1
     base_id = generate_unique_account_id(raw_account_id, email)
     assert data[0]["accountId"] == base_id
-    # Second reauth carried the team plan; it must be applied to the
-    # existing row rather than a new __copy row.
+
+
     assert data[0]["planType"] == "team"
 
 
@@ -527,13 +514,13 @@ async def test_device_oauth_flow_keeps_same_email_distinct_upstream_identities_i
     call_count = {"value": 0}
 
     async def fake_exchange_device_token(**_):
-        # Each of the first two flows uses a *different* upstream
-        # chatgpt_account_id so that identity-aware reauth treats them
-        # as distinct upstream identities and keeps both local rows.
-        # The third flow then introduces a third upstream id under the
-        # same email. OAuth/reauth is keyed by upstream identity rather
-        # than email, so the overwrite-by-email import setting must not
-        # collapse this credential slot.
+
+
+
+
+
+
+
         call_count["value"] += 1
         if call_count["value"] == 1:
             account_id = "acc_oauth_conflict_one"
@@ -1475,7 +1462,7 @@ async def test_manual_callback_idempotent_success_requires_requested_flow(async_
 
 @pytest.mark.asyncio
 async def test_internal_oauth_pending_reports_counts_and_ages_only(async_client):
-    # lb-restart reads this before a blue/green swap; it must never carry state or codes.
+
     await oauth_module._OAUTH_STORE.reset()
     now = time.time()
     async with oauth_module._OAUTH_STORE.lock:
@@ -1520,8 +1507,8 @@ async def test_internal_oauth_pending_refuses_non_loopback_clients(app_instance)
 
 @pytest.mark.asyncio
 async def test_abandoned_browser_flow_releases_the_callback_port(monkeypatch):
-    # After a blue/green swap the other process needs the callback port for its own
-    # sign-ins; a flow nobody finished must not keep holding it.
+
+
     import socket
 
     await oauth_module._OAUTH_STORE.reset()
@@ -1576,8 +1563,8 @@ async def test_failed_browser_flow_releases_the_callback_port(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_concurrent_browser_flows_never_trust_an_unbound_callback_server(monkeypatch):
-    # Two sign-ins start while the first bind is still in flight and then fails: the
-    # second must bind for itself, not assume the first one's server is listening.
+
+
     await oauth_module._OAUTH_STORE.reset()
     release_bind = asyncio.Event()
     bind_attempts: list[object] = []
@@ -1614,8 +1601,8 @@ async def test_concurrent_browser_flows_never_trust_an_unbound_callback_server(m
 
 @pytest.mark.asyncio
 async def test_cancelled_sign_in_request_still_registers_the_port_it_bound(monkeypatch):
-    # The browser can drop the start request mid-bind; the bound port must still be
-    # tracked, or no idle check or expiry could ever release it.
+
+
     await oauth_module._OAUTH_STORE.reset()
     release_bind = asyncio.Event()
     bound: list[object] = []
@@ -1687,8 +1674,8 @@ async def test_bind_crash_after_request_cancelled_fails_the_flow(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_held_callback_port_counts_as_pending_until_released():
-    # An expired sign-in keeps the port for a short grace; a swap in that window would
-    # send the other process's callback here, so lb-restart must still see it.
+
+
     await oauth_module._OAUTH_STORE.reset()
     now = time.time()
 

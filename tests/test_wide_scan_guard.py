@@ -1,4 +1,4 @@
-"""Exercise the real Bash hook with PreToolUse payloads; commands are never executed."""
+
 import json
 import subprocess
 from pathlib import Path
@@ -31,7 +31,7 @@ CWD = str(Path.home() / ".agent-rails/agents/home")
     ("bash -c 'rg foo /Volumes/Media500'", 2),
     ("grep -r x ~/.agent-rails/agents/home 2>/dev/null", 1),
     ("grep -r -D skip x ~/.agent-rails/agents/home 2>/dev/null", 0),
-    ("rg foo /Volumes/Media500 # wide-scan-ok", 2),  # the comment silences a warning, never a refusal
+    ("rg foo /Volumes/Media500 # wide-scan-ok", 2),
     ("rg foo /Volumes/StudioExt/repos # wide-scan-ok", 2),
     ("bash <<EOF\nrg x /\nEOF\n", 2),
     ("sh <<-EOF\n\trg x /\n\tEOF\n", 2),
@@ -80,7 +80,7 @@ CWD = str(Path.home() / ".agent-rails/agents/home")
     ("bash <<< 'rg x /'", 2),
     ("sh <<< 'rg x /'", 2),
     ("bash <<< 'rg x src'", 0),
-    # factory-burn 2026-10-12: the scans that took Studio to 0% idle, bare and through rtk (rtk grep is recursive).
+
     ("grep -rl 0123abcd ~/.agent-rails/agents ~/.agent-rails/evidence", 2),
     ("grep -rl 38280104567 ~/.agent-rails --include=*.jsonl", 2),
     ("rtk grep -rl 0123abcd ~/.agent-rails/agents ~/.agent-rails/evidence", 2),
@@ -93,15 +93,15 @@ CWD = str(Path.home() / ".agent-rails/agents/home")
     ("rg -n x ~/.agent-rails/evidence", 2),
     ("rg -n x /Users/aneyman", 2),
     ("cd ~/.agent-rails && grep -r x", 2),
-    # one lane, one agent dir or a repo checkout stays allowed
+
     ("rg -n x ~/.agent-rails/lanes/factory-burn-2026-10-09", 0),
     ("rtk grep x ~/.agent-rails/lanes/factory-burn-2026-10-09", 0),
     ("rtk grep -rl x ~/.agent-rails/agents/home", 0),
     ("rg -n x /Volumes/StudioExt/repos/agent-lb", 0),
     ("rtk grep x src", 0),
     ("rtk git status", 0),
-    # factory-burn 2026-10-12 19:43Z: the repos root and the worktree roots, as a path or as `.` with that cwd, bare
-    # or through rtk grep/rg; one repo or worktree inside them stays allowed.
+
+
     ("rg x /Volumes/StudioExt/repos", 2),
     ("grep -rln x .", 2, "/Volumes/StudioExt/repos"),
     ("rtk grep -rln cost_cmd --include=*.py .", 2, "/Volumes/StudioExt/repos"),
@@ -122,14 +122,11 @@ CWD = str(Path.home() / ".agent-rails/agents/home")
     ("rg -n x /Volumes/StudioExt/repos/agent-lb-wt/topic ../factory", 0, "/Volumes/StudioExt/repos/factory"),
     ("grep -n x /Volumes/StudioExt/repos/README.md", 0),
     ("ls /Volumes/StudioExt/repos", 0),
-    # other wide roots only warn
+
     ("rtk grep x /System", 1),
 ]])
 def test_hook_command_segments(command, expected, cwd):
-    """expected 2: refused (exit 2, one BLOCKED line on stderr), for a recursive search over /, $HOME, a volume root,
-    the repos root or a worktree root, or ~/.agent-rails (or its agents, evidence or lanes dir) as a whole
-    (factory-burn 2026-10-12). expected 1: exit 0 with one warn-only line of context (other wide roots, unparsed
-    input, a FIFO grep it cannot rewrite). 0: silent. A third column is the payload cwd."""
+
     result = run(command, cwd)
     if expected == 2:
         assert result.returncode == 2, (command, result.stdout, result.stderr)
@@ -171,7 +168,7 @@ def warned(result):
     if not result.stdout.strip():
         return False
     out = json.loads(result.stdout)["hookSpecificOutput"]
-    if "updatedInput" in out:  # the FIFO grep rewrite (-D skip) is a fix, not a warning
+    if "updatedInput" in out:
         return False
     assert "permissionDecision" not in out
     return out["additionalContext"].startswith("wide-scan-guard (warn only, not blocked): ")
@@ -195,11 +192,11 @@ def test_documented_residuals(command):
     assert warned(run(command))
 
 
-# Missing or failing jq (and a failing scanner) lets the call through with a warning (guard trim, 2026-10-08).
+
 
 
 def test_installed_hook_matches_source():
-    """Protect delivery: the active hook must match the checked-in policy."""
+
     installed = Path.home() / ".claude/hooks/wide-scan-guard.sh"
     if not installed.exists():
         pytest.skip("wide-scan guard is not installed")

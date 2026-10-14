@@ -7,7 +7,7 @@ import pytest
 from app.core.usage.types import BucketModelAggregate
 from app.modules.usage.builders import align_bucket_window_start, build_trends_from_buckets
 
-BUCKET_SECONDS = 21600  # 6 hours
+BUCKET_SECONDS = 21600
 SINCE = datetime(2026, 2, 1, 0, 0, 0, tzinfo=timezone.utc)
 SINCE_EPOCH = int(SINCE.timestamp())
 FIRST_SLOT_EPOCH = SINCE_EPOCH
@@ -75,10 +75,10 @@ class TestBuildTrendsFromBuckets:
         trends, metrics, cost = build_trends_from_buckets(rows, SINCE)
 
         assert trends.requests[2].v == 10
-        assert trends.tokens[2].v == 700  # 500 + 200
+        assert trends.tokens[2].v == 700
         assert trends.error_rate[2].v == pytest.approx(0.1)
 
-        # Other slots should be zero
+
         assert trends.requests[0].v == 0
         assert trends.requests[1].v == 0
         assert trends.requests[3].v == 0
@@ -116,7 +116,7 @@ class TestBuildTrendsFromBuckets:
         _, metrics, _ = build_trends_from_buckets(rows, SINCE)
 
         assert metrics.requests == 30
-        assert metrics.tokens == 4500  # 1000+500+2000+1000
+        assert metrics.tokens == 4500
         assert metrics.cached_input_tokens == 300
         assert metrics.error_rate == pytest.approx(5 / 30)
         assert metrics.error_count == 5
@@ -164,7 +164,7 @@ class TestBuildTrendsFromBuckets:
             assert point.t.tzinfo == timezone.utc
 
     def test_last_slot_covers_recent_data(self):
-        """Data near the end of the window (slot index 27) should be included."""
+
         rows = [_make_row(slot_index=27, request_count=5)]
         trends, metrics, _ = build_trends_from_buckets(rows, SINCE)
 

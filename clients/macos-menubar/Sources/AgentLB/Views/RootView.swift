@@ -4,13 +4,13 @@ import SwiftUI
 struct RootView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-  // §9.2: top-level provider scope, persisted; scopes pool, accounts, recent.
+
   @AppStorage("providerScope") private var providerScopeRaw = ProviderScope.all.rawValue
-  // §12: privacy mode, persisted; redacts identity text for shareable screenshots.
+
   @AppStorage("privacyMode") private var privacyMode = false
-  // Sizing-relevant accounts state lives HERE (not in AccountsSection): the
-  // panel height is a pure function of state (PanelLayout), so RootView must
-  // own every input that changes it.
+
+
+
   @State private var accountStatus: AccountFilter.Status = .all
   @State private var accountQuery = ""
   @State private var searchVisible = false
@@ -20,16 +20,16 @@ struct RootView: View {
     ProviderScope(rawValue: providerScopeRaw) ?? .all
   }
 
-  // §12: built from the FULL account list so pseudonyms stay stable under any
-  // scope/sort; injected into the environment for every section to read.
+
+
   private var privacyMask: PrivacyMask {
     PrivacyMask.build(enabled: privacyMode, accounts: appState.accounts)
   }
 
-  // §11: value multiple scoped to the provider filter — the numerator comes
-  // from the provider-scoped summary fetch, the denominator from the scoped
-  // accounts. Computed once and reused for both the panel-height input
-  // (metrics line count) and the PoolSection render.
+
+
+
+
   private var arbitrage: ArbitrageStats? {
     ArbitrageStats.compute(
       summary: appState.summary,
@@ -54,16 +54,16 @@ struct RootView: View {
         }
         Divider().opacity(0.5)
         bodyContent(layout)
-        // Absorbs the (small, bounded) difference between the PanelMetrics
-        // estimates and real text heights so the footer stays bottom-pinned.
+
+
         Spacer(minLength: 0)
         Divider().opacity(0.5)
         FooterBar()
       }
     }
-    // Deterministic §9.1 sizing: content is pinned to the computed height
-    // and PanelResizer applies the same number to the NSWindow (macOS 26
-    // panels never re-measure on their own). No geometry feedback.
+
+
+
     .environment(\.privacyMask, privacyMask)
     .frame(height: layout.panelHeight)
     .onChange(of: layout.panelHeight) { _, height in
@@ -80,14 +80,14 @@ struct RootView: View {
     .onDisappear { appState.popoverClosed() }
   }
 
-  // MARK: - Deterministic sizing inputs
+
 
   private var scopedAccounts: [Account] {
     scope.filter(appState.accounts)
   }
 
-  // §9.2: Recent entries filtered to accountIds within scope; entries
-  // without an accountId cannot be attributed, so they hide when scoped.
+
+
   private var scopedRecent: [RequestLogEntry] {
     guard scope != .all else { return appState.recent }
     let ids = Set(scopedAccounts.map(\.accountId))
@@ -96,8 +96,8 @@ struct RootView: View {
     }
   }
 
-  /// Filtered row count for sizing — sort never changes the count, so the
-  /// sort mode can stay private to AccountsSection.
+
+
   private var filteredAccountRows: Int {
     AccountFilter(provider: .all, status: accountStatus, query: accountQuery, sort: .resetSoonest)
       .apply(to: scopedAccounts, now: .now)
@@ -128,8 +128,8 @@ struct RootView: View {
       inputs.degraded = appState.serviceStatus == .degraded
     }
     inputs.showsScopeBar = showsScopeBar
-    // §8.2 base cost line, + a token line when totals exist, + the §11
-    // arbitrage line when a value multiple is computable.
+
+
     let hasTokenLine = appState.summary?.metrics?.tokensSecondaryWindow != nil
     inputs.metricsLines = 1 + (hasTokenLine ? 1 : 0) + (arbitrage != nil ? 1 : 0)
     inputs.poolHasError = appState.sectionErrors.contains(.pool)
@@ -144,7 +144,7 @@ struct RootView: View {
     return PanelLayout.compute(inputs)
   }
 
-  // The scope control is chrome — visible whenever content states render.
+
   private var showsScopeBar: Bool {
     switch appState.serviceStatus {
     case .running, .degraded: hasAnyData
@@ -194,9 +194,9 @@ struct RootView: View {
       || !appState.pools.isEmpty || appState.lastSyncAt != nil
   }
 
-  // §8.3: panel padding 14 pt (horizontal), section vertical gap 12 pt —
-  // 6 pt above + 6 pt below each section around the hairline divider.
-  // §9.2: everything below the scope bar sees only scoped data.
+
+
+
   @ViewBuilder
   private func content(_ layout: PanelLayout) -> some View {
     VStack(spacing: 0) {
@@ -248,10 +248,10 @@ struct RootView: View {
   }
 }
 
-// MARK: - Provider scope bar (§9.2)
 
-// Full-width segmented control in the chrome area: All n / Codex n /
-// Claude n. Selected segment = ink fill (.primary) with inverted label.
+
+
+
 private struct ProviderScopeBar: View {
   @Binding var scopeRaw: String
   let counts: [ProviderScope: Int]
@@ -289,11 +289,11 @@ private struct ProviderScopeBar: View {
   }
 }
 
-// MARK: - Header
 
-// §8.2: exactly two 0-wrap lines.
-//   L1: ring status glyph · "Agent LB" (15 pt semibold) · spacer · ⟳ ⋯
-//   L2: host chip · synced age · spacer · version (11 pt tertiary)
+
+
+
+
 private struct HeaderView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.privacyMask) private var privacyMask
@@ -301,7 +301,7 @@ private struct HeaderView: View {
   @State private var showStopConfirm = false
 
   var body: some View {
-    // Line heights enforced per PanelMetrics so PanelLayout stays exact.
+
     VStack(alignment: .leading, spacing: 6) {
       HStack(alignment: .center, spacing: 8) {
         headerStatus
@@ -338,8 +338,8 @@ private struct HeaderView: View {
     }
   }
 
-  // §8.2 L1: a mini ring of the first available pool window doubles as the
-  // status glyph; degraded/down fall back to the §1.2 shape language.
+
+
   @ViewBuilder
   private var headerStatus: some View {
     switch appState.serviceStatus {
@@ -364,7 +364,7 @@ private struct HeaderView: View {
     }
   }
 
-  // SHORT host only — FQDN truncated at the first dot; local mode → "local".
+
   private var hostChip: some View {
     Text(hostLabel)
       .font(.system(size: 10, design: .monospaced))
@@ -377,14 +377,14 @@ private struct HeaderView: View {
 
   private var hostLabel: String {
     guard appState.isRemote else { return "local" }
-    // §12: the remote hostname identifies the machine — redact it too.
+
     let host = appState.remoteHost
     let short = host.split(separator: ".").first.map(String.init) ?? host
     return privacyMask.host(short)
   }
 
-  // §12: eye toggle for privacy mode — the quick "hide/show sensitive info"
-  // affordance for shareable screenshots. Glass, consistent with refresh.
+
+
   private var privacyButton: some View {
     Button {
       privacyMode.toggle()
@@ -519,7 +519,7 @@ private struct HeaderView: View {
   }
 }
 
-// MARK: - Service down / starting
+
 
 private struct ServiceDownView: View {
   @Environment(AppState.self) private var appState
@@ -544,12 +544,12 @@ private struct ServiceDownView: View {
     }
     .frame(maxWidth: .infinity)
     .padding(.horizontal, 12)
-    // PanelMetrics.serviceDown — enforced so PanelLayout stays exact.
+
     .frame(height: PanelMetrics.serviceDown)
   }
 
-  // §2.3: prominent buttons render monochrome (ink fill, inverted label
-  // owned by MonochromeProminentButtonStyle) — never the system accent.
+
+
   @ViewBuilder
   private var actionButton: some View {
     if appState.isRemote {
@@ -575,7 +575,7 @@ private struct ServiceDownView: View {
   }
 }
 
-// MARK: - Loading
+
 
 private struct LoadingPlaceholders: View {
   var body: some View {
@@ -588,7 +588,7 @@ private struct LoadingPlaceholders: View {
     }
     .padding(12)
     .redacted(reason: .placeholder)
-    // PanelMetrics.loading — enforced so PanelLayout stays exact.
+
     .frame(height: PanelMetrics.loading)
   }
 }

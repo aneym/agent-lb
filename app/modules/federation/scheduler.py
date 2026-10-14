@@ -45,11 +45,7 @@ _RepoFactory = Callable[[], AbstractAsyncContextManager[FederationRepository]]
 
 @dataclass(slots=True)
 class FederationMirrorScheduler:
-    """Non-owner mirror-pull loop: periodically imports the peer's owned-account
 
-    access tokens. Never runs against an unconfigured peer; exponential
-    backoff on failure, capped at ~30 minutes.
-    """
 
     interval_seconds: int
     enabled: bool
@@ -144,10 +140,10 @@ class FederationMirrorScheduler:
                     or applied
                 )
         if applied:
-            # A request can cache an empty selection before the first mirror
-            # pull completes. Make newly mirrored (or refreshed) accounts
-            # routable immediately instead of preserving that stale 503 until
-            # the selection cache expires or the process restarts.
+
+
+
+
             get_account_selection_cache().invalidate()
 
     async def _push_usage_report(self) -> None:
@@ -177,9 +173,9 @@ class FederationMirrorScheduler:
             cursor = await self._cursor_for_forward()
             for _ in range(_REQUEST_LOG_BATCHES_PER_CYCLE):
                 since = None if cursor is not None else utcnow() - _REQUEST_LOG_LOOKBACK
-                # Snapshot the rows inside the session: the background session
-                # expires ORM rows when it rolls back on exit, and reading log.id afterwards
-                # raised on every edge (2026-10-04 00:05Z, ax42).
+
+
+
                 async with self.repo_factory() as repo:
                     logs = await repo.list_request_logs_to_forward(
                         after_id=cursor,
@@ -203,12 +199,7 @@ class FederationMirrorScheduler:
             logger.warning("Federation request-log forward failed; mirror pull remains successful", exc_info=True)
 
     async def _cursor_for_forward(self) -> int | None:
-        """Return the cursor, or None (48h window) when it sits past the table.
 
-        A restored or replaced store can reuse low ids while the cursor file
-        still names an id from the previous file. Leaving that cursor in place
-        would skip every current row forever.
-        """
         assert self.request_log_cursor_path is not None
         cursor = _read_request_log_cursor(self.request_log_cursor_path)
         if cursor is None:

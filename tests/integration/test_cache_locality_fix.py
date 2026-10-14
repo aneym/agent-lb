@@ -52,8 +52,7 @@ async def _import_account(async_client, account_id: str, email: str) -> str:
 
 
 def test_mini_and_large_requests_use_different_cache_keys():
-    """Verify that gpt-5.4-mini and gpt-5.3-codex requests produce different prompt_cache_keys
-    due to model-class prefix separation."""
+
     from app.core.openai.requests import ResponsesRequest
     from app.modules.proxy.affinity import _derive_prompt_cache_key
 
@@ -78,7 +77,7 @@ def test_mini_and_large_requests_use_different_cache_keys():
 
 
 def test_same_model_class_produces_same_cache_key():
-    """Verify that two requests with the same model class produce the same cache key."""
+
     from app.core.openai.requests import ResponsesRequest
     from app.modules.proxy.affinity import _derive_prompt_cache_key
 
@@ -95,7 +94,7 @@ def test_same_model_class_produces_same_cache_key():
 
 
 def test_prompt_cache_bridge_idle_ttl_from_settings():
-    """Verify that PROMPT_CACHE bridge idle TTL is read from dashboard settings."""
+
     from app.db.models import StickySessionKind
     from app.modules.proxy.service import _AffinityPolicy, _effective_http_bridge_idle_ttl_seconds
 
@@ -115,7 +114,7 @@ def test_prompt_cache_bridge_idle_ttl_from_settings():
 
 
 def test_codex_session_idle_ttl_unchanged():
-    """Verify that CODEX_SESSION idle TTL behavior is unchanged."""
+
     from app.db.models import StickySessionKind
     from app.modules.proxy.service import _AffinityPolicy, _effective_http_bridge_idle_ttl_seconds
 
@@ -135,7 +134,7 @@ def test_codex_session_idle_ttl_unchanged():
 
 
 def test_model_class_extraction_for_all_model_types():
-    """Verify model class extraction works correctly for mini, codex, and standard models."""
+
     from app.modules.proxy.affinity import _extract_model_class
 
     assert _extract_model_class("gpt-5.4-mini") == "mini"
@@ -145,7 +144,7 @@ def test_model_class_extraction_for_all_model_types():
     assert _extract_model_class("gpt-5.3-codex-spark") == "codex"
     assert _extract_model_class("gpt-5.1-codex-mini") == "codex"
 
-    # Standard models (default)
+
     assert _extract_model_class("gpt-5.4") == "std"
     assert _extract_model_class("gpt-4") == "std"
     assert _extract_model_class("gpt-4-turbo") == "std"
@@ -235,9 +234,9 @@ async def test_prompt_cache_reallocates_when_usage_exceeds_configured_budget_thr
 async def test_prompt_cache_holds_its_account_until_a_real_rate_limit_then_stays_on_the_failover(
     async_client, monkeypatch
 ):
-    # A conversation's prompt cache lives on the account that wrote it. Budget
-    # pressure must not move it; an upstream 429 moves it once, and it stays on the
-    # new account after the old one recovers.
+
+
+
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -297,17 +296,17 @@ async def test_prompt_cache_holds_its_account_until_a_real_rate_limit_then_stays
     await turn()
     assert seen == ["acc_hold_a"]
 
-    # Budget pressure (85% over an 80% threshold, with a 5% account free) holds.
+
     await set_usage(85.0, 5.0)
     await turn()
     assert seen == ["acc_hold_a"] * 2
 
-    # A real upstream 429 fails over once.
+
     limited.add("acc_hold_a")
     await turn()
     assert seen == ["acc_hold_a"] * 3 + ["acc_hold_b"]
 
-    # The old account recovers and the new one comes under budget pressure: stay.
+
     async with SessionLocal() as session:
         account = await session.get(Account, acc_a_id)
         assert account is not None and account.status == AccountStatus.RATE_LIMITED
@@ -321,12 +320,7 @@ async def test_prompt_cache_holds_its_account_until_a_real_rate_limit_then_stays
 
 
 def test_owner_mismatch_raises_409_for_retry() -> None:
-    """Verify that the bridge mismatch block raises ProxyResponseError(409).
 
-    When a request lands on a non-owner replica, the mismatch block must raise
-    a 409 so the client retries instead of silently creating a duplicate local
-    bridge that breaks turn-state continuity.
-    """
     import inspect
 
     from app.modules.proxy._service.http_bridge import mixin as http_bridge_mixin_module

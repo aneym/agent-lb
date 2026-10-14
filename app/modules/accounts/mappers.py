@@ -42,9 +42,9 @@ from app.modules.usage.mappers import usage_history_to_window_row
 
 _ACCOUNT_ROUTING_POLICIES = frozenset({"burn_first", "normal", "preserve"})
 _DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS = 60
-# Mirrored in app/modules/proxy/anthropic_service.py — both must treat a
-# Fable-scoped weekly marker older than this as stale.
-_FABLE_SCOPED_FRESH_SECONDS = 21600  # 6 hours
+
+
+_FABLE_SCOPED_FRESH_SECONDS = 21600
 
 
 def build_account_summaries(
@@ -88,14 +88,7 @@ def build_account_summaries(
 
 
 def _duplicate_detection_keys_appearing_more_than_once(accounts: list[Account]) -> set[tuple[str, str, str | None]]:
-    """Return duplicate (email, ChatGPT account id, workspace id) keys in this list.
 
-    Emails are compared case-sensitively to match the storage normalization
-    already performed at OAuth-import time. Blank/None emails, the legacy
-    DEFAULT_EMAIL placeholder used by malformed imports, and rows without a
-    ChatGPT account identity are excluded so valid same-email accounts in
-    different workspaces are not flagged as stale/fresh duplicates.
-    """
     counts: dict[tuple[str, str, str | None], int] = {}
     for account in accounts:
         key = _duplicate_detection_key(account)
@@ -153,15 +146,15 @@ def _account_to_summary(
         and primary_usage is not None
         and usage_core.is_weekly_window_minutes(primary_usage.window_minutes)
     )
-    # Keep account payload aligned with UI semantics: weekly-only plans expose
-    # their quota as secondary/7d and omit primary/5h fields.
+
+
     primary_used_percent = _normalize_used_percent(effective_primary_usage)
     secondary_used_percent = _normalize_used_percent(effective_secondary_usage)
     primary_remaining_percent = usage_core.remaining_percent_from_used(primary_used_percent)
     secondary_remaining_percent = usage_core.remaining_percent_from_used(secondary_used_percent)
 
-    # Codex has no 5h window anymore (OpenAI removed it 2026-07), so openai
-    # accounts never default to a full primary gauge.
+
+
     if (
         primary_remaining_percent is None
         and not weekly_only_usage
@@ -270,8 +263,8 @@ def _account_to_summary(
         credits_balance=credits_balance,
         allow_missing_runtime_reset_recovery=allow_missing_runtime_reset_recovery,
     )
-    # AccountSummary still carries the raw credit fields below so extra-usage
-    # burn stays dashboard-visible even though it never rescues the status.
+
+
     credits_cap = None
     credits_spent = None
     credits_window_model = None
@@ -424,14 +417,7 @@ def _fable_eligible(
     secondary_used_percent: float | None,
     fable_scoped_weekly: AdditionalUsageHistory | None = None,
 ) -> bool | None:
-    """Whether the balancer will consider this account for Fable-class requests.
 
-    Anthropic accounts only. Prefers Anthropic's dedicated Fable-scoped
-    weekly percent when a fresh (<=6h) marker exists — mirrors the
-    eligibility logic in app/modules/proxy/anthropic_service.py — else falls
-    back to the overall-weekly heuristic; an account with no weekly usage
-    sample yet counts as eligible (fresh window).
-    """
     if account.provider != ANTHROPIC_PROVIDER_NAME:
         return None
     if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED):
@@ -451,12 +437,7 @@ def _fable_scoped_weekly_summary(
     account: Account,
     fable_scoped_weekly: AdditionalUsageHistory | None,
 ) -> AccountFableScopedWeekly | None:
-    """Serialize the Fable-scoped weekly marker behind `fable_eligible`.
 
-    Anthropic accounts only, and only when a marker row exists — there is no
-    such window for other providers and no useful zero to report before the
-    first refresh has recorded one.
-    """
     if account.provider != ANTHROPIC_PROVIDER_NAME or fable_scoped_weekly is None:
         return None
     return AccountFableScopedWeekly(
@@ -508,9 +489,9 @@ def _effective_status_from_usage(
 ) -> AccountStatus:
     long_window_usage = monthly_usage or secondary_usage
     long_window_used_percent = monthly_used_percent if monthly_usage is not None else secondary_used_percent
-    # Anthropic extra-usage credits never rescue an exhausted status: upstream
-    # serves those windows by billing metered dollars, so the OpenAI-style
-    # credit override would mask exhaustion the routing gate relies on.
+
+
+
     credit_override_enabled = account.provider != ANTHROPIC_PROVIDER_NAME
     if not credit_override_enabled:
         credits_has, credits_unlimited, credits_balance = None, None, None
@@ -677,12 +658,8 @@ def build_account_usage_trends(
     bucket_seconds: int,
     bucket_count: int,
 ) -> dict[str, AccountUsageTrend]:
-    """Convert raw UsageTrendBucket rows into per-account trend data.
 
-    Values are expressed as remaining_percent (100 - used_percent) for UI consistency.
-    Empty buckets are filled with the last known value (or 100.0 if no prior data).
-    """
-    # Group buckets by (account_id, window)
+
     grouped: dict[tuple[str, str], dict[int, float]] = {}
     secondary_schedule: dict[str, dict[int, tuple[int, int]]] = {}
     for b in _effective_usage_trend_buckets(buckets):
@@ -700,12 +677,12 @@ def build_account_usage_trends(
                 b.window_minutes,
             )
 
-    # Generate the full time grid, aligned to bucket boundaries (same as SQL)
+
     aligned_start = (since_epoch // bucket_seconds) * bucket_seconds
     time_grid = [aligned_start + i * bucket_seconds for i in range(bucket_count)]
 
     result: dict[str, AccountUsageTrend] = {}
-    # Collect all account_ids
+
     account_ids = {key[0] for key in grouped}
 
     for account_id in account_ids:
@@ -772,9 +749,9 @@ def _fill_trend_points(
     time_grid: list[int],
     bucket_data: dict[int, float],
 ) -> list[UsageTrendPoint]:
-    """Fill missing buckets with last-known value and convert to remaining percent."""
+
     points: list[UsageTrendPoint] = []
-    last_value = 100.0  # assume full remaining if no prior data
+    last_value = 100.0
     for epoch in time_grid:
         if epoch in bucket_data:
             remaining = max(0.0, min(100.0, 100.0 - bucket_data[epoch]))
@@ -794,7 +771,7 @@ def _fill_scheduled_secondary_points(
     time_grid: list[int],
     schedule_data: dict[int, tuple[int, int]],
 ) -> list[UsageTrendPoint]:
-    """Build the ideal weekly remaining line from each sample's own reset deadline."""
+
     points: list[UsageTrendPoint] = []
     current_reset_at: int | None = None
     current_window_minutes: int | None = None

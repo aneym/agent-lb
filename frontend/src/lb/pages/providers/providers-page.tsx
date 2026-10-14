@@ -60,7 +60,7 @@ const poolModels: Record<string, string> = {
   cursor: "Cursor seat",
   devin: "Devin seat",
 };
-// Components that show names subscribe to the privacy store, so a toggle re-renders them.
+
 const accountName = (a: Account) => accountLabel(a, usePrivacyStore.getState().blurred);
 function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: string }) {
   const no5h = ["openai", "kimi", "cursor", "devin", "openrouter"].includes(pool.provider);

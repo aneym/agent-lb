@@ -1,4 +1,4 @@
-"""Widening contracts at the launcher, HTTP handler and upstream-header boundary."""
+
 from __future__ import annotations
 
 import importlib.machinery

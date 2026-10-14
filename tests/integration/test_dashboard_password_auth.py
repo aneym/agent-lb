@@ -165,9 +165,9 @@ async def test_password_not_configured_requests_do_not_spend_login_budget(async_
 
 @pytest.mark.asyncio
 async def test_password_setup_rejects_overlong_password(async_client):
-    # bcrypt enforces a hard 72-byte input limit and raises ValueError otherwise.
-    # The API must surface this as a 422 validation error, not a 500.
-    long_password = "a" * 73  # 73 ASCII bytes -> over the bcrypt limit
+
+
+    long_password = "a" * 73
     response = await async_client.post(
         "/api/dashboard-auth/password/setup",
         json={"password": long_password},
@@ -180,7 +180,7 @@ async def test_password_setup_rejects_overlong_password(async_client):
 
 @pytest.mark.asyncio
 async def test_password_setup_accepts_72_byte_password(async_client):
-    # Exactly 72 bytes must still be accepted.
+
     setup = await async_client.post(
         "/api/dashboard-auth/password/setup",
         json={"password": "a" * 72},
@@ -190,10 +190,10 @@ async def test_password_setup_accepts_72_byte_password(async_client):
 
 @pytest.mark.asyncio
 async def test_password_setup_counts_utf8_bytes_not_codepoints(async_client):
-    # 25 emoji code points = 100 UTF-8 bytes (each emoji is 4 bytes).
-    # Even though len() reports 25 characters, the encoded length exceeds 72
-    # bytes and must be rejected with the same clear error.
-    long_emoji = "🦞" * 25  # 100 bytes when encoded
+
+
+
+    long_emoji = "🦞" * 25
     response = await async_client.post(
         "/api/dashboard-auth/password/setup",
         json={"password": long_emoji},
@@ -205,7 +205,7 @@ async def test_password_setup_counts_utf8_bytes_not_codepoints(async_client):
 
 @pytest.mark.asyncio
 async def test_password_change_rejects_overlong_new_password(async_client):
-    # Establish a valid password so we can authenticate the change request.
+
     setup = await async_client.post(
         "/api/dashboard-auth/password/setup",
         json={"password": "password123"},

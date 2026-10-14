@@ -1,4 +1,4 @@
-"""Cursor alias and dispatch contracts exercised at the CLI boundary."""
+
 from __future__ import annotations
 
 import json

@@ -1434,7 +1434,7 @@ def test_agent_onboarding_docs_keep_claude_subscription_billing_guardrail() -> N
 
 def test_readme_agent_prompt_keeps_onboarding_guardrails() -> None:
     readme = (ROOT / "README.md").read_text()
-    # Collapse hard wraps: the pins protect phrases, not line-break positions.
+
     prompt = " ".join(_fenced_blocks(readme, "text")[0].split())
 
     assert "read GETTING-STARTED.md" in prompt
@@ -1548,7 +1548,7 @@ def test_agent_skills_pin_public_onboarding_and_account_operator_contracts() -> 
         (ROOT / ".agents/skills/agent-lb-account-operator/account-profiles.example.json").read_text()
     )
 
-    # Collapse hard wraps: the pins protect phrases, not line-break positions.
+
     skill_text = " ".join(skill.split())
     assert "Follow `GETTING-STARTED.md` at the repo root, top to bottom" in skill_text
     assert "single source of truth" in skill_text

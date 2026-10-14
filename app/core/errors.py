@@ -13,9 +13,9 @@ class OpenAIErrorDetail(TypedDict, total=False):
     plan_type: str
     resets_at: int | float
     resets_in_seconds: int | float
-    # Selection-failure detail: {degraded, accounts: [{id, status, reset_at,
-    # reason}], earliest_recovery_at, requested_model}. Additive — OpenAI SDK
-    # clients tolerate extra keys inside "error".
+
+
+
     diagnostics: dict
 
 
@@ -99,8 +99,8 @@ def is_previous_response_not_found_error(
         return True
     if code != "invalid_request_error":
         return False
-    # ChatGPT's websocket backend can omit both code and param for an
-    # expired anchor. Match its exact message, not arbitrary invalid input.
+
+
     if param in (None, "previous_response_id") and message is not None:
         if " ".join(message.lower().split()) == "invalid `previous_response_id`.":
             return True

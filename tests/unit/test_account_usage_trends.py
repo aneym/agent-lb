@@ -28,10 +28,10 @@ def _bucket(
     )
 
 
-# Use a value already aligned to BUCKET_SECONDS so tests are predictable
-BUCKET_SECONDS = 21600  # 6h
+
+BUCKET_SECONDS = 21600
 SINCE_EPOCH = (1_700_000_000 // BUCKET_SECONDS) * BUCKET_SECONDS
-BUCKET_COUNT = 4  # 4 buckets → spans 24h
+BUCKET_COUNT = 4
 
 
 class TestBuildAccountUsageTrends:
@@ -50,11 +50,11 @@ class TestBuildAccountUsageTrends:
         trend = result["a1"]
         assert len(trend.primary) == BUCKET_COUNT
 
-        # First bucket: 100 - 20 = 80
+
         assert trend.primary[0].v == 80.0
-        # Second bucket: 100 - 40 = 60
+
         assert trend.primary[1].v == 60.0
-        # Third and fourth buckets: forward-filled with last value (60)
+
         assert trend.primary[2].v == 60.0
         assert trend.primary[3].v == 60.0
 
@@ -66,17 +66,17 @@ class TestBuildAccountUsageTrends:
     def test_used_percent_clamped_to_0_100(self):
         buckets = [_bucket(SINCE_EPOCH, "a1", "primary", 110.0)]
         result = build_account_usage_trends(buckets, SINCE_EPOCH, BUCKET_SECONDS, BUCKET_COUNT)
-        # 100 - 110 = -10, clamped to 0
+
         assert result["a1"].primary[0].v == 0.0
 
     def test_missing_buckets_filled_with_default(self):
-        # No data at all for bucket 0, data at bucket 1
+
         buckets = [_bucket(SINCE_EPOCH + BUCKET_SECONDS, "a1", "primary", 50.0)]
         result = build_account_usage_trends(buckets, SINCE_EPOCH, BUCKET_SECONDS, BUCKET_COUNT)
 
-        # Bucket 0: no data → default 100.0
+
         assert result["a1"].primary[0].v == 100.0
-        # Bucket 1: 100 - 50 = 50
+
         assert result["a1"].primary[1].v == 50.0
 
     def test_dual_window(self):
@@ -101,7 +101,7 @@ class TestBuildAccountUsageTrends:
     def test_missing_window_returns_empty_list(self):
         buckets = [_bucket(SINCE_EPOCH, "a1", "primary", 20.0)]
         result = build_account_usage_trends(buckets, SINCE_EPOCH, BUCKET_SECONDS, BUCKET_COUNT)
-        # secondary was not in any bucket → empty list
+
         assert result["a1"].secondary == []
 
     def test_secondary_scheduled_line_uses_bucket_reset_deadline(self):

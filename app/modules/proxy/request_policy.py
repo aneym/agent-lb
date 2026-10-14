@@ -20,21 +20,21 @@ from app.modules.api_keys.service import ApiKeyData
 
 logger = logging.getLogger(__name__)
 
-# Reasoning efforts that the upstream ChatGPT/Codex backend silently drops
-# (the WebSocket never produces ``response.completed``). When a client sends
-# one of these we transparently rewrite it to a value the resolved model
-# advertises in its ``supported_reasoning_levels`` so the request does not
-# hang. ``minimal`` is a valid value on the OpenAI Platform Responses API for
-# GPT-5 family models, but the ChatGPT backend agent-lb proxies to does not
-# accept it as of 2026-04. See https://github.com/Soju06/agent-lb/issues/493
+
+
+
+
+
+
+
 _UNSUPPORTED_UPSTREAM_REASONING_EFFORTS: frozenset[str] = frozenset({"minimal"})
 _DEFAULT_REASONING_EFFORT_FALLBACK = "low"
 
-# Cursor exposes GPT-5 family model labels with UI suffixes such as "Extra
-# High Fast". The ChatGPT/Codex upstream accepts the canonical GPT-5-family
-# slug plus request fields, not those synthetic suffixes in the model name.
-# Keep this deliberately narrow: only strip known Cursor-style suffix tokens
-# from known GPT-5 base model slugs, and leave every other model untouched.
+
+
+
+
+
 _GPT5_ALIAS_BASE_MODELS: tuple[str, ...] = (
     "gpt-5.4-mini",
     "gpt-5.3-codex",
@@ -72,13 +72,13 @@ _MODEL_ALIAS_TOKENS: frozenset[str] = frozenset(
     }
 )
 
-# Service tier values agent-lb accepts at the API-key surface but that the
-# ChatGPT/Codex backend rejects with ``Unsupported service_tier: <value>``.
-# Semantically both ``auto`` and ``default`` mean "let upstream pick" -- the
-# same thing as omitting the field entirely -- so when an enforced API-key
-# policy resolves to one of these, we forward the request without a
-# ``service_tier`` instead of sending a literal that fails upstream. See
-# https://github.com/Soju06/agent-lb/issues/546
+
+
+
+
+
+
+
 _UPSTREAM_OMIT_SERVICE_TIERS: frozenset[str] = frozenset({"auto", "default"})
 
 
@@ -134,12 +134,12 @@ def apply_api_key_enforcement(
 
     if api_key.enforced_service_tier is not None:
         requested_service_tier = getattr(payload, "service_tier", None)
-        # ``auto``/``default`` are accepted at the API-key surface but
-        # the ChatGPT/Codex backend rejects them as literal values. Map
-        # them onto the wire-level absence of ``service_tier`` (which
-        # already means "use upstream default") so the enforcement
-        # actually reaches upstream instead of failing with
-        # ``Unsupported service_tier``. See issue #546.
+
+
+
+
+
+
         if api_key.enforced_service_tier in _UPSTREAM_OMIT_SERVICE_TIERS:
             effective_service_tier: str | None = None
         else:
@@ -166,13 +166,7 @@ def resolve_model_alias(model: str | None) -> str | None:
 
 
 def strip_model_alias_suffix(model: str) -> str:
-    """Drop trailing reasoning-effort and service-tier tokens from a model id.
 
-    ``resolve_model_alias`` only collapses the base models in
-    ``_GPT5_ALIAS_BASE_MODELS``. Newer families (``gpt-5.6-*``, ``gpt-6-*``)
-    carry the same suffixes without being listed there, so a caller comparing a
-    requested model against a configured one needs the suffix gone either way.
-    """
 
     parts = model.strip().lower().split("-")
     while len(parts) > 1 and parts[-1] in _MODEL_ALIAS_TOKENS:
@@ -272,16 +266,7 @@ def normalize_unsupported_reasoning_effort(
     *,
     registry: ModelRegistry | None = None,
 ) -> None:
-    """Rewrite ``reasoning.effort`` values the upstream backend rejects.
 
-    Some efforts that agent-lb accepts at the API surface (notably
-    ``"minimal"``) are silently dropped by the ChatGPT/Codex WebSocket
-    backend, which causes the response stream to hang with no completion.
-    For those values we map to a value the resolved model actually supports
-    so clients (e.g. Codex CLI's ``--reasoning-effort minimal``) keep
-    working. Mapping picks the model's lowest advertised effort, falling
-    back to ``low`` when the registry has no metadata yet.
-    """
 
     if payload.reasoning is None or payload.reasoning.effort is None:
         return
@@ -319,9 +304,9 @@ def _resolve_reasoning_effort_fallback(
     if upstream is None:
         return _DEFAULT_REASONING_EFFORT_FALLBACK
     advertised = [level.effort for level in upstream.supported_reasoning_levels if level.effort]
-    # Prefer the order the model registry advertises (already lowest -> highest
-    # for the GPT-5 family), but always pick the first advertised effort that
-    # is not itself an unsupported value.
+
+
+
     for effort in advertised:
         if effort.strip().lower() not in _UNSUPPORTED_UPSTREAM_REASONING_EFFORTS:
             return effort
@@ -348,11 +333,7 @@ def openai_invalid_payload_error(param: str | None = None) -> OpenAIErrorEnvelop
 
 
 def openai_client_payload_error(exc: ClientPayloadError) -> OpenAIErrorEnvelope:
-    """Render a ``ClientPayloadError`` as an OpenAI error envelope.
 
-    Falls back to ``openai_invalid_payload_error`` for legacy callsites
-    that raise ``ClientPayloadError`` without ``code`` / ``error_type``.
-    """
     if exc.code is None and exc.error_type is None:
         return openai_invalid_payload_error(exc.param)
     code = exc.code or "invalid_request_error"
@@ -378,16 +359,7 @@ def normalize_responses_request_payload(
 
 
 def enforce_strict_text_format(request: ResponsesRequest) -> None:
-    """Reject strict-mode JSON schemas that violate OpenAI structured-outputs rules.
 
-    The Codex backend mirrors OpenAI's strict-mode policy and closes the
-    websocket with ``close_code=1000`` (delivering the original
-    ``invalid_json_schema`` payload via ``response.failed``). The local
-    pre-check raises a deterministic 400 before any upstream connection
-    is opened, keeping ``/v1/responses`` and the chat-conversion path
-    consistent and avoiding pointless retry/reconnect cycles for
-    permanently invalid schemas.
-    """
     if request.text is None or request.text.format is None:
         return
     text_format = request.text.format
@@ -416,61 +388,22 @@ def enforce_strict_function_tools_format(
     param_template: str = "tools[{index}].parameters",
     nested: bool = False,
 ) -> None:
-    """Reject strict-mode function tools whose parameter schemas violate OpenAI rules.
 
-    Mirrors :func:`enforce_strict_text_format` for function tools that
-    set ``strict: true``. The Codex backend rejects an invalid strict
-    tool schema by closing the WebSocket with ``close_code=1000``; the
-    surfaced error is a generic ``upstream_rejected_input`` 502, which
-    well-behaved retry loops misclassify as transient. Real OpenAI
-    returns a deterministic ``400 invalid_function_parameters`` for the
-    same payload, so agent-lb pre-validates here.
-
-    ``param_template`` controls how the rejected parameter is named in
-    the error envelope: native ``/v1/responses`` callers see
-    ``tools[<i>].parameters``; chat-completions callers pass
-    ``"tools[{index}].function.parameters"`` to mirror the inbound
-    shape.
-
-    ``nested`` selects the shape of an inbound function tool:
-
-    * ``False`` (default) — flat ``{"type": "function", "name": ...,
-      "parameters": ..., "strict": ...}``. This is the
-      ``/v1/responses`` request shape (and the shape produced by
-      ``_normalize_chat_tools``).
-    * ``True`` — chat-completions shape with the function payload
-      wrapped under ``"function"``:
-      ``{"type": "function", "function": {"name": ..., "parameters":
-      ..., "strict": ...}}``. The chat handler MUST pass ``True`` and
-      hand in the *original* request payload's ``tools`` list (not the
-      list returned by ``ChatCompletionsRequest.to_responses_request``,
-      which may drop or reorder entries) so the ``{index}`` slot in
-      ``param_template`` lines up with the inbound payload.
-
-      A tool is treated as a function tool whenever ``tool["function"]``
-      is a dict — the same rule ``_normalize_chat_tools`` uses, where
-      missing or other ``type`` values get coerced to ``"function"``
-      (``"type": tool_type or "function"``). Anchoring on the wrapper
-      key keeps pre-validation in lockstep with normalization; otherwise
-      a payload like ``{"function": {"strict": true, "parameters":
-      <invalid>}}`` (no top-level ``type``) bypasses the local 400 and
-      surfaces as a misleading upstream 5xx.
-    """
     if not tools:
         return
     for index, tool in enumerate(tools):
         if not isinstance(tool, dict):
             continue
         if nested:
-            # Chat path: detect function tools the same way
-            # ``_normalize_chat_tools`` does — presence of a ``"function"``
-            # dict is the signal, not a strict ``"type" == "function"``
-            # check. The normalizer coerces missing or other ``type``
-            # values to ``"function"`` whenever ``tool["function"]`` is a
-            # dict (`"type": tool_type or "function"`), so pre-validation
-            # must mirror that or strict violations on type-omitted
-            # nested tools bypass the local 400 and surface as upstream
-            # 5xx instead.
+
+
+
+
+
+
+
+
+
             function_value = tool.get("function")
             if not isinstance(function_value, dict):
                 continue

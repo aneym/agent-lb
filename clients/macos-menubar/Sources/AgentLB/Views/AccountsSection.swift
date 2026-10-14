@@ -1,15 +1,15 @@
 import AppKit
 import SwiftUI
 
-// §8.2/§9: account list with dashboard-parity status/sort/search filtering.
-// Provider scoping happens ABOVE this section (§9.2 top-level scope bar) —
-// `accounts` arrives pre-scoped and the §8 provider chips are gone.
-//
-// Sizing-relevant state (status filter, query, search visibility) is OWNED
-// BY ROOTVIEW and passed as bindings: the panel height is a pure function of
-// that state (PanelLayout), so RootView must see every input. Sort mode is
-// height-neutral and persisted separately for the All and provider scopes.
-// `listHeight` is the exact PanelLayout-computed frame for the scroll area.
+
+
+
+
+
+
+
+
+
 struct AccountsSection: View {
   @Environment(AppState.self) private var appState
   let accounts: [Account]
@@ -103,7 +103,7 @@ struct AccountsSection: View {
     }
   }
 
-  // MARK: - Header (filtered count · search toggle · filter menu)
+
 
   private func headerRow(filteredCount: Int) -> some View {
     HStack(spacing: 6) {
@@ -125,7 +125,7 @@ struct AccountsSection: View {
       .accessibilityLabel(searchVisible ? "Hide search" : "Search accounts")
       filterMenu
     }
-    // PanelMetrics.accountsHeader — enforced so PanelLayout stays exact.
+
     .frame(height: PanelMetrics.accountsHeader)
   }
 
@@ -182,7 +182,7 @@ struct AccountsSection: View {
     .accessibilityLabel(filter.hasActiveFilters ? "Filter accounts (active)" : "Filter accounts")
   }
 
-  // MARK: - Search
+
 
   private var searchField: some View {
     HStack(spacing: 6) {
@@ -199,7 +199,7 @@ struct AccountsSection: View {
     .frame(height: 24)
     .background(.thinMaterial, in: .rect(cornerRadius: 6))
     .onChange(of: searchFocused) { _, focused in
-      // Empty + blur hides the field (§8.2).
+
       if !focused && query.isEmpty {
         withAnimation(.easeOut(duration: 0.15)) { searchVisible = false }
       }
@@ -212,17 +212,17 @@ struct AccountsSection: View {
     withAnimation(.easeOut(duration: 0.15)) { searchVisible = false }
   }
 
-  // MARK: - List / empty states
+
 
   @ViewBuilder
   private func list(_ filtered: [Account]) -> some View {
-    // Regression guard (v1.2 "no account rows" bug): the list renders at the
-    // EXACT height PanelLayout computed — never `maxHeight`, never flexible.
-    // A flexible list was the only compressible view in the panel, so any
-    // window-size staleness (macOS 26 panels never re-measure) collapsed it
-    // to zero while every fixed sibling rendered normally. With a fixed
-    // frame the list cannot be squeezed; rows beyond it scroll (§9.1). One
-    // 30 s timeline keeps the per-window countdowns fresh between fetches.
+
+
+
+
+
+
+
     TimelineView(.periodic(from: .now, by: 30)) { context in
       ScrollView {
         VStack(spacing: 0) {
@@ -257,7 +257,7 @@ struct AccountsSection: View {
       .buttonStyle(.plain)
     }
     .frame(maxWidth: .infinity)
-    // PanelMetrics.noMatches — enforced so PanelLayout stays exact.
+
     .frame(height: PanelMetrics.noMatches)
     .background(.thinMaterial, in: .rect(cornerRadius: 8))
   }
@@ -282,15 +282,15 @@ struct AccountsSection: View {
       }
     }
     .frame(maxWidth: .infinity)
-    // PanelMetrics.emptyState — enforced so PanelLayout stays exact.
+
     .frame(height: PanelMetrics.emptyState)
     .background(.thinMaterial, in: .rect(cornerRadius: 8))
   }
 }
 
-// §9.3 account row (52 pt): 20 pt active-window ring gauge with the status
-// glyph in its center (paused/deactivated only); line 2 has one self-contained
-// labeled cell per displayed window.
+
+
+
 struct AccountRow: View {
   @Environment(AppState.self) private var appState
   @Environment(\.privacyMask) private var privacyMask
@@ -314,8 +314,8 @@ struct AccountRow: View {
     case unsubscribed
   }
 
-  // §1.2 override priority: operator-disabled routing state, then blocked
-  // routing state. Reset metadata only adds detail to a blocked state.
+
+
   private var presentation: Presentation {
     if account.isSubscriptionCanceled { return .unsubscribed }
     if account.status == "paused" { return .paused }
@@ -393,8 +393,8 @@ struct AccountRow: View {
     }
   }
 
-  // §8.2: pause/xmark only when not active; active (and rate-limited, which
-  // is signalled by the bold trailing text) shows no center glyph.
+
+
   @ViewBuilder
   private var centerGlyph: some View {
     switch presentation {
@@ -407,10 +407,10 @@ struct AccountRow: View {
     }
   }
 
-  // §1.2: duplicates keep their displayName and gain a disambiguation suffix
-  // (alias/workspaceLabel when present, "·2" otherwise). §12: privacy mode
-  // replaces the whole thing with a stable pseudonym (already unique per
-  // account, so no disambiguation suffix is needed).
+
+
+
+
   private var displayName: String {
     privacyMask.name(for: account, real: realDisplayName)
   }
@@ -544,12 +544,12 @@ struct AccountRow: View {
     }
   }
 
-  // MARK: - Refresh control (on-demand re-verification)
 
-  // The slot only enters the layout when the row is refreshable and reveals
-  // via opacity, so hovering never shifts the title row. Unsubscribed rows
-  // keep it visible — resubscribing at the vendor is the primary reason to
-  // reach for it; other rows reveal it on hover.
+
+
+
+
+
   @ViewBuilder
   private var refreshControl: some View {
     if let action = AccountRefreshAction.action(for: account) {
@@ -607,9 +607,9 @@ struct AccountRow: View {
     }
   }
 
-  // §9.3: active rows do not show limit status unless the backend status is
-  // blocked; local subscription labels are display-only and never change
-  // routing classification.
+
+
+
   @ViewBuilder
   private var trailingStatus: some View {
     switch presentation {
@@ -661,7 +661,7 @@ struct AccountRow: View {
     }
   }
 
-  // §9.3 line 2: one cell per displayed window.
+
   private var windowGrid: some View {
     HStack(alignment: .center, spacing: 12) {
       if !isCodex {
@@ -728,9 +728,9 @@ struct AccountRow: View {
   }
 }
 
-// One self-contained window cell: `5H  [meter] 62% · 0:15`.
-// Label 9 pt caps .secondary, 56 pt MonoMeter, mono digits, compact
-// countdown to that window's reset; "—" when the window is missing.
+
+
+
 private struct WindowCell: View {
   let label: String
   let percent: Double?

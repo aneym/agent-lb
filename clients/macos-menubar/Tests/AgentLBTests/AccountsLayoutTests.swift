@@ -4,15 +4,15 @@ import XCTest
 
 @testable import AgentLB
 
-/// Layout regression tests for the v1.2 "no account rows" bug.
-///
-/// Root cause was window-level: macOS 26's MenuBarExtra panel never
-/// re-measures after its first layout, so any height-flexible list absorbed
-/// the stale-size deficit and collapsed. Sizing is now deterministic
-/// (PanelLayout computes; the list renders at an exact `.frame(height:)`).
-/// These tests lock in the unit-testable layer: given the PanelLayout list
-/// height, the section must render at exactly header (22) + spacing (6) +
-/// listHeight — never less — in every provider scope with default filters.
+
+
+
+
+
+
+
+
+
 final class AccountsLayoutTests: XCTestCase {
 
   private func listHeight(rows: Int) -> Double {
@@ -20,7 +20,7 @@ final class AccountsLayoutTests: XCTestCase {
       + PanelMetrics.listPadding
   }
 
-  /// Header row (22) + VStack spacing (6) + list frame.
+
   private func expectedHeight(rows: Int) -> Double {
     PanelMetrics.accountsHeader + PanelMetrics.accountsSpacing + listHeight(rows: rows)
   }

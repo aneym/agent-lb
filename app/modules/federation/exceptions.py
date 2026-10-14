@@ -20,7 +20,7 @@ class FederationNotConfiguredError(Exception):
 
 
 class FederationPeerRequestError(Exception):
-    """Raised by a FederationPeerClient implementation when a peer HTTP call fails."""
+
 
     def __init__(self, message: str, *, status_code: int | None = None) -> None:
         self.status_code = status_code

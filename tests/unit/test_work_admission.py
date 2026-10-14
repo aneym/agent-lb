@@ -46,7 +46,7 @@ async def test_work_admission_rejects_after_wait_timeout() -> None:
 
 @pytest.mark.asyncio
 async def test_admission_lease_context_manager_releases() -> None:
-    """AdmissionLease used as a context manager releases the semaphore on exit."""
+
     sem = asyncio.Semaphore(1)
     await sem.acquire()
 
@@ -60,7 +60,7 @@ async def test_admission_lease_context_manager_releases() -> None:
 
 @pytest.mark.asyncio
 async def test_admission_lease_context_manager_releases_on_exception() -> None:
-    """AdmissionLease releases the semaphore even when the with-block raises."""
+
     sem = asyncio.Semaphore(1)
     await sem.acquire()
 
@@ -73,7 +73,7 @@ async def test_admission_lease_context_manager_releases_on_exception() -> None:
 
 @pytest.mark.asyncio
 async def test_admission_lease_del_releases_and_warns(caplog: pytest.LogCaptureFixture) -> None:
-    """__del__ safety net releases the semaphore and logs a warning."""
+
     sem = asyncio.Semaphore(1)
     await sem.acquire()
     assert sem.locked()
@@ -91,7 +91,7 @@ async def test_admission_lease_del_releases_and_warns(caplog: pytest.LogCaptureF
 
 @pytest.mark.asyncio
 async def test_admission_lease_del_noop_after_release() -> None:
-    """__del__ does nothing if the lease was already released."""
+
     sem = asyncio.Semaphore(1)
     await sem.acquire()
 
@@ -106,7 +106,7 @@ async def test_admission_lease_del_noop_after_release() -> None:
 
 @pytest.mark.asyncio
 async def test_admission_lease_none_semaphore_is_noop() -> None:
-    """AdmissionLease with None semaphore (disabled gate) is always safe."""
+
     lease = AdmissionLease(None)
     lease.release()
     with lease:

@@ -27,7 +27,7 @@ class CreditsWindow:
 
 
 def credits_exhausted(window: CreditsWindow) -> bool:
-    """Balance at or below zero, or spent at the cap. Never a used-percent check."""
+
     if window.balance <= 0:
         return True
     if window.cap is not None and window.spent is not None and window.spent >= window.cap:

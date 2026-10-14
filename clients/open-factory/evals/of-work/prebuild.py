@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Build each task's image once and point its task.toml at it.
 
-Without this, Harbor builds every trial's image from environment/Dockerfile and removes it at
-teardown (`down --rmi local`), so each trial pays the `of-checkout` again: 5-125 s, times every
-arm and attempt. A tagged prebuilt image survives teardown. The tag carries a hash of the
-Dockerfile and the base image id, so a changed task or base gets a new image and never reuses a
-stale one. The Dockerfile stays as the record of how the image was made.
-
-    python3 prebuild.py ~/.agent-lb/of/dataset/v0/tasks [-j 4]
-"""
 
 from __future__ import annotations
 

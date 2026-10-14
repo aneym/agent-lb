@@ -1,10 +1,4 @@
-"""A response.create sent as a binary websocket frame meets the API key's limits (fix round, 2026-10-07).
 
-Before the fix, once a text response.create had opened the upstream session, a binary frame
-was forwarded raw: no preparation, no reservation, and no unpriced-model refusal under a
-cost_usd cap. The upstream socket is faked at the network edge only; the key, its limits and
-the reservation run through the real websocket route and database.
-"""
 
 from __future__ import annotations
 
@@ -101,7 +95,7 @@ async def test_binary_response_create_is_refused_for_unpriced_model_under_cost_c
             websocket.send_bytes(json.dumps(unpriced).encode())
             refusal = websocket.receive_json()
 
-            # A priced binary response.create still runs: prepared and sent upstream like a text one.
+
             websocket.send_bytes(json.dumps(priced).encode())
             assert websocket.receive_json()["type"] == "response.created"
             assert websocket.receive_json()["type"] == "response.completed"

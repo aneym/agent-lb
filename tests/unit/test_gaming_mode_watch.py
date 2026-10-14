@@ -22,7 +22,7 @@ def _setup(tmp_path: Path, tasklist: str | None) -> dict[str, str]:
     else:
         (tmp_path / "tasklist.txt").write_text(tasklist)
         warning = "** WARNING: connection is not using a post-quantum key exchange algorithm."
-        # The real host is the fifth argument after -o BatchMode=yes -o ConnectTimeout=10.
+
         facts = tmp_path / 'pc-facts'
         facts.mkdir()
         (facts / 'tasklist.csv').write_text(tasklist)
@@ -76,7 +76,7 @@ CSV_IDLE = '"System.exe","4","Services","0","5,844 K"\n"explorer.exe","900","Con
 def test_idle_first_deploy_does_not_release_an_unowned_default_throttle(tmp_path: Path) -> None:
     env = _setup(tmp_path, CSV_IDLE)
     _poll(env)
-    assert _throttle(env) is None  # one empty poll: nothing changes yet
+    assert _throttle(env) is None
     _poll(env)
     assert _throttle(env) is None
 
@@ -110,14 +110,14 @@ def test_a_failed_poll_restarts_the_idle_count(tmp_path: Path) -> None:
     env = _setup(tmp_path, CSV_IDLE)
     state = Path(env["GAMING_MODE_HOME"]) / ".agent-lb" / "state" / "upload-throttle.json"
     state.write_text('{"version": 2, "holds": {"gaming-detector": {"bytes_per_sec": 1500000}}, "rate": 1500000}')
-    _poll(env)  # idle 1
+    _poll(env)
     good_ssh = (tmp_path / "ssh").read_text()
     (tmp_path / "ssh").write_text("#!/bin/sh\nexit 255\n")
-    _poll(env)  # failed poll
+    _poll(env)
     (tmp_path / "ssh").write_text(good_ssh)
-    _poll(env)  # idle 1 again, not 2
+    _poll(env)
     assert _throttle(env) is True
-    _poll(env)  # idle 2
+    _poll(env)
     assert _throttle(env) is False
 
 
@@ -155,7 +155,7 @@ def test_generation_drop_is_accepted_and_logged_once(tmp_path: Path) -> None:
 
 
 def test_the_poll_reads_the_tasklist_from_pc_wsl_never_windows_ssh(tmp_path: Path) -> None:
-    """A Windows-side `ssh pc` opens a console over the game (2026-10-08); the tasklist comes from pc-wsl's pc-facts."""
+
     env = _setup(tmp_path, CSV_GAME)
     _poll(env)
     assert (tmp_path / "ssh-hosts").read_text().split() == ["pc-wsl"]

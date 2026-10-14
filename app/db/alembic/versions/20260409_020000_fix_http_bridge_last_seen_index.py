@@ -1,9 +1,4 @@
-"""fix durable http bridge last_seen index ordering
 
-Revision ID: 20260409_020000_fix_http_bridge_last_seen_index
-Revises: 20260409_010000_merge_http_bridge_and_import_without_overwrite_heads
-Create Date: 2026-04-09
-"""
 
 from __future__ import annotations
 

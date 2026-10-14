@@ -1,9 +1,4 @@
-"""add persisted cost to request_logs
 
-Revision ID: 20260325_000000_add_request_log_cost
-Revises: 20260321_210000_merge_request_log_tiers_and_dashboard_index_heads
-Create Date: 2026-03-25
-"""
 
 from __future__ import annotations
 
@@ -15,7 +10,6 @@ from sqlalchemy.engine import Connection
 
 from app.core.usage.pricing import UsageTokens, calculate_cost_from_usage, get_pricing_for_model
 
-# revision identifiers, used by Alembic.
 revision = "20260325_000000_add_request_log_cost"
 down_revision = "20260321_210000_merge_request_log_tiers_and_dashboard_index_heads"
 branch_labels = None

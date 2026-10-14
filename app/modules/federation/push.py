@@ -1,4 +1,4 @@
-"""Send selected locally owned access tokens to trusted federation receivers."""
+
 
 from __future__ import annotations
 
@@ -148,8 +148,8 @@ class FederationPushScheduler:
                 async with self.repo_factory() as repo:
                     await repo.upsert_usage_report(target.name, response.usage, reported_at=utcnow())
             except Exception as exc:
-                # Exceptions from HTTP libraries can include the serialized request.
-                # Never expose their contents (or credentials) in logs or CLI output.
+
+
                 self._failures[target.name] = self._failures.get(target.name, 0) + 1
                 backoff = min(1800, 30 * 2 ** min(self._failures[target.name] - 1, 6))
                 self._retry_at[target.name] = time.monotonic() + backoff
@@ -208,8 +208,8 @@ async def _run_cli(command: str) -> int:
         print(f"{target.name} {target.url}")
         if isinstance(result, Exception):
             failed = True
-            # Only the structured HTTP status is safe to print: exception messages
-            # from HTTP clients can contain request payloads and access tokens.
+
+
             status_code = getattr(result, "status_code", None)
             status = f" status={status_code}" if isinstance(status_code, int) else ""
             print(f"  failed: {type(result).__name__}{status}")

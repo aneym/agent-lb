@@ -710,9 +710,9 @@ _TaskResultT = TypeVar("_TaskResultT")
 _ResponsesPayloadT = TypeVar("_ResponsesPayloadT", ResponsesRequest, ResponsesCompactRequest)
 _DOWNSTREAM_WEBSOCKET_IDLE_CLOSE_REASON = "Idle downstream websocket timeout"
 _DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS = 1.0
-# Keep the first HTTP bridge liveness frame behind the API layer's startup
-# error probe window. If a keepalive becomes the first yielded chunk, the HTTP
-# status is committed as 200 and startup ProxyResponseError handling is masked.
+
+
+
 _HTTP_BRIDGE_STARTUP_KEEPALIVE_GRACE_SECONDS = 0.5
 _DEFAULT_PROXY_ADMISSION_WAIT_TIMEOUT_SECONDS = 10.0
 
@@ -731,17 +731,17 @@ def _proxy_admission_wait_timeout_seconds(settings: Any | None = None) -> float:
     return max(0.001, timeout)
 
 
-# Maximum time (seconds) to wait for a prewarm upstream response before
-# giving up and letting the actual request proceed without prewarming.
-# A blocked prewarm holds the response_create_gate semaphore and prevents
-# the real request from being sent, leading to an indefinite :keepalive hang.
+
+
+
+
 _PREWARM_RESPONSE_TIMEOUT_SECONDS = 2.0
 _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS = 5.0
 _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
-# Maximum consecutive keepalive frames sent before terminating the stream.
-# 6 × 10s (default interval) = 60s.  Combined with the 0.5s startup-probe
-# window this ensures the client sees a terminal event within ≈70s when the
-# upstream silently stops responding.
+
+
+
+
 _STREAM_KEEPALIVE_MAX_COUNT = 6
 
 
@@ -805,11 +805,11 @@ _UPSTREAM_UNAVAILABLE_NON_TRANSIENT_MESSAGE_MARKERS = (
 )
 _UPSTREAM_CLOSE_CODES_SKIP_SAME_ACCOUNT_RETRY = frozenset({1011})
 _MAX_TRANSIENT_SAME_ACCOUNT_RETRIES = 3
-# Compaction is a single critical call: if it 503s, the client session cannot
-# shrink and overflows. Two account attempts is below a typical codex pool, so a
-# transient-error burst on the first two selected accounts exhausts the loop and
-# raises `no_accounts` while other healthy accounts were never tried. Cover the
-# pool (match/exceed the streaming path) so compaction fails over across it.
+
+
+
+
+
 _COMPACT_MAX_ACCOUNT_ATTEMPTS = 4
 _STREAM_MAX_ACCOUNT_ATTEMPTS = 3
 _WEBSOCKET_MAX_ACCOUNT_ATTEMPTS = 3
@@ -915,22 +915,22 @@ class ProxyService(
         self._http_bridge_previous_response_index: dict[tuple[str, str | None], _HTTPBridgeSessionKey] = {}
         self._websocket_previous_response_account_index: dict[tuple[str, str | None, str | None], str] = {}
         self._websocket_continuity_index: dict[tuple[str, str | None], _WebSocketContinuityState] = {}
-        # In-memory cooldown from bridge session key -> account that just
-        # failed a first-event timeout on that key. Consulted when the next
-        # request re-creates the bridge so account selection excludes the
-        # poisoned account instead of letting stickiness re-pin it (the
-        # exclusion also makes the sticky machinery rebind the mapping to a
-        # healthy account). Entries expire after
-        # ``_HTTP_BRIDGE_FIRST_EVENT_COOLDOWN_SECONDS``.
+
+
+
+
+
+
+
         self._http_bridge_account_cooldowns: dict[_HTTPBridgeSessionKey, _FilePinEntry] = {}
         self._background_cleanup_tasks: set[asyncio.Task[None]] = set()
-        # In-memory pin from upstream-issued file_id -> agent-lb account_id.
-        # Used so ``finalize_file`` for a given ``file_id`` is routed to
-        # the same account that handled ``create_file``. Cross-instance
-        # routing is best-effort: if the finalize request lands on a
-        # different replica with no pin, we fall back to a fresh load-
-        # balancer selection. The TTL is short enough (5 min) that we
-        # never hold stale pins after the upstream upload window closes.
+
+
+
+
+
+
+
         self._file_account_pins: dict[str, _FilePinEntry] = {}
         self._file_account_pin_lock = asyncio.Lock()
         self._http_bridge_lock = anyio.Lock()
@@ -1395,11 +1395,11 @@ class ProxyService(
 
     @asynccontextmanager
     async def _accounts_refresh_scope(self) -> AsyncIterator[AccountsRepositoryPort]:
-        # Fresh, self-contained accounts repo (own DB session) for AuthManager's
-        # detached/shielded token-refresh task. A client disconnect cancels the
-        # request and closes the request-scoped session below; without this the
-        # still-running refresh task would touch that closed session and strand
-        # a background-pool connection (the agent-lb pool-exhaustion leak).
+
+
+
+
+
         async with self._repo_factory() as repos:
             yield repos.accounts
 
@@ -1943,18 +1943,18 @@ class ProxyService(
 
 
 def _is_account_neutral_error_code(code: str | None) -> bool:
-    # A first-event timeout means the upstream produced ZERO events within the
-    # first-event window. That is almost always upstream slowness (e.g. a large
-    # context-compaction payload whose connect+serialize+send eats the window)
-    # or a silently-dropped response.create — NOT a fault of this account's
-    # credentials or quota. Recording an account-health error here lets a
-    # handful of such timeouts push every codex account past the error_count>=3
-    # backoff threshold (app/core/balancer/logic.py), draining the routable pool
-    # to a spurious `no_accounts` 503 that breaks compaction for ALL callers.
-    # The per-bridge-key cooldown + sticky rebind (http_bridge/streaming.py) already
-    # steer the retry to a different account, so treat the first-event timeout as
-    # account-neutral — honoring the documented invariant that idle/no-event
-    # disconnects must not mark an otherwise-healthy account unhealthy.
+
+
+
+
+
+
+
+
+
+
+
+
     return is_local_overload_error_code(code) or code == "proxy_unavailable" or code == "bridge_first_event_timeout"
 
 

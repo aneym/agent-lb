@@ -42,7 +42,7 @@ async def account_plan(context: AccountsContext = Depends(get_accounts_context))
 
 @router.get("/seat-accounts", response_model=SeatAccountsResponse)
 async def list_seat_accounts() -> SeatAccountsResponse:
-    """Cursor and Devin accounts as the `seat` CLI last saw them: auth, cooldowns, observed usage."""
+
     return read_seat_accounts()
 
 

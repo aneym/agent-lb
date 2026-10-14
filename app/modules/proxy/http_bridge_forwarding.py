@@ -143,8 +143,8 @@ def build_owner_forward_headers(
     payload: ResponsesRequest,
     context: HTTPBridgeForwardContext,
 ) -> dict[str, str]:
-    # The owner attributes from the signed identity only, so no caller-identity or client-address header travels
-    # with the forward, whatever the caller already filtered.
+
+
     forwarded = {
         key: value
         for key, value in headers.items()
@@ -337,7 +337,7 @@ def _bridge_forward_signature(*, payload: ResponsesRequest, context: HTTPBridgeF
 
 
 def _identity_signature(forward_signature: str, identity_value: str) -> str:
-    """Bind identity to the legacy-signed forward without changing its signing bytes."""
+
     secret = get_or_create_key(get_settings().encryption_key_file)
     return hmac.new(secret, (forward_signature + "|" + identity_value).encode("utf-8"), hashlib.sha256).hexdigest()
 

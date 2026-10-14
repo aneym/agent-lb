@@ -1,4 +1,4 @@
-"""API-boundary receipts contract: independent token and time arithmetic."""
+
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.mark.asyncio
 async def test_receipts_and_summary(async_client, db_setup):
-    # UTC hour buckets: 00:00, empty 01:00, 02:00, then exclusive 03:00.
+
     def timestamp(hour, minute=0):
         return datetime(2026, 9, 25, hour, minute, tzinfo=timezone.utc).replace(tzinfo=None)
 
@@ -45,7 +45,7 @@ async def test_receipts_and_summary(async_client, db_setup):
             )
         await session.flush()
         rows = [
-            # id, time, provider, account, key, session, client-session, raw input, read, write, output, cost, status
+
             (1, timestamp(0), "openai", "acc-a", "key-a", "sess-a", None, 100, 40, 10, 20, 1.0, "success"),
             (2, timestamp(0, 30), "anthropic", "acc-b", "key-b", "sess-b", "client-a", 50, 20, 5, 10, 2.0, "error"),
             (3, timestamp(2), "openai", "acc-a", "key-a", "sess-a", None, 30, 10, 0, 5, 0.5, "success"),
@@ -84,7 +84,7 @@ async def test_receipts_and_summary(async_client, db_setup):
     response = await async_client.get("/api/receipts", params=bounds)
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["total"] == 6  # 1,2,3,4,7,8: deleted 6 and exclusive 5 are absent
+    assert body["total"] == 6
     assert [r["id"] for r in body["receipts"]] == [8, 4, 3, 2, 7, 1]
     first = next(r for r in body["receipts"] if r["id"] == 1)
     assert (first["pool"], first["inputTokens"], first["cacheReadTokens"], first["cacheReadRatio"]) == (
@@ -113,7 +113,7 @@ async def test_receipts_and_summary(async_client, db_setup):
     assert (page["total"], page["limit"], page["offset"], [r["id"] for r in page["receipts"]]) == (6, 2, 2, [3, 2])
 
     summary = (await async_client.get("/api/receipts/summary", params={**bounds, "bucket": "hour"})).json()
-    # The row at the inclusive start (id 7) contributes 8 tokens and $8.
+
     assert summary["totals"] == {
         "requests": 6,
         "errors": 1,
@@ -160,7 +160,7 @@ async def test_receipts_and_summary(async_client, db_setup):
     )).json()
     assert (filtered["totals"]["requests"], filtered["totals"]["errors"],
             filtered["groups"][0]["key"], filtered["groups"][0]["tokens"]) == (1, 1, "key-b", 85)
-    # Summary is never limited by a list page; repeated filters are OR within a dimension.
+
     repeated = (await async_client.get("/api/receipts/summary", params=[
         ("since", bounds["since"]), ("until", bounds["until"]),
         ("account_id", "acc-a"), ("account_id", "acc-b"),

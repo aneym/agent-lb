@@ -46,10 +46,10 @@ class DashboardUsageWindows(DashboardModel):
 
 
 class DepletionResponse(DashboardModel):
-    # Pool-level risk (mean across accounts); the worst single account is
-    # attributed separately so one hot account cannot label the pool critical.
+
+
     risk: float
-    risk_level: str  # "safe" | "warning" | "danger" | "critical"
+    risk_level: str
     burn_rate: float
     safe_usage_percent: float
     projected_exhaustion_at: datetime | None = None
@@ -73,7 +73,7 @@ class WeeklyCreditPaceResponse(DashboardModel):
     scheduled_used_percent: float
     delta_percent: float
     schedule_gap_credits: float
-    # Legacy frontend field name kept as an alias-compatible value for one release.
+
     over_plan_credits: float
     projected_shortfall_credits: float
     pause_for_break_even_hours: float | None = None
@@ -108,8 +108,8 @@ class DashboardOverviewResponse(DashboardModel):
 class DashboardProjectionsResponse(DashboardModel):
     depletion_primary: DepletionResponse | None = None
     depletion_secondary: DepletionResponse | None = None
-    # Provider-scoped breakdowns (e.g. "openai", "anthropic") so scoped UIs
-    # never inherit another provider's risk.
+
+
     depletion_primary_by_provider: dict[str, DepletionResponse] | None = None
     depletion_secondary_by_provider: dict[str, DepletionResponse] | None = None
     weekly_credit_pace: WeeklyCreditPaceResponse | None = None

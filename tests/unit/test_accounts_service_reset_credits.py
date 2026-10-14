@@ -188,7 +188,7 @@ async def test_redeem_reset_credit_success_refreshes_usage_and_credit_count(monk
     assert result.windows_reset == 2
     assert result.primary_used_percent_before == 100.0
     assert captured["credit_id"] == "credit-1"
-    # A fresh idempotency key must be generated per redemption attempt.
+
     assert isinstance(captured["redeem_request_id"], str) and captured["redeem_request_id"]
     service._usage_updater.force_refresh.assert_awaited_once()
     assert reset_credit_cache.get_count(_ACCOUNT_ID) == 1

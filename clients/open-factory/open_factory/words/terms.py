@@ -1,4 +1,4 @@
-"""Validated, mergeable retired-word contracts."""
+
 
 import json
 from pathlib import Path

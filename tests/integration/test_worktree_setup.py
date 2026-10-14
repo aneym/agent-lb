@@ -1,8 +1,4 @@
-"""Real uv/file-boundary proof: shared dependencies must not pin the builder's app.
 
-A per-worktree venv or editable app install breaks reuse/import isolation here;
-existing API tests do not exercise setup. No production-only test seam is needed.
-"""
 
 import os
 import shutil

@@ -1,15 +1,15 @@
 #!/bin/bash
-# Start the approved internal runtime. Deployment is a separate coordinated step:
-# run the configured sync-runtime.sh interactively, verify candidate hashes,
-# then use the normal launchctl kickstart during an approved service window.
-#
-# Database readiness gate (2026-10-06): after an unclean reboot PostgreSQL spends
-# minutes in fsync + crash recovery ("the database system is starting up").
-# agent-lb runs migrations at startup and exits on that error, so launchd
-# crash-looped it 14 times and the watchdog kicked it mid-recovery. Wait here,
-# bounded, until the configured Postgres accepts connections, then exec.
-# On timeout we exec anyway so the app's own error reaches the log and launchd
-# retries; we never hang forever.
+
+
+
+
+
+
+
+
+
+
+
 set -e
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/db-endpoint.sh"
 cd "$HOME/.agent-lb/runtime/agent-lb"
@@ -50,7 +50,7 @@ wait_for_postgres() {
       if [[ -n "$timeout_bin" ]]; then
         "$timeout_bin" -k 2 "$remaining" "$pgready" -q -h "$host" -p "$port" -t "$probe_timeout" >/dev/null 2>&1 && rc=0 || rc=$?
       else
-        # macOS without coreutils: terminate even a DNS-stalled probe.
+
         "$pgready" -q -h "$host" -p "$port" -t "$probe_timeout" >/dev/null 2>&1 &
         local probe_pid=$! timer_pid
         (

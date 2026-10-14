@@ -27,7 +27,7 @@ pytestmark = pytest.mark.integration
 
 
 async def _create_member_key(async_client, **member_overrides) -> tuple[dict, str]:
-    """Create a team member plus one key attached to it; returns (member, plain key)."""
+
 
     payload = {"name": f"member-{utcnow().timestamp()}"}
     payload.update(member_overrides)

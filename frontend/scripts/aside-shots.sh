@@ -1,15 +1,15 @@
 #!/bin/bash
-# usage: scripts/aside-shots.sh <base-url> <outdir> <path> [<path>...]
-#   e.g. scripts/aside-shots.sh http://127.0.0.1:2455 /tmp/lb-shots / /usage /keys
-# Needs Aside with the aside-guard wrappers (aside-tab, aside repl) and python3 with Pillow.
-# Browser work on this machine goes through Aside only; do not swap in a headless browser.
-#
-# Aside has no viewport API, so each page is loaded in a same-origin iframe of the target width,
-# scaled to fit the tab, captured in viewport chunks and stitched. Writes <slug>-<w>-<theme>.png
-# and <slug>-checks.json (content height, scrollWidth vs clientWidth for the sideways-scroll check).
-# The app's email blur is switched on for the origin, and email addresses plus every account's
-# email local part (display names read "Max · alex") are masked before capture, so the images
-# can go on the private review site.
+
+
+
+
+
+
+
+
+
+
+
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 base=$1; out=$2; shift 2

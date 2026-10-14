@@ -1,9 +1,4 @@
-"""add requested and actual service tiers to request_logs
 
-Revision ID: 20260320_000000_add_request_log_requested_actual_tiers
-Revises: 20260319_183000_normalize_sqlite_account_status_casing
-Create Date: 2026-03-20
-"""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection
 
-# revision identifiers, used by Alembic.
 revision = "20260320_000000_add_request_log_requested_actual_tiers"
 down_revision = "20260319_183000_normalize_sqlite_account_status_casing"
 branch_labels = None

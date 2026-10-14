@@ -27,9 +27,9 @@ case "${1:-}" in
   *) echo "usage: $0 [--print | --uninstall]" >&2; exit 2 ;;
 esac
 
-# `cc` and `fable` use the canonical Fable driver. `opus` is the explicit
-# genuine-1M Opus driver. The launcher and definition doctor are also public
-# commands; runtime-only helpers remain siblings in the installed bundle.
+
+
+
 CLIENT_NAMES=(cc fable opus claude-lb-launch agent-defs-doctor)
 BUNDLE_NAMES=("${CLIENT_NAMES[@]}" opus-runtime-doctor)
 POLICY_SOURCE="$REPO_DIR/config/coding-agents"
@@ -186,7 +186,7 @@ fi
 bundle="$(prepare_bundle)"
 "$bundle/config/coding-agents/install-policy.py" --home "$USER_HOME"
 
-# A launcher resolves its version once; retain old bundles for its child helpers.
+
 python3 - "$bundle" "$CURRENT" <<'PY'
 import os
 import sys

@@ -1,9 +1,4 @@
-"""add credit-based api key limit enum values
 
-Revision ID: 20260403_000000_add_credit_api_key_limit_values
-Revises: 20260402_000000_switch_dashboard_routing_default_to_capacity_weighted
-Create Date: 2026-04-03
-"""
 
 from __future__ import annotations
 
@@ -40,5 +35,5 @@ def downgrade() -> None:
         return
     if bind.dialect.name != "postgresql":
         return
-    # PostgreSQL enum values cannot be removed safely in-place here.
+
     return

@@ -65,7 +65,7 @@ class FederationPeerClient(Protocol):
 
 
 class AiohttpFederationPeerClient:
-    """Default runtime FederationPeerClient. Bounded timeouts, no hidden retries."""
+
 
     def __init__(self, *, timeout_seconds: float = 15.0) -> None:
         self._timeout_seconds = timeout_seconds
@@ -80,7 +80,7 @@ class AiohttpFederationPeerClient:
         return FederationMirrorResponse.model_validate(data)
 
     async def push_accounts(self, *, url: str, request: FederationPushRequest) -> FederationPushResponse:
-        # Push authentication is the receiver's Tailscale whois identity, not a bearer token.
+
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), trust_env=False) as session:
             async with session.post(
                 f"{url.rstrip('/')}/api/federation/push",

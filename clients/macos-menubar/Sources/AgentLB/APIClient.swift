@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Errors
+
 
 enum APIError: Error, @unchecked Sendable {
   case serviceDown
@@ -41,7 +41,7 @@ private enum ServiceLocality {
   }
 }
 
-// MARK: - Client
+
 
 struct APIClient: @unchecked Sendable {
   let base: URL
@@ -70,9 +70,9 @@ struct APIClient: @unchecked Sendable {
     config.waitsForConnectivity = false
     self.session = URLSession(configuration: config)
 
-    // Probe/subscription-check POSTs round-trip the upstream vendor (token
-    // refresh + completion probe + usage refresh) — far slower than the 3 s
-    // dashboard reads, so they get their own timeout envelope.
+
+
+
     let probeConfig = URLSessionConfiguration.ephemeral
     probeConfig.timeoutIntervalForRequest = 30
     probeConfig.timeoutIntervalForResource = 45
@@ -80,7 +80,7 @@ struct APIClient: @unchecked Sendable {
     self.probeSession = URLSession(configuration: probeConfig)
   }
 
-  // MARK: - Decoder (also used in tests)
+
 
   static func makeDecoder() -> JSONDecoder {
     let decoder = JSONDecoder()
@@ -97,7 +97,7 @@ struct APIClient: @unchecked Sendable {
     return decoder
   }
 
-  // MARK: - Health
+
 
   func health() async throws {
     let (_, response) = try await fetch(path: "/health", on: healthSession)
@@ -124,7 +124,7 @@ struct APIClient: @unchecked Sendable {
     }
   }
 
-  // MARK: - API endpoints
+
 
   func accounts() async throws -> AccountsResponse {
     try await get("/api/accounts")
@@ -138,7 +138,7 @@ struct APIClient: @unchecked Sendable {
     try await get("/api/pools")
   }
 
-  /// Absent until the account-plan route exists. A 404 hides the menu footer.
+
   func poolsPlan() async throws -> PoolPlan? {
     let (data, response) = try await fetch(path: "/api/pools/plan")
     if let http = response as? HTTPURLResponse, http.statusCode == 404 {
@@ -185,13 +185,13 @@ struct APIClient: @unchecked Sendable {
     try await postDecoding("/api/accounts/\(id)/subscription/check")
   }
 
-  /// Spends one banked reset credit on this account. Upstream round-trip, so
-  /// it rides the probe session's longer timeout envelope.
+
+
   func redeemResetCredit(_ id: String) async throws -> AccountResetCreditConsumeResponse {
     try await postDecoding("/api/accounts/\(id)/rate-limit-reset-credits/consume")
   }
 
-  // MARK: - Generic helpers
+
 
   private func get<T: Decodable>(_ path: String) async throws -> T {
     let (data, response) = try await fetch(path: path)
@@ -211,8 +211,8 @@ struct APIClient: @unchecked Sendable {
     try assertOK(response, endpoint: path)
   }
 
-  /// POST that decodes its response body — on the probe session, because
-  /// both callers block on an upstream vendor round-trip.
+
+
   private func postDecoding<T: Decodable>(_ path: String) async throws -> T {
     let url = URL(string: path, relativeTo: base) ?? base.appendingPathComponent(path)
     var request = URLRequest(url: url)

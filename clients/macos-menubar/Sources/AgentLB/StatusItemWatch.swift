@@ -1,15 +1,15 @@
 import AppKit
 import Foundation
 
-/// Self-check for the one failure mode a LaunchAgent cannot see: the process
-/// runs, but the `MenuBarExtra` status item never registered (launched too
-/// early at login, or from a non-GUI context), so the menu bar shows nothing.
-///
-/// A registered status item owns an `NSStatusBarWindow` in `NSApp.windows`.
-/// If none exists at both `checkDelays`, the app exits with `exitCode` so the
-/// LaunchAgent (`KeepAlive: SuccessfulExit=false`) relaunches it into a ready
-/// session. A counter file caps consecutive self-exits so a false positive
-/// can never turn into a restart loop; it resets to zero once the item is seen.
+
+
+
+
+
+
+
+
+
 enum StatusItemWatch {
   static let exitCode: Int32 = 3
   static let maxConsecutiveExits = 5
@@ -45,7 +45,7 @@ enum StatusItemWatch {
     }
   }
 
-  /// True when any window's class name marks it as a status bar host.
+
   nonisolated static func hasStatusItemWindow(_ windows: [NSWindow]) -> Bool {
     windows.contains { String(describing: type(of: $0)).contains("StatusBarWindow") }
   }

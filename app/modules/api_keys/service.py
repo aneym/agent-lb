@@ -209,20 +209,13 @@ class ApiKeyInvalidError(ValueError):
 
 
 class ApiKeyValidationError(ValueError):
-    """Raised when api_keys service input fails domain validation.
 
-    Subclasses ValueError so existing transitive callers that catch
-    ``ValueError`` continue to work, but lets API routes catch the
-    typed exception explicitly so unrelated programming errors that
-    happen to surface as ``ValueError`` are no longer silently
-    converted into 4xx client responses (#619).
-    """
 
     pass
 
 
 class MemberKeyScopeRequiredError(ApiKeyValidationError):
-    """A key that belongs to a team member must keep at least one assigned account."""
+    pass
 
 
 class ApiKeyRateLimitExceededError(ValueError):
@@ -232,10 +225,7 @@ class ApiKeyRateLimitExceededError(ValueError):
 
 
 class ApiKeyUnpricedModelError(ValueError):
-    """A cost_usd cap applies to the request but the model has no list price.
 
-    Billing such a request at $0 would let it run past the cap, so it is refused.
-    """
 
     def __init__(self, *, model: str, limit_window: str, max_microdollars: int) -> None:
         self.model = model
@@ -786,7 +776,7 @@ class ApiKeysService:
             normalized_usage_budget = _normalize_request_usage_budget(request_usage_budget)
             try:
                 for limit in refreshed.limits:
-                    # Only trusted file routes set this flag; a model string alone never exempts spend.
+
                     if (
                         request_is_file_operation
                         and request_model in {"files-create", "files-finalize"}
@@ -959,7 +949,7 @@ class ApiKeysService:
                 cache_creation_tier=cache_creation_tier,
                 cache_creation_1h_input_tokens=cache_creation_1h_input_tokens,
             )
-            # Usage we cannot price keeps its reservation: a cost cap is never billed at $0.
+
             consumed_tokens = (
                 effective_input_tokens
                 + effective_output_tokens
@@ -1115,13 +1105,13 @@ class ApiKeysService:
         return _build_api_key_trends(key_id, buckets, since, now, _DETAIL_BUCKET_SECONDS)
 
     async def get_key_usage_summary_for_self(self, key_id: str) -> ApiKeySelfUsageData | None:
-        """Return usage summary + current limits for a single key (self-service lookup)."""
+
         row = await self._repository.get_by_id(key_id)
         if row is None:
             return None
 
         now = utcnow()
-        # Reset any expired limits before reading state
+
         limits_reset = await _lazy_reset_expired_limits(self._repository, row.limits, now=now)
         refreshed = await self._repository.get_by_id(key_id) if limits_reset else row
         if refreshed is None:
@@ -1520,7 +1510,7 @@ def _reserve_cost_budget_microdollars(
 def _unknown_model_reserve_cost_budget_microdollars(*, input_tokens: int, output_tokens: int) -> int:
     token_budget = max(0, input_tokens) + max(0, output_tokens)
     if token_budget <= 0:
-        return 1  # A model request always reserves a positive spend floor.
+        return 1
     return ceil(
         _API_KEY_USAGE_RESERVATION_UNKNOWN_MODEL_MICRODOLLARS
         * token_budget
@@ -1703,7 +1693,7 @@ def _limit_identity_from_row(limit: ApiKeyLimit) -> tuple[str, str, str | None]:
 
 
 def _model_has_list_price(model: str) -> bool:
-    """Admission never treats an OpenAI wildcard or prefix as a published model."""
+
     normalized = model.lower()
     prices = {name.lower() for name in OPENAI_PRICING_MODELS}
     explicit_aliases = {
@@ -1728,16 +1718,7 @@ def _calculate_cost_microdollars(
     cache_creation_tier: str | None = None,
     cache_creation_1h_input_tokens: int | None = None,
 ) -> int | None:
-    """List-price cost in microdollars for cap accounting; None when the model has no list price.
 
-    Cap accounting always reads list price, including for subscription accounts whose
-    actual spend per request is $0. OpenAI models use the OpenAI table (unchanged);
-    Claude models use the Anthropic table, where ``input_tokens`` excludes cache tokens.
-    When the caller gives no cache split, ``cached_input_tokens`` counts as cache reads.
-    Cache writes are metered at the 1-hour rate for ``cache_creation_1h_input_tokens`` (Anthropic's
-    per-TTL breakdown) and at the 5-minute rate for the rest; without a breakdown the request's
-    ``cache_creation_tier`` applies to all writes.
-    """
     if not model:
         return None
     resolved = get_pricing_for_model(model)
@@ -1776,7 +1757,7 @@ def _calculate_cost_microdollars(
     if anthropic_cost_usd is None:
         return 0
     anthropic_cost_usd += one_hour_writes * anthropic_price.cache_creation_1h_input_per_1m / 1_000_000
-    # Round, not truncate: 0.0117 USD is 11699.999... in float and must meter as 11700.
+
     return round(anthropic_cost_usd * 1_000_000)
 
 
@@ -1802,7 +1783,7 @@ def _build_api_key_trends(
         return ApiKeyTrendsData(key_id=key_id)
 
     start_epoch = (int(since_utc.timestamp()) // bucket_seconds) * bucket_seconds
-    # The SQL window is exclusive of `until`, so step back one microsecond to find the last visible bucket.
+
     end_epoch = (int((until_utc - timedelta(microseconds=1)).timestamp()) // bucket_seconds) * bucket_seconds
     bucket_count = ((end_epoch - start_epoch) // bucket_seconds) + 1
     time_grid = [start_epoch + i * bucket_seconds for i in range(bucket_count)]

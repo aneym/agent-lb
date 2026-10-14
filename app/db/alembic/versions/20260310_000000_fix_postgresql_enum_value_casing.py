@@ -1,16 +1,10 @@
-"""fix postgresql enum value casing from uppercase to lowercase
 
-Revision ID: 20260310_000000_fix_postgresql_enum_value_casing
-Revises: 20260309_000000_add_additional_usage_history
-Create Date: 2026-03-10
-"""
 
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
 revision = "20260310_000000_fix_postgresql_enum_value_casing"
 down_revision = "20260309_000000_add_additional_usage_history"
 branch_labels = None

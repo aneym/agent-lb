@@ -114,18 +114,13 @@ class RefreshAdmissionLeasePort(Protocol):
 
 logger = logging.getLogger(__name__)
 _ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 300
-# Mirrors and uncertain exchanges cannot refresh; leave time for an owner or
-# operator to recover before the token expires.
+
+
 _ACCESS_TOKEN_SERVING_MARGIN_SECONDS = 300
 
 
 class AccountNotOwnedError(Exception):
-    """Raised when a refresh is required for an account this instance does not own.
 
-    Instance federation restricts OAuth refresh execution to a single owner
-    instance per account (openspec instance-federation): non-owners must
-    never call the provider's refresh endpoint, regardless of token age.
-    """
 
     def __init__(self, account_id: str, owner_instance: str | None, local_instance_id: str) -> None:
         message = (
@@ -236,12 +231,7 @@ _REFRESH_LOCK_ENGINE: AsyncEngine | None = None
 
 
 def _refresh_lock_engine() -> AsyncEngine | None:
-    """A pool-less engine for refresh locks, or None off Postgres.
 
-    Lock holders must not sit in the shared pools: the locked body needs its own
-    repository and route-lookup connections, and enough concurrent refreshes
-    holding pool connections would starve their own completion.
-    """
     global _REFRESH_LOCK_ENGINE
     if db_session.engine.dialect.name != "postgresql":
         return None
@@ -252,17 +242,7 @@ def _refresh_lock_engine() -> AsyncEngine | None:
 
 @asynccontextmanager
 async def _cross_process_refresh_lock(account_id: str) -> AsyncIterator[None]:
-    """Serialize one account's token refresh across agent-lb processes.
 
-    The singleflight above only sees its own process. A blue/green restart runs
-    a standby and a draining primary against one database, and OpenAI refresh
-    tokens are single use: two processes presenting the same token gets the
-    second one refresh_token_reused, which marks the account reauth_required.
-    The lock is transaction scoped on its own unpooled connection, so a dropped
-    connection or a cancelled caller releases it; the holder's refresh is
-    committed before it lets go, and the waiter's reload then sees the rotated
-    token and skips the provider.
-    """
     lock_engine = _refresh_lock_engine()
     if lock_engine is None:
         yield
@@ -292,26 +272,26 @@ class AuthManager:
         self._repo = repo
         self._encryptor = TokenEncryptor()
         self._acquire_refresh_admission = acquire_refresh_admission
-        # Optional factory yielding a *fresh* accounts repo (own DB session) for
-        # the detached, shielded refresh task. When set, the singleflight body
-        # runs against this session instead of the request-scoped `repo`, so a
-        # caller cancelled by a client disconnect cannot close the session out
-        # from under the still-running refresh task and strand a pooled
-        # connection. See _run_refresh.
+
+
+
+
+
+
         self._refresh_repo_factory = refresh_repo_factory
 
     async def ensure_fresh(self, account: Account, *, force: bool = False, recover_uncertain: bool = False) -> Account:
         settings = get_settings()
-        # Selection inputs are cached briefly. Recheck ownership and the token
-        # version against the database before returning a cached access token.
+
+
         latest = await self._repo.reload_by_id(account.id)
         if latest is not None:
             account = latest
-        # Return an independent snapshot, also when the row is gone: request-scoped
-        # rollback on close expires the ORM instance loaded in this repository session.
+
+
         account = _snapshot(self._repo, account)
         if not is_locally_owned(account, settings):
-            # A mirror cannot refresh; stop serving before its token expires.
+
             if force or access_token_hard_expired(self._encryptor, account):
                 raise AccountNotOwnedError(account.id, account.owner_instance, settings.local_instance_id)
             return await self._ensure_chatgpt_account_id(account)
@@ -337,22 +317,7 @@ class AuthManager:
         return await self._ensure_chatgpt_account_id(account)
 
     async def _run_refresh(self, account: Account) -> Account:
-        """Singleflight body for token refresh.
 
-        Runs inside a detached task that the singleflight keeps alive with
-        ``asyncio.shield`` (so concurrent waiters share one refresh and a
-        cancelled waiter does not abort it). Because the task outlives the
-        caller, it MUST NOT use the caller's request-scoped session: when a
-        client disconnects, the caller is cancelled and its
-        ``async with get_background_session()`` closes that session, while this
-        shielded task keeps running and would then touch a closed,
-        concurrently-finalized ``AsyncSession`` (not safe for concurrent use) —
-        stranding a pooled connection that never returns. When a
-        ``refresh_repo_factory`` is provided, open a fresh session here so the
-        refresh write is fully self-contained; otherwise fall back to the bound
-        repo (callers whose session is not client-cancellable, e.g. the usage
-        refresh scheduler).
-        """
         if self._refresh_repo_factory is None:
             return await self.refresh_account(account)
         async with self._refresh_repo_factory() as repo:
@@ -375,7 +340,7 @@ class AuthManager:
         ):
             if not is_locally_owned(latest, get_settings()):
                 raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
-            # A delayed caller must not replay a token already rotated by another request.
+
             return _snapshot(self._repo, latest)
         if latest is None:
             if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
@@ -428,7 +393,7 @@ class AuthManager:
                 if latest is not None and _refresh_token_material_changed(
                     self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
                 ):
-                    return _snapshot(self._repo, latest)  # a re-login rotated the token first
+                    return _snapshot(self._repo, latest)
                 if await self._repo.exchange_intent_hash(account_id) == token_hash:
                     await self._repo.mark_exchange_uncertain(account_id, token_hash, expected_refresh_token_encrypted)
                     get_account_selection_cache().invalidate()
@@ -592,10 +557,10 @@ class AuthManager:
         if workspace_matches_current_slot and result.seat_type:
             account.seat_type = result.seat_type
 
-        # A failed write must never flush the rotated in-memory tokens on a later commit.
+
         if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
             self._repo.session.expunge(account)
-        # A durable fence may be marked uncertain by a new worker after lock loss.
+
         tokens_updated = False
         for attempt in range(3):
             try:
@@ -753,7 +718,7 @@ def _refresh_singleflight_key(encryptor: TokenEncryptor, account: Account) -> _R
 
 
 def _expires_within(expires_ms: int, *, margin_seconds: float, now: datetime | None = None) -> bool:
-    """True when expires_ms is within margin_seconds of `now` (or already past)."""
+
     current = to_utc_naive(now) if now is not None else utcnow()
     threshold_ms = naive_utc_to_epoch(current) * 1000 + (margin_seconds * 1000)
     return expires_ms <= threshold_ms
@@ -781,7 +746,7 @@ def access_token_hard_expired(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """True when a mirror or uncertain exchange cannot safely serve its access token."""
+
     if not account.access_token_encrypted:
         return True
     try:
@@ -810,13 +775,7 @@ def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: 
 
 
 def _snapshot(repo: object, account: Account) -> Account:
-    """Copy a row out of a session-backed repository before returning it.
 
-    Background and request sessions roll back an open transaction before they
-    close, which expires every row they loaded; a caller that reads the row
-    afterwards raises DetachedInstanceError. Rows from repositories without a
-    session (test fakes) are returned as they are.
-    """
     if not hasattr(repo, "session"):
         return account
     return Account(**{column.key: getattr(account, column.key) for column in Account.__table__.columns})

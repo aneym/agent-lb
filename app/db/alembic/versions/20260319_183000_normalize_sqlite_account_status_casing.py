@@ -1,16 +1,10 @@
-"""normalize sqlite account status casing
 
-Revision ID: 20260319_183000_normalize_sqlite_account_status_casing
-Revises: 20260319_111500_merge_prompt_cache_ttl_and_upstream_transport_heads
-Create Date: 2026-03-19
-"""
 
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
 revision = "20260319_183000_normalize_sqlite_account_status_casing"
 down_revision = "20260319_111500_merge_prompt_cache_ttl_and_upstream_transport_heads"
 branch_labels = None

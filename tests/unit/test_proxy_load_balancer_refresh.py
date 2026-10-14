@@ -37,8 +37,8 @@ from app.modules.proxy.sticky_repository import StickySessionsRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 
-# Some concurrency tests here can wait forever on a lock that never frees when they
-# fail; a per-test timeout turns that into a failure so suite wall times stay honest.
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
 _UNSET = object()
@@ -670,7 +670,7 @@ async def test_budget_safe_fallback_still_skips_unavailable_accounts() -> None:
     )
 
     assert selection.account is not None
-    # 82ed714b: a persisted live failure marker still excludes the blocked account.
+
     assert selection.account.id == available_account.id
 
 
@@ -1162,7 +1162,7 @@ async def test_select_account_ranks_by_additional_usage_when_stale(monkeypatch) 
     )
 
     assert selection.account is not None
-    # 82ed714b: additional usage (5% vs 90%) ranks accounts even when stale; staleness does not exclude.
+
     assert selection.account.id == account_fresh.id
     assert stale_only.account is not None
     assert stale_only.account.id == account_stale.id
@@ -1177,11 +1177,7 @@ async def test_select_account_ranks_by_additional_usage_when_stale(monkeypatch) 
     ],
 )
 async def test_openai_model_on_primary_usage_registry_entry_routes_without_additional_rows(model: str) -> None:
-    """Outage 2026-09-22: every gpt-6-astra call 503'd with additional_quota_data_unavailable.
 
-    Registry entries whose usage lives in the account's own windows have no
-    additional_usage rows upstream, so they must not gate OpenAI routing.
-    """
     account = _make_account("acc-subscription-only", email="sub@example.com")
     now = utcnow()
     now_epoch = int(now.replace(tzinfo=timezone.utc).timestamp())
@@ -1813,9 +1809,9 @@ async def test_select_account_does_not_open_repo_before_runtime_lock(monkeypatch
 
     monkeypatch.setattr(balancer, "_load_selection_inputs", fake_load_selection_inputs)
 
-    # T21 made select_account lock-free (per-account locking replaces global _runtime_lock).
-    # select_account now proceeds without acquiring _runtime_lock.
-    # Verify that select_account still works correctly without the global lock.
+
+
+
     release_repo.set()
     selection = await balancer.select_account()
     assert repo_entered.is_set()
@@ -2808,7 +2804,7 @@ async def test_select_account_routes_mapped_model_despite_stale_additional_data(
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
 
-    # 82ed714b: stale additional-usage snapshots cannot deny a live attempt.
+
     assert selection.account is not None
     assert selection.account.id == account.id
     assert selection.error_code is None
@@ -2887,7 +2883,7 @@ async def test_select_account_keeps_standard_quota_for_plus_gated_model_without_
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
 
-    # 82ed714b: primary exhaustion alone cannot block a routable plus account.
+
     assert selection.account is not None
     assert selection.account.id == account.id
 
@@ -2993,7 +2989,7 @@ async def test_select_account_routes_unmapped_plan_without_additional_quota_rows
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
 
-    # 82ed714b: the registry permits this plan; missing additional rows do not establish model incompatibility.
+
     assert selection.account is not None
     assert selection.account.id == account.id
     assert selection.error_code is None
@@ -3055,7 +3051,7 @@ async def test_select_account_routes_when_additional_secondary_window_is_stale(m
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
 
-    # 82ed714b: stale secondary additional usage cannot block a live attempt.
+
     assert selection.account is not None
     assert selection.account.id == account.id
     assert selection.error_code is None
@@ -3146,7 +3142,7 @@ async def test_select_account_allows_primary_only_account_when_other_account_has
         model="gpt-5.3-codex-spark", account_ids=[stale_secondary_account.id]
     )
 
-    # 82ed714b: stale secondary history does not exclude that account or the primary-only one.
+
     assert selection.account is not None
     assert primary_only.account is not None
     assert primary_only.account.id == primary_only_account.id
@@ -3211,7 +3207,7 @@ async def test_select_account_routes_mapped_model_despite_exhausted_additional_u
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
 
-    # 82ed714b: exhausted additional usage is advisory until upstream rejects a request.
+
     assert selection.account is not None
     assert selection.account.id == account.id
     assert selection.error_code is None

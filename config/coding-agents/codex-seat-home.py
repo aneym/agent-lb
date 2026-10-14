@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Build a job-local CODEX_HOME; never read authentication contents.
 
-Shell access stays workspace-write, with network for gh/loopback checks.
-macOS Chromium bootstrap still requires an outside-sandbox capture process.
-No MCP, apps, plugins, hooks or global rollout archive are inherited.
-"""
 from __future__ import annotations
 
 import argparse
@@ -65,7 +60,7 @@ def main() -> None:
     destination.mkdir(parents=True, exist_ok=True)
     sessions = destination / "sessions"
     if sessions.is_symlink():
-        sessions.unlink()  # Never traverse or delete the archive behind the link.
+        sessions.unlink()
     sessions.mkdir(exist_ok=True)
     (destination / "config.toml").write_text("\n".join(lines) + "\n")
     auth = destination / "auth.json"

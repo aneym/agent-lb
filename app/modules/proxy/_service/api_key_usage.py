@@ -310,7 +310,7 @@ class _ApiKeyUsageMixin:
         settlement: _StreamSettlement,
         request_id: str,
     ) -> bool:
-        """Settle stream reservation. Returns True if settled."""
+
         if api_key is None or api_key_reservation is None:
             return True
 

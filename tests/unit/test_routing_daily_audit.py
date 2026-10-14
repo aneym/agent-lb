@@ -1,4 +1,4 @@
-"""Daily audit output contracts: counts, revert horizon and evidence-gated moves."""
+
 import json
 import plistlib
 import sqlite3
@@ -39,7 +39,7 @@ def observations(tmp_path):
             verdicts.append(dict(pr=pr, ts=(start + timedelta(hours=index, minutes=15)).isoformat(),
                                  **{"pass": True}))
             merges.append(dict(number=pr, mergedAt=(start + timedelta(hours=index, minutes=20)).isoformat()))
-    # One observed redo in a distinct session; it is not another dispatch closeout.
+
     events.append(events[0] | dict(session_id="redo", ts=(start + timedelta(minutes=30)).isoformat(),
                                   ok=False, wall_s=60, pr=None))
     verdicts.insert(0, dict(pr=10, ts=(start + timedelta(minutes=10)).isoformat(), **{"pass": False}))
@@ -136,8 +136,8 @@ def test_routing_daily_audit_proposes_only_with_accepted_evidence(observations):
 
 def test_routing_daily_audit_quantized_claude_points_show_fleet_estimate(observations):
     start, runs, verdicts, merges, requests, usage = observations
-    # Spend precedes the first sample: adjacent integer snapshots cannot attribute
-    # its points, but the fleet's later weekly delta supplies an estimate.
+
+
     requests.append(dict(requested_at=(start + timedelta(minutes=1)).isoformat(), session_id="review",
                          account_id="claude", provider="anthropic", model="sonnet", cost_usd=2,
                          input_tokens=100, output_tokens=10))

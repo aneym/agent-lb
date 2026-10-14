@@ -90,7 +90,7 @@ async def test_request_scoped_primary_quota_bypass_is_exact_and_not_persisted(db
         routing_strategy="usage_weighted",
     )
 
-    # 82ed714b: a live failure marker excludes unless the exact account is bypassed for this request.
+
     assert blocked.account is None
     assert wrong_id.account is None
     assert bypassed.account is not None
@@ -148,7 +148,7 @@ async def test_request_scoped_primary_quota_bypass_secondary_exhaustion_is_advis
         routing_strategy="usage_weighted",
     )
 
-    # 82ed714b: secondary exhaustion alone is advisory, even with a primary bypass.
+
     assert selection.account is not None
     assert selection.account.id == account.id
     async with SessionLocal() as session:
@@ -232,7 +232,7 @@ async def test_load_balancer_skips_secondary_quota(db_setup):
         refreshed = await session.get(Account, account_a.id)
         assert refreshed is not None
         await session.refresh(refreshed)
-        # 82ed714b: secondary snapshot exhaustion lowers rank, not persisted account status.
+
         assert refreshed.status == AccountStatus.ACTIVE
 
 
@@ -357,7 +357,7 @@ async def test_load_balancer_treats_weekly_only_primary_as_quota_window(db_setup
         refreshed_free = await session.get(Account, free_account.id)
         assert refreshed_free is not None
         await session.refresh(refreshed_free)
-        # 82ed714b: exhausted weekly snapshots cannot set a live quota failure status.
+
         assert refreshed_free.status == AccountStatus.ACTIVE
 
 
@@ -477,7 +477,7 @@ async def test_load_balancer_prefers_newer_weekly_primary_over_stale_secondary(d
         refreshed_free = await session.get(Account, free_account.id)
         assert refreshed_free is not None
         await session.refresh(refreshed_free)
-        # 82ed714b: the newer exhausted weekly snapshot affects ranking, not status.
+
         assert refreshed_free.status == AccountStatus.ACTIVE
 
 

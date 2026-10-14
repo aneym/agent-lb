@@ -173,7 +173,7 @@ async def test_v1_ccgpt_messages_rejects_anthropic_defined_tools(
 
 
 def _guard_reservation_paths(monkeypatch: pytest.MonkeyPatch) -> tuple[list[object], list[object]]:
-    """Fail loudly if count_tokens ever touches the reservation lifecycle."""
+
     enforced: list[object] = []
     released: list[object] = []
 
@@ -317,9 +317,9 @@ async def test_v1_messages_count_tokens_requires_model(async_client) -> None:
     }
 
 
-# Header values below were captured from live Anthropic OAuth responses on
-# 2026-07-01: a healthy subscription-covered 200 and a 200 served by billing
-# extra-usage credits on an account whose 5h window sat at 100% utilization.
+
+
+
 _HEALTHY_UNIFIED_HEADERS = {
     "anthropic-ratelimit-unified-status": "allowed",
     "anthropic-ratelimit-unified-5h-status": "allowed",
@@ -373,17 +373,17 @@ def test_unified_tripwire_ignores_responses_without_unified_headers() -> None:
 def test_pool_wait_delay_clamps_to_poll_bounds_and_remaining(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(anthropic_service_module, "_POOL_WAIT_JITTER", lambda: 0.0)
 
-    # Reset far away: bounded by the max poll interval so early frees are seen.
+
     assert (
         anthropic_service_module._pool_wait_delay_seconds(10_000, now=0.0, remaining=100_000.0)
         == anthropic_service_module._POOL_WAIT_MAX_POLL_SECONDS
     )
-    # Reset already passed: re-poll on the min cadence instead of spinning.
+
     assert (
         anthropic_service_module._pool_wait_delay_seconds(10, now=50.0, remaining=100_000.0)
         == anthropic_service_module._POOL_WAIT_MIN_POLL_SECONDS
     )
-    # Never sleeps past the wait cap.
+
     assert anthropic_service_module._pool_wait_delay_seconds(10_000, now=0.0, remaining=42.0) == 42.0
 
 

@@ -30,28 +30,14 @@ def _normalize_session_id(session_id: str | None) -> str | None:
 
 class _RequestLogMixin:
     async def rewrite_request_log_model(self, request_id: str, model: str) -> None:
-        """Override the ``model`` field on any ``request_logs`` row that
-        matches ``request_id``.
 
-        Used by route adapters that translate a public request shape
-        (currently ``/v1/images/*``) into an internal Responses request: the
-        first-pass log row stores the internal host model the proxy used
-        for routing, and we rewrite it here once the public effective model
-        is known so dashboards and usage views surface the user-visible
-        ``gpt-image-*`` model instead of the host (e.g. ``gpt-5.5``).
-
-        The upstream ``stream_responses`` generator writes its request_log
-        row from a ``finally`` block that runs after the last chunk is
-        yielded, which can race with the call site here. We therefore retry
-        a few times with short backoff while the row is still missing.
-        """
         if not request_id or not model:
             return
         proxy = cast(_RequestLogServiceProtocol, self)
         with anyio.CancelScope(shield=True):
             try:
                 rowcount = 0
-                # Total wait: 0 + 50 + 100 + 200 + 400 + 800 ms = 1550 ms.
+
                 for delay in (0.0, 0.05, 0.1, 0.2, 0.4, 0.8):
                     if delay > 0:
                         await asyncio.sleep(delay)
@@ -229,8 +215,8 @@ class _RequestLogMixin:
     ) -> None:
         proxy = cast(_RequestLogServiceProtocol, self)
         try:
-            # The member lookup runs here, inside the shielded task, so a cancelled
-            # request still gets its log row.
+
+
             identity = await attach_member(identity, api_key_member_id)
             async with proxy._repo_factory() as repos:
                 await repos.request_logs.add_log(

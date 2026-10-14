@@ -29,7 +29,7 @@ class UsageMetrics(DashboardModel):
 
 
 class UsageSummaryResponse(DashboardModel):
-    # Null when no account in scope has a 5h window (codex-only scope).
+
     primary_window: UsageWindow | None = None
     secondary_window: UsageWindow | None = None
     monthly_window: UsageWindow | None = None

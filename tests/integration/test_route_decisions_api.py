@@ -1,4 +1,4 @@
-"""Contract for the read-only dashboard ledger projection."""
+
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ pytestmark = pytest.mark.integration
 
 @pytest.mark.asyncio
 async def test_route_decisions_pairing_filters_counts_and_redaction(async_client, monkeypatch, tmp_path):
-    # A response should represent the independently written ledger without claiming
-    # that an indistinguishable pair of concurrent dispatches both completed.
+
+
     ledger = tmp_path / "dispatch.jsonl"
     monkeypatch.setenv("ROUTE_LEDGER", str(ledger))
     rows = [

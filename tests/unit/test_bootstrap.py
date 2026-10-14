@@ -169,12 +169,7 @@ async def test_ensure_auto_bootstrap_token_reuses_existing_encrypted_token(monke
 
 
 def test_log_bootstrap_token_emits_at_warning_level_so_docker_default_surfaces_it() -> None:
-    """Regression guard for #458.
 
-    The token must be logged at a level that survives docker's default
-    root-logger WARNING threshold. If it downgrades to INFO, operators
-    following the README quickstart cannot find their first-run token.
-    """
     import io
     import logging
 

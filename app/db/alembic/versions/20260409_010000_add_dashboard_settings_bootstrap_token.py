@@ -1,9 +1,4 @@
-"""add shared bootstrap token storage to dashboard settings
 
-Revision ID: 20260409_010000_add_dashboard_settings_bootstrap_token
-Revises: 20260409_000000_switch_sticky_threads_and_prefer_earlier_reset_defaults_to_true
-Create Date: 2026-04-09
-"""
 
 from __future__ import annotations
 

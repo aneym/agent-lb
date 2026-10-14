@@ -40,8 +40,7 @@ class DemandBin:
 
 @dataclass(frozen=True, slots=True)
 class DemandSlot:
-    """Demand aggregated to one (time slot, request_kind) cell — the only
-    granularity build_demand_forecast() consumes."""
+
 
     slot_epoch: int
     request_kind: str
@@ -253,13 +252,7 @@ class QuotaPlannerRepository:
         since: datetime | None = None,
         bucket_seconds: int = 900,
     ) -> list[DemandSlot]:
-        """Demand per (slot, request_kind) for the forecast.
 
-        aggregate_demand_bins() also splits by account, key, model, effort and
-        status, which the forecast then re-sums per slot in Python on the
-        event loop: 13.9k rows for 28 days on 2026-09-16 versus 2.3k here.
-        Both the 5-minute scheduler tick and the /forecast endpoint use this.
-        """
         since = since or (utcnow() - timedelta(days=28))
         bind = self._session.get_bind()
         dialect = bind.dialect.name if bind else "sqlite"

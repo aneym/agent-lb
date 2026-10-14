@@ -1,4 +1,4 @@
-# pyright: reportGeneralTypeIssues=false
+
 from __future__ import annotations
 
 import asyncio
@@ -128,10 +128,10 @@ class _StreamingRetryMixin:
         if upstream_stream_transport is None:
             upstream_stream_transport = _facade()._resolve_upstream_stream_transport(settings.upstream_stream_transport)
         if request_transport == _REQUEST_TRANSPORT_HTTP and upstream_stream_transport == "websocket":
-            # HTTP/SSE clients can retry a half-rendered turn after an upstream
-            # websocket close, making the same visible message restart. Keep
-            # native websocket clients on their dedicated path, but use upstream
-            # HTTP/SSE for downstream HTTP streams.
+
+
+
+
             upstream_stream_transport = "http"
         if rewritten_file_account_id is None:
             proxy._raise_for_unsupported_input_image_references(payload)
@@ -196,10 +196,10 @@ class _StreamingRetryMixin:
                     surface="http_stream",
                 )
                 require_preferred_account = preferred_account_id is not None
-                # `previous_response_id` is a stored-object continuation, so it
-                # remains hard owner-bound even when the request also carries a
-                # soft prompt-cache affinity key. A different account may have a
-                # warmer cache, but it cannot safely resolve the stored response.
+
+
+
+
                 if preferred_account_id is None:
                     selection_inputs = await proxy._load_balancer._load_selection_inputs(
                         model=payload.model,
@@ -241,12 +241,12 @@ class _StreamingRetryMixin:
                         return
             file_required_preferred_account = False
             if preferred_account_id is None:
-                # ``input_file.file_id`` references must land on the account
-                # that registered the upload; otherwise upstream rejects the
-                # request with not-found / 401. The helper itself enforces
-                # priority -- it returns ``None`` when stronger affinity
-                # signals (prompt_cache_key / session header / turn_state
-                # header) are present, so this never overrides them.
+
+
+
+
+
+
                 if rewritten_file_account_id is not None:
                     preferred_account_id = rewritten_file_account_id
                     file_required_preferred_account = True
@@ -400,9 +400,9 @@ class _StreamingRetryMixin:
                             useragent_group=useragent_group,
                         )
                         return
-                    # If a prior attempt stored a transient 500 and the caller
-                    # expects HTTP error propagation, re-raise the original error
-                    # instead of returning a generic no_accounts event.
+
+
+
                     if propagate_http_errors and last_transient_exc is not None:
                         raise last_transient_exc
                     if last_retryable_stream_error is not None:
@@ -866,8 +866,8 @@ class _StreamingRetryMixin:
                                     error_code,
                                 )
                                 await asyncio.sleep(delay)
-                                continue  # inner loop: retry same account
-                            # Exhausted same-account retries -- penalize and failover
+                                continue
+
                             _facade().logger.warning(
                                 "Transient retries exhausted for account "
                                 "request_id=%s account_id=%s retries=%s code=%s",
@@ -877,16 +877,16 @@ class _StreamingRetryMixin:
                                 error_code,
                             )
                             await proxy._handle_stream_error(account, error_payload, error_code)
-                            # Record remaining errors so total equals transient_retries,
-                            # meeting the load balancer backoff threshold (error_count >= 3).
+
+
                             await proxy._load_balancer.record_errors(account, transient_retries - 1)
-                            # Preserve last ProxyResponseError for propagate_http_errors path.
+
                             if isinstance(tex, ProxyResponseError):
                                 last_transient_exc = tex
                             await _release_tracked_stream_lease(current_account_lease)
                             current_account_lease = None
                             excluded_account_ids.add(account.id)
-                            break  # outer loop: select different account
+                            break
                         finally:
                             pop_stream_timeout_overrides(stream_timeout_tokens)
                         if retry_protocol_only_failures and not protocol_only_buffer_committed and protocol_only_buffer:
@@ -949,7 +949,7 @@ class _StreamingRetryMixin:
                             request_id,
                         )
                         return
-                    continue  # outer loop: account failover after transient exhaustion
+                    continue
                 except _RetryableStreamError as exc:
                     if _facade()._is_security_work_authorization_required_error(exc.code, exc.error.get("message")):
                         if (
@@ -1315,8 +1315,8 @@ class _StreamingRetryMixin:
                     )
                     yield format_sse_event(event)
                     return
-            # When HTTP error propagation is enabled and the last failure was
-            # a transient 500, re-raise to preserve the upstream status/payload.
+
+
             if propagate_http_errors and last_transient_exc is not None:
                 raise last_transient_exc
             if last_retryable_stream_error is not None:

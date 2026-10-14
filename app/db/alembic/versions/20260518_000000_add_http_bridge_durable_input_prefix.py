@@ -1,9 +1,4 @@
-"""add HTTP bridge durable input prefix metadata
 
-Revision ID: 20260518_000000_add_http_bridge_durable_input_prefix
-Revises: 20260515_000000_soft_delete_request_logs_on_account_delete
-Create Date: 2026-05-18 00:00:00.000000
-"""
 
 from collections.abc import Sequence
 

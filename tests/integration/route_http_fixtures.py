@@ -1,4 +1,4 @@
-"""Serve pool/model fixtures at the network edge while forwarding real lease reads."""
+
 
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
