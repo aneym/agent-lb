@@ -74,4 +74,4 @@ chmod +x "$focus_dir/desktop-guard-focus"
 export PATH="$focus_dir:$PATH"
 printf 'codex-local: host baseline %s; sandbox snapshot: python3 %s --baseline %s snapshot (non-live; lead compares after run)\n' "$LOCAL_SEAT_FOCUS_BASELINE" "$LOCAL_SEAT_FOCUS_HELPER" "$LOCAL_SEAT_FOCUS_BASELINE" >&2
 companion="$HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs"
-exec node "$companion" "$@"
+exec python3 "$(dirname "$0")/codex-local-launch.py" node "$companion" "$@"

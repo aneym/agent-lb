@@ -35,12 +35,21 @@ try {
     }
     console.log(`PASS ${label}`);
   }
+  const worktree = path.join(fixture, 'worktree');
+  const added = spawnSync('git', ['-C', process.cwd(), 'worktree', 'add', '--detach', worktree, 'HEAD'], { encoding: 'utf8' });
+  assert.equal(added.status, 0, added.stderr);
+  try {
+    run('write linked worktree allowed', worktree, ['--write', 'inspect']);
+  } finally {
+    const removed = spawnSync('git', ['-C', process.cwd(), 'worktree', 'remove', worktree], { encoding: 'utf8' });
+    assert.equal(removed.status, 0, removed.stderr);
+  }
   run('read-only repo cwd allowed', repo, ['inspect']);
   run('write repo cwd refused immediately', repo, ['--write', 'inspect'], true);
   run('write lane cwd allowed with repository references', lane, ['--write', 'Inspect /Volumes/StudioExt/repos/agent-lb']);
   run('background repo write refused before queue', repo, ['--write', '--background', 'inspect'], true);
   run('explicit repo write override allowed', repo, ['--write', '--allow-repo-write', 'inspect']);
-  console.log('All 5 companion launch checks passed');
+  console.log('All 6 companion launch checks passed');
 } finally {
   fs.rmSync(fixture, { recursive: true, force: true });
 }

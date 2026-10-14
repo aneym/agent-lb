@@ -18,7 +18,7 @@ diff --git a/plugins/codex/scripts/codex-companion.mjs b/plugins/codex/scripts/c
        "  node scripts/codex-companion.mjs transfer [--source <claude-jsonl>] [--json]",
        "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
        "  node scripts/codex-companion.mjs result [job-id] [--json]",
-@@ -154,6 +154,17 @@
+@@ -154,6 +154,21 @@
  
  function resolveCommandWorkspace(options = {}) {
    return resolveWorkspaceRoot(resolveCommandCwd(options));
@@ -31,12 +31,16 @@ diff --git a/plugins/codex/scripts/codex-companion.mjs b/plugins/codex/scripts/c
 +    env: { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined }
 +  });
 +  if (repo.status === 0 && repo.stdout.trim() === "true") {
++    const dirs = spawnSync("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], { encoding: "utf8" });
++    const [gitDir, commonDir] = dirs.stdout.trim().split(/\r?\n/);
++    if (dirs.status === 0 && gitDir && commonDir && gitDir !== commonDir) return;
++
 +    throw new Error(`codex-companion: ${cwd}: repo edits go through seat-run gpt-implementer / seat-exec, never codex-companion --write; use --allow-repo-write only for an explicit override`);
 +  }
  }
  
  function sleep(ms) {
-@@ -762,7 +773,7 @@
+@@ -762,7 +777,7 @@
  async function handleTask(argv) {
    const { options, positionals } = parseCommandInput(argv, {
      valueOptions: ["model", "effort", "cwd", "prompt-file"],
@@ -45,7 +49,7 @@ diff --git a/plugins/codex/scripts/codex-companion.mjs b/plugins/codex/scripts/c
      aliasMap: {
        m: "model"
      }
-@@ -780,6 +791,11 @@
+@@ -780,6 +795,11 @@
      throw new Error("Choose either --resume/--resume-last or --fresh.");
    }
    const write = Boolean(options.write);
