@@ -28,6 +28,8 @@ class RequestLogEntry(DashboardModel):
     room: str | None = None
     unified_5h_utilization: float | None = None
     unified_7d_utilization: float | None = None
+    unified_headers: dict[str, str] | None = None
+    quota_observed_at: datetime | None = None
     session_id: str | None = None
     request_id: str
     request_kind: str = "normal"

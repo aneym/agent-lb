@@ -420,6 +420,8 @@ class RequestLogsRepository:
         identity: RequestIdentity | None = None,
         unified_5h_utilization: float | None = None,
         unified_7d_utilization: float | None = None,
+        unified_headers: dict[str, str] | None = None,
+        quota_observed_at: datetime | None = None,
     ) -> RequestLog:
         caller = identity_for_log(identity)
         async with sqlite_writer_section(self._session):
@@ -445,6 +447,8 @@ class RequestLogsRepository:
                 room=get_room(),
                 unified_5h_utilization=unified_5h_utilization,
                 unified_7d_utilization=unified_7d_utilization,
+                unified_headers=unified_headers,
+                quota_observed_at=quota_observed_at,
                 request_id=resolved_request_id,
                 model=model,
                 plan_type=resolved_plan_type,

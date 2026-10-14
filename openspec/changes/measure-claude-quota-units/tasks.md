@@ -1,0 +1,8 @@
+- [x] Capture unified header evidence and observation time.
+- [x] Add a windowed quota report with JSON and table output.
+- [x] Exercise the recorded-header parser/report and existing lb-cache test file, 4 passed.
+- [x] Validate OpenSpec and lint; check SQLite upgrade and schema drift.
+- [x] Run the existing migration scenario, 1 passed, 12 deselected.
+- [ ] Run request-boundary scenarios on a worker with working async database I/O.
+- [ ] Push quota-units, obtain the required fresh review, and fast-forward main if clean.
+- [ ] Run the 24h history report and install through lb-restart on the serving machine.

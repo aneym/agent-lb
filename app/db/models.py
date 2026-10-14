@@ -5,6 +5,7 @@ from datetime import date, datetime
 from enum import Enum
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     Date,
@@ -253,6 +254,8 @@ class RequestLog(Base):
     room: Mapped[str | None] = mapped_column(String(128), nullable=True)
     unified_5h_utilization: Mapped[float | None] = mapped_column(Float, nullable=True)
     unified_7d_utilization: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unified_headers: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    quota_observed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     request_id: Mapped[str] = mapped_column(String, nullable=False)
     request_kind: Mapped[str] = mapped_column(
         String,

@@ -65,6 +65,8 @@ async def test_anthropic_room_and_utilization(async_client, monkeypatch, stream,
     async with SessionLocal() as session:
         row = (await session.execute(select(RequestLog).where(RequestLog.request_id == "room-scenario"))).scalar_one()
         assert (row.room, row.unified_5h_utilization, row.unified_7d_utilization) == expected
+        assert row.unified_headers == upstream_headers
+        assert row.quota_observed_at is not None
         entry = to_request_log_entry(row)
         assert (entry.room, entry.unified_5h_utilization, entry.unified_7d_utilization) == expected
 

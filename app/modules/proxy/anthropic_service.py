@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import random
 import re
 import time
@@ -32,6 +31,8 @@ from app.core.anthropic.models import (
     merge_usage_values,
 )
 from app.core.anthropic.parsing import parse_sse_event
+from app.core.anthropic.quota_headers import capture_unified_headers
+from app.core.anthropic.quota_headers import parse_unified_utilization as _parse_unified_utilization
 from app.core.anthropic.quota_keys import model_quota_key
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.balancer.types import UpstreamError
@@ -640,6 +641,10 @@ class AnthropicProxyService:
                             # a plain API client does not.
                             body_payload = ensure_claude_code_identity_body(body_payload)
 
+                        unified_headers: dict[str, str] | None = None
+                        quota_observed_at: datetime | None = None
+                        unified_5h_utilization: float | None = None
+                        unified_7d_utilization: float | None = None
                         cache_creation_tier = _upgrade_helper_cache(
                             body_payload, headers, inbound_headers, provider_name
                         )
@@ -675,6 +680,11 @@ class AnthropicProxyService:
                                 first_byte_seconds=first_byte_seconds,
                             ) as resp:
                                 await admission_stack.aclose()
+                                quota_observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                                unified_headers = (
+                                    capture_unified_headers(resp.headers)
+                                    if provider_name == ANTHROPIC_PROVIDER_NAME else None
+                                )
                                 unified_5h_utilization = None
                                 unified_7d_utilization = None
                                 if provider_name == ANTHROPIC_PROVIDER_NAME:
@@ -715,6 +725,8 @@ class AnthropicProxyService:
                                             useragent_group=useragent_group,
                                             unified_5h_utilization=unified_5h_utilization,
                                             unified_7d_utilization=unified_7d_utilization,
+                                            unified_headers=unified_headers,
+                                            quota_observed_at=quota_observed_at,
                                         )
                                         last_error_status = 503
                                         last_error_message = (
@@ -773,6 +785,8 @@ class AnthropicProxyService:
                                         useragent_group=useragent_group,
                                         unified_5h_utilization=unified_5h_utilization,
                                         unified_7d_utilization=unified_7d_utilization,
+                                        unified_headers=unified_headers,
+                                        quota_observed_at=quota_observed_at,
                                     )
                                     if error_code == "mirror_token_unavailable":
                                         raise AnthropicProxyError(503, error_message, code=error_code)
@@ -803,6 +817,8 @@ class AnthropicProxyService:
                                         useragent_group=useragent_group,
                                         unified_5h_utilization=unified_5h_utilization,
                                         unified_7d_utilization=unified_7d_utilization,
+                                        unified_headers=unified_headers,
+                                        quota_observed_at=quota_observed_at,
                                     )
                                     last_error_status = resp.status
                                     last_error_message = error_message
@@ -830,6 +846,8 @@ class AnthropicProxyService:
                                         useragent_group=useragent_group,
                                         unified_5h_utilization=unified_5h_utilization,
                                         unified_7d_utilization=unified_7d_utilization,
+                                        unified_headers=unified_headers,
+                                        quota_observed_at=quota_observed_at,
                                     )
                                     last_error_status = resp.status
                                     last_error_message = error_message
@@ -862,6 +880,8 @@ class AnthropicProxyService:
                                         useragent_group=useragent_group,
                                         unified_5h_utilization=unified_5h_utilization,
                                         unified_7d_utilization=unified_7d_utilization,
+                                        unified_headers=unified_headers,
+                                        quota_observed_at=quota_observed_at,
                                     )
                                     raise AnthropicProxyError(
                                         resp.status,
@@ -914,6 +934,8 @@ class AnthropicProxyService:
                                         useragent_group=useragent_group,
                                         unified_5h_utilization=unified_5h_utilization,
                                         unified_7d_utilization=unified_7d_utilization,
+                                        unified_headers=unified_headers,
+                                        quota_observed_at=quota_observed_at,
                                     )
                                     last_error_status = 429
                                     last_error_message = "Anthropic response billed extra usage"
@@ -1024,6 +1046,8 @@ class AnthropicProxyService:
                                         useragent_group=useragent_group,
                                         unified_5h_utilization=unified_5h_utilization,
                                         unified_7d_utilization=unified_7d_utilization,
+                                        unified_headers=unified_headers,
+                                        quota_observed_at=quota_observed_at,
                                         usage=usage,
                                         cache_creation_tier=cache_creation_tier,
                                         latency_first_token_ms=latency_first_token_ms,
@@ -1052,6 +1076,8 @@ class AnthropicProxyService:
                                     useragent_group=useragent_group,
                                     unified_5h_utilization=unified_5h_utilization,
                                     unified_7d_utilization=unified_7d_utilization,
+                                    unified_headers=unified_headers,
+                                    quota_observed_at=quota_observed_at,
                                     usage=usage,
                                     cache_creation_tier=cache_creation_tier,
                                     latency_first_token_ms=latency_first_token_ms,
@@ -1097,6 +1123,10 @@ class AnthropicProxyService:
                                 usage=usage,
                                 latency_first_token_ms=latency_first_token_ms,
                                 cache_creation_tier=cache_creation_tier,
+                                unified_headers=unified_headers,
+                                quota_observed_at=quota_observed_at,
+                                unified_5h_utilization=unified_5h_utilization,
+                                unified_7d_utilization=unified_7d_utilization,
                             )
                         )
                         if not streamed_bytes:
@@ -1247,6 +1277,8 @@ class AnthropicProxyService:
         useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
         status = "error"
         error_code = "upstream_error"
+        unified_headers: dict[str, str] | None = None
+        quota_observed_at: datetime | None = None
         try:
             token = await self._fresh_access_token(account)
             url = URL(_upstream_base_url(ANTHROPIC_PROVIDER_NAME).rstrip("/") + path_and_query, encoded=True)
@@ -1266,6 +1298,8 @@ class AnthropicProxyService:
                         allow_redirects=False,
                         auto_decompress=False,
                     ) as resp:
+                        unified_headers = capture_unified_headers(resp.headers)
+                        quota_observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                         raw = await resp.read()
                         result = AnthropicFrameResult(resp.status, raw, _frame_end_to_end_headers(resp.headers))
                     if result.status_code != 401 or attempt == 1:
@@ -1291,6 +1325,14 @@ class AnthropicProxyService:
                 session_id=session_id,
                 useragent=useragent,
                 useragent_group=useragent_group,
+                unified_headers=unified_headers,
+                quota_observed_at=quota_observed_at,
+                unified_5h_utilization=_parse_unified_utilization(
+                    (unified_headers or {}).get("anthropic-ratelimit-unified-5h-utilization")
+                ),
+                unified_7d_utilization=_parse_unified_utilization(
+                    (unified_headers or {}).get("anthropic-ratelimit-unified-7d-utilization")
+                ),
                 request_kind="frame",
             )
         raise AssertionError("Frame retry loop exhausted")
@@ -2089,6 +2131,8 @@ class AnthropicProxyService:
         latency_first_token_ms: int | None = None,
         unified_5h_utilization: float | None = None,
         unified_7d_utilization: float | None = None,
+        unified_headers: dict[str, str] | None = None,
+        quota_observed_at: datetime | None = None,
         request_kind: str = "normal",
     ) -> None:
         # The member lookup adds an await. Keep the log task alive if the client
@@ -2113,6 +2157,8 @@ class AnthropicProxyService:
                 identity=get_request_identity(),
                 unified_5h_utilization=unified_5h_utilization,
                 unified_7d_utilization=unified_7d_utilization,
+                unified_headers=unified_headers,
+                quota_observed_at=quota_observed_at,
                 request_kind=request_kind,
             )
         )
@@ -2153,6 +2199,8 @@ class AnthropicProxyService:
         latency_first_token_ms: int | None = None,
         unified_5h_utilization: float | None = None,
         unified_7d_utilization: float | None = None,
+        unified_headers: dict[str, str] | None = None,
+        quota_observed_at: datetime | None = None,
         identity: RequestIdentity | None = None,
         request_kind: str = "normal",
     ) -> None:
@@ -2181,6 +2229,8 @@ class AnthropicProxyService:
                     provider=provider_name,
                     unified_5h_utilization=unified_5h_utilization,
                     unified_7d_utilization=unified_7d_utilization,
+                    unified_headers=unified_headers,
+                    quota_observed_at=quota_observed_at,
                     transport="http",
                     session_id=session_id,
                     useragent=useragent,
@@ -2235,6 +2285,10 @@ class AnthropicProxyService:
         usage: AnthropicUsage | None,
         latency_first_token_ms: int | None,
         cache_creation_tier: str | None = None,
+        unified_headers: dict[str, str] | None = None,
+        quota_observed_at: datetime | None = None,
+        unified_5h_utilization: float | None = None,
+        unified_7d_utilization: float | None = None,
     ) -> None:
         await self._finalize_api_key_reservation(
             reservation, model=model, usage=usage, cache_creation_tier=cache_creation_tier
@@ -2253,6 +2307,10 @@ class AnthropicProxyService:
             session_id=session_id,
             useragent=useragent,
             useragent_group=useragent_group,
+            unified_headers=unified_headers,
+            quota_observed_at=quota_observed_at,
+            unified_5h_utilization=unified_5h_utilization,
+            unified_7d_utilization=unified_7d_utilization,
             usage=usage,
             latency_first_token_ms=latency_first_token_ms,
         )
@@ -3008,13 +3066,3 @@ def _get_header(headers: Mapping[str, str], name: str) -> str | None:
         if key.lower() == lowered:
             return value
     return None
-
-
-def _parse_unified_utilization(raw: str | None) -> float | None:
-    if raw is None:
-        return None
-    try:
-        value = float(raw)
-    except (ValueError, TypeError, OverflowError):
-        return None
-    return value if math.isfinite(value) and value >= 0 else None
