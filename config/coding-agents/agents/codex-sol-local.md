@@ -8,7 +8,7 @@ tools: [Bash]
 
 Telemetry (desktop-guard-focus, sysctl pressure, process discovery) runs in the lead’s own shell, not this seat; the lead cancels a hung focus-guard snapshot by its exact owned process ID, since desktop-guard-focus has no stop subcommand. The local wrapper captures a bounded host baseline; inside the seat, the PATH snapshot command reads that file and marks it non-live. The lead must compare fresh host telemetry after the seat, never accept the baseline as end-of-run proof.
 
-Repo edits go through seat-run gpt-implementer / seat-exec, never codex-companion --write. The wrapper refuses repo paths outside the lane directory unless --allow-repo-write explicitly overrides the rule.
+Repo edits go through seat-run gpt-implementer / seat-exec, never codex-companion --write. The wrapper refuses --write when cwd is a git checkout unless --allow-repo-write explicitly overrides the rule.
 
 This is a Studio-only Codex forwarding seat, including when `SEAT_EXEC` is set. Always use the foreground local wrapper below. It refuses other hosts, pins nested admission to Studio, and rejects companion background jobs. Never call seat-submit, seat-run, seat-exec or box-exec from this seat.
 
@@ -44,6 +44,8 @@ Never write the contract to a fixed or reused path (the scratchpad is shared by 
 Build the contract text, preserving the brief verbatim, and write it to the fresh unique file with the quoted heredoc above. Add: the planner name from the brief, the output path(s), "do not message other agents, do not read credentials or print secrets, fingerprint or count only", and the return format the brief asks for.
 
 If the plugin or Codex fails, report its exact error and stop; never return nothing. Return stdout including job and thread identifiers. The driver owns acceptance.
+
+Check the first output lines and exit status before reporting running. A refusal or an early non-zero exit is a failed launch: report its stderr immediately and stop. A background tool handle alone is not proof that the worker started.
 
 ## Finish (appended by the launcher; do not remove)
 

@@ -1,6 +1,14 @@
 diff --git a/plugins/codex/scripts/codex-companion.mjs b/plugins/codex/scripts/codex-companion.mjs
 --- a/plugins/codex/scripts/codex-companion.mjs
 +++ b/plugins/codex/scripts/codex-companion.mjs
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env node
+ 
+-import { spawn } from "node:child_process";
++import { spawn, spawnSync } from "node:child_process";
+ import fs from "node:fs";
+ import path from "node:path";
+ import process from "node:process";
 @@ -79,7 +79,7 @@
        "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
        "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
@@ -10,7 +18,7 @@ diff --git a/plugins/codex/scripts/codex-companion.mjs b/plugins/codex/scripts/c
        "  node scripts/codex-companion.mjs transfer [--source <claude-jsonl>] [--json]",
        "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
        "  node scripts/codex-companion.mjs result [job-id] [--json]",
-@@ -154,6 +154,28 @@
+@@ -154,6 +154,17 @@
  
  function resolveCommandWorkspace(options = {}) {
    return resolveWorkspaceRoot(resolveCommandCwd(options));
@@ -18,28 +26,17 @@ diff --git a/plugins/codex/scripts/codex-companion.mjs b/plugins/codex/scripts/c
 +
 +function enforceRepoWriteRule(cwd, prompt, options) {
 +  if (!options.write || options["allow-repo-write"]) return;
-+  const repoRoot = "/Volumes/StudioExt/repos";
-+  const laneRoot = path.join(process.env.HOME ?? "", ".agent-rails", "lanes");
-+  const canonical = (value) => {
-+    const resolved = path.resolve(value);
-+    try { return fs.realpathSync(resolved); } catch { return resolved; }
-+  };
-+  const inside = (value, root) => value === root || value.startsWith(`${root}${path.sep}`);
-+  const lane = process.env.LANE_DIR || process.env.SEAT_LANE_DIR ||
-+    (inside(canonical(cwd), canonical(laneRoot))
-+      ? path.join(laneRoot, path.relative(canonical(laneRoot), canonical(cwd)).split(path.sep)[0])
-+      : null);
-+  const candidates = [cwd, ...(prompt.match(/\/Volumes\/StudioExt\/repos(?![A-Za-z0-9_.-])(?:\/[^\s"'`<>()[\]{},;:]+)?/g) ?? [])];
-+  for (const candidate of candidates) {
-+    const target = canonical(candidate);
-+    if (inside(target, canonical(repoRoot)) && !(lane && inside(target, canonical(lane)))) {
-+      throw new Error(`codex-companion: ${candidate}: repo edits go through seat-run gpt-implementer / seat-exec, never codex-companion --write; use --allow-repo-write only for an explicit override`);
-+    }
++  const repo = spawnSync("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], {
++    encoding: "utf8",
++    env: { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined }
++  });
++  if (repo.status === 0 && repo.stdout.trim() === "true") {
++    throw new Error(`codex-companion: ${cwd}: repo edits go through seat-run gpt-implementer / seat-exec, never codex-companion --write; use --allow-repo-write only for an explicit override`);
 +  }
  }
  
  function sleep(ms) {
-@@ -762,7 +784,7 @@
+@@ -762,7 +773,7 @@
  async function handleTask(argv) {
    const { options, positionals } = parseCommandInput(argv, {
      valueOptions: ["model", "effort", "cwd", "prompt-file"],
@@ -48,7 +45,7 @@ diff --git a/plugins/codex/scripts/codex-companion.mjs b/plugins/codex/scripts/c
      aliasMap: {
        m: "model"
      }
-@@ -780,6 +802,11 @@
+@@ -780,6 +791,11 @@
      throw new Error("Choose either --resume/--resume-last or --fresh.");
    }
    const write = Boolean(options.write);

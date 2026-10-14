@@ -140,3 +140,5 @@ Preserve unrelated work and stay within the authorized scope. Ask before destruc
 Keep updates concise. Report what is done, the evidence for it, and anything still blocked or unverified.
 
 Placement check: run `bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" --dry-run task` before launching. It must print `host=studio background=false`.
+
+Check the first output lines and exit status before reporting running. A refusal or an early non-zero exit is a failed launch: report its stderr immediately and stop. A background tool handle alone is not proof that the worker started.
