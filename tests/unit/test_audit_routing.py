@@ -1,10 +1,11 @@
 
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.audit_routing import fold_units, harness, movements, routing_rows, text_report
+from app.audit_routing import fold_units, harness, merge_units, movements, routing_rows, text_report
 from app.audit_tokens import quota_allocation
 
 
@@ -256,3 +257,31 @@ def test_movement_requires_more_than_quarter_and_ten_samples_in_both_windows():
     )
     assert result[0]["pool"] == "openai"
     assert result[0]["metric"] == "points_per_accepted_piece"
+
+
+def test_studio_merge_counts_branches_refusals_and_vendor(tmp_path):
+    state = tmp_path / "repo/.git/studio-merge"
+    state.mkdir(parents=True)
+    start = datetime(2026, 10, 14, tzinfo=UTC)
+    at = start.timestamp()
+    log = [
+        dict(ok=False, code="conflict", branch="lane/a", at=at + 60),
+        dict(ok=True, branch="lane/a", at=at + 660),
+        dict(ok=True, branch="lane/b", at=at + 120),
+        dict(ok=False, code="mirror_stale", branch="lane/c", at=at + 180),
+        dict(ok=True, branch="lane/old", at=at - 60),
+        dict(ok=False, code="no_branch"),
+    ]
+    (state / "log.jsonl").write_text("".join(json.dumps(row) + "\n" for row in log) + "not json\n")
+    (state / "receipts.jsonl").write_text(json.dumps(dict(branch="lane/b", author_vendor="openai")) + "\n")
+
+    rows = merge_units(start, start + timedelta(days=1), states=str(tmp_path / "*/.git/studio-merge"))
+
+    by_model = {row["model"]: row for row in rows}
+    assert set(by_model) == {"openai", "unknown"}
+    assert all(row["seat"] == "studio_merge:repo" for row in rows)
+    unknown = by_model["unknown"]
+    assert (unknown["pieces"], unknown["accepted"], unknown["fix_rounds"]) == (2, 1, 2)
+    assert unknown["status_counts"] == {"pass": 1, "refused": 1}
+    assert unknown["wall_minutes_per_accepted_piece"] == 10
+    assert (by_model["openai"]["pieces"], by_model["openai"]["accept_rate"]) == (1, 1)

@@ -80,3 +80,26 @@ def test_latency_json_reports_percentiles_per_provider(tmp_path, capsys) -> None
     assert report["upload_admission_rejected"] == 1
     assert {row["account"] for row in report["tables"]["account"]} == {"abcdefgh", "zzzzzzzz"}
     assert all(row["hour"].endswith("Z") for row in report["tables"]["hour"])
+
+
+def test_latency_without_db_reads_the_service_database(tmp_path, monkeypatch, capsys) -> None:
+    import plistlib
+
+    from app.core.config.settings import get_settings
+
+    database = tmp_path / "service.db"
+    _seed(str(database))
+    agents = tmp_path / "Library/LaunchAgents"
+    agents.mkdir(parents=True)
+    with (agents / "com.aneyman.agent-lb.plist").open("wb") as stream:
+        plistlib.dump({"EnvironmentVariables": {"AGENT_LB_DATABASE_URL": f"sqlite:///{database}"}}, stream)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("AGENT_LB_DATABASE_URL")
+    get_settings.cache_clear()
+    try:
+        run(_parse_args(["latency", "--json", "--since", "24h", "--by", "provider"]))
+    finally:
+        get_settings.cache_clear()
+
+    report = json.loads(capsys.readouterr().out)
+    assert {row["provider"]: row["n_rows"] for row in report["tables"]["provider"]} == {"openai": 4, "anthropic": 3}

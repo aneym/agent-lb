@@ -1,10 +1,7 @@
-
-
 from __future__ import annotations
 
 import json
 import math
-import os
 import re
 import sqlite3
 from collections import defaultdict
@@ -25,7 +22,7 @@ def add_parser(subparsers) -> None:
     )
     latency.add_argument("--session", help="List request latencies for a client session ID.")
     latency.add_argument("--json", action="store_true")
-    latency.add_argument("--db", help="Database URL (default: AGENT_LB_DATABASE_URL or settings).")
+    latency.add_argument("--db", help="Database URL (default: AGENT_LB_DATABASE_URL, then the live service database).")
 
 
 def parse_since(value: str, *, until: datetime) -> datetime:
@@ -47,12 +44,9 @@ def parse_since(value: str, *, until: datetime) -> datetime:
 
 
 def database_url(args) -> str:
-    url = args.db or os.environ.get("AGENT_LB_DATABASE_URL")
-    if url:
-        return url
-    from app.core.config.settings import get_settings
+    from app.core.config.service_database import cli_database_url
 
-    return get_settings().database_url
+    return cli_database_url(args.db)
 
 
 def _normalize_url(url: str) -> str:

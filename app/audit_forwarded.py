@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import plistlib
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -26,14 +25,9 @@ def add_parser(commands):
 
 
 def database_url():
-    from app.core.config.settings import get_settings
+    from app.core.config.service_database import cli_database_url
 
-    url = os.environ.get("AGENT_LB_DATABASE_URL") or get_settings().database_url
-    if url.startswith("sqlite"):
-        plist = Path.home() / "Library/LaunchAgents/com.aneyman.agent-lb.plist"
-        if plist.is_file():
-            with plist.open("rb") as stream:
-                url = plistlib.load(stream).get("EnvironmentVariables", {}).get("AGENT_LB_DATABASE_URL", "")
+    url = cli_database_url()
     if not url or not url.startswith(("postgresql://", "postgresql+asyncpg://", "postgresql+psycopg://")):
         raise ValueError("Live PostgreSQL database URL is not resolvable; configure AGENT_LB_DATABASE_URL.")
     return url.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")

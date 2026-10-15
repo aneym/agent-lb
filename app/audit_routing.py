@@ -1,7 +1,6 @@
-
-
 from __future__ import annotations
 
+import glob
 import html
 import json
 import re
@@ -96,6 +95,71 @@ def fold_units(records, agent_points, since, until):
                 points = agent_points.get(f"workflow:{workflow}:{label}", {})
                 for pool, amount in points.items():
                     row["quota_points_by_pool"][pool] = row["quota_points_by_pool"].get(pool, 0) + amount
+    return finish_units(groups)
+
+
+STUDIO_MERGE_STATES = "/Volumes/StudioExt/repos/*/.git/studio-merge"
+
+
+def read_jsonl(path):
+    try:
+        with open(path) as stream:
+            for line in stream:
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(item, dict):
+                    yield item
+    except OSError:
+        return
+
+
+def merge_units(since, until, states=None):
+    start, end = since.timestamp(), until.timestamp()
+    groups = {}
+    for state in sorted({str(Path(found).resolve()) for found in glob.glob(states or STUDIO_MERGE_STATES)}):
+        repo = Path(state).parent.parent.name
+        vendors = {
+            item["branch"]: item.get("author_vendor")
+            for item in read_jsonl(Path(state) / "receipts.jsonl")
+            if item.get("branch") and item.get("author_vendor")
+        }
+        attempts = defaultdict(list)
+        for item in read_jsonl(Path(state) / "log.jsonl"):
+            at, branch = item.get("at"), item.get("branch")
+            if isinstance(at, (int, float)) and branch and start <= at < end:
+                attempts[branch].append((at, item.get("ok") is True, item.get("code")))
+        for branch, tries in attempts.items():
+            tries.sort(key=lambda attempt: attempt[0])
+            merged = next((i for i, attempt in enumerate(tries) if attempt[1]), None)
+            key = (f"studio_merge:{repo}", tokens.safe_label(vendors.get(branch)))
+            row = groups.setdefault(
+                key,
+                dict(
+                    seat=key[0],
+                    model=key[1],
+                    pieces=0,
+                    accepted=0,
+                    status_counts={},
+                    fix_rounds=0,
+                    review_rounds=0,
+                    wall_minutes=0.0,
+                    quota_points_by_pool={},
+                ),
+            )
+            row["pieces"] += 1
+            status = "pass" if merged is not None else "refused"
+            row["accepted"] += merged is not None
+            row["status_counts"][status] = row["status_counts"].get(status, 0) + 1
+            refusals = tries[:merged] if merged is not None else tries
+            row["fix_rounds"] += sum(1 for attempt in refusals if not attempt[1])
+            if merged is not None:
+                row["wall_minutes"] += (tries[merged][0] - tries[0][0]) / 60
+    return finish_units(groups)
+
+
+def finish_units(groups):
     for row in groups.values():
         accepted = row["accepted"]
         row["accept_rate"] = accepted / row["pieces"]
@@ -130,18 +194,43 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
                     else sum(v for k, v in tokens.price_row(event | {"provider": "openai"})[2].items() if k != "output")
                     for event in events
                 )
-                model_agents.setdefault((sid, model), []).append(agent | {"events": events, "weight": weight})
+                first_event = min(events, key=tokens.event_time)
+                start = sum(
+                    first_event.get(k) or 0 for k in ("input_tokens", "cache_read_tokens", "cache_creation_tokens")
+                )
+                model_agents.setdefault((sid, model), []).append(
+                    agent | {"events": events, "weight": weight, "start_tokens": start}
+                )
+    buckets = {}
     for row in rows:
         classes = tokens.token_classes(row)
         count = row.get("requests", 1)
-        value = tokens.empty() | dict(
-            requests=count,
-            tokens=sum(classes.values()),
-            token_classes={k: v * count for k, v in classes.items()},
-            quota_points=row.get("quota_points", 0),
-            quota_5h_points=row.get("quota_5h_points", 0),
+        bucket_key = (
+            row["sid"],
+            row.get("model"),
+            row["provider"],
+            row.get("reasoning_effort"),
+            row.get("useragent_group"),
         )
-        for agent, part in tokens.allocate(value, model_agents.get((row["sid"], row.get("model")), [])):
+        bucket = buckets.get(bucket_key)
+        if bucket is None:
+            bucket = buckets[bucket_key] = dict(
+                row=row,
+                value=tokens.empty(),
+                outputs=[],
+                start=sum(classes[k] for k in ("fresh_input", "cache_read", "cache_write")),
+            )
+        value = bucket["value"]
+        value["requests"] += count
+        value["tokens"] += sum(classes.values())
+        value["quota_points"] += row.get("quota_points", 0)
+        value["quota_5h_points"] += row.get("quota_5h_points", 0)
+        for name, amount in classes.items():
+            value["token_classes"][name] += amount * count
+        bucket["outputs"].append(classes["output"])
+    for bucket in buckets.values():
+        row = bucket["row"]
+        for agent, part in tokens.allocate(bucket["value"], model_agents.get((row["sid"], row.get("model")), [])):
             seat = agent["seat"]
             if seat == "lead" and row["provider"] == "openai":
                 seat = (
@@ -166,15 +255,10 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
             if part["requests"] <= 0:
                 continue
             identities[key].add(identity)
-            events = agent.get("events", [])
-            start_tokens = sum(classes[k] for k in ("fresh_input", "cache_read", "cache_write"))
-            if events:
-                event = min(events, key=lambda e: tokens.event_time(e))
-                start_tokens = sum(
-                    event.get(k) or 0 for k in ("input_tokens", "cache_read_tokens", "cache_creation_tokens")
-                )
-            first.setdefault((key, identity), start_tokens)
-            outputs[key].append(classes["output"])
+            if (key, identity) not in first:
+                start_tokens = agent.get("start_tokens")
+                first[(key, identity)] = bucket["start"] if start_tokens is None else start_tokens
+            outputs[key].extend(bucket["outputs"])
             workflow_key = agent["key"].removesuffix(" review")
             agent_points[workflow_key][row["provider"]] += part["quota_points"]
     for item in (quota or {}).get("unattributed", []):
@@ -260,12 +344,13 @@ def report_for(args, since, until):
     return dict(
         window=dict(since=since.isoformat(), until=until.isoformat()),
         rows=grouped,
-        fold=fold_units(records, points, since, until),
+        fold=fold_units(records, points, since, until) + merge_units(since, until),
         quota=quota,
         notes=notes
         + [
             "Quota allocated by receipt audit input-side weights; unallocated intervals remain explicit.",
             "Fold points include all matched stages in this window, not lifetime costs outside the window.",
+            "studio_merge rows count branches tried in the window; fix rounds are refusals before the merge.",
             "n < 10 is provisional and never flagged.",
         ],
     )
@@ -302,8 +387,7 @@ def text_report(report):
         lines.append(
             f"{row['seat']} / {row['model']} | {row['pieces']} | {row['accepted']} | "
             f"{row['accept_rate']:.1%} | {seat_rate} | {row['fix_rounds']} | {row['review_rounds']} | "
-            f"{wall_text} | {points_text}"
-            + (" (provisional)" if row["provisional"] else "")
+            f"{wall_text} | {points_text}" + (" (provisional)" if row["provisional"] else "")
         )
     lines += ["\nMOVED"] + [json.dumps(m) for m in report.get("moved", [])]
     if not report.get("moved"):
