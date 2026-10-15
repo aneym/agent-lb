@@ -9,7 +9,14 @@ REPO_DIR="$(realpath "$REPO_DIR")"
 LAUNCHER="$REPO_DIR/clients/claude-lb-launch"
 TARGET_HOME="${CLAUDE_DESKTOP_PROXY_HOME:-$HOME}"
 PORT="${CLAUDE_DESKTOP_PROXY_PORT:-2458}"
-UPSTREAM="${CLAUDE_DESKTOP_PROXY_UPSTREAM:-http://127.0.0.1:2455}"
+LOCAL_LB_PLIST="$TARGET_HOME/Library/LaunchAgents/com.aneyman.agent-lb.plist"
+if [[ -n "${CLAUDE_DESKTOP_PROXY_UPSTREAM:-}" ]]; then
+  UPSTREAM="$CLAUDE_DESKTOP_PROXY_UPSTREAM"
+elif [[ -e "$LOCAL_LB_PLIST" ]]; then
+  UPSTREAM="http://127.0.0.1:2455"
+else
+  UPSTREAM="https://studio.tailf266ac.ts.net:2455"
+fi
 PYTHON_BIN="${CLAUDE_DESKTOP_PROXY_PYTHON:-$(command -v python3 || true)}"
 PLIST="$TARGET_HOME/Library/LaunchAgents/$LABEL.plist"
 STATE_DIR="$TARGET_HOME/.agent-lb"

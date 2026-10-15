@@ -5,6 +5,7 @@ import importlib.util
 import os
 import re
 import socket
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -1575,3 +1576,34 @@ def test_connect_valid_domain_logs_validated_target(monkeypatch, capsys):
     launcher._tunnel_logs.join()
     assert reply.startswith(b"HTTP/1.1 502")
     assert "connect example.com:443 failed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("platform", "local_lb_installed", "expected"),
+    [
+        ("darwin", False, [("remote", "https://studio.tailf266ac.ts.net:2455")]),
+        ("darwin", True, [("local", "http://127.0.0.1:2455")]),
+        ("linux", False, [("local", "http://127.0.0.1:2455")]),
+    ],
+)
+def test_mac_without_local_lb_goes_straight_to_studio(
+    monkeypatch, tmp_path, platform, local_lb_installed, expected
+) -> None:
+    agents = tmp_path / "Library" / "LaunchAgents"
+    agents.mkdir(parents=True)
+    if local_lb_installed:
+        (agents / "com.aneyman.agent-lb.plist").write_text("")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for name in (
+        "CLAUDE_LB_LOCAL_URL",
+        "CLAUDE_LB_BASE_URL",
+        "CLAUDE_LB_PREFER_REMOTE",
+        "CLAUDE_LB_LOCAL_PREFER",
+        "CLAUDE_LB_LAUNCHD_LABEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(sys, "platform", platform)
+    launcher = load_launcher_module()
+
+    assert launcher._lb_candidates() == expected
+    assert launcher.AGENT_LB_BASE_URL == expected[0][1]

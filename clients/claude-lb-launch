@@ -198,7 +198,22 @@ def stand_in_banner() -> str:
     return f"stand-in: {_safe_tag(intent)}" + (f" ({_safe_tag(lane)})" if lane else " (lane: none)")
 
 
-AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
+LOCAL_LB_URL = "http://127.0.0.1:2455"
+STUDIO_LB_URL = "https://studio.tailf266ac.ts.net:2455"
+
+
+def remote_only_mac() -> bool:
+    if sys.platform != "darwin" or os.environ.get("CLAUDE_LB_LOCAL_URL"):
+        return False
+    label = os.environ.get("CLAUDE_LB_LAUNCHD_LABEL") or "com.aneyman.agent-lb"
+    return not (Path.home() / "Library" / "LaunchAgents" / f"{label}.plist").exists()
+
+
+def default_remote_url() -> str:
+    return STUDIO_LB_URL if remote_only_mac() else LOCAL_LB_URL
+
+
+AGENT_LB_BASE_URL = (os.environ.get("CLAUDE_LB_BASE_URL") or default_remote_url()).rstrip("/")
 CCGPT_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
 CCGPT_MODEL = "sol-latest"
 # agent-lb resolves GPT names against its served model list (any gpt-* slug or a
@@ -1459,9 +1474,9 @@ def _lb_candidates() -> list[tuple[str, str]]:
     pre-federation single-URL behavior driven solely by CLAUDE_LB_BASE_URL.
     """
     # Empty-string env values count as unset (an empty base URL crashes urllib).
-    local_url = (os.environ.get("CLAUDE_LB_LOCAL_URL") or "http://127.0.0.1:2455").rstrip("/")
-    remote_url = (os.environ.get("CLAUDE_LB_BASE_URL") or "http://127.0.0.1:2455").rstrip("/")
-    prefer_local = os.environ.get("CLAUDE_LB_LOCAL_PREFER") != "0"
+    local_url = (os.environ.get("CLAUDE_LB_LOCAL_URL") or LOCAL_LB_URL).rstrip("/")
+    remote_url = (os.environ.get("CLAUDE_LB_BASE_URL") or default_remote_url()).rstrip("/")
+    prefer_local = os.environ.get("CLAUDE_LB_LOCAL_PREFER") != "0" and not remote_only_mac()
     prefer_remote = os.environ.get("CLAUDE_LB_PREFER_REMOTE") == "1"
 
     candidates: list[tuple[str, str]] = []

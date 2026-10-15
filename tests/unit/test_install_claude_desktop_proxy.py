@@ -78,7 +78,8 @@ def _test_environment(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
     bin_dir = tmp_path / "bin"
     state = tmp_path / "state"
     call_log = tmp_path / "calls.log"
-    home.mkdir()
+    (home / "Library" / "LaunchAgents").mkdir(parents=True)
+    (home / "Library" / "LaunchAgents" / "com.aneyman.agent-lb.plist").write_text("")
     bin_dir.mkdir()
     state.mkdir()
     for name, body in (
@@ -114,6 +115,8 @@ def _run(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
 
 def test_print_is_non_mutating_and_describes_dedicated_launch_agent(tmp_path: Path) -> None:
     home = tmp_path / "missing-home"
+    (home / "Library" / "LaunchAgents").mkdir(parents=True)
+    (home / "Library" / "LaunchAgents" / "com.aneyman.agent-lb.plist").write_text("")
     env = {
         **os.environ,
         "CLAUDE_DESKTOP_PROXY_HOME": str(home),
@@ -123,7 +126,11 @@ def test_print_is_non_mutating_and_describes_dedicated_launch_agent(tmp_path: Pa
     result = _run(env, "--print")
 
     assert result.returncode == 0, result.stderr
-    assert not home.exists()
+    assert sorted(path.relative_to(home) for path in home.rglob("*")) == [
+        Path("Library"),
+        Path("Library/LaunchAgents"),
+        Path("Library/LaunchAgents/com.aneyman.agent-lb.plist"),
+    ]
     assert "Preview only; no files or processes will be changed." in result.stderr
     assert f"LaunchAgent: {LABEL}" in result.stderr
     assert "Proxy: http://127.0.0.1:2458 -> http://127.0.0.1:2455" in result.stderr
@@ -312,3 +319,19 @@ def test_uninstall_conditionally_restores_owned_values_and_preserves_user_edits(
     assert not _backup_path(home).exists()
     assert not _plist_path(home).exists()
     assert not state.joinpath("loaded").exists()
+
+
+def test_print_targets_studio_when_mac_has_no_local_lb(tmp_path: Path) -> None:
+    home = tmp_path / "remote-only-home"
+    env = {
+        **os.environ,
+        "CLAUDE_DESKTOP_PROXY_HOME": str(home),
+        "CLAUDE_DESKTOP_PROXY_PYTHON": sys.executable,
+    }
+    env.pop("CLAUDE_DESKTOP_PROXY_UPSTREAM", None)
+
+    result = _run(env, "--print")
+
+    assert result.returncode == 0, result.stderr
+    assert "Proxy: http://127.0.0.1:2458 -> https://studio.tailf266ac.ts.net:2455" in result.stderr
+    assert plistlib.loads(result.stdout.encode())["ProgramArguments"][-1] == "https://studio.tailf266ac.ts.net:2455"
