@@ -55,6 +55,12 @@ Alex, 2026-10-14 ~21:00 ET: "opus must ALWAYS be the architect and design - even
 - **UI-critical, contract and trust-boundary code goes to opus-seat,** even while quota is tight.
 - **Scope and design lane leads default to `opus-latest`.**
 
+Alex, 2026-10-14 ~21:10 ET: "yes remember sol does NO WIRITNG ORARCHITECTURE THINKING ever. only astra reviews and gives feedback on architecture. opus is the mmain brain."
+- **Lane leads that make decisions run `opus-latest`, not Sol.**
+- **Sol only implements code to an Opus spec.**
+- **Sol writes no scopes, specs, contracts, docs, research synthesis or rulings.**
+- **Architecture review is `astra-consult` only,** never `sol-consult`.
+
 ## Model ladder and seats (2026-09-30; updated 2026-10-13)
 
 Best first, and only Claude is precious; use family aliases (`route resolve <alias>`). Alex, 2026-09-30: "use things up that are best always first, using fallbacks when we need to ... the only precious thing i think is claude usage".
@@ -68,8 +74,8 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 | Read-only exploration | gpt-explorer | sol-latest low |
 | Review, on request only (non-Claude author) | verifier (Sonnet) | off while quota is tight (2026-10-13); use codex-verifier on sol-latest |
 | Review, on request only (Claude author) | codex-verifier | sol-latest xhigh |
-| Plan second opinion | sol-consult; astra-consult light (one per plan, brief under 2k tokens) | sol-latest high for both while quota is tight (2026-10-13) |
-| Plans, specs, verdicts, design | Opus; fable-orchestrator | sol-latest for workflow agents; fable-orchestrator off while quota is tight (2026-10-13) |
+| Plan and architecture second opinion | astra-consult (one per plan, brief under 2k tokens) | astra-latest high; never sol-consult (2026-10-14) |
+| Plans, specs, verdicts, design | Opus; fable-orchestrator | opus-latest, never Sol (2026-10-14); fable-orchestrator off while quota is tight (2026-10-13) |
 | Tabs Alex talks to, leads, orchestrators | Opus tab; full-tier ultracode on; workflow helpers on Sol | opus-latest medium for top-level tabs and workflow orchestrators; sol-latest for helpers |
 | Remote-machine relay (batch templates) | host-relay | sol-latest low |
 
@@ -87,7 +93,7 @@ Available optional seat: `muse-seat` via `muse-seat-local` on Studio, Muse Code 
 
 ## Plans and slices (2026-09-26; updated 2026-10-08)
 
-Opus plans and asks `sol-consult` before splitting complex or risky work. Every slice names its files, fixed interfaces and one check, which is one user scenario on one vertical path; the seat runs it while writing and the harness reruns it on main after merge (2026-10-07). A decision the check cannot back stays on Opus. Start independent slices together; an open product call gets a seam with a reasonable default (2026-09-28). An incident fix ships with the check that catches it next time (2026-09-26).
+Opus plans and asks `astra-consult` before splitting complex or risky work. Every slice names its files, fixed interfaces and one check, which is one user scenario on one vertical path; the seat runs it while writing and the harness reruns it on main after merge (2026-10-07). A decision the check cannot back stays on Opus. Start independent slices together; an open product call gets a seam with a reasonable default (2026-09-28). An incident fix ships with the check that catches it next time (2026-09-26).
 Tests: load the test-audit skill first, prefer e2e, then integration without mocks of our own code, then golden; never thin a test that guards a kept floor (2026-10-07).
 
 ## Capacity and placement (2026-10-05; updated 2026-10-12)
