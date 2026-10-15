@@ -6,6 +6,7 @@ import json
 import re
 from bisect import bisect_right
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from statistics import median
@@ -363,8 +364,22 @@ def report_for(args, since, until):
         row.update(quota_points=points["weekly"], quota_5h_points=points["5h"])
     index = tokens.session_index()
     sessions = {row["sid"] for row in rows}
-    metas = {sid: tokens.metadata(index.get(sid)) for sid in sessions}
-    agents = {sid: tokens.session_agents(index.get(sid), since, until) for sid in sessions}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        loaded = dict(
+            zip(
+                sessions,
+                pool.map(
+                    lambda sid: (
+                        tokens.metadata(index.get(sid)),
+                        tokens.session_agents(index.get(sid), since, until),
+                    ),
+                    sessions,
+                ),
+                strict=True,
+            )
+        )
+    metas = {sid: meta for sid, (meta, _) in loaded.items()}
+    agents = {sid: found for sid, (_, found) in loaded.items()}
     grouped, points = routing_rows(rows, agents, metas, quota)
     records = []
     for path in (Path.home() / ".claude/projects").glob("*/*/workflows/wf_*.json"):
