@@ -16,6 +16,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+DESCRIPTION = 'Parity fixture for hook-dispatch.py: the per-hook config and the dispatcher give Claude Code the same answers.'
+
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DEFAULT_TIMEOUT = 600.0
 PATH_REF = re.compile(r'(?:\$HOME|~)/([^\s"\'$`\\;&|<>(){}]+)')
@@ -1320,7 +1322,7 @@ def timing_only(case):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--home", default=os.path.expanduser("~"))
     parser.add_argument("--registry")
     parser.add_argument("--dispatcher")
