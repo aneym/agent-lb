@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import hashlib
@@ -227,10 +225,21 @@ def prompt_text(content):
     return content
 
 
-def transcript_digest(path):
+DIGESTS = {}
 
+
+def transcript_digest(path):
     stat = path.stat()
     signature = [str(path), stat.st_size, stat.st_mtime_ns, RULE_PATH.stat().st_mtime_ns, 8]
+    memo = DIGESTS.get(str(path))
+    if memo is not None and memo[0] == signature:
+        return memo[1]
+    digest = read_digest(path, signature)
+    DIGESTS[str(path)] = (signature, digest)
+    return digest
+
+
+def read_digest(path, signature):
     cache = Path.home() / ".agent-lb/audit/transcript-cache" / (hashlib.sha1(str(path).encode()).hexdigest() + ".json")
     try:
         cached = json.loads(cache.read_text())
@@ -251,7 +260,6 @@ def transcript_digest(path):
     events_by_id, tools_by_id, seen_tools = {}, defaultdict(list), set()
     with path.open() as stream:
         for line in stream:
-
             if not any(
                 marker in line
                 for marker in (
@@ -577,7 +585,15 @@ def quota_allocation(rows, snapshots, since, until):
     with (RULE_PATH.parent / "openai_quota_weights.toml").open("rb") as stream:
         openai_weights = tomllib.load(stream)
 
+    weights_by_row = {}
+
     def row_weight(row):
+        weight = weights_by_row.get(id(row))
+        if weight is None:
+            weight = weights_by_row[id(row)] = receipt_weight(row)
+        return weight
+
+    def receipt_weight(row):
         tokens = token_classes(row)
         if row["provider"] == "openai":
             return (
@@ -693,7 +709,6 @@ def quota_allocation(rows, snapshots, since, until):
             previous = stamp
             previous_used = current_used
         if provider == "openai":
-
             for stamp, delta in quota_bins.items():
                 candidates = receipt_bins[stamp]
                 weights = [row_weight(row) for _, row in candidates]
@@ -709,10 +724,13 @@ def quota_allocation(rows, snapshots, since, until):
                     missing.append(
                         {"provider": provider, "account_id": account, "window": window_name, "points": delta}
                     )
+        bin_weights = {
+            stamp: sum(row_weight(row) for _, row in candidates) for stamp, candidates in receipt_bins.items()
+        }
         for hours in (1, 3, 6):
             bins = defaultdict(lambda: [0.0, 0.0])
-            for stamp, candidates in receipt_bins.items():
-                bins[bin_start(stamp, hours)][0] += sum(row_weight(row) for _, row in candidates)
+            for stamp, weight in bin_weights.items():
+                bins[bin_start(stamp, hours)][0] += weight
             for stamp, delta in quota_bins.items():
                 bins[bin_start(stamp, hours)][1] += delta
             binned_calibration[(provider, window_name, hours)].extend(
@@ -904,7 +922,6 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
         waste["premium_usd"] += premium
         agent_key = (sid, lane, seat, key)
         merge(waste["agents"][agent_key], value)
-
 
     for sid, agents in agents_by_session.items():
         indexed = row_index.get(sid, [])
@@ -1422,6 +1439,5 @@ def run(args):
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from None
     except Exception as exc:
-
         message = f"Token audit failed ({type(exc).__name__}); check local inputs and database availability."
         raise SystemExit(message) from None

@@ -1,11 +1,17 @@
-
-
 import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.audit_routing import fold_units, harness, merge_units, movements, routing_rows, text_report
+from app.audit_routing import (
+    fold_units,
+    harness,
+    merge_units,
+    movements,
+    routing_rows,
+    text_report,
+    weighted_median,
+)
 from app.audit_tokens import quota_allocation
 
 
@@ -195,9 +201,7 @@ def test_fold_seat_accept_rate_excludes_only_infra_faults(statuses, seat_rate):
     ],
 )
 def test_text_report_formats_fold_costs_and_unattributed_rows(wall, points, expected):
-    rows, _ = routing_rows(
-        [], {}, {}, {"unattributed": [dict(provider="anthropic", window="weekly", points=5)]}
-    )
+    rows, _ = routing_rows([], {}, {}, {"unattributed": [dict(provider="anthropic", window="weekly", points=5)]})
     fold = dict(
         seat="builder",
         model="sol",
@@ -285,3 +289,19 @@ def test_studio_merge_counts_branches_refusals_and_vendor(tmp_path):
     assert unknown["status_counts"] == {"pass": 1, "refused": 1}
     assert unknown["wall_minutes_per_accepted_piece"] == 10
     assert (by_model["openai"]["pieces"], by_model["openai"]["accept_rate"]) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    ("parts", "expected"),
+    [
+        ([], 0),
+        ([([], 2)], 0),
+        ([([5], 1)], 5),
+        ([([1, 9], 1)], 5),
+        ([([1, 2], 3), ([10], 1)], 2),
+        ([([1], 1), ([4], 1), ([2, 3], 1)], 2.5),
+        ([([0, 0, 7], 2), ([3], 1)], 0),
+    ],
+)
+def test_weighted_median_matches_the_expanded_median(parts, expected):
+    assert weighted_median(parts) == expected

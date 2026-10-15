@@ -4,6 +4,7 @@ import glob
 import html
 import json
 import re
+from bisect import bisect_right
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -175,10 +176,31 @@ def finish_units(groups):
     return sorted(groups.values(), key=lambda r: (r["seat"], r["model"]))
 
 
+def weighted_median(parts):
+    total = sum(len(values) * weight for values, weight in parts)
+    if not total:
+        return 0
+
+    def kth(k):
+        low = min(values[0] for values, _ in parts if values)
+        high = max(values[-1] for values, _ in parts if values)
+        while low < high:
+            middle = (low + high) // 2
+            if sum(bisect_right(values, middle) * weight for values, weight in parts) > k:
+                high = middle
+            else:
+                low = middle + 1
+        return low
+
+    if total % 2:
+        return kth(total // 2)
+    return (kth(total // 2 - 1) + kth(total // 2)) / 2
+
+
 def routing_rows(rows, agents_by_session, metas, quota=None):
     groups, agent_points = {}, defaultdict(lambda: defaultdict(float))
     first = {}
-    outputs = defaultdict(list)
+    outputs = defaultdict(lambda: defaultdict(int))
     clients = defaultdict(set)
     identities = defaultdict(set)
     model_agents = {}
@@ -188,19 +210,24 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
             for event in agent.get("events", []):
                 by_model[event.get("model")].append(event)
             for model, events in by_model.items():
-                weight = sum(
-                    tokens.input_cost(event)
-                    if tokens.anthropic_price(model or "")
-                    else sum(v for k, v in tokens.price_row(event | {"provider": "openai"})[2].items() if k != "output")
-                    for event in events
-                )
                 first_event = min(events, key=tokens.event_time)
                 start = sum(
                     first_event.get(k) or 0 for k in ("input_tokens", "cache_read_tokens", "cache_creation_tokens")
                 )
-                model_agents.setdefault((sid, model), []).append(
-                    agent | {"events": events, "weight": weight, "start_tokens": start}
-                )
+                model_agents.setdefault((sid, model), []).append(agent | {"events": events, "start_tokens": start})
+    for (_, model), shared in model_agents.items():
+        anthropic = tokens.anthropic_price(model or "")
+
+        def cost(event):
+            if anthropic:
+                return tokens.input_cost(event)
+            return sum(v for k, v in tokens.price_row(event | {"provider": "openai"})[2].items() if k != "output")
+
+        if len(shared) == 1:
+            shared[0]["weight"] = 1.0 if any(cost(event) > 0 for event in shared[0]["events"]) else 0.0
+            continue
+        for agent in shared:
+            agent["weight"] = sum(cost(event) for event in agent["events"])
     buckets = {}
     for row in rows:
         classes = tokens.token_classes(row)
@@ -258,7 +285,7 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
             if (key, identity) not in first:
                 start_tokens = agent.get("start_tokens")
                 first[(key, identity)] = bucket["start"] if start_tokens is None else start_tokens
-            outputs[key].extend(bucket["outputs"])
+            outputs[key][id(bucket)] += 1
             workflow_key = agent["key"].removesuffix(" review")
             agent_points[workflow_key][row["provider"]] += part["quota_points"]
     for item in (quota or {}).get("unattributed", []):
@@ -268,6 +295,10 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
         )
         field = "quota_points" if item["window"] == "weekly" else "quota_5h_points"
         summary[field] += item["points"]
+    by_bucket = {id(bucket): sorted(bucket["outputs"]) for bucket in buckets.values()}
+    starts = defaultdict(list)
+    for (key, _), value in first.items():
+        starts[key].append(value)
     result = []
     for key, row in groups.items():
         classes = row["token_classes"]
@@ -276,8 +307,8 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
             useragent_groups=sorted(clients[key]),
             agents=len(identities[key]),
             cache_hit_rate=classes["cache_read"] / input_total if input_total else 0,
-            median_start_tokens=median([v for (k, _), v in first.items() if k == key]) if identities[key] else 0,
-            median_output_per_request=median(outputs[key]) if outputs[key] else 0,
+            median_start_tokens=median(starts[key]) if identities[key] else 0,
+            median_output_per_request=weighted_median([(by_bucket[ref], times) for ref, times in outputs[key].items()]),
             points_per_request=row["quota_points"] / row["requests"] if row["requests"] else None,
             provisional=row["requests"] < 10,
         )
