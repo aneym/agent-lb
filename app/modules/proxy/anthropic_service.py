@@ -98,6 +98,9 @@ _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 
 _FABLE_SCOPED_FRESH_SECONDS = 21600
 _ANTHROPIC_PLANNER_MODEL_ALIAS = "claude-planner"
+_FRAME_UNAVAILABLE_STATUSES = frozenset(
+    {AccountStatus.PAUSED, AccountStatus.REAUTH_REQUIRED, AccountStatus.EXCHANGE_UNCERTAIN, AccountStatus.DEACTIVATED}
+)
 
 _ANTHROPIC_PLANNER_MODEL = "claude-opus-5-5"
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
@@ -1232,14 +1235,7 @@ class AnthropicProxyService:
     ) -> AnthropicFrameResult:
         normalized_headers = {key.lower(): value for key, value in inbound_headers.items()}
         session_id = _anthropic_session_header(inbound_headers) or normalized_headers.get("x-agent-lb-seat")
-        quota_key = "anthropic_top_thinking"
-        account = await self._select_account(
-            _ANTHROPIC_PLANNER_MODEL,
-            provider_name=ANTHROPIC_PROVIDER_NAME,
-            exclude_account_ids=set(),
-            sticky_key=f"claude:{quota_key}:session:{_hash_for_key(session_id)}" if session_id else None,
-            quota_key=quota_key,
-        )
+        account = await self._frame_account()
         started_at = time.monotonic()
         useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
         status = "error"
@@ -1433,6 +1429,25 @@ class AnthropicProxyService:
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             return upstream_body.post_json(session, url, json_body=json_body, headers=headers, timeout=timeout)
         return session.post(url, json=json_body, headers=headers, timeout=timeout)
+
+    async def _frame_account(self) -> Account:
+        account_id = get_settings().anthropic_frame_account_id
+        async with self._repo_factory() as repos:
+            account = await repos.accounts.get_by_id(account_id)
+            if account is not None:
+                repos.accounts.session.expunge(account)
+        if (
+            account is None
+            or account.provider != ANTHROPIC_PROVIDER_NAME
+            or account.status in _FRAME_UNAVAILABLE_STATUSES
+        ):
+            raise AnthropicProxyError(
+                503,
+                f"Frame account {account_id} is unavailable; set AGENT_LB_ANTHROPIC_FRAME_ACCOUNT_ID "
+                "to an active Anthropic account that owns the artifact.",
+                code="frame_account_unavailable",
+            )
+        return account
 
     async def _select_account(
         self,

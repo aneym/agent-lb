@@ -22,7 +22,7 @@ pytestmark = pytest.mark.unit
 async def test_frame_route_uses_pool_bearer_and_fixed_upstream(monkeypatch, status):
     service = object.__new__(AnthropicProxyService)
     account = SimpleNamespace(id="fixture-account")
-    service._select_account = AsyncMock(return_value=account)
+    service._frame_account = AsyncMock(return_value=account)
     service._fresh_access_token = AsyncMock(side_effect=["fixture-pool-token", "fixture-refreshed-token"])
     service._persist_request_log = AsyncMock()
     calls = []
@@ -80,9 +80,7 @@ async def test_frame_route_uses_pool_bearer_and_fixed_upstream(monkeypatch, stat
     assert kwargs["headers"]["x-frame-client-version"] == "2.1.296"
     assert kwargs["headers"]["x-claude-session-id"] == "fixture-session"
     assert kwargs["headers"]["x-agent-lb-seat"] == "fixture-seat"
-    service._select_account.assert_awaited_once()
-    assert service._select_account.await_args.kwargs["provider_name"] == "anthropic"
-    assert service._select_account.await_args.kwargs["sticky_key"] is not None
+    service._frame_account.assert_awaited_once()
     if status == 401:
         assert len(calls) == 2
         retry_method, retry_url, retry_kwargs = calls[1]
@@ -106,7 +104,7 @@ async def test_frame_route_uses_pool_bearer_and_fixed_upstream(monkeypatch, stat
 @pytest.mark.asyncio
 async def test_frame_network_error_has_safe_response(monkeypatch):
     service = object.__new__(AnthropicProxyService)
-    service._select_account = AsyncMock(return_value=SimpleNamespace(id="fixture"))
+    service._frame_account = AsyncMock(return_value=SimpleNamespace(id="fixture"))
     service._fresh_access_token = AsyncMock(return_value="fixture-token")
     service._persist_request_log = AsyncMock()
 

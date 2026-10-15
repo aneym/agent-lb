@@ -194,6 +194,7 @@ class Settings(BaseSettings):
     anthropic_first_byte_timeout_seconds: float = Field(default=180.0, ge=0)
     anthropic_stream_idle_timeout_seconds: float = Field(default=300.0, ge=0)
     sse_keepalive_interval_seconds: float = Field(default=10.0, ge=0)
+    anthropic_frame_account_id: str = "2c436b54-a7e2-4299-9d6b-689ad2dda8cb"
     proxy_downstream_websocket_idle_timeout_seconds: float = Field(default=120.0, gt=0)
 
 
