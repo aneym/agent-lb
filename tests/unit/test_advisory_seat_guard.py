@@ -268,3 +268,13 @@ def test_implementer_brief_without_needs_line_warns_once_at_dispatch(tmp_path: P
         assert "no NEEDS line" not in output.get("additionalContext", "") and "needs_missing" not in record
     output, record = needs_dispatch(tmp_path, brief, subagent="gpt-explorer")
     assert "needs_missing" not in record
+
+
+def test_scope_brief_on_a_sol_seat_warns_in_one_line_and_still_runs(tmp_path: Path) -> None:
+    output, record = needs_dispatch(tmp_path, "Write the scope for the billing piece.", subagent="codex-sol")
+    assert "permissionDecision" not in output and record["brief_on_sol"] is True
+    assert "default to opus-latest" in output["additionalContext"] and "\n" not in output["additionalContext"]
+    output, record = needs_dispatch(tmp_path, "Write the scope for the billing piece.", subagent="opus-seat")
+    assert "brief_on_sol" not in record
+    output, record = needs_dispatch(tmp_path, "Implement slice 3 to the spec.", subagent="gpt-implementer")
+    assert "brief_on_sol" not in record

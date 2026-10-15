@@ -45,6 +45,15 @@ AGENT_MODEL = re.compile(r"^model:\s*(\S+)\s*$", re.MULTILINE)
 DEFAULT_RETIRED = ("claude-fable-*", "fable", "claude-planner", "gpt-*-astra", "gpt-*-astra-*", "gpt-5.6*", "gpt-5.5*")
 DEFAULT_BLOCKED = ("claude-planner", "gpt-5.4*", "gpt-5-*", "gpt-5")
 
+BRIEF_CLASSES = {"scope", "spec", "contract", "design"}
+BRIEF = re.compile(
+    r"\b(?:write|draft|author|produce|rewrite)\s+(?:the\s+|a\s+|an\s+|this\s+|its\s+)?(?:[\w-]+\s+)?"
+    r"(?:scopes?|specs?|specifications?|contracts?|design\s+(?:briefs?|specs?|docs?))\b"
+    r"|\b(?:scope|spec|contract|design)\s+brief\b",
+    re.IGNORECASE,
+)
+SOL_SEATS = {"codex-sol", "gpt-implementer", "sol-consult", "gpt-explorer", "luna-implementer"}
+SOL_MODEL = re.compile(r"(?:^|[-/_])(?:sol|luna|gpt)(?:$|[-_.\d])", re.IGNORECASE)
 MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 
 
@@ -80,6 +89,21 @@ def emit_warning(reason: str) -> None:
             }
         )
     )
+
+
+def emit_context(text: str) -> None:
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": text}}))
+
+
+def is_brief(prompt: str) -> bool:
+    tag = CLASS_TAG.match(prompt)
+    if tag:
+        return tag.group(1).lower() in BRIEF_CLASSES
+    return bool(BRIEF.search(prompt[:600]))
+
+
+def sol_choice(subagent: str, model: str) -> bool:
+    return subagent in SOL_SEATS or bool(model and SOL_MODEL.search(model))
 
 
 def retired_patterns(table: Path, subagent: str = "") -> tuple:
@@ -343,8 +367,17 @@ def main() -> None:
             advisories.append(capacity_advisory)
     elif requires_snapshot:
         record["anthropic_override"] = True
+    brief_on_sol = is_brief(prompt) and sol_choice(subagent, model)
+    if brief_on_sol:
+        record["brief_on_sol"] = True
     if not append(record, ledger):
         emit_advisory("could not record routing telemetry; dispatch was not blocked")
+    elif brief_on_sol:
+        emit_context(
+            "seat-guard warning: scope, spec, contract and design briefs default to opus-latest "
+            "(models.md 2026-10-14); this Sol dispatch still runs."
+            + (" Capacity: " + "; ".join(advisories) + "." if advisories else "")
+        )
     elif advisories:
         emit_advisory("; ".join(advisories))
 
