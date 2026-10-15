@@ -502,3 +502,22 @@ def test_stall_does_not_claim_route_for_resume(monkeypatch, tmp_path):
     )
 
     assert launcher.run_headless_with_resume(["claude", "-p", "hello"], ["-p", "hello"], "test", "opus", "weekly") == 75
+
+
+def test_busy_session_does_not_scan_process_table_every_second(monkeypatch, tmp_path):
+    launcher = load_launcher_module()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "ps-calls"
+    fake_ps = bin_dir / "ps"
+    fake_ps.write_text(f'#!/bin/sh\necho x >> "{calls}"\nexec /bin/ps "$@"\n')
+    fake_ps.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    activity = tmp_path / "busy.activity"
+    activity.write_text(f"0 {time.time()}\n")
+
+    assert launcher.run_supervised(
+        [sys.executable, "-c", "import time; time.sleep(4)"], activity, 60.0,
+    ) == 0
+
+    assert not calls.exists()

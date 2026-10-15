@@ -237,6 +237,7 @@ EXIT_TEMPFAIL = 75
 SHIM_START_TIMEOUT_DEFAULT = 90.0
 STALL_TIMEOUT_DEFAULT = 300.0
 STALL_STARTUP_GRACE = 30.0
+WORK_PROCESS_POLL_SECONDS = 30.0
 # The retry budget (~2 minutes with these defaults) must outlast a full
 # watchdog-driven LB recovery: an unloaded launchd job is re-bootstrapped
 # within ~65s (2 x 30s ticks + startup), so a session mid-request rides the
@@ -2331,6 +2332,9 @@ def run_supervised(
     last_life = start
     session_dir = None
     next_lookup = start
+    work_seen = False
+    work_interval = min(WORK_PROCESS_POLL_SECONDS, stall_timeout / 4)
+    next_work_check = start
     if session_id is not None:
         projects = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
         session_dir = projects / re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())
@@ -2361,8 +2365,14 @@ def run_supervised(
                 modified = _transcript_mtime(session_dir, session_id)
                 if modified is not None and wall_now - modified < stall_timeout:
                     last_life = max(last_life, now - max(0, wall_now - modified))
-            if _work_process_alive(child.pid):
-                last_life = now
+            if now - last_life >= stall_timeout or (
+                now >= next_work_check and (work_seen or now - last_life >= work_interval)
+            ):
+                alive = _work_process_alive(child.pid)
+                if alive or work_seen:
+                    last_life = now
+                work_seen = alive
+                next_work_check = now + work_interval
             if now - last_life >= stall_timeout:
                 print(
                     f"cc: no agent-lb traffic, transcript writes or tool processes for {stall_timeout:g}s "
