@@ -9,6 +9,7 @@ Every project is a personal project until launch. Alex, 2026-10-07 21:35 ET: "tr
 - **Only the kept floors stop work** (2026-10-08 09:27 ET): Alex's own passwords, passkeys and codes are never typed or printed by an agent; outbound to a real person; spend past a cap; destructive data without an approval on record. The secret floor is off until launch and restored then (the launch rotation checklist).
 - **Scenarios, type checks, suites, screenshots, parity, version bumps and generated files** run after merge; red is fixed forward and becomes the next slice. Code review does not run at all by default (see Merging, deploy and review).
 - **Agents decide after a scope is approved** (2026-10-05), log the reason in the lane state and keep going.
+- **Lean on red tape (2026-10-14 23:55 ET).** Alex: "we need rules to stay lean on red tape here so we can move super quickly since we're building this mostly for low risk agents and low risk companies." Default to the lightest control that keeps undo plus a receipt. Hard stops are only the kept floors: Alex's own credentials, and irreversible deletes with no record. Enterprise controls go on the GA restore list, not into pre-launch work. Leads cut reviewer-driven weight: no reviewer sign-off on Opus calls unless a lead asks; one check per slice; fix forward. Source: ~/.agent-rails/agents/rails/state/research/ruling-lean-cut-2355.md.
 
 ## Merging, deploy and review (2026-10-08)
 
@@ -122,7 +123,7 @@ No slot counts or job caps anywhere (Alex, 2026-10-05: "we're removing slots, an
 
 ## GA restores (2026-10-08)
 
-At launch, the rotation checklist turns the secret scan, its floor-door review and the secret guards back on, and setting `rails.mode` to `ga` brings back cross-vendor review before merge, the money-path panel, the full per-change code floor, staging before production and automatic rollback, each only if it earns its place.
+At launch, the rotation checklist turns the secret scan, its floor-door review and the secret guards back on, and setting `rails.mode` to `ga` brings back cross-vendor review before merge, the money-path panel, the full per-change code floor, staging before production and automatic rollback, each only if it earns its place. Enterprise controls deferred by the lean-on-red-tape rule (2026-10-14) return the same way, only if they earn their place.
 
 
 - **Muse Code available seat only** (2026-10-13): `muse-seat` forwards to Studio-local `muse-seat-local` on `muse-latest`; no ladder change until interleaved evaluations. Box placement stays parked pending a scoped credential.
