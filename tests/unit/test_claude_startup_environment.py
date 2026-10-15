@@ -71,3 +71,23 @@ def test_execed_claude_inherits_raised_soft_limit(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "4096"
+
+
+@pytest.mark.parametrize(("args", "expected"), [(["--resume", "abc"], "1"), (["-p", "hi"], "unset")])
+def test_interactive_claude_launch_gets_no_flicker(tmp_path, args, expected):
+    launcher = Path(__file__).resolve().parents[2] / "clients/claude-lb-launch"
+    claude = tmp_path / "claude"
+    claude.write_text(f"#!{sys.executable}\nimport os\nprint(os.environ.get('CLAUDE_CODE_NO_FLICKER', 'unset'))\n")
+    claude.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "CLAUDE_LB_DISABLE": "1", "HOME": str(tmp_path)}
+    env.pop("CLAUDE_CODE_NO_FLICKER", None)
+    result = subprocess.run(
+        [sys.executable, str(launcher), *args],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == expected

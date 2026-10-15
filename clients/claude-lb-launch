@@ -2464,6 +2464,8 @@ def main() -> None:
     schedule_opus_doctor()
 
     argv = sys.argv[1:]
+    if not headless_invocation(argv):
+        os.environ.setdefault("CLAUDE_CODE_NO_FLICKER", "1")
     tag_reason = resolve_lane_tags(argv)
     resolved_tags = tag_headers(os.environ)
     routed = False
