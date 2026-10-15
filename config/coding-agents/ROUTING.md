@@ -47,6 +47,14 @@ Use scripts or Sol for wakes, status digests and polling. Never start a workflow
 
 Each Workflow completion appends to `~/.open-factory/state/workflow-readback.jsonl`, or `FACTORY_HOME/workflow-readback.jsonl`. Record quota percentage from a matching workflow id in agent-lb unified utilization capture when present; otherwise record the run's tokens and label missing usage. Never infer quota percentage from token counts. Hook context for SessionStart, UserPromptSubmit and PostToolUse is at most 1024 UTF-8 bytes per hook. Deliver bulletin ids and a one-line preview, keep overflow queued, and retrieve full text with `lane-post read <id>`. Memory and learnings use short pointers with commands for full text.
 
+## Opus architects (2026-10-14)
+
+Alex, 2026-10-14 ~21:00 ET: "opus must ALWAYS be the architect and design - even writing code and contracts where we dont trust sol."
+- **Opus owns architecture, contracts, and UI design and specs.**
+- **Sol implements only to an Opus spec.**
+- **UI-critical, contract and trust-boundary code goes to opus-seat,** even while quota is tight.
+- **Scope and design lane leads default to `opus-latest`.**
+
 ## Model ladder and seats (2026-09-30; updated 2026-10-13)
 
 Best first, and only Claude is precious; use family aliases (`route resolve <alias>`). Alex, 2026-09-30: "use things up that are best always first, using fallbacks when we need to ... the only precious thing i think is claude usage".
@@ -55,7 +63,8 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 |---|---|---|
 | Code to a spec | gpt-implementer; devin-seat; sonnet-implementer | sol-latest medium; sonnet-implementer off while quota is tight (2026-10-13) |
 | Mechanical sweeps | gpt-implementer; devin-seat | sol-latest low while quota is tight (2026-10-13) |
-| Judgment code, or work a seat failed twice | opus-seat | off while quota is tight (2026-10-13); use sol-latest |
+| Judgment code, or work a seat failed twice | opus-seat | opus-latest; overrides the 2026-10-13 off-while-tight note (Opus architects, 2026-10-14) |
+| UI-critical, contract and trust-boundary code | opus-seat | opus-latest; overrides the 2026-10-13 off-while-tight note (Opus architects, 2026-10-14) |
 | Read-only exploration | gpt-explorer | sol-latest low |
 | Review, on request only (non-Claude author) | verifier (Sonnet) | off while quota is tight (2026-10-13); use codex-verifier on sol-latest |
 | Review, on request only (Claude author) | codex-verifier | sol-latest xhigh |
