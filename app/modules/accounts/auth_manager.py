@@ -315,10 +315,21 @@ class AuthManager:
             if force or access_token_hard_expired(self._encryptor, account):
                 raise AccountNotOwnedError(account.id, account.owner_instance, settings.local_instance_id)
             return await self._ensure_chatgpt_account_id(account)
+        recover_exchange = False
         if account.status == AccountStatus.EXCHANGE_UNCERTAIN:
-            if not force and not access_token_hard_expired(self._encryptor, account):
+            if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
+                intent = await self._repo.exchange_intent_window(account.id, _exchange_timeout_seconds())
+                recover_exchange = (
+                    intent is not None
+                    and intent.token_hash
+                    == _refresh_token_material_fingerprint(self._encryptor, account.refresh_token_encrypted)
+                    and intent.ready
+                    and not intent.replay
+                    and intent.reason != "unsaved"
+                )
+            if not force and not recover_exchange and not access_token_hard_expired(self._encryptor, account):
                 return await self._ensure_chatgpt_account_id(account)
-        if force or _account_needs_refresh(self._encryptor, account):
+        if force or recover_exchange or _account_needs_refresh(self._encryptor, account):
             account = await _REFRESH_SINGLEFLIGHT.run(
                 _refresh_singleflight_key(self._encryptor, account),
                 lambda: self._run_refresh(account),
@@ -379,11 +390,7 @@ class AuthManager:
         intent_supported = isinstance(getattr(self._repo, "session", None), db_session.AsyncSession)
         replay = False
         if intent_supported:
-            timeout = max(
-                get_settings().oauth_timeout_seconds,
-                get_settings().token_refresh_timeout_seconds,
-                30.0,  # CodexClient's refresh-request timeout is bounded by the configured token timeout.
-            )
+            timeout = _exchange_timeout_seconds()
             intent = await self._repo.exchange_intent_window(account.id, timeout)
             if intent is not None and intent.token_hash != token_hash:
                 if account.status != AccountStatus.EXCHANGE_UNCERTAIN and await self._repo.drop_stale_exchange_intent(
@@ -394,6 +401,8 @@ class AuthManager:
                 else:
                     raise RefreshError("exchange_intent_conflict", "A previous exchange is unresolved", False)
             if intent is not None:
+                if account.status in {AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED}:
+                    raise RefreshError("exchange_uncertain", "Permanent auth failure requires operator recovery", False)
                 if not intent.ready or (
                     intent.reason != "operator_reset" and (intent.replay or intent.reason == "unsaved")
                 ):
@@ -728,6 +737,11 @@ class AuthManager:
         except Exception:
             logger.warning("Failed to persist chatgpt_account_id account_id=%s", account.id, exc_info=True)
         return account
+
+
+def _exchange_timeout_seconds() -> float:
+    settings = get_settings()
+    return max(settings.oauth_timeout_seconds, settings.token_refresh_timeout_seconds, 30.0)
 
 
 def _chatgpt_account_id_from_id_token(id_token: str) -> str | None:

@@ -8,12 +8,14 @@ from dataclasses import dataclass, field
 from datetime import timezone
 from typing import AsyncIterator, Protocol, cast
 
+from app.core.auth.refresh import RefreshError
 from app.core.config.settings import get_settings
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.usage import capacity_for_plan
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
+from app.modules.accounts.auth_manager import AuthManager, is_locally_owned
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.limit_warmup.service import LimitWarmupService, StreamingLimitWarmupSender
@@ -109,6 +111,27 @@ class UsageRefreshScheduler:
                     before_primary = await usage_repo.latest_by_account(window="primary")
                     before_secondary = await usage_repo.latest_by_account(window="secondary")
                     accounts = _usage_refresh_accounts(await accounts_repo.list_accounts())
+                    uncertain_accounts = [
+                        Account(**{column.key: getattr(account, column.key) for column in Account.__table__.columns})
+                        for account in accounts
+                        if account.status == AccountStatus.EXCHANGE_UNCERTAIN
+                        and is_locally_owned(account, get_settings())
+                    ]
+                    if uncertain_accounts:
+                        auth_manager = AuthManager(accounts_repo)
+                        for account in uncertain_accounts:
+                            try:
+                                await auth_manager.ensure_fresh(account)
+                            except RefreshError as exc:
+                                logger.debug(
+                                    "Uncertain exchange recovery deferred account_id=%s code=%s", account.id, exc.code
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "Uncertain exchange recovery failed account_id=%s", account.id, exc_info=True
+                                )
+                        # Recovery is independent of usage freshness/cooldown and reset priority.
+                        accounts = _usage_refresh_accounts(await accounts_repo.list_accounts(refresh_existing=True))
                     updater = UsageUpdater(usage_repo, accounts_repo, additional_usage_repo)
                     now_epoch = utcnow().replace(tzinfo=timezone.utc).timestamp()
                     near_anthropic_reset = any(
