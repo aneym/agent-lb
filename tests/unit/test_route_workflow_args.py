@@ -33,6 +33,10 @@ def test_each_seat_kind_gets_options_that_reach_its_model(tmp_path: Path) -> Non
     assert "Effort: high" in seats["plan"]["brief"]
     assert args["agent_cap"] == 6
     assert args["quota"]["opus_stages"] == ["judge", "synthesis"]
+    assert args['orchestrator'] == {'model': 'opus-latest', 'effort': 'medium'}
+    assert args['opus_stages'] == {
+        'judge': {'model': 'opus-latest', 'effort': 'medium'},
+        'synthesis': {'model': 'opus-latest', 'effort': 'medium'}}
 
 
 

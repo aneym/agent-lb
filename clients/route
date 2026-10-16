@@ -2865,6 +2865,8 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
     model = entry.get("model")
     alias = entry.get("alias") or model
     effort = entry.get("effort") if "effort" in entry else _chain_effort(table, class_name, seat)
+    if alias and ('opus' in alias.lower() or 'opus' in (model or '').lower()):
+        effort = 'medium'
     if model and is_retired(model, retired_patterns(table)):
         raise ValueError(f"{seat} picked retired model {model}")
     opts: dict[str, Any] = {"agentType": seat}
@@ -2948,6 +2950,7 @@ def workflow_quota():
         raise ValueError('invalid factory quota mode')
     return {'mode': mode, 'agent_cap': 6 if mode == 'tight' else 16,
             'default_model': 'sol-latest', 'opus_stages': ['judge', 'synthesis'],
+            'orchestrator': {'model': 'opus-latest', 'effort': 'medium'}, 'opus_effort': 'medium',
             'excluded_work': ['status', 'wake', 'polling', 'single-file'],
             'maintenance_model': 'sol-latest', 'auto_tighten_used_percent': 70}
 
@@ -2980,6 +2983,9 @@ def command_workflow_args(args: argparse.Namespace) -> int:
         "table_sha256": hashlib.sha256(table_path().read_bytes()).hexdigest() if table_path().is_file() else None,
         "agent_cap": quota["agent_cap"],
         "quota": quota,
+        "orchestrator": {"model": "opus-latest", "effort": "medium"},
+        "opus_stages": {name: {"model": "opus-latest", "effort": "medium"}
+                        for name in ("judge", "synthesis")},
         "seats": {},
         "review_for": {},
         "errors": {},
