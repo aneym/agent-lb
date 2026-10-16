@@ -1545,7 +1545,7 @@ def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path)
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install("--hook-dispatcher", "on")
     registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
-    # A lone Agent guard stays per-hook (it gains nothing from the dispatcher); the Bash entry folds.
+    # The Agent seat guard (a floor guard, so it folds even alone) and the Bash entry fold.
     commands = [hook["command"] for hooks in registry["entries"]["PreToolUse"].values() for hook in hooks] + [
         hook["command"] for group in hooks_of(home)["PreToolUse"] for hook in group["hooks"]]
     assert '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"' in commands
@@ -1641,3 +1641,52 @@ def test_the_dangerous_command_guard_keeps_only_the_drop_floor(tmp_path: Path) -
     approved = run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-drop-2026-10-08.md")
     assert approved.returncode == 0, approved
     assert run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-none-2026-10-08.md").returncode == 2
+
+
+@pytest.mark.parametrize("breakage", ["execute-bit-removed", "cat-not-a-system-tool"])
+def test_a_pinned_floor_guard_is_never_skipped_when_it_could_not_start_as_reviewed(tmp_path: Path,
+                                                                                    breakage: str) -> None:
+    """2026-10-08 review of hook-dispatcher-5 (M1, hook-dispatch.py:737/:1564; and :730): the prefilter skipped the
+    pinned wide-scan guard for a call it ignores while the guard could not run as reviewed, so the dispatcher allowed
+    where the guard does not. With its execute bit removed the direct exec fails (per-hook /bin/sh exits 126), so the
+    floor rule refuses; with a `cat` earlier on PATH that exits 1 the guard refuses per-hook, and now through the
+    dispatcher too. A healthy guard on the same call is still skipped and the call allowed."""
+    home, env, hook = guard_home(tmp_path, "wide-scan-guard.sh", WIDE_SCAN)
+    registry_path = home / ".claude/hooks/dispatch/registry.json"
+    registry_path.write_text(json.dumps(dict(json.loads(registry_path.read_text()),
+                                             script_sha=policy_module().script_pins(SOURCE))))
+    call = {"tool_name": "Bash", "tool_input": {"command": "echo hello"}, "hook_event_name": "PreToolUse",
+            "cwd": str(home)}
+    healthy = run_owned(DISPATCH_BASH, call, env, 30)
+    assert healthy is not None and healthy.returncode == 0 and decision(healthy) == "allow", healthy
+    if breakage == "execute-bit-removed":
+        (home / ".claude/hooks/wide-scan-guard.sh").chmod(0o644)
+        assert run_hook(hook["command"], call, env).returncode == 126  # per-hook the shell cannot start it
+    else:
+        env = stub_bin(tmp_path, env, "cat", "#!/bin/sh\nexit 1\n")
+        assert decision(run_hook(hook["command"], call, env)) == "deny"  # per-hook the guard refuses
+    new = run_owned(DISPATCH_BASH, call, env, 30)
+    assert new is not None and decision(new) == "deny", new
+    assert "wide-scan-guard" in json.loads(new.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_install_folds_a_lone_floor_guard_so_its_failure_refuses(tmp_path: Path) -> None:
+    """2026-10-08 review M2 (install-policy.py:922): the Agent matcher holds only the seat guard, and a lone hook that
+    spawns anyway stayed per-hook, where a seat guard that crashes or hangs allows the dispatch. A floor guard always
+    folds: the installed Agent entry is the dispatcher, and a crashing seat guard refuses the dispatch through it."""
+    home, _settings = make_home(tmp_path)
+    install, env = installer(tmp_path, home)
+    install("--hook-dispatcher", "on")
+    registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
+    assert [hook["command"] for hook in registry["entries"]["PreToolUse"]["Agent"]] == [
+        '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"']
+    agent = [group for group in hooks_of(home)["PreToolUse"] if group.get("matcher") == "Agent"]
+    assert len(agent) == 1 and len(agent[0]["hooks"]) == 1, agent
+    entry = agent[0]["hooks"][0]["command"]
+    assert entry == f"{DISPATCH} PreToolUse 'Agent' {registry['rev']}", entry
+    (home / ".claude/hooks/seat-guard.py").write_text("raise RuntimeError('synthetic seat guard crash')\n")
+    call = {"tool_name": "Agent", "tool_input": {"subagent_type": "Explore", "prompt": "x", "description": "x"},
+            "hook_event_name": "PreToolUse"}
+    refused = run_owned(entry, call, env, 30)
+    assert refused is not None and decision(refused) == "deny", refused
+    assert "floor guard seat-guard.py" in json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
