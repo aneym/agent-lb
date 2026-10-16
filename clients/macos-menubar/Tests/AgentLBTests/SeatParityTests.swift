@@ -92,7 +92,8 @@ final class SeatParityTests: XCTestCase {
     XCTAssertEqual(vendor.cards.map(\.title), ["MONTHLY LIMIT", "MONTHLY LIMIT"])
     XCTAssertEqual(vendor.cards.map(\.detail), ["Cursor models · Grok, Composer", "Other models"])
     XCTAssertEqual(vendor.cards.map(\.remainingPercent), [38, 0])
-    XCTAssertEqual(vendor.cards.map(\.resetText), ["resets Oct 29, 8:00 PM", "resets Oct 29, 8:00 PM"])
+    XCTAssertEqual(vendor.cards.map(\.valueText), ["38%", "Out"])
+    XCTAssertEqual(vendor.cards.map(\.resetText), ["resets Oct 29, 8:00 PM", "resets Oct 29"])
     XCTAssertEqual(vendor.cards.map(\.sourceText), ["as of 10:00 AM", "as of 10:00 AM"])
     XCTAssertEqual(vendor.cards.map(\.seatsText), ["2/2 seats", "0/1 seat"])
     XCTAssertFalse(vendor.texts.contains { $0.contains("5-HOUR") })
@@ -118,7 +119,7 @@ final class SeatParityTests: XCTestCase {
       summary: try summary(for: .muse, example: example), now: now
     )
     XCTAssertTrue(vendor.cards.isEmpty)
-    XCTAssertEqual(vendor.quietLine, "Not reported by Muse")
+    XCTAssertEqual(vendor.quietLine, "Usage based · 0 runs in 24 h")
     XCTAssertEqual(vendor.stripLines, ["7d · 3 runs · tokens not reported · Not reported"])
     XCTAssertFalse(vendor.texts.contains { $0.contains("$0.0000") || $0.contains("$0.00") })
   }

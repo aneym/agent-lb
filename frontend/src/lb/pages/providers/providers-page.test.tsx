@@ -53,7 +53,7 @@ describe("providers page CLI seats", () => {
 
     const muse = await seatRow("muse-main");
     expect(muse).toHaveTextContent("Muse · seat");
-    expect(muse).toHaveTextContent("Not reported by Muse");
+    expect(muse).toHaveTextContent("Usage based");
     expect(muse).not.toHaveTextContent("No reading");
     expect(muse).not.toHaveTextContent("Cursor");
     expect(muse).toHaveTextContent("0 runs");
@@ -75,7 +75,9 @@ describe("providers page CLI seats", () => {
     expect(cursor).toHaveTextContent("until Oct 29, 8:00 PM ET");
     expect(cursor).toHaveTextContent("Cursor models · Grok, Composer · resets Oct 29, 8:00 PM ET");
     expect(cursor).toHaveTextContent("38%");
-    expect(cursor).toHaveTextContent("Other models · resets Oct 29, 8:00 PM ET");
+    expect(cursor).toHaveTextContent("Out");
+    expect(cursor).toHaveTextContent("resets Oct 29");
+    expect(cursor).not.toHaveTextContent(/\b0%/);
     expect(cursor).toHaveTextContent("6 runs");
     expect(cursor).toHaveTextContent("est. value");
     expect(markUrl(cursor)).toContain("/brand/providers/cursor.svg");
@@ -96,7 +98,7 @@ describe("providers page CLI seats", () => {
     expect(cursorPool).toHaveTextContent("38%");
     expect(cursorPool).toHaveTextContent("resets Oct 29, 8:00 PM ET");
     const musePool = within(details).getByText("Muse").closest(".row") as HTMLElement;
-    expect(musePool).toHaveTextContent("Not reported by Muse");
+    expect(musePool).toHaveTextContent("Usage based");
     expect(musePool).not.toHaveTextContent("No reading");
     expect(markUrl(musePool)).toContain("/brand/providers/muse.svg");
   });

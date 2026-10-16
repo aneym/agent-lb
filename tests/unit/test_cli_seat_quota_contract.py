@@ -35,6 +35,8 @@ def _keys_equal(actual, expected):
 
 def test_seat_accounts_serialized_keys_match_canonical_contract(tmp_path):
     example = json.loads(EXAMPLE.read_text())["seatAccounts"]
+    for account in example["accounts"]:
+        account["today"]["okKnown"] = True
     records = {}
     for account in example["accounts"]:
         records[account["id"]] = {
@@ -105,12 +107,13 @@ def test_seat_accounts_serialized_keys_match_canonical_contract(tmp_path):
 
 def test_usage_activity_keys_match_canonical_contract():
     example = json.loads(EXAMPLE.read_text())["usageSummaryCursor"]
+    example["seatActivity"]["okKnown"] = True
     result = UsageSummaryResponse.model_validate(example).model_dump(mode="json", by_alias=True)
     _keys_equal(result["seatActivity"], example["seatActivity"])
     assert result["provider"] == "cursor"
 
 
-def test_pool_window_serialized_keys_match_example_and_shared_plan_counts_once():
+def test_pool_window_serialized_keys_match_example_and_shared_plan_counts_accounts():
     example = json.loads(EXAMPLE.read_text())
     reference = example["seatAccounts"]["accounts"][0]
     accounts = [
@@ -124,7 +127,7 @@ def test_pool_window_serialized_keys_match_example_and_shared_plan_counts_once()
     )
     window = pools[0].model_dump(mode="json", by_alias=True)["windows"][0]
     _keys_equal(window, example["poolsExcerpt"][0]["windows"][0])
-    assert window["measuredAccounts"] == 1
+    assert window["measuredAccounts"] == 2
     assert window["usedPercent"] == 62
     muse = cli_seat_pools(
         SeatAccountsResponse(source="seat_state", accounts=[SeatAccount(id="muse", vendor="muse", ready=True)])

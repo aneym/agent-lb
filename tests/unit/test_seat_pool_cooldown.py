@@ -19,8 +19,9 @@ def test_seat_pool_cooldown(cli, tmp_path: Path, shared_plan: bool) -> None:  # 
     cursor.write_text(
         cursor.read_text().replace(
             "print(json.dumps({'is_error': False, 'result': 'done'}))",
-            "prompt = sys.stdin.read()\n"
-            "error = ('You\\'ve hit your usage limit. Your usage limits will reset when your monthly cycle ends on 10/30/2026' "
+            "prompt = sys.stdin.read().splitlines()[0]\n"
+            "error = ('You\\'ve hit your usage limit. "
+            "Your usage limits will reset when your monthly cycle ends on 10/30/2026' "
             "if prompt == 'limit' else ('authentication required' if prompt == 'auth' else None))\n"
             "print(json.dumps({'is_error': bool(error), 'result': error or 'done'}))\n"
             "sys.exit(1 if error else 0)",

@@ -168,7 +168,7 @@ async def test_pools_aggregates_live_windows_and_marks_the_fable_source(async_cl
     assert pools["glm"]["headroomPercent"] == pytest.approx(100.0)
     assert pools["kimi"]["accounts"] == 0
     assert pools["cursor"]["kind"] == "cli_seat"
-    assert pools["cursor"]["windowLabel"] == "month"
+    assert pools["cursor"]["windowLabel"] is None
     assert pools["cursor"]["fiveHourRemainingPercent"] is None
     assert pools["cursor"]["fiveHourResetAt"] is None
 
@@ -267,7 +267,10 @@ async def test_cli_seat_quota_endpoints_read_state_and_preserve_routing(async_cl
     response = await async_client.get("/api/pools")
     assert response.status_code == 200
     pool = next(pool for pool in response.json()["pools"] if pool["id"] == "muse")
-    assert pool["eligibleAccounts"] == 1
+    assert pool["eligibleAccounts"] == 0
+    assert pool["status"] == "exhausted"
+    assert pool["resetAt"] is not None
+    assert account["ready"] is False
     assert pool["headroomPercent"] is None
     assert pool["windows"][0]["measuredAccounts"] == 1
     assert pool["quotaSource"] == "vendor_observed"
@@ -275,3 +278,77 @@ async def test_cli_seat_quota_endpoints_read_state_and_preserve_routing(async_cl
     assert summary.status_code == 200
     assert summary.json()["provider"] == "muse"
     assert summary.json()["seatActivity"]["tokensKnown"] is False
+
+
+@pytest.mark.asyncio
+async def test_exhausted_shared_cursor_plan_and_unknown_seat_usage_at_api_boundary(
+    async_client, db_setup, monkeypatch, tmp_path
+):
+    import json
+    from zoneinfo import ZoneInfo
+
+    del db_setup
+    stamp = datetime.now(timezone.utc)
+    reset = (stamp + timedelta(days=2)).isoformat()
+    windows = [
+        {
+            "id": window_id,
+            "kind": "monthly",
+            "label": window_id,
+            "usedPercent": 100,
+            "remainingPercent": 0,
+            "resetsAt": reset,
+            "source": "vendor",
+        }
+        for window_id in ("cursor-models", "cursor-other")
+    ]
+    accounts = {
+        account_id: {
+            "vendor": "cursor",
+            "plan": "shared-ultra",
+            "enabled": True,
+            "auth_ok": True,
+            "identity": {"tier": "Ultra"},
+            "quota": {"source": "vendor", "observedAt": stamp.isoformat(), "windows": windows},
+        }
+        for account_id in ("cursor-first", "cursor-second")
+    }
+    day = stamp.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+    accounts["devin"] = {
+        "vendor": "devin",
+        "enabled": True,
+        "auth_ok": True,
+        "daily": {day: {"swe-1.5": {"runs": 6, "tokens_in": 120, "tokens_out": 30}}},
+    }
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"updated_at": stamp.isoformat(), "accounts": accounts}))
+    monkeypatch.setenv("AGENT_LB_SEAT_STATE", str(path))
+
+    response = await async_client.get("/api/pools")
+    assert response.status_code == 200
+    pools = {pool["id"]: pool for pool in response.json()["pools"]}
+    for pool_id in ("cursor", "cursor-models", "cursor-other"):
+        pool = pools[pool_id]
+        assert pool["accounts"] == 2
+        assert pool["eligibleAccounts"] == 0
+        assert pool["status"] == "exhausted"
+        assert datetime.fromisoformat(pool["resetAt"].replace("Z", "+00:00")) == datetime.fromisoformat(reset)
+        assert all(window["measuredAccounts"] == 2 for window in pool["windows"])
+    assert pools["devin"]["aggregateRemainingPercent"] is None
+    assert pools["devin"]["headroomPercent"] is None
+    assert pools["devin"]["windowLabel"] is None
+
+    response = await async_client.get("/api/pools/seat-accounts")
+    assert response.status_code == 200
+    seats = {account["id"]: account for account in response.json()["accounts"]}
+    for account_id in ("cursor-first", "cursor-second"):
+        assert seats[account_id]["ready"] is False
+        assert seats[account_id]["status"] == "rate_limited"
+    response = await async_client.get("/api/usage/summary?provider=devin")
+    assert response.status_code == 200
+    activity = response.json()["seatActivity"]
+    assert activity["runs"] == 6
+    assert activity["okKnown"] is False
+    assert activity["tokensKnown"] is True
+    assert activity["tokensIn"] == 120
+    assert activity["tokensOut"] == 30

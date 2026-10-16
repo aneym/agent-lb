@@ -25,11 +25,11 @@ final class PoolMenuTests: XCTestCase {
     XCTAssertEqual(rows[0].caption, "3/8")
     XCTAssertEqual(rows[3].percent, 0)
     XCTAssertEqual(rows[3].shortName, "Cursor other")
-    XCTAssertEqual(rows[3].caption, "back Oct 30")
+    XCTAssertEqual(rows[3].caption, "resets Oct 30")
     XCTAssertEqual(rows[0].subline, "+1 at 12:59 PM")
     XCTAssertEqual(rows[1].subline, "+3 Oct 3, 12:58 PM")
     XCTAssertEqual(rows[2].subline, "estimate · resets Oct 30")
-    XCTAssertEqual(rows[3].subline, "back Oct 30")
+    XCTAssertEqual(rows[3].subline, "resets Oct 30")
     XCTAssertNil(rows[4].subline)
     XCTAssertFalse(rows[0].ticks.isEmpty)
     XCTAssertEqual(
@@ -37,6 +37,19 @@ final class PoolMenuTests: XCTestCase {
       "Code → Grok 4.7 low · Edits → Composer 2.5"
     )
     XCTAssertNil(PoolMenu.footer(plan: nil))
+  }
+
+  func testUnreportedDevinDoesNotFallBackToAggregateEstimate() throws {
+    let json = """
+    {"pools":[{"id":"devin","provider":"devin","kind":"cli_seat","accounts":2,
+      "eligibleAccounts":1,"status":"ok","aggregateRemainingPercent":50,
+      "quotaSource":"unavailable","windows":[]}]}
+    """
+    let pools = try APIClient.makeDecoder().decode(PoolsDocument.self, from: Data(json.utf8)).pools
+    let row = try XCTUnwrap(PoolMenu.rows(pools: pools, now: now, timeZone: zone).first)
+    XCTAssertEqual(row.value, "— · 1/2")
+    XCTAssertNil(row.percent)
+    XCTAssertEqual(row.caption, "not reported")
   }
 
   func testFableLosesToGeneralInEitherOrder() {

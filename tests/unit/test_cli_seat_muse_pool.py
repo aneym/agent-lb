@@ -83,6 +83,7 @@ def test_muse_unknown_tokens_and_observed_quota_survive_state_read(tmp_path: Pat
     assert account.today.tokens_in is None
     assert account.today.value_usd is None
     pool = cli_seat_pools(seats)[0]
-    assert pool.headroom_percent is None
+    assert pool.headroom_percent == 88
+    assert pool.aggregate_remaining_percent == 88
     assert pool.windows[0].remaining_percent == 88
     assert pool.quota_source == "vendor_observed"

@@ -158,7 +158,7 @@ describe("routing dashboard", () => {
     expect(screen.getByText("Watch. The first code step passed 20 of 20 units in its trial (E17).")).toBeInTheDocument();
     expect(container.querySelector(".steps, .step, .chip")).toBeNull();
     expect(screen.getByText("Claude Sonnet 5.5 for GPT and Grok work")).toBeInTheDocument();
-    expect(screen.queryByText("→", { exact: false })).not.toBeNull();
+    expect(screen.queryByText("→", { exact: false })).toBeNull();
 
     expect(screen.getByText("Claude")).toBeInTheDocument();
     expect(screen.getByText("28% · 3/8")).toBeInTheDocument();
@@ -168,7 +168,7 @@ describe("routing dashboard", () => {
     expect(screen.getByText("estimate · resets Oct 30")).toBeInTheDocument();
     expect(screen.getByText("out")).toBeInTheDocument();
     expect(screen.getByText("50% · 1/2")).toBeInTheDocument();
-    expect(screen.getByText("Code → Grok 4.7 low · Edits → Composer 2.5")).toBeInTheDocument();
+    expect(screen.queryByText("Code → Grok 4.7 low · Edits → Composer 2.5")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Budget" }));
     expect(screen.getByText("drop")).toBeInTheDocument();

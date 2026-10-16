@@ -126,19 +126,23 @@ def test_cursor_and_devin_collection_use_vendor_request_boundaries(seat, tmp_pat
                 json.dumps(
                     {
                         "planUsage": {"autoPercentUsed": 12, "apiPercentUsed": 38},
-                        "billingCycleEnd": "2026-10-30T00:00:00Z",
+                        "billingCycleEnd": "1793325807000",
                     }
                 )
             )
         if request.full_url.endswith("GetPlanInfo"):
-            return io.StringIO(json.dumps({"includedUsagePeriod": "weekly", "planName": "Ultra"}))
+            return io.StringIO(json.dumps({"planInfo": {"includedUsagePeriod": "weekly", "planName": "Ultra"}}))
         body = json.loads(request.data)
         assert body["metadata"]["apiKey"] == "fixture-not-a-real-key"
+        assert body["metadata"]["extensionVersion"] == "1.0.0"
+        assert body["metadata"]["ideVersion"] == "1.0.0"
         return io.StringIO(
             json.dumps(
                 {
                     "userStatus": {
                         "dailyQuotaRemainingPercent": 80,
+                        "dailyQuotaResetAtUnix": "1792209600",
+                        "weeklyQuotaResetAtUnix": "1792468800",
                         "weeklyQuotaRemainingPercent": 40,
                         "planStatus": {"planInfo": {"planName": "Pro"}},
                     }
@@ -153,10 +157,14 @@ def test_cursor_and_devin_collection_use_vendor_request_boundaries(seat, tmp_pat
     )
     assert {window["kind"] for window in cursor["windows"]} == {"weekly"}
     assert cursor["planLabel"] == "Ultra"
+    assert {window["resetsAt"] for window in cursor["windows"]} == {"2026-10-30T02:03:27Z"}
     directory = tmp_path / "devin"
     directory.mkdir()
     (directory / "credentials.toml").write_text('windsurf_api_key = "fixture-not-a-real-key"\n')
     devin = seat["collect_quota"]({"id": "devin", "vendor": "devin", "data_dir": str(tmp_path)})
     assert [(window["id"], window["usedPercent"]) for window in devin["windows"]] == [("daily", 20), ("weekly", 60)]
     assert devin["planLabel"] == "Pro"
+    assert [window["resetsAt"] for window in devin["windows"]] == [
+        "2026-10-17T04:00:00Z", "2026-10-20T04:00:00Z"
+    ]
     assert len(calls) == 3
