@@ -43,6 +43,16 @@ log() { printf '%s %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
 
 
 
+PG_QOS_GUARD="${AGENT_LB_PG_QOS_GUARD:-$(dirname "${BASH_SOURCE[0]}")/pg-qos-guard.sh}"
+if [[ -x "$PG_QOS_GUARD" ]]; then
+  "$PG_QOS_GUARD" >/dev/null 2>&1
+  guard_rc=$?
+  if (( guard_rc != 0 )); then
+    mkdir -p "$(dirname "$LOG_FILE")"
+    log "pg-qos-guard rc=$guard_rc"
+  fi
+fi
+
 if [[ -f "$PAUSE_FILE" ]]; then
   exit 0
 fi

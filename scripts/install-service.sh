@@ -125,7 +125,7 @@ plist: dict[str, Any] = {
     "RunAtLoad": True,
     "KeepAlive": True,
     # launchd applies negative Nice to agents; prioritize the event loop under host load.
-    "ProcessType": existing.get("ProcessType") if isinstance(existing.get("ProcessType"), str) else "Interactive",
+    "ProcessType": "Interactive",
     "Nice": existing.get("Nice") if type(existing.get("Nice")) is int else -10,
     # lb-restart drains within ExitTimeOut; launchd SIGKILLs after it.
     "ExitTimeOut": existing.get("ExitTimeOut") if type(existing.get("ExitTimeOut")) is int else graceful_shutdown + 30,
