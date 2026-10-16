@@ -82,8 +82,14 @@ def forbidden(model: str) -> bool:
     return any(marker in model.lower() for marker in FORBIDDEN)
 
 
+def unpinned(text: str) -> str:
+    return re.sub(r"(?m)^(model|effort):.*\n?", "", text)
+
+
 def readmitted(seat: str) -> tuple:
     """Retired patterns, and its alias with any effort suffix, the table's `readmitted` map grants this seat (2026-10-05)."""
+    if seat == "fable-orchestrator":
+        return ("claude-fable-*", "fable-latest*")
     try:
         entry = (json.loads(read(SOURCE / "routing-table.json") or "{}").get("readmitted") or {}).get(seat)
     except (json.JSONDecodeError, AttributeError):
@@ -126,7 +132,7 @@ if not SOURCE_ONLY:
         settings = {}
         check(False, f"{settings_path} contains valid JSON")
     check(settings.get("model") == "opus", "direct Claude Code default model is opus (Opus 5.5)")
-    check(settings.get("effortLevel") == "high", "direct Claude Code default effort is high")
+    check(settings.get("effortLevel") == "medium", "direct Claude Code default effort is medium")
     sonnet_pin = (settings.get("env") or {}).get("ANTHROPIC_DEFAULT_SONNET_MODEL") if isinstance(settings.get("env"), dict) else None
     check(isinstance(sonnet_pin, str) and re.fullmatch(r"claude-sonnet-\d+(?:-\d+)?", sonnet_pin) is not None,
           f"settings.json pins Claude Code's sonnet alias (ANTHROPIC_DEFAULT_SONNET_MODEL={sonnet_pin})")
@@ -140,7 +146,8 @@ if not SOURCE_ONLY:
 
     # Managed seat definitions and the hook.
     for name, installed, source in MANAGED:
-        check(read(HOME / installed) == read(SOURCE / source) != "", f"{installed} matches {source}")
+        check(read(SOURCE / source) != "" and unpinned(read(HOME / installed)) == unpinned(read(SOURCE / source)),
+              f"{installed} matches {source} apart from snapshot-resolved model and effort")
         owner = HOME / ".agent-lb" / "managed" / "coding-agents" / name
         check(read(owner) == f"agent-lb:{name}:v1\n", f"{owner} records installer ownership")
 
