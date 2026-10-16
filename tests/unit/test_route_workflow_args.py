@@ -27,12 +27,9 @@ def test_each_seat_kind_gets_options_that_reach_its_model(tmp_path: Path) -> Non
     assert implement["audit"]["opts"] == {
         "agentType": "verifier", "model": "claude-sonnet-5-5", "effort": "high"}
     assert seats["explore"]["opts"] == {"agentType": "gpt-explorer", "model": "sol-latest-low"}
-    assert all(seat["vendor"] == "openai" for seat in seats.values())
-    assert seats["plan"]["opts"] == {"agentType": "codex-sol"}
-    assert seats["plan"]["model"] == "gpt-6.1-sol"
-    assert "Effort: high" in seats["plan"]["brief"]
+    assert all(seat["vendor"] == "openai" for name, seat in seats.items() if name not in ("plan", "review"))
     assert args["agent_cap"] == 6
-    assert args["quota"]["opus_stages"] == ["judge", "synthesis"]
+    assert args["quota"]["opus_stages"] == ["plan", "review", "judge", "synthesis", "orchestrator"]
 
 
 
@@ -91,3 +88,16 @@ def test_normal_quota_emits_sixteen_agent_cap(tmp_path: Path) -> None:
     args = workflow_args(env)
     assert args['agent_cap'] == 16 and args['quota']['mode'] == 'normal'
     assert args['quota']['excluded_work'] == ['status', 'wake', 'polling', 'single-file']
+
+
+def test_plan_review_judge_and_orchestrator_stages_run_opus_medium_even_under_reserve(tmp_path: Path) -> None:
+    env = setup(tmp_path, claude_eligible=1, codex_low=False)
+    args = workflow_args(env)
+    for stage in ("plan", "review", "judge", "synthesis", "orchestrator"):
+        entry = args["stages"][stage]
+        assert (entry["alias"], entry["model"], entry["effort"], entry["vendor"]) == (
+            "opus-latest", "claude-opus-5-5", "medium", "anthropic"), stage
+        assert entry["opts"]["model"] == "claude-opus-5-5" and entry["opts"]["effort"] == "medium"
+    assert args["seats"]["plan"]["opts"]["agentType"] == "planner"
+    assert args["seats"]["review"]["opts"]["agentType"] == "plan-reviewer"
+    assert args["review_for"]["anthropic"]["effort"] == "high"

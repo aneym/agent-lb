@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "routing-table.v2.json",
+  "title": "routing table v2: policy snapshot blocks",
+  "type": "object",
+  "required": ["version", "policy_rev", "precedence", "background_model", "standards", "explore"],
+  "properties": {
+    "version": {"const": 2},
+    "policy_rev": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}\\.\\d+$"},
+    "precedence": {"const": ["explicit", "constraints", "sticky", "explore", "standard"]},
+    "background_model": {"type": "string", "minLength": 1},
+    "standards": {
+      "type": "object",
+      "required": ["plan", "review", "design", "audit", "implement", "mechanical", "explore", "research", "verify",
+                   "computer", "council", "relay", "decide", "digest", "judge", "classify"],
+      "additionalProperties": {"$ref": "#/$defs/standard"}
+    },
+    "explore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "max_share_per_class", "daily_cap_per_arm", "claude_daily_cap_jobs",
+                   "stop_after_nonaccepts", "min_n_per_arm", "never_classes", "arms"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "max_share_per_class": {"type": "number", "minimum": 0, "maximum": 1},
+        "daily_cap_per_arm": {"type": "integer", "minimum": 0},
+        "claude_daily_cap_jobs": {"type": "integer", "minimum": 0},
+        "stop_after_nonaccepts": {"type": "integer", "minimum": 1},
+        "min_n_per_arm": {"type": "integer", "minimum": 1},
+        "never_classes": {"type": "array", "items": {"type": "string"}},
+        "arms": {"type": "object", "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/arm"}}},
+        "note": {"type": "string"}
+      }
+    }
+  },
+  "$defs": {
+    "effort": {"enum": ["low", "medium", "high", "xhigh", "max"]},
+    "standard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seat", "model", "effort", "explore", "authority", "evidence", "since"],
+      "properties": {
+        "seat": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "effort": {"$ref": "#/$defs/effort"},
+        "wrapper_model": {"type": "string", "minLength": 1},
+        "explore": {"type": "boolean"},
+        "authority": {"enum": ["verdict", "architecture", "bounded", "none"]},
+        "evidence": {"type": "string", "minLength": 1},
+        "since": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+        "money_path_effort": {"$ref": "#/$defs/effort"},
+        "by_author_vendor": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["seat", "model", "effort"],
+            "properties": {
+              "seat": {"type": "string"},
+              "model": {"type": "string"},
+              "effort": {"$ref": "#/$defs/effort"}
+            }
+          }
+        }
+      }
+    },
+    "arm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "seat", "model", "effort", "share", "pool"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "seat": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "effort": {"$ref": "#/$defs/effort"},
+        "share": {"type": "number", "minimum": 0, "maximum": 1},
+        "pool": {"type": "string"},
+        "author_vendor": {"type": "string"},
+        "paused": {"type": "boolean"},
+        "gate": {
+          "type": "object",
+          "required": ["open"],
+          "properties": {"open": {"type": "boolean"}, "until": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

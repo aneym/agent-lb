@@ -1,5 +1,306 @@
 {
   "version": 2,
+  "policy_rev": "2026-10-16.1",
+  "precedence": [
+    "explicit",
+    "constraints",
+    "sticky",
+    "explore",
+    "standard"
+  ],
+  "background_model": "sonnet-latest",
+  "standards": {
+    "plan": {
+      "seat": "planner",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "architecture",
+      "evidence": "E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted; Sol fallback removed, under reserve plans WAIT",
+      "since": "2026-10-16"
+    },
+    "review": {
+      "seat": "plan-reviewer",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "verdict",
+      "evidence": "E19 Opus medium 9/20 = high 9/20; verdict authority stays on Opus",
+      "since": "2026-10-16"
+    },
+    "design": {
+      "seat": "frontend-designer",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "architecture",
+      "evidence": "Alex 2026-10-14 ~21:00 ET: opus must ALWAYS be the architect and design",
+      "since": "2026-10-16"
+    },
+    "audit": {
+      "seat": "plan-reviewer",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "verdict",
+      "evidence": "verdict authority stays on Opus (Astra review 2026-10-16)",
+      "since": "2026-10-16"
+    },
+    "implement": {
+      "seat": "gpt-implementer",
+      "model": "sol-latest",
+      "effort": "medium",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "bounded",
+      "evidence": "E17 Sol 19/20 $0.64 per accepted, Grok 20/20; Muse 9/9 clean exits only, no acceptance evidence",
+      "since": "2026-10-16"
+    },
+    "mechanical": {
+      "seat": "gpt-implementer",
+      "model": "sol-latest",
+      "effort": "low",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "bounded",
+      "evidence": "orch-lab E10 and E12; quota tight 2026-10-13",
+      "since": "2026-10-16"
+    },
+    "explore": {
+      "seat": "gpt-explorer",
+      "model": "sol-latest",
+      "effort": "low",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "none",
+      "evidence": "Sol low default; Haiku unmeasured",
+      "since": "2026-10-16"
+    },
+    "research": {
+      "seat": "codex-sol",
+      "model": "sol-latest",
+      "effort": "high",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "bounded",
+      "evidence": "codex-sol research default; Sonnet Explore arm unmeasured",
+      "since": "2026-10-16"
+    },
+    "verify": {
+      "seat": "verifier",
+      "model": "sonnet-latest",
+      "effort": "high",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "bounded",
+      "evidence": "E15 Sonnet 16/16 seeded like Opus, $0.101 vs $0.216; DeepSWE low 16/20 vs xhigh 17/20 at 1/3 cost",
+      "since": "2026-10-16",
+      "by_author_vendor": {
+        "anthropic": {
+          "seat": "codex-verifier",
+          "model": "sol-latest",
+          "effort": "high"
+        }
+      },
+      "money_path_effort": "xhigh"
+    },
+    "computer": {
+      "seat": "computer-use",
+      "model": "sol-latest",
+      "effort": "medium",
+      "wrapper_model": "sonnet-latest",
+      "explore": false,
+      "authority": "bounded",
+      "evidence": "computer-use default on Sol medium",
+      "since": "2026-10-16"
+    },
+    "council": {
+      "seat": "codex-sol",
+      "model": "sol-latest",
+      "effort": "high",
+      "wrapper_model": "sonnet-latest",
+      "explore": false,
+      "authority": "bounded",
+      "evidence": "council round on Sol high; Opus synthesizes",
+      "since": "2026-10-16"
+    },
+    "relay": {
+      "seat": "host-relay",
+      "model": "sonnet-latest",
+      "effort": "low",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "none",
+      "evidence": "forwarding wrappers carry no decision; seat files name full ids so the background pin no longer redirects them",
+      "since": "2026-10-16"
+    },
+    "decide": {
+      "seat": "decider",
+      "model": "sonnet-latest",
+      "effort": "high",
+      "explore": true,
+      "authority": "bounded",
+      "evidence": "E20 Sonnet high 12/20, Sol 12/20, Opus medium 11/20, read as exploration evidence, not equivalence; was Fable every 30 min on ax42; a routing failure skips the tick",
+      "since": "2026-10-16"
+    },
+    "digest": {
+      "seat": "digest",
+      "model": "sonnet-latest",
+      "effort": "medium",
+      "explore": true,
+      "authority": "none",
+      "evidence": "digests and summaries carry no decision authority",
+      "since": "2026-10-16"
+    },
+    "judge": {
+      "seat": "general-purpose",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "verdict",
+      "evidence": "Astra review 2026-10-16: verdict authority stays Opus; E19 4/6 too small for an arm",
+      "since": "2026-10-16"
+    },
+    "classify": {
+      "seat": "jev",
+      "model": "haiku-latest",
+      "effort": "low",
+      "explore": false,
+      "authority": "bounded",
+      "evidence": "Jev first; haiku-latest low when a model is needed",
+      "since": "2026-10-16"
+    }
+  },
+  "explore": {
+    "enabled": false,
+    "max_share_per_class": 0.3,
+    "daily_cap_per_arm": 40,
+    "claude_daily_cap_jobs": 60,
+    "stop_after_nonaccepts": 3,
+    "min_n_per_arm": 40,
+    "never_classes": [
+      "plan",
+      "review",
+      "spec",
+      "contract",
+      "verdict",
+      "judge",
+      "design",
+      "audit",
+      "ui_critical",
+      "trust",
+      "money_path",
+      "fix"
+    ],
+    "arms": {
+      "implement": [
+        {
+          "id": "muse",
+          "seat": "muse-seat",
+          "model": "muse-latest",
+          "effort": "medium",
+          "share": 0.1,
+          "pool": "muse"
+        },
+        {
+          "id": "grok",
+          "seat": "cursor-seat",
+          "model": "grok-latest",
+          "effort": "medium",
+          "share": 0.1,
+          "pool": "cursor-models",
+          "gate": {
+            "open": false,
+            "until": "2026-10-30 Cursor probe"
+          }
+        }
+      ],
+      "mechanical": [
+        {
+          "id": "muse",
+          "seat": "muse-seat",
+          "model": "muse-latest",
+          "effort": "low",
+          "share": 0.1,
+          "pool": "muse"
+        },
+        {
+          "id": "luna-low",
+          "seat": "gpt-implementer",
+          "model": "luna-latest",
+          "effort": "low",
+          "share": 0.1,
+          "pool": "openai-codex",
+          "gate": {
+            "open": false,
+            "until": "Alex yes (Q3)"
+          }
+        }
+      ],
+      "explore": [
+        {
+          "id": "haiku-explore",
+          "seat": "Explore",
+          "model": "haiku-latest",
+          "effort": "low",
+          "share": 0.2,
+          "pool": "anthropic-general"
+        }
+      ],
+      "decide": [
+        {
+          "id": "haiku-decide",
+          "seat": "decider",
+          "model": "haiku-latest",
+          "effort": "high",
+          "share": 0.1,
+          "pool": "anthropic-general"
+        }
+      ],
+      "digest": [
+        {
+          "id": "haiku-digest",
+          "seat": "digest",
+          "model": "haiku-latest",
+          "effort": "medium",
+          "share": 0.2,
+          "pool": "anthropic-general"
+        }
+      ],
+      "relay": [
+        {
+          "id": "haiku-relay",
+          "seat": "host-relay",
+          "model": "haiku-latest",
+          "effort": "low",
+          "share": 0.3,
+          "pool": "anthropic-general"
+        }
+      ],
+      "verify": [
+        {
+          "id": "sol-xhigh",
+          "seat": "codex-verifier",
+          "model": "sol-latest",
+          "effort": "xhigh",
+          "share": 0.1,
+          "pool": "openai-codex",
+          "author_vendor": "anthropic"
+        }
+      ],
+      "research": [
+        {
+          "id": "sonnet-explore",
+          "seat": "Explore",
+          "model": "sonnet-latest",
+          "effort": "medium",
+          "share": 0.1,
+          "pool": "anthropic-general"
+        }
+      ]
+    },
+    "note": "2026-10-16 routing standard phase 1: exploration ships off. Arms open in phase 3 only after Opus turns enabled on; promotion is manual on dated evidence (ROUTING.md)."
+  },
   "implement_default": "gpt-implementer",
   "implement_default_note": "The default implementer switch (2026-09-28): route moves this seat to the head of the implement and mechanical chains. gpt-implementer (Sol medium) by E12; sonnet-implementer is the Codex-empty fallback, not the default.",
     "ladder": "interim",
@@ -116,7 +417,7 @@
               "@sonnet-cursor-high"
             ],
             "anthropic": [
-              "@sol-xhigh",
+              "@sol-high",
               "@opus-same-vendor"
             ],
         "glm": ["@sonnet-high", "@sol-high", "@sonnet-cursor-high"],
@@ -171,18 +472,12 @@
           "seat": "planner",
           "model": "opus-latest",
           "vendor": "anthropic",
-          "effort": "high"
-        },
-        {
-          "seat": "codex-sol",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "high"
+          "effort": "medium"
         }
       ],
       "second_opinion": {
-        "seat": "sol-consult",
-        "model": "sol-latest",
+        "seat": "astra-consult",
+        "model": "astra-latest",
         "vendor": "openai",
         "effort": "high",
         "when": "complex or risky plans, before the work is split"
@@ -194,13 +489,7 @@
           "seat": "plan-reviewer",
           "model": "opus-latest",
           "vendor": "anthropic",
-          "effort": "high"
-        },
-        {
-          "seat": "codex-sol",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "high"
+          "effort": "medium"
         }
       ]
     },
@@ -309,7 +598,7 @@
             "seat": "codex-verifier",
             "model": "sol-latest",
             "vendor": "openai",
-            "effort": "xhigh"
+            "effort": "high"
           }
         },
         "fresh_per_unit": true,
@@ -393,7 +682,7 @@
             "seat": "codex-verifier",
             "model": "sol-latest",
             "vendor": "openai",
-            "effort": "xhigh"
+            "effort": "high"
           }
         },
         "fresh_per_unit": true,
@@ -406,6 +695,12 @@
       "chain": [
         {
           "seat": "verifier",
+          "model": "sonnet-latest",
+          "vendor": "anthropic",
+          "effort": "high"
+        },
+        {
+          "seat": "verifier",
           "model": "opus-latest",
           "vendor": "anthropic",
           "effort": "high"
@@ -414,7 +709,7 @@
           "seat": "codex-verifier",
           "model": "sol-latest",
           "vendor": "openai",
-          "effort": "xhigh"
+          "effort": "high"
         }
       ]
     },
@@ -471,7 +766,7 @@
     "codex-verifier": {"vendor": "openai", "box": null, "needs_test_run": true},
     "computer-use": {"vendor": "openai", "box": null},
     "codex-test-runner": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "medium"},
-    "frontend-designer": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "high"},
+    "frontend-designer": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "medium"},
     "sonnet-implementer": {"vendor": "anthropic", "box": null},
     "effort-xhigh": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "xhigh"},
     "host-relay": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "low"},
@@ -620,9 +915,11 @@
           "high"
         ],
         "plan": [
+          "medium",
           "high"
         ],
         "review": [
+          "medium",
           "high"
         ],
         "council": [
@@ -669,7 +966,7 @@
       "harness": "sonnet",
       "note": "The newest claude-sonnet-N[-N] on the upstream Anthropic list (LB /api/models/anthropic); pinned, then Claude Code's sonnet alias, when no list is reachable. install-policy writes the resolved id to ANTHROPIC_DEFAULT_SONNET_MODEL (2026-09-28)"
     },
-    "haiku-latest": {"vendor": "anthropic", "family": "haiku", "pinned": "claude-haiku-4-5", "harness": "haiku", "note": "The newest claude-haiku-N[-N] on the upstream Anthropic list; pinned, then Claude Code's haiku alias, when no list is reachable (2026-09-28)"},
+    "haiku-latest": {"vendor": "anthropic", "family": "haiku", "pinned": "claude-haiku-5-5", "harness": "haiku", "note": "The newest claude-haiku-N[-N] on the upstream Anthropic list; pinned, then Claude Code's haiku alias, when no list is reachable (2026-09-28)"},
     "sol-latest": {
       "vendor": "openai",
       "family": "sol",
@@ -752,10 +1049,9 @@
   "blocked": ["claude-planner", "gpt-5.4*", "gpt-5-*", "gpt-5"],
   "blocked_note": "2026-10-05: models no longer served upstream (absent from the LB's /api/models and /api/models/anthropic lists that day); denied even on explicit request. Move an id here only when the upstream drops it.",
   "readmitted": {
-    "fable-orchestrator": {"alias": "fable-latest", "patterns": ["claude-fable-*", "fable"]},
     "astra-consult": {"alias": "astra-latest", "patterns": ["gpt-*-astra", "gpt-*-astra-*", "astra"]}
   },
-  "readmitted_note": "2026-10-05, Alex: \"right now i'm just using fable because opus has sort of failed this project. i also want you to consult with astra throughout this without burning too many tokens.\" Each seat named here, and the alias it names, may use the listed retired patterns; every other seat, alias and dispatch still treats them as retired. Fable and Astra are not on any ladder.",
+  "readmitted_note": "2026-10-05, Alex: \"right now i'm just using fable because opus has sort of failed this project. i also want you to consult with astra throughout this without burning too many tokens.\" Each seat named here, and the alias it names, may use the listed retired patterns; every other seat, alias and dispatch still treats them as retired. Fable and Astra are not on any ladder. 2026-10-16 routing standard: fable-orchestrator dropped from readmitted; Fable runs only when a dispatch names it, logged.",
   "off_default": [],
   "older_allowed": {},
   "older_allowed_note": "2026-10-01: retired ids always fail; an older id passes only when it carries an eval reference."

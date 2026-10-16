@@ -64,6 +64,7 @@ import io
 import json
 import math
 import os
+import random
 import re
 import secrets
 import shlex
@@ -79,6 +80,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
 DEFAULT_CODEX_COMPANION = "~/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs"
@@ -2837,6 +2839,7 @@ WORKFLOW_AUTHOR_VENDORS = ("anthropic", "openai", "xai", "cursor", "cognition", 
 CCGPT_EFFORTS = ("low", "medium", "high", "xhigh")
 # Claude Code's own cap on concurrent agent() calls in one workflow.
 WORKFLOW_AGENT_CAP = 16
+WORKFLOW_OPUS_STAGES = ("plan", "review", "judge", "synthesis", "orchestrator")
 
 
 def _chain_effort(table: dict[str, Any], class_name: str, seat: str) -> str | None:
@@ -2859,6 +2862,22 @@ def finish_text() -> str:
     return ""
 
 
+def seat_opts(seat: str, model: str | None, alias: str | None, effort: str | None) -> dict[str, Any]:
+    opts: dict[str, Any] = {"agentType": seat}
+    if seat in WORKFLOW_BRIDGE_SEATS:
+        if alias:
+            base = next((alias[: -len(f"-{e}")] for e in CCGPT_EFFORTS if alias.endswith(f"-{e}")), alias)
+            opts["model"] = f"{base}-{effort}" if effort in CCGPT_EFFORTS else alias
+    elif seat in WORKFLOW_BRIEF_SEATS:
+        opts["effort"] = "low"
+    elif seat not in WORKFLOW_EFFORT_BRIEF_SEATS and seat not in WORKFLOW_FIXED_FORWARDERS:
+        if model:
+            opts["model"] = model
+        if effort:
+            opts["effort"] = effort
+    return opts
+
+
 def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any]) -> dict[str, Any]:
     """Turn one pick entry into the agent() options and brief line that reach it."""
     seat = entry["seat"]
@@ -2867,14 +2886,9 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
     effort = entry.get("effort") if "effort" in entry else _chain_effort(table, class_name, seat)
     if model and is_retired(model, retired_patterns(table)):
         raise ValueError(f"{seat} picked retired model {model}")
-    opts: dict[str, Any] = {"agentType": seat}
+    opts = seat_opts(seat, model, alias, effort)
     brief = ""
-    if seat in WORKFLOW_BRIDGE_SEATS:
-        if alias:
-            base = next((alias[: -len(f"-{e}")] for e in CCGPT_EFFORTS if alias.endswith(f"-{e}")), alias)
-            opts["model"] = f"{base}-{effort}" if effort in CCGPT_EFFORTS else alias
-    elif seat in WORKFLOW_BRIEF_SEATS:
-        opts["effort"] = "low"
+    if seat in WORKFLOW_BRIEF_SEATS:
         brief = f"Seat model: {model or alias}\n"
         if class_name == "verify":
             brief += "Seat mode: ask\nReviewer instructions: read ~/.claude/agents/verifier.md and follow it.\n"
@@ -2882,11 +2896,6 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
             brief += "Seat mode: ask\n"
     elif seat in WORKFLOW_EFFORT_BRIEF_SEATS:
         brief = f"Effort: {effort}\n" if effort else ""
-    elif seat not in WORKFLOW_FIXED_FORWARDERS:
-        if model:
-            opts["model"] = model
-        if effort:
-            opts["effort"] = effort
     out = {key: entry.get(key) for key in ("rung", "seat", "model", "alias", "vendor", "pool") if entry.get(key)}
     seat_spec = (table.get("seats") or {}).get(seat)
     if "vendor" not in out and isinstance(seat_spec, dict) and seat_spec.get("vendor"):
@@ -2947,15 +2956,14 @@ def workflow_quota():
     if mode not in ('tight', 'normal'):
         raise ValueError('invalid factory quota mode')
     return {'mode': mode, 'agent_cap': 6 if mode == 'tight' else 16,
-            'default_model': 'sol-latest', 'opus_stages': ['judge', 'synthesis'],
+            'default_model': 'sol-latest', 'opus_stages': list(WORKFLOW_OPUS_STAGES), 'opus_effort': 'medium',
             'excluded_work': ['status', 'wake', 'polling', 'single-file'],
             'maintenance_model': 'sol-latest', 'auto_tighten_used_percent': 70}
 
 
 def workflow_table(table):
-    # Workflow stages have their own defaults; ordinary route pick retains its ladder.
     for name, spec in table['classes'].items():
-        if name == 'verify' or spec.get('driver'):
+        if name == 'verify' or name in WORKFLOW_OPUS_STAGES or spec.get('driver'):
             continue
         entries = ladder_entries(table, name) or spec.get('chain', [])
         sol = [dict(entry) for entry in entries if str(entry.get('model', '')).startswith('sol-latest')]
@@ -2970,6 +2978,15 @@ def workflow_table(table):
     return table
 
 
+def workflow_opus_stage(table: dict[str, Any], stage: str) -> dict[str, Any]:
+    standard = (table.get("standards") or {}).get(stage)
+    seat = standard.get("seat") if isinstance(standard, dict) and standard.get("seat") else "general-purpose"
+    model, _ = resolve_alias(table, "opus-latest", [], seat)
+    entry = {"seat": seat, "model": model or pinned_model(table, "opus-latest"), "alias": "opus-latest",
+             "vendor": "anthropic", "pool": "anthropic-general", "effort": "medium"}
+    return workflow_seat(table, stage, entry)
+
+
 def command_workflow_args(args: argparse.Namespace) -> int:
     quota = workflow_quota()
     table = workflow_table(load_table())
@@ -2980,12 +2997,18 @@ def command_workflow_args(args: argparse.Namespace) -> int:
         "table_sha256": hashlib.sha256(table_path().read_bytes()).hexdigest() if table_path().is_file() else None,
         "agent_cap": quota["agent_cap"],
         "quota": quota,
+        "policy_rev": table.get("policy_rev"),
+        "stages": {},
         "seats": {},
         "review_for": {},
         "errors": {},
     }
+    for stage in WORKFLOW_OPUS_STAGES:
+        document["stages"][stage] = workflow_opus_stage(table, stage)
+        if stage in classes:
+            document["seats"][stage] = document["stages"][stage]
     for class_name in sorted(classes):
-        if class_name == "verify":
+        if class_name == "verify" or class_name in WORKFLOW_OPUS_STAGES:
             continue
         try:
             document["seats"][class_name] = _workflow_pick(table, class_name, None)
@@ -3000,6 +3023,326 @@ def command_workflow_args(args: argparse.Namespace) -> int:
     if not document["seats"] and not document["review_for"]:
         return EXIT_UNROUTABLE
     return EXIT_DEGRADED if document["errors"] else EXIT_OK
+
+
+EXIT_WAIT = 3
+OPUS_AUTHORITY = frozenset({"verdict", "architecture"})
+CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+DECISION_DAY_ZONE = ZoneInfo("America/New_York")
+
+
+def new_ulid() -> str:
+    value = (int(time.time() * 1000) << 80) | int.from_bytes(secrets.token_bytes(10), "big")
+    return "".join(CROCKFORD[(value >> shift) & 31] for shift in range(125, -1, -5))
+
+
+def decisions_path() -> Path:
+    return _env_path("ROUTE_DECISIONS_LOG", Path.home() / ".claude" / "logs" / "route-decisions.jsonl")
+
+
+def read_decisions() -> list[dict[str, Any]]:
+    try:
+        lines = decisions_path().read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return []
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and row.get("v") == 1:
+            rows.append(row)
+    return rows
+
+
+def append_decision(row: dict[str, Any]) -> None:
+    path = decisions_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def table_digest() -> str:
+    path = table_path()
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else hashlib.sha256(b"").hexdigest()
+
+
+def pinned_model(table: dict[str, Any], alias: str | None) -> str | None:
+    if not alias:
+        return None
+    spec = (table.get("aliases") or {}).get(family_alias(table, alias))
+    pinned = spec.get("pinned") if isinstance(spec, dict) else None
+    return pinned if isinstance(pinned, str) else None
+
+
+def alias_vendor(table: dict[str, Any], alias: str | None) -> str | None:
+    if not alias:
+        return None
+    spec = (table.get("aliases") or {}).get(family_alias(table, alias))
+    if isinstance(spec, dict):
+        return spec.get("vendor")
+    return "anthropic" if alias.startswith("claude-") else None
+
+
+def quota_mode() -> str:
+    try:
+        return workflow_quota()["mode"]
+    except (ValueError, OSError, tomllib.TOMLDecodeError):
+        return "tight"
+
+
+def dispatch_standard(table: dict[str, Any], class_name: str, author_vendor: str | None) -> dict[str, Any]:
+    standard = dict(table["standards"][class_name])
+    override = (standard.get("by_author_vendor") or {}).get(author_vendor or "")
+    if isinstance(override, dict):
+        standard.update(override)
+    return standard
+
+
+def decision_day(ts: Any) -> str | None:
+    stamp = _parse_ts(ts)
+    return stamp.astimezone(DECISION_DAY_ZONE).date().isoformat() if stamp else None
+
+
+class DispatchContext:
+    def __init__(self, table: dict[str, Any], class_name: str, author_vendor: str | None) -> None:
+        self.table = table
+        self.class_name = class_name
+        self.author_vendor = author_vendor
+        self._reserve: dict[str, Any] | None | bool = False
+
+    def reserve(self) -> dict[str, Any] | None:
+        if self._reserve is False:
+            document, _ = fetch_pools()
+            self._reserve = reserve_state(self.table, pools_by_id(document), self.class_name)
+        return self._reserve if isinstance(self._reserve, dict) else None
+
+    def reserve_why(self) -> str | None:
+        state = self.reserve()
+        return state["why"] if state and state.get("active") else None
+
+
+def arm_block(ctx: DispatchContext, arm: dict[str, Any]) -> str | None:
+    explore = ctx.table.get("explore") or {}
+    standard = ctx.table["standards"][ctx.class_name]
+    if ctx.class_name in (explore.get("never_classes") or []):
+        return f"{ctx.class_name} never explores"
+    if explore.get("enabled") is not True:
+        return "explore disabled"
+    if standard.get("explore") is not True:
+        return f"{ctx.class_name} standard does not explore"
+    if arm.get("paused"):
+        return "paused"
+    gate = arm.get("gate")
+    if isinstance(gate, dict) and gate.get("open") is False:
+        return f"gate closed until {gate.get('until') or 'reopened'}"
+    wanted = arm.get("author_vendor")
+    if wanted and wanted != ctx.author_vendor:
+        return f"author vendor {ctx.author_vendor or 'unset'} is not {wanted}"
+    if alias_vendor(ctx.table, arm.get("model")) == "anthropic":
+        if quota_mode() == "tight":
+            return "tight quota mode holds Claude arms"
+        why = ctx.reserve_why()
+        if why:
+            return f"anthropic reserve: {why}"
+    return None
+
+
+def arm_cap_block(ctx: DispatchContext, arm: dict[str, Any], today: list[dict[str, Any]]) -> str | None:
+    explore = ctx.table.get("explore") or {}
+    arm_jobs = {row.get("job_id") for row in today
+                if row.get("class") == ctx.class_name and row.get("arm_id") == arm.get("id")}
+    cap = explore.get("daily_cap_per_arm")
+    if isinstance(cap, int) and len(arm_jobs) >= cap:
+        return f"daily cap {cap} jobs reached"
+    if alias_vendor(ctx.table, arm.get("model")) == "anthropic":
+        claude_jobs = {row.get("job_id") for row in today
+                       if alias_vendor(ctx.table, row.get("model_alias")) == "anthropic"}
+        claude_cap = explore.get("claude_daily_cap_jobs")
+        if isinstance(claude_cap, int) and len(claude_jobs) >= claude_cap:
+            return f"Claude explore cap {claude_cap} jobs reached"
+    return None
+
+
+def dispatch_wait(reason: str, class_name: str, job_id: str, as_json: bool) -> int:
+    document = {"status": "wait", "class": class_name, "job_id": job_id, "reason": reason}
+    print(json.dumps(document, sort_keys=True) if as_json else f"wait: {reason}")
+    return EXIT_WAIT
+
+
+def command_dispatch(args: argparse.Namespace) -> int:
+    table = load_table()
+    standards = table.get("standards") if isinstance(table.get("standards"), dict) else {}
+    if args.task_class not in standards:
+        print(f"route: unknown dispatch class {args.task_class!r}; known: {', '.join(standards)}", file=sys.stderr)
+        return EXIT_UNROUTABLE
+    if args.effort is not None and args.effort not in EFFORTS:
+        print(f"route: unknown effort {args.effort!r}", file=sys.stderr)
+        return EXIT_UNROUTABLE
+    class_name = args.task_class
+    job_id = args.job or f"job_{new_ulid()}"
+    history = read_decisions()
+    prior = [row for row in history if row.get("job_id") == job_id]
+    attempt = max((row.get("attempt") or 1 for row in prior), default=0) + 1
+    standard = dispatch_standard(table, class_name, args.author_vendor)
+    ctx = DispatchContext(table, class_name, args.author_vendor)
+    explore = table.get("explore") or {}
+    eligible: list[str] = []
+    sticky = False
+    explicit = any(value is not None for value in (args.seat, args.model, args.effort))
+    if explicit:
+        seat = args.seat or standard["seat"]
+        seat_spec = (table.get("seats") or {}).get(seat) or {}
+        model_alias = args.model or (standard["model"] if seat == standard["seat"] else seat_spec.get("model"))
+        effort = args.effort or (standard.get("effort") if seat == standard["seat"] else seat_spec.get("effort"))
+        choice = {"arm": "explicit", "arm_id": "explicit", "seat": seat, "model_alias": model_alias,
+                  "effort": effort, "pool": None, "propensity": 1.0, "reason": "explicit flags"}
+    else:
+        why = ctx.reserve_why() if (standard.get("authority") in OPUS_AUTHORITY
+                                    and alias_vendor(table, standard.get("model")) == "anthropic") else None
+        if why:
+            return dispatch_wait(f"{class_name} has {standard['authority']} authority and stays on Opus; "
+                                 f"anthropic reserve: {why}", class_name, job_id, args.json)
+        if prior:
+            first = prior[0]
+            arms = {arm.get("id"): arm for arm in (explore.get("arms") or {}).get(class_name) or []}
+            if first.get("arm") == "explore":
+                blocked = arm_block(ctx, arms.get(first.get("arm_id")) or {"id": first.get("arm_id"), "paused": True})
+                if blocked:
+                    return dispatch_wait(f"sticky arm {first.get('arm_id')} is held: {blocked}",
+                                         class_name, job_id, args.json)
+            sticky = True
+            choice = {"arm": first.get("arm") or "default", "arm_id": first.get("arm_id") or "standard",
+                      "seat": first.get("seat"), "model_alias": first.get("model_alias"),
+                      "effort": first.get("effort"), "pool": first.get("pool"),
+                      "propensity": first.get("propensity", 1.0),
+                      "reason": f"sticky: job {job_id} keeps {first.get('decision_id')}"}
+            eligible = list(first.get("eligible_arms") or [])
+        else:
+            today_key = decision_day(now_iso())
+            today = [row for row in history if row.get("arm") == "explore" and decision_day(row.get("ts")) == today_key]
+            candidates = []
+            for arm in (explore.get("arms") or {}).get(class_name) or []:
+                if not isinstance(arm, dict):
+                    continue
+                if arm_block(ctx, arm) or arm_cap_block(ctx, arm, today):
+                    continue
+                candidates.append(arm)
+            total = sum(float(arm.get("share") or 0) for arm in candidates)
+            cap = float(explore.get("max_share_per_class") or 0)
+            scale = cap / total if total > cap and total > 0 else 1.0
+            shares = [(arm, float(arm.get("share") or 0) * scale) for arm in candidates]
+            eligible = [arm["id"] for arm in candidates]
+            rng = random.Random(args.seed) if args.seed is not None else random.SystemRandom()
+            draw = rng.random()
+            cumulative = 0.0
+            choice = None
+            for arm, share in shares:
+                cumulative += share
+                if draw < cumulative:
+                    choice = {"arm": "explore", "arm_id": arm["id"], "seat": arm["seat"], "model_alias": arm["model"],
+                              "effort": arm.get("effort"), "pool": arm.get("pool"), "propensity": round(share, 6),
+                              "reason": f"explore draw {draw:.4f} < {cumulative:.4f}"}
+                    break
+            if choice is None:
+                reason = "standard"
+                if not explore.get("enabled"):
+                    reason = "standard (explore disabled)"
+                elif shares:
+                    reason = f"standard after draw {draw:.4f}"
+                choice = {"arm": "default", "arm_id": "standard", "seat": standard["seat"],
+                          "model_alias": standard["model"], "effort": standard.get("effort"), "pool": None,
+                          "propensity": round(1.0 - sum(share for _, share in shares), 6), "reason": reason}
+    seat = choice["seat"]
+    model_alias = choice["model_alias"]
+    served = ServedModels()
+    model = None
+    if model_alias:
+        needs_list = alias_vendor(table, model_alias) == "openai"
+        model, _ = resolve_alias(table, model_alias, served.get() if needs_list else [], seat)
+        unaliased = family_alias(table, model_alias) not in (table.get("aliases") or {})
+        if model is None and choice["arm"] == "explicit" and unaliased:
+            if not is_retired(model_alias, blocked_patterns(table)):
+                model = model_alias
+                record_explicit_model(model_alias, f"route dispatch {class_name}")
+    wrapper_alias = standard.get("wrapper_model")
+    if wrapper_alias and wrapper_alias == standard.get("model"):
+        wrapper_alias = model_alias
+    wrapper_model = resolve_alias(table, wrapper_alias, [], None)[0] if wrapper_alias else None
+    effort = choice["effort"]
+    row = {
+        "v": 1,
+        "decision_id": f"dcn_{new_ulid()}",
+        "ts": now_iso(),
+        "class": class_name,
+        "job_id": job_id,
+        "attempt": attempt,
+        "parent_id": args.parent,
+        "caller": args.caller,
+        "arm": choice["arm"],
+        "arm_id": choice["arm_id"],
+        "seat": seat,
+        "model_alias": model_alias,
+        "model": model,
+        "effort": effort,
+        "requested_effort": args.effort,
+        "wrapper_model": wrapper_model,
+        "pool": choice["pool"] or (pool_for_model(table, model_alias) if model_alias else None),
+        "opts": seat_opts(seat, model, model_alias, effort),
+        "explicit": choice["arm"] == "explicit",
+        "sticky": sticky,
+        "propensity": float(choice["propensity"]),
+        "eligible_arms": eligible,
+        "reason": choice["reason"],
+        "table_sha256": table_digest(),
+        "policy_rev": str(table.get("policy_rev") or "unversioned"),
+    }
+    if not args.dry_run:
+        append_decision(row)
+    if args.json:
+        print(json.dumps(row, sort_keys=True))
+    else:
+        print(f"{class_name} -> {seat} {model or model_alias} {effort or ''} ({row['arm']}:{row['arm_id']})".rstrip())
+    return EXIT_OK
+
+
+def policy_snapshot(table: dict[str, Any]) -> dict[str, Any]:
+    standards = table.get("standards") if isinstance(table.get("standards"), dict) else {}
+    seats: dict[str, dict[str, Any]] = {}
+    for spec in standards.values():
+        seat = spec.get("seat")
+        if seat and seat not in seats:
+            seats[seat] = {"model": spec.get("model"), "model_id": pinned_model(table, spec.get("model")),
+                           "effort": spec.get("effort")}
+    for seat, spec in (table.get("seats") or {}).items():
+        if seat not in seats and isinstance(spec, dict) and spec.get("model"):
+            seats[seat] = {"model": spec.get("model"), "model_id": pinned_model(table, spec.get("model")),
+                           "effort": spec.get("effort")}
+    background = table.get("background_model")
+    return {
+        "policy_rev": table.get("policy_rev"),
+        "table_sha256": table_digest(),
+        "precedence": table.get("precedence"),
+        "standards": standards,
+        "background_model": pinned_model(table, background) or background,
+        "background_model_alias": background,
+        "explore_enabled": bool((table.get("explore") or {}).get("enabled")),
+        "seats": dict(sorted(seats.items())),
+    }
+
+
+def command_policy(args: argparse.Namespace) -> int:
+    snapshot = policy_snapshot(load_table(apply_default=False))
+    if args.json:
+        print(json.dumps(snapshot, indent=2, sort_keys=True))
+    else:
+        print(f"policy {snapshot['policy_rev']} table {snapshot['table_sha256'][:12]} "
+              f"background {snapshot['background_model']}")
+        for seat, spec in snapshot["seats"].items():
+            print(f"  {seat}: {spec['model']} {spec['effort'] or ''}".rstrip())
+    return EXIT_OK
 
 
 # --- doctor ------------------------------------------------------------------
@@ -3824,6 +4167,26 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     workflow_args = sub.add_parser("workflow-args",
                                    help="JSON of agent() options per class for Workflow scripts (always JSON)")
     workflow_args.set_defaults(handler=command_workflow_args)
+
+    dispatch = sub.add_parser("dispatch", help="one routing decision for a class, logged to route-decisions.jsonl")
+    dispatch.add_argument("task_class", metavar="class")
+    dispatch.add_argument("--job", default=None, help="job id; the same job keeps its first arm")
+    dispatch.add_argument("--parent", default=None, help="parent decision id")
+    dispatch.add_argument("--caller", default=None)
+    dispatch.add_argument("--author-vendor", "--author-maker", dest="author_vendor", default=None)
+    dispatch.add_argument("--seat", default=None)
+    dispatch.add_argument("--model", default=None)
+    dispatch.add_argument("--effort", default=None)
+    dispatch.add_argument("--seed", type=int, default=None)
+    dispatch.add_argument("--dry-run", dest="dry_run", action="store_true")
+    dispatch.add_argument("--json", action="store_true")
+    dispatch.set_defaults(handler=command_dispatch)
+
+    policy = sub.add_parser("policy", help="the versioned routing policy")
+    policy_sub = policy.add_subparsers(dest="policy_command", required=True)
+    snapshot = policy_sub.add_parser("snapshot", help="standards and per-seat model and effort")
+    snapshot.add_argument("--json", action="store_true")
+    snapshot.set_defaults(handler=command_policy)
 
     learn = sub.add_parser("learn", help="propose chain demotions from recorded outcomes")
     learn.add_argument("--apply", action="store_true", help="write the overrides into the routing table")
