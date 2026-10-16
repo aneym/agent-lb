@@ -228,6 +228,9 @@ class Settings(BaseSettings):
     kimi_oauth_token_url: str = "https://auth.kimi.com/api/oauth/token"
     kimi_oauth_client_id: str = "17e5f671-d194-4dfb-9706-5516cb48c098"
     token_refresh_timeout_seconds: float = 8.0
+    exchange_auto_reset_max_attempts: int = 3
+    exchange_auto_reset_base_seconds: float = 900.0
+    exchange_auto_reset_providers: tuple[str, ...] = ("anthropic",)
     auth_guardian_enabled: bool = False
     auth_guardian_interval_seconds: int = Field(default=21600, gt=0)
     auth_guardian_max_refresh_age_seconds: int = Field(default=43200, gt=0)

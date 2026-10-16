@@ -8,14 +8,21 @@ from dataclasses import dataclass, field
 from datetime import timezone
 from typing import AsyncIterator, Protocol, cast
 
+from app.core.audit.service import AuditDetails, AuditService
 from app.core.auth.refresh import RefreshError
 from app.core.config.settings import get_settings
+from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.usage import capacity_for_plan
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
-from app.modules.accounts.auth_manager import AuthManager, is_locally_owned
+from app.modules.accounts.auth_manager import (
+    AuthManager,
+    _exchange_timeout_seconds,
+    _refresh_token_material_fingerprint,
+    is_locally_owned,
+)
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.limit_warmup.repository import LimitWarmupRepository
@@ -101,6 +108,7 @@ class UsageRefreshScheduler:
         if not await _get_leader_election().try_acquire():
             return
         async with self._lock:
+            audit_events: list[tuple[str, AuditDetails]] = []
             try:
                 async with get_background_session() as session:
                     usage_repo = UsageRepository(session)
@@ -122,8 +130,41 @@ class UsageRefreshScheduler:
                     ]
                     if uncertain_accounts:
                         auth_manager = AuthManager(accounts_repo)
+                        settings = get_settings()
+                        encryptor = TokenEncryptor()
                         for account in uncertain_accounts:
                             try:
+                                if account.provider in settings.exchange_auto_reset_providers:
+                                    result = await accounts_repo.auto_reset_exchange_intent(
+                                        account.id,
+                                        _refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted),
+                                        timeout_seconds=_exchange_timeout_seconds(),
+                                        base_seconds=settings.exchange_auto_reset_base_seconds,
+                                        max_attempts=settings.exchange_auto_reset_max_attempts,
+                                    )
+                                    details = {
+                                        "account_id": account.id,
+                                        "attempt": result.attempt,
+                                        "prior_replay": result.prior_replay,
+                                        "prior_reason": result.prior_reason,
+                                    }
+                                    if result.outcome == "reset":
+                                        logger.info(
+                                            "Uncertain exchange auto-reset account_id=%s attempt=%d "
+                                            "prior_replay=%s prior_reason=%s",
+                                            account.id,
+                                            result.attempt,
+                                            result.prior_replay,
+                                            result.prior_reason,
+                                        )
+                                        audit_events.append(("account_exchange_auto_reset", details))
+                                    elif result.outcome == "exhausted":
+                                        logger.warning(
+                                            "Uncertain exchange auto-recovery exhausted account_id=%s; "
+                                            "exchange-reset or re-login needed",
+                                            account.id,
+                                        )
+                                        audit_events.append(("account_exchange_auto_exhausted", details))
                                 await auth_manager.ensure_fresh(account, recover_uncertain=True)
                             except RefreshError as exc:
                                 logger.debug(
@@ -223,6 +264,9 @@ class UsageRefreshScheduler:
                     get_account_selection_cache().invalidate()
             except Exception:
                 logger.exception("Usage refresh loop failed")
+            finally:
+                for action, details in audit_events:
+                    AuditService.log_async(action, details=details)
 
 
 def build_usage_refresh_scheduler() -> UsageRefreshScheduler:

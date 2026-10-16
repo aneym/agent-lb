@@ -16,6 +16,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -170,6 +171,7 @@ class AccountExchangeIntent(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     replay: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
     reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    auto_resets: Mapped[int] = mapped_column(SmallInteger, default=0, server_default="0", nullable=False)
 
 
 class AccountResumeSchedule(Base):

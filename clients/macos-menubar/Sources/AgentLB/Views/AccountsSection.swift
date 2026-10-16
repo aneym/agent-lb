@@ -275,6 +275,7 @@ struct AccountRow: View {
   private var presentation: RowPresentation {
     if account.isSubscriptionCanceled { return .unsubscribed }
     if account.status == "paused" { return .paused }
+    if account.status == "exchange_uncertain" { return .reconnecting }
     if account.isDisconnected {
       let reauth = account.status == "reauth_required"
         || (account.deactivationReason ?? "").localizedCaseInsensitiveContains("auth")
@@ -621,6 +622,7 @@ enum RowPresentation: Equatable, Sendable {
   case active
   case rateLimited(Date?)
   case paused
+  case reconnecting
   case deactivated(reauth: Bool)
   case unsubscribed
 
@@ -628,6 +630,7 @@ enum RowPresentation: Equatable, Sendable {
     switch seat.displayStatus {
     case "rate_limited": .rateLimited(seat.displayStatusResetAt)
     case "paused": .paused
+    case "exchange_uncertain": .reconnecting
     case "reauth_required": .deactivated(reauth: true)
     default: .active
     }
@@ -649,6 +652,8 @@ enum RowPresentation: Equatable, Sendable {
       return "limited · \(reset(resetAt))"
     case .paused:
       return "paused"
+    case .reconnecting:
+      return "reconnecting"
     case .deactivated(let reauth):
       return reauth ? "re-auth needed" : "inactive"
     case .unsubscribed:
