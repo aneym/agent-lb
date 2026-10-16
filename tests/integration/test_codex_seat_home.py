@@ -97,3 +97,32 @@ def test_dry_installed_writer_and_launcher_patch(tmp_path: Path):
     assert local.is_dir() and not local.is_symlink()
     assert not (local / "untouched").exists()
     assert (archive / "untouched").read_text() == "global archive"
+
+
+def test_seat_home_carries_the_port_kill_rules_codex_enforces(tmp_path: Path):
+    import json
+    import shutil
+
+    import pytest
+
+    codex = shutil.which("codex")
+    if not codex:
+        pytest.skip("codex CLI not installed")
+    source = tmp_path / "source"
+    (source / "rules").mkdir(parents=True)
+    (source / "rules/port-kill.rules").write_text((ROOT / "config/coding-agents/codex/port-kill.rules").read_text())
+    job = tmp_path / "job"
+    env = os.environ | {"HOME": str(tmp_path / "home"), "CODEX_SOURCE_HOME": str(source)}
+    subprocess.run([sys.executable, str(WRITER), str(job)], env=env, capture_output=True, text=True,
+                   timeout=10, check=True)
+
+    def decision(*command):
+        result = subprocess.run([codex, "execpolicy", "check", "-r", str(job / "rules/port-kill.rules"), *command],
+                                capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(result.stdout).get("decision")
+
+    assert decision("pkill", "-9", "-f", "voice-capture") == "forbidden"
+    assert decision("killall", "-KILL", "python3") == "forbidden"
+    assert decision("xargs", "kill", "-9") == "forbidden"
+    assert decision("kill", "12345") is None
+    assert decision("pkill", "-P", "123") is None

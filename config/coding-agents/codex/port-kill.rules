@@ -1,0 +1,3 @@
+prefix_rule(pattern=["pkill", ["-9", "-KILL", "-SIGKILL"], "-f"], decision="forbidden", justification="2026-10-16: a pattern SIGKILL hit Tailscale; kill your own pid, or free a port with port-free <port>")
+prefix_rule(pattern=["killall", ["-9", "-KILL", "-SIGKILL"]], decision="forbidden", justification="2026-10-16: a pattern SIGKILL hit Tailscale; kill your own pid, or free a port with port-free <port>")
+prefix_rule(pattern=["xargs", "kill", ["-9", "-KILL", "-SIGKILL"]], decision="forbidden", justification="2026-10-16: lsof -t | xargs kill -9 SIGKILLed Tailscale; free a port with port-free <port>")

@@ -63,6 +63,10 @@ def main() -> None:
         sessions.unlink()
     sessions.mkdir(exist_ok=True)
     (destination / "config.toml").write_text("\n".join(lines) + "\n")
+    rules = source / "rules" / "port-kill.rules"
+    if rules.is_file():
+        (destination / "rules").mkdir(exist_ok=True)
+        (destination / "rules" / "port-kill.rules").write_text(rules.read_text())
     auth = destination / "auth.json"
     source_auth = source / "auth.json"
     if source_auth.exists() and not auth.exists() and not auth.is_symlink():

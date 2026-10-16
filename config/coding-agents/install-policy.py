@@ -36,6 +36,12 @@ MANAGED_AGENTS = (
         Path("codex-seat-home.py"),
     ),
     (
+        Path(".codex/rules/port-kill.rules"),
+        Path(".agent-lb/managed/coding-agents/codex-port-kill-rules"),
+        "agent-lb:codex-port-kill-rules:v1\n",
+        Path("codex/port-kill.rules"),
+    ),
+    (
         Path(".claude/agents/computer-use.md"),
         Path(".agent-lb/managed/coding-agents/computer-use"),
         "agent-lb:computer-use:v1\n",
