@@ -662,6 +662,8 @@ struct RowRing: View {
   let presentation: RowPresentation
   var pending = false
 
+  var drawsGauge: Bool { percent != nil && !pending }
+
   var body: some View {
     if pending {
       ProgressView()
@@ -669,7 +671,11 @@ struct RowRing: View {
         .frame(width: 20, height: 20)
     } else {
       ZStack {
-        RingGauge(percent: percent, lineWidth: 2)
+        if drawsGauge {
+          RingGauge(percent: percent, lineWidth: 2)
+        } else {
+          Circle().stroke(.quaternary, style: StrokeStyle(lineWidth: 2, dash: [2, 3]))
+        }
         switch presentation {
         case .active, .rateLimited, .unsubscribed:
           EmptyView()
@@ -849,15 +855,30 @@ struct SeatAccountRow: View {
   }
 
   var trailingText: String? {
-    presentation.label(now: now, activeText: Self.todayText(seat)) {
+    if seat.onlyCursorOtherLimited, presentation == .active,
+      let reset = seat.cooldowns?["cursor-other"] ?? seat.quotaWindows.first(where: { $0.id == "cursor-other" })?.resetsAt {
+      return "Other out until \(Format.easternDay(reset))"
+    }
+    return presentation.label(now: now, activeText: Self.todayText(seat)) {
       Format.easternMoment($0, relativeTo: now)
     }
   }
 
-  private var emptyText: String {
-    let reason = SeatVendorSummary.reasonText(seat.quota?.unavailableReason, vendor: seat.vendorLabel)
-    let runs = seat.todayRuns
-    return "\(reason) · \(runs) \(runs == 1 ? "run" : "runs") in 24 h"
+  var emptyText: String {
+    let cutoff = now.addingTimeInterval(-7 * 24 * 60 * 60)
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "yyyy-MM-dd"
+    let firstDay = formatter.string(from: cutoff)
+    let lastDay = formatter.string(from: now)
+    let runs = (seat.daily ?? [:]).filter { $0.key > firstDay && $0.key <= lastDay }
+      .values.reduce(0) { $0 + $1.values.reduce(0) { $0 + $1.runs } }
+    var text = "\(runs) \(runs == 1 ? "run" : "runs") · 7d"
+    if let lastRun = seat.lastRunAt {
+      text += " · last run \(Format.easternTime(lastRun))"
+    }
+    return text
   }
 
   private var help: String {

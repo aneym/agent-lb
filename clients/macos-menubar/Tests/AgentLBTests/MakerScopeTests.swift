@@ -54,12 +54,12 @@ final class MakerScopeTests: XCTestCase {
     let devinRows = AccountFilter(sort: .nameAsc).apply(to: [], seats: ProviderScope.devin.filter(seats), now: now)
     XCTAssertEqual(devinRows.map(\.id), ["seat:devin-kinetic", "seat:devin-main"])
     XCTAssertEqual(AccountFilter(status: .paused).apply(to: seats, now: now).map(\.id), ["devin-kinetic"])
-    XCTAssertEqual(AccountFilter(status: .rateLimited).apply(to: seats, now: now).map(\.id), ["cursor-main"])
+    XCTAssertEqual(AccountFilter(status: .rateLimited).apply(to: seats, now: now).map(\.id), [])
     XCTAssertEqual(AccountFilter(query: "gmail").apply(to: seats, now: now).map(\.id), ["cursor-gmail"])
 
     let main = try XCTUnwrap(seats.first { $0.id == "cursor-main" })
-    XCTAssertEqual(RowPresentation.forSeat(main), .rateLimited(Format.iso8601.date(from: "2099-10-30T04:00:00Z")))
-    XCTAssertEqual(SeatAccountRow(seat: main, now: now).trailingText, "limited · Oct 30, 12:00 AM")
+    XCTAssertEqual(RowPresentation.forSeat(main), .active)
+    XCTAssertEqual(SeatAccountRow(seat: main, now: now).trailingText, "Other out until Oct 30")
 
     let cursor = SeatVendorSummary.build(scope: .cursor, pools: pools, seats: seats, summary: nil, now: now)
     XCTAssertEqual(cursor.cards.map(\.id), ["cursor-models", "cursor-other"])
@@ -70,7 +70,7 @@ final class MakerScopeTests: XCTestCase {
 
     let devin = SeatVendorSummary.build(scope: .devin, pools: pools, seats: seats, summary: nil, now: now)
     XCTAssertTrue(devin.cards.isEmpty)
-    XCTAssertEqual(devin.quietLine, "No usage reading from Devin · 2 runs in 24 h")
+    XCTAssertEqual(devin.quietLine, "Not reported by Devin · 2 runs in 24 h")
     XCTAssertEqual(devin.seatsText, "1/2 seats")
   }
 }

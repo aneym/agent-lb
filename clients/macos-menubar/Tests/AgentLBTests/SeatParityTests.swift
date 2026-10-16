@@ -67,7 +67,7 @@ final class SeatParityTests: XCTestCase {
     XCTAssertEqual(gmail.status, "rate_limited")
     XCTAssertEqual(gmail.planLabel, "Ultra")
     XCTAssertEqual(gmail.email, "seat-owner@example.invalid")
-    XCTAssertEqual(gmail.primaryQuotaWindow?.id, "cursor-other")
+    XCTAssertEqual(gmail.primaryQuotaWindow?.id, "cursor-models")
     XCTAssertEqual(gmail.quotaWindows.map(\.label), ["Cursor models · Grok, Composer", "Other models"])
     XCTAssertEqual(gmail.today?.valueUsd, 3.41)
     XCTAssertEqual(gmail.recentRuns?.first?.ok, true)
@@ -76,6 +76,7 @@ final class SeatParityTests: XCTestCase {
     XCTAssertEqual(muse.quota?.source, "unavailable")
     XCTAssertEqual(muse.quota?.unavailableReason, "not_reported")
     XCTAssertNil(muse.today?.tokensIn)
+    XCTAssertFalse(RowRing(percent: muse.primaryQuotaWindow?.remainingPercent, presentation: .active).drawsGauge)
     XCTAssertEqual(example.poolsExcerpt.first?.windows?.first?.measuredAccounts, 1)
     XCTAssertEqual(example.poolsExcerpt.last?.quotaSource, "unavailable")
     XCTAssertEqual(example.usageSummaryCursor.provider, "cursor")
@@ -107,7 +108,7 @@ final class SeatParityTests: XCTestCase {
     XCTAssertEqual(vendor.cards.map(\.title), ["DAILY LIMIT", "WEEKLY LIMIT"])
     XCTAssertEqual(vendor.cards.map(\.detail), [nil, nil])
     XCTAssertEqual(vendor.cards.map(\.resetText), ["resets Oct 17, 12:00 AM", "resets Oct 20, 12:00 AM"])
-    XCTAssertEqual(vendor.stripLines, ["7d · 9 runs · tokens not reported · value unknown"])
+    XCTAssertEqual(vendor.stripLines, ["7d · 9 runs · tokens not reported · Not reported"])
   }
 
   func testMuseTabIsQuietWithoutAReading() throws {
@@ -117,8 +118,8 @@ final class SeatParityTests: XCTestCase {
       summary: try summary(for: .muse, example: example), now: now
     )
     XCTAssertTrue(vendor.cards.isEmpty)
-    XCTAssertEqual(vendor.quietLine, "Not reported by Muse · 0 runs in 24 h")
-    XCTAssertEqual(vendor.stripLines, ["7d · 3 runs · tokens not reported · value unknown"])
+    XCTAssertEqual(vendor.quietLine, "Not reported by Muse")
+    XCTAssertEqual(vendor.stripLines, ["7d · 3 runs · tokens not reported · Not reported"])
     XCTAssertFalse(vendor.texts.contains { $0.contains("$0.0000") || $0.contains("$0.00") })
   }
 
@@ -139,7 +140,7 @@ final class SeatParityTests: XCTestCase {
       scope: .devin, pools: [pool], seats: [seat], summary: try summary(for: .devin, example: example), now: now
     )
     XCTAssertTrue(vendor.cards.isEmpty)
-    XCTAssertEqual(vendor.quietLine, "Usage credential unavailable · 4 runs in 24 h")
+    XCTAssertEqual(vendor.quietLine, "Usage login unavailable · 4 runs in 24 h")
   }
 
   func testSeatRowsMatchSeatCountsAndUseSharedPresentation() throws {
@@ -153,9 +154,8 @@ final class SeatParityTests: XCTestCase {
     XCTAssertEqual(AccountFilter().apply(to: [], seats: seats, now: now).count, counts[.all])
 
     let gmail = try XCTUnwrap(seats.first { $0.id == "cursor-gmail" })
-    let reset = Format.iso8601.date(from: "2026-10-30T00:00:00Z")
-    XCTAssertEqual(RowPresentation.forSeat(gmail), .rateLimited(reset))
-    XCTAssertEqual(SeatAccountRow(seat: gmail, now: now).trailingText, "limited · Oct 29, 8:00 PM")
+    XCTAssertEqual(RowPresentation.forSeat(gmail), .active)
+    XCTAssertEqual(SeatAccountRow(seat: gmail, now: now).trailingText, "Other out until Oct 29")
     XCTAssertEqual(SeatAccountRow.cells(for: gmail).map(\.label), ["CURSOR", "OTHER"])
     XCTAssertEqual(SeatAccountRow.cells(for: gmail).map(\.percent), [38, 0])
 
@@ -169,7 +169,7 @@ final class SeatParityTests: XCTestCase {
     XCTAssertNil(mask.email(for: gmail))
     XCTAssertEqual(PrivacyMask.disabled.name(for: gmail, real: gmail.id), "cursor-gmail")
 
-    XCTAssertEqual(AccountFilter(status: .rateLimited).apply(to: seats, now: now).map(\.id), ["cursor-gmail"])
+    XCTAssertEqual(AccountFilter(status: .rateLimited).apply(to: seats, now: now).map(\.id), [])
     XCTAssertEqual(AccountFilter(query: "ultra").apply(to: seats, now: now).map(\.id), ["cursor-gmail"])
     XCTAssertEqual(
       AccountFilter(sort: .remainingAsc).apply(to: seats, now: now).map(\.id),
