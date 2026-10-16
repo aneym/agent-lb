@@ -170,6 +170,7 @@ async def test_mirror_401_pulls_once_then_returns_retryable_503(async_client, mo
         account.owner_instance = "remote-owner"
         await session.commit()
 
+    monkeypatch.setattr(proxy.get_settings(), "federation_peer_url", "http://peer.invalid")
     pulls = AsyncMock()
 
     class Mirror:
@@ -191,3 +192,41 @@ async def test_mirror_401_pulls_once_then_returns_retryable_503(async_client, mo
     assert response.json()["error"]["type"] == "mirror_token_unavailable"
     assert len(upstream) == 1
     pulls.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_push_only_mirror_401_skips_pull_and_backs_off_account(async_client, monkeypatch):
+    await _insert_account(
+        account_id="pushed-mirror", provider="anthropic", access_token="stale-access", email="pushed@example.com"
+    )
+    async with SessionLocal() as session:
+        account = await session.get(Account, "pushed-mirror")
+        account.owner_instance = "remote-owner"
+        await session.commit()
+
+    monkeypatch.setattr(proxy.get_settings(), "federation_peer_url", None)
+    pulls = AsyncMock()
+
+    class Mirror:
+        mirror_once = pulls
+
+    monkeypatch.setattr(proxy, "build_federation_mirror_scheduler", lambda: Mirror())
+    upstream = []
+
+    def open_response(self, session, *, provider_name, headers, json_body):
+        upstream.append(headers["Authorization"])
+        return _FakeResponseContext(_FakeResponse(401, b'{"error":{"message":"rejected"}}'))
+
+    monkeypatch.setattr(proxy.AnthropicProxyService, "_open_upstream_response", open_response)
+    body = {"model": "claude-sonnet-4-6", "max_tokens": 16, "messages": [{"role": "user", "content": "hi"}]}
+
+    first = await async_client.post("/v1/messages", json=body)
+    second = await async_client.post("/v1/messages", json=body)
+
+    assert first.status_code == 503
+    assert first.json()["error"]["type"] == "mirror_token_unavailable"
+    assert second.status_code >= 400
+    assert upstream == ["Bearer stale-access"]
+    pulls.assert_not_awaited()
+    async with SessionLocal() as session:
+        assert (await session.get(Account, "pushed-mirror")).status == AccountStatus.ACTIVE

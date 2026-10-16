@@ -77,6 +77,7 @@ _MAX_SELECTION_ATTEMPTS = 4
 _ANTHROPIC_COOLDOWN_WINDOW = "primary"
 _ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
 _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
+_MIRROR_TOKEN_UNAVAILABLE_COOLDOWN_SECONDS = 60
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 
 
@@ -735,6 +736,10 @@ class AnthropicProxyService:
                                                     expected_reset_at=account.reset_at,
                                                     expected_blocked_at=account.blocked_at,
                                                 )
+                                        elif error_code == "mirror_token_unavailable":
+                                            await self._load_balancer.cool_down(
+                                                account, _MIRROR_TOKEN_UNAVAILABLE_COOLDOWN_SECONDS
+                                            )
                                         else:
                                             await self._load_balancer.record_error(account)
                                     else:
@@ -2069,7 +2074,7 @@ class AnthropicProxyService:
                 fresh = await manager.ensure_fresh(latest, force=force)
                 return self._encryptor.decrypt(fresh.access_token_encrypted)
         except AccountNotOwnedError as exc:
-            if rejected_access_token is not None:
+            if rejected_access_token is not None and get_settings().federation_peer_url:
                 try:
                     await build_federation_mirror_scheduler().mirror_once()
                     async with self._repo_factory() as repos:

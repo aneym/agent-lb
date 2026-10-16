@@ -1665,6 +1665,17 @@ class LoadBalancer:
                 await self._persist_state(repos.accounts, account, state)
             self._selection_inputs_cache.invalidate()
 
+    async def cool_down(self, account: Account, seconds: float) -> None:
+        lock = await self._get_account_lock(account.id)
+        async with lock:
+            state = self._state_for(account)
+            now = time.time()
+            state.error_count += 1
+            state.last_error_at = now
+            state.cooldown_until = max(state.cooldown_until or 0.0, now + seconds)
+            self._sync_runtime_state(account, state)
+            self._selection_inputs_cache.invalidate()
+
     async def record_error(self, account: Account) -> None:
         await self.record_errors(account, 1)
 
