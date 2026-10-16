@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -272,6 +273,24 @@ def emit_refusal(why: str) -> None:
     )
 
 
+def lean_studio_refusal(subagent: str, prompt: str) -> str | None:
+    if not (subagent.endswith("-local") or "-local-" in subagent):
+        return None
+    tool = os.environ.get("LEAN_STUDIO_BIN") or str(Path.home() / ".local" / "bin" / "lean-studio")
+    if not os.access(tool, os.X_OK):
+        return None
+    try:
+        done = subprocess.run([tool, "check-local", subagent], input=prompt, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() or None if done.returncode == 1 else None
+
+
+def emit_lean_refusal(why: str) -> None:
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                             "permissionDecisionReason": "seat-guard: " + why}}))
+
+
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
@@ -351,6 +370,12 @@ def main() -> None:
         record["warned"] = warn_reason
         append(record, ledger)
         emit_warning(warn_reason + ("; " + NEEDS_MISSING if record.get("needs_missing") else ""))
+        return
+    lean = lean_studio_refusal(subagent, prompt)
+    if lean:
+        record["lean_studio_refused"] = True
+        append(record, ledger)
+        emit_lean_refusal(lean)
         return
     is_fork = subagent == "fork"
     if is_fork:
