@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -197,6 +199,52 @@ def test_regular_cc_never_rewrites_messages_even_for_gpt_model() -> None:
     )
 
 
+@pytest.mark.parametrize("existing", ["", "X-Trace-Id: keep-me\nX-Agent-Lb-Seat: old-seat"])
+def test_print_dry_run_exports_tag_headers_without_losing_custom_headers(tmp_path, existing) -> None:
+    launcher = Path(__file__).resolve().parents[2] / "clients" / "claude-lb-launch"
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("AGENT_LB_", "CLAUDE_LB_", "ANTHROPIC_", "CC_"))
+    }
+    env.update(
+        CLAUDE_LB_DRY_RUN="1",
+        CLAUDE_LB_DISABLE="1",
+        AGENT_LB_SEAT="host-relay",
+        AGENT_LB_INTENT="implementation",
+        AGENT_LB_LANE="routing",
+        AGENT_LB_DISPATCH='{"decision_id":"dispatch-test"}',
+        ANTHROPIC_CUSTOM_HEADERS=existing,
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json, os, runpy, sys; "
+            "path = sys.argv[1]; sys.argv = [path, '-p', 'hello']; "
+            "runpy.run_path(path, run_name='__main__'); "
+            "print(json.dumps(os.environ.get('ANTHROPIC_CUSTOM_HEADERS', '')))",
+            str(launcher),
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    )
+    assert "-p hello" in completed.stdout
+    lines = json.loads(completed.stdout.splitlines()[-1]).splitlines()
+    headers = dict(line.split(": ", 1) for line in lines)
+    assert headers["x-agent-lb-seat"] == "host-relay"
+    assert headers["x-agent-lb-intent"] == "implementation"
+    assert headers["x-agent-lb-lane"] == "routing"
+    assert headers["x-agent-lb-dispatch"] == "dispatch-test"
+    assert sum(line.lower().startswith("x-agent-lb-seat:") for line in lines) == 1
+    if existing:
+        assert headers["X-Trace-Id"] == "keep-me"
+
+
 def test_shared_proxy_preserves_identity_headers_and_does_not_rewrite_models(monkeypatch) -> None:
     import io
 
@@ -229,6 +277,10 @@ def test_shared_proxy_preserves_identity_headers_and_does_not_rewrite_models(mon
         + b"Content-Type: application/json\r\n"
         + b"X-Claude-Session-Id: desktop-session\r\n"
         + b"X-Identity-Token: keep-me\r\n"
+        + b"X-Agent-Lb-Seat: host-relay\r\n"
+        + b"X-Agent-Lb-Intent: implementation\r\n"
+        + b"X-Agent-Lb-Lane: routing\r\n"
+        + b"X-Agent-Lb-Dispatch: dispatch-test\r\n"
         + b"Connection: close\r\n\r\n"
         + body
     )
@@ -253,6 +305,10 @@ def test_shared_proxy_preserves_identity_headers_and_does_not_rewrite_models(mon
     headers = {key.lower(): value for key, value in requests[0].header_items()}
     assert headers["x-claude-session-id"] == "desktop-session"
     assert headers["x-identity-token"] == "keep-me"
+    assert headers["x-agent-lb-seat"] == "host-relay"
+    assert headers["x-agent-lb-intent"] == "implementation"
+    assert headers["x-agent-lb-lane"] == "routing"
+    assert headers["x-agent-lb-dispatch"] == "dispatch-test"
 
 
 def test_auxiliary_request_routes_direct_with_original_credentials_and_identity(monkeypatch) -> None:

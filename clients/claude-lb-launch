@@ -2508,6 +2508,17 @@ def main() -> None:
         os.environ.setdefault("CLAUDE_CODE_NO_FLICKER", "1")
     tag_reason = resolve_lane_tags(argv)
     resolved_tags = tag_headers(os.environ)
+    custom_tags = {
+        name: value for name, value in resolved_tags.items() if "\r" not in value and "\n" not in value
+    }
+    if custom_tags:
+        custom_headers = [
+            line
+            for line in os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "").splitlines()
+            if line.partition(":")[0].strip().lower() not in custom_tags
+        ]
+        custom_headers.extend(f"{name}: {value}" for name, value in custom_tags.items())
+        os.environ["ANTHROPIC_CUSTOM_HEADERS"] = "\n".join(custom_headers)
     routed = False
     session_id = ""
     if lb_enabled():
