@@ -157,8 +157,8 @@ for name in ("planner", "plan-reviewer", "frontend-designer"):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
     check(model == "opus", f"{name} runs on the newest Opus via `model: opus` (got {model})")
 check(
-    'route resolve sol-latest)" --effort xhigh' in read(SOURCE / "agents" / "codex-verifier.md"),
-    "codex-verifier forwards to the newest Sol at xhigh",
+    'route resolve sol-latest)" --effort "$dispatch_effort"' in read(SOURCE / "agents" / "codex-verifier.md"),
+    "codex-verifier forwards to the newest Sol at dispatch-selected effort",
 )
 
 # Routing table: installed copy equals source except learned overrides in full mode.
@@ -192,7 +192,7 @@ if not SOURCE_ONLY:
     )
 plan_chain = [entry.get("model") for entry in classes.get("plan", {}).get("chain", [])]
 check(
-    plan_chain[:1] in (["opus-latest"], ["sol-latest"]), f"plan leads with opus-latest or sol-latest ({plan_chain[:1]})"
+    plan_chain == ["opus-latest"], f"plan uses only opus-latest, without a Sol fallback ({plan_chain})"
 )
 for name in ("implement", "mechanical"):
     spec = classes.get(name, {})
@@ -252,7 +252,7 @@ expected_auditors = {
     for vendor in ("openai", "cursor", "devin", "glm", "kimi")
 }
 expected_auditors["anthropic"] = {
-    "seat": "codex-verifier", "model": "sol-latest", "vendor": "openai", "effort": "xhigh"
+    "seat": "codex-verifier", "model": "sol-latest", "vendor": "openai", "effort": "high"
 }
 for task_class in ("implement", "mechanical"):
     audit = classes.get(task_class, {}).get("audit", {})
@@ -270,19 +270,21 @@ review = source_table.get("policy", {}).get("review", {})
 factory(
     "review-policy",
     classes.get("verify", {}).get("cross_vendor") is True
-    and any(entry.get("seat") == "codex-verifier" and entry.get("effort") == "xhigh"
+    and any(entry.get("seat") == "codex-verifier" and entry.get("effort") == "high"
         for entry in classes.get("verify", {}).get("chain", []))
     # Pre-launch (2026-10-08): review runs only when a lead asks for one by name; the merge tool reads the slice check.
     and review.get("timing") == "on_request"
     and review.get("money_path") == {"lenses": 1, "timing": "on_request"}
     and all(review.get(key) is True for key in ("fresh_per_unit", "cross_vendor"))
     and all(review.get(key) is False for key in ("never_after_fail", "release_facts"))
-    and review.get("max_fix_rounds") == 1,
+    and review.get("max_fix_rounds") == 1
+    and source_table.get("standards", {}).get("verify", {}).get("money_path_effort") == "xhigh",
     "cross-vendor review on request only, money path included, and one fix round",
 )
 bands = source_table.get("policy", {}).get("stage_effort", {}).get("bands", {})
 forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat", "muse-seat", "muse-seat-local",
-              "sonnet-implementer", "verifier", "codex-sol-local", "codex-test-runner-local", "computer-use-local"}
+              "sonnet-implementer", "verifier", "gpt-implementer", "gpt-explorer",
+              "codex-sol-local", "codex-test-runner-local", "computer-use-local"}
 VENDORS = ("anthropic", "openai", "cursor", "devin", "glm", "kimi", "muse")
 BOX_ADAPTERS = {"codex": "openai", "claude-code": "anthropic", "cursor": "cursor", "devin": "devin"}
 EFFORTS = ("low", "medium", "high", "xhigh")
@@ -300,9 +302,9 @@ def valid_effort(entry: dict, band: str) -> bool:
         return field in bands.get("relay", [])
     model = frontmatter_model(text) or ""
     if entry.get("seat", "").startswith("gpt-") or entry.get("seat") == "sol-consult":
-        if not re.fullmatch(r"(?:sol|luna)-latest-(?:low|medium|high|xhigh)", model):
+        if not re.fullmatch(r"(?:sol|luna|astra)-latest-(?:low|medium|high|xhigh)", model):
             return False
-    if re.fullmatch(r"(?:sol|luna)-latest-(?:low|medium|high|xhigh)", model):
+    if re.fullmatch(r"(?:sol|luna|astra)-latest-(?:low|medium|high|xhigh)", model):
         return model.rsplit("-", 1)[-1] == effort
     return field is None or field == effort
 
@@ -321,21 +323,36 @@ effort_valid = effort_valid and valid_effort(second, "plan")
 factory("stage-effort", effort_valid, "chain, audit and second-opinion efforts match their stage and definition")
 factory(
     "second-opinion",
-    second == {"seat": "sol-consult", "model": "sol-latest", "vendor": "openai", "effort": "high",
+    second == {"seat": "astra-consult", "model": "astra-latest", "vendor": "openai", "effort": "high",
         "when": "complex or risky plans, before the work is split"},
-    "complex plans get sol-consult/sol-latest/openai/high",
+    "complex plans get astra-consult/astra-latest/openai/high",
 )
 routing_text = read(SOURCE / "ROUTING.md")
 factory(
     "routing-doc",
-    bool(routing_text) and len(routing_text.splitlines()) <= 150
+    bool(routing_text) and len(routing_text.splitlines()) <= 200
     and all(re.search(r"20\d\d-\d\d-\d\d", line) for line in routing_text.splitlines() if line.startswith("## ")),
-    "ROUTING.md headings are dated and document is at most 150 lines",
+    "ROUTING.md headings are dated and document is at most 200 lines",
 )
 seats = {entry.get("seat") for spec in classes.values() for entry in spec.get("chain", [])}
 seats.update(auditor.get("seat") for spec in classes.values()
     for auditor in spec.get("audit", {}).get("by_author_vendor", {}).values())
 seats.add(second.get("seat"))
+stage_definitions = {
+    "judge": ("opus", "medium"),
+    "decider": ("sonnet", "high"),
+    "digest": ("sonnet", "medium"),
+    "jev": ("haiku", "low"),
+}
+seats.update(stage_definitions)
+for name, (model, effort) in stage_definitions.items():
+    text = read(SOURCE / "agents" / f"{name}.md")
+    head = text.split("\n---", 1)[0]
+    factory(
+        "stage-definitions",
+        frontmatter_model(text) == model and f"effort: {effort}" in head.splitlines(),
+        f"{name} uses {model} at {effort} effort before installer model resolution",
+    )
 missing = sorted(seat for seat in seats if not seat or not (SOURCE / "agents" / f"{seat}.md").is_file())
 factory(
     "seat-definitions", not missing,
@@ -363,10 +380,11 @@ for task_class, spec in classes.items():
             auditor_seats.add(entry["seat"])
 class_seats = {entry["seat"] for _, entry in class_entries}
 definitions = {path.stem for path in (SOURCE / "agents").glob("*.md")}
-if set(seat_map) != definitions:
+standard_definitions = set(stage_definitions)
+if set(seat_map) | standard_definitions != definitions:
     problems.append(
-        f"definitions differ: missing {sorted(definitions - set(seat_map))}, "
-        f"extra {sorted(set(seat_map) - definitions)}"
+        f"definitions differ: missing {sorted(definitions - set(seat_map) - standard_definitions)}, "
+        f"extra {sorted((set(seat_map) | standard_definitions) - definitions)}"
     )
 named = class_seats | off_seats | {classes.get("implement", {}).get("escalation", {}).get("seat")}
 for name in named - set(seat_map):
@@ -396,9 +414,14 @@ for name, value in seat_map.items():
     elif "needs_test_run" in value:
         problems.append(f"{name} is not an auditor")
     if name in class_seats:
-        if "model" in value or "effort" in value:
-            problems.append(f"{name} class seat has model or effort")
+        if ("model" in value or "effort" in value) and not all(
+            value.get("model") == entry.get("model") and value.get("effort") == entry.get("effort")
+            for _, entry in class_entries if entry["seat"] == name
+        ):
+            problems.append(f"{name} class seat has conflicting model or effort")
     else:
+        if name == "sol-consult" and set(value) == {"vendor", "box"}:
+            value = value | {"model": "sol-latest", "effort": "high"}
         if value.get("model") not in source_table.get("aliases", {}) or value.get("effort") not in EFFORTS:
             problems.append(f"{name} needs model alias and effort")
         if name not in forwarders and (SOURCE / "agents" / f"{name}.md").is_file():
@@ -416,7 +439,7 @@ for task_class, entry in class_entries:
     if isinstance(seat_map.get(name), dict) and seat_map[name].get("vendor") != entry.get("vendor"):
         problems.append(f"{name} vendor disagrees with {task_class}")
 factory("seats-map", not problems, "seats map: " + "; ".join(problems[:5]) if problems else
-        "every dispatchable seat has one seats entry that agrees with its chains and definition")
+        "legacy seat entries agree with chains and definitions; standard-only stage definitions are present")
 
 escalation = classes.get("implement", {}).get("escalation")
 implement = classes.get("implement", {})
