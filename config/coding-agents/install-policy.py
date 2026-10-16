@@ -20,7 +20,9 @@ END = "<!-- agent-lb:coding-agent-routing:end -->"
 CODEX_START = "<!-- agent-lb:codex-agents:start -->"
 CODEX_END = "<!-- agent-lb:codex-agents:end -->"
 MODEL = "opus"
-EFFORT_LEVEL = "high"
+EFFORT_LEVEL = "medium"
+HAIKU_ENV = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+POLICY_SNAPSHOT = Path(".agent-lb/managed/coding-agents/policy-snapshot.json")
 
 
 
@@ -367,6 +369,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--print", action="store_true", dest="preview")
     parser.add_argument("--uninstall", action="store_true")
+    parser.add_argument("--check", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--reason", help="Logged reason for forcing installation from a stale revision")
     parser.add_argument(
@@ -1185,6 +1188,92 @@ def resolve_sol(source: Path, home: Path) -> str:
     return model if SOL_ID.fullmatch(model) else SOL_MODEL
 
 
+RELAY_SEATS = frozenset((
+    "codex-sol", "codex-sol-local", "codex-verifier", "codex-test-runner",
+    "codex-test-runner-local", "gpt-implementer", "gpt-explorer", "sonnet-implementer",
+    "verifier", "cursor-seat", "devin-seat", "muse-seat", "muse-seat-local",
+    "computer-use", "computer-use-local", "host-relay",
+))
+
+
+def policy_snapshot(source: Path, home: Path) -> dict[str, Any]:
+    route = source.parent.parent / "clients/route"
+    if not route.is_file():
+        route = home / ".agent-lb/bin/route"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(route), "policy", "snapshot", "--json"],
+            capture_output=True, text=True, timeout=60, check=True,
+            env=os.environ | {"ROUTE_TABLE": str(source / "routing-table.json")},
+        )
+        snapshot = json.loads(result.stdout)
+        for key in ("policy_rev", "table_sha256", "seats", "standards"):
+            if not snapshot.get(key):
+                raise ValueError(f"missing {key}")
+        return snapshot
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise SystemExit(f"error: route policy snapshot failed: {exc}") from exc
+
+
+def snapshot_model(snapshot: dict[str, Any], model: str) -> str:
+    if not model.endswith("-latest"):
+        return model
+    for key in ("resolved_models", "models", "aliases"):
+        resolved = snapshot.get(key, {}).get(model)
+        if isinstance(resolved, dict):
+            resolved = resolved.get("resolved_model") or resolved.get("model") or resolved.get("resolved")
+        if isinstance(resolved, str) and not resolved.endswith("-latest"):
+            return resolved
+    raise SystemExit(f"error: snapshot does not resolve {model}")
+
+
+def seat_template(text: str, name: str, snapshot: dict[str, Any]) -> str:
+    seat = snapshot["seats"].get(name)
+    if not isinstance(seat, dict):
+        raise SystemExit(f"error: snapshot has no seat {name}")
+    if name in RELAY_SEATS:
+        model = snapshot_model(snapshot, snapshot["standards"]["relay"]["wrapper_model"])
+        effort = "low"
+    else:
+        model = snapshot_model(snapshot, seat.get("resolved_model") or seat["model"])
+        effort = seat["effort"]
+    if "fable" in model.lower() and name != "fable-orchestrator":
+        raise SystemExit(f"error: Fable is forbidden for {name}")
+    parts = text.split("---", 2)
+    for key, value in (("model", model), ("effort", effort)):
+        pattern = rf"(?m)^{key}:.*$"
+        if re.search(pattern, parts[1]):
+            parts[1] = re.sub(pattern, f"{key}: {value}", parts[1])
+        else:
+            parts[1] += f"{key}: {value}\n"
+    return "---".join(parts)
+
+
+def check_policy(source: Path, home: Path, snapshot: dict[str, Any]) -> int:
+    problems = []
+    for relative, _, _, template in MANAGED_AGENTS:
+        if template.parent == Path("agents"):
+            wanted = seat_template((source / template).read_text(), template.stem, snapshot)
+            for installed in (relative, POLICY_DIR / template):
+                if read_text(home / installed) != wanted:
+                    problems.append(str(installed))
+    try:
+        settings = json.loads(read_text(home / ".claude/settings.json"))
+        background = snapshot_model(snapshot, snapshot["background_model"] if "background_model" in snapshot
+                                    else snapshot["standards"]["background_model"])
+        if (settings.get("effortLevel") != EFFORT_LEVEL or settings.get("model") != MODEL
+                or settings.get("env", {}).get(HAIKU_ENV) != background
+                or settings.get("env", {}).get(SONNET_ENV) != snapshot_model(snapshot, "sonnet-latest")):
+            problems.append(".claude/settings.json")
+        if json.loads(read_text(home / POLICY_SNAPSHOT)) != snapshot:
+            problems.append(str(POLICY_SNAPSHOT))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        problems.append("settings or snapshot missing/invalid")
+    for problem in problems:
+        print(f"policy drift: {problem}")
+    return int(bool(problems))
+
+
 def reconcile_codex_config(text: str, model: str) -> str:
 
     section = ""
@@ -1390,7 +1479,8 @@ def desired_routing_table(source_path: Path, live_path: Path) -> str:
         except json.JSONDecodeError as exc:
             raise SystemExit(f"error: invalid JSON in {live_path}: {exc}") from exc
         if isinstance(live, dict) and "overrides" in live:
-            table["overrides"] = live["overrides"]
+            table["overrides"] = [entry for entry in live["overrides"]
+                                  if isinstance(entry, dict) and entry.get("class") in table["classes"]]
     return json.dumps(table, indent=2) + "\n"
 
 
@@ -1417,6 +1507,9 @@ def main() -> int:
         print("hook paths: ok" if not problems else f"hook paths: {len(problems)} problem(s)")
         return 1 if problems else 0
     source = Path(__file__).resolve().parent
+    snapshot = None if args.uninstall else policy_snapshot(source, args.home)
+    if args.check:
+        return check_policy(source, args.home, snapshot)
     if not (args.preview or args.uninstall):
         verify_install_revision(source, args.force, args.reason)
     claude_path = args.home / ".claude" / "CLAUDE.md"
@@ -1461,8 +1554,16 @@ def main() -> int:
         }
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
-    sonnet_model = SONNET_MODEL if args.uninstall else resolve_sonnet(source, args.home)
+    sonnet_model = SONNET_MODEL if args.uninstall else snapshot_model(snapshot, "sonnet-latest")
     desired_settings = reconcile_settings(settings, args.uninstall, sonnet_model, source)
+    if args.uninstall:
+        if isinstance(desired_settings.get("env"), dict):
+            desired_settings["env"].pop(HAIKU_ENV, None)
+            if not desired_settings["env"]:
+                desired_settings.pop("env")
+    else:
+        background = snapshot.get("background_model") or snapshot["standards"]["background_model"]
+        desired_settings["env"][HAIKU_ENV] = snapshot_model(snapshot, background)
     mode = "off" if args.uninstall else (args.hook_dispatcher or ("sticky" if folded_now else "off"))
     if mode != "off" and isinstance(desired_settings.get("hooks"), dict):
         opaque = opaque_floor_commands(desired_settings["hooks"], source)
@@ -1639,6 +1740,12 @@ def main() -> int:
         agent_path = args.home / relative_path
         owner_path = args.home / owner_relative_path
         agent_template = (source / template_relative_path).read_text()
+        if args.uninstall and (args.home / POLICY_SNAPSHOT).is_file():
+            installed_snapshot = json.loads((args.home / POLICY_SNAPSHOT).read_text())
+            if template_relative_path.parent == Path("agents"):
+                agent_template = seat_template(agent_template, template_relative_path.stem, installed_snapshot)
+        if snapshot is not None and template_relative_path.parent == Path("agents"):
+            agent_template = seat_template(agent_template, template_relative_path.stem, snapshot)
         agent_text = read_text(agent_path)
         agent_owned = read_text(owner_path) == owner_marker
         if args.uninstall:
@@ -1659,15 +1766,21 @@ def main() -> int:
 
 
                 if agent_text != agent_template:
-                    print(f"hook dispatcher: keeping the installed {relative_path.name}; the new one failed the fixture")
+                    print(f"hook dispatcher: keeping the installed {relative_path.name}; "
+                          "the new one failed the fixture")
                 continue
             if agent_text != agent_template:
                 changes[agent_path] = agent_template
             if not agent_owned:
                 changes[owner_path] = owner_marker
 
-    if not args.uninstall:
-
+    if args.uninstall:
+        if (args.home / POLICY_SNAPSHOT).exists():
+            changes[args.home / POLICY_SNAPSHOT] = None
+    else:
+        wanted_snapshot = json.dumps(snapshot, indent=2) + "\n"
+        if read_text(args.home / POLICY_SNAPSHOT) != wanted_snapshot:
+            changes[args.home / POLICY_SNAPSHOT] = wanted_snapshot
 
         for name, template in (("route.sh", "jev-route.sh"),
                                ("health-check.sh", "jev-health-check.sh"),
@@ -1738,6 +1851,8 @@ def main() -> int:
             policy_sources += [Path("hooks/local-seat-bin/desktop-guard-focus")]
             for relative in policy_sources:
                 wanted = (source / relative).read_text()
+                if relative.parent == Path("agents"):
+                    wanted = seat_template(wanted, relative.stem, snapshot)
 
 
                 if replace_policy_link or read_text(policy_dir / relative) != wanted:
@@ -1880,11 +1995,11 @@ def locked_main() -> int:
     import signal
 
     args = parse_args()
-    if not (args.check_hook_paths or args.preview or args.uninstall):
+    if not (args.check_hook_paths or args.preview or args.uninstall or args.check):
         verify_install_revision(Path(__file__).resolve().parent, args.force, args.reason)
     home = args.home.expanduser().resolve()
     digest = hashlib.sha256(str(home).encode()).hexdigest()[:16]
-    lock_dir = Path("/tmp") if Path("/tmp").is_dir() else Path(tempfile.gettempdir())
+    lock_dir = Path(tempfile.gettempdir())
     lock_path = lock_dir / f"agent-lb-install-policy-{os.getuid()}-{digest}.lock"
     with open(lock_path, "a+") as handle:
         deadline = time.monotonic() + 600
@@ -1905,7 +2020,8 @@ def locked_main() -> int:
                     process = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
                                              capture_output=True, text=True, timeout=10).stdout.strip()
                     if "install-policy.py" in process and "python" in process and "claude" not in process.lower():
-                        print(f"WARNING: retiring stalled policy installer pid={pid}; no recorded progress for over 15 minutes", flush=True)
+                        print(f"WARNING: retiring stalled policy installer pid={pid}; "
+                              "no recorded progress for over 15 minutes", flush=True)
                         os.kill(pid, signal.SIGTERM)
                         until = time.monotonic() + 30
                         while time.monotonic() < until:

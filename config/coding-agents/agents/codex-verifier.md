@@ -1,7 +1,7 @@
 ---
 name: codex-verifier
-description: Cross-vendor verification. Forwards a verification contract to Codex on the newest Sol (`sol-latest`, xhigh effort) in read-only mode and returns its verdict. Use whenever the diff under review was authored by an Anthropic model, so the verifier does not share a vendor with the author.
-model: haiku
+description: Cross-vendor verification. Forwards a verification contract to Codex on the newest Sol (`sol-latest`, policy-selected effort) in read-only mode and returns its verdict. Use whenever the diff under review was authored by an Anthropic model, so the verifier does not share a vendor with the author.
+model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
 ---
@@ -28,8 +28,17 @@ written in the same Bash call:
 cd <worktree> && f=$(mktemp "${TMPDIR:-/tmp}/codex-verifier-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
 <contract text built below>
 CONTRACT_EOF
+job_args=()
+if [ -n "${AGENT_LB_DISPATCH:-}" ]; then
+  job_args=(--job "$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job"])')")
+else
+  job_args=(--job "codex-verifier-$(date +%s)-$(openssl rand -hex 8)")
+fi
+AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch verify --author-vendor anthropic --caller codex-verifier "${job_args[@]}" --json) || exit $?
+export AGENT_LB_DISPATCH
+dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
 vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-verifier --)
-$HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- ${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort xhigh --prompt-file "$f"
+$HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- ${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort "$dispatch_effort" --prompt-file "$f"
 ```
 
 When the brief names a piece id, put `SEAT_RUN_PIECE=<that id>` before

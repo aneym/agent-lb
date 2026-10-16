@@ -1,7 +1,7 @@
 ---
 name: sonnet-implementer
 description: Scoped coding seat on Claude Sonnet (sonnet-latest, high effort), placed on the factory box with the most measured room. The Codex-empty fallback implementer (2026-09-28, E12): it stands in when gpt-implementer hits real 429s or usage limits; codex-verifier (Sol) reviews it. Mac-only briefs use sonnet-implementer-local.
-model: haiku
+model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
 ---

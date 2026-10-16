@@ -16,7 +16,7 @@ tools:
     Skill,
   ]
 model: opus
-effort: high
+effort: medium
 ---
 
 You are a lane planner — a coordinator teammate running a delegated

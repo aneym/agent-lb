@@ -4,7 +4,7 @@ description: Adversarial review of a plan, PRD, spec, or design doc before imple
 tools: [Read, Grep, Glob, Bash]
 disallowedTools: [Write, Edit]
 model: opus
-effort: high
+effort: medium
 ---
 
 You review plans, not code. Your job is to find the reasons this plan will

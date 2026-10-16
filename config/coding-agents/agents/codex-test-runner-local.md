@@ -1,7 +1,7 @@
 ---
 name: codex-test-runner-local
 description: Studio-only copy of codex-test-runner that runs in this process. Use only for Mac-only work (xcodebuild, simctl, Aside, herdr, keychain, TCC, screenshots, the League or PC link); every other brief goes to codex-test-runner, which runs on the box with the most measured room.
-model: haiku
+model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
 ---

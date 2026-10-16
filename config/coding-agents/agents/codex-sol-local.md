@@ -1,7 +1,7 @@
 ---
 name: codex-sol-local
 description: Studio-only copy of codex-sol that runs in this process. Use only for Mac-only work (xcodebuild, simctl, Aside, herdr, keychain, TCC, screenshots, the League or PC link); every other brief goes to codex-sol, which runs on the box with the most measured room.
-model: haiku
+model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
 ---
@@ -28,7 +28,17 @@ cd <working directory> && f=$(mktemp "${TMPDIR:-/tmp}/codex-sol-contract.XXXXXX"
 PLACEMENT: studio-only
 <contract text built below>
 CONTRACT_EOF
-bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort <low|medium|high|xhigh> [--write] --prompt-file "$f"
+task_class=research
+job_args=()
+if [ -n "${AGENT_LB_DISPATCH:-}" ]; then
+  job_args=(--job "$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job"])')")
+else
+  job_args=(--job "codex-sol-local-$(date +%s)-$(openssl rand -hex 8)")
+fi
+AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch "$task_class" --caller codex-sol-local "${job_args[@]}" --json) || exit $?
+export AGENT_LB_DISPATCH
+dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
+bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort "$dispatch_effort" [--write] --prompt-file "$f"
 ```
 
 Never write the contract to a fixed or reused path (the scratchpad is shared by parallel agents), and never pass it inline.
@@ -36,7 +46,7 @@ Never write the contract to a fixed or reused path (the scratchpad is shared by 
 - The `cd` is part of the same shell invocation (Codex's sandbox is rooted at the cwd; each Bash call starts in the session cwd). Research and deliberation contracts cd into the directory whose files Codex must read or write (a scratchpad directory is fine). Coding contracts cd into the lane's worktree.
 - Use `--write` for browser walkers, admission/check commands, evidence capture, and any contract needing network access, even when product/repository files remain read-only. Launch from the owning lane directory, or export `LANE_DIR` when using scratch cwd. This workspace-write mode grants admission bookkeeping, own-lane evidence writes, and network access. It does not authorize repository edits.
 - Omit `--write` only for filesystem inspection that needs neither admission nor network. Strict read-only mode cannot run a browser walker. Never use write mode in a shared checkout another seat owns.
-- `--effort`: the brief's effort, default `high` for research and deliberation, `medium` for mechanical work, `xhigh` when the brief says "hard".
+- Set `task_class=mechanical` for mechanical work; otherwise use `research`. Use the effort returned by `route dispatch`. When the brief explicitly names an effort, add `--effort <named effort>` to that dispatch call; xhigh is allowed only when the brief names xhigh. Reuse the same job through retries and forwarding.
 - Return the completed job report, not a queued job ID. Never `--resume-last` in a shared worktree.
 - Computer use: forward the exact app, pages, permitted interactions, evidence directory and hold rules; require Codex to discover its tools first (a computer_use flag is not proof of control). No foreground input, credentials, logins, TCC or system settings, extension installs, or Herdr tab changes unless the brief says the owner authorized that exact thing.
 - Web access is on for research contracts; ask Codex to cite every source with a date.

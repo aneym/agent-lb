@@ -1,7 +1,7 @@
 ---
 name: codex-sol
 description: General Codex seat on the newest Sol (`sol-latest`). Forward ANY contract to a Codex Sol thread (research with web access, exploration, planning and review, deliberation and council rounds, long-running work, or coding in a worktree). Use when the driver wants Codex judgment or hands, not only an implementation contract. Replaces the retired astra seat (owner, 2026-09-22). Callers pass a descriptive kebab-case `name`.
-model: haiku
+model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
 ---
@@ -20,8 +20,18 @@ Create and write a fresh unique contract file in the same Bash call that launche
 cd <working directory> && f=$(mktemp "${TMPDIR:-/tmp}/codex-sol-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
 <contract text built below>
 CONTRACT_EOF
+task_class=research
+job_args=()
+if [ -n "${AGENT_LB_DISPATCH:-}" ]; then
+  job_args=(--job "$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job"])')")
+else
+  job_args=(--job "codex-sol-$(date +%s)-$(openssl rand -hex 8)")
+fi
+AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch "$task_class" --caller codex-sol "${job_args[@]}" --json) || exit $?
+export AGENT_LB_DISPATCH
+dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
 vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-sol --)
-k=codex-sol-<kebab topic>-$(date +%s)-$(openssl rand -hex 2); echo "key=$k"; seat-run --bg --name "$k" --timeout 4320 -- ${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort <low|medium|high|xhigh> [--write] --prompt-file "$f"
+k=codex-sol-<kebab topic>-$(date +%s)-$(openssl rand -hex 2); echo "key=$k"; seat-run --bg --name "$k" --timeout 4320 -- ${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort "$dispatch_effort" [--write] --prompt-file "$f"
 ```
 
 Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it on the factory box with the most measured room unless the contract names a Mac-only tool (then Studio). Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 75, at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). Exit 69 (`NO-BOX`) or a `studio-governor:` line is a placement event, not a death: relaunch once at once with a new key and `seat-run --box auto`, which queues for the next box; a seat that is not Mac-only never runs on Studio, so never pass `--box studio` and never fall back to a `-local` seat. Studio-only work (a Mac app, Aside, herdr, simulators) uses `codex-sol-local` instead.
@@ -30,7 +40,7 @@ Never write the contract to a fixed or reused path (the scratchpad is shared by 
 
 - The `cd` is part of the same shell invocation (Codex's sandbox is rooted at the cwd; each Bash call starts in the session cwd). Research and deliberation contracts cd into the directory whose files Codex must read or write (a scratchpad directory is fine). Coding contracts cd into the lane's worktree.
 - `--write` only when the contract says Codex writes files; never in a shared checkout that another seat owns. Without `--write` Codex is read-only on disk.
-- `--effort`: the brief's effort, default `high` for research and deliberation, `medium` for mechanical work, `xhigh` when the brief says "hard".
+- Set `task_class=mechanical` for mechanical work; otherwise use `research`. Use the effort returned by `route dispatch`. When the brief explicitly names an effort, add `--effort <named effort>` to that dispatch call; xhigh is allowed only when the brief names xhigh. Reuse the same job through retries and forwarding.
 - Long work needs no `--background`: seat-run runs it detached and `--wait` collects it. Never `--resume-last` in a shared worktree.
 - Computer use: forward the exact app, pages, permitted interactions, evidence directory and hold rules; require Codex to discover its tools first (a computer_use flag is not proof of control). No foreground input, credentials, logins, TCC or system settings, extension installs, or Herdr tab changes unless the brief says the owner authorized that exact thing.
 - Web access is on for research contracts; ask Codex to cite every source with a date.
