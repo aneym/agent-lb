@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import subprocess
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Request
@@ -32,6 +35,72 @@ _DROP_HEADERS = {
 _TAIL_BYTES = 128 * 1024
 
 router = APIRouter(prefix="/muse-api", tags=["muse"])
+provider_router = APIRouter(prefix="/muse/v1", tags=["muse"])
+
+CREDENTIAL_SERVICE = os.environ.get("MUSE_LB_CREDENTIAL_SERVICE", "ai.meta.dev.credentials")
+CREDENTIAL_ACCOUNT = os.environ.get("MUSE_LB_CREDENTIAL_ACCOUNT", "meta")
+CREDENTIAL_TTL_SECONDS = 300.0
+DEFAULT_MODEL = "muse-wonder-1.0"
+_CLIENT_AUTH_HEADERS = {"authorization", "x-api-key", "cookie"}
+
+
+class MuseCredential:
+    def __init__(self) -> None:
+        self._value: str | None = None
+        self._loaded_at = 0.0
+        self._lock = asyncio.Lock()
+
+    def _read(self) -> str | None:
+        try:
+            result = subprocess.run(
+                ["security", "find-generic-password", "-s", CREDENTIAL_SERVICE, "-a", CREDENTIAL_ACCOUNT, "-w"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0:
+            return None
+        try:
+            secret = json.loads(result.stdout.strip())
+        except ValueError:
+            return None
+        key = secret.get("api_key") if isinstance(secret, dict) else None
+        return key if isinstance(key, str) and key else None
+
+    async def get(self, *, refresh: bool = False) -> str | None:
+        async with self._lock:
+            fresh = time.monotonic() - self._loaded_at < CREDENTIAL_TTL_SECONDS
+            if refresh or self._value is None or not fresh:
+                self._value = await asyncio.to_thread(self._read)
+                self._loaded_at = time.monotonic()
+            return self._value
+
+
+credential = MuseCredential()
+
+
+def _route_table_path() -> Path:
+    if os.environ.get("ROUTE_TABLE"):
+        return Path(os.environ["ROUTE_TABLE"]).expanduser()
+    managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
+    if managed.is_file():
+        return managed
+    return Path(__file__).resolve().parents[3] / "config/coding-agents/routing-table.json"
+
+
+def resolve_model(model: str) -> str:
+    if model and model != "muse-latest":
+        return model
+    try:
+        alias = json.loads(_route_table_path().read_text())["aliases"]["muse-latest"]
+        pinned = alias.get("pinned")
+        if isinstance(pinned, str) and pinned:
+            return pinned
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    return DEFAULT_MODEL
 
 
 def upstream_url(path: str) -> str:
@@ -42,11 +111,14 @@ def parse_usage_from_sse_tail(tail: bytes) -> tuple[int | None, int | None]:
 
     input_tokens: int | None = None
     output_tokens: int | None = None
-    for line in tail.decode("utf-8", "replace").splitlines():
-        if not line.startswith("data:"):
-            continue
+    text = tail.decode("utf-8", "replace")
+    stripped = text.strip()
+    lines = [stripped] if stripped.startswith("{") else [
+        line[5:] for line in text.splitlines() if line.startswith("data:")
+    ]
+    for line in lines:
         try:
-            event = json.loads(line[5:])
+            event = json.loads(line)
         except ValueError:
             continue
         if not isinstance(event, dict):
@@ -70,6 +142,7 @@ async def _log_call(
     upstream_status: int | None,
     latency_ms: int,
     tail: bytes,
+    transport: str = "muse-api",
 ) -> None:
     try:
         from app.db.session import SessionLocal
@@ -87,7 +160,7 @@ async def _log_call(
                 status=status,
                 error_code=None,
                 session_id=session_id,
-                transport="muse-api",
+                transport=transport,
                 provider=PROVIDER,
                 upstream_status_code=upstream_status,
             )
@@ -110,23 +183,113 @@ async def forward(request: Request, path: str) -> StreamingResponse | JSONRespon
         except ValueError:
             model = ""
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_HEADERS}
+    return await _relay(request, path, headers, body, model, "muse-api")
+
+
+def _error(status: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        {"error": {"code": code, "message": message, "type": "agent_lb_muse"}}, status_code=status
+    )
+
+
+@provider_router.get("/models", response_model=None)
+async def provider_models() -> JSONResponse:
+    model = resolve_model("muse-latest")
+    return JSONResponse(
+        {"object": "list", "data": [
+            {"id": "muse-latest", "object": "model", "owned_by": "meta", "resolves_to": model},
+            {"id": model, "object": "model", "owned_by": "meta"},
+        ]}
+    )
+
+
+@provider_router.post("/responses", response_model=None)
+async def provider_responses(request: Request) -> StreamingResponse | JSONResponse:
+    body = await request.body()
+    try:
+        payload = json.loads(body) if body else {}
+    except ValueError:
+        return _error(400, "invalid_json", "request body is not JSON")
+    if not isinstance(payload, dict):
+        return _error(400, "invalid_json", "request body must be a JSON object")
+    model = resolve_model(str(payload.get("model") or ""))
+    if model.endswith("-contributor"):
+        return _error(
+            400, "contributor_mode_refused",
+            "agent-lb runs Muse with contributor mode off; drop the -contributor suffix",
+        )
+    if not model.startswith("muse-"):
+        return _error(400, "unknown_muse_model", f"{model} is not a Muse model")
+    payload["model"] = model
+    key = await credential.get()
+    if key is None:
+        await _log_call(
+            model=model,
+            session_id=_session_id(request),
+            status="error",
+            upstream_status=None,
+            latency_ms=0,
+            tail=b"",
+            transport="muse-provider",
+        )
+        return _error(503, "muse_credential_unavailable", "no Muse login on this agent-lb host")
+    headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _DROP_HEADERS
+        and k.lower() not in _CLIENT_AUTH_HEADERS
+        and not k.lower().startswith("x-agent-lb-")
+    }
+    headers["authorization"] = f"Bearer {key}"
+
+    async def reauth() -> str | None:
+        fresh = await credential.get(refresh=True)
+        return f"Bearer {fresh}" if fresh is not None and fresh != key else None
+
+    return await _relay(
+        request, "responses", headers, json.dumps(payload).encode(), model, "muse-provider", reauth
+    )
+
+
+def _session_id(request: Request) -> str | None:
+    return request.headers.get("x-tbh-session-id") or request.headers.get("session_id")
+
+
+async def _relay(
+    request: Request,
+    path: str,
+    headers: dict[str, str],
+    body: bytes,
+    model: str,
+    transport: str,
+    reauth: Callable[[], Awaitable[str | None]] | None = None,
+) -> StreamingResponse | JSONResponse:
     started = time.monotonic()
     client = httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=None, write=60.0, pool=15.0))
-    upstream = client.build_request(
-        request.method, upstream_url(path), params=request.query_params, headers=headers, content=body
-    )
+
+    async def send(send_headers: dict[str, str]) -> httpx.Response:
+        upstream = client.build_request(
+            request.method, upstream_url(path), params=request.query_params, headers=send_headers, content=body
+        )
+        return await client.send(upstream, stream=True)
+
     try:
-        response = await client.send(upstream, stream=True)
+        response = await send(headers)
+        if response.status_code == 401 and reauth is not None:
+            authorization = await reauth()
+            if authorization is not None:
+                await response.aclose()
+                response = await send({**headers, "authorization": authorization})
     except httpx.HTTPError as exc:
         await client.aclose()
         if path == "responses":
             await _log_call(
                 model=model,
-                session_id=request.headers.get("x-tbh-session-id"),
+                session_id=_session_id(request),
                 status="error",
                 upstream_status=None,
                 latency_ms=int((time.monotonic() - started) * 1000),
                 tail=b"",
+                transport=transport,
             )
         return JSONResponse(
             {"error": {"message": f"muse upstream unreachable: {exc.__class__.__name__}"}},
@@ -155,11 +318,12 @@ async def forward(request: Request, path: str) -> StreamingResponse | JSONRespon
             if path == "responses":
                 await _log_call(
                     model=model,
-                    session_id=request.headers.get("x-tbh-session-id"),
+                    session_id=_session_id(request),
                     status=status,
                     upstream_status=response.status_code,
                     latency_ms=int((time.monotonic() - started) * 1000),
                     tail=bytes(tail),
+                    transport=transport,
                 )
 
     return StreamingResponse(
