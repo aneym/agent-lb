@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Protocol, 
 
 import anyio
 from anyio import to_thread
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -380,3 +380,9 @@ async def close_db() -> None:
     await engine.dispose()
     if _background_engine is not None:
         await _background_engine.dispose()
+
+
+async def analytics_work_mem(session: AsyncSession) -> None:
+    bind = session.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        await session.execute(text("SET LOCAL work_mem = '256MB'"))

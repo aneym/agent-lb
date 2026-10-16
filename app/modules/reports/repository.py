@@ -7,6 +7,7 @@ from sqlalchemy import Integer, and_, cast, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, RequestLog
+from app.db.session import analytics_work_mem
 from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS
 
 _INTERNAL_LIMIT_WARMUP_SOURCE = "limit_warmup"
@@ -88,6 +89,7 @@ class ReportsRepository:
             .group_by(date_col)
             .order_by(date_col)
         )
+        await analytics_work_mem(self._session)
         result = await self._session.execute(stmt)
         return [
             DailyAggregateRow(

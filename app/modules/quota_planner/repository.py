@@ -15,7 +15,7 @@ from app.db.models import (
     QuotaWindowObservation,
     RequestLog,
 )
-from app.db.session import sqlite_writer_section
+from app.db.session import analytics_work_mem, sqlite_writer_section
 from app.modules.quota_planner.logic import PlannerSettings, encode_working_days, parse_working_days
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
@@ -286,6 +286,7 @@ class QuotaPlannerRepository:
             .group_by(bucket_col, request_kind)
             .order_by(bucket_col)
         )
+        await analytics_work_mem(self._session)
         result = await self._session.execute(stmt)
         return [
             DemandSlot(
@@ -352,6 +353,7 @@ class QuotaPlannerRepository:
             )
             .order_by(bucket_col)
         )
+        await analytics_work_mem(self._session)
         result = await self._session.execute(stmt)
         return [
             DemandBin(
