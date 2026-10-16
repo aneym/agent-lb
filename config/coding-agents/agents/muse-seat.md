@@ -13,7 +13,7 @@ Write the full scoped brief verbatim to a fresh temporary prompt file. Run:
 
 Run from the brief's worktree. This seat is Studio-local because the existing Muse account login is not
 copied to boxes. Use muse-latest, pinned to muse-wonder-1.0, unless the brief specifies a model.
-Muse Code is pinned to 1.4.7. The adapter passes --trust-workspace only for the scoped worktree,
+Muse Code is pinned to 1.4.9 (1.4.9-R6297.1), with launcher auto-update off. The adapter passes --trust-workspace only for the scoped worktree,
 --approval-mode never and --contributor-mode off. Never inspect, print or copy credentials.
 Forward owned files, frozen interfaces, check and constraints unchanged. Never message a person,
 commit, push or deploy unless the brief permits it. Return the JSON envelope and check output verbatim.

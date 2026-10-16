@@ -19,7 +19,7 @@ def test_muse_exec_receipt_pool_limit_and_version_pin(tmp_path: Path) -> None:
 import json, os, sys
 from pathlib import Path
 if sys.argv[1:] == ['--version']:
-    print('Muse Code 1.4.7 (1.4.7-R6101.1)' if not Path('wrong-version').exists() else 'Muse Code 1.4.6')
+    print('Muse Code 1.4.9 (1.4.9-R6297.1)' if not Path('wrong-version').exists() else 'Muse Code 1.4.6')
     raise SystemExit(0)
 a = sys.argv[1:]
 assert a[0] == 'exec'

@@ -80,7 +80,7 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 | Tabs Alex talks to, leads, orchestrators | Opus tab; full-tier ultracode on; workflow helpers on Sol | opus-latest medium for top-level tabs and workflow orchestrators; sol-latest for helpers |
 | Remote-machine relay (batch templates) | host-relay | sol-latest low |
 
-Available optional seat: `muse-seat` via `muse-seat-local` on Studio, Muse Code `1.4.7-R6101.1`, `muse-latest` pins `muse-wonder-1.0`. Alex reports login complete on 2026-10-13; live seat validation is pending. Boxes are not yet provisioned. No ladder promotion before interleaved evals.
+Available optional seat: `muse-seat` via `muse-seat-local` on Studio, Muse Code `1.4.9-R6297.1` (re-pinned 2026-10-16 after launcher auto-update; seat runs set `MUSE_NO_AUTO_UPDATE=1`), `muse-latest` pins `muse-wonder-1.0`. Alex reports login complete on 2026-10-13; a trivial brief passed on 2026-10-16. Boxes are not yet provisioned. No ladder promotion before interleaved evals.
 
 - **Quota rule (2026-10-14): tabs run `opus-latest` medium; full-tier ultracode stays on.** This replaces the 2026-10-10 Fable exception and the 2026-10-12 Claude lane defaults. Alex, 2026-10-13 ~03:00Z: "okay we ahve very limited claude quota left. we need to slow thigns down a lot until we're ready - ensure everything runs on opus medium at the top level as well."
   Alex, 2026-10-13 ~03:10Z: "token allocation should be to raise and recruiter and that's basically it i think. since those are our priorities".

@@ -66,6 +66,7 @@ from typing import Any, Callable, Iterator, TypeVar
 from urllib.parse import urlsplit
 
 VENDORS = ("cursor", "devin", "muse")
+MUSE_PIN = "Muse Code 1.4.9 (1.4.9-R6297.1)"
 SEAT_FOR_VENDOR = {"cursor": "cursor-seat", "devin": "devin-seat", "muse": "muse-seat-local"}
 
 EXIT_OK = 0
@@ -381,6 +382,7 @@ def account_env(account: dict[str, Any]) -> dict[str, str]:
     elif vendor == "muse":
         # Preserve account login without inspecting or copying its credential store.
         env.pop("META_API_KEY", None)
+        env["MUSE_NO_AUTO_UPDATE"] = "1"
     elif vendor == "devin" and auth == "lease":
         env["XDG_DATA_HOME"] = str(devin_data_dir(account))
     elif vendor == "devin":
@@ -435,7 +437,7 @@ def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", completed.stdout + "\n" + completed.stderr)
     if vendor == "muse":
         # Installation is not an auth proof. Actual dispatch reports auth errors.
-        ok = completed.returncode == 0 and "Muse Code 1.4.7" in text
+        ok = completed.returncode == 0 and MUSE_PIN in text
         identity = {"version": text.strip(), "auth_source": "existing-login-unverified"}
     elif vendor == "cursor" and account.get("auth") == "api-key":
         ok = completed.returncode == 0 and not AUTH_RE.search(text)
@@ -1706,9 +1708,10 @@ def command_run(args: argparse.Namespace) -> int:
     cwd = Path(args.cwd or os.getcwd()).expanduser().resolve()
     if args.vendor == "muse":
         version = subprocess.run([cli_bin("muse"), "--version"], capture_output=True, text=True,
+                                 env={**os.environ, "MUSE_NO_AUTO_UPDATE": "1"},
                                  timeout=PROBE_TIMEOUT_SECONDS, check=False)
-        if version.returncode or version.stdout.strip() != "Muse Code 1.4.7 (1.4.7-R6101.1)":
-            fail("Muse seat requires pinned Muse Code 1.4.7 (1.4.7-R6101.1)")
+        if version.returncode or version.stdout.strip() != MUSE_PIN:
+            fail(f"Muse seat requires pinned {MUSE_PIN}; found {version.stdout.strip() or 'none'}")
     registry = load_registry() + lease_accounts(args.vendor)
     state = load_state()
     run_id = f"seat-{uuid.uuid4()}"
