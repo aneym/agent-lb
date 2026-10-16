@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from "react";
+import { useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAccounts } from "@/features/accounts/hooks/use-accounts";
 import type { AccountSummarySchema } from "@/features/accounts/schemas";
@@ -8,8 +8,11 @@ import {
   useSeatAccounts,
   useStickySessions,
   type Pool,
+  type SeatAccount,
+  type SeatQuota,
+  type SeatQuotaWindow,
 } from "../../api";
-import { accountLabel, money } from "../../format";
+import { accountLabel, compact, money } from "../../format";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 
 function durationWords(milliseconds: number) {
@@ -24,7 +27,7 @@ function durationWords(milliseconds: number) {
     .join(" ");
 }
 import { ProviderMark } from "../../kit/provider-mark";
-import { providerMark } from "../../kit/provider-mark-helpers";
+import { poolProvider, providerMark, vendorName } from "../../kit/provider-mark-helpers";
 import {
   AccountState,
   EmptyState,
@@ -41,7 +44,6 @@ import {
 import { PausePopover } from "../../kit/pause-popover";
 import { RoutingDashboard } from "@/features/dashboard/components/routing-dashboard";
 import { useAccountPlan } from "@/features/dashboard/use-account-plan";
-import { toast } from "sonner";
 import type { z } from "zod";
 
 type Account = z.infer<typeof AccountSummarySchema>;
@@ -52,22 +54,138 @@ const poolName: Record<string, string> = {
   kimi: "Kimi",
   openrouter: "OpenRouter",
   cursor: "Cursor",
+  "cursor-models": "Cursor models",
+  "cursor-other": "Cursor · other models",
   devin: "Devin",
+  muse: "Muse",
 };
 const poolModels: Record<string, string> = {
   "anthropic-general": "opus-latest · sonnet-latest",
   "openai-codex": "sol-latest · luna-latest",
   cursor: "Cursor seat",
+  "cursor-models": "Grok · Composer",
+  "cursor-other": "Cursor seat",
   devin: "Devin seat",
+  muse: "Muse seat",
 };
+const SEAT_VENDORS = ["cursor", "devin", "muse"];
+const ET = "America/New_York";
+
+function etWhen(iso: string, now: number) {
+  const at = new Date(iso);
+  const ahead = at.getTime() - now;
+  const options: Intl.DateTimeFormatOptions =
+    Math.abs(ahead) > 6 * 86_400_000
+      ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+      : Math.abs(ahead) > 18 * 3_600_000
+        ? { weekday: "short", hour: "numeric", minute: "2-digit" }
+        : { hour: "numeric", minute: "2-digit" };
+  return `${new Intl.DateTimeFormat("en-US", { ...options, timeZone: ET }).format(at)} ET`;
+}
+function unavailableText(vendor: string, reason?: SeatQuota["unavailableReason"]) {
+  const name = vendorName(vendor);
+  switch (reason) {
+    case "auth_unsupported":
+      return `${name} key can't read usage`;
+    case "credential_unavailable":
+      return "Login not readable";
+    case "vendor_error":
+      return `${name} usage check failed`;
+    case "not_collected":
+      return "Not checked yet";
+    default:
+      return `Not reported by ${name}`;
+  }
+}
+const isFiveHour = (w: { kind: string; durationMins?: number | null }) =>
+  w.kind === "session" && (w.durationMins == null || w.durationMins <= 300);
+const unitFor = (kind: string): "wk" | "mo" | undefined =>
+  kind === "weekly" ? "wk" : kind === "monthly" ? "mo" : undefined;
+function sourceNote(source: string | null | undefined, observedAt: string | null | undefined, stale: boolean, now: number) {
+  if (source === "estimate") return "est.";
+  if ((source === "vendor_observed" || stale) && observedAt) return `as of ${etWhen(observedAt, now)}`;
+  return null;
+}
+function isSeatPool(pool: Pool) {
+  return (
+    pool.kind === "cli_seat" ||
+    pool.kind === "cli_seat_budget" ||
+    SEAT_VENDORS.includes(pool.provider)
+  );
+}
+function MeterStack({ children }: { children: ReactNode }) {
+  return <div style={{ display: "grid", gap: 10, minWidth: 0 }}>{children}</div>;
+}
 
 const accountName = (a: Account) => accountLabel(a, usePrivacyStore.getState().blurred);
+function seatPoolMeters(pool: Pool, now: number) {
+  const windows = pool.windows;
+  const vendor = pool.provider;
+  if (windows == null) {
+    const remaining =
+      pool.percentUsed != null
+        ? Math.max(0, 100 - pool.percentUsed)
+        : (pool.aggregateRemainingPercent ?? pool.headroomPercent ?? null);
+    const reset = pool.cycleResetAt || pool.resetAt;
+    const parts = [
+      reset ? `resets ${etWhen(reset, now)}` : null,
+      sourceNote(pool.percentSource, null, false, now),
+    ].filter(Boolean);
+    return {
+      long: (
+        <LimitMeter
+          remaining={remaining}
+          detail={remaining != null && parts.length ? parts.join(" · ") : undefined}
+          empty="No reading"
+          unit={pool.windowLabel === "month" ? "mo" : "wk"}
+        />
+      ),
+      session: null,
+    };
+  }
+  const long = windows.filter((w) => !isFiveHour(w));
+  const session = windows.find((w) => isFiveHour(w)) ?? null;
+  return {
+    long: long.length ? (
+      <MeterStack>
+        {long.map((w) => (
+          <LimitMeter
+            key={w.id}
+            remaining={w.remainingPercent}
+            unit={unitFor(w.kind)}
+            empty={unavailableText(vendor)}
+            detail={[
+              long.length > 1 ? w.label : null,
+              w.resetsAt ? `resets ${etWhen(w.resetsAt, now)}` : null,
+              sourceNote(w.source, null, false, now),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          />
+        ))}
+      </MeterStack>
+    ) : (
+      <LimitMeter
+        remaining={null}
+        empty={session ? "No weekly window" : unavailableText(vendor, "not_reported")}
+      />
+    ),
+    session: session ? (
+      <LimitMeter
+        remaining={session.remainingPercent}
+        resetAt={session.resetsAt}
+        unit="5h"
+        detail={sourceNote(session.source, null, false, now) ?? undefined}
+      />
+    ) : null,
+  };
+}
 function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: string }) {
-  const no5h = ["openai", "kimi", "cursor", "devin", "openrouter"].includes(pool.provider);
-  const isSeat = pool.kind === "cli_seat" || ["cursor", "devin"].includes(pool.provider);
-  const long = isSeat
-    ? null
-    : (pool.weeklyRemainingPercent ?? (pool.windowLabel ? pool.aggregateRemainingPercent : null));
+  const [now] = useState(() => Date.now());
+  const seatPool = isSeatPool(pool);
+  const seatMeters = seatPool ? seatPoolMeters(pool, now) : null;
+  const no5h = seatPool ? !seatMeters?.session : ["openai", "kimi", "openrouter"].includes(pool.provider);
+  const long = pool.weeklyRemainingPercent ?? (pool.windowLabel ? pool.aggregateRemainingPercent : null);
   const reset = pool.weeklyResetAt || pool.resetAt;
   const longLabel = pool.windowLabel === "month" ? "mo" : "wk";
   const paceTick =
@@ -75,11 +193,11 @@ function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: string }) {
   return (
     <div className="row link">
       <div className="c-who who">
-        <ProviderMark id={pool.provider === "anthropic" ? "claude" : providerMark(pool.provider)} />
+        <ProviderMark id={pool.provider === "anthropic" ? "claude" : poolProvider(pool.id)} />
         <div className="t">
           <span className="n">{poolName[pool.id] || pool.id}</span>
           <span className="s">
-            {poolModels[pool.id] || (pool.kind === "cli_seat" ? "CLI seat" : pool.provider)}
+            {poolModels[pool.id] || (seatPool ? `${vendorName(pool.provider)} seat` : pool.provider)}
           </span>
         </div>
       </div>
@@ -87,23 +205,31 @@ function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: string }) {
         <PoolState status={pool.status} ready={pool.eligibleAccounts} total={pool.accounts} />
       </div>
       <div className="c-wk">
-        <LimitMeter
-          remaining={long}
-          resetAt={reset}
-          paceTick={paceTick}
-          paceDelta={pool.weeklyPacePercent}
-          empty={["glm", "kimi"].includes(pool.provider) ? "No cap" : "No reading"}
-          unit={longLabel}
-        />
+        {seatMeters ? (
+          seatMeters.long
+        ) : (
+          <LimitMeter
+            remaining={long}
+            resetAt={reset}
+            paceTick={paceTick}
+            paceDelta={pool.weeklyPacePercent}
+            empty={["glm", "kimi"].includes(pool.provider) ? "No cap" : "No reading"}
+            unit={longLabel}
+          />
+        )}
       </div>
       <div className={`c-h5 ${no5h ? "none" : ""}`}>
-        <LimitMeter
-          remaining={pool.fiveHourRemainingPercent}
-          resetAt={pool.fiveHourResetAt}
-          detail={bestAccount ? `on ${bestAccount}` : undefined}
-          noWindow={no5h}
-          unit="5h"
-        />
+        {seatMeters ? (
+          (seatMeters.session ?? <LimitMeter noWindow />)
+        ) : (
+          <LimitMeter
+            remaining={pool.fiveHourRemainingPercent}
+            resetAt={pool.fiveHourResetAt}
+            detail={bestAccount ? `on ${bestAccount}` : undefined}
+            noWindow={no5h}
+            unit="5h"
+          />
+        )}
       </div>
       <div className={`c-pace ${pool.weeklyPacePercent == null ? "none" : ""}`}>
         <Pace value={pool.weeklyPacePercent} />
@@ -112,6 +238,65 @@ function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: string }) {
   );
 }
 function AccountRow({
+  dim,
+  onOpen,
+  label,
+  mark,
+  name,
+  sub,
+  state,
+  limit,
+  fiveHour,
+  today,
+  menu,
+}: {
+  dim?: boolean;
+  onOpen?: () => void;
+  label: string;
+  mark: ReactNode;
+  name: ReactNode;
+  sub: ReactNode;
+  state: ReactNode;
+  limit: ReactNode;
+  fiveHour: ReactNode | null;
+  today: ReactNode;
+  menu?: ReactNode;
+}) {
+  function open(e: MouseEvent<HTMLDivElement>) {
+    if ((e.target as HTMLElement).closest("button,a,.pop")) return;
+    onOpen?.();
+  }
+  return (
+    <div
+      className={`row ${onOpen ? "link" : ""} ${dim ? "dim" : ""}`}
+      aria-label={label}
+      {...(onOpen
+        ? {
+            role: "link",
+            tabIndex: 0,
+            onClick: open,
+            onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+              if (e.key === "Enter" && e.target === e.currentTarget) onOpen();
+            },
+          }
+        : { role: "group" })}
+    >
+      <div className="c-who who">
+        {mark}
+        <div className="t">
+          <span className="n">{name}</span>
+          <span className="s">{sub}</span>
+        </div>
+      </div>
+      <div className="c-st">{state}</div>
+      <div className="c-wk">{limit}</div>
+      <div className={`c-h5 ${fiveHour ? "" : "none"}`}>{fiveHour ?? <LimitMeter noWindow />}</div>
+      <div className="c-today today">{today}</div>
+      <div className="c-more lb-pop-wrap">{menu}</div>
+    </div>
+  );
+}
+function ProxyAccountRow({
   a,
   summary,
   sessions,
@@ -124,7 +309,7 @@ function AccountRow({
   const hideEmails = usePrivacyStore((state) => state.blurred);
   const [pauseOpen, setPauseOpen] = useState(false);
   const { resumeMutation, probeMutation } = useAccounts();
-  const no5h = ["openai", "kimi", "cursor", "devin", "openrouter"].includes(a.provider || "");
+  const no5h = ["openai", "kimi", "cursor", "devin", "muse", "openrouter"].includes(a.provider || "");
   const has5h = !no5h && a.windowMinutesPrimary === 300;
   const secondary = a.usage?.secondaryRemainingPercent;
   const reset = a.resetAtSecondary;
@@ -139,38 +324,27 @@ function AccountRow({
       )
     : undefined;
   const rowLink = `/providers/${encodeURIComponent(a.accountId)}`;
-  function open(e: MouseEvent<HTMLDivElement>) {
-    if ((e.target as HTMLElement).closest("button,a,.pop")) return;
-    navigate(rowLink);
-  }
   return (
-    <div
-      className={`row link ${["paused", "reauth_required", "deactivated"].includes(a.status) ? "dim" : ""}`}
-      role="link"
-      tabIndex={0}
-      onClick={open}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && e.target === e.currentTarget) navigate(rowLink);
-      }}
-    >
-      <div className="c-who who">
-        <ProviderMark id={a.provider === "anthropic" ? "claude" : providerMark(a.provider)} />
-        <div className="t">
-          <span className="n">{accountLabel(a, hideEmails)}</span>
-          <span className="s">
-            <span className={hideEmails ? "privacy-blur" : undefined}>{a.email}</span>
-            <span className="mono id"> · {a.accountId.slice(0, 6)}</span>
-          </span>
-        </div>
-      </div>
-      <div className="c-st">
+    <AccountRow
+      label={accountLabel(a, hideEmails)}
+      dim={["paused", "reauth_required", "deactivated"].includes(a.status)}
+      onOpen={() => navigate(rowLink)}
+      mark={<ProviderMark id={a.provider === "anthropic" ? "claude" : providerMark(a.provider)} />}
+      name={accountLabel(a, hideEmails)}
+      sub={
+        <>
+          <span className={hideEmails ? "privacy-blur" : undefined}>{a.email}</span>
+          <span className="mono id"> · {a.accountId.slice(0, 6)}</span>
+        </>
+      }
+      state={
         <AccountState
           status={a.status}
           resetAt={a.rateLimitResetAt || a.resetAtSecondary}
           sub={a.status === "active" && sessions ? `holding ${sessions} sessions` : undefined}
         />
-      </div>
-      <div className="c-wk">
+      }
+      limit={
         <LimitMeter
           remaining={a.status === "reauth_required" ? null : secondary}
           resetAt={reset}
@@ -179,55 +353,188 @@ function AccountRow({
           empty={["glm", "kimi"].includes(a.provider || "") ? "No cap" : "No reading"}
           unit={a.windowMinutesSecondary && a.windowMinutesSecondary > 20160 ? "mo" : "wk"}
         />
-      </div>
-      <div className={`c-h5 ${no5h ? "none" : ""}`}>
-        <LimitMeter
-          remaining={has5h ? a.usage?.primaryRemainingPercent : null}
-          resetAt={has5h ? a.resetAtPrimary : null}
-          noWindow={no5h}
-          notStarted={has5h && a.usage?.primaryRemainingPercent === 100 && !a.resetAtPrimary}
-          unit="5h"
-        />
-      </div>
-      <div className="c-today today">
-        <span className="num">{summary?.requests.toLocaleString() || "—"}</span>
-        {summary && <span className="s">{money(summary.costUsd)} API value</span>}
-      </div>
-      <div className="c-more lb-pop-wrap">
-        <RowMenu
-          label={`Actions for ${accountName(a)}`}
-          items={[
-            { label: "Open", onSelect: () => navigate(rowLink) },
-            { label: "Pause…", hidden: a.status === "paused", onSelect: () => setPauseOpen(true) },
-            {
-              label: "Resume",
-              hidden: a.status !== "paused",
-              onSelect: () => resumeMutation.mutate(a.accountId),
-            },
-            {
-              label: "Check limits now",
-              onSelect: () => probeMutation.mutate({ accountId: a.accountId }),
-            },
-            {
-              label: "Sign in again",
-              hidden: a.status !== "reauth_required",
-              onSelect: () => navigate(`${rowLink}?signin=1`),
-            },
-            { label: "Remove…", onSelect: () => navigate(rowLink) },
-          ]}
-        />
-        {pauseOpen && (
-          <PausePopover
-            accountId={a.accountId}
-            pool={a.provider || "this pool"}
-            fiveHourResetAt={has5h ? a.resetAtPrimary : null}
-            weeklyResetAt={a.resetAtSecondary}
-            onClose={() => setPauseOpen(false)}
+      }
+      fiveHour={
+        no5h ? null : (
+          <LimitMeter
+            remaining={has5h ? a.usage?.primaryRemainingPercent : null}
+            resetAt={has5h ? a.resetAtPrimary : null}
+            notStarted={has5h && a.usage?.primaryRemainingPercent === 100 && !a.resetAtPrimary}
+            unit="5h"
           />
-        )}
-      </div>
-    </div>
+        )
+      }
+      today={
+        <>
+          <span className="num">{summary?.requests.toLocaleString() || "—"}</span>
+          {summary && <span className="s">{money(summary.costUsd)} API value</span>}
+        </>
+      }
+      menu={
+        <>
+          <RowMenu
+            label={`Actions for ${accountName(a)}`}
+            items={[
+              { label: "Open", onSelect: () => navigate(rowLink) },
+              { label: "Pause…", hidden: a.status === "paused", onSelect: () => setPauseOpen(true) },
+              {
+                label: "Resume",
+                hidden: a.status !== "paused",
+                onSelect: () => resumeMutation.mutate(a.accountId),
+              },
+              {
+                label: "Check limits now",
+                onSelect: () => probeMutation.mutate({ accountId: a.accountId }),
+              },
+              {
+                label: "Sign in again",
+                hidden: a.status !== "reauth_required",
+                onSelect: () => navigate(`${rowLink}?signin=1`),
+              },
+              { label: "Remove…", onSelect: () => navigate(rowLink) },
+            ]}
+          />
+          {pauseOpen && (
+            <PausePopover
+              accountId={a.accountId}
+              pool={a.provider || "this pool"}
+              fiveHourResetAt={has5h ? a.resetAtPrimary : null}
+              weeklyResetAt={a.resetAtSecondary}
+              onClose={() => setPauseOpen(false)}
+            />
+          )}
+        </>
+      }
+    />
   );
+}
+function seatStatus(a: SeatAccount) {
+  if (a.status) return a.status;
+  if (!a.enabled) return "paused";
+  if (a.authOk === false) return "reauth_required";
+  return a.ready ? "active" : "rate_limited";
+}
+function seatName(a: SeatAccount) {
+  return `${vendorName(a.vendor)} · ${a.planLabel || a.tier || "seat"}`;
+}
+function primaryWindow(a: SeatAccount) {
+  const windows = a.quota?.windows ?? [];
+  return windows.find((w) => w.id === a.quota?.primaryWindowId) ?? windows[0] ?? null;
+}
+function SeatToday({ today, vendor }: { today?: SeatAccount["today"]; vendor: string }) {
+  if (!today) return <span className="num">—</span>;
+  const tokens =
+    today.tokensKnown && today.tokensIn != null && today.tokensOut != null
+      ? today.tokensIn + today.tokensOut
+      : null;
+  const value =
+    today.valueUsd != null
+      ? `${money(today.valueUsd)}${today.valueSource === "estimate" ? " est." : ""} value`
+      : tokens != null
+        ? `${compact(tokens)} tokens`
+        : today.runs
+          ? "tokens not reported"
+          : null;
+  const title = [
+    `${today.runs} ${today.runs === 1 ? "run" : "runs"}, ${today.ok} ok in the last 24 hours`,
+    tokens != null ? `${compact(tokens)} tokens` : `tokens not reported by ${vendorName(vendor)}`,
+    ...today.models.map((m) => `${m.model}: ${m.runs}`),
+  ].join(" · ");
+  return (
+    <>
+      <span className="num" title={title}>
+        {today.runs.toLocaleString()} {today.runs === 1 ? "run" : "runs"}
+      </span>
+      {value && (
+        <span className="s" title={title}>
+          {value}
+        </span>
+      )}
+    </>
+  );
+}
+function SeatAccountRow({ a }: { a: SeatAccount }) {
+  const hideEmails = usePrivacyStore((state) => state.blurred);
+  const [now] = useState(() => Date.now());
+  const status = seatStatus(a);
+  const quota = a.quota;
+  const windows = quota?.windows ?? [];
+  const long = windows.filter((w) => !isFiveHour(w));
+  const session = windows.find((w) => isFiveHour(w)) ?? null;
+  const note = (w: SeatQuotaWindow) =>
+    sourceNote(w.source, quota?.observedAt, quota?.stale ?? false, now);
+  const meter = (w: SeatQuotaWindow) => {
+    const expected =
+      w.durationMins && w.resetsAt && w.kind !== "session"
+        ? Math.max(0, Math.min(100, ((new Date(w.resetsAt).getTime() - now) / (w.durationMins * 60000)) * 100))
+        : undefined;
+    return (
+      <LimitMeter
+        key={w.id}
+        remaining={w.remainingPercent}
+        unit={unitFor(w.kind)}
+        paceTick={w.remainingPercent != null ? expected : undefined}
+        paceDelta={w.remainingPercent != null && expected != null ? w.remainingPercent - expected : undefined}
+        empty={unavailableText(a.vendor, quota?.unavailableReason)}
+        detail={[w.label, w.resetsAt ? `resets ${etWhen(w.resetsAt, now)}` : null, note(w)]
+          .filter(Boolean)
+          .join(" · ")}
+      />
+    );
+  };
+  const reasonText = quota
+    ? unavailableText(a.vendor, quota.unavailableReason)
+    : "No reading";
+  const limit =
+    status === "reauth_required" ? (
+      <LimitMeter remaining={null} empty="Sign in to read usage" />
+    ) : long.length ? (
+      <MeterStack>{long.map(meter)}</MeterStack>
+    ) : (
+      <LimitMeter remaining={null} empty={session ? "No weekly reading" : reasonText} />
+    );
+  const fiveHour =
+    session && status !== "reauth_required" ? (
+      <LimitMeter
+        remaining={session.remainingPercent}
+        resetAt={session.resetsAt}
+        unit="5h"
+        detail={note(session) ?? undefined}
+      />
+    ) : null;
+  const stateSub =
+    status === "rate_limited" && a.statusResetAt
+      ? `until ${etWhen(a.statusResetAt, now)}`
+      : status === "paused"
+        ? "turned off"
+        : status === "active" && a.lastRunAt
+          ? `last run ${etWhen(a.lastRunAt, now)}`
+          : undefined;
+  return (
+    <AccountRow
+      label={`${seatName(a)} ${a.id}`}
+      dim={["paused", "reauth_required"].includes(status)}
+      mark={<ProviderMark id={providerMark(a.vendor)} />}
+      name={seatName(a)}
+      sub={
+        <>
+          {a.email && (
+            <span className={hideEmails ? "privacy-blur" : undefined}>{a.email} · </span>
+          )}
+          <span className="mono id">{a.id}</span>
+        </>
+      }
+      state={<AccountState status={status} sub={stateSub} />}
+      limit={limit}
+      fiveHour={fiveHour}
+      today={<SeatToday today={a.today} vendor={a.vendor} />}
+    />
+  );
+}
+function seatSortKey(a: SeatAccount, sort: string) {
+  const primary = primaryWindow(a);
+  if (sort === "left") return -(primary?.remainingPercent ?? -1);
+  return new Date(a.statusResetAt || primary?.resetsAt || "9999-01-01").getTime();
 }
 export function ProvidersPage() {
   usePrivacyStore((state) => state.blurred);
@@ -247,7 +554,10 @@ export function ProvidersPage() {
   const [sort, setSort] = useState("reset");
   const activePools = pools.data?.pools.filter((p) => p.kind !== "fable_scoped") || [];
   const accounts = accountsQuery.data || [];
-  const paused = accounts.filter((a) => a.status === "paused").length;
+  const seatAccounts = seat.data?.accounts ?? [];
+  const paused =
+    accounts.filter((a) => a.status === "paused").length +
+    seatAccounts.filter((a) => seatStatus(a) === "paused").length;
   const soon = accounts
     .filter(
       (a) =>
@@ -299,6 +609,26 @@ export function ProvidersPage() {
       list: filtered.filter((a) => !["anthropic", "openai"].includes(a.provider || "")),
     },
   ];
+  const seatFiltered = seatAccounts
+    .filter(
+      (a) =>
+        (filter === "all" || seatStatus(a) === "paused") &&
+        `${a.vendor} ${vendorName(a.vendor)} ${a.id} ${a.planLabel ?? ""} ${a.tier ?? ""} ${a.email ?? ""}`
+          .toLowerCase()
+          .includes(search.toLowerCase()),
+    )
+    .sort((a, b) =>
+      sort === "name"
+        ? seatName(a).localeCompare(seatName(b)) || a.id.localeCompare(b.id)
+        : seatSortKey(a, sort) - seatSortKey(b, sort),
+    );
+  const seatVendors = [
+    ...SEAT_VENDORS,
+    ...new Set(seatAccounts.map((a) => a.vendor).filter((v) => !SEAT_VENDORS.includes(v))),
+  ];
+  const seatGroups = seatVendors
+    .map((vendor) => ({ vendor, list: seatFiltered.filter((a) => a.vendor === vendor) }))
+    .filter((group) => group.list.length);
   const summaryById = new Map(summary.data?.groups.map((g) => [g.key, g]));
   return (
     <>
@@ -355,7 +685,7 @@ export function ProvidersPage() {
                 {
                   label: "All",
                   value: "all",
-                  count: accounts.length + (seat.data?.accounts.length || 0),
+                  count: accounts.length + seatAccounts.length,
                 },
                 { label: "Paused", value: "paused", count: paused },
               ]}
@@ -408,7 +738,7 @@ export function ProvidersPage() {
                       </span>
                     </div>
                     {group.list.map((a) => (
-                      <AccountRow
+                      <ProxyAccountRow
                         key={a.accountId}
                         a={a}
                         summary={summaryById.get(a.accountId)}
@@ -418,62 +748,22 @@ export function ProvidersPage() {
                   </div>
                 ) : null,
               )}
-              {seat.data?.accounts.filter(
-                (a) =>
-                  filter === "all" &&
-                  `${a.vendor} ${a.id}`.toLowerCase().includes(search.toLowerCase()),
-              ).length ? (
-                <div>
+              {seatGroups.map((group) => (
+                <div key={group.vendor}>
                   <div className="grp">
-                    <span className="gn">CLI logins</span>
-                    <span className="gs">· {seat.data.accounts.length} accounts</span>
+                    <ProviderMark id={providerMark(group.vendor)} />
+                    <span className="gn">{vendorName(group.vendor)}</span>
+                    <span className="gs">
+                      · {group.list.length} {group.list.length === 1 ? "account" : "accounts"} · CLI
+                      seat
+                    </span>
                   </div>
-                  {seat.data.accounts
-                    .filter(
-                      (a) =>
-                        filter === "all" &&
-                        `${a.vendor} ${a.id}`.toLowerCase().includes(search.toLowerCase()),
-                    )
-                    .map((a) => (
-                      <div
-                        className="row link"
-                        key={a.id}
-                        onClick={() => toast("Seat details coming in the next slice")}
-                      >
-                        <div className="c-who who">
-                          <ProviderMark id={providerMark(a.vendor)} />
-                          <div className="t">
-                            <span className="n">
-                              {a.vendor === "devin" ? "Devin" : "Cursor"} · {a.tier || "seat"}
-                            </span>
-                            <span className="s">{a.id}</span>
-                          </div>
-                        </div>
-                        <div className="c-st">
-                          <AccountState
-                            status={
-                              !a.enabled
-                                ? "deactivated"
-                                : a.ready
-                                  ? "active"
-                                  : a.authOk
-                                    ? "rate_limited"
-                                    : "reauth_required"
-                            }
-                          />
-                        </div>
-                        <div className="c-wk">
-                          <LimitMeter empty="No reading" />
-                        </div>
-                        <div className="c-h5 none">
-                          <LimitMeter noWindow />
-                        </div>
-                        <div className="c-today today">—</div>
-                      </div>
-                    ))}
+                  {group.list.map((a) => (
+                    <SeatAccountRow key={a.id} a={a} />
+                  ))}
                 </div>
-              ) : null}
-              {!filtered.length && !seat.data?.accounts.length && (
+              ))}
+              {!filtered.length && !seatFiltered.length && (
                 <EmptyState
                   title={search || filter !== "all" ? "No matching accounts" : "No accounts yet"}
                 />

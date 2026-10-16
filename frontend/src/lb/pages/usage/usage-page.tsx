@@ -15,9 +15,10 @@ import {
   type Receipt,
   type ReceiptSummary,
 } from "../../api/receipts";
+import { useSeatActivity, type SeatActivity } from "../../api";
 import { accountLabel, compact } from "../../format";
 import { ProviderMark } from "../../kit/provider-mark";
-import { providerMark } from "../../kit/provider-mark-helpers";
+import { providerMark, vendorName } from "../../kit/provider-mark-helpers";
 import {
   FilterSelect,
   ModelChip,
@@ -93,6 +94,69 @@ function SummaryStats({ totals, hours }: { totals: ReceiptSummary["totals"]; hou
         </div>
       ))}
     </div>
+  );
+}
+
+function SeatActivityStats({ activity, provider }: { activity: SeatActivity; provider: string }) {
+  const tokens =
+    activity.tokensKnown && activity.tokensIn != null && activity.tokensOut != null
+      ? activity.tokensIn + activity.tokensOut
+      : null;
+  const who = provider ? vendorName(provider) : "These seats";
+  const top = [...activity.models].sort((a, b) => b.runs - a.runs)[0];
+  const stats = [
+    [
+      "Seat runs",
+      number(activity.runs),
+      `${number(activity.ok)} ok · ${compact(activity.runs / (activity.periodHours / 24))} a day`,
+    ],
+    [
+      "Seat tokens",
+      tokens == null ? "Not reported" : compact(tokens),
+      tokens == null ? `${who} did not report tokens` : "in and out",
+    ],
+    [
+      "Seat value",
+      activity.valueUsd == null ? "Not reported" : usageMoney(activity.valueUsd),
+      activity.valueUsd == null
+        ? "no list price for these runs"
+        : activity.valueSource === "estimate"
+          ? "estimate at list prices"
+          : "at list prices",
+    ],
+    [
+      "Success",
+      activity.runs ? percent(activity.ok / activity.runs) : "—",
+      `${number(activity.runs - activity.ok)} failed`,
+    ],
+    [
+      "Top model",
+      top ? top.model : "—",
+      top ? `${number(top.runs)} runs · ${activity.models.length} models` : "no runs",
+    ],
+  ];
+  return (
+    <section className="usage-seat-activity" aria-label="CLI seat runs">
+      <div className="sec-h">
+        <h2>CLI seat runs</h2>
+        <span className="aside">
+          Last {Math.round(activity.periodHours / 24)} days · counted apart from requests
+        </span>
+      </div>
+      <div className="stats">
+        {stats.map(([label, value, sub]) => (
+          <div className="stat" key={label}>
+            <div className="k">{label}</div>
+            <div className="v" title={value}>
+              {value}
+            </div>
+            <div className="s" title={sub}>
+              {sub}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -484,6 +548,7 @@ export function UsagePage() {
   }
   const filterString = filters.toString();
   const summary = useUsageSummary(filterString, group, range.bucket);
+  const seatActivity = useSeatActivity(params.get("provider") || "");
   const modelFilters = new URLSearchParams(filters);
   modelFilters.delete("model");
   const reuseModelSummary = group === "model" && !filters.has("model");
@@ -606,6 +671,7 @@ export function UsagePage() {
               "openai",
               "cursor",
               "devin",
+              "muse",
               "glm",
               "kimi",
               "openrouter",
@@ -716,6 +782,12 @@ export function UsagePage() {
       {summary.data ? (
         <>
           <SummaryStats totals={summary.data.totals} hours={range.hours} />
+          {seatActivity.data?.seatActivity && (
+            <SeatActivityStats
+              activity={seatActivity.data.seatActivity}
+              provider={params.get("provider") || ""}
+            />
+          )}
           <UsageChart series={summary.data.series} bucket={range.bucket} />
         </>
       ) : summary.isPending ? (

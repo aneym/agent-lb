@@ -3,13 +3,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useSettings } from "@/features/settings/hooks/use-settings";
 import { StickySessionsSection } from "@/features/sticky-sessions/components/sticky-sessions-section";
-import { useStickySessions } from "@/lb/api";
-import { clock, pace } from "@/lb/format";
+import { usePools, useStickySessions } from "@/lb/api";
+import { clock } from "@/lb/format";
 import { ModelChip, Panel, Section, Seg, SidePanel } from "@/lb/kit/primitives";
 import { ProviderMark } from "@/lb/kit/provider-mark";
-import { providerMark } from "@/lb/kit/provider-mark-helpers";
+import { poolProvider, providerMark } from "@/lb/kit/provider-mark-helpers";
 import {
   localMidnight,
+  poolPaceText,
   updatePlannerMode,
   useMenu,
   usePlannerDecisions,
@@ -215,11 +216,16 @@ function MenuSection() {
 
 function PaceLimits() {
   const menu = useMenu();
+  const pools = usePools();
+  const poolById = new Map(pools.data?.pools.map((p) => [p.id, p]));
   const displayNames: Record<string, string> = {
     "anthropic-general": "Anthropic general",
     "openai-codex": "OpenAI Codex",
     cursor: "Cursor",
+    "cursor-models": "Cursor models",
+    "cursor-other": "Cursor · other models",
     devin: "Devin",
+    muse: "Muse",
     glm: "GLM",
     kimi: "Kimi",
   };
@@ -248,20 +254,11 @@ function PaceLimits() {
           .map(([name, pool]) => (
             <div className="row" key={name}>
               <span className="c-who who">
-                <ProviderMark
-                  id={
-                    name === "anthropic-general"
-                      ? "claude"
-                      : name === "openai-codex"
-                        ? "codex"
-                        : providerMark(name)
-                  }
-                  size={20}
-                />
+                <ProviderMark id={poolProvider(name)} size={20} />
                 <span className="n">{displayNames[name] ?? name}</span>
               </span>
               <span className="c-st">
-                {pool.weeklyPacePercent == null ? "No weekly cap" : pace(pool.weeklyPacePercent)}
+                {poolPaceText(name, pool.weeklyPacePercent, poolById.get(name))}
               </span>
               <span className="c-gate muted">{admission(name, pool.status)}</span>
             </div>

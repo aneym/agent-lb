@@ -11,6 +11,19 @@ const color: Partial<Record<ProviderId, string>> = {
   gemini: "gemini-color",
 };
 export function ProviderMark({ id, size = 20 }: { id: ProviderId; size?: 16 | 20 | 28 }) {
+  if (id === "unknown")
+    return (
+      <span
+        className="logo"
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "50%",
+          boxShadow: "inset 0 0 0 1.5px var(--line)",
+        }}
+        aria-hidden="true"
+      />
+    );
   const maker = id === "codex" ? "openai" : id;
   const name = color[maker] ?? maker;
   const url = `/brand/providers/${name}.svg`;
