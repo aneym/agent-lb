@@ -851,6 +851,7 @@ def run_case(sandbox, registry, case):
     outcome["block_message"] = old_plain["block"][:400]
     outcome["new_decision"] = new_view["decision"] or "allow"
     outcome["new_block_message"] = new_view["block"][:400]
+    outcome["new_block_full"] = new_view["block"]  # every joined block message, for a guard named past the first
     # What the dispatcher path showed and how long its entries ran: the exec'd rewriter's timeout case reads these.
     outcome["new_updated_input"] = new_view["updatedInput"]
     outcome["new_shown"] = new_view["shown"][:400]
