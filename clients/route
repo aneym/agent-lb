@@ -11,7 +11,6 @@
 #                                                with reasons, pool headroom, pace and reset times
 #   route doctor [--write]                       probe seats and pools; write routing-state.json
 #   route report [--days N]                      dispatch ledger joined with LB session cost
-#   route learn  [--apply]                       propose (or write) chain demotions from outcomes
 #   route record --class C --seat S --model M ...  log one implement outcome (tokens, time, audit)
 #   route resolve <alias> [<alias> ...]          newest served model for the first resolvable family alias
 #   route seat <name> [--class C] [--rules COMMIT] [--json]   one seat at a pinned rules commit
@@ -4613,74 +4612,298 @@ def print_implement_report(since: datetime, days: int) -> None:
         )
 
 
-def proposals(rows: dict[RowKey, dict[str, Any]], *, minimum: int, floor: float) -> list[dict[str, Any]]:
-    found = []
-    for key in sorted(rows):
-        row = rows[key]
-        rate = ok_rate(row)
-        if row["closeouts"] < minimum or rate is None or rate >= floor:
+def outcome_path() -> Path:
+    return _env_path("ROUTE_OUTCOMES", Path.home() / ".agent-lb/audits/routing/outcomes.jsonl")
+
+
+def learning_window(value: str) -> tuple[datetime, datetime]:
+    match = re.fullmatch(r"([1-9][0-9]*)d", value)
+    if not match:
+        fail("--since must be a positive number of days, for example 30d")
+    until = datetime.now(timezone.utc)
+    return until - timedelta(days=int(match[1])), until
+
+
+def learning_outcomes(since: datetime, until: datetime) -> list[dict[str, Any]]:
+    try:
+        lines = outcome_path().read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    records = {}
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
             continue
-        found.append(
-            {
-                "class": row["class"],
-                "demote": {"seat": row["seat"], "model": row["model"]},
-                "reason": f"ok-rate {rate:.0%} over {row['closeouts']} closeouts, below the {floor:.0%} floor",
-                "evidence": {
-                    "closeouts": row["closeouts"],
-                    "ok": row["ok"],
-                    "okRate": round(rate, 3),
-                    "windowDays": None,
-                    "ledger": str(ledger_path()),
-                },
-            }
-        )
-    return found
+        if not isinstance(row, dict):
+            continue
+        stamp = _parse_ts(row.get("ts"))
+        if stamp is None or stamp.tzinfo is None or not since <= stamp <= until:
+            continue
+        job = row.get("job_id")
+        if not isinstance(job, str) or not job:
+            continue
+        if job not in records or stamp >= records[job][0]:
+            records[job] = (stamp, row)
+    return [row for _, row in sorted(records.values(), key=lambda item: item[0])]
+
+
+def arm_key(arm: dict[str, Any]) -> str:
+    return str(arm.get("arm_id") or arm.get("id") or "")
+
+
+def learning_arms(table: dict[str, Any], class_name: str) -> list[dict[str, Any]]:
+    arms = table.get("explore", {}).get("arms", {}).get(class_name, [])
+    return arms if isinstance(arms, list) else []
+
+
+def attributed_outcome(row: dict[str, Any]) -> bool:
+    propensity = row.get("propensity")
+    return (
+        row.get("attribution_complete") is True
+        and row.get("outcome") not in ("infra_failure", "pending")
+        and isinstance(row.get("outcome"), str)
+        and isinstance(propensity, (float, int))
+        and not isinstance(propensity, bool)
+        and math.isfinite(propensity)
+        and 0 < propensity <= 1
+    )
+
+
+def wilson_interval(rate: float, weight: float) -> list[float]:
+    if not weight:
+        return [0.0, 1.0]
+    z = 1.6448536269514722
+    denominator = 1 + z * z / weight
+    center = (rate + z * z / (2 * weight)) / denominator
+    radius = z * math.sqrt(rate * (1 - rate) / weight + z * z / (4 * weight * weight)) / denominator
+    return [max(0.0, center - radius), min(1.0, center + radius)]
+
+
+def learning_metrics(rows: list[dict[str, Any]], total: int) -> dict[str, Any]:
+    weight = sum(1 / row["propensity"] for row in rows)
+    accepted_weight = sum(1 / row["propensity"] for row in rows if row["outcome"] == "accepted")
+    rate = accepted_weight / weight if weight else 0.0
+    known = [row for row in rows if isinstance(row.get("cost_usd"), (float, int))
+             and not isinstance(row["cost_usd"], bool) and math.isfinite(row["cost_usd"])
+             and row["cost_usd"] >= 0]
+    known_weight = sum(1 / row["propensity"] for row in known)
+    known_accepted = sum(1 / row["propensity"] for row in known if row["outcome"] == "accepted")
+    walls = [row["wall_s"] for row in rows if isinstance(row.get("wall_s"), (float, int))
+             and not isinstance(row["wall_s"], bool) and math.isfinite(row["wall_s"]) and row["wall_s"] >= 0]
+    coverage = len(known) / len(rows) if rows else 0.0
+    cost = (sum(row["cost_usd"] / row["propensity"] for row in known) / known_accepted
+            if known_accepted and coverage >= 0.8 and known_weight / weight >= 0.8 else None)
+    return {
+        "n": len(rows), "accepted": sum(row["outcome"] == "accepted" for row in rows),
+        "attributed_share": len(rows) / total if total else 0.0,
+        "weighted_n": weight, "accept_rate": rate if rows else None,
+        "interval": wilson_interval(rate, weight), "cost_known_share": coverage,
+        "cost_per_accepted": cost, "median_wall_s": statistics.median(walls) if walls else None,
+    }
+
+
+def v2_override(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    evidence = entry.get("evidence")
+    return (isinstance(evidence, dict)
+            and {"n", "accepted", "lower_bound", "cost_per_accepted", "window", "policy_rev"} <= evidence.keys()
+            and {"class", "action", "arm_id", "reason", "ts", "id"} <= entry.keys())
+
+
+def arm_paused(table: dict[str, Any], class_name: str, arm_id: str) -> bool:
+    return any(entry.get("class") == class_name and entry.get("arm_id") == arm_id
+               and entry.get("action") == "pause" and not entry.get("reverted_at")
+               for entry in table.get("overrides", []) if isinstance(entry, dict))
+
+
+def learning_report(table: dict[str, Any], window: str, only: str | None = None) -> dict[str, Any]:
+    since, until = learning_window(window)
+    outcomes = learning_outcomes(since, until)
+    standards = table.get("standards", {})
+    classes = {}
+    proposals = []
+    minimum = table.get("explore", {}).get("min_n_per_arm", 40)
+    if not isinstance(minimum, int) or minimum < 1:
+        fail("min_n_per_arm must be positive")
+    for class_name, default in standards.items():
+        if only and class_name != only:
+            continue
+        default_id = arm_key(default)
+        class_rows = [row for row in outcomes if row.get("class") == class_name]
+        valid = [row for row in class_rows if attributed_outcome(row)]
+        arms = []
+        for arm in [default, *learning_arms(table, class_name)]:
+            arm_id = arm_key(arm)
+            if not arm_id or any(item["arm_id"] == arm_id for item in arms):
+                continue
+            eligible = [row for row in valid if default_id in row.get("eligible_arms", [])
+                        and arm_id in row.get("eligible_arms", [])]
+            selected = [row for row in eligible if row.get("arm_id") == arm_id]
+            total = sum(row.get("arm_id") == arm_id for row in class_rows)
+            metrics = learning_metrics(selected, total)
+            paused = arm_paused(table, class_name, arm_id) or arm.get("paused", False)
+            arms.append({"arm_id": arm_id, "default": arm_id == default_id,
+                         **metrics, "paused": bool(paused)})
+            if arm_id == default_id:
+                continue
+            baseline = learning_metrics([row for row in eligible if row.get("arm_id") == default_id],
+                                        len(eligible))
+            if (metrics["n"] >= minimum and baseline["n"] >= minimum
+                    and metrics["interval"][0] >= baseline["accept_rate"] - 0.05
+                    and metrics["cost_per_accepted"] is not None
+                    and baseline["cost_per_accepted"] is not None
+                    and metrics["cost_per_accepted"] < baseline["cost_per_accepted"]
+                    and not paused):
+                proposals.append({"class": class_name, "action": "promote", "arm_id": arm_id,
+                                  "evidence": learning_evidence(metrics, window, table)})
+        classes[class_name] = {"default": default_id, "arms": arms}
+    return {"window": window, "policy_rev": table.get("policy_rev"), "classes": classes,
+            "proposals": proposals,
+            "pending_alex": [entry for entry in table.get("overrides", [])
+                             if isinstance(entry, dict) and entry.get("pending_alex")
+                             and not entry.get("reverted_at") and (not only or entry.get("class") == only)]}
+
+
+def learning_evidence(metrics: dict[str, Any], window: str, table: dict[str, Any]) -> dict[str, Any]:
+    return {"n": metrics["n"], "accepted": metrics["accepted"], "lower_bound": metrics["interval"][0],
+            "cost_per_accepted": metrics["cost_per_accepted"], "window": window,
+            "policy_rev": table.get("policy_rev")}
+
+
+def learning_entry(class_name: str, action: str, arm_id: str, evidence: dict[str, Any],
+                   reason: str) -> dict[str, Any]:
+    return {"class": class_name, "action": action, "arm_id": arm_id, "evidence": evidence,
+            "reason": reason, "ts": now_iso(), "id": secrets.token_hex(12)}
+
+
+def write_learning_table(table: dict[str, Any]) -> None:
+    canonical = Path(__file__).resolve().parent.parent / "config/coding-agents/routing-table.json"
+    if table_path().resolve() == canonical:
+        fail("learning writes require a managed routing table, set ROUTE_TABLE to its path")
+    atomic_write(table_path(), json.dumps(table, indent=2) + "\n")
 
 
 def command_learn(args: argparse.Namespace) -> int:
-    since = datetime.now(timezone.utc) - timedelta(days=args.days)
-    dispatches, closeouts = read_ledger(since)
-    rows = aggregate(dispatches, closeouts)
-    found = proposals(rows, minimum=args.min_closeouts, floor=args.ok_floor)
-    for proposal in found:
-        proposal["evidence"]["windowDays"] = args.days
-        proposal["ts"] = now_iso()
-
-    if not found:
-        print(
-            f"No demotions proposed: no (class, seat, model) reached {args.min_closeouts} closeouts below "
-            f"a {args.ok_floor:.0%} ok-rate in {args.days} day(s)."
-        )
-        return EXIT_OK
-
+    if args.override_evidence and not args.promote:
+        fail("--override-evidence requires --promote")
     table = load_table(apply_default=False)
-    existing = table.get("overrides")
-    existing = existing if isinstance(existing, list) else []
-    fresh = [
-        proposal
-        for proposal in found
-        if not any(_override_matches(current, proposal["class"], proposal["demote"]) for current in existing)
-    ]
+    report = learning_report(table, args.since)
+    overrides = table.setdefault("overrides", [])
+    changed = False
+    if args.purge_legacy:
+        if not args.apply:
+            fail("--purge-legacy requires --apply")
+        kept = [entry for entry in overrides if v2_override(entry)]
+        report["purged"] = len(overrides) - len(kept)
+        table["overrides"] = overrides = kept
+        changed = bool(report["purged"])
+    elif args.apply:
+        fail("--apply is only supported with --purge-legacy; use --promote explicitly")
+    if args.promote:
+        class_name, arm_id = args.promote
+        if not args.reason:
+            fail("--promote requires --reason")
+        if class_name not in report["classes"]:
+            fail(f"unknown standard class: {class_name}")
+        arm = next((arm for arm in learning_arms(table, class_name) if arm_key(arm) == arm_id), None)
+        if arm is None:
+            fail(f"unknown exploration arm: {class_name}/{arm_id}")
+        if arm_id == report["classes"][class_name]["default"]:
+            fail("arm is already the default")
+        proposal = next((p for p in report["proposals"] if p["class"] == class_name
+                         and p["arm_id"] == arm_id), None)
+        if proposal is None and not args.override_evidence:
+            fail("promotion criteria not met; --override-evidence must be explicit")
+        metrics = next(row for row in report["classes"][class_name]["arms"] if row["arm_id"] == arm_id)
+        entry = learning_entry(class_name, "promote", arm_id,
+                               learning_evidence(metrics, args.since, table), args.reason)
+        previous = table["standards"][class_name]
+        entry["previous_default"] = previous
+        entry["override_evidence"] = bool(args.override_evidence)
+        protected = {"plan", "review", "design", "audit", "judge", "ui_critical", "trust"}
+        claude = str(previous.get("model", "")).startswith(("opus", "sonnet", "haiku", "claude"))
+        entry["pending_alex"] = class_name in protected and claude
+        if not entry["pending_alex"]:
+            table["standards"][class_name] = arm
+        overrides.append(entry)
+        report["entry"] = entry
+        changed = True
+    if args.revert:
+        entry = next((entry for entry in overrides if isinstance(entry, dict)
+                      and entry.get("id") == args.revert and entry.get("action") == "promote"), None)
+        if entry is None or entry.get("reverted_at"):
+            fail("no active promotion with that id")
+        if not entry.get("pending_alex"):
+            if arm_key(table["standards"][entry["class"]]) != entry["arm_id"]:
+                fail("a newer default is active; revert it first")
+            table["standards"][entry["class"]] = entry["previous_default"]
+        entry["reverted_at"] = now_iso()
+        report["reverted"] = args.revert
+        changed = True
+    if args.apply_pauses:
+        since, until = learning_window(args.since)
+        outcomes = learning_outcomes(since, until)
+        threshold = table.get("explore", {}).get("stop_after_nonaccepts", 3)
+        if not isinstance(threshold, int) or threshold < 1:
+            fail("stop_after_nonaccepts must be positive")
+        for class_name, data in report["classes"].items():
+            for arm in data["arms"]:
+                if arm["default"] or arm["paused"]:
+                    continue
+                rows = [row for row in outcomes if row.get("class") == class_name
+                        and row.get("arm_id") == arm["arm_id"] and attributed_outcome(row)]
+                streak = 0
+                longest = 0
+                for row in rows:
+                    streak = 0 if row["outcome"] == "accepted" else streak + 1
+                    longest = max(longest, streak)
+                if longest >= threshold:
+                    entry = learning_entry(class_name, "pause", arm["arm_id"],
+                                           learning_evidence(arm, args.since, table),
+                                           f"{longest} consecutive non-accepts")
+                    overrides.append(entry)
+                    changed = True
+    if changed:
+        write_learning_table(table)
+        updated = learning_report(table, args.since)
+        for key in ("classes", "proposals", "pending_alex"):
+            report[key] = updated[key]
+    print(json.dumps(report, indent=2) if args.json else learning_text(report))
+    return EXIT_OK
 
-    if not args.apply:
-        print(f"# route learn — proposed overrides for {table_path()}\n")
-        for proposal in found:
-            state = "already present" if proposal not in fresh else "new"
-            print(
-                f"+ {proposal['class']}: demote {proposal['demote']['seat']}/{proposal['demote']['model']} "
-                f"({proposal['reason']}) [{state}]"
-            )
-        print("\nRun `route learn --apply` to write these into the table's `overrides`.")
-        return EXIT_OK
 
-    if not fresh:
-        print("All proposed demotions are already recorded in the table; nothing written.")
-        return EXIT_OK
-    table["overrides"] = existing + fresh
-    atomic_write(table_path(), json.dumps(table, indent=2) + "\n")
-    for proposal in fresh:
-        print(f"wrote override: {proposal['class']} demotes {proposal['demote']['seat']}/{proposal['demote']['model']}")
-    print(f"table: {table_path()}")
+def learning_text(report: dict[str, Any]) -> str:
+    lines = ['---', 'title: "Routing standings"', '---', "", "# Routing standings", ""]
+    for class_name, data in report["classes"].items():
+        lines.extend([f"## {class_name}", "",
+                      "| Arm | Default | n | Attributed share | Acceptance (90% interval) | "
+                      "$/accepted | Median wall s | Paused |",
+                      "|---|---|---:|---:|---|---:|---:|---|"])
+        for arm in data["arms"]:
+            cost = arm["cost_per_accepted"]
+            rate = arm["accept_rate"]
+            low, high = arm["interval"]
+            acceptance = f"{rate:.1%} ({low:.1%} to {high:.1%})" if rate is not None else "unknown"
+            price = f"{cost:.4f}" if cost is not None else "cost unknown"
+            lines.append(f"| {arm['arm_id']} | {arm['default']} | {arm['n']} | {arm['attributed_share']:.1%} | "
+                         f"{acceptance} | {price} | {arm['median_wall_s']} | {arm['paused']} |")
+        lines.append("")
+    for proposal in report["proposals"]:
+        lines.append(f"Propose promoting {proposal['arm_id']} for {proposal['class']}.")
+    for entry in report["pending_alex"]:
+        lines.append(f"Alex's approval is pending for {entry['class']} promotion to {entry['arm_id']}.")
+    if not report["proposals"]:
+        lines.append("No promotions proposed.")
+    return "\n".join(lines) + "\n"
+
+
+def command_standings(args: argparse.Namespace) -> int:
+    report = learning_report(load_table(apply_default=False), args.since, args.task_class)
+    if args.mdx:
+        atomic_write(Path(args.mdx).expanduser(), learning_text(report))
+    print(json.dumps(report, indent=2) if args.json else learning_text(report))
     return EXIT_OK
 
 
@@ -4826,12 +5049,25 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     snapshot.add_argument("--json", action="store_true")
     snapshot.set_defaults(handler=command_policy)
 
-    learn = sub.add_parser("learn", help="propose chain demotions from recorded outcomes")
-    learn.add_argument("--apply", action="store_true", help="write the overrides into the routing table")
-    learn.add_argument("--days", type=int, default=14)
-    learn.add_argument("--min-closeouts", type=int, default=10, dest="min_closeouts")
-    learn.add_argument("--ok-floor", type=float, default=0.6, dest="ok_floor")
+    learn = sub.add_parser("learn", help="propose evidence-based promotions from outcomes")
+    learn.add_argument("--since", default="30d")
+    learn.add_argument("--json", action="store_true")
+    actions = learn.add_mutually_exclusive_group()
+    actions.add_argument("--apply-pauses", action="store_true")
+    actions.add_argument("--promote", nargs=2, metavar=("CLASS", "ARM_ID"))
+    actions.add_argument("--revert", metavar="ID")
+    actions.add_argument("--purge-legacy", action="store_true")
+    learn.add_argument("--reason")
+    learn.add_argument("--override-evidence", action="store_true")
+    learn.add_argument("--apply", action="store_true")
     learn.set_defaults(handler=command_learn)
+
+    standings = sub.add_parser("standings", help="show attributed routing evidence by class and arm")
+    standings.add_argument("--class", dest="task_class")
+    standings.add_argument("--since", default="30d")
+    standings.add_argument("--json", action="store_true")
+    standings.add_argument("--mdx")
+    standings.set_defaults(handler=command_standings)
 
     return parser.parse_args(argv)
 
