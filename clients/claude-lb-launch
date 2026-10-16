@@ -77,17 +77,31 @@ from datetime import datetime
 from pathlib import Path
 
 
+def dispatch_id(value: str) -> str:
+    if not value.lstrip().startswith("{"):
+        return value
+    try:
+        document = json.loads(value)
+    except json.JSONDecodeError:
+        return ""
+    decision = document.get("decision_id") if isinstance(document, dict) else None
+    return decision if isinstance(decision, str) else ""
+
+
 def tag_headers(environ: Mapping[str, str]) -> dict[str, str]:
-    return {
+    tags = {
         header: environ[name]
         for name, header in (
             ("AGENT_LB_INTENT", "x-agent-lb-intent"),
             ("AGENT_LB_LANE", "x-agent-lb-lane"),
             ("AGENT_LB_SEAT", "x-agent-lb-seat"),
-            ("AGENT_LB_DISPATCH", "x-agent-lb-dispatch"),
         )
         if environ.get(name)
     }
+    decision = dispatch_id(environ.get("AGENT_LB_DISPATCH") or "")
+    if decision:
+        tags["x-agent-lb-dispatch"] = decision
+    return tags
 
 
 def resolve_lane_tags(argv: list[str]) -> str:

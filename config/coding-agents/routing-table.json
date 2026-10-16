@@ -19,6 +19,15 @@
       "evidence": "E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted; Sol fallback removed, under reserve plans WAIT",
       "since": "2026-10-16"
     },
+    "lane": {
+      "seat": "lane-lead",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "architecture",
+      "evidence": "models.md 2026-10-14: top-level tabs, lane leads and workflow orchestrators run opus-latest medium",
+      "since": "2026-10-16"
+    },
     "review": {
       "seat": "plan-reviewer",
       "model": "opus-latest",
