@@ -2987,6 +2987,29 @@ def workflow_opus_stage(table: dict[str, Any], stage: str) -> dict[str, Any]:
     return workflow_seat(table, stage, entry)
 
 
+def workflow_stage_effort(table: dict[str, Any]) -> dict[str, Any]:
+    standards = table.get("standards") if isinstance(table.get("standards"), dict) else {}
+    efforts = {name: spec["effort"] for name, spec in standards.items()
+               if isinstance(spec, dict) and spec.get("effort") in EFFORTS}
+    if "verify" in efforts:
+        efforts["facts"] = efforts["verify"]
+    bands = ((table.get("policy") or {}).get("stage_effort") or {}).get("bands") or {}
+    money = bands.get("money_path") or ["xhigh"]
+    efforts["money_path"] = money[-1]
+    return efforts
+
+
+def workflow_relay_seat(table: dict[str, Any]) -> dict[str, Any]:
+    standard = (table.get("standards") or {}).get("relay")
+    if not isinstance(standard, dict) or not standard.get("seat"):
+        raise ValueError("no relay standard")
+    alias = standard.get("wrapper_model") or standard.get("model")
+    model = pinned_model(table, alias) or alias
+    entry = {"seat": standard["seat"], "model": model, "alias": alias, "effort": standard.get("effort") or "low",
+             "vendor": alias_vendor(table, alias) or "anthropic"}
+    return workflow_seat(table, "relay", entry)
+
+
 def command_workflow_args(args: argparse.Namespace) -> int:
     quota = workflow_quota()
     table = workflow_table(load_table())
@@ -3005,8 +3028,13 @@ def command_workflow_args(args: argparse.Namespace) -> int:
     }
     for stage in WORKFLOW_OPUS_STAGES:
         document["stages"][stage] = workflow_opus_stage(table, stage)
-        if stage in classes:
+        if stage in classes or stage == "judge":
             document["seats"][stage] = document["stages"][stage]
+    document["stage_effort"] = workflow_stage_effort(table)
+    try:
+        document["seats"]["relay"] = workflow_relay_seat(table)
+    except ValueError as error:
+        document["errors"]["relay"] = str(error)
     for class_name in sorted(classes):
         if class_name == "verify" or class_name in WORKFLOW_OPUS_STAGES:
             continue

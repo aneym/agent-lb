@@ -27,7 +27,7 @@ def test_each_seat_kind_gets_options_that_reach_its_model(tmp_path: Path) -> Non
     assert implement["audit"]["opts"] == {
         "agentType": "verifier", "model": "claude-sonnet-5-5", "effort": "high"}
     assert seats["explore"]["opts"] == {"agentType": "gpt-explorer", "model": "sol-latest-low"}
-    assert all(seat["vendor"] == "openai" for name, seat in seats.items() if name not in ("plan", "review"))
+    assert all(seat["vendor"] == "openai" for name, seat in seats.items() if name not in ("plan", "review", "judge", "relay"))
     assert args["agent_cap"] == 6
     assert args["quota"]["opus_stages"] == ["plan", "review", "judge", "synthesis", "orchestrator"]
 
