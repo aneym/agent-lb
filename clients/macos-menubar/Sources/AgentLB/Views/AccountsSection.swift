@@ -584,7 +584,7 @@ struct AccountRow: View {
       Button("Reactivate") {
         run { await appState.reactivate(accountId: account.accountId) }
       }
-    case .unsubscribed:
+    case .unsubscribed, .reconnecting:
       EmptyView()
     }
     if account.canRedeemResetCredit {
@@ -682,7 +682,7 @@ struct RowRing: View {
           Circle().stroke(.quaternary, style: StrokeStyle(lineWidth: 2, dash: [2, 3]))
         }
         switch presentation {
-        case .active, .rateLimited, .unsubscribed:
+        case .active, .rateLimited, .unsubscribed, .reconnecting:
           EmptyView()
         case .paused:
           StatusGlyph(kind: .paused, size: 8)
