@@ -48,6 +48,7 @@ from app.core.providers import (
     get_anthropic_compat_profile,
     provider_name_for_anthropic_model,
 )
+from app.core.utils.client_session import get_dispatch_id
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, AccountStatus, StickySessionKind
@@ -483,6 +484,7 @@ class AnthropicProxyService:
     ) -> AnthropicProxyStream:
         resolved_request = await self.resolve_message_request(payload)
         payload = resolved_request.payload
+        reasoning_effort = _anthropic_reasoning_effort(payload)
         provider_name = resolved_request.provider_name
         quota_key = resolved_request.quota_key
 
@@ -581,6 +583,7 @@ class AnthropicProxyService:
                                 provider_name=provider_name,
                                 request_id=request_id,
                                 model=payload.model,
+                                reasoning_effort=reasoning_effort,
                                 started_at=started_at,
                                 status="error",
                                 error_code=exc.code,
@@ -686,6 +689,7 @@ class AnthropicProxyService:
                                             provider_name=provider_name,
                                             request_id=request_id,
                                             model=payload.model,
+                                            reasoning_effort=reasoning_effort,
                                             started_at=started_at,
                                             status="error",
                                             error_code="balance_exhausted",
@@ -750,6 +754,7 @@ class AnthropicProxyService:
                                         provider_name=provider_name,
                                         request_id=request_id,
                                         model=payload.model,
+                                        reasoning_effort=reasoning_effort,
                                         started_at=started_at,
                                         status="error",
                                         error_code=error_code,
@@ -782,6 +787,7 @@ class AnthropicProxyService:
                                         provider_name=provider_name,
                                         request_id=request_id,
                                         model=payload.model,
+                                        reasoning_effort=reasoning_effort,
                                         started_at=started_at,
                                         status="error",
                                         error_code="rate_limit_exceeded",
@@ -811,6 +817,7 @@ class AnthropicProxyService:
                                         provider_name=provider_name,
                                         request_id=request_id,
                                         model=payload.model,
+                                        reasoning_effort=reasoning_effort,
                                         started_at=started_at,
                                         status="error",
                                         error_code="upstream_529",
@@ -845,6 +852,7 @@ class AnthropicProxyService:
                                         provider_name=provider_name,
                                         request_id=request_id,
                                         model=payload.model,
+                                        reasoning_effort=reasoning_effort,
                                         started_at=started_at,
                                         status="error",
                                         error_code=f"upstream_{resp.status}",
@@ -899,6 +907,7 @@ class AnthropicProxyService:
                                         provider_name=provider_name,
                                         request_id=request_id,
                                         model=payload.model,
+                                        reasoning_effort=reasoning_effort,
                                         started_at=started_at,
                                         status="error",
                                         error_code="extra_usage_refused",
@@ -1011,6 +1020,7 @@ class AnthropicProxyService:
                                         provider_name=provider_name,
                                         request_id=request_id,
                                         model=payload.model,
+                                        reasoning_effort=reasoning_effort,
                                         started_at=started_at,
                                         status="error",
                                         error_code=f"stream_error_{stream_error_type}",
@@ -1043,6 +1053,7 @@ class AnthropicProxyService:
                                     provider_name=provider_name,
                                     request_id=request_id,
                                     model=payload.model,
+                                    reasoning_effort=reasoning_effort,
                                     started_at=started_at,
                                     status="success",
                                     api_key=api_key,
@@ -1090,6 +1101,7 @@ class AnthropicProxyService:
                                 provider_name=provider_name,
                                 request_id=request_id,
                                 model=payload.model,
+                                reasoning_effort=reasoning_effort,
                                 started_at=started_at,
                                 api_key=api_key,
                                 session_id=session_id,
@@ -1127,6 +1139,7 @@ class AnthropicProxyService:
                         provider_name=provider_name,
                         request_id=request_id,
                         model=payload.model,
+                        reasoning_effort=reasoning_effort,
                         started_at=started_at,
                         status="error",
                         error_code=code,
@@ -1195,6 +1208,7 @@ class AnthropicProxyService:
                     provider_name=provider_name,
                     request_id=request_id,
                     model=payload.model,
+                    reasoning_effort=reasoning_effort,
                     started_at=started_at,
                     status="error",
                     error_code=_no_available_accounts_code(provider_name),
@@ -2105,6 +2119,7 @@ class AnthropicProxyService:
         provider_name: str,
         request_id: str,
         model: str,
+        reasoning_effort: str | None = None,
         started_at: float,
         status: str,
         api_key: ApiKeyData | None,
@@ -2130,6 +2145,7 @@ class AnthropicProxyService:
                 provider_name=provider_name,
                 request_id=request_id,
                 model=model,
+                reasoning_effort=reasoning_effort,
                 started_at=started_at,
                 status=status,
                 api_key=api_key,
@@ -2173,6 +2189,7 @@ class AnthropicProxyService:
         provider_name: str,
         request_id: str,
         model: str,
+        reasoning_effort: str | None = None,
         started_at: float,
         status: str,
         api_key: ApiKeyData | None,
@@ -2192,6 +2209,9 @@ class AnthropicProxyService:
         request_kind: str = "normal",
     ) -> None:
         try:
+            dispatch_id = get_dispatch_id()
+            if dispatch_id:
+                unified_headers = {**(unified_headers or {}), "x-agent-lb-dispatch": dispatch_id}
             latency_ms = int((time.monotonic() - started_at) * 1000)
             identity = await attach_member(identity, api_key.member_id if api_key else None)
             async with self._repo_factory() as repos:
@@ -2201,6 +2221,7 @@ class AnthropicProxyService:
                     api_key_id=api_key.id if api_key else None,
                     request_id=request_id,
                     model=model,
+                    reasoning_effort=reasoning_effort,
                     input_tokens=usage.input_tokens if usage else None,
                     output_tokens=usage.output_tokens if usage else None,
                     cached_input_tokens=usage.cache_read_input_tokens if usage else None,
@@ -2264,6 +2285,7 @@ class AnthropicProxyService:
         provider_name: str,
         request_id: str,
         model: str,
+        reasoning_effort: str | None = None,
         started_at: float,
         api_key: ApiKeyData | None,
         session_id: str | None,
@@ -2286,6 +2308,7 @@ class AnthropicProxyService:
             provider_name=provider_name,
             request_id=request_id,
             model=model,
+            reasoning_effort=reasoning_effort,
             started_at=started_at,
             status="error",
             error_code=stall.code,
@@ -2395,6 +2418,21 @@ class AnthropicProxyService:
 
 def _request_id_from_headers(headers: Mapping[str, str]) -> str | None:
     return headers.get("x-request-id") or headers.get("request-id")
+
+
+def _anthropic_reasoning_effort(payload: AnthropicMessageRequest) -> str:
+    output_config = (payload.model_extra or {}).get("output_config")
+    effort = output_config.get("effort") if isinstance(output_config, dict) else None
+    if isinstance(effort, str) and effort in {"low", "medium", "high", "xhigh", "max"}:
+        return effort
+    thinking = payload.thinking or {}
+    budget = thinking.get("budget_tokens")
+    if thinking.get("type") == "enabled" and isinstance(budget, int) and not isinstance(budget, bool):
+        for threshold, band in ((4000, "low"), (16000, "medium"), (32000, "high")):
+            if budget < threshold:
+                return band
+        return "xhigh"
+    return "none"
 
 
 def _anthropic_quota_key(payload: AnthropicMessageRequest) -> str:

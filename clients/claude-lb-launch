@@ -84,6 +84,7 @@ def tag_headers(environ: Mapping[str, str]) -> dict[str, str]:
             ("AGENT_LB_INTENT", "x-agent-lb-intent"),
             ("AGENT_LB_LANE", "x-agent-lb-lane"),
             ("AGENT_LB_SEAT", "x-agent-lb-seat"),
+            ("AGENT_LB_DISPATCH", "x-agent-lb-dispatch"),
         )
         if environ.get(name)
     }

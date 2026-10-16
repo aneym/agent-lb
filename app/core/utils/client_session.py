@@ -14,6 +14,8 @@ _CLIENT_SESSION_ID: ContextVar[str | None] = ContextVar("client_session_id", def
 
 _SEAT_HEADER = b"x-agent-lb-seat"
 _SEAT_RE = re.compile(r"[a-z0-9][a-z0-9@._:-]{0,63}\Z")
+_DISPATCH_ID: ContextVar[str | None] = ContextVar("dispatch_id", default=None)
+_DISPATCH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:-]{0,59}\Z")
 _CALLER_SEAT: ContextVar[str | None] = ContextVar("caller_seat", default=None)
 
 
@@ -27,6 +29,21 @@ def set_client_session_id_from_scope(scope: Scope) -> Token[str | None]:
 
 def reset_client_session_id(token: Token[str | None]) -> None:
     _CLIENT_SESSION_ID.reset(token)
+
+
+def get_dispatch_id() -> str | None:
+    return _DISPATCH_ID.get()
+
+
+def set_dispatch_id_from_scope(scope: Scope) -> Token[str | None]:
+    headers = dict(scope.get("headers") or ())
+    raw = headers.get(b"x-agent-lb-dispatch")
+    value = raw.decode("latin-1").strip() if raw else ""
+    return _DISPATCH_ID.set(value if _DISPATCH_RE.fullmatch(value) else None)
+
+
+def reset_dispatch_id(token: Token[str | None]) -> None:
+    _DISPATCH_ID.reset(token)
 
 
 def get_caller_seat() -> str | None:
@@ -56,7 +73,8 @@ def _caller_seat(scope: Scope) -> str | None:
     headers = dict(scope.get("headers") or ())
     raw = headers.get(_SEAT_HEADER)
     if not raw:
-        return None
+        dispatch_id = get_dispatch_id()
+        return f"dcn:{dispatch_id}" if dispatch_id else None
     value = raw.decode("latin-1").strip().lower()
     if _SEAT_RE.fullmatch(value):
         return value
