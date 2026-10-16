@@ -28,7 +28,7 @@ final class MakerScopeTests: XCTestCase {
     "windowLabel":"month","percentUsed":100,"percentSource":"vendor","cycleResetAt":"2099-10-30T04:00:00Z"}]}
   """
 
-  func testAllCountsEveryAccountAndMakerScopesShowTheirPoolsAndAccounts() throws {
+  func testLegacySeatPayloadCountsSeatsAndRendersRowsAndCards() throws {
     let decoder = APIClient.makeDecoder()
     let seats = try decoder.decode(SeatAccountsResponse.self, from: Data(seatsJSON.utf8)).accounts
     let pools = try decoder.decode(PoolsDocument.self, from: Data(poolsJSON.utf8)).pools
@@ -43,28 +43,34 @@ final class MakerScopeTests: XCTestCase {
     XCTAssertEqual(counts[.cursor], 2)
     XCTAssertEqual(counts[.devin], 2)
     XCTAssertEqual(counts[.other], 2)
-    XCTAssertEqual(ProviderScope.allCases.map(\.label), ["All", "Codex", "Claude", "Cursor", "Devin", "Other"])
+    XCTAssertEqual(counts[.muse], 0)
+    XCTAssertEqual(ProviderScope.allCases.map(\.label), ["All", "Codex", "Claude", "Cursor", "Devin", "Muse", "Other"])
     XCTAssertTrue(ProviderScope.other.includes(accounts.first { $0.provider == "kimi" }!))
     XCTAssertEqual(ProviderScope.cursor.filter(accounts).count, 0)
 
-    XCTAssertTrue(MakerRows.lines(for: .cursor, seats: [], pools: pools.filter { $0.id == "cursor" }).isEmpty)
-    XCTAssertEqual(MakerRows.lines(for: .cursor, seats: seats, pools: pools), [
-      "Cursor models: ~2% used (estimate), resets Oct 30",
-      "Other models: 100% used, resets Oct 30",
-      "cursor-gmail: plan unknown, ready",
-      "cursor-main: Ultra, Other models out until Oct 30; other pools ready",
-    ])
-    let allOutJSON = seatsJSON.replacingOccurrences(
-      of: "\"cooldowns\":{\"cursor-other\":\"2099-10-30T04:00:00Z\"}",
-      with: "\"cooldowns\":{\"cursor-models\":\"2099-10-30T04:00:00Z\",\"cursor-other\":\"2099-10-30T04:00:00Z\"}"
-    )
-    let allOutSeats = try decoder.decode(SeatAccountsResponse.self, from: Data(allOutJSON.utf8)).accounts
-    XCTAssertEqual(MakerRows.lines(for: .cursor, seats: allOutSeats, pools: pools).last,
-      "cursor-main: Ultra, Cursor models out until Oct 30; Other models out until Oct 30")
-    XCTAssertEqual(MakerRows.lines(for: .devin, seats: seats, pools: pools), [
-      "Devin: 1 of 2 ready, 2 runs in 24 h",
-      "devin-kinetic: disabled",
-      "devin-main: ready",
-    ])
+    let now = Format.iso8601.date(from: "2026-09-30T03:00:00Z")!
+    let cursorRows = AccountFilter(sort: .nameAsc).apply(to: [], seats: ProviderScope.cursor.filter(seats), now: now)
+    XCTAssertEqual(cursorRows.map(\.id), ["seat:cursor-gmail", "seat:cursor-main"])
+    let devinRows = AccountFilter(sort: .nameAsc).apply(to: [], seats: ProviderScope.devin.filter(seats), now: now)
+    XCTAssertEqual(devinRows.map(\.id), ["seat:devin-kinetic", "seat:devin-main"])
+    XCTAssertEqual(AccountFilter(status: .paused).apply(to: seats, now: now).map(\.id), ["devin-kinetic"])
+    XCTAssertEqual(AccountFilter(status: .rateLimited).apply(to: seats, now: now).map(\.id), ["cursor-main"])
+    XCTAssertEqual(AccountFilter(query: "gmail").apply(to: seats, now: now).map(\.id), ["cursor-gmail"])
+
+    let main = try XCTUnwrap(seats.first { $0.id == "cursor-main" })
+    XCTAssertEqual(RowPresentation.forSeat(main), .rateLimited(Format.iso8601.date(from: "2099-10-30T04:00:00Z")))
+    XCTAssertEqual(SeatAccountRow(seat: main, now: now).trailingText, "limited · Oct 30, 12:00 AM")
+
+    let cursor = SeatVendorSummary.build(scope: .cursor, pools: pools, seats: seats, summary: nil, now: now)
+    XCTAssertEqual(cursor.cards.map(\.id), ["cursor-models", "cursor-other"])
+    XCTAssertEqual(cursor.cards.map(\.title), ["MONTHLY LIMIT", "MONTHLY LIMIT"])
+    XCTAssertEqual(cursor.cards.map(\.detail), ["Cursor models · Grok, Composer", "Other models"])
+    XCTAssertEqual(cursor.cards.map(\.sourceText), ["est", "as of —"])
+    XCTAssertEqual(cursor.cards.map(\.remainingPercent), [98, 0])
+
+    let devin = SeatVendorSummary.build(scope: .devin, pools: pools, seats: seats, summary: nil, now: now)
+    XCTAssertTrue(devin.cards.isEmpty)
+    XCTAssertEqual(devin.quietLine, "No usage reading from Devin · 2 runs in 24 h")
+    XCTAssertEqual(devin.seatsText, "1/2 seats")
   }
 }

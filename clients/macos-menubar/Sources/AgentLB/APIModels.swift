@@ -215,6 +215,25 @@ struct UsageSummary: Decodable, Sendable, Equatable {
   let monthlyWindow: UsageWindow?
   let cost: CostSummary?
   let metrics: SummaryMetrics?
+  var provider: String? = nil
+  var seatActivity: SeatActivity? = nil
+}
+
+struct SeatActivity: Decodable, Sendable, Equatable {
+  let periodHours: Int
+  let runs: Int
+  let ok: Int
+  var tokensIn: Int? = nil
+  var tokensOut: Int? = nil
+  let tokensKnown: Bool
+  var valueUsd: Double? = nil
+  var valueSource: String? = nil
+  var models: [SeatActivityModel]? = nil
+}
+
+struct SeatActivityModel: Decodable, Sendable, Equatable {
+  let model: String
+  let runs: Int
 }
 
 struct UsageWindow: Decodable, Sendable, Equatable {
@@ -303,26 +322,138 @@ struct HealthResponse: Decodable, Sendable {
 struct SeatAccountsResponse: Decodable {
   let stateUpdatedAt: Date?
   let source: String
+  var quotaRefreshedAt: Date? = nil
   let accounts: [SeatAccount]
 }
 
-struct SeatAccount: Decodable, Equatable, Sendable {
+struct SeatAccount: Decodable, Equatable, Sendable, Identifiable {
   let id: String
   let vendor: String
+  var auth: String? = nil
   let enabled: Bool
   let authOk: Bool?
+  var authCheckedAt: Date? = nil
   let tier: String?
+  var plan: String? = nil
+  var cycleDay: Int? = nil
   let cooldownUntil: Date?
   let cooldowns: [String: Date]?
+  var lastErrorKind: String? = nil
+  var lastErrorAt: Date? = nil
+  var lastRunAt: Date? = nil
   let ready: Bool
   let lastDay: SeatUsage
+  var recentRuns: [SeatRun]? = nil
+  var email: String? = nil
+  var planLabel: String? = nil
+  var status: String? = nil
+  var statusResetAt: Date? = nil
+  var quota: SeatQuota? = nil
+  var today: SeatToday? = nil
 }
 
 struct SeatUsage: Decodable, Equatable, Sendable {
   let runs: Int
   let ok: Int
+  var wallS: Double? = nil
   let tokensIn: Int
   let tokensOut: Int
+}
+
+struct SeatRun: Decodable, Equatable, Sendable {
+  let ts: Date
+  var model: String? = nil
+  var tokensIn: Int? = nil
+  var tokensOut: Int? = nil
+  var cacheRead: Int? = nil
+  var ok: Bool? = nil
+  var wallS: Double? = nil
+}
+
+struct SeatQuota: Decodable, Equatable, Sendable {
+  let source: String
+  var observedAt: Date? = nil
+  var stale: Bool? = nil
+  var unavailableReason: String? = nil
+  var primaryWindowId: String? = nil
+  var windows: [SeatQuotaWindow]? = nil
+}
+
+struct SeatQuotaWindow: Decodable, Equatable, Sendable {
+  let id: String
+  let kind: String
+  let label: String
+  var durationMins: Int? = nil
+  var usedPercent: Double? = nil
+  var remainingPercent: Double? = nil
+  var resetsAt: Date? = nil
+  var source: String? = nil
+}
+
+struct SeatToday: Decodable, Equatable, Sendable {
+  let runs: Int
+  let ok: Int
+  var tokensIn: Int? = nil
+  var tokensOut: Int? = nil
+  let tokensKnown: Bool
+  var valueUsd: Double? = nil
+  var valueSource: String? = nil
+  var models: [SeatTodayModel]? = nil
+}
+
+struct SeatTodayModel: Decodable, Equatable, Sendable {
+  let model: String
+  let runs: Int
+  var tokensIn: Int? = nil
+  var tokensOut: Int? = nil
+}
+
+extension SeatAccount {
+  var scope: ProviderScope? {
+    ProviderScope(rawValue: vendor.lowercased()).flatMap { $0.isSeatVendor ? $0 : nil }
+  }
+
+  var vendorLabel: String {
+    scope?.label ?? vendor.capitalized
+  }
+
+  var displayStatus: String {
+    if let status { return status }
+    if !enabled { return "paused" }
+    if authOk == false { return "reauth_required" }
+    if cooldownUntil.map({ $0 > .now }) == true { return "rate_limited" }
+    if (cooldowns ?? [:]).values.contains(where: { $0 > .now }) { return "rate_limited" }
+    return "active"
+  }
+
+  var displayStatusResetAt: Date? {
+    if let statusResetAt { return statusResetAt }
+    guard displayStatus == "rate_limited" else { return nil }
+    let candidates = [cooldownUntil].compactMap { $0 } + Array((cooldowns ?? [:]).values)
+    return candidates.filter { $0 > .now }.min()
+  }
+
+  var quotaWindows: [SeatQuotaWindow] {
+    quota?.windows ?? []
+  }
+
+  var primaryQuotaWindow: SeatQuotaWindow? {
+    let windows = quotaWindows
+    if let id = quota?.primaryWindowId, let match = windows.first(where: { $0.id == id }) {
+      return match
+    }
+    return windows
+      .filter { $0.remainingPercent != nil }
+      .min { ($0.remainingPercent ?? 100) < ($1.remainingPercent ?? 100) }
+  }
+
+  var todayRuns: Int {
+    today?.runs ?? lastDay.runs
+  }
+
+  var nextQuotaReset: Date? {
+    quotaWindows.compactMap(\.resetsAt).min()
+  }
 }
 
 struct PoolsDocument: Decodable {
@@ -358,6 +489,21 @@ struct PoolEntry: Decodable, Equatable, Sendable {
   let refills: [PoolRefill]?
   let usableAccounts: Int?
   let totalAccounts: Int?
+  var headroomPercent: Double? = nil
+  var observedTokens: Int? = nil
+  var windows: [PoolWindow]? = nil
+  var quotaSource: String? = nil
+}
+
+struct PoolWindow: Decodable, Equatable, Sendable {
+  let id: String
+  let kind: String
+  let label: String
+  var remainingPercent: Double? = nil
+  var usedPercent: Double? = nil
+  var resetsAt: Date? = nil
+  var measuredAccounts: Int? = nil
+  var source: String? = nil
 }
 
 struct PoolPlan: Decodable, Equatable, Sendable {

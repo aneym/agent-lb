@@ -77,6 +77,45 @@ enum Format {
   }
 
 
+  static func dollars(_ value: Double) -> String {
+    let formatter = NumberFormatter()
+    formatter.locale = Locale(identifier: "en_US")
+    formatter.numberStyle = .currency
+    formatter.currencyCode = "USD"
+    formatter.currencySymbol = "$"
+    formatter.minimumFractionDigits = 2
+    formatter.maximumFractionDigits = 2
+    return formatter.string(from: NSNumber(value: value)) ?? "$0.00"
+  }
+
+  static let eastern = TimeZone(identifier: "America/New_York")!
+
+  private static func easternFormatter(_ pattern: String) -> DateFormatter {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = eastern
+    formatter.dateFormat = pattern
+    return formatter
+  }
+
+  static func easternTime(_ date: Date) -> String {
+    easternFormatter("h:mm a").string(from: date)
+  }
+
+  static func easternDateTime(_ date: Date) -> String {
+    easternFormatter("MMM d, h:mm a").string(from: date)
+  }
+
+  static func easternDay(_ date: Date) -> String {
+    easternFormatter("MMM d").string(from: date)
+  }
+
+  static func easternMoment(_ date: Date, relativeTo now: Date = .now) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = eastern
+    return calendar.isDate(date, inSameDayAs: now) ? easternTime(date) : easternDateTime(date)
+  }
+
   static func compact(_ value: Int) -> String {
     guard value >= 1000 else { return "\(value)" }
     let k = Double(value) / 1000.0

@@ -13,6 +13,7 @@ import SwiftUI
 struct AccountsSection: View {
   @Environment(AppState.self) private var appState
   let accounts: [Account]
+  var seats: [SeatAccount] = []
   let isScoped: Bool
   let listHeight: Double
   @Binding var status: AccountFilter.Status
@@ -20,6 +21,7 @@ struct AccountsSection: View {
   @Binding var searchVisible: Bool
   let hasError: Bool
   let retry: () -> Void
+  var fixedNow: Date? = nil
 
   @FocusState private var searchFocused: Bool
   @AppStorage("accountSort") private var sortRaw = AccountFilter.Sort.resetSoonest.rawValue
@@ -37,18 +39,19 @@ struct AccountsSection: View {
   }
 
   var body: some View {
-    let now = Date.now
-    let filtered = filter.apply(to: accounts, now: now)
+    let now = fixedNow ?? Date.now
+    let filtered = filter.apply(to: accounts, seats: seats, now: now)
+    let isEmpty = accounts.isEmpty && seats.isEmpty
     VStack(alignment: .leading, spacing: PanelMetrics.accountsSpacing) {
-      headerRow(filteredCount: filtered.count + makerAccountCount)
+      headerRow(filteredCount: filtered.count)
       if searchVisible {
         searchField
       }
-      if hasError && accounts.isEmpty && makerLineCount == 0 {
+      if hasError && isEmpty {
         RetryRow(retry: retry)
-      } else if accounts.isEmpty && makerLineCount == 0 {
+      } else if isEmpty {
         emptyState
-      } else if filtered.isEmpty && makerLineCount == 0 {
+      } else if filtered.isEmpty {
         noMatches
       } else {
         list(filtered)
@@ -58,52 +61,6 @@ struct AccountsSection: View {
       }
     }
   }
-
-  private var makerScopes: [ProviderScope] {
-    switch appState.providerScope {
-    case .all: [.cursor, .devin]
-    case .cursor: [.cursor]
-    case .devin: [.devin]
-    default: []
-    }
-  }
-
-  private var makerAccountCount: Int {
-    appState.seatAccounts.filter { seat in
-      makerScopes.contains { $0.rawValue == seat.vendor.lowercased() }
-    }.count
-  }
-
-  private var makerLineCount: Int {
-    makerScopes.reduce(0) {
-      $0 + MakerRows.lines(for: $1, seats: appState.seatAccounts, pools: appState.pools).count
-    }
-  }
-
-  @ViewBuilder
-  private var makerGroups: some View {
-    ForEach(makerScopes, id: \.self) { scope in
-      let lines = MakerRows.lines(for: scope, seats: appState.seatAccounts, pools: appState.pools)
-      if !lines.isEmpty {
-        if appState.providerScope == .all {
-          Text(scope.label)
-            .font(.system(size: 12, weight: .semibold))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .frame(height: PanelMetrics.accountRow)
-        }
-        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-          Text(line)
-            .font(.system(size: 12))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .frame(height: PanelMetrics.accountRow)
-        }
-      }
-    }
-  }
-
-
 
   private func headerRow(filteredCount: Int) -> some View {
     HStack(spacing: 6) {
@@ -215,7 +172,7 @@ struct AccountsSection: View {
 
 
   @ViewBuilder
-  private func list(_ filtered: [Account]) -> some View {
+  private func list(_ filtered: [AccountListItem]) -> some View {
 
 
 
@@ -224,14 +181,23 @@ struct AccountsSection: View {
 
 
     TimelineView(.periodic(from: .now, by: 30)) { context in
-      ScrollView {
-        VStack(spacing: 0) {
-          ForEach(filtered) { account in
-            AccountRow(account: account, now: context.date)
+      let rows = VStack(spacing: 0) {
+        ForEach(filtered) { item in
+          switch item {
+          case .proxy(let account):
+            AccountRow(account: account, now: fixedNow ?? context.date)
+          case .seat(let seat):
+            SeatAccountRow(seat: seat, now: fixedNow ?? context.date)
           }
-          makerGroups
         }
-        .padding(.vertical, 4)
+      }
+      .padding(.vertical, 4)
+      Group {
+        if Double(filtered.count) * PanelMetrics.accountRow + PanelMetrics.listPadding <= listHeight {
+          rows.frame(maxHeight: .infinity, alignment: .top)
+        } else {
+          ScrollView { rows }
+        }
       }
       .frame(height: listHeight)
       .background(.thinMaterial, in: .rect(cornerRadius: 8))
@@ -306,17 +272,7 @@ struct AccountRow: View {
     case idle, inFlight, success, failure
   }
 
-  private enum Presentation {
-    case active
-    case rateLimited(Date?)
-    case paused
-    case deactivated(reauth: Bool)
-    case unsubscribed
-  }
-
-
-
-  private var presentation: Presentation {
+  private var presentation: RowPresentation {
     if account.isSubscriptionCanceled { return .unsubscribed }
     if account.status == "paused" { return .paused }
     if account.isDisconnected {
@@ -362,9 +318,7 @@ struct AccountRow: View {
   }
 
   private var isDimmed: Bool {
-    if case .paused = presentation { return true }
-    if case .unsubscribed = presentation { return true }
-    return false
+    presentation.isDimmed
   }
 
   private var isCodex: Bool { account.provider.lowercased() == "openai" }
@@ -378,33 +332,8 @@ struct AccountRow: View {
       : account.usage.primaryRemainingPercent
   }
 
-  @ViewBuilder
   private var leadingRing: some View {
-    if pendingAction {
-      ProgressView()
-        .controlSize(.small)
-        .frame(width: 20, height: 20)
-    } else {
-      ZStack {
-        RingGauge(percent: ringPercent, lineWidth: 2)
-        centerGlyph
-      }
-      .frame(width: 20, height: 20)
-    }
-  }
-
-
-
-  @ViewBuilder
-  private var centerGlyph: some View {
-    switch presentation {
-    case .active, .rateLimited, .unsubscribed:
-      EmptyView()
-    case .paused:
-      StatusGlyph(kind: .paused, size: 8)
-    case .deactivated:
-      StatusGlyph(kind: .deactivated, size: 8)
-    }
+    RowRing(percent: ringPercent, presentation: presentation, pending: pendingAction)
   }
 
 
@@ -423,19 +352,8 @@ struct AccountRow: View {
     return account.displayName + " ·2"
   }
 
-  @ViewBuilder
   private var planChip: some View {
-    if let plan = account.planType {
-      Text(plan.uppercased())
-        .font(.system(size: 9, weight: .medium))
-        .tracking(0.5)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 5)
-        .padding(.vertical, 1)
-        .background(Capsule().fill(.quaternary.opacity(0.5)))
-        .lineLimit(1)
-        .fixedSize()
-    }
+    PlanChip(text: account.planType)
   }
 
   @ViewBuilder
@@ -610,41 +528,12 @@ struct AccountRow: View {
 
 
 
-  @ViewBuilder
   private var trailingStatus: some View {
-    switch presentation {
-    case .active:
-      if let subscriptionStatus {
-        Text(subscriptionStatus)
-          .font(.system(size: 12))
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .fixedSize()
-      } else {
-        EmptyView()
-      }
-    case .rateLimited(let reset):
-      Text(rateLimitLabel(reset: reset))
-        .font(.system(size: 12, weight: .bold, design: .monospaced))
-        .monospacedDigit()
-    case .paused:
-      Text("paused")
-        .font(.system(size: 12))
-        .foregroundStyle(.secondary)
-    case .deactivated(let reauth):
-      Text(reauth ? "re-auth needed" : "inactive")
-        .font(.system(size: 12))
-        .foregroundStyle(.secondary)
-    case .unsubscribed:
-      Text("unsubscribed")
-        .font(.system(size: 12))
-        .foregroundStyle(.secondary)
-    }
-  }
-
-  private func rateLimitLabel(reset: Date?) -> String {
-    guard let reset, reset > now else { return "limited" }
-    return "limited · \(Format.hhmm(reset))"
+    RowTrailing(presentation: presentation, text: presentation.label(
+      now: now,
+      activeText: subscriptionStatus,
+      reset: Format.hhmm
+    ))
   }
 
   private var subscriptionStatus: String? {
@@ -663,24 +552,24 @@ struct AccountRow: View {
 
 
   private var windowGrid: some View {
-    HStack(alignment: .center, spacing: 12) {
-      if !isCodex {
-        WindowCell(
-          label: "5H",
-          percent: account.usage.primaryRemainingPercent,
-          knownFull: ResetDisplay.isKnownFull(account, window: .primary),
-          resetAt: account.resetAtPrimary,
-          now: now
-        )
-      }
-      WindowCell(
-        label: "WK",
-        percent: account.usage.secondaryRemainingPercent,
-        knownFull: ResetDisplay.isKnownFull(account, window: .secondary),
-        resetAt: account.resetAtSecondary,
-        now: now
-      )
+    var cells: [RowWindow] = []
+    if !isCodex {
+      cells.append(RowWindow(
+        id: "primary",
+        label: "5H",
+        percent: account.usage.primaryRemainingPercent,
+        knownFull: ResetDisplay.isKnownFull(account, window: .primary),
+        resetAt: account.resetAtPrimary
+      ))
     }
+    cells.append(RowWindow(
+      id: "secondary",
+      label: "WK",
+      percent: account.usage.secondaryRemainingPercent,
+      knownFull: ResetDisplay.isKnownFull(account, window: .secondary),
+      resetAt: account.resetAtSecondary
+    ))
+    return RowWindowGrid(cells: cells, now: now)
   }
 
   @ViewBuilder
@@ -728,29 +617,170 @@ struct AccountRow: View {
   }
 }
 
+enum RowPresentation: Equatable, Sendable {
+  case active
+  case rateLimited(Date?)
+  case paused
+  case deactivated(reauth: Bool)
+  case unsubscribed
 
+  static func forSeat(_ seat: SeatAccount) -> RowPresentation {
+    switch seat.displayStatus {
+    case "rate_limited": .rateLimited(seat.displayStatusResetAt)
+    case "paused": .paused
+    case "reauth_required": .deactivated(reauth: true)
+    default: .active
+    }
+  }
 
+  var isDimmed: Bool {
+    switch self {
+    case .paused, .unsubscribed: true
+    default: false
+    }
+  }
 
-private struct WindowCell: View {
+  func label(now: Date, activeText: String?, reset: (Date) -> String) -> String? {
+    switch self {
+    case .active:
+      return activeText
+    case .rateLimited(let resetAt):
+      guard let resetAt, resetAt > now else { return "limited" }
+      return "limited · \(reset(resetAt))"
+    case .paused:
+      return "paused"
+    case .deactivated(let reauth):
+      return reauth ? "re-auth needed" : "inactive"
+    case .unsubscribed:
+      return "unsubscribed"
+    }
+  }
+}
+
+struct RowRing: View {
+  let percent: Double?
+  let presentation: RowPresentation
+  var pending = false
+
+  var body: some View {
+    if pending {
+      ProgressView()
+        .controlSize(.small)
+        .frame(width: 20, height: 20)
+    } else {
+      ZStack {
+        RingGauge(percent: percent, lineWidth: 2)
+        switch presentation {
+        case .active, .rateLimited, .unsubscribed:
+          EmptyView()
+        case .paused:
+          StatusGlyph(kind: .paused, size: 8)
+        case .deactivated:
+          StatusGlyph(kind: .deactivated, size: 8)
+        }
+      }
+      .frame(width: 20, height: 20)
+    }
+  }
+}
+
+struct PlanChip: View {
+  let text: String?
+
+  var body: some View {
+    if let text, !text.isEmpty {
+      Text(text.uppercased())
+        .font(.system(size: 9, weight: .medium))
+        .tracking(0.5)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(Capsule().fill(.quaternary.opacity(0.5)))
+        .lineLimit(1)
+        .fixedSize()
+    }
+  }
+}
+
+struct RowTrailing: View {
+  let presentation: RowPresentation
+  let text: String?
+
+  var body: some View {
+    if let text {
+      if case .rateLimited = presentation {
+        Text(text)
+          .font(.system(size: 12, weight: .bold, design: .monospaced))
+          .monospacedDigit()
+          .lineLimit(1)
+          .fixedSize()
+      } else {
+        Text(text)
+          .font(.system(size: 12))
+          .monospacedDigit()
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .fixedSize()
+      }
+    }
+  }
+}
+
+struct RowWindow: Equatable, Identifiable, Sendable {
+  let id: String
   let label: String
   let percent: Double?
-  let knownFull: Bool
+  var knownFull = false
   let resetAt: Date?
+  var help: String? = nil
+}
+
+struct RowWindowGrid: View {
+  let cells: [RowWindow]
+  let now: Date
+  var emptyText: String? = nil
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 12) {
+      if cells.isEmpty, let emptyText {
+        Text(emptyText)
+          .font(.system(size: 10, design: .monospaced))
+          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      } else {
+        ForEach(cells) { cell in
+          WindowCell(cell: cell, labelWidth: labelWidth, now: now)
+        }
+      }
+    }
+  }
+
+  private var labelWidth: CGFloat {
+    let longest = cells.map(\.label.count).max() ?? 2
+    return max(16, CGFloat(longest) * 7.5)
+  }
+}
+
+private struct WindowCell: View {
+  let cell: RowWindow
+  let labelWidth: CGFloat
   let now: Date
 
   var body: some View {
     HStack(spacing: 5) {
-      Text(label)
+      Text(cell.label)
         .font(.system(size: 9, weight: .semibold))
         .tracking(0.5)
         .foregroundStyle(.secondary)
-        .frame(width: 16, alignment: .leading)
-      if percent == nil && resetAt == nil {
+        .lineLimit(1)
+        .frame(width: labelWidth, alignment: .leading)
+      if cell.percent == nil && cell.resetAt == nil {
         Text("—")
           .font(.system(size: 10, design: .monospaced))
           .foregroundStyle(.tertiary)
       } else {
-        MonoMeter(percent: percent)
+        MonoMeter(percent: cell.percent)
           .frame(width: 56)
         Text(detail)
           .font(.system(size: 10, design: .monospaced))
@@ -760,14 +790,128 @@ private struct WindowCell: View {
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+    .help(cell.help ?? "")
   }
 
   private var detail: String {
     var parts: [String] = []
-    if let percent { parts.append(Format.percent(percent)) }
-    if !knownFull, let resetAt, resetAt > now {
+    if let percent = cell.percent { parts.append(Format.percent(percent)) }
+    if !cell.knownFull, let resetAt = cell.resetAt, resetAt > now {
       parts.append(Format.countdownCompact(to: resetAt, relativeTo: now))
     }
     return parts.isEmpty ? "—" : parts.joined(separator: " · ")
+  }
+}
+
+struct SeatAccountRow: View {
+  @Environment(\.privacyMask) private var privacyMask
+  let seat: SeatAccount
+  var now: Date = .now
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 9) {
+      RowRing(percent: seat.primaryQuotaWindow?.remainingPercent, presentation: presentation)
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 6) {
+          Text(displayName)
+            .font(.system(size: 13))
+            .lineLimit(1)
+            .truncationMode(.middle)
+          PlanChip(text: seat.planLabel ?? seat.tier)
+          if seat.quota?.stale == true {
+            PlanChip(text: "stale")
+          }
+          Spacer(minLength: 6)
+          RowTrailing(presentation: presentation, text: trailingText)
+        }
+        RowWindowGrid(cells: Self.cells(for: seat), now: now, emptyText: emptyText)
+      }
+    }
+    .frame(height: 52)
+    .padding(.horizontal, 10)
+    .opacity(presentation.isDimmed ? 0.55 : 1)
+    .contentShape(.rect)
+    .contextMenu {
+      Button("Copy Seat ID") {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(seat.id, forType: .string)
+      }
+    }
+    .help(help)
+  }
+
+  var presentation: RowPresentation {
+    RowPresentation.forSeat(seat)
+  }
+
+  var displayName: String {
+    privacyMask.name(for: seat, real: seat.id)
+  }
+
+  var trailingText: String? {
+    presentation.label(now: now, activeText: Self.todayText(seat)) {
+      Format.easternMoment($0, relativeTo: now)
+    }
+  }
+
+  private var emptyText: String {
+    let reason = SeatVendorSummary.reasonText(seat.quota?.unavailableReason, vendor: seat.vendorLabel)
+    let runs = seat.todayRuns
+    return "\(reason) · \(runs) \(runs == 1 ? "run" : "runs") in 24 h"
+  }
+
+  private var help: String {
+    var parts = [seat.vendorLabel]
+    if let email = privacyMask.email(for: seat) { parts.append(email) }
+    if let observed = seat.quota?.observedAt {
+      parts.append("usage as of \(Format.easternDateTime(observed)) ET")
+    }
+    if let models = seat.today?.models, !models.isEmpty {
+      parts.append(models.map { "\($0.model) \($0.runs)" }.joined(separator: ", "))
+    }
+    return parts.joined(separator: " · ")
+  }
+
+  static func todayText(_ seat: SeatAccount) -> String? {
+    let runs = seat.todayRuns
+    guard runs > 0 || seat.today?.valueUsd != nil else { return nil }
+    var text = "\(runs) \(runs == 1 ? "run" : "runs")"
+    if let value = seat.today?.valueUsd {
+      text += " · " + (seat.today?.valueSource == "estimate" ? "~" : "") + Format.dollars(value)
+    }
+    return text
+  }
+
+  static func cells(for seat: SeatAccount) -> [RowWindow] {
+    seat.quotaWindows.map { window in
+      RowWindow(
+        id: window.id,
+        label: shortLabel(window),
+        percent: window.remainingPercent,
+        knownFull: (window.remainingPercent ?? 0) >= 100,
+        resetAt: window.resetsAt,
+        help: [
+          window.label,
+          window.remainingPercent.map { "\(Format.percent($0)) left" },
+          window.resetsAt.map { "resets \(Format.easternDateTime($0)) ET" },
+          window.source == "estimate" ? "estimate" : nil,
+        ].compactMap { $0 }.joined(separator: " · ")
+      )
+    }
+  }
+
+  static func shortLabel(_ window: SeatQuotaWindow) -> String {
+    switch window.id {
+    case "cursor-models": return "CURSOR"
+    case "cursor-other": return "OTHER"
+    default: break
+    }
+    switch window.kind {
+    case "session": return window.durationMins == 300 ? "5H" : "SES"
+    case "daily": return "DAY"
+    case "weekly": return "WK"
+    case "monthly": return "MO"
+    default: return String(window.kind.prefix(3)).uppercased()
+    }
   }
 }

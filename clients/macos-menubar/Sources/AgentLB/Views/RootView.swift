@@ -23,7 +23,7 @@ struct RootView: View {
 
 
   private var privacyMask: PrivacyMask {
-    PrivacyMask.build(enabled: privacyMode, accounts: appState.accounts)
+    PrivacyMask.build(enabled: privacyMode, accounts: appState.accounts, seats: appState.seatAccounts)
   }
 
 
@@ -31,7 +31,8 @@ struct RootView: View {
 
 
   private var arbitrage: ArbitrageStats? {
-    ArbitrageStats.compute(
+    guard !scope.isSeatVendor else { return nil }
+    return ArbitrageStats.compute(
       summary: appState.summary,
       accounts: scope == .all ? appState.accounts : scope.filter(appState.accounts)
     )
@@ -98,23 +99,19 @@ struct RootView: View {
 
 
 
-  private var filteredAccountRows: Int {
-    AccountFilter(provider: .all, status: accountStatus, query: accountQuery, sort: .resetSoonest)
-      .apply(to: scopedAccounts, now: .now)
-      .count + makerRowCount
+  private var scopedSeats: [SeatAccount] {
+    scope.filter(appState.seatAccounts)
   }
 
-  private var makerRowCount: Int {
-    let scopes: [ProviderScope] = scope == .all ? [.cursor, .devin] : [scope]
-    return scopes.reduce(0) { count, makerScope in
-      let lines = MakerRows.lines(for: makerScope, seats: appState.seatAccounts, pools: appState.pools)
-      return count + lines.count + (scope == .all && !lines.isEmpty ? 1 : 0)
-    }
+  private var filteredAccountRows: Int {
+    AccountFilter(provider: .all, status: accountStatus, query: accountQuery, sort: .resetSoonest)
+      .apply(to: scopedAccounts, seats: scopedSeats, now: .now)
+      .count
   }
 
   private var accountsHaveError: Bool {
     appState.sectionErrors.contains(.accounts)
-      || ((scope == .all || scope == .cursor || scope == .devin)
+      || ((scope == .all || scope.isSeatVendor)
         && (!appState.sectionErrors.isDisjoint(with: [.seatAccounts, .pools])))
   }
 
@@ -130,11 +127,12 @@ struct RootView: View {
     inputs.showsScopeBar = showsScopeBar
 
 
-    let hasTokenLine = appState.summary?.metrics?.tokensSecondaryWindow != nil
-    inputs.metricsLines = 1 + (hasTokenLine ? 1 : 0) + (arbitrage != nil ? 1 : 0)
+    inputs.metricsLines = PoolSection.metricsLineCount(
+      scope: scope, summary: appState.summary, hasArbitrage: arbitrage != nil
+    )
     inputs.poolHasError = appState.sectionErrors.contains(.pool)
     inputs.poolHasData = appState.summary != nil || scope != .all
-    inputs.scopedAccountCount = scopedAccounts.count + makerRowCount
+    inputs.scopedAccountCount = scopedAccounts.count + scopedSeats.count
     inputs.filteredAccountRows = filteredAccountRows
     inputs.searchVisible = searchVisible
     inputs.accountsHaveError = accountsHaveError
@@ -197,47 +195,30 @@ struct RootView: View {
 
 
 
-  @ViewBuilder
   private func content(_ layout: PanelLayout) -> some View {
-    VStack(spacing: 0) {
-      PoolSection(
-        summary: appState.summary,
-        projections: appState.projections,
-        scope: scope,
-        scopedAccounts: scopedAccounts,
-        arbitrage: arbitrage,
-        hasError: appState.sectionErrors.contains(.pool),
-        retry: retrySection,
-        menuPools: scope == .all ? appState.pools : [],
-        plan: scope == .all ? appState.poolPlan : nil
-      )
-      .padding(.horizontal, 14)
-      .padding(.vertical, 6)
-      Divider().opacity(0.5)
-      AccountsSection(
-        accounts: scopedAccounts,
-        isScoped: scope != .all,
-        listHeight: layout.listHeight,
-        status: $accountStatus,
-        query: $accountQuery,
-        searchVisible: $searchVisible,
-        hasError: accountsHaveError,
-        retry: retrySection
-      )
-      .padding(.horizontal, 14)
-      .padding(.vertical, 6)
-      Divider().opacity(0.5)
-      ActivitySection(
-        entries: scopedRecent,
-        hasError: appState.sectionErrors.contains(.recent),
-        retry: retrySection,
-        expanded: $recentExpanded
-      )
-      .padding(.horizontal, 14)
-      .padding(.vertical, 6)
-    }
+    ScopeTabContent(
+      scope: scope,
+      summary: appState.summary,
+      projections: appState.projections,
+      accounts: scopedAccounts,
+      seats: scopedSeats,
+      pools: appState.pools,
+      plan: appState.poolPlan,
+      recent: scopedRecent,
+      arbitrage: arbitrage,
+      listHeight: layout.listHeight,
+      poolHasError: appState.sectionErrors.contains(.pool),
+      accountsHaveError: accountsHaveError,
+      recentHasError: appState.sectionErrors.contains(.recent),
+      retry: retrySection,
+      accountStatus: $accountStatus,
+      accountQuery: $accountQuery,
+      searchVisible: $searchVisible,
+      recentExpanded: $recentExpanded
+    )
     .animation(.easeOut(duration: 0.15), value: appState.summary)
     .animation(.easeOut(duration: 0.15), value: appState.accounts)
+    .animation(.easeOut(duration: 0.15), value: appState.seatAccounts)
     .animation(.easeOut(duration: 0.15), value: appState.recent)
     .animation(.easeOut(duration: 0.15), value: providerScopeRaw)
     .animation(.easeOut(duration: 0.15), value: privacyMode)
@@ -252,7 +233,75 @@ struct RootView: View {
 
 
 
-private struct ProviderScopeBar: View {
+struct ScopeTabContent: View {
+  let scope: ProviderScope
+  let summary: UsageSummary?
+  let projections: ProjectionsResponse?
+  let accounts: [Account]
+  let seats: [SeatAccount]
+  let pools: [PoolEntry]
+  let plan: PoolPlan?
+  let recent: [RequestLogEntry]
+  let arbitrage: ArbitrageStats?
+  let listHeight: Double
+  let poolHasError: Bool
+  let accountsHaveError: Bool
+  let recentHasError: Bool
+  let retry: () -> Void
+  @Binding var accountStatus: AccountFilter.Status
+  @Binding var accountQuery: String
+  @Binding var searchVisible: Bool
+  @Binding var recentExpanded: Bool
+  var fixedNow: Date? = nil
+
+  var body: some View {
+    VStack(spacing: 0) {
+      PoolSection(
+        summary: summary,
+        projections: projections,
+        scope: scope,
+        scopedAccounts: accounts,
+        arbitrage: arbitrage,
+        hasError: poolHasError,
+        retry: retry,
+        menuPools: scope == .all ? pools : [],
+        plan: scope == .all ? plan : nil,
+        menuNow: fixedNow ?? .now,
+        menuTimeZone: Format.eastern,
+        vendorPools: scope.isSeatVendor ? pools : [],
+        seats: seats
+      )
+      .padding(.horizontal, 14)
+      .padding(.vertical, 6)
+      Divider().opacity(0.5)
+      AccountsSection(
+        accounts: accounts,
+        seats: seats,
+        isScoped: scope != .all,
+        listHeight: listHeight,
+        status: $accountStatus,
+        query: $accountQuery,
+        searchVisible: $searchVisible,
+        hasError: accountsHaveError,
+        retry: retry,
+        fixedNow: fixedNow
+      )
+      .padding(.horizontal, 14)
+      .padding(.vertical, 6)
+      Divider().opacity(0.5)
+      ActivitySection(
+        entries: recent,
+        hasError: recentHasError,
+        retry: retry,
+        expanded: $recentExpanded
+      )
+      .padding(.horizontal, 14)
+      .padding(.vertical, 6)
+    }
+  }
+}
+
+struct ProviderScopeBar: View {
   @Binding var scopeRaw: String
   let counts: [ProviderScope: Int]
 

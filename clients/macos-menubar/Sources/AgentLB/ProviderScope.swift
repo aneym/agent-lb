@@ -9,6 +9,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
   case anthropic
   case cursor
   case devin
+  case muse
   case other
 
 
@@ -19,15 +20,31 @@ enum ProviderScope: String, CaseIterable, Sendable {
     case .anthropic: "Claude"
     case .cursor: "Cursor"
     case .devin: "Devin"
+    case .muse: "Muse"
     case .other: "Other"
     }
+  }
+
+  static let seatVendors: [ProviderScope] = [.cursor, .devin, .muse]
+
+  var isSeatVendor: Bool {
+    Self.seatVendors.contains(self)
+  }
+
+  func includes(_ seat: SeatAccount) -> Bool {
+    if self == .all { return true }
+    return seat.vendor.lowercased() == rawValue && isSeatVendor
+  }
+
+  func filter(_ seats: [SeatAccount]) -> [SeatAccount] {
+    seats.filter { includes($0) }
   }
 
   func includes(_ account: Account) -> Bool {
     if self == .all { return true }
     let provider = account.provider.lowercased()
     if self == .other {
-      return !["openai", "anthropic", "cursor", "devin"].contains(provider)
+      return !["openai", "anthropic", "cursor", "devin", "muse"].contains(provider)
     }
     return provider == rawValue
   }
@@ -53,8 +70,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
     }
     for seat in seats {
       counts[.all, default: 0] += 1
-      if let scope = ProviderScope(rawValue: seat.vendor.lowercased()),
-         scope == .cursor || scope == .devin {
+      if let scope = seat.scope {
         counts[scope, default: 0] += 1
       }
     }

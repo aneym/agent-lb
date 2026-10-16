@@ -31,6 +31,23 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertEqual(ProviderScope.all.label, "All")
     XCTAssertEqual(ProviderScope.openai.label, "Codex")
     XCTAssertEqual(ProviderScope.anthropic.label, "Claude")
+    XCTAssertEqual(ProviderScope.muse.label, "Muse")
+    XCTAssertEqual(ProviderScope.seatVendors, [.cursor, .devin, .muse])
+  }
+
+  func testMuseSeatCountsInMuseAndAllNotOther() throws {
+    let seats = try loadSeatUsageExample().seatAccounts.accounts
+    let muse = makeTestAccount(id: "muse-proxy", provider: "muse")
+    let counts = ProviderScope.counts(in: accounts + [muse], seats: seats)
+    XCTAssertEqual(counts[.muse], 2)
+    XCTAssertEqual(counts[.cursor], 1)
+    XCTAssertEqual(counts[.devin], 1)
+    XCTAssertEqual(counts[.other], 0)
+    XCTAssertEqual(counts[.all], 8 + 1 + seats.count)
+    XCTAssertFalse(ProviderScope.other.includes(muse))
+    XCTAssertTrue(ProviderScope.muse.includes(muse))
+    XCTAssertEqual(ProviderScope.muse.filter(seats).map(\.id), ["muse-main"])
+    XCTAssertEqual(ProviderScope.muse.providerParam, "muse")
   }
 
 

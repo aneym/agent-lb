@@ -18,7 +18,7 @@ struct PrivacyMask: Equatable, Sendable {
 
 
 
-  static func build(enabled: Bool, accounts: [Account]) -> PrivacyMask {
+  static func build(enabled: Bool, accounts: [Account], seats: [SeatAccount] = []) -> PrivacyMask {
     guard enabled else { return .disabled }
     var names: [String: String] = [:]
     var counters: [String: Int] = [:]
@@ -28,7 +28,26 @@ struct PrivacyMask: Equatable, Sendable {
       counters[base] = next
       names[account.accountId] = "\(base) \(next)"
     }
+    for seat in seats.sorted(by: { $0.id < $1.id }) {
+      let base = providerLabel(seat.vendor)
+      let next = (counters[base] ?? 0) + 1
+      counters[base] = next
+      names[seatKey(seat.id)] = "\(base) \(next)"
+    }
     return PrivacyMask(enabled: true, names: names)
+  }
+
+  func name(for seat: SeatAccount, real: @autoclosure () -> String) -> String {
+    guard enabled else { return real() }
+    return names[Self.seatKey(seat.id)] ?? Self.providerLabel(seat.vendor)
+  }
+
+  func email(for seat: SeatAccount) -> String? {
+    enabled ? nil : seat.email
+  }
+
+  private static func seatKey(_ id: String) -> String {
+    "seat:" + id
   }
 
 
@@ -66,6 +85,9 @@ struct PrivacyMask: Equatable, Sendable {
     switch provider.lowercased() {
     case "anthropic": return "Claude"
     case "openai": return "Codex"
+    case "cursor": return "Cursor"
+    case "devin": return "Devin"
+    case "muse": return "Muse"
     default: return "Account"
     }
   }

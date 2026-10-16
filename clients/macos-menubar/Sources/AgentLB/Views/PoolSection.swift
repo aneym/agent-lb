@@ -19,6 +19,8 @@ struct PoolSection: View {
   var plan: PoolPlan? = nil
   var menuNow: Date = .now
   var menuTimeZone: TimeZone = .current
+  var vendorPools: [PoolEntry] = []
+  var seats: [SeatAccount] = []
 
   private var isScoped: Bool { scope != .all }
   var showsPoolTiles: Bool { scope == .all && !menuPools.isEmpty }
@@ -32,7 +34,9 @@ struct PoolSection: View {
     VStack(alignment: .leading, spacing: PanelMetrics.poolSpacing) {
       SectionLabel(showsPoolTiles ? "POOLS" : "POOL")
         .frame(height: PanelMetrics.poolLabel)
-      if hasError && summary == nil && !isScoped {
+      if scope.isSeatVendor {
+        seatVendorBody
+      } else if hasError && summary == nil && !isScoped {
         RetryRow(retry: retry)
       } else if showsPoolTiles {
         poolTiles
@@ -48,6 +52,47 @@ struct PoolSection: View {
         }
       }
     }
+  }
+
+  var seatVendor: SeatVendorSummary {
+    SeatVendorSummary.build(scope: scope, pools: vendorPools, seats: seats, summary: summary, now: menuNow)
+  }
+
+  @ViewBuilder
+  private var seatVendorBody: some View {
+    let vendor = seatVendor
+    if vendor.cards.isEmpty {
+      SeatQuietCard(vendor: vendor)
+    } else {
+      HStack(alignment: .top, spacing: 10) {
+        ForEach(vendor.cards) { card in
+          SeatWindowCard(model: card)
+        }
+      }
+    }
+    VStack(alignment: .leading, spacing: PanelMetrics.metricsSpacing) {
+      ForEach(Array(vendor.stripLines.enumerated()), id: \.offset) { _, line in
+        Text(line)
+          .frame(height: PanelMetrics.metricsLine)
+      }
+    }
+    .font(.system(size: 11, design: .monospaced))
+    .monospacedDigit()
+    .foregroundStyle(.secondary)
+    .lineLimit(1)
+    .minimumScaleFactor(0.85)
+    if hasError {
+      RetryRow(retry: retry)
+    }
+  }
+
+  static func metricsLineCount(scope: ProviderScope, summary: UsageSummary?, hasArbitrage: Bool) -> Int {
+    if scope.isSeatVendor {
+      return max(1, SeatVendorSummary.stripLines(summary: summary).count)
+    }
+    let hasTokenLine = summary?.metrics?.tokensSecondaryWindow != nil
+      || (scope == .all && (summary?.seatActivity?.runs ?? 0) > 0)
+    return 1 + (hasTokenLine ? 1 : 0) + (hasArbitrage ? 1 : 0)
   }
 
   private var poolTiles: some View {
@@ -165,7 +210,7 @@ struct PoolSection: View {
     VStack(alignment: .leading, spacing: PanelMetrics.metricsSpacing) {
       HStack(alignment: .firstTextBaseline, spacing: 14) {
         if let cost = summary?.cost?.totalUsd7d {
-          Text("\(Format.usd(cost)) · 7d")
+          Text("\(Format.dollars(cost)) · 7d")
         }
         if let requests = summary?.metrics?.requests7d {
           Text("\(Format.compact(requests)) req")
@@ -173,19 +218,24 @@ struct PoolSection: View {
         if let rate = summary?.metrics?.errorRate7d {
           Text("err \(String(format: "%.2f", rate * 100))%")
         }
-        if isScoped {
+        if scope == .all {
           Text("· all providers")
             .font(.system(size: 9))
             .foregroundStyle(.tertiary)
         }
       }
       .frame(height: PanelMetrics.metricsLine)
-      if let tokens = summary?.metrics?.tokensSecondaryWindow {
+      if summary?.metrics?.tokensSecondaryWindow != nil || allTabSeatRuns != nil {
         HStack(spacing: 14) {
-          Text("\(Format.compactLarge(tokens)) tok · 7d")
-          if let cached = summary?.metrics?.cachedTokensSecondaryWindow,
-             let share = Format.cachedPercent(cached: cached, total: tokens) {
-            Text(share)
+          if let tokens = summary?.metrics?.tokensSecondaryWindow {
+            Text("\(Format.compactLarge(tokens)) tok · 7d")
+            if let cached = summary?.metrics?.cachedTokensSecondaryWindow,
+               let share = Format.cachedPercent(cached: cached, total: tokens) {
+              Text(share)
+            }
+          }
+          if let runs = allTabSeatRuns {
+            Text("\(Format.compact(runs)) seat runs")
           }
         }
         .frame(height: PanelMetrics.metricsLine)
@@ -202,6 +252,11 @@ struct PoolSection: View {
 
 
 
+
+  private var allTabSeatRuns: Int? {
+    guard scope == .all, let runs = summary?.seatActivity?.runs, runs > 0 else { return nil }
+    return runs
+  }
 
   private func arbitrageLine(_ stats: ArbitrageStats) -> some View {
     HStack(spacing: 6) {
@@ -376,5 +431,301 @@ private struct WindowCard: View {
     ResetDisplay.resetText(
       resetAt: resetAt, knownFull: knownFull, recoveredCredits: recoveredCredits, now: now
     )
+  }
+}
+
+struct SeatWindowCardModel: Equatable, Identifiable, Sendable {
+  let id: String
+  let title: String
+  let detail: String?
+  let remainingPercent: Double
+  let resetText: String
+  let sourceText: String
+  let seatsText: String
+  let help: String
+
+  var texts: [String] {
+    [title, detail, Format.percent(remainingPercent), resetText, sourceText, seatsText].compactMap { $0 }
+  }
+}
+
+struct SeatVendorSummary: Equatable, Sendable {
+  let scope: ProviderScope
+  let cards: [SeatWindowCardModel]
+  let quietLine: String?
+  let seatsText: String
+  let stripLines: [String]
+
+  var texts: [String] {
+    cards.flatMap(\.texts) + [quietLine, seatsText].compactMap { $0 } + stripLines
+  }
+
+  static func build(
+    scope: ProviderScope, pools: [PoolEntry], seats: [SeatAccount], summary: UsageSummary?, now: Date
+  ) -> SeatVendorSummary {
+    let vendorSeats = scope.filter(seats)
+    let vendorPools = pools.filter {
+      $0.provider.lowercased() == scope.rawValue && ($0.kind == "cli_seat" || $0.kind == "cli_seat_budget")
+    }
+    let usable = vendorPools.isEmpty
+      ? vendorSeats.filter { $0.enabled && $0.ready && $0.displayStatus != "reauth_required" }.count
+      : vendorPools.map { $0.usableAccounts ?? $0.eligibleAccounts }.max() ?? 0
+    let total = vendorPools.isEmpty
+      ? vendorSeats.count
+      : vendorPools.map { $0.totalAccounts ?? $0.accounts }.max() ?? 0
+    let seatsText = "\(usable)/\(total) " + (total == 1 ? "seat" : "seats")
+
+    var seen: [String: Int] = [:]
+    var picked: [(PoolWindow, PoolEntry)] = []
+    for pool in vendorPools {
+      for window in windows(of: pool) {
+        if let index = seen[window.id] {
+          if pool.id == window.id, picked[index].1.id != window.id {
+            picked[index] = (window, pool)
+          }
+        } else {
+          seen[window.id] = picked.count
+          picked.append((window, pool))
+        }
+      }
+    }
+
+    let cards = picked.compactMap { window, pool -> SeatWindowCardModel? in
+      guard let remaining = window.remainingPercent else { return nil }
+      let clamped = min(100, max(0, remaining))
+      let poolUsable = pool.usableAccounts ?? pool.eligibleAccounts
+      let poolTotal = pool.totalAccounts ?? pool.accounts
+      let cardSeats = "\(poolUsable)/\(poolTotal) " + (poolTotal == 1 ? "seat" : "seats")
+      let reset = window.resetsAt.map { "resets \(Format.easternMoment($0, relativeTo: now))" } ?? "reset not reported"
+      let source = sourceText(window: window, seats: vendorSeats, now: now)
+      let detail = detailText(window)
+      let help = [
+        window.label,
+        "\(Format.percent(clamped)) left",
+        window.usedPercent.map { "\(Format.percent($0)) used" },
+        window.resetsAt.map { "resets \(Format.easternDateTime($0)) ET" },
+        source,
+        window.measuredAccounts.map { "\($0) measured" },
+      ].compactMap { $0 }.joined(separator: " · ")
+      return SeatWindowCardModel(
+        id: window.id,
+        title: title(window),
+        detail: detail,
+        remainingPercent: clamped,
+        resetText: reset,
+        sourceText: source,
+        seatsText: cardSeats,
+        help: help
+      )
+    }
+
+    var quiet: String?
+    if cards.isEmpty {
+      let runs = vendorSeats.isEmpty
+        ? vendorPools.compactMap(\.observedRuns).max() ?? 0
+        : vendorSeats.reduce(0) { $0 + $1.todayRuns }
+      let reason = vendorSeats.compactMap { $0.quota?.unavailableReason }.first
+      let lead = vendorSeats.isEmpty && vendorPools.isEmpty
+        ? "No \(scope.label) seats"
+        : reasonText(reason, vendor: scope.label)
+      quiet = "\(lead) · \(runs) \(runs == 1 ? "run" : "runs") in 24 h"
+    }
+
+    return SeatVendorSummary(
+      scope: scope,
+      cards: cards,
+      quietLine: quiet,
+      seatsText: seatsText,
+      stripLines: stripLines(summary: summary)
+    )
+  }
+
+  static func stripLines(summary: UsageSummary?) -> [String] {
+    var lines: [String] = []
+    if let activity = summary?.seatActivity {
+      let days = max(1, activity.periodHours / 24)
+      var parts = ["\(days)d", "\(Format.compact(activity.runs)) \(activity.runs == 1 ? "run" : "runs")"]
+      if activity.tokensKnown, let tokensIn = activity.tokensIn, let tokensOut = activity.tokensOut {
+        parts.append("\(Format.compactLarge(tokensIn)) in / \(Format.compactLarge(tokensOut)) out")
+      } else {
+        parts.append("tokens not reported")
+      }
+      if let value = activity.valueUsd {
+        parts.append(Format.dollars(value) + (activity.valueSource == "estimate" ? " est" : ""))
+      } else {
+        parts.append("value unknown")
+      }
+      lines.append(parts.joined(separator: " · "))
+    } else {
+      lines.append("7d · seat activity not reported")
+    }
+    if let requests = summary?.metrics?.requests7d, requests > 0 {
+      var parts = ["proxy 7d", "\(Format.compact(requests)) req"]
+      if let cost = summary?.cost?.totalUsd7d, cost > 0 {
+        parts.append(Format.dollars(cost))
+      }
+      if let rate = summary?.metrics?.errorRate7d {
+        parts.append("err \(String(format: "%.2f", rate * 100))%")
+      }
+      lines.append(parts.joined(separator: " · "))
+    }
+    return lines
+  }
+
+  static func reasonText(_ reason: String?, vendor: String) -> String {
+    switch reason {
+    case "not_reported": "Not reported by \(vendor)"
+    case "auth_unsupported": "\(vendor) login can't read usage"
+    case "credential_unavailable": "Usage credential unavailable"
+    case "vendor_error": "\(vendor) usage check failed"
+    case "not_collected": "Usage not collected yet"
+    default: "No usage reading from \(vendor)"
+    }
+  }
+
+  private static func windows(of pool: PoolEntry) -> [PoolWindow] {
+    if let windows = pool.windows { return windows }
+    guard pool.kind == "cli_seat_budget", let used = pool.percentUsed else { return [] }
+    let label = pool.id == "cursor-models" ? "Cursor models · Grok, Composer"
+      : pool.id == "cursor-other" ? "Other models" : pool.id
+    return [PoolWindow(
+      id: pool.id,
+      kind: pool.windowLabel == "week" ? "weekly" : "monthly",
+      label: label,
+      remainingPercent: min(100, max(0, 100 - used)),
+      usedPercent: used,
+      resetsAt: pool.cycleResetAt ?? pool.resetAt,
+      measuredAccounts: nil,
+      source: pool.percentSource
+    )]
+  }
+
+  private static func kindWord(_ window: PoolWindow) -> String {
+    switch window.kind {
+    case "session":
+      return window.label.lowercased() == "5-hour" ? "5-hour" : "session"
+    case "daily": return "daily"
+    case "weekly": return "weekly"
+    case "monthly": return "monthly"
+    default: return window.kind
+    }
+  }
+
+  private static func title(_ window: PoolWindow) -> String {
+    "\(kindWord(window).uppercased()) LIMIT"
+  }
+
+  private static func detailText(_ window: PoolWindow) -> String? {
+    let generic = ["daily", "weekly", "monthly", "session", "5-hour", kindWord(window)]
+    return generic.contains(window.label.lowercased()) ? nil : window.label
+  }
+
+  private static func sourceText(window: PoolWindow, seats: [SeatAccount], now: Date) -> String {
+    if window.source == "estimate" { return "est" }
+    let readings = seats.compactMap { seat -> SeatQuota? in
+      guard let quota = seat.quota, quota.windows?.contains(where: { $0.id == window.id }) == true else {
+        return nil
+      }
+      return quota
+    }
+    let observed = readings.compactMap(\.observedAt).max()
+    let stale = readings.contains { $0.stale == true }
+    var text = observed.map { "as of \(Format.easternMoment($0, relativeTo: now))" } ?? "as of —"
+    if window.source == "mixed" { text = "mixed · " + text }
+    if stale { text = "stale · " + text }
+    return text
+  }
+}
+
+private struct SeatWindowCard: View {
+  let model: SeatWindowCardModel
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
+        Text(model.title)
+          .font(.system(size: 11, weight: .semibold))
+          .tracking(0.6)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+        Spacer(minLength: 4)
+        Text(model.seatsText)
+          .font(.system(size: 9, design: .monospaced))
+          .monospacedDigit()
+          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+          .fixedSize()
+      }
+      HStack(alignment: .center, spacing: 9) {
+        RingGauge(percent: model.remainingPercent, lineWidth: 3)
+          .frame(width: 30, height: 30)
+        Text(Format.percent(model.remainingPercent))
+          .font(.system(size: 26, weight: model.remainingPercent < 15 ? .bold : .semibold, design: .monospaced))
+          .monospacedDigit()
+          .lineLimit(1)
+          .minimumScaleFactor(0.8)
+      }
+      VStack(alignment: .leading, spacing: 3) {
+        if let detail = model.detail {
+          Text(detail)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
+        Text(model.resetText)
+          .font(.system(size: 10, design: .monospaced))
+          .monospacedDigit()
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.85)
+        Text(model.sourceText)
+          .font(.system(size: 10, design: .monospaced))
+          .monospacedDigit()
+          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.85)
+      }
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .frame(height: PanelMetrics.poolCard, alignment: .top)
+    .background(.thinMaterial, in: .rect(cornerRadius: 8))
+    .help(model.help)
+    .accessibilityElement(children: .combine)
+  }
+}
+
+private struct SeatQuietCard: View {
+  let vendor: SeatVendorSummary
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
+        Text("USAGE")
+          .font(.system(size: 11, weight: .semibold))
+          .tracking(0.6)
+          .foregroundStyle(.secondary)
+        Spacer(minLength: 4)
+        Text(vendor.seatsText)
+          .font(.system(size: 9, design: .monospaced))
+          .monospacedDigit()
+          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+      }
+      Spacer(minLength: 0)
+      Text(vendor.quietLine ?? "")
+        .font(.system(size: 12))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+        .frame(maxWidth: .infinity, alignment: .center)
+      Spacer(minLength: 0)
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .frame(height: PanelMetrics.poolCard, alignment: .top)
+    .background(.thinMaterial, in: .rect(cornerRadius: 8))
+    .accessibilityElement(children: .combine)
   }
 }
