@@ -446,6 +446,22 @@ def _ensure_proxy() -> tuple[str, int]:
     raise RuntimeError("shared Codex bandwidth proxy did not start")
 
 
+def _is_loopback_proxy(value: str) -> bool:
+    candidate = value.strip()
+    if not candidate:
+        return True
+    if "://" not in candidate:
+        candidate = "http://" + candidate
+    try:
+        host = urlsplit(candidate).hostname
+    except ValueError:
+        return False
+    if host is None:
+        return False
+    host = host.lower().rstrip(".")
+    return host in {"localhost", "::1"} or host.startswith("127.")
+
+
 def _append_no_proxy(hosts: tuple[str, ...]) -> None:
     for name in ("NO_PROXY", "no_proxy"):
         entries = [entry.strip() for entry in os.environ.get(name, "").split(",") if entry.strip()]
@@ -473,8 +489,15 @@ def main(argv: list[str]) -> None:
         print(json.dumps(_public_status(state), sort_keys=True))
         return
     proxy_names = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
-    if any(os.environ.get(name) for name in proxy_names):
+    present = {
+        name: os.environ[name]
+        for name in proxy_names
+        if os.environ.get(name) and os.environ[name].strip()
+    }
+    if any(not _is_loopback_proxy(value) for value in present.values()):
         raise SystemExit("codex-lb-launch refuses to replace an existing proxy configuration")
+    for name in present:
+        del os.environ[name]
     proxy_url, _pid = _ensure_proxy()
     for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
         os.environ[name] = proxy_url

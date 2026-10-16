@@ -283,3 +283,51 @@ def test_existing_proxy_configuration_is_not_replaced(
         launcher.main([])
 
     assert os.environ["HTTPS_PROXY"] == "http://existing-proxy:8080"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://127.0.0.1:2458",
+        "http://localhost:2458",
+        "http://[::1]:2458",
+        "http://codex:token@127.0.0.1:53316",
+        "127.0.0.1:2458",
+    ],
+)
+def test_loopback_agent_lb_proxy_is_replaced(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    launcher = load_launcher_module()
+    for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", value)
+    monkeypatch.setenv("https_proxy", value)
+    fake_url = "http://codex:tok@127.0.0.1:53316"
+    monkeypatch.setattr(launcher, "_ensure_proxy", lambda: (fake_url, 123))
+    calls: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        launcher.os, "execvp", lambda command, argv: calls.append((command, argv))
+    )
+
+    launcher.main(["--version"])
+
+    assert calls == [("codex", ["codex", "--version"])]
+    assert os.environ["HTTP_PROXY"] == fake_url
+    assert os.environ["HTTPS_PROXY"] == fake_url
+
+
+def test_mixed_loopback_and_foreign_proxy_still_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = load_launcher_module()
+    for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:2458")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.com:8080")
+
+    with pytest.raises(SystemExit, match="refuses to replace"):
+        launcher.main([])
+
+    assert os.environ["HTTPS_PROXY"] == "http://127.0.0.1:2458"
+    assert os.environ["HTTP_PROXY"] == "http://proxy.example.com:8080"
