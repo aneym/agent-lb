@@ -77,7 +77,7 @@ enum PoolMenu {
       value = "\(percentText(remaining)) · \(usable)/\(total)"
       fraction = min(1, max(0, remaining / 100))
     } else {
-      value = "— · \(usable)/\(total)"
+      value = pool.provider == "muse" ? "usage based · \(usable)/\(total)" : "— · \(usable)/\(total)"
       fraction = 0
     }
     let percent = out ? 0 : remaining.map { min(100, max(0, $0)) }
@@ -86,9 +86,9 @@ enum PoolMenu {
     let reset = pool.cycleResetAt ?? pool.weeklyResetAt ?? pool.resetAt
     let caption: String
     if out {
-      caption = reset.map { "back \(monthDay($0, calendar: calendar))" } ?? "\(usable)/\(total)"
+      caption = reset.map { "resets \(monthDay($0, calendar: calendar))" } ?? "\(usable)/\(total)"
     } else if remaining == nil, pool.quotaSource == "unavailable" {
-      caption = "not reported"
+      caption = pool.provider == "muse" ? "usage based" : "not reported"
     } else {
       caption = "\(usable)/\(total)"
     }
@@ -124,6 +124,10 @@ enum PoolMenu {
   }
 
   private static func remainingPercent(_ pool: PoolEntry) -> Double? {
+    if let windows = pool.windows {
+      if windows.isEmpty && pool.quotaSource == "unavailable" { return nil }
+      if let remaining = windows.compactMap(\.remainingPercent).min() { return remaining }
+    }
     if pool.provider == "cursor", let used = pool.percentUsed {
       return max(0, 100 - used)
     }
@@ -165,7 +169,7 @@ enum PoolMenu {
       return reset.map { "estimate · resets \(monthDay($0, calendar: calendar))" } ?? "estimate"
     }
     if out, pool.provider == "cursor", let reset = pool.cycleResetAt ?? pool.resetAt {
-      return "back \(monthDay(reset, calendar: calendar))"
+      return "resets \(monthDay(reset, calendar: calendar))"
     }
     guard let next = (pool.refills ?? []).filter({ $0.at > now }).min(by: { $0.at < $1.at }) else {
       return nil

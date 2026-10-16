@@ -43,8 +43,8 @@ const number = (n: number) => new Intl.NumberFormat("en-US").format(n);
 const percent = (n: number | null) => (n == null ? "—" : `${Math.round(n * 100)}%`);
 const latency = (n: number | null) =>
   n == null ? "—" : n >= 1000 ? `${(n / 1000).toFixed(1)} s` : `${Math.round(n)} ms`;
-const displayAccount = (a: AccountSummary | undefined, hideEmails: boolean) =>
-  a ? accountLabel(a, hideEmails) : "Deleted or unknown account";
+const displayAccount = (a: AccountSummary | undefined, hideEmails: boolean, pending = false, provider?: string | null) =>
+  a ? accountLabel(a, hideEmails) : provider === "muse" ? "Muse · host login" : pending ? "Loading account" : "Deleted or unknown account";
 const usageMoney = (value: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -53,7 +53,7 @@ const usageMoney = (value: number) =>
     maximumFractionDigits: Math.abs(value) < 10 ? 2 : 0,
   }).format(value);
 const markFor = (provider?: string | null) =>
-  provider === "anthropic" ? "claude" : providerMark(provider || "anthropic");
+  provider === "anthropic" ? "claude" : providerMark(provider);
 const providerName = (provider?: string | null) =>
   provider === "anthropic"
     ? "Claude"
@@ -108,7 +108,7 @@ function SeatActivityStats({ activity, provider }: { activity: SeatActivity; pro
     [
       "Seat runs",
       number(activity.runs),
-      `${number(activity.ok)} ok · ${compact(activity.runs / (activity.periodHours / 24))} a day`,
+      `${activity.okKnown ? `${number(activity.ok)} ok` : "ok not recorded"} · ${(activity.runs / (activity.periodHours / 24)).toFixed(1)} a day`,
     ],
     [
       "Seat tokens",
@@ -126,8 +126,8 @@ function SeatActivityStats({ activity, provider }: { activity: SeatActivity; pro
     ],
     [
       "Success",
-      activity.runs ? percent(activity.ok / activity.runs) : "—",
-      `${number(activity.runs - activity.ok)} failed`,
+      activity.okKnown && activity.runs ? percent(activity.ok / activity.runs) : "—",
+      activity.okKnown ? `${number(activity.runs - activity.ok)} failed` : "not recorded before Oct 16",
     ],
     [
       "Top model",
@@ -296,6 +296,7 @@ function Breakdown({
   accounts,
   keys,
   blurred,
+  accountsPending = false,
 }: {
   summary?: ReceiptSummary;
   group: Group;
@@ -303,6 +304,7 @@ function Breakdown({
   accounts: Map<string, AccountSummary>;
   keys: Map<string, string>;
   blurred: boolean;
+  accountsPending?: boolean;
 }) {
   const max = Math.max(0, ...(summary?.groups.map((row) => row.costUsd) || []));
   return (
@@ -335,14 +337,14 @@ function Breakdown({
           const account = accounts.get(row.key || "");
           const name =
             group === "account"
-              ? displayAccount(account, blurred)
+              ? displayAccount(account, blurred, accountsPending, row.provider)
               : group === "key"
                 ? keys.get(row.key || "") || row.key
                 : row.key || "Unknown";
           const body = (
             <>
               {group === "account" || group === "pool" ? (
-                <ProviderMark id={markFor(row.provider || account?.provider)} />
+                <ProviderMark id={markFor(accountsPending && !account && row.provider !== "muse" ? null : row.provider || account?.provider)} />
               ) : null}
               <div className="t">
                 {group === "model" ? (
@@ -409,11 +411,13 @@ function ReceiptRow({
   account,
   onSelect,
   blurred,
+  accountsPending = false,
 }: {
   receipt: Receipt;
   account?: AccountSummary;
   onSelect: () => void;
   blurred: boolean;
+  accountsPending?: boolean;
 }) {
   const session = receipt.clientSessionId || receipt.sessionId;
   const status = receipt.status === "ok" ? "✓" : receipt.httpStatus === 429 ? "◷" : "×";
@@ -442,8 +446,8 @@ function ReceiptRow({
         <span className="usage-key"> · {receipt.apiKeyName || "no key"}</span>
       </span>
       <span className="c-acct cellm">
-        <ProviderMark id={markFor(receipt.provider || account?.provider)} size={16} />
-        <span>{displayAccount(account, blurred)}</span>
+        <ProviderMark id={markFor(accountsPending && !account && receipt.provider !== "muse" ? null : receipt.provider || account?.provider)} size={16} />
+        <span>{displayAccount(account, blurred, accountsPending, receipt.provider)}</span>
       </span>
       <span className="c-model">
         <ModelChip model={receipt.model || "Unknown"} />
@@ -470,16 +474,18 @@ function RouteTrace({
   account,
   onClose,
   blurred,
+  accountsPending = false,
 }: {
   receipt: Receipt | null;
   account?: AccountSummary;
   onClose: () => void;
   blurred: boolean;
+  accountsPending?: boolean;
 }) {
   if (!receipt) return null;
   const fields = [
     ["Time", new Date(receipt.requestedAt).toLocaleString()],
-    ["Account", displayAccount(account, blurred)],
+    ["Account", displayAccount(account, blurred, accountsPending, receipt.provider)],
     ["Pool", receipt.pool],
     ["Model", receipt.model],
     ["Input tokens", number(receipt.inputTokens)],
@@ -779,25 +785,20 @@ export function UsagePage() {
       {summary.isError || receipts.isError ? (
         <p role="alert">Could not load usage. Try refreshing the page.</p>
       ) : null}
+      {seatActivity.data?.seatActivity && (
+        <SeatActivityStats activity={seatActivity.data.seatActivity} provider={params.get("provider") || ""} />
+      )}
       {summary.data ? (
-        <>
-          <SummaryStats totals={summary.data.totals} hours={range.hours} />
-          {seatActivity.data?.seatActivity && (
-            <SeatActivityStats
-              activity={seatActivity.data.seatActivity}
-              provider={params.get("provider") || ""}
-            />
-          )}
-          <UsageChart series={summary.data.series} bucket={range.bucket} />
-        </>
+        !( ["cursor", "devin", "muse"].includes(params.get("provider") || "") && summary.data.totals.requests === 0) && (
+          <>
+            <SummaryStats totals={summary.data.totals} hours={range.hours} />
+            <UsageChart series={summary.data.series} bucket={range.bucket} />
+          </>
+        )
       ) : summary.isPending ? (
         <>
-          <div className="usage-loading-stats" role="status">
-            Loading usage totals…
-          </div>
-          <div className="usage-chart-panel usage-loading-chart" role="status">
-            Loading request chart…
-          </div>
+          <div className="usage-loading-stats" role="status">Loading usage totals…</div>
+          <div className="usage-chart-panel usage-loading-chart" role="status">Loading request chart…</div>
         </>
       ) : null}
       <Breakdown
@@ -805,6 +806,7 @@ export function UsagePage() {
         group={group}
         onGroup={setGroup}
         accounts={accounts}
+        accountsPending={accountsQuery.isPending}
         keys={keys}
         blurred={blurred}
       />
@@ -831,6 +833,7 @@ export function UsagePage() {
               key={r.id}
               receipt={r}
               account={accounts.get(r.accountId || "")}
+              accountsPending={accountsQuery.isPending}
               blurred={blurred}
               onSelect={() => setSelected(r)}
             />
@@ -850,6 +853,7 @@ export function UsagePage() {
       <RouteTrace
         receipt={selected}
         account={accounts.get(selected?.accountId || "")}
+        accountsPending={accountsQuery.isPending}
         onClose={() => setSelected(null)}
         blurred={blurred}
       />

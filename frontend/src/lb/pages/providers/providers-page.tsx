@@ -1,3 +1,4 @@
+import { seatUsageReason } from "@/features/dashboard/pool-rows";
 import { useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAccounts } from "@/features/accounts/hooks/use-accounts";
@@ -9,7 +10,6 @@ import {
   useStickySessions,
   type Pool,
   type SeatAccount,
-  type SeatQuota,
   type SeatQuotaWindow,
 } from "../../api";
 import { accountLabel, compact, money } from "../../format";
@@ -82,21 +82,9 @@ function etWhen(iso: string, now: number) {
         : { hour: "numeric", minute: "2-digit" };
   return `${new Intl.DateTimeFormat("en-US", { ...options, timeZone: ET }).format(at)} ET`;
 }
-function unavailableText(vendor: string, reason?: SeatQuota["unavailableReason"]) {
-  const name = vendorName(vendor);
-  switch (reason) {
-    case "auth_unsupported":
-      return "Login can't read usage";
-    case "credential_unavailable":
-      return "Usage login unavailable";
-    case "vendor_error":
-      return "Vendor error";
-    case "not_collected":
-      return "Not checked yet";
-    case "not_reported":
-    default:
-      return `Not reported by ${name}`;
-  }
+function unavailableText(vendor: string, reason?: string | null) {
+  const text = seatUsageReason(vendor, reason);
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 const isFiveHour = (w: { kind: string; durationMins?: number | null }) =>
   w.kind === "session" && (w.durationMins == null || w.durationMins <= 300);
@@ -136,6 +124,8 @@ function seatPoolMeters(pool: Pool, now: number) {
       long: (
         <LimitMeter
           remaining={remaining}
+          out={pool.status === "exhausted" || (remaining != null && remaining <= 0)}
+          resetAt={reset}
           detail={remaining != null && parts.length ? parts.join(" · ") : undefined}
           empty="No reading"
           unit={pool.windowLabel === "month" ? "mo" : "wk"}
@@ -153,8 +143,10 @@ function seatPoolMeters(pool: Pool, now: number) {
           <LimitMeter
             key={w.id}
             remaining={w.remainingPercent}
+            resetAt={w.resetsAt}
+            out={pool.status === "exhausted" || (w.remainingPercent != null && w.remainingPercent <= 0)}
             unit={unitFor(w.kind)}
-            empty={unavailableText(vendor)}
+            empty={unavailableText(vendor, pool.unavailableReason)}
             detail={[
               long.length > 1 ? w.label : null,
               w.resetsAt ? `resets ${etWhen(w.resetsAt, now)}` : null,
@@ -168,12 +160,13 @@ function seatPoolMeters(pool: Pool, now: number) {
     ) : (
       <LimitMeter
         remaining={null}
-        empty={session ? "No weekly window" : unavailableText(vendor, "not_reported")}
+        empty={session ? "No weekly window" : unavailableText(vendor, pool.unavailableReason)}
       />
     ),
     session: session ? (
       <LimitMeter
         remaining={session.remainingPercent}
+        out={session.remainingPercent != null && session.remainingPercent <= 0}
         resetAt={session.resetsAt}
         unit="5h"
         detail={sourceNote(session.source, null, false, now) ?? undefined}
@@ -211,6 +204,7 @@ function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: string }) {
         ) : (
           <LimitMeter
             remaining={long}
+            out={pool.status === "exhausted" || (long != null && long <= 0)}
             resetAt={reset}
             paceTick={paceTick}
             paceDelta={pool.weeklyPacePercent}
@@ -437,7 +431,7 @@ function SeatToday({ today, vendor }: { today?: SeatAccount["today"]; vendor: st
           ? "tokens not reported"
           : null;
   const title = [
-    `${today.runs} ${today.runs === 1 ? "run" : "runs"}, ${today.ok} ok in the last 24 hours`,
+    `${today.runs} ${today.runs === 1 ? "run" : "runs"}, ${today.okKnown ? `${today.ok} ok` : "ok not recorded"} in the last 24 hours`,
     tokens != null ? `${compact(tokens)} tokens` : `tokens not reported by ${vendorName(vendor)}`,
     ...today.models.map((m) => `${m.model}: ${m.runs}`),
   ].join(" · ");
@@ -473,6 +467,8 @@ function SeatAccountRow({ a }: { a: SeatAccount }) {
       <LimitMeter
         key={w.id}
         remaining={w.remainingPercent}
+        resetAt={w.resetsAt}
+        out={w.remainingPercent != null && w.remainingPercent <= 0}
         unit={unitFor(w.kind)}
         paceTick={w.remainingPercent != null ? expected : undefined}
         paceDelta={w.remainingPercent != null && expected != null ? w.remainingPercent - expected : undefined}
@@ -498,6 +494,7 @@ function SeatAccountRow({ a }: { a: SeatAccount }) {
     session && status !== "reauth_required" ? (
       <LimitMeter
         remaining={session.remainingPercent}
+        out={session.remainingPercent != null && session.remainingPercent <= 0}
         resetAt={session.resetsAt}
         unit="5h"
         detail={note(session) ?? undefined}
@@ -553,7 +550,8 @@ export function ProvidersPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [sort, setSort] = useState("reset");
-  const activePools = pools.data?.pools.filter((p) => p.kind !== "fable_scoped") || [];
+  const activePools = pools.data?.pools.filter((p) => p.kind !== "fable_scoped" && !(p.kind === "cli_seat" &&
+    pools.data.pools.some((other) => other.provider === p.provider && other.kind === "cli_seat_budget"))) || [];
   const accounts = accountsQuery.data || [];
   const seatAccounts = seat.data?.accounts ?? [];
   const paused =
@@ -649,7 +647,7 @@ export function ProvidersPage() {
       <section>
         <div className="sec-h">
           <h2>Pool details</h2>
-          <span className="aside">Groups of accounts that can take work right now</span>
+          <span className="aside">What each group of accounts has left</span>
         </div>
         <div className="rows pools">
           <div className="row hd">
@@ -749,6 +747,9 @@ export function ProvidersPage() {
                   </div>
                 ) : null,
               )}
+            </>
+          )}
+          <>
               {seatGroups.map((group) => (
                 <div key={group.vendor}>
                   <div className="grp">
@@ -764,13 +765,12 @@ export function ProvidersPage() {
                   ))}
                 </div>
               ))}
-              {!filtered.length && !seatFiltered.length && (
+              {!accountsQuery.isPending && !filtered.length && !seatFiltered.length && (
                 <EmptyState
                   title={search || filter !== "all" ? "No matching accounts" : "No accounts yet"}
                 />
               )}
-            </>
-          )}
+          </>
           <div className="add-more">
             Not connected yet:{" "}
             <Link className="btn sm" to="/providers/add">

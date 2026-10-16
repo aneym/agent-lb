@@ -44,6 +44,7 @@ export const PoolSchema = z.object({
   totalAccounts: maybeNumber,
   windows: z.array(PoolWindowSchema).nullable().optional(),
   quotaSource: z.string().nullable().optional(),
+  unavailableReason: z.string().nullable().optional(),
 });
 export const PoolsSchema = z.object({ generatedAt: z.string(), pools: z.array(PoolSchema) });
 export type Pool = z.infer<typeof PoolSchema>;
@@ -63,7 +64,7 @@ export const SeatQuotaSchema = z.object({
   observedAt: z.string().nullable(),
   stale: z.boolean(),
   unavailableReason: z
-    .enum(["not_reported", "auth_unsupported", "credential_unavailable", "vendor_error", "not_collected"])
+    .enum(["not_reported", "auth_unsupported", "credential_unavailable", "vendor_error", "vendor_parse", "not_collected"])
     .nullable(),
   primaryWindowId: z.string().nullable(),
   windows: z.array(SeatQuotaWindowSchema),
@@ -75,6 +76,7 @@ const SeatTodaySchema = z.object({
   tokensIn: z.number().nullable(),
   tokensOut: z.number().nullable(),
   tokensKnown: z.boolean(),
+  okKnown: z.boolean().default(true),
   valueUsd: z.number().nullable(),
   valueSource: z.literal("estimate").nullable(),
   models: z.array(
@@ -152,6 +154,7 @@ export const SeatActivitySchema = z.object({
   tokensIn: z.number().nullable(),
   tokensOut: z.number().nullable(),
   tokensKnown: z.boolean(),
+  okKnown: z.boolean().default(true),
   valueUsd: z.number().nullable(),
   valueSource: z.literal("estimate").nullable(),
   models: z.array(z.object({ model: z.string(), runs: z.number() })),

@@ -38,7 +38,7 @@ class SeatModelUsage(DashboardModel):
     tokens_in: int = 0
     tokens_out: int = 0
     cache_read: int = 0
-    ok: int = Field(default=0, exclude=True)
+    ok: int | None = Field(default=None, exclude=True)
     tokens_known: bool = Field(default=False, exclude=True)
 
 
@@ -72,6 +72,7 @@ class SeatTodayModel(DashboardModel):
 class SeatToday(DashboardModel):
     runs: int = 0
     ok: int = 0
+    ok_known: bool = True
     tokens_in: int | None = None
     tokens_out: int | None = None
     tokens_known: bool = False
@@ -175,7 +176,18 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
             usage = SeatAccount(
                 id=str(account_id),
                 vendor=record["vendor"],
-                daily=record.get("daily") or {},
+                daily={
+                    day: {
+                        model: {
+                            **bucket,
+                            "tokens_known": bucket.get(
+                                "tokens_known", (bucket.get("tokens_in", 0) + bucket.get("tokens_out", 0)) > 0
+                            ),
+                        }
+                        for model, bucket in models.items()
+                    }
+                    for day, models in (record.get("daily") or {}).items()
+                },
                 recent_runs=[
                     SeatRun(
                         ts=stamp,
@@ -302,6 +314,7 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
             else "active"
         )
         account.status_reset_at = min(resets) if resets and account.status == "rate_limited" else None
+        account.ready = account.ready and account.status != "rate_limited"
     return SeatAccountsResponse(
         quota_refreshed_at=_ts(state.get("quota_refreshed_at")),
         state_updated_at=updated,
@@ -316,9 +329,32 @@ def cli_seat_pools(seats: SeatAccountsResponse) -> list[PoolSummary]:
         members = [account for account in seats.accounts if account.vendor == vendor]
         if not members:
             continue
-        ready = [account for account in members if account.ready]
+        current = datetime.now(timezone.utc)
+        exhausted = [
+            window
+            for account in members
+            for window in account.quota.windows
+            if (window.used_percent or 0) >= 100 and window.resets_at and window.resets_at > current
+        ]
+        ready = [
+            account
+            for account in members
+            if account.ready
+            and not any(
+                (window.used_percent or 0) >= 100 and window.resets_at and window.resets_at > current
+                for window in account.quota.windows
+            )
+        ]
         cooling = [account.cooldown_until for account in members if account.cooldown_until is not None]
-        headroom = 100.0 if ready else 0.0
+        cooling.extend(window.resets_at for window in exhausted)
+        measured = [
+            window.remaining_percent
+            for account in ready
+            for window in account.quota.windows
+            if window.used_percent is not None and window.remaining_percent is not None
+        ]
+        headroom = min(measured) if measured else None
+        windows = pool_quota_windows(members)
         pools.append(
             PoolSummary(
                 id=vendor,
@@ -326,12 +362,22 @@ def cli_seat_pools(seats: SeatAccountsResponse) -> list[PoolSummary]:
                 kind=POOL_KIND_CLI_SEAT,
                 accounts=len(members),
                 eligible_accounts=len(ready),
-                headroom_percent=None if vendor == "muse" else headroom,
-                aggregate_remaining_percent=None if vendor == "muse" else 100.0 * len(ready) / len(members),
-                reset_at=None if ready or not cooling else min(cooling),
+                headroom_percent=headroom,
+                aggregate_remaining_percent=headroom,
+                reset_at=min(cooling) if cooling else None,
                 status=POOL_STATUS_OK if ready else POOL_STATUS_EXHAUSTED,
                 source=seats.source,
-                windows=pool_quota_windows(members),
+                windows=windows,
+                window_label=(
+                    "month"
+                    if any(w.kind == "monthly" for w in windows)
+                    else "week"
+                    if any(w.kind == "weekly" for w in windows)
+                    else None
+                ),
+                unavailable_reason=next(
+                    (a.quota.unavailable_reason for a in members if a.quota.unavailable_reason), None
+                ),
                 quota_source=pool_quota_source(members),
                 observed_runs=sum(account.last_day.runs for account in members),
                 observed_tokens=(
@@ -485,7 +531,24 @@ def cursor_budget_pools(seats: SeatAccountsResponse, config: dict, *, now: datet
         remaining = (
             0.0 if vendor_limit else (max(0.0, 100 * (budget - budgeted_spent) / budget) if budget > 0 else None)
         )
+        measured_windows = pool_quota_windows(members, definition["id"])
+        vendor_windows = [
+            window
+            for window in measured_windows
+            if window.source in ("vendor", "vendor_observed")
+            and (window.resets_at is None or window.resets_at > current)
+        ]
+        if vendor_windows:
+            remaining = min(window.remaining_percent for window in vendor_windows)
+            percent_used = max(window.used_percent for window in vendor_windows)
+            percent_source = "vendor"
+            vendor_limit = remaining <= 0
+        if remaining == 0 or vendor_limit:
+            ready = 0
         start, reset = min(cycles, key=lambda cycle: cycle[1])
+        resets = [window.resets_at for window in vendor_windows if window.resets_at]
+        if resets:
+            reset = min(resets)
         time_remaining = 100 * (reset - current).total_seconds() / (reset - start).total_seconds()
         status = (
             POOL_STATUS_EXHAUSTED
@@ -495,7 +558,7 @@ def cursor_budget_pools(seats: SeatAccountsResponse, config: dict, *, now: datet
         pools.append(
             PoolSummary(
                 id=definition["id"],
-                windows=pool_quota_windows(members, definition["id"]),
+                windows=measured_windows,
                 quota_source=pool_quota_source(members),
                 provider="cursor",
                 kind="cli_seat_budget",
@@ -514,6 +577,7 @@ def cursor_budget_pools(seats: SeatAccountsResponse, config: dict, *, now: datet
                 monthly_pace_percent=remaining - time_remaining if remaining is not None else None,
                 burn24h_percent=100 * burn / budget if budget > 0 else None,
                 cycle_reset_at=reset,
+                reset_at=reset if status == POOL_STATUS_EXHAUSTED else None,
                 unbudgeted_accounts=unbudgeted,
                 observed_runs=observed_runs,
                 observed_tokens=observed_tokens,
@@ -545,9 +609,9 @@ def seat_activity(accounts: list[SeatAccount], current: datetime, *, days: int =
             for run in account.recent_runs:
                 if not run.model or not current - timedelta(hours=24) < run.ts <= current:
                     continue
-                entry = entries.setdefault(run.model, SeatModelUsage(tokens_known=True))
+                entry = entries.setdefault(run.model, SeatModelUsage(tokens_known=True, ok=0))
                 entry.runs += 1
-                entry.ok += int(run.ok is True)
+                entry.ok = (entry.ok + int(run.ok)) if entry.ok is not None and run.ok is not None else None
                 entry.tokens_known &= run.tokens_in is not None and run.tokens_out is not None
                 entry.tokens_in += run.tokens_in or 0
                 entry.tokens_out += run.tokens_out or 0
@@ -560,6 +624,7 @@ def seat_activity(accounts: list[SeatAccount], current: datetime, *, days: int =
     models: dict[str, SeatTodayModel] = {}
     runs = ok = 0
     known = True
+    ok_known = True
     unknown_models: set[str] = set()
     value = 0.0
     priced = True
@@ -573,7 +638,8 @@ def seat_activity(accounts: list[SeatAccount], current: datetime, *, days: int =
                 target = models.setdefault(model, SeatTodayModel(model=model, tokens_in=0, tokens_out=0))
                 target.runs += usage.runs
                 runs += usage.runs
-                ok += usage.ok
+                ok += usage.ok or 0
+                ok_known &= usage.ok is not None
                 known &= usage.tokens_known
                 if usage.tokens_known and model not in unknown_models:
                     target.tokens_in = (target.tokens_in or 0) + usage.tokens_in
@@ -595,6 +661,7 @@ def seat_activity(accounts: list[SeatAccount], current: datetime, *, days: int =
     return SeatToday(
         runs=runs,
         ok=ok,
+        ok_known=ok_known,
         tokens_known=known,
         tokens_in=sum(item.tokens_in or 0 for item in models.values()) if known else None,
         tokens_out=sum(item.tokens_out or 0 for item in models.values()) if known else None,
@@ -637,7 +704,9 @@ def pool_quota_windows(accounts: list[SeatAccount], window_id: str | None = None
                 used_percent=sum(window.used_percent for window in measured) / len(measured),
                 remaining_percent=sum(window.remaining_percent or 0 for window in measured) / len(measured),
                 resets_at=min(resets) if resets else None,
-                measured_accounts=len(measured),
+                measured_accounts=sum(
+                    any(w.id == key and w.used_percent is not None for w in a.quota.windows) for a in accounts
+                ),
                 source=(measured[0].source if len({window.source for window in measured}) == 1 else "mixed"),
             )
         )

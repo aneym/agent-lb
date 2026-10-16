@@ -262,6 +262,21 @@ def load_state() -> dict[str, Any]:
         state["accounts"] = {}
     if not isinstance(state.get("leases"), dict):
         state["leases"] = {}
+    if not state.get("daily_ok_migrated"):
+        for record in state["accounts"].values():
+            kept: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for run in record.get("runs") or []:
+                stamp = parse_ts(run.get("ts"))
+                if stamp and run.get("model"):
+                    day = stamp.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+                    kept.setdefault((day, run["model"]), []).append(run)
+            for day, models in (record.get("daily") or {}).items():
+                for model, bucket in models.items():
+                    runs = kept.get((day, model), [])
+                    if "ok" not in bucket and len(runs) == bucket.get("runs") and all(
+                            isinstance(run.get("ok"), bool) for run in runs):
+                        bucket["ok"] = sum(run["ok"] for run in runs)
+        state["daily_ok_migrated"] = True
     return state
 
 
@@ -349,7 +364,8 @@ def quota_window(window_id: str, kind: str, label: str, used: Any, reset: Any,
     if not math.isfinite(percent):
         raise ValueError("invalid quota percent")
     if isinstance(reset, (int, float)) or (isinstance(reset, str) and reset.isdigit()):
-        reset = iso(datetime.fromtimestamp(float(reset), timezone.utc))
+        seconds = float(reset)
+        reset = iso(datetime.fromtimestamp(seconds / 1000 if seconds > 1e11 else seconds, timezone.utc))
     else:
         reset = iso(stamp) if (stamp := parse_ts(reset)) else None
     return {"id": window_id, "kind": kind, "label": label, "durationMins": duration,
@@ -370,7 +386,8 @@ def quota_payload(windows: list[dict[str, Any]], source: str = "vendor",
 
 def cursor_quota(usage: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
     values = usage.get("planUsage") or {}
-    kind = "weekly" if plan.get("includedUsagePeriod") == "weekly" else "monthly"
+    info = plan.get("planInfo") or plan
+    kind = "weekly" if info.get("includedUsagePeriod") == "weekly" else "monthly"
     reset = usage.get("billingCycleEnd") or values.get("billingCycleEnd")
     windows = [quota_window(window_id, kind, label, values[field], reset)
                for window_id, label, field in (
@@ -379,7 +396,7 @@ def cursor_quota(usage: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
     if not windows:
         raise QuotaError("vendor_error")
     reading = quota_payload(windows)
-    reading["planLabel"] = plan.get("planName") or plan.get("planType")
+    reading["planLabel"] = info.get("planName") or info.get("planType")
     reading["email"] = plan.get("email")
     return reading
 
@@ -392,7 +409,8 @@ def devin_quota(response: dict[str, Any]) -> dict[str, Any]:
         if window_id == "daily" and (status.get("hideDailyQuota") or plan.get("hideDailyQuota")):
             continue
         remaining = status.get(f"{window_id}QuotaRemainingPercent", plan.get(f"{window_id}QuotaRemainingPercent"))
-        reset = status.get(f"{window_id}ResetAtUnix", plan.get(f"{window_id}ResetAtUnix"))
+        reset = (status.get(f"{window_id}QuotaResetAtUnix") or plan.get(f"{window_id}QuotaResetAtUnix")
+                 or status.get(f"{window_id}ResetAtUnix") or plan.get(f"{window_id}ResetAtUnix"))
         if remaining is not None:
             windows.append(quota_window(window_id, window_id, window_id.title(), 100 - float(remaining), reset,
                                         minutes))
@@ -443,20 +461,15 @@ def cursor_access_credential(account: dict[str, Any]) -> str:
         return read_cursor_key(account)
     if sys.platform != "darwin":
         raise QuotaError("credential_unavailable")
-    import ctypes
-    security = ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")
-    security.SecKeychainSetUserInteractionAllowed(False)
-    service = b"cursor-access-token"
-    length = ctypes.c_uint32()
-    data = ctypes.c_void_p()
-    result = security.SecKeychainFindGenericPassword(None, len(service), service, 0, None,
-                                                   ctypes.byref(length), ctypes.byref(data), None)
-    if result != 0:
-        raise QuotaError("credential_unavailable")
     try:
-        return ctypes.string_at(data, length.value).decode()
-    finally:
-        security.SecKeychainItemFreeContent(None, data)
+        result = subprocess.run(
+            ["/usr/bin/security", "find-generic-password", "-s", "cursor-access-token", "-a", "cursor-user", "-w"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        raise QuotaError("credential_unavailable") from None
+    if result.returncode != 0 or not result.stdout.strip():
+        raise QuotaError("credential_unavailable")
+    return result.stdout.strip()
 
 
 def quota_post(url: str, body: dict[str, Any], bearer: str | None = None) -> dict[str, Any]:
@@ -497,8 +510,8 @@ def collect_quota(account: dict[str, Any], observed: dict[str, Any] | None = Non
         raise QuotaError("credential_unavailable") from None
     base = credentials.get("api_server_url") or "https://server.codeium.com"
     response = quota_post(base.rstrip("/") + "/exa.seat_management_pb.SeatManagementService/GetUserStatus",
-        {"metadata": {"apiKey": key, "ideName": "agent-lb", "ideVersion": "1", "extensionName": "agent-lb",
-                      "extensionVersion": "1", "locale": "en"}})
+        {"metadata": {"apiKey": key, "ideName": "agent-lb", "ideVersion": "1.0.0", "extensionName": "agent-lb",
+                      "extensionVersion": "1.0.0", "locale": "en"}})
     return devin_quota(response)
 
 
@@ -508,7 +521,9 @@ def refresh_quota(account: dict[str, Any], observed: dict[str, Any] | None = Non
         reason = None
     except QuotaError as error:
         reading, reason = None, str(error)
-    except (OSError, RuntimeError, ValueError, TypeError, KeyError):
+    except (ValueError, TypeError):
+        reading, reason = None, "vendor_parse"
+    except (OSError, RuntimeError, KeyError, subprocess.SubprocessError):
         reading, reason = None, "vendor_error"
     def apply(registry: list[dict[str, Any]], state: dict[str, Any]) -> dict[str, Any]:
         record = state["accounts"].setdefault(account["id"], {})
@@ -1016,11 +1031,13 @@ def record_run(record: dict[str, Any], run: dict[str, Any]) -> None:
         bucket = (
             record.setdefault("daily", {})
             .setdefault(day, {})
-            .setdefault(run["model"], {"runs": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0})
+            .setdefault(run["model"], {"runs": 0, "ok": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0})
         )
         bucket["runs"] += 1
-        bucket["ok"] = bucket.get("ok", 0) + int(run.get("ok") is True)
-        bucket["tokens_known"] = bucket.get("tokens_known", True) and all(
+        if "ok" in bucket:
+            bucket["ok"] += int(run.get("ok") is True)
+        bucket["tokens_known"] = bucket.get("tokens_known", bucket["runs"] == 1 or
+            (bucket.get("tokens_in", 0) + bucket.get("tokens_out", 0)) > 0) and all(
             run.get(field) is not None for field in ("tokens_in", "tokens_out"))
         for field in ("tokens_in", "tokens_out", "cache_read"):
             bucket[field] += int(run.get(field) or 0)

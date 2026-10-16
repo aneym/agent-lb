@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.modules.pools.schemas import PoolsResponse
 
@@ -120,10 +121,7 @@ def _balanced_risk(head: dict, costs: list[dict]) -> str:
     row = next((item for item in costs if item.get("rung") == head.get("id")), None)
     if row is None:
         return "Watch. The first code step has no trial on record."
-    line = (
-        f"Watch. The first code step passed {row['accepted']} of {row['of']} units "
-        f"in its trial ({row['source']})."
-    )
+    line = f"Watch. The first code step passed {row['accepted']} of {row['of']} units in its trial ({row['source']})."
     if row["of"] < 20:
         line += " A 20-unit round settles it; if it drops, Sol goes back to first with one switch."
     return line
@@ -179,19 +177,18 @@ def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[
     openai = pools.get("openai-codex")
     cursor = pools.get("cursor-models")
 
-
     empty = claude.weekly_empty_accounts if claude else 0
 
     slowest = max((row["minutesPerUnit"] for row in costs), default=0)
     drop_devin = any(row["harness"] == "Devin" and row["minutesPerUnit"] == slowest for row in costs)
 
-    cursor_over = False
+    cursor_over = bool(cursor and cursor.percent_used is not None and cursor.percent_used >= 100)
     if cursor and cursor.cycle_reset_at and cursor.percent_used is not None:
         reset = cursor.cycle_reset_at
         previous_month = reset.replace(day=1) - timedelta(days=1)
         start = previous_month.replace(day=min(reset.day, previous_month.day))
         day = (response.generated_at - start).total_seconds() / 86400 + 1
-        cursor_over = cursor.percent_used > 60 and 1 <= day < 20
+        cursor_over = cursor.percent_used >= 100 or (cursor.percent_used > 60 and 1 <= day < 20)
     levels = {}
     for level in ("budget", "balanced", "unlimited"):
         accounts = []
@@ -222,6 +219,10 @@ def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[
 
                 if level == "balanced" and cursor_over:
                     delta = 1
+                    if cursor and cursor.percent_used is not None and cursor.percent_used >= 100:
+                        reset = cursor.cycle_reset_at or cursor.reset_at
+                        date = reset.astimezone(ZoneInfo("America/New_York")).strftime("%b %-d") if reset else None
+                        reason = f"Add 1. Cursor models are out{f' until {date}' if date else ''}."
                 elif level == "budget":
                     reason = (
                         f"Keep. {100 - cursor.percent_used:g}% unused."

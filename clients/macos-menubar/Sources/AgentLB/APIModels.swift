@@ -223,6 +223,7 @@ struct SeatActivity: Decodable, Sendable, Equatable {
   let periodHours: Int
   let runs: Int
   let ok: Int
+  var okKnown: Bool? = nil
   var tokensIn: Int? = nil
   var tokensOut: Int? = nil
   let tokensKnown: Bool
@@ -398,6 +399,7 @@ struct SeatQuotaWindow: Decodable, Equatable, Sendable {
 struct SeatToday: Decodable, Equatable, Sendable {
   let runs: Int
   let ok: Int
+  var okKnown: Bool? = nil
   var tokensIn: Int? = nil
   var tokensOut: Int? = nil
   let tokensKnown: Bool

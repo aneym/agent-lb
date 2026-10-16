@@ -349,7 +349,7 @@ class PoolsService:
         response = build_pools(summaries)
 
         seats = read_seat_accounts()
-        seat_pools = [pool.model_copy(update={"window_label": "month"}) for pool in cli_seat_pools(seats)]
+        seat_pools = cli_seat_pools(seats)
         managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
         table = (
             Path(os.environ["ROUTE_TABLE"]).expanduser()

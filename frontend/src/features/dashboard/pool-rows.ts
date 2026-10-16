@@ -35,6 +35,7 @@ export type DashboardPool = {
   totalAccounts?: number | null;
   windows?: DashboardPoolWindow[] | null;
   quotaSource?: string | null;
+  unavailableReason?: string | null;
 };
 
 export type PoolTone = "success" | "warning" | "danger";
@@ -145,16 +146,30 @@ function vendorName(provider: string): string {
   return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
+export function seatUsageReason(provider: string, reason?: string | null): string {
+  if (provider === "muse") return "usage based";
+  const name = vendorName(provider);
+  const reasons: Record<string, string> = {
+    not_reported: `not reported by ${name}`,
+    vendor_error: `${name} usage check failed`,
+    vendor_parse: "usage reading failed",
+    credential_unavailable: "usage login unavailable",
+    auth_unsupported: "login can't read usage",
+    not_collected: "not checked yet",
+  };
+  return reasons[reason ?? "not_reported"] ?? `not reported by ${name}`;
+}
+
 function windowSubline(pool: DashboardPool, out: boolean, timeZone: string): string | null {
   if (pool.windows && !tightestWindow(pool) && pool.quotaSource === "unavailable") {
-    return `not reported by ${vendorName(pool.provider)}`;
+    return seatUsageReason(pool.provider, pool.unavailableReason);
   }
   const window = tightestWindow(pool);
   if (!window) return null;
   const reset = window.resetsAt;
   const word = KIND_WORD[window.kind] ?? window.kind;
   if (window.source === "estimate") return reset ? `estimate · resets ${monthDay(reset, timeZone)}` : "estimate";
-  if (out) return reset ? `back ${monthDay(reset, timeZone)}` : null;
+  if (out) return reset ? `resets ${monthDay(reset, timeZone)}` : null;
   if (!reset) return word;
   return window.kind === "session" || window.kind === "daily"
     ? `${word} · resets ${clock(reset, timeZone)}`
@@ -169,7 +184,7 @@ function subline(pool: DashboardPool, out: boolean, now: Date, timeZone: string)
   }
   if (out && pool.provider === "cursor") {
     const reset = pool.cycleResetAt || pool.resetAt;
-    return reset ? `back ${monthDay(reset, timeZone)}` : null;
+    return reset ? `resets ${monthDay(reset, timeZone)}` : null;
   }
   const next = (pool.refills ?? [])
     .filter((refill) => Date.parse(refill.at) > now.getTime())
@@ -207,7 +222,7 @@ export function poolRows(pools: DashboardPool[], now: Date, timeZone: string): P
     const value = out
       ? "out"
       : remaining == null
-        ? `— · ${usable}/${total}`
+        ? `${pool.provider === "muse" ? seatUsageReason(pool.provider, pool.unavailableReason) : "—"} · ${usable}/${total}`
         : `${Math.round(remaining)}% · ${usable}/${total}`;
     return [
       {

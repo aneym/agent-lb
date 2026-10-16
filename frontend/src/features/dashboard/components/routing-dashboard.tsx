@@ -3,7 +3,6 @@ import "./routing-dashboard.css";
 
 import {
   modelLabel,
-  planFooter,
   poolRows,
   type AccountPlan,
   type DashboardPool,
@@ -37,7 +36,6 @@ export function RoutingDashboard({
   timeZone?: string;
 }) {
   const rows = poolRows(pools, now, timeZone);
-  const footer = planFooter(plan);
   return (
     <div className="routing-dashboard">
       {plan ? <AccountPlanCard plan={plan} /> : null}
@@ -60,7 +58,6 @@ export function RoutingDashboard({
             </div>
           ))}
         </div>
-        {footer ? <p className="pool-foot">{footer}</p> : null}
       </section>
     </div>
   );
@@ -94,7 +91,7 @@ function AccountPlanCard({ plan }: { plan: AccountPlan }) {
             <tr key={account.pool}>
               <td>
                 <span className="plan-label">
-                  {account.label}, {account.count} {account.count === 1 ? "account" : "accounts"}
+                  {account.label}, {account.count} {account.pool === "cursor" || account.pool.startsWith("cursor-") ? (account.count === 1 ? "plan" : "plans") : (account.count === 1 ? "account" : "accounts")}
                 </span>
                 <span className="plan-reason">{account.reason}</span>
               </td>

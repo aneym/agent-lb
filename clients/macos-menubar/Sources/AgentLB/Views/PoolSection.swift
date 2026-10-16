@@ -450,8 +450,10 @@ struct SeatWindowCardModel: Equatable, Identifiable, Sendable {
   let seatsText: String
   let help: String
 
+  var valueText: String { remainingPercent <= 0 ? "Out" : Format.percent(remainingPercent) }
+
   var texts: [String] {
-    [title, detail, Format.percent(remainingPercent), resetText, sourceText, seatsText].compactMap { $0 }
+    [title, detail, valueText, resetText, sourceText, seatsText].compactMap { $0 }
   }
 }
 
@@ -498,11 +500,11 @@ struct SeatVendorSummary: Equatable, Sendable {
 
     let cards = picked.compactMap { window, pool -> SeatWindowCardModel? in
       guard let remaining = window.remainingPercent else { return nil }
-      let clamped = min(100, max(0, remaining))
+      let clamped = pool.status == "exhausted" ? 0 : min(100, max(0, remaining))
       let poolUsable = pool.usableAccounts ?? pool.eligibleAccounts
       let poolTotal = pool.totalAccounts ?? pool.accounts
       let cardSeats = "\(poolUsable)/\(poolTotal) " + (poolTotal == 1 ? "seat" : "seats")
-      let reset = window.resetsAt.map { "resets \(Format.easternMoment($0, relativeTo: now))" } ?? "reset not reported"
+      let reset = window.resetsAt.map { "resets \(clamped <= 0 ? Format.easternDay($0) : Format.easternMoment($0, relativeTo: now))" } ?? "reset not reported"
       let source = sourceText(window: window, seats: vendorSeats, now: now)
       let detail = detailText(window)
       let help = [
@@ -534,7 +536,7 @@ struct SeatVendorSummary: Equatable, Sendable {
       let lead = vendorSeats.isEmpty && vendorPools.isEmpty
         ? "No \(scope.label) seats"
         : reasonText(reason, vendor: scope.label)
-      quiet = scope == .muse ? lead : "\(lead) · \(runs) \(runs == 1 ? "run" : "runs") in 24 h"
+      quiet = "\(scope == .muse ? "Usage based" : lead) · \(runs) \(runs == 1 ? "run" : "runs") in 24 h"
     }
 
     return SeatVendorSummary(
@@ -551,6 +553,7 @@ struct SeatVendorSummary: Equatable, Sendable {
     if let activity = summary?.seatActivity {
       let days = max(1, activity.periodHours / 24)
       var parts = ["\(days)d", "\(Format.compact(activity.runs)) \(activity.runs == 1 ? "run" : "runs")"]
+      if activity.okKnown == false { parts.append("ok not recorded") }
       if activity.tokensKnown, let tokensIn = activity.tokensIn, let tokensOut = activity.tokensOut {
         parts.append("\(Format.compactLarge(tokensIn)) in / \(Format.compactLarge(tokensOut)) out")
       } else {
@@ -583,7 +586,8 @@ struct SeatVendorSummary: Equatable, Sendable {
     case "not_reported": "Not reported by \(vendor)"
     case "auth_unsupported": "Login can't read usage"
     case "credential_unavailable": "Usage login unavailable"
-    case "vendor_error": "Vendor error"
+    case "vendor_error": "\(vendor) usage check failed"
+    case "vendor_parse": "Usage reading failed"
     case "not_collected": "Not checked yet"
     default: "Not reported by \(vendor)"
     }
@@ -665,7 +669,7 @@ private struct SeatWindowCard: View {
       HStack(alignment: .center, spacing: 9) {
         RingGauge(percent: model.remainingPercent, lineWidth: 3)
           .frame(width: 30, height: 30)
-        Text(Format.percent(model.remainingPercent))
+        Text(model.valueText)
           .font(.system(size: 26, weight: model.remainingPercent < 15 ? .bold : .semibold, design: .monospaced))
           .monospacedDigit()
           .lineLimit(1)

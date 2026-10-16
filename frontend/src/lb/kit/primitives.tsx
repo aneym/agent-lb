@@ -70,6 +70,7 @@ export function LimitMeter({
   detail,
   noWindow = false,
   notStarted = false,
+  out = false,
   title,
 }: {
   remaining?: number | null;
@@ -81,17 +82,19 @@ export function LimitMeter({
   detail?: string;
   noWindow?: boolean;
   notStarted?: boolean;
+  out?: boolean;
   title?: string;
 }) {
   const [now] = useState(() => Date.now());
   if (noWindow) return <span className="sr">No 5-hour window</span>;
-  if (remaining == null)
+  if (remaining == null && !out)
     return (
       <div className="lim na" title={title}>
         <span className="w">{empty}</span>
       </div>
     );
-  const percent = Math.min(100, Math.max(0, remaining));
+  const percent = out ? 0 : Math.min(100, Math.max(0, remaining ?? 0));
+  out = out || percent <= 0;
   const paceTitle =
     paceDelta == null
       ? "Expected remaining at this point"
@@ -102,13 +105,15 @@ export function LimitMeter({
     <div className={`lim ${fillTone(percent)}`} title={title}>
       <div className="lt">
         <span className={`v ${percent < 20 ? "warn" : ""}`}>
-          {percent < 20 && <TriangleAlert size={12} aria-label="Low remaining" />}
-          {pct(percent)}
-          {unit && <span className={`u ${unit === "5h" ? "m" : ""}`}>{unit}</span>}
+          {!out && percent < 20 && <TriangleAlert size={12} aria-label="Low remaining" />}
+          {out ? "Out" : pct(percent)}
+          {!out && unit && <span className={`u ${unit === "5h" ? "m" : ""}`}>{unit}</span>}
         </span>
         <span className="r">
           {notStarted
             ? "not started"
+            : out
+              ? null
             : resetAt
               ? unit === "5h"
                 ? duration(new Date(resetAt).getTime() - now)
@@ -118,13 +123,15 @@ export function LimitMeter({
       </div>
       <div className="bar">
         <i style={{ width: `${percent}%` }} />
-        {paceTick != null && (
+        {!out && paceTick != null && (
           <b style={{ left: `${Math.min(100, Math.max(0, paceTick))}%` }} title={paceTitle} />
         )}
       </div>
-      {detail && (
+      {(detail || (out && resetAt)) && (
         <span className="ls" title={detail}>
-          {detail}
+          {out && resetAt
+            ? `resets ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" }).format(new Date(resetAt))}${detail?.includes("est.") ? " · est." : ""}`
+            : detail}
         </span>
       )}
     </div>
