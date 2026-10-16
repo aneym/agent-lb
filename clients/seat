@@ -88,6 +88,7 @@ STOP_GRACE_SECONDS = 10.0
 KILL_DRAIN_SECONDS = 3.0
 RELEASE_BUDGET_SECONDS = 8.0
 STOP_POLL_SECONDS = 0.2
+MUSE_STALL_SECONDS = 600.0
 
 PROBE_TIMEOUT_SECONDS = 20.0
 DEFAULT_RUN_TIMEOUT_SECONDS = 3600.0
@@ -938,7 +939,8 @@ def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_
             fail("Muse account login is Studio-local; box path is parked")
         return [cli_bin("muse"), "exec", "--json", "--trust-workspace", "--model", model,
                 "--effort", effort, "--approval-mode", "never", "--contributor-mode", "off",
-                "--no-foreign-personal-context", "--prompt-file", str(prompt_file)]
+                "--no-foreign-personal-context", *([] if mode == "ask" else ["--disable-sandbox"]),
+                "--prompt-file", str(prompt_file)]
     # Devin's `auto` rejects every shell call in print mode, `ls` included, so a read-only
     # task cannot finish; `smart` runs what Devin's own safety model judges safe.
     permission = "smart" if mode == "ask" else "dangerous"
@@ -1522,6 +1524,8 @@ def run_stoppable(command: list[str], control: RunControl | None, *, input: str 
     stop.drain()
     if stop.timed_out:
         raise subprocess.TimeoutExpired(command, timeout, stdout, stderr)
+    if stop.stalled:
+        raise Stalled(stop.stalled)
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
@@ -1551,11 +1555,17 @@ def echo_until_exit(process: subprocess.Popen[str], stop: GroupStop, input: str 
             process.stdin.close()
         except (BrokenPipeError, OSError):
             pass
+    limit = getattr(echo, "stall_limit", None)
     while True:
         try:
             process.wait(timeout=STOP_POLL_SECONDS)
             break
         except subprocess.TimeoutExpired:
+            if limit and stop.stalled is None and echo.idle() >= limit:
+                stop.stalled = f"no vendor output for {echo.idle():.0f}s (stall limit {limit:.0f}s)"
+                print(f"seat: STALLED: {stop.stalled}; stopping the vendor CLI", file=sys.stderr, flush=True)
+                stop.send(signal.SIGTERM)
+                stop.termed_at = time.monotonic()
             stop.step(leader_done=False)
     for reader in readers:
         reader.join(timeout=5)
@@ -1563,6 +1573,26 @@ def echo_until_exit(process: subprocess.Popen[str], stop: GroupStop, input: str 
     if close:
         close()
     return "".join(out), "".join(err)
+
+
+class Stalled(RuntimeError):
+    pass
+
+
+def post_stall(vendor: str, cwd: Path, error: str) -> None:
+    owner = os.environ.get("SEAT_OWNER_PANE") or os.environ.get("FACTORY_OWNER_PANE")
+    if not owner or owner == "none":
+        print("seat: STALLED with no owner pane to tell (set SEAT_OWNER_PANE)", file=sys.stderr)
+        return
+    poster = os.environ.get("SEAT_LANE_POST") or str(Path.home() / ".agent-rails/factory-runtime/bin/lane-post")
+    sender = os.environ.get("HERDR_PANE_ID") or owner
+    text = f"{vendor} seat stalled in {cwd}: {error}; the run was stopped and failed. Relaunch or reassign it."
+    try:
+        completed = subprocess.run([poster, "post", "--to", owner, "--from", sender, "--kind", "task", text],
+                                   capture_output=True, text=True, timeout=30, check=False)
+        print(f"seat: stall bulletin to {owner} rc={completed.returncode}", file=sys.stderr)
+    except (OSError, subprocess.TimeoutExpired) as error_:
+        print(f"seat: stall bulletin to {owner} failed: {error_}", file=sys.stderr)
 
 
 def muse_call(call: dict[str, Any]) -> str:
@@ -1606,8 +1636,14 @@ class MuseTail:
     def __init__(self) -> None:
         self.started = False
         self.done = threading.Event()
+        self.last = time.monotonic()
+        self.stall_limit = float(os.environ.get("SEAT_STALL_SECONDS") or MUSE_STALL_SECONDS)
+
+    def idle(self) -> float:
+        return time.monotonic() - self.last
 
     def __call__(self, line: str) -> str | None:
+        self.last = time.monotonic()
         if not self.started:
             try:
                 stream = json.loads(line).get("stream") or {}
@@ -1631,6 +1667,7 @@ class MuseTail:
             while True:
                 chunk = stream.readline()
                 if chunk:
+                    self.last = time.monotonic()
                     pending += chunk
                     if not pending.endswith("\n"):
                         continue
@@ -1669,6 +1706,7 @@ class GroupStop:
         self.termed_at: float | None = None
         self.killed_at: float | None = None
         self.timed_out = False
+        self.stalled: str | None = None
 
     def send(self, signum: int) -> None:
         try:
@@ -2017,6 +2055,9 @@ def run_on_accounts(
                     outcome = parse_outcome(args.vendor, completed, export_file)
                 except subprocess.TimeoutExpired:
                     outcome = {"ok": False, "error": f"timeout after {args.timeout:.0f}s"}
+                except Stalled as error:
+                    outcome = {"ok": False, "error": f"stalled: {error}"}
+                    post_stall(args.vendor, cwd, outcome["error"])
                 except (OSError, RuntimeError) as error:
                     outcome = {"ok": False, "error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}
                 wall = round(time.monotonic() - started, 1)
