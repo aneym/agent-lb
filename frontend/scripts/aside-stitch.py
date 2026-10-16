@@ -1,5 +1,7 @@
-import json, sys
+import json
+import sys
 from pathlib import Path
+
 from PIL import Image
 
 src, out, slug = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
@@ -17,6 +19,8 @@ for key, info in checks.items():
         part = img.crop((0, skip, min(width_px, img.width), img.height))
         canvas.paste(part, (0, round(c["want"] * dpr)))
     canvas.save(out / f"{slug}-{w}-{theme}.png")
-    summary[key] = {"sideways": info["sw"] > info["cw"], "sw": info["sw"], "cw": info["cw"], "h": info["h"], "url": info["url"]}
+    summary[key] = {
+        "sideways": info["sw"] > info["cw"], "sw": info["sw"], "cw": info["cw"], "h": info["h"], "url": info["url"]
+    }
 (out / f"{slug}-checks.json").write_text(json.dumps(summary))
 print(slug, json.dumps(summary))

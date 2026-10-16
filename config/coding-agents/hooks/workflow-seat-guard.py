@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import fnmatch
 import json
 import os
-from pathlib import Path
 import re
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 AGENT_MODEL = re.compile(r'^model:\s*(\S+)\s*$', re.MULTILINE)
 
@@ -99,7 +99,8 @@ def tokens(script: str, interpolations: list[str]) -> list[tuple[str, str]]:
 
             result.append(('string' if quote != '`' and '\\' not in raw else 'opaque', raw))
             continue
-        if c == '/' and (not result or result[-1][1] in ('=', '(', '[', '{', ',', ':', '!', '?', ';', 'return', '=>', '&&', '||')):
+        if c == '/' and (not result or result[-1][1] in (
+                '=', '(', '[', '{', ',', ':', '!', '?', ';', 'return', '=>', '&&', '||')):
             i += 1
             in_class = False
             while i < len(script):
@@ -305,9 +306,11 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
             model = None
         if model and model[0] == 'string':
             if is_blocked(model[1], table):
-                reasons.append(f'agent() pins {model[1]!r}, which is no longer served: use a current model alias (models.md, Workflows)')
+                reasons.append(f'agent() pins {model[1]!r}, which is no longer served: '
+                               'use a current model alias (models.md, Workflows)')
             elif model[1] in ('sonnet', 'haiku') and is_retired(model[1], table, seat):
-                reasons.append(f'agent() pins {model[1]!r}, which resolves to a retired model: use a current model alias (models.md, Workflows)')
+                reasons.append(f'agent() pins {model[1]!r}, which resolves to a retired model: '
+                               'use a current model alias (models.md, Workflows)')
             elif is_retired(model[1], table, seat):
                 explicit.append(model[1])
         elif 'model' not in keys and seat:
@@ -337,7 +340,9 @@ def main() -> None:
             script = Path(tool_input['scriptPath']).read_text()
         if not isinstance(script, str):
             raise TypeError('the script is not text')
-        table_path = Path(os.environ.get('ROUTE_TABLE') or Path.home() / '.agent-lb/managed/coding-agents/routing-table.json')
+        table_path = Path(
+            os.environ.get('ROUTE_TABLE') or Path.home() / '.agent-lb/managed/coding-agents/routing-table.json'
+        )
         if not table_path.exists() and 'ROUTE_TABLE' not in os.environ:
             table_path = Path(__file__).resolve().parent.parent / 'routing-table.json'
         table = json.loads(table_path.read_text())
@@ -350,10 +355,14 @@ def main() -> None:
             output['additionalContext'] = 'workflow-seat-guard (warn only, not blocked): ' + reason
         elif explicit:
             record_explicit(sorted(set(explicit)))
-            output['additionalContext'] = ('workflow-seat-guard: agent() explicitly requests a model off the default ladder ('
+            output['additionalContext'] = ('workflow-seat-guard: agent() explicitly requests a model '
+                                           'off the default ladder ('
                                            + ', '.join(sorted(set(explicit))) + '); allowed on request (models.md).')
         elif warning:
-            output['additionalContext'] = 'workflow-seat-guard: dynamic agent() options could not be checked; pass agentType and avoid retired model pins (models.md, Workflows).'
+            output['additionalContext'] = (
+                'workflow-seat-guard: dynamic agent() options could not be checked; '
+                'pass agentType and avoid retired model pins (models.md, Workflows).'
+            )
     except Exception as error:
         output.pop('additionalContext', None)
         output['additionalContext'] = (

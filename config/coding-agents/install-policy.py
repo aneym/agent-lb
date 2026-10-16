@@ -1659,7 +1659,9 @@ def main() -> int:
 
 
                 if agent_text != agent_template:
-                    print(f"hook dispatcher: keeping the installed {relative_path.name}; the new one failed the fixture")
+                    print(
+                        f"hook dispatcher: keeping the installed {relative_path.name}; the new one failed the fixture"
+                    )
                 continue
             if agent_text != agent_template:
                 changes[agent_path] = agent_template
@@ -1905,7 +1907,8 @@ def locked_main() -> int:
                     process = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
                                              capture_output=True, text=True, timeout=10).stdout.strip()
                     if "install-policy.py" in process and "python" in process and "claude" not in process.lower():
-                        print(f"WARNING: retiring stalled policy installer pid={pid}; no recorded progress for over 15 minutes", flush=True)
+                        print(f"WARNING: retiring stalled policy installer pid={pid}; "
+                              "no recorded progress for over 15 minutes", flush=True)
                         os.kill(pid, signal.SIGTERM)
                         until = time.monotonic() + 30
                         while time.monotonic() < until:

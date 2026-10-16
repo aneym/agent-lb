@@ -9,7 +9,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 LEDGER = Path(
     os.environ.get("ROUTE_LEDGER")
     or os.environ.get("DISPATCH_LEDGER")
@@ -98,7 +97,8 @@ def structured_result(path: str) -> str:
                 except ValueError:
                     continue
                 for block in (row.get("message") or {}).get("content") or []:
-                    if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
+                    if (isinstance(block, dict) and block.get("type") == "tool_use"
+                            and block.get("name") == "StructuredOutput"):
                         found = json.dumps(block.get("input"))[:300]
     except OSError:
         return ""

@@ -2,8 +2,8 @@
 
 import argparse
 import os
-from pathlib import Path
 import re
+from pathlib import Path
 
 
 def own_lane(brief, env=None):
@@ -26,9 +26,11 @@ def allowed_lane_path(path, lane):
 def render(brief='', env=None):
     template = (Path(__file__).resolve().parent.parent / 'FINISH.md').read_text()
     lane = own_lane(brief, env)
-    boundary = (f'Calling lane directory: `{lane}`. Brief-listed evidence, state, lane-local helpers and runners inside this directory may be edited. '
+    boundary = (f'Calling lane directory: `{lane}`. Brief-listed evidence, state, lane-local helpers and runners '
+                'inside this directory may be edited. '
                 if lane else 'Calling lane directory: unresolved. No lane-directory edits are allowed. ')
-    return template + '\n' + boundary + 'Other lanes, ~/.agent-rails/factory state, scoping state and Alex\'s files remain forbidden.\n'
+    return (template + '\n' + boundary
+            + 'Other lanes, ~/.agent-rails/factory state, scoping state and Alex\'s files remain forbidden.\n')
 
 
 def main():
