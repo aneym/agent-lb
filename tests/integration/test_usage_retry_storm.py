@@ -147,9 +147,7 @@ async def test_unusable_subscription_uses_slow_recovery_cadence(
     db_setup, usage_endpoint, subscription_status, deactivation_reason
 ):
     calls, statuses, clock = usage_endpoint
-    await seed_account(
-        "unusable", subscription_status=subscription_status, deactivation_reason=deactivation_reason
-    )
+    await seed_account("unusable", subscription_status=subscription_status, deactivation_reason=deactivation_reason)
     await seed_account("healthy")
     statuses["unusable"] = 429
     scheduler = UsageRefreshScheduler(interval_seconds=10, enabled=True)

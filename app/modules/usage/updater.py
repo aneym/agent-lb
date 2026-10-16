@@ -350,7 +350,7 @@ class UsageUpdater:
             return False
         if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
             return False
-        if _is_usage_refresh_in_cooldown(account.id):
+        if _usage_refresh_rate_limit_strikes.get(account.id) and _is_usage_refresh_in_cooldown(account.id):
             return False
         try:
             result = await _USAGE_REFRESH_SINGLEFLIGHT.run(
