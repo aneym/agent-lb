@@ -172,6 +172,7 @@ export function AccountState({
     rate_limited: "Rate limited",
     quota_exceeded: "Out",
     reauth_required: "Disconnected",
+    exchange_uncertain: "Reconnecting",
     deactivated: "Off",
   };
   const [now] = useState(() => Date.now());

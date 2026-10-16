@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import delete, func, insert, literal, or_, select, text, update
 from sqlalchemy.exc import OperationalError
@@ -28,6 +28,17 @@ from app.db.models import (
     UsageHistory,
 )
 from app.modules.usage.additional_quota_keys import normalize_additional_quota_routing_policy_overrides
+
+EXCHANGE_RESET_REASONS = frozenset({"operator_reset", "auto_reset"})
+
+
+@dataclass(frozen=True)
+class AutoResetResult:
+    outcome: Literal["reset", "waiting", "exhausted", "ineligible"]
+    attempt: int
+    prior_replay: bool
+    prior_reason: str | None
+
 
 _SETTINGS_ROW_ID = 1
 _DUPLICATE_ACCOUNT_SUFFIX = "__copy"
@@ -722,6 +733,71 @@ class AccountsRepository:
             database_now = database_now.replace(tzinfo=None)
         return ExchangeIntentWindow(token_hash, replay, reason, available_at, database_now >= available_at)
 
+    async def auto_reset_exchange_intent(
+        self,
+        account_id: str,
+        token_hash: str,
+        *,
+        timeout_seconds: float,
+        base_seconds: float,
+        max_attempts: int,
+    ) -> AutoResetResult:
+        account = (
+            await self._session.execute(
+                select(Account)
+                .where(Account.id == account_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        intent = (
+            await self._session.execute(
+                select(AccountExchangeIntent)
+                .where(AccountExchangeIntent.account_id == account_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        attempt = intent.auto_resets if intent is not None else 0
+        prior_replay = intent.replay if intent is not None else False
+        prior_reason = intent.reason if intent is not None else None
+        if (
+            account is None
+            or account.status != AccountStatus.EXCHANGE_UNCERTAIN
+            or account.owner_instance not in (None, get_settings().local_instance_id)
+            or intent is None
+            or intent.refresh_token_sha256 != token_hash
+            or intent.reason not in (None, "unsaved")
+            or not (intent.replay or intent.reason == "unsaved")
+        ):
+            await self._session.commit()
+            return AutoResetResult("ineligible", attempt, prior_replay, prior_reason)
+        if attempt >= max_attempts:
+            intent.reason = "auto_exhausted"
+            await self._session.commit()
+            return AutoResetResult("exhausted", attempt, prior_replay, prior_reason)
+        database_now = (
+            await self._session.execute(
+                select(
+                    func.timezone("UTC", func.clock_timestamp())
+                    if self._session.bind.dialect.name == "postgresql"
+                    else func.current_timestamp()
+                )
+            )
+        ).scalar_one()
+        available_at = intent.started_at + timedelta(seconds=timeout_seconds + base_seconds * 2 ** attempt)
+        if available_at.tzinfo is not None and database_now.tzinfo is None:
+            available_at = available_at.replace(tzinfo=None)
+        if database_now.tzinfo is not None and available_at.tzinfo is None:
+            database_now = database_now.replace(tzinfo=None)
+        if database_now < available_at:
+            await self._session.commit()
+            return AutoResetResult("waiting", attempt, prior_replay, prior_reason)
+        intent.reason = "auto_reset"
+        intent.auto_resets = attempt + 1
+        await self._session.commit()
+        return AutoResetResult("reset", attempt + 1, prior_replay, prior_reason)
+
     async def exchange_intent_hash(self, account_id: str) -> str | None:
         return (
             await self._session.execute(
@@ -766,6 +842,7 @@ class AccountsRepository:
 
         from sqlalchemy.exc import IntegrityError
 
+        carried = 0
         source = (
             select(
                 Account.id,
@@ -809,9 +886,16 @@ class AccountsRepository:
                     if eligible and timeout_seconds is not None:
                         window = await self.exchange_intent_window(account_id, timeout_seconds)
                         eligible = window is not None and window.token_hash == token_hash and window.ready
-                        if eligible and window.reason != "operator_reset":
-                            eligible = not window.replay and window.reason != "unsaved"
+                        if eligible and window.reason not in EXCHANGE_RESET_REASONS:
+                            eligible = not window.replay and window.reason not in {"unsaved", "auto_exhausted"}
                     if eligible:
+                        carried = (
+                            await self._session.execute(
+                                select(AccountExchangeIntent.auto_resets)
+                                .where(AccountExchangeIntent.account_id == account_id)
+                                .with_for_update()
+                            )
+                        ).scalar_one()
                         retired = await self._session.execute(
                             delete(AccountExchangeIntent).where(
                                 AccountExchangeIntent.account_id == account_id,
@@ -823,7 +907,10 @@ class AccountsRepository:
                 if eligible:
                     result = await self._session.execute(
                         insert(AccountExchangeIntent)
-                        .from_select(("account_id", "refresh_token_sha256", "started_at", "replay"), source)
+                        .from_select(
+                            ("account_id", "refresh_token_sha256", "started_at", "replay", "auto_resets"),
+                            source.add_columns(literal(carried)),
+                        )
                         .returning(AccountExchangeIntent.account_id),
                     )
                     inserted = result.scalar_one_or_none() is not None
@@ -865,7 +952,7 @@ class AccountsRepository:
         await self._session.execute(
             update(AccountExchangeIntent)
             .where(AccountExchangeIntent.account_id == account_id)
-            .values(reason="operator_reset")
+            .values(reason="operator_reset", auto_resets=0)
         )
         await self._session.commit()
         return True

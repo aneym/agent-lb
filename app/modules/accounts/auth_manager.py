@@ -40,6 +40,7 @@ from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db import session as db_session
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
+from app.modules.accounts.repository import EXCHANGE_RESET_REASONS
 from app.modules.proxy.account_cache import get_account_selection_cache
 
 
@@ -304,8 +305,10 @@ class AuthManager:
                     and intent.token_hash
                     == _refresh_token_material_fingerprint(self._encryptor, account.refresh_token_encrypted)
                     and intent.ready
-                    and not intent.replay
-                    and intent.reason != "unsaved"
+                    and (
+                        intent.reason in EXCHANGE_RESET_REASONS
+                        or (not intent.replay and intent.reason not in {"unsaved", "auto_exhausted"})
+                    )
                 )
             if not force and not recover_exchange and not access_token_hard_expired(self._encryptor, account):
                 return await self._ensure_chatgpt_account_id(account)
@@ -369,7 +372,8 @@ class AuthManager:
                 if account.status in {AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED}:
                     raise RefreshError("exchange_uncertain", "Permanent auth failure requires operator recovery", False)
                 if not intent.ready or (
-                    intent.reason != "operator_reset" and (intent.replay or intent.reason == "unsaved")
+                    intent.reason not in EXCHANGE_RESET_REASONS
+                    and (intent.replay or intent.reason in {"unsaved", "auto_exhausted"})
                 ):
                     if account.status != AccountStatus.EXCHANGE_UNCERTAIN:
                         await self._repo.mark_exchange_uncertain(
