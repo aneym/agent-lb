@@ -17,6 +17,8 @@ from typing import Any
 
 START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
+CODEX_START = "<!-- agent-lb:codex-agents:start -->"
+CODEX_END = "<!-- agent-lb:codex-agents:end -->"
 MODEL = "opus"
 EFFORT_LEVEL = "high"
 
@@ -424,6 +426,22 @@ def install_adapter(text: str, template: str, path: Path) -> str:
         else:
             updated = template.strip() + "\n"
     return updated if updated.endswith("\n") else updated + "\n"
+
+
+def install_codex_doc(text: str, body: str, path: Path) -> str:
+    text = uninstall_adapter(text, path)
+    if text.count(CODEX_START) > 1 or text.count(CODEX_START) != text.count(CODEX_END):
+        raise ValueError(f"malformed or duplicate Codex markers in {path}")
+    block = CODEX_START + "\n" + body.strip() + "\n" + CODEX_END
+    if CODEX_START in text:
+        start = text.index(CODEX_START)
+        end = text.index(CODEX_END, start) + len(CODEX_END)
+        updated = text[:start] + block + text[end:]
+    elif not text.strip() or text.strip() == body.strip():
+        updated = block
+    else:
+        updated = text.rstrip() + "\n\n" + block
+    return updated.rstrip() + "\n"
 
 
 def uninstall_adapter(text: str, path: Path) -> str:
@@ -1399,7 +1417,8 @@ def main() -> int:
         print("hook paths: ok" if not problems else f"hook paths: {len(problems)} problem(s)")
         return 1 if problems else 0
     source = Path(__file__).resolve().parent
-    verify_install_revision(source, args.force, args.reason)
+    if not (args.preview or args.uninstall):
+        verify_install_revision(source, args.force, args.reason)
     claude_path = args.home / ".claude" / "CLAUDE.md"
     codex_path = args.home / ".codex" / "AGENTS.md"
     template = (source / "claude-adapter.md").read_text()
@@ -1434,7 +1453,11 @@ def main() -> int:
                 else install_adapter(originals[claude_path], template, claude_path)
             ),
 
-            codex_path: uninstall_adapter(originals[codex_path], codex_path),
+            codex_path: (
+                uninstall_adapter(originals[codex_path], codex_path)
+                if args.uninstall
+                else install_codex_doc(originals[codex_path], (source / "codex-AGENTS.md").read_text(), codex_path)
+            ),
         }
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
@@ -1815,11 +1838,27 @@ def main() -> int:
     return 0
 
 
+def same_policy_tree(bundle: Path, checkout: Path) -> bool:
+
+    def files(root: Path) -> dict[Path, bytes]:
+        return {path.relative_to(root): path.read_bytes() for path in sorted(root.rglob("*"))
+                if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"}
+    try:
+        return checkout.is_dir() and files(bundle) == files(checkout)
+    except OSError:
+        return False
+
+
 def verify_install_revision(source: Path, force: bool = False, reason: str | None = None) -> None:
 
     repo = source.parent.parent
     if not (repo / ".git").exists():
-        raise SystemExit("error: installer needs a git worktree; rebase onto origin/main")
+        origin_repo = os.environ.get("AGENT_LB_POLICY_SOURCE_REPO")
+        if not origin_repo or not same_policy_tree(source, Path(origin_repo) / "config/coding-agents"):
+            raise SystemExit("error: installer needs a git worktree; rebase onto origin/main")
+        repo = Path(origin_repo)
+        if not (repo / ".git").exists():
+            raise SystemExit("error: installer needs a git worktree; rebase onto origin/main")
     def git(*words):
         return subprocess.run(["git", "-C", str(repo), *words], capture_output=True, text=True, timeout=60)
     fetched = git("fetch", "origin", "main")
@@ -1841,7 +1880,7 @@ def locked_main() -> int:
     import signal
 
     args = parse_args()
-    if not args.check_hook_paths:
+    if not (args.check_hook_paths or args.preview or args.uninstall):
         verify_install_revision(Path(__file__).resolve().parent, args.force, args.reason)
     home = args.home.expanduser().resolve()
     digest = hashlib.sha256(str(home).encode()).hexdigest()[:16]

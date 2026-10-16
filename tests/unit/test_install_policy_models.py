@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("workspace", [None, b"# Workspace\r\nDeterministic hosts.\r\n"])
-def test_models_install_lifecycle(tmp_path: Path, workspace: bytes | None) -> None:
-    source = tmp_path / "policy-source"
+def test_models_install_lifecycle(tmp_path: Path, workspace: bytes | None, policy_checkout) -> None:
+    source = tmp_path / "policy-repo" / "config/coding-agents"
     shutil.copytree(ROOT / "config/coding-agents", source)
     routing = b"# Routing\r\nOne source of truth.\r\n"
     (source / "ROUTING.md").write_bytes(routing)
@@ -24,6 +24,7 @@ def test_models_install_lifecycle(tmp_path: Path, workspace: bytes | None) -> No
     workspace_path.unlink(missing_ok=True)
     if workspace is not None:
         workspace_path.write_bytes(workspace)
+    policy_checkout(tmp_path / "policy-repo")
     home = tmp_path / "home"
     models = home / ".claude/rules/models.md"
     models.parent.mkdir(parents=True)
@@ -67,7 +68,7 @@ def test_models_install_lifecycle(tmp_path: Path, workspace: bytes | None) -> No
     )
     generated = header.encode() + b"\n\n" + routing
     assert models.read_bytes() == generated
-    implementer = (home / ".claude/agents/gpt-implementer.md").read_text()
+    implementer = (home / ".claude/agents/gpt-implementer-local.md").read_text()
     assert "model: sol-latest-medium" in implementer
     assert "`AUTHORITY: <grant-id>`" in implementer and "factory-grant verify" in implementer
     assert "Do not commit, push" not in implementer

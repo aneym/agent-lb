@@ -184,7 +184,7 @@ if [[ -e "$CURRENT" || -L "$CURRENT" ]]; then
 fi
 "$POLICY_INSTALLER" --home "$USER_HOME" --print >/dev/null
 bundle="$(prepare_bundle)"
-"$bundle/config/coding-agents/install-policy.py" --home "$USER_HOME"
+AGENT_LB_POLICY_SOURCE_REPO="$REPO_DIR" "$bundle/config/coding-agents/install-policy.py" --home "$USER_HOME"
 
 
 python3 - "$bundle" "$CURRENT" <<'PY'

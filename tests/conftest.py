@@ -192,3 +192,26 @@ def _reset_hot_path_caches():
     _reset_global_state()
     yield
     _reset_global_state()
+
+
+def _commit_as_origin_main(repo: Path) -> Path:
+    import subprocess
+
+    def git(*words: str) -> None:
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "-c", "commit.gpgsign=false", *words], check=True, capture_output=True, timeout=60)
+
+    git("init", "-q", "-b", "main")
+    git("add", "-A")
+    git("commit", "-q", "-m", "policy")
+    origin = repo.with_name(repo.name + "-origin.git")
+    subprocess.run(["git", "clone", "-q", "--bare", str(repo), str(origin)], check=True, capture_output=True,
+                   timeout=60)
+    git("remote", "add", "origin", str(origin))
+    git("fetch", "-q", "origin", "main")
+    return repo
+
+
+@pytest.fixture
+def policy_checkout():
+    return _commit_as_origin_main

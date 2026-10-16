@@ -64,12 +64,13 @@ base_url = "https://example.invalid"
     assert local.read_text() == "resume me\n"
 
 
-def test_dry_installed_writer_and_launcher_patch(tmp_path: Path):
+def test_dry_installed_writer_and_launcher_patch(tmp_path: Path, policy_checkout):
 
     import shutil
 
-    source = tmp_path / "policy"
+    source = tmp_path / "policy-repo" / "config/coding-agents"
     shutil.copytree(ROOT / "config/coding-agents", source)
+    policy_checkout(tmp_path / "policy-repo")
     home = tmp_path / "home"
     result = subprocess.run([sys.executable, str(source / "install-policy.py"), "--home", str(home)],
                             env=os.environ | {"HOME": str(home), "AGENT_LB_URL": "http://127.0.0.1:1"},

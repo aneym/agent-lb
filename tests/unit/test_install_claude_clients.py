@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import _commit_as_origin_main
+
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "scripts" / "install-claude-clients.sh"
 POLICY_INSTALLER = ROOT / "config" / "coding-agents" / "install-policy.py"
@@ -164,7 +166,7 @@ def _copy_client_source(tmp_path: Path) -> Path:
         shutil.copytree(ROOT / directory, source / directory, ignore=shutil.ignore_patterns("__pycache__"))
     (source / "scripts").mkdir()
     shutil.copy2(INSTALLER, source / "scripts" / INSTALLER.name)
-    return source
+    return _commit_as_origin_main(source)
 
 
 def test_installed_commands_and_uninstall_work_without_source_checkout(tmp_path: Path) -> None:
@@ -782,3 +784,35 @@ def test_policy_installer_skips_unsupported_codex_config_and_finishes_converge(t
     assert (home / ".claude/agents/gpt-implementer.md").is_file()
     assert config.read_bytes() == target.read_bytes() == original
     assert config.is_symlink() is (case == "outside-home")
+
+
+def test_policy_installer_owns_the_codex_doc_as_one_block(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    codex_doc = home / ".codex" / "AGENTS.md"
+    codex_doc.parent.mkdir(parents=True)
+    body = (ROOT / "config/coding-agents/codex-AGENTS.md").read_text()
+    codex_doc.write_text(body)
+    for _ in range(2):
+        subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+        text = codex_doc.read_text()
+        assert text.count("<!-- agent-lb:codex-agents:start -->") == 1
+        assert text.count("# Working with Alex") == 1
+        assert "port-free <port>" in text
+
+
+def test_policy_installer_refuses_a_copy_that_is_not_a_verified_checkout(tmp_path: Path, policy_checkout) -> None:
+    copy = tmp_path / "copy" / "config/coding-agents"
+    shutil.copytree(ROOT / "config/coding-agents", copy, ignore=shutil.ignore_patterns("__pycache__"))
+    checkout = tmp_path / "checkout"
+    shutil.copytree(ROOT / "config/coding-agents", checkout / "config/coding-agents",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    policy_checkout(checkout)
+    home = tmp_path / "home"
+    command = [str(copy / "install-policy.py"), "--home", str(home)]
+    alone = subprocess.run(command, capture_output=True, text=True, env=os.environ | {"HOME": str(home)})
+    assert alone.returncode != 0 and "needs a git worktree" in alone.stderr
+    (copy / "ROUTING.md").write_text("tampered\n")
+    tampered = subprocess.run(command, capture_output=True, text=True,
+                              env=os.environ | {"HOME": str(home), "AGENT_LB_POLICY_SOURCE_REPO": str(checkout)})
+    assert tampered.returncode != 0 and "needs a git worktree" in tampered.stderr
+    assert not (home / ".claude").exists()
