@@ -490,6 +490,14 @@ CLOSEOUT_HOOK = {
 }
 
 
+FOCUS_STEAL_HOOK = {
+    "type": "command",
+    "command": '/usr/bin/python3 "$HOME/.agents/policy/coding-agents/hooks/focus-steal-check.py" subagent-stop',
+    "timeout": 15,
+    "statusMessage": "Focus steal check",
+}
+
+
 FACTORY_CONTEXT_HOOK = {
     "type": "command",
     "command": '/usr/bin/python3 "$HOME/.claude/hooks/factory-context.py" 2>/dev/null || true',
@@ -522,6 +530,7 @@ SETTINGS_HOOKS = (
     ("PreToolUse", "Bash", DANGEROUS_GUARD_HOOK, True),
     ("PreToolUse", "Bash", KILL_SCOPE_GUARD_HOOK, True),
     ("SubagentStop", None, CLOSEOUT_HOOK, False),
+    ("SubagentStop", None, FOCUS_STEAL_HOOK, False),
     ("PostToolUse", "Workflow", {"type": "command",
         "command": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-readback.py"',
         "timeout": 5}, False),
