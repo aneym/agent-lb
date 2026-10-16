@@ -19,4 +19,5 @@ def test_seat_record_run_preserves_run_with_malformed_tokens(value: object) -> N
     assert record["runs"][0]["tokens_in"] == 0
     assert record["daily"]["2026-09-30"]["grok-4.7-low"] == {
         "runs": 1, "tokens_in": 0, "tokens_out": 12, "cache_read": 0,
+        "ok": 1, "tokens_known": True,
     }
