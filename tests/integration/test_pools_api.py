@@ -103,8 +103,6 @@ async def test_pools_aggregates_live_windows_and_marks_the_fable_source(async_cl
     late_reset = int((now + timedelta(hours=4)).replace(tzinfo=timezone.utc).timestamp())
 
     async with SessionLocal() as session:
-
-
         session.add(_account("acc-fable-hot", "anthropic", encryptor))
         session.add(_weekly_usage("acc-fable-hot", "anthropic", 30.0))
         session.add(_five_hour_usage("acc-fable-hot", 45.0, late_reset))
@@ -216,3 +214,64 @@ async def test_accounts_exposes_the_fable_scoped_window(async_client, db_setup) 
     assert marked["fresh"] is True
     assert marked["recordedAt"].endswith("Z")
     assert accounts["acc-unmarked"]["fableScopedWeekly"] is None
+
+
+@pytest.mark.asyncio
+async def test_cli_seat_quota_endpoints_read_state_and_preserve_routing(async_client, db_setup, monkeypatch, tmp_path):
+    import json
+
+    del db_setup
+    stamp = datetime.now(timezone.utc)
+    reset = (stamp + timedelta(days=1)).isoformat()
+    path = tmp_path / "seats.json"
+    path.write_text(
+        json.dumps(
+            {
+                "updated_at": stamp.isoformat(),
+                "quota_refreshed_at": stamp.isoformat(),
+                "accounts": {
+                    "fixture": {
+                        "vendor": "muse",
+                        "enabled": True,
+                        "auth_ok": True,
+                        "cooldowns": {"session": reset},
+                        "quota": {
+                            "source": "vendor_observed",
+                            "observedAt": stamp.isoformat(),
+                            "primaryWindowId": "session",
+                            "windows": [
+                                {
+                                    "id": "session",
+                                    "kind": "session",
+                                    "label": "5-hour",
+                                    "durationMins": 300,
+                                    "usedPercent": 101,
+                                    "remainingPercent": 0,
+                                    "resetsAt": reset,
+                                    "source": "vendor_observed",
+                                }
+                            ],
+                        },
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setenv("AGENT_LB_SEAT_STATE", str(path))
+    response = await async_client.get("/api/pools/seat-accounts")
+    assert response.status_code == 200
+    account = response.json()["accounts"][0]
+    assert account["status"] == "rate_limited"
+    assert account["quota"]["windows"][0]["usedPercent"] == 101
+    assert account["today"]["tokensIn"] is None
+    response = await async_client.get("/api/pools")
+    assert response.status_code == 200
+    pool = next(pool for pool in response.json()["pools"] if pool["id"] == "muse")
+    assert pool["eligibleAccounts"] == 1
+    assert pool["headroomPercent"] is None
+    assert pool["windows"][0]["measuredAccounts"] == 1
+    assert pool["quotaSource"] == "vendor_observed"
+    summary = await async_client.get("/api/usage/summary?provider=muse")
+    assert summary.status_code == 200
+    assert summary.json()["provider"] == "muse"
+    assert summary.json()["seatActivity"]["tokensKnown"] is False

@@ -1020,9 +1020,9 @@ def command_pools(args: argparse.Namespace) -> int:
                     and (stamp - checked).total_seconds() < 43200 for r in members)
         document["pools"].append({"id": "muse", "provider": "muse", "kind": "cli_seat",
             "source": "seat_state", "accounts": len(members), "eligibleAccounts": ready,
-            "status": "ok" if ready else "exhausted", "headroomPercent": 100 if ready else 0,
-            "observedRuns": len(runs), "observedTokens": sum((r.get("tokens_in") or 0) +
-                (r.get("tokens_out") or 0) for r in runs), "limitReadback": "unavailable",
+            "status": "ok" if ready else "exhausted", "headroomPercent": None,
+            "observedRuns": len(runs), "observedTokens": (sum(r["tokens_in"] + r["tokens_out"] for r in runs) if runs and
+                all(r.get("tokens_in") is not None and r.get("tokens_out") is not None for r in runs) else None), "limitReadback": "unavailable",
             "usageSource": "observed request log; token counts unavailable when CLI omits usage"})
     now = datetime.now(timezone.utc)
     history = load_pool_history(now)

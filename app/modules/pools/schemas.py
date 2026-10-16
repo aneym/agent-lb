@@ -20,13 +20,24 @@ class PoolRefill(DashboardModel):
     remaining_percent: float
 
 
-class PoolSummary(DashboardModel):
+class PoolWindow(DashboardModel):
+    id: str
+    kind: str
+    label: str
+    remaining_percent: float | None = None
+    used_percent: float | None = None
+    resets_at: datetime | None = None
+    measured_accounts: int = 0
+    source: str
 
+
+class PoolSummary(DashboardModel):
+    windows: list[PoolWindow] | None = Field(default=None, exclude_if=lambda value: value is None)
+    quota_source: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     id: str
     provider: str
     kind: str
-
 
     accounts: int
     eligible_accounts: int
@@ -44,8 +55,6 @@ class PoolSummary(DashboardModel):
     def usable_accounts(self) -> int:
         return self.eligible_accounts
 
-
-
     headroom_percent: float | None = None
     aggregate_remaining_percent: float | None = None
 
@@ -58,14 +67,10 @@ class PoolSummary(DashboardModel):
 
     source: str | None = None
 
-
-
     weekly_remaining_percent: float | None = None
     weekly_reset_at: datetime | None = None
 
-
     weekly_pace_percent: float | None = None
-
 
     observed_runs: int | None = None
     observed_tokens: int | None = None
@@ -76,7 +81,7 @@ class PoolSummary(DashboardModel):
     burn24h_percent: float | None = Field(default=None, alias="burn24hPercent", exclude_if=lambda value: value is None)
     percent_used: float | None = Field(default=None, exclude_if=lambda value: value is None)
     percent_source: str | None = Field(
-        default=None, pattern=r"^(vendor|estimate)$", exclude_if=lambda value: value is None
+        default=None, pattern=r"^(vendor|vendor_observed|estimate)$", exclude_if=lambda value: value is None
     )
     cycle_reset_at: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
     unbudgeted_accounts: int | None = Field(default=None, exclude_if=lambda value: value is None)
