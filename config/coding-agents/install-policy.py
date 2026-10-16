@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -371,6 +372,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--uninstall", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--no-box-sync", action="store_true", help="Skip syncing routing policy to factory boxes")
     parser.add_argument("--reason", help="Logged reason for forcing installation from a stale revision")
     parser.add_argument(
         "--hook-dispatcher", choices=("on", "off"),
@@ -1510,6 +1512,72 @@ def write_atomic(path: Path, content: str) -> None:
             os.unlink(temp_name)
 
 
+def policy_box_hosts(home: Path) -> list[str]:
+    registry = Path(os.environ.get("FACTORY_HOME") or home / ".agent-rails/factory").expanduser()
+    defaults = home / ".agent-rails/factory-runtime/fleet/config"
+
+    def load(name: str, override: str | None = None) -> Any:
+        path = Path(override).expanduser() if override else registry / name
+        if not path.exists() and not override:
+            path = defaults / name
+        return json.loads(path.read_text())
+
+    machines = load("machines.json", os.environ.get("FACTORY_MACHINES"))
+    boxes = load("boxes.json", os.environ.get("FLEET_BOXES_FILE"))
+    boxes = boxes.get("boxes", []) if isinstance(boxes, dict) else boxes
+    disabled = {row.get("name") for row in [*machines, *boxes]
+                if row.get("enabled") is False or row.get("kind") == "slot"}
+    known = {name for row in machines for name in [row["name"], *row.get("aliases", [])]}
+    hosts = [row["name"] for row in machines
+             if row.get("job_host") is True and not str(row.get("os", "")).lower().startswith("macos")
+             and row["name"] not in disabled and row.get("ssh", row["name"]) not in disabled]
+    hosts.extend(row["name"] for row in boxes
+                 if row.get("kind") == "plain" and row.get("enabled") is True and row["name"] not in known)
+    return list(dict.fromkeys(hosts))
+
+
+def sync_policy_boxes(home: Path) -> None:
+    try:
+        hosts = policy_box_hosts(home)
+        table = home / ROUTING_TABLE
+        expected = {"policy_rev": json.loads(table.read_text())["policy_rev"],
+                    "table_sha256": hashlib.sha256(table.read_bytes()).hexdigest()}
+        files = [home / ".agent-lb/bin/route", home / ".agent-lb/bin/seat", table]
+        if not all(path.is_file() for path in files):
+            raise ValueError("installed route, seat or routing table is missing")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        print(f"WARNING: box policy sync unavailable ({type(exc).__name__})", file=sys.stderr)
+        return
+    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+    ssh_config = home / ".agent-rails/factory/ssh/hosts.conf"
+    if ssh_config.is_file():
+        ssh += ["-F", str(ssh_config)]
+    verify = ('ROUTE_TABLE="$HOME/.agent-lb/managed/coding-agents/routing-table.json" '
+              'python3 "$HOME/.agent-lb/bin/route" policy snapshot --json')
+    for host in hosts:
+        try:
+            if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", host):
+                raise ValueError("invalid box name")
+            subprocess.run([*ssh, host, 'mkdir -p "$HOME/.agent-lb/bin" '
+                            '"$HOME/.agent-lb/managed/coding-agents"'],
+                           capture_output=True, text=True, check=True, timeout=30)
+            for sources, destination in ((files[:2], ".agent-lb/bin/"),
+                                         (files[2:], ".agent-lb/managed/coding-agents/")):
+                subprocess.run(["rsync", "-az", "-e", shlex.join(ssh),
+                                *(str(path) for path in sources), f"{host}:{destination}"],
+                               capture_output=True, text=True, check=True, timeout=60)
+            result = subprocess.run([*ssh, host, verify], capture_output=True, text=True,
+                                    check=True, timeout=60)
+            actual = json.loads(result.stdout)
+            if any(actual.get(key) != value for key, value in expected.items()):
+                raise ValueError("policy_rev or table_sha256 mismatch")
+            print(f"box policy synced {host}: policy_rev={expected['policy_rev']} "
+                  f"table_sha256={expected['table_sha256']}")
+        except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
+            print(f"WARNING: box policy sync failed for {host} ({type(exc).__name__}); "
+                  "local install succeeded", file=sys.stderr)
+
+
 def main() -> int:
     args = parse_args()
     if args.check_hook_paths:
@@ -2067,7 +2135,11 @@ def locked_main() -> int:
         stdout = sys.stdout
         sys.stdout = ProgressStream(stdout)
         try:
-            return main()
+            result = main()
+            if result == 0 and not (args.check_hook_paths or args.preview or args.uninstall
+                                    or args.check or args.no_box_sync):
+                sync_policy_boxes(home)
+            return result
         finally:
             sys.stdout = stdout
             handle.seek(0)
