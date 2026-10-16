@@ -195,3 +195,28 @@ def test_provider_refusals_never_reach_upstream(provider, model, keys, status, c
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
     assert _KeyedUpstream.seen == []
+
+
+@pytest.mark.parametrize(
+    ("mode", "status", "auth"),
+    [(None, 503, None), (0o644, 503, None), (0o600, 200, "Bearer fresh-key")],
+)
+def test_provider_reads_credential_file_and_never_the_keychain(provider, tmp_path, mode, status, auth) -> None:
+    monkeypatch, _, client = provider
+    marker = tmp_path / "security-called"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_security = fake_bin / "security"
+    fake_security.write_text(f"#!/bin/sh\ntouch {marker}\nexit 1\n")
+    fake_security.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:/usr/bin:/bin")
+    credential_file = tmp_path / "muse-credential.json"
+    if mode is not None:
+        credential_file.write_text(json.dumps({"api_key": "fresh-key"}))
+        credential_file.chmod(mode)
+    monkeypatch.setattr(meta_service, "CREDENTIAL_FILE", credential_file, raising=False)
+    monkeypatch.setattr(meta_service, "credential", meta_service.MuseCredential())
+    response = client.post("/muse/v1/responses", json={"model": "muse-wonder-1.0", "input": "hi"})
+    assert response.status_code == status
+    assert [call["auth"] for call in _KeyedUpstream.seen] == ([auth] if auth else [])
+    assert not marker.exists()

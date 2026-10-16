@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -37,8 +36,9 @@ _TAIL_BYTES = 128 * 1024
 router = APIRouter(prefix="/muse-api", tags=["muse"])
 provider_router = APIRouter(prefix="/muse/v1", tags=["muse"])
 
-CREDENTIAL_SERVICE = os.environ.get("MUSE_LB_CREDENTIAL_SERVICE", "ai.meta.dev.credentials")
-CREDENTIAL_ACCOUNT = os.environ.get("MUSE_LB_CREDENTIAL_ACCOUNT", "meta")
+CREDENTIAL_FILE = Path(
+    os.environ.get("MUSE_LB_CREDENTIAL_FILE", str(Path.home() / ".agent-lb/secrets/muse-credential.json"))
+).expanduser()
 CREDENTIAL_TTL_SECONDS = 300.0
 DEFAULT_MODEL = "muse-wonder-1.0"
 _CLIENT_AUTH_HEADERS = {"authorization", "x-api-key", "cookie"}
@@ -52,19 +52,10 @@ class MuseCredential:
 
     def _read(self) -> str | None:
         try:
-            result = subprocess.run(
-                ["security", "find-generic-password", "-s", CREDENTIAL_SERVICE, "-a", CREDENTIAL_ACCOUNT, "-w"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        if result.returncode != 0:
-            return None
-        try:
-            secret = json.loads(result.stdout.strip())
-        except ValueError:
+            if CREDENTIAL_FILE.stat().st_mode & 0o077:
+                return None
+            secret = json.loads(CREDENTIAL_FILE.read_text())
+        except (OSError, ValueError):
             return None
         key = secret.get("api_key") if isinstance(secret, dict) else None
         return key if isinstance(key, str) and key else None
