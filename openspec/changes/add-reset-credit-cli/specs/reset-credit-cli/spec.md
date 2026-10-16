@@ -27,7 +27,7 @@ When a Claude reset grant has `use_requires_limit: false`, the service MUST perm
 
 ### Requirement: Redemption is deliberate and single-attempt
 
-The CLI MUST send at most one POST to `/api/accounts/{id}/rate-limit-reset-credits/consume`, with optional `creditId`, and MUST NOT send `overrideDailyLimit`. It MUST require `--yes` or an affirmative interactive confirmation before POST. It MUST exit nonzero without POST when inventory shows no available credits or a known ineligible state. It MUST display response `status` and `code`, and exit nonzero for any status other than `redeemed`.
+The CLI MUST send at most one POST to `/api/accounts/{id}/rate-limit-reset-credits/consume`, with optional `creditId`. It MUST send `overrideDailyLimit` only for a Claude account when the operator explicitly supplies `--override-daily-limit`; the flag bypasses Agent LB's local daily cap but cannot bypass provider eligibility. It MUST require `--yes` or an affirmative interactive confirmation before POST. It MUST exit nonzero without POST when inventory shows no available credits or a known ineligible state. It MUST display response `status` and `code`, and exit nonzero for any status other than `redeemed`.
 
 #### Scenario: Declined confirmation
 - **WHEN** the operator declines or stdin is noninteractive without `--yes`

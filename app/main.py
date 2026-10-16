@@ -68,6 +68,7 @@ from app.modules.health import api as health_api
 from app.modules.oauth import api as oauth_api
 from app.modules.pools import api as pools_api
 from app.modules.proxy import api as proxy_api
+from app.modules.proxy import meta_service as meta_api
 from app.modules.proxy.durable_bridge_repository import missing_durable_bridge_tables
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.proxy.ring_membership import (
@@ -461,6 +462,7 @@ def create_app() -> FastAPI:
     app.include_router(proxy_api.transcribe_router)
     app.include_router(proxy_api.files_router)
     app.include_router(proxy_api.usage_router)
+    app.include_router(meta_api.router)
     app.include_router(audit_api.router)
     app.include_router(accounts_api.router)
     app.include_router(accounts_api.availability_router)

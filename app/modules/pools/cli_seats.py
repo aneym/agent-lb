@@ -21,7 +21,7 @@ from pydantic import Field
 from app.modules.pools.schemas import POOL_STATUS_EXHAUSTED, POOL_STATUS_OK, PoolSummary
 from app.modules.shared.schemas import DashboardModel
 
-CLI_SEAT_VENDORS = ("cursor", "devin")
+CLI_SEAT_VENDORS = ("cursor", "devin", "muse")
 POOL_KIND_CLI_SEAT = "cli_seat"
 POOL_SOURCE_SEAT_STATE = "seat_state"
 # A state nobody has touched for this long says nothing about auth today.
@@ -151,13 +151,14 @@ def cli_seat_pools(seats: SeatAccountsResponse) -> list[PoolSummary]:
                 kind=POOL_KIND_CLI_SEAT,
                 accounts=len(members),
                 eligible_accounts=len(ready),
-                headroom_percent=headroom,
-                aggregate_remaining_percent=100.0 * len(ready) / len(members),
+                headroom_percent=None if vendor == "muse" else headroom,
+                aggregate_remaining_percent=None if vendor == "muse" else 100.0 * len(ready) / len(members),
                 reset_at=None if ready or not cooling else min(cooling),
                 status=POOL_STATUS_OK if ready else POOL_STATUS_EXHAUSTED,
                 source=seats.source,
                 observed_runs=sum(account.last_day.runs for account in members),
-                observed_tokens=sum(account.last_day.tokens_in + account.last_day.tokens_out for account in members),
+                observed_tokens=(None if vendor == "muse" else
+                                 sum(account.last_day.tokens_in + account.last_day.tokens_out for account in members)),
             )
         )
     return pools

@@ -38,6 +38,10 @@ def run(args: Any) -> None:
         if not args.yes and not _confirm(account):
             raise ResetCliError("redemption not confirmed; no redemption attempted")
         body = {"creditId": credit_id} if credit_id is not None else {}
+        if args.override_daily_limit:
+            if account.get("provider") != "anthropic":
+                raise ResetCliError("--override-daily-limit is only supported for Claude accounts")
+            body["overrideDailyLimit"] = True
         result = _request(base_url, inventory_path + "/consume", args.timeout, body=body)
         if (
             not isinstance(result, dict)
@@ -128,6 +132,14 @@ def _request(base_url: str, path: str, timeout: float, *, body: dict[str, Any] |
                 raise ResetCliError(f"service returned HTTP {response.status}")
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
+        if exc.code == 409:
+            try:
+                error = json.loads(exc.read().decode("utf-8")).get("error", {})
+            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+                error = {}
+            message = error.get("message") if isinstance(error, dict) else None
+            if isinstance(message, str) and message:
+                raise ResetCliError(f"service returned HTTP 409: {message[:200]}") from exc
         raise ResetCliError(f"service returned HTTP {exc.code}") from exc
     except (URLError, TimeoutError, OSError) as exc:
         raise ResetCliError("service is unavailable or did not respond") from exc

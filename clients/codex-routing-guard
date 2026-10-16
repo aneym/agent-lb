@@ -22,7 +22,7 @@ MANAGED = {
     "base_url": f'"{BASE_URL}"',
     "wire_api": '"responses"',
     "supports_websockets": "true",
-    "requires_openai_auth": "true",
+    "requires_openai_auth": "false",
 }
 ASSIGNMENT = re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z0-9_-]+)(?P<gap>\s*=\s*)(?P<value>.*?)(?P<ending>\r?\n)?$")
 TABLE = re.compile(r"^\s*\[(?P<name>[^]]+)]\s*(?:#.*)?(?:\r?\n)?$")
