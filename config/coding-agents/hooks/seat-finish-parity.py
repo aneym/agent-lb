@@ -29,7 +29,7 @@ class LaneBoundary(unittest.TestCase):
                 self.assertNotIn('anything under ~/.agent-rails/lanes/', rendered)
 
     def test_unresolved_and_invalid_lane(self):
-        for env in [{}, {'LANE_DIR': '/Volumes/StudioExt/repos'}, {'LANE_DIR': '~/.agent-rails/lanes/../factory'}]:
+        for env in [{}, {'LANE_DIR': '/tmp/repos'}, {'LANE_DIR': '~/.agent-rails/lanes/../factory'}]:
             self.assertIsNone(finish.own_lane('', env))
             self.assertIn('No lane-directory edits are allowed', finish.render('', env))
 

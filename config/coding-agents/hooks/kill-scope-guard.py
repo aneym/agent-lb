@@ -312,7 +312,7 @@ def main():
     if "port-free" not in command and any(p.search(command) for p in PORT_KILL):
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": (
             "kill-scope-guard (warn only, not blocked): lsof -t lists every client of a port, not just its "
-            "listener (2026-10-16 this SIGKILLed Tailscale); free a port with `port-free <port>`, which kills "
+            "listener (2026-10-16 this SIGKILLed the VPN daemon); free a port with `port-free <port>`, which kills "
             "only a listener you started.")}}))
         return 0
     if not re.search(r"\b(pkill|killall|pgrep)\b", command):

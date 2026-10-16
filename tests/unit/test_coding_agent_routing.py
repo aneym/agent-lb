@@ -128,9 +128,9 @@ def test_verify_routing_rejects_each_factory_violation(
                 f.write("\n## Undated\n")
         elif violation == "oversized-doc":
             path = source / "ROUTING.md"
-            path.write_text(path.read_text() + "\n" * (152 - len(path.read_text().splitlines())))
+            path.write_text(path.read_text() + "\n" * (202 - len(path.read_text().splitlines())))
         elif violation == "missing-definition":
-            (source / "agents" / "sol-consult.md").unlink()
+            (source / "agents" / "astra-consult.md").unlink()
         elif violation == "definition-without-seat":
             definition = (source / "agents" / "gpt-implementer.md").read_text()
             (source / "agents" / "extra-seat.md").write_text(
@@ -194,7 +194,7 @@ def test_fable_telemetry_and_historical_fixtures_are_not_route_migrated() -> Non
     assert '"model":"claude-fable-5"' in fixture
 
 
-def test_install_pins_the_sonnet_alias_to_the_newest_listed_sonnet(tmp_path: Path) -> None:
+def test_install_pins_the_sonnet_alias_to_the_policy_table_pin(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     fixtures = tmp_path / "fixtures"
@@ -209,7 +209,6 @@ def test_install_pins_the_sonnet_alias_to_the_newest_listed_sonnet(tmp_path: Pat
                        capture_output=True, text=True, timeout=120)
         return json.loads((home / ".claude" / "settings.json").read_text())["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"]
 
-    assert install({"ROUTE_FIXTURE_DIR": str(fixtures)}) == "claude-sonnet-6"
+    assert install({"ROUTE_FIXTURE_DIR": str(fixtures)}) == "claude-sonnet-5-5"
 
-    (tmp_path / "cache" / "route-anthropic-models.json").unlink()
     assert install({}) == "claude-sonnet-5-5"
