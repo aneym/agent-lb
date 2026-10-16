@@ -67,6 +67,15 @@ from urllib.parse import urlsplit
 
 VENDORS = ("cursor", "devin", "muse")
 MUSE_PIN = "Muse Code 1.4.9 (1.4.9-R6297.1)"
+MUSE_MIN = (1, 4, 9)
+
+
+def muse_version_ok(text: str) -> bool:
+    found = re.search(r"Muse Code (\d+)\.(\d+)\.(\d+)", text)
+    if not found:
+        return False
+    version = tuple(int(part) for part in found.groups())
+    return version[0] == MUSE_MIN[0] and version >= MUSE_MIN
 SEAT_FOR_VENDOR = {"cursor": "cursor-seat", "devin": "devin-seat", "muse": "muse-seat-local"}
 
 EXIT_OK = 0
@@ -437,7 +446,7 @@ def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", completed.stdout + "\n" + completed.stderr)
     if vendor == "muse":
         # Installation is not an auth proof. Actual dispatch reports auth errors.
-        ok = completed.returncode == 0 and MUSE_PIN in text
+        ok = completed.returncode == 0 and muse_version_ok(text)
         identity = {"version": text.strip(), "auth_source": "existing-login-unverified"}
     elif vendor == "cursor" and account.get("auth") == "api-key":
         ok = completed.returncode == 0 and not AUTH_RE.search(text)
@@ -1485,31 +1494,109 @@ class RunControl:
 
 
 def run_stoppable(command: list[str], control: RunControl | None, *, input: str | None, timeout: float,
-                  **kwargs: Any) -> subprocess.CompletedProcess[str]:
+                  echo: Any = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
     """subprocess.run, except that under a RunControl the command runs in its own process group, which is sent
     SIGTERM once the run must stop and SIGKILL on a second signal or after STOP_GRACE_SECONDS. It returns only once
     the whole group is gone: a descendant that outlives the leader is stopped the same way, so capacity is never
     released while a process of the run still works."""
-    if control is None:
+    if control is None and echo is None:
         return subprocess.run(command, input=input, capture_output=True, text=True, timeout=timeout, check=False,
                               **kwargs)
+    control = control or RunControl()
     if input is not None:
         kwargs["stdin"] = subprocess.PIPE
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                start_new_session=True, **kwargs)
     stop = GroupStop(process.pid, control, time.monotonic() + timeout)
-    pending = input
-    while True:
-        try:
-            stdout, stderr = process.communicate(pending, timeout=STOP_POLL_SECONDS)
-            break
-        except subprocess.TimeoutExpired:
-            pending = None
-        stop.step(leader_done=False)
+    if echo is not None:
+        stdout, stderr = echo_until_exit(process, stop, input, echo)
+    else:
+        pending = input
+        while True:
+            try:
+                stdout, stderr = process.communicate(pending, timeout=STOP_POLL_SECONDS)
+                break
+            except subprocess.TimeoutExpired:
+                pending = None
+            stop.step(leader_done=False)
     stop.drain()
     if stop.timed_out:
         raise subprocess.TimeoutExpired(command, timeout, stdout, stderr)
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def echo_until_exit(process: subprocess.Popen[str], stop: GroupStop, input: str | None,
+                    echo: Any) -> tuple[str, str]:
+    out: list[str] = []
+    err: list[str] = []
+
+    def pump(source: Any, sink: list[str], show: bool) -> None:
+        for line in source:
+            sink.append(line)
+            if show:
+                try:
+                    shown = echo(line)
+                except Exception:
+                    shown = None
+                if shown:
+                    print(shown, file=sys.stderr, flush=True)
+
+    readers = [threading.Thread(target=pump, args=(process.stdout, out, True), daemon=True),
+               threading.Thread(target=pump, args=(process.stderr, err, False), daemon=True)]
+    for reader in readers:
+        reader.start()
+    if input is not None and process.stdin is not None:
+        try:
+            process.stdin.write(input)
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+    while True:
+        try:
+            process.wait(timeout=STOP_POLL_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            stop.step(leader_done=False)
+    for reader in readers:
+        reader.join(timeout=5)
+    return "".join(out), "".join(err)
+
+
+def muse_call(call: dict[str, Any]) -> str:
+    name = str(call.get("name") or "tool")
+    try:
+        args = json.loads(call.get("args") or "{}")
+    except ValueError:
+        args = {}
+    first = next((v for v in args.values() if isinstance(v, str)), "") if isinstance(args, dict) else ""
+    return f"{name} {' '.join(first.split())[:120]}".rstrip()
+
+
+def muse_progress(line: str) -> str | None:
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return None
+    payload = event.get("payload") if isinstance(event, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    inner = payload.get("event") if isinstance(payload.get("event"), dict) else {}
+    kind = inner.get("kind")
+    if kind == "reasoning_summary_committed" and inner.get("text"):
+        return "muse: " + " ".join(str(inner["text"]).split())[:200]
+    if kind == "assistant_tool_calls_committed":
+        calls = [muse_call(call) for call in inner.get("tool_calls") or [] if isinstance(call, dict)]
+        return "muse: " + "; ".join(calls)[:240] if calls else None
+    if kind == "todo_snapshot_updated":
+        items = [i for i in inner.get("items") or [] if isinstance(i, dict)]
+        active = next((i.get("text") for i in items if i.get("status") == "in_progress"), None)
+        done = sum(1 for i in items if i.get("status") == "completed")
+        return f"muse: todo {done}/{len(items)} done" + (f", now: {active}"[:160] if active else "")
+    if kind == "status" and inner.get("message") and not re.search(r"attempt 1/|serialized", str(inner["message"])):
+        return "muse: " + str(inner["message"])[:200]
+    if payload.get("terminal"):
+        return f"muse: run {payload['terminal']}"
+    return None
 
 
 def group_alive(pgid: int) -> bool:
@@ -1710,8 +1797,10 @@ def command_run(args: argparse.Namespace) -> int:
         version = subprocess.run([cli_bin("muse"), "--version"], capture_output=True, text=True,
                                  env={**os.environ, "MUSE_NO_AUTO_UPDATE": "1"},
                                  timeout=PROBE_TIMEOUT_SECONDS, check=False)
-        if version.returncode or version.stdout.strip() != MUSE_PIN:
-            fail(f"Muse seat requires pinned {MUSE_PIN}; found {version.stdout.strip() or 'none'}")
+        if version.returncode or not muse_version_ok(version.stdout):
+            fail(f"Muse seat requires Muse Code {MUSE_MIN[0]}.x at or above {MUSE_PIN}; "
+                 f"found {version.stdout.strip() or 'none'}")
+        print(f"seat: {version.stdout.strip()}", file=sys.stderr, flush=True)
     registry = load_registry() + lease_accounts(args.vendor)
     state = load_state()
     run_id = f"seat-{uuid.uuid4()}"
@@ -1877,6 +1966,7 @@ def run_on_accounts(
                         input=prompt_file.read_text(encoding="utf-8") if args.vendor == "cursor" else None,
                         stdin=None if args.vendor == "cursor" else subprocess.DEVNULL,
                         timeout=args.timeout,
+                        echo=muse_progress if args.vendor == "muse" else None,
                     )
                     outcome = parse_outcome(args.vendor, completed, export_file)
                 except subprocess.TimeoutExpired:

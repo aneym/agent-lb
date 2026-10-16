@@ -68,6 +68,8 @@ print(json.dumps({'id':'event-1', 'stream':{'kind':'session','id':'00000000-0000
     outcome = json.loads(completed.stdout)
     UUID(outcome["vendor_session_id"])
     assert outcome["result"] == "Created result.txt"
+    assert "seat: Muse Code 1.4.9" in completed.stderr
+    assert "muse: run completed" in completed.stderr
     assert outcome["model"] == "muse-wonder-1.0"
     assert outcome["tokens_in"] is None and outcome["tokens_out"] is None
     assert (tmp_path / "result.txt").read_text() == "Muse seat check\n"
@@ -95,5 +97,5 @@ print(json.dumps({'id':'event-1', 'stream':{'kind':'session','id':'00000000-0000
     assert pool.observed_runs == 2
     (tmp_path / "wrong-version").touch()
     wrong = seat(*args)
-    assert wrong.returncode != 0 and "requires pinned" in wrong.stderr
+    assert wrong.returncode != 0 and "Muse seat requires Muse Code 1.x" in wrong.stderr
     assert len((tmp_path / "dispatch.jsonl").read_text().splitlines()) == 4
