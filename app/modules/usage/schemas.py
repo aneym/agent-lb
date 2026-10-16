@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
+from app.modules.pools.cli_seats import SeatToday
 from app.modules.shared.schemas import DashboardModel
 
 
@@ -28,7 +29,19 @@ class UsageMetrics(DashboardModel):
     top_error: str | None = None
 
 
+class SeatActivityModel(DashboardModel):
+    model: str
+    runs: int
+
+
+class SeatActivity(SeatToday):
+    period_hours: int = 168
+    models: list[SeatActivityModel] = Field(default_factory=list)
+
+
 class UsageSummaryResponse(DashboardModel):
+    provider: str | None = None
+    seat_activity: SeatActivity | None = None
 
     primary_window: UsageWindow | None = None
     secondary_window: UsageWindow | None = None

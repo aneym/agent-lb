@@ -8,6 +8,7 @@ from app.core.usage.types import UsageCostSummary, UsageMetricsSummary, UsageWin
 from app.core.utils.time import utcnow
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import subscription_usable_accounts
+from app.modules.pools.cli_seats import read_seat_accounts, seat_activity
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.builders import (
     build_usage_history_response,
@@ -19,6 +20,7 @@ from app.modules.usage.repository import UsageRepository
 from app.modules.usage.schemas import (
     CallerUsageResponse,
     CallerUsageRow,
+    SeatActivity,
     UsageHistoryResponse,
     UsageSummaryResponse,
     UsageWindowResponse,
@@ -67,7 +69,7 @@ class UsageService:
                 account_ids=account_ids,
                 provider=provider,
             )
-        return build_usage_summary_response(
+        response = build_usage_summary_response(
             accounts=accounts,
             primary_rows=primary_rows,
             secondary_rows=secondary_rows,
@@ -75,6 +77,14 @@ class UsageService:
             logs_secondary=[],
             metrics_override=metrics_override,
             cost_override=cost_override,
+        )
+        seats = read_seat_accounts()
+        members = [account for account in seats.accounts if not provider or account.vendor == provider.lower()]
+        activity = seat_activity(members, now)
+        payload = activity.model_dump(exclude={"models"})
+        payload["models"] = [{"model": item.model, "runs": item.runs} for item in activity.models]
+        return response.model_copy(
+            update={"provider": provider, "seat_activity": SeatActivity(**payload) if members else None}
         )
 
     async def _log_window_metrics(
@@ -85,10 +95,6 @@ class UsageService:
         account_ids: set[str],
         provider: str | None,
     ) -> tuple[UsageMetricsSummary, UsageCostSummary]:
-
-
-
-
 
         cache_key = (provider or "", secondary_minutes, tuple(sorted(account_ids)))
         mono_now = time.monotonic()

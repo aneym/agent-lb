@@ -67,6 +67,7 @@ from app.modules.firewall import api as firewall_api
 from app.modules.health import api as health_api
 from app.modules.oauth import api as oauth_api
 from app.modules.pools import api as pools_api
+from app.modules.pools.seat_quota_scheduler import build_seat_quota_scheduler
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy import meta_service as meta_api
 from app.modules.proxy.durable_bridge_repository import missing_durable_bridge_tables
@@ -177,6 +178,7 @@ async def lifespan(app: FastAPI):
         startup_module.mark_bridge_durable_schema_ready()
     async with startup_recorder.phase("schedulers"):
         usage_scheduler = build_usage_refresh_scheduler()
+        seat_quota_scheduler = build_seat_quota_scheduler()
         api_key_limit_reset_scheduler = build_api_key_limit_reset_scheduler()
         model_scheduler = build_model_refresh_scheduler()
         sticky_session_cleanup_scheduler = build_sticky_session_cleanup_scheduler()
@@ -195,6 +197,7 @@ async def lifespan(app: FastAPI):
             warning_threshold_seconds=settings.event_loop_lag_warning_threshold_seconds
         )
         await usage_scheduler.start()
+        await seat_quota_scheduler.start()
         await api_key_limit_reset_scheduler.start()
         await model_scheduler.start()
         await sticky_session_cleanup_scheduler.start()
@@ -387,6 +390,7 @@ async def lifespan(app: FastAPI):
         await sticky_session_cleanup_scheduler.stop()
         await model_scheduler.stop()
         await api_key_limit_reset_scheduler.stop()
+        await seat_quota_scheduler.stop()
         await usage_scheduler.stop()
         try:
             await close_http_client()
