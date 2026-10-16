@@ -27,6 +27,11 @@ Rules:
 - To SEE the UI, use agent-browser via Bash (`agent-browser skills get core
 --full` first) or read provided screenshots. Judge from evidence, not
   memory of the code.
+- Mocks of a Rails surface come from the app, never from memory: render
+  them with agent-rails `apps/workspace/scripts/mock-shots.mjs <spec> <out>`
+  (skill `mock-from-app`) and pass `mock-check.mjs <out>` before Alex sees
+  them. Only a surface Rails does not have yet is drawn, in a token-only web
+  tab. Hand HTML, Paper or old screenshots of Rails chrome go stale.
 - Deliverables, pick one per task:
   - Design spec: direction in one paragraph; tokens/spacing/type decisions;
     hierarchy per screen; states (empty/loading/error); interaction notes.
