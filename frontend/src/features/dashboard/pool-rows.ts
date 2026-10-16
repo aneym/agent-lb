@@ -4,9 +4,21 @@ export type PoolRefill = {
   remainingPercent: number;
 };
 
+export type DashboardPoolWindow = {
+  id: string;
+  kind: string;
+  label: string;
+  remainingPercent: number | null;
+  usedPercent?: number | null;
+  resetsAt: string | null;
+  measuredAccounts?: number;
+  source?: string | null;
+};
+
 export type DashboardPool = {
   id: string;
   provider: string;
+  kind?: string;
   accounts: number;
   eligibleAccounts: number;
   status: string;
@@ -21,6 +33,8 @@ export type DashboardPool = {
   refills?: PoolRefill[] | null;
   usableAccounts?: number | null;
   totalAccounts?: number | null;
+  windows?: DashboardPoolWindow[] | null;
+  quotaSource?: string | null;
 };
 
 export type PoolTone = "success" | "warning" | "danger";
@@ -34,25 +48,46 @@ export type PoolRow = {
   subline: string | null;
 };
 
-const ORDER = ["anthropic-general", "openai-codex", "cursor-models", "cursor-other", "devin"] as const;
+const ORDER = ["anthropic-general", "openai-codex", "cursor-models", "cursor-other", "devin", "muse"];
 
-const NAMES: Record<(typeof ORDER)[number], string> = {
+const NAMES: Record<string, string> = {
   "anthropic-general": "Claude",
   "openai-codex": "OpenAI",
   "cursor-models": "Cursor models",
   "cursor-other": "Cursor other",
   devin: "Devin",
+  muse: "Muse",
 };
 
-function canonicalId(pool: DashboardPool): (typeof ORDER)[number] | null {
-  if ((ORDER as readonly string[]).includes(pool.id)) return pool.id as (typeof ORDER)[number];
+const SEAT_KINDS = ["cli_seat", "cli_seat_budget"];
+const SEAT_PROVIDERS = ["cursor", "devin", "muse"];
+
+function isSeat(pool: DashboardPool): boolean {
+  return SEAT_KINDS.includes(pool.kind ?? "") || SEAT_PROVIDERS.includes(pool.provider);
+}
+
+function canonicalId(pool: DashboardPool): string | null {
+  if (ORDER.includes(pool.id)) return pool.id;
   if (pool.provider === "anthropic") return "anthropic-general";
   if (pool.provider === "openai") return "openai-codex";
-  if (pool.provider === "devin") return "devin";
+  if (isSeat(pool)) return pool.id;
   return null;
 }
 
+function poolName(id: string): string {
+  return NAMES[id] ?? id.charAt(0).toUpperCase() + id.slice(1).replaceAll("-", " ");
+}
+
+function tightestWindow(pool: DashboardPool): DashboardPoolWindow | null {
+  const measured = (pool.windows ?? []).filter((w) => w.remainingPercent != null);
+  if (!measured.length) return null;
+  return measured.reduce((low, w) => ((w.remainingPercent as number) < (low.remainingPercent as number) ? w : low));
+}
+
 function remainingPercent(pool: DashboardPool): number | null {
+  const window = tightestWindow(pool);
+  if (window) return window.remainingPercent;
+  if (pool.windows && pool.quotaSource === "unavailable") return null;
   if (pool.provider === "cursor" && pool.percentUsed != null) return Math.max(0, 100 - pool.percentUsed);
   return pool.weeklyRemainingPercent ?? pool.aggregateRemainingPercent ?? null;
 }
@@ -99,7 +134,35 @@ function sameDay(a: string, b: Date, timeZone: string): boolean {
   return fmt.format(new Date(a)) === fmt.format(b);
 }
 
+const KIND_WORD: Record<string, string> = {
+  session: "5-hour",
+  daily: "daily",
+  weekly: "weekly",
+  monthly: "monthly",
+};
+
+function vendorName(provider: string): string {
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+function windowSubline(pool: DashboardPool, out: boolean, timeZone: string): string | null {
+  if (pool.windows && !tightestWindow(pool) && pool.quotaSource === "unavailable") {
+    return `not reported by ${vendorName(pool.provider)}`;
+  }
+  const window = tightestWindow(pool);
+  if (!window) return null;
+  const reset = window.resetsAt;
+  const word = KIND_WORD[window.kind] ?? window.kind;
+  if (window.source === "estimate") return reset ? `estimate · resets ${monthDay(reset, timeZone)}` : "estimate";
+  if (out) return reset ? `back ${monthDay(reset, timeZone)}` : null;
+  if (!reset) return word;
+  return window.kind === "session" || window.kind === "daily"
+    ? `${word} · resets ${clock(reset, timeZone)}`
+    : `${word} · resets ${monthDay(reset, timeZone)}`;
+}
+
 function subline(pool: DashboardPool, out: boolean, now: Date, timeZone: string): string | null {
+  if (pool.windows && isSeat(pool)) return windowSubline(pool, out, timeZone);
   if (pool.percentSource === "estimate") {
     const reset = pool.cycleResetAt || pool.weeklyResetAt || pool.resetAt;
     return reset ? `estimate · resets ${monthDay(reset, timeZone)}` : "estimate";
@@ -118,14 +181,23 @@ function subline(pool: DashboardPool, out: boolean, now: Date, timeZone: string)
 }
 
 export function poolRows(pools: DashboardPool[], now: Date, timeZone: string): PoolRow[] {
-  const byId = new Map<(typeof ORDER)[number], DashboardPool>();
+  const byId = new Map<string, DashboardPool>();
+  const shadowed = (pool: DashboardPool) =>
+    pool.id === pool.provider &&
+    isSeat(pool) &&
+    pools.some((other) => other.provider === pool.provider && other.id !== pool.id);
   for (const pool of pools) {
+    if (shadowed(pool)) continue;
     const id = canonicalId(pool);
     if (!id) continue;
     const existing = byId.get(id);
     if (!existing || (pool.id === id && existing.id !== id)) byId.set(id, pool);
   }
-  return ORDER.flatMap((id) => {
+  const ids = [
+    ...ORDER.filter((id) => byId.has(id)),
+    ...[...byId.keys()].filter((id) => !ORDER.includes(id)),
+  ];
+  return ids.flatMap((id) => {
     const pool = byId.get(id);
     if (!pool) return [];
     const remaining = remainingPercent(pool);
@@ -139,7 +211,7 @@ export function poolRows(pools: DashboardPool[], now: Date, timeZone: string): P
         : `${Math.round(remaining)}% · ${usable}/${total}`;
     return [
       {
-        name: NAMES[id],
+        name: poolName(id),
         value,
         fraction: out || remaining == null ? 0 : Math.min(1, Math.max(0, remaining / 100)),
         tone: tone(remaining, out),

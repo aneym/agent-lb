@@ -1,6 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { get, put } from "@/lib/api-client";
+import type { Pool } from "@/lb/api";
+import { pace } from "@/lb/format";
+import { vendorName } from "@/lb/kit/provider-mark-helpers";
 
 const nullableString = z.string().nullable();
 const nullableNumber = z.number().nullable();
@@ -128,3 +131,37 @@ export const usePlannerForecast = () =>
   useRoutingQuery("planner-forecast", "/api/quota-planner/forecast", Forecast);
 export const updatePlannerMode = (settings: z.infer<typeof PlannerSettings>, mode: string) =>
   put("/api/quota-planner/settings", PlannerSettings, { body: { ...settings, mode } });
+
+const KIND_TEXT: Record<string, string> = {
+  session: "5-hour",
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly cap",
+};
+const SEAT_PROVIDERS = ["cursor", "devin", "muse"];
+export function poolPaceText(
+  name: string,
+  weeklyPacePercent: number | null | undefined,
+  pool?: Pool,
+): string {
+  if (weeklyPacePercent != null) return pace(weeklyPacePercent);
+  const provider = pool?.provider ?? name.split("-")[0];
+  const measured = (pool?.windows ?? []).filter((w) => w.remainingPercent != null);
+  if (measured.length) {
+    const tight = measured.reduce((low, w) =>
+      (w.remainingPercent as number) < (low.remainingPercent as number) ? w : low,
+    );
+    const est = tight.source === "estimate" ? " (est.)" : "";
+    return `${KIND_TEXT[tight.kind] ?? tight.label} · ${Math.round(tight.remainingPercent as number)}% left${est}`;
+  }
+  if (pool?.quotaSource === "unavailable" || (pool?.windows && SEAT_PROVIDERS.includes(provider)))
+    return `No reading from ${vendorName(provider)}`;
+  if (["glm", "kimi"].includes(provider)) return "No cap";
+  if (pool?.windowLabel === "month") {
+    const left = pool.percentUsed != null ? Math.max(0, 100 - pool.percentUsed) : null;
+    const est = pool.percentSource === "estimate" ? " (est.)" : "";
+    return left == null ? "Monthly cap" : `Monthly cap · ${Math.round(left)}% left${est}`;
+  }
+  if (SEAT_PROVIDERS.includes(provider)) return `No reading from ${vendorName(provider)}`;
+  return "No weekly cap";
+}
