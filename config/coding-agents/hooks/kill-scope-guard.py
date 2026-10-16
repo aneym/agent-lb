@@ -15,6 +15,9 @@ OPERATORS = "<>;&|()"
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(\\?)(['\"]?)([A-Za-z0-9_.-]+)\2")
 
 VALUED = set("FGgPstUu")
+LSOF_T = r"\blsof\b[^|;&\n]*\s-[A-Za-z]*t[A-Za-z]*\b"
+PORT_KILL = (re.compile(LSOF_T + r"[^|;&\n]*\|\s*(?:sudo\s+)?(?:xargs\b[^|;&\n]*\bkill\b|kill\b)"),
+             re.compile(r"\bkill\b[^|;&\n]*(?:\$\(|`)\s*" + LSOF_T))
 
 
 class Doubt(Exception):
@@ -306,6 +309,12 @@ def main():
     except ValueError:
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
+    if "port-free" not in command and any(p.search(command) for p in PORT_KILL):
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": (
+            "kill-scope-guard (warn only, not blocked): lsof -t lists every client of a port, not just its "
+            "listener (2026-10-16 this SIGKILLed Tailscale); free a port with `port-free <port>`, which kills "
+            "only a listener you started.")}}))
+        return 0
     if not re.search(r"\b(pkill|killall|pgrep)\b", command):
         return 0
     try:

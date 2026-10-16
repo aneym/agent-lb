@@ -69,3 +69,20 @@ def test_a_pattern_built_at_run_time_warns_without_blocking(tmp_path):
     result = run(tmp_path, PKILL + ' -f "$TARGET"')
     assert result.returncode == 0, result.stderr
     assert "kill-scope-guard (warn only, not blocked)" in result.stdout
+
+
+@pytest.mark.parametrize("command,warned", [
+    ("lsof -ti :3334 | xargs kill -9", True),
+    ("lsof -t -i tcp:3334 | xargs -r kill", True),
+    ("kill -9 $(lsof -ti:3334)", True),
+    ("lsof -nP -iTCP:3334 -sTCP:LISTEN", False),
+    ("port-free 3334", False),
+])
+def test_a_port_kill_through_lsof_warns_toward_port_free(tmp_path, command, warned):
+    result = run(tmp_path, command)
+    assert result.returncode == 0, result
+    if warned:
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert context.startswith("kill-scope-guard (warn only, not blocked)") and "port-free <port>" in context
+    else:
+        assert result.stdout == ""
