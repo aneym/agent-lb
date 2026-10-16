@@ -17,6 +17,7 @@ from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
 from app.modules.accounts.auth_manager import AuthManager, is_locally_owned
 from app.modules.accounts.repository import AccountsRepository
+from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.limit_warmup.service import LimitWarmupService, StreamingLimitWarmupSender
 from app.modules.proxy.account_cache import get_account_selection_cache
@@ -138,6 +139,7 @@ class UsageRefreshScheduler:
                     now_epoch = utcnow().replace(tzinfo=timezone.utc).timestamp()
                     near_anthropic_reset = any(
                         account.provider == ANTHROPIC_PROVIDER_NAME
+                        and is_subscription_usable(account)
                         and account.limit_warmup_enabled
                         and account.status in {AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED}
                         and (entry := before_primary.get(account.id)) is not None
@@ -149,6 +151,7 @@ class UsageRefreshScheduler:
                         entry = before_primary.get(account.id)
                         if (
                             account.provider == ANTHROPIC_PROVIDER_NAME
+                            and is_subscription_usable(account)
                             and entry is not None
                             and entry.reset_at is not None
                             and entry.reset_at + 3 <= now_epoch

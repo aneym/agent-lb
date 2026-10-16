@@ -32,7 +32,7 @@ from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
 from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager
-from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
+from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK, is_subscription_usable
 from app.modules.usage.additional_quota_keys import canonicalize_additional_quota_key
 from app.modules.usage.identity_mismatch import (
     clear_identity_mismatch,
@@ -335,6 +335,12 @@ class UsageUpdater:
                 )
 
                 continue
+            finally:
+                if not is_subscription_usable(account):
+                    _usage_refresh_auth_cooldowns[account.id] = max(
+                        _usage_refresh_auth_cooldowns.get(account.id, 0.0),
+                        time.monotonic() + settings.account_pulse_recovery_interval_seconds,
+                    )
         return refreshed
 
     async def force_refresh(self, account: Account) -> bool:
@@ -343,6 +349,8 @@ class UsageUpdater:
         if not settings.usage_refresh_enabled:
             return False
         if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+            return False
+        if _is_usage_refresh_in_cooldown(account.id):
             return False
         try:
             result = await _USAGE_REFRESH_SINGLEFLIGHT.run(
