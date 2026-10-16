@@ -3308,6 +3308,27 @@ def command_dispatch(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def snapshot_resolved_models(table: dict[str, Any], standards: dict[str, Any],
+                             seats: dict[str, dict[str, Any]], background: Any) -> dict[str, str]:
+    wanted = {"opus-latest", "sonnet-latest", "haiku-latest", "sol-latest"}
+    wanted.update(spec.get("model") for spec in seats.values())
+    for spec in standards.values():
+        if isinstance(spec, dict):
+            wanted.update((spec.get("model"), spec.get("wrapper_model")))
+    wanted.add(background)
+    served: list[str] | None = None
+    resolved: dict[str, str] = {}
+    for alias in sorted(name for name in wanted if isinstance(name, str) and name.endswith("-latest")):
+        model = pinned_model(table, alias)
+        if not model:
+            if served is None:
+                served, _ = served_models()
+            model, _ = resolve_alias(table, alias, served) if served else (None, "")
+        if model:
+            resolved[alias] = model
+    return resolved
+
+
 def policy_snapshot(table: dict[str, Any]) -> dict[str, Any]:
     standards = table.get("standards") if isinstance(table.get("standards"), dict) else {}
     seats: dict[str, dict[str, Any]] = {}
@@ -3322,6 +3343,7 @@ def policy_snapshot(table: dict[str, Any]) -> dict[str, Any]:
                            "effort": spec.get("effort")}
     background = table.get("background_model")
     return {
+        "resolved_models": snapshot_resolved_models(table, standards, seats, background),
         "policy_rev": table.get("policy_rev"),
         "table_sha256": table_digest(),
         "precedence": table.get("precedence"),

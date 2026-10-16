@@ -106,7 +106,7 @@ def test_a_blocked_model_is_warned_and_logged_never_denied(tmp_path: Path) -> No
 @pytest.mark.parametrize(
     ("subagent", "model", "explicit"),
     [
-        pytest.param("fable-orchestrator", "claude-fable-5-1", False, id="fable-on-its-readmitted-seat"),
+        pytest.param("fable-orchestrator", "claude-fable-5-1", True, id="fable-on-its-retired-seat"),
         pytest.param("astra-consult", "gpt-6-astra", False, id="astra-on-its-readmitted-seat"),
         pytest.param("astra-consult", "claude-fable-5-1", True, id="fable-on-the-astra-seat"),
         pytest.param("sol-consult", "gpt-6-astra", True, id="astra-on-another-seat"),

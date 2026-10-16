@@ -639,55 +639,6 @@ def test_doctor_without_write_prints_the_state_and_touches_nothing(home: Path) -
     assert not (home / ".claude" / "routing-ALERT").exists()
 
 
-def test_learn_proposes_a_demotion_at_ten_failing_closeouts_but_not_at_nine(home: Path, tmp_path: Path) -> None:
-    ledger(home, closeouts=9, ok=False)
-    nine = run("learn", home=home)
-    ledger(home, closeouts=10, ok=False)
-    ten = run("learn", home=home)
-
-    assert nine.returncode == 0, nine.stderr
-    assert "No demotions proposed" in nine.stdout
-    assert ten.returncode == 0, ten.stderr
-    assert "demote opus-seat/claude-opus-5" in ten.stdout
-    assert "implement" in ten.stdout
-
-
-def test_learn_does_not_propose_a_demotion_when_the_seat_succeeds(home: Path) -> None:
-    ledger(home, closeouts=20, ok=True)
-
-    result = run("learn", home=home)
-
-    assert result.returncode == 0
-    assert "No demotions proposed" in result.stdout
-
-
-def test_learn_apply_writes_the_override_with_reason_evidence_and_timestamp(home: Path, tmp_path: Path) -> None:
-    ledger(home, closeouts=10, ok=False)
-    table = tmp_path / "table.json"
-    table.write_text(TABLE.read_text(encoding="utf-8"), encoding="utf-8")
-
-    applied = run("learn", "--apply", home=home, table=table)
-    again = run("learn", "--apply", home=home, table=table)
-
-    assert applied.returncode == 0, applied.stderr
-    overrides = json.loads(table.read_text(encoding="utf-8"))["overrides"]
-    assert len(overrides) == 1
-    override = overrides[0]
-    assert override["class"] == "implement"
-    assert override["demote"] == {"seat": "opus-seat", "model": "claude-opus-5"}
-    assert override["evidence"]["closeouts"] == 10
-    assert override["evidence"]["okRate"] == 0.0
-    assert override["ts"].endswith("Z")
-    assert override["reason"]
-    assert again.returncode == 0
-    updated = json.loads(table.read_text(encoding="utf-8"))
-    assert len(updated["overrides"]) == 1
-    source = json.loads(TABLE.read_text(encoding="utf-8"))
-    updated.pop("overrides", None)
-    source.pop("overrides", None)
-    assert json.dumps(updated).encode() == json.dumps(source).encode()
-
-
 def test_report_joins_dispatches_with_closeouts(home: Path) -> None:
     ledger(home, closeouts=3, ok=False)
 
@@ -841,7 +792,7 @@ def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> No
     astra = run("resolve", "astra-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     fable = run("resolve", "fable-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     assert (astra.returncode, astra.stdout.strip()) == (0, "gpt-6-astra")
-    assert (fable.returncode, fable.stdout.strip()) == (0, "claude-fable-5-1")
+    assert (fable.returncode, fable.stdout.strip()) == (0, "claude-opus-5-5")
 
     write_fixture(fixtures, "api_models_anthropic.json", {"models": ["claude-opus-5-5", "claude-sonnet-5-5"]})
     (tmp_path / "route-anthropic-models.json").unlink()

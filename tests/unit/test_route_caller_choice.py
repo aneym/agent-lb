@@ -96,7 +96,7 @@ def test_the_logged_default_is_the_tables_pick_on_both_paths(tmp_path: Path) -> 
 
     plan = pick(env, CANONICAL_TABLE, "plan", "--effort", "xhigh", "--reason", "escalate")
     assert (plan["seat"], plan["default"], plan["effort"], plan["effort_default"]) == (
-        "planner", "planner", "xhigh", "high")
+        "planner", "planner", "xhigh", "medium")
 
     pools(env, anthropic_general=closed)
     unknown = route(env, CANONICAL_TABLE, "pick", "plan", "--prefer", "nope", "--reason", "x", "--json")

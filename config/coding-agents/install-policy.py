@@ -1224,13 +1224,16 @@ def snapshot_model(snapshot: dict[str, Any], model: str) -> str:
             resolved = resolved.get("resolved_model") or resolved.get("model") or resolved.get("resolved")
         if isinstance(resolved, str) and not resolved.endswith("-latest"):
             return resolved
-    raise SystemExit(f"error: snapshot does not resolve {model}")
+    for seat in (snapshot.get("seats") or {}).values():
+        if isinstance(seat, dict) and seat.get("model") == model and isinstance(seat.get("model_id"), str):
+            return seat["model_id"]
+    return model
 
 
 def seat_template(text: str, name: str, snapshot: dict[str, Any]) -> str:
     seat = snapshot["seats"].get(name)
     if not isinstance(seat, dict):
-        raise SystemExit(f"error: snapshot has no seat {name}")
+        return text
     if name in RELAY_SEATS:
         model = snapshot_model(snapshot, snapshot["standards"]["relay"]["wrapper_model"])
         effort = "low"

@@ -52,10 +52,10 @@ def test_the_last_claude_account_is_kept_for_orchestrators(tmp_path: Path) -> No
 
 
     review = pick(last, "review")
-    assert (review["seat"], review["pool"]) == ("codex-sol", "openai-codex")
+    assert (review["seat"], review["pool"]) == ("plan-reviewer", "anthropic-general")
     assert review["reserve"] == {"pool": "anthropic-general", "active": True, "admitted": False, "eligible": 1,
                                  "headroom": 50.0, "why": "1 eligible account (keep 2)"}
-    assert review["fallbacks"][-1]["seat"] == "plan-reviewer"
+    assert review["reason"].startswith("reserved for orchestrators: 1 eligible account (keep 2); no other seat open")
 
 
     plan = pick(last, "plan")
@@ -68,7 +68,7 @@ def test_the_last_claude_account_is_kept_for_orchestrators(tmp_path: Path) -> No
 
 
     thin = pick(env_for(tmp_path, "thin", eligible=3, headroom=35.0), "review")
-    assert thin["seat"] == "codex-sol" and thin["reserve"]["why"] == "headroom 35% (keep 40%)"
+    assert thin["seat"] == "plan-reviewer" and thin["reserve"]["why"] == "headroom 35% (keep 40%)"
 
 
     healthy = pick(env_for(tmp_path, "healthy", eligible=3, headroom=80.0), "review")

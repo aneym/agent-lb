@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_models_install_lifecycle(tmp_path: Path, workspace: bytes | None, policy_checkout) -> None:
     source = tmp_path / "policy-repo" / "config/coding-agents"
     shutil.copytree(ROOT / "config/coding-agents", source)
+    (source.parent.parent / "clients").mkdir()
+    shutil.copy2(ROOT / "clients/route", source.parent.parent / "clients/route")
     routing = b"# Routing\r\nOne source of truth.\r\n"
     (source / "ROUTING.md").write_bytes(routing)
     workspace_path = source / "WORKSPACE.md"
@@ -69,7 +71,7 @@ def test_models_install_lifecycle(tmp_path: Path, workspace: bytes | None, polic
     generated = header.encode() + b"\n\n" + routing
     assert models.read_bytes() == generated
     implementer = (home / ".claude/agents/gpt-implementer-local.md").read_text()
-    assert "model: sol-latest-medium" in implementer
+    assert "\nmodel: sol-latest\n" in implementer and "\neffort: medium\n" in implementer
     assert "`AUTHORITY: <grant-id>`" in implementer and "factory-grant verify" in implementer
     assert "Do not commit, push" not in implementer
 
