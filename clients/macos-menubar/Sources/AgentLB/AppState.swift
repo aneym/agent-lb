@@ -17,6 +17,9 @@ final class AppState {
   var projections: ProjectionsResponse?
   var accounts: [Account] = []
   var seatAccounts: [SeatAccount] = []
+  var seatSource: String?
+  var seatStateUpdatedAt: Date?
+  var seatQuotaRefreshedAt: Date?
   var pools: [PoolEntry] = []
   var poolPlan: PoolPlan?
   var recent: [RequestLogEntry] = []
@@ -274,7 +277,11 @@ final class AppState {
 
   private func fetchMakerData(silently: Bool = false) async {
     do {
-      seatAccounts = try await client.seatAccounts().accounts
+      let seats = try await client.seatAccounts()
+      seatAccounts = seats.accounts
+      seatSource = seats.source
+      seatStateUpdatedAt = seats.stateUpdatedAt
+      seatQuotaRefreshedAt = seats.quotaRefreshedAt
       Self.updateSectionError(.seatAccounts, error: nil, in: &sectionErrors)
     } catch {
       if !silently {

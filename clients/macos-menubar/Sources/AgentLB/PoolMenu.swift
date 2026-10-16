@@ -20,27 +20,22 @@ struct PoolMenuRow: Equatable, Sendable {
 }
 
 enum PoolMenu {
-  static let order = [
-    "anthropic-general",
-    "openai-codex",
-    "cursor-models",
-    "cursor-other",
-    "devin",
-  ]
-
   static func rows(pools: [PoolEntry], now: Date, timeZone: TimeZone) -> [PoolMenuRow] {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = timeZone
-    let pairs = pools.compactMap { pool -> (String, PoolEntry)? in
-      guard let key = canonicalID(pool) else { return nil }
-      return (key, pool)
-    }
-    let byID = Dictionary(pairs, uniquingKeysWith: { existing, incoming in
-      if incoming.id == canonicalID(incoming), existing.id != canonicalID(existing) {
-        return incoming
+    var order: [String] = []
+    var byID: [String: PoolEntry] = [:]
+    for pool in pools {
+      guard let key = canonicalID(pool) else { continue }
+      if let existing = byID[key] {
+        if pool.id == key, existing.id != key {
+          byID[key] = pool
+        }
+      } else {
+        order.append(key)
+        byID[key] = pool
       }
-      return existing
-    })
+    }
     return order.compactMap { id in
       byID[id].map { row(for: $0, id: id, now: now, calendar: calendar) }
     }
@@ -55,13 +50,14 @@ enum PoolMenu {
 
   private static func canonicalID(_ pool: PoolEntry) -> String? {
     switch pool.id {
-    case "anthropic-general", "openai-codex", "cursor-models", "cursor-other", "devin":
+    case "anthropic-general", "openai-codex", "cursor-models", "cursor-other", "devin", "muse":
       return pool.id
     default:
       switch pool.provider {
       case "anthropic": return "anthropic-general"
       case "openai": return "openai-codex"
       case "devin": return "devin"
+      case "muse": return "muse"
       default: return nil
       }
     }
@@ -88,9 +84,14 @@ enum PoolMenu {
     let shortName = id == "cursor-models" ? "Cursor" : name(for: id)
     let detail = subline(pool, out: out, now: now, calendar: calendar)
     let reset = pool.cycleResetAt ?? pool.weeklyResetAt ?? pool.resetAt
-    let caption = out
-      ? reset.map { "back \(monthDay($0, calendar: calendar))" } ?? "\(usable)/\(total)"
-      : "\(usable)/\(total)"
+    let caption: String
+    if out {
+      caption = reset.map { "back \(monthDay($0, calendar: calendar))" } ?? "\(usable)/\(total)"
+    } else if remaining == nil, pool.quotaSource == "unavailable" {
+      caption = "not reported"
+    } else {
+      caption = "\(usable)/\(total)"
+    }
     let help = [
       name(for: id),
       out ? "out" : percent.map { "\(percentText($0)) left" },
@@ -117,6 +118,7 @@ enum PoolMenu {
     case "openai-codex": "OpenAI"
     case "cursor-models": "Cursor models"
     case "cursor-other": "Cursor other"
+    case "muse": "Muse"
     default: "Devin"
     }
   }
@@ -125,7 +127,10 @@ enum PoolMenu {
     if pool.provider == "cursor", let used = pool.percentUsed {
       return max(0, 100 - used)
     }
-    return pool.weeklyRemainingPercent ?? pool.aggregateRemainingPercent
+    if let remaining = pool.weeklyRemainingPercent ?? pool.aggregateRemainingPercent {
+      return remaining
+    }
+    return (pool.windows ?? []).compactMap(\.remainingPercent).min()
   }
 
   private static func isOut(_ pool: PoolEntry, remaining: Double?) -> Bool {

@@ -1,5 +1,17 @@
 import Foundation
 
+enum AccountListItem: Identifiable, Equatable, Sendable {
+  case proxy(Account)
+  case seat(SeatAccount)
+
+  var id: String {
+    switch self {
+    case .proxy(let account): "proxy:" + account.accountId
+    case .seat(let seat): "seat:" + seat.id
+    }
+  }
+}
+
 
 
 struct AccountFilter: Equatable, Sendable {
@@ -55,6 +67,102 @@ struct AccountFilter: Equatable, Sendable {
   }
 
 
+
+  static func classify(_ seat: SeatAccount) -> Status {
+    switch seat.displayStatus {
+    case "paused": return .paused
+    case "reauth_required": return .inactive
+    case "rate_limited": return .rateLimited
+    default: return .active
+    }
+  }
+
+  static func nextReset(of seat: SeatAccount, now: Date) -> Date? {
+    ([seat.displayStatusResetAt] + seat.quotaWindows.map(\.resetsAt))
+      .compactMap { $0 }
+      .filter { $0 > now }
+      .min()
+  }
+
+  func apply(to seats: [SeatAccount], now: Date) -> [SeatAccount] {
+    apply(to: [], seats: seats, now: now).compactMap {
+      if case .seat(let seat) = $0 { return seat }
+      return nil
+    }
+  }
+
+  func apply(to accounts: [Account], seats: [SeatAccount], now: Date) -> [AccountListItem] {
+    let proxies = accounts.filter {
+      matchesProvider($0) && matchesStatus($0, now: now) && matchesQuery($0)
+    }.map { AccountListItem.proxy($0) }
+    let seatItems = seats.filter {
+      matchesProvider($0) && (status == .all || Self.classify($0) == status) && matchesQuery($0)
+    }.map { AccountListItem.seat($0) }
+    let keyed = (proxies + seatItems).map { ($0, sortKey($0, now: now)) }
+    return keyed.sorted { ordered($0.1, $1.1) }.map(\.0)
+  }
+
+  private struct SortKey {
+    let name: String
+    let id: String
+    let reset: Date?
+    let remaining: Double?
+  }
+
+  private func sortKey(_ item: AccountListItem, now: Date) -> SortKey {
+    switch item {
+    case .proxy(let account):
+      return SortKey(
+        name: account.displayName.lowercased(),
+        id: account.accountId,
+        reset: Self.nextReset(of: account, now: now),
+        remaining: remainingPercent(of: account)
+      )
+    case .seat(let seat):
+      return SortKey(
+        name: seat.id.lowercased(),
+        id: seat.id,
+        reset: Self.nextReset(of: seat, now: now),
+        remaining: seat.primaryQuotaWindow?.remainingPercent
+      )
+    }
+  }
+
+  private func ordered(_ lhs: SortKey, _ rhs: SortKey) -> Bool {
+    func byName(_ ascending: Bool) -> Bool {
+      if lhs.name != rhs.name { return ascending ? lhs.name < rhs.name : lhs.name > rhs.name }
+      return lhs.id < rhs.id
+    }
+    func byOptional<T: Comparable>(_ l: T?, _ r: T?, ascending: Bool) -> Bool {
+      switch (l, r) {
+      case (nil, nil): return byName(true)
+      case (nil, _): return false
+      case (_, nil): return true
+      case (let l?, let r?):
+        if l != r { return ascending ? l < r : l > r }
+        return byName(true)
+      }
+    }
+    switch sort {
+    case .resetSoonest: return byOptional(lhs.reset, rhs.reset, ascending: true)
+    case .resetLatest: return byOptional(lhs.reset, rhs.reset, ascending: false)
+    case .nameAsc: return byName(true)
+    case .nameDesc: return byName(false)
+    case .remainingAsc: return byOptional(lhs.remaining, rhs.remaining, ascending: true)
+    case .remainingDesc: return byOptional(lhs.remaining, rhs.remaining, ascending: false)
+    }
+  }
+
+  private func matchesProvider(_ seat: SeatAccount) -> Bool {
+    provider == .all || seat.vendor.lowercased() == provider.rawValue
+  }
+
+  private func matchesQuery(_ seat: SeatAccount) -> Bool {
+    let q = trimmedQuery
+    guard !q.isEmpty else { return true }
+    let haystacks = [seat.id, seat.email, seat.planLabel ?? seat.tier, seat.vendorLabel]
+    return haystacks.contains { $0?.localizedCaseInsensitiveContains(q) == true }
+  }
 
   func apply(to accounts: [Account], now: Date) -> [Account] {
     sorted(
