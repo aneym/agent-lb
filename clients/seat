@@ -359,7 +359,10 @@ def quota_window(window_id: str, kind: str, label: str, used: Any, reset: Any,
 
 def quota_payload(windows: list[dict[str, Any]], source: str = "vendor",
                   observed: str | None = None) -> dict[str, Any]:
-    primary = max(windows, key=lambda item: item["usedPercent"], default=None)
+    available = [window for window in windows if window["usedPercent"] < 100]
+    primary = next((window for window in windows if window["id"] == "cursor-models"), None)
+    if primary is None:
+        primary = max(available or windows, key=lambda item: item["usedPercent"], default=None)
     return {"source": source, "observedAt": observed or iso(now()), "stale": False,
             "unavailableReason": None, "primaryWindowId": primary["id"] if primary else None,
             "windows": windows}

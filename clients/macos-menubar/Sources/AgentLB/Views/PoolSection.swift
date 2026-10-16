@@ -62,7 +62,13 @@ struct PoolSection: View {
   private var seatVendorBody: some View {
     let vendor = seatVendor
     if vendor.cards.isEmpty {
-      SeatQuietCard(vendor: vendor)
+      if scope == .muse {
+        if let line = vendor.quietLine {
+          Text(line).font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+      } else {
+        SeatQuietCard(vendor: vendor)
+      }
     } else {
       HStack(alignment: .top, spacing: 10) {
         ForEach(vendor.cards) { card in
@@ -218,7 +224,7 @@ struct PoolSection: View {
         if let rate = summary?.metrics?.errorRate7d {
           Text("err \(String(format: "%.2f", rate * 100))%")
         }
-        if scope == .all {
+        if scope == .all && (summary?.cost?.totalUsd7d != nil || summary?.metrics?.requests7d != nil || summary?.metrics?.errorRate7d != nil) {
           Text("· all providers")
             .font(.system(size: 9))
             .foregroundStyle(.tertiary)
@@ -528,7 +534,7 @@ struct SeatVendorSummary: Equatable, Sendable {
       let lead = vendorSeats.isEmpty && vendorPools.isEmpty
         ? "No \(scope.label) seats"
         : reasonText(reason, vendor: scope.label)
-      quiet = "\(lead) · \(runs) \(runs == 1 ? "run" : "runs") in 24 h"
+      quiet = scope == .muse ? lead : "\(lead) · \(runs) \(runs == 1 ? "run" : "runs") in 24 h"
     }
 
     return SeatVendorSummary(
@@ -553,7 +559,7 @@ struct SeatVendorSummary: Equatable, Sendable {
       if let value = activity.valueUsd {
         parts.append(Format.dollars(value) + (activity.valueSource == "estimate" ? " est" : ""))
       } else {
-        parts.append("value unknown")
+        parts.append("Not reported")
       }
       lines.append(parts.joined(separator: " · "))
     } else {
@@ -575,11 +581,11 @@ struct SeatVendorSummary: Equatable, Sendable {
   static func reasonText(_ reason: String?, vendor: String) -> String {
     switch reason {
     case "not_reported": "Not reported by \(vendor)"
-    case "auth_unsupported": "\(vendor) login can't read usage"
-    case "credential_unavailable": "Usage credential unavailable"
-    case "vendor_error": "\(vendor) usage check failed"
-    case "not_collected": "Usage not collected yet"
-    default: "No usage reading from \(vendor)"
+    case "auth_unsupported": "Login can't read usage"
+    case "credential_unavailable": "Usage login unavailable"
+    case "vendor_error": "Vendor error"
+    case "not_collected": "Not checked yet"
+    default: "Not reported by \(vendor)"
     }
   }
 

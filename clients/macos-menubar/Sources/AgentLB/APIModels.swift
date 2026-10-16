@@ -343,6 +343,7 @@ struct SeatAccount: Decodable, Equatable, Sendable, Identifiable {
   var lastRunAt: Date? = nil
   let ready: Bool
   let lastDay: SeatUsage
+  var daily: [String: [String: SeatDailyUsage]]? = nil
   var recentRuns: [SeatRun]? = nil
   var email: String? = nil
   var planLabel: String? = nil
@@ -350,6 +351,10 @@ struct SeatAccount: Decodable, Equatable, Sendable, Identifiable {
   var statusResetAt: Date? = nil
   var quota: SeatQuota? = nil
   var today: SeatToday? = nil
+}
+
+struct SeatDailyUsage: Decodable, Equatable, Sendable {
+  let runs: Int
 }
 
 struct SeatUsage: Decodable, Equatable, Sendable {
@@ -417,7 +422,19 @@ extension SeatAccount {
     scope?.label ?? vendor.capitalized
   }
 
+  var onlyCursorOtherLimited: Bool {
+    guard vendor.lowercased() == "cursor", cooldownUntil.map({ $0 > .now }) != true else { return false }
+    let activeCooldowns = (cooldowns ?? [:]).filter { $0.value > .now }
+    let limitedWindows = quotaWindows.filter { ($0.usedPercent ?? 0) >= 100 && ($0.resetsAt.map { $0 > .now } ?? true) }
+    return (!activeCooldowns.isEmpty || !limitedWindows.isEmpty)
+      && activeCooldowns.keys.allSatisfy { $0 == "cursor-other" }
+      && limitedWindows.allSatisfy { $0.id == "cursor-other" }
+  }
+
   var displayStatus: String {
+    if onlyCursorOtherLimited && enabled && authOk != false && (status == nil || status == "rate_limited") {
+      return "active"
+    }
     if let status { return status }
     if !enabled { return "paused" }
     if authOk == false { return "reauth_required" }
@@ -439,11 +456,15 @@ extension SeatAccount {
 
   var primaryQuotaWindow: SeatQuotaWindow? {
     let windows = quotaWindows
+    if vendor.lowercased() == "cursor", let models = windows.first(where: { $0.id == "cursor-models" }) {
+      return models
+    }
     if let id = quota?.primaryWindowId, let match = windows.first(where: { $0.id == id }) {
       return match
     }
-    return windows
-      .filter { $0.remainingPercent != nil }
+    let measured = windows.filter { $0.remainingPercent != nil }
+    let available = measured.filter { ($0.remainingPercent ?? 0) > 0 }
+    return (available.isEmpty ? measured : available)
       .min { ($0.remainingPercent ?? 100) < ($1.remainingPercent ?? 100) }
   }
 

@@ -86,13 +86,14 @@ function unavailableText(vendor: string, reason?: SeatQuota["unavailableReason"]
   const name = vendorName(vendor);
   switch (reason) {
     case "auth_unsupported":
-      return `${name} key can't read usage`;
+      return "Login can't read usage";
     case "credential_unavailable":
-      return "Login not readable";
+      return "Usage login unavailable";
     case "vendor_error":
-      return `${name} usage check failed`;
+      return "Vendor error";
     case "not_collected":
       return "Not checked yet";
+    case "not_reported":
     default:
       return `Not reported by ${name}`;
   }

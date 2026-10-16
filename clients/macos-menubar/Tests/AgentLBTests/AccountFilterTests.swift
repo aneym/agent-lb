@@ -192,7 +192,7 @@ final class AccountFilterTests: XCTestCase {
 
 
   func testQueryMatchesSubstringCaseInsensitively() {
-    let filter = AccountFilter(query: "KINETIC")
+    let filter = AccountFilter(query: "A3-WORK")
     let result = filter.apply(to: accounts, now: now)
     XCTAssertEqual(result.count, 2)
     XCTAssertTrue(result.allSatisfy { $0.displayName == "a3-work@example.com" })
