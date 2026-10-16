@@ -73,6 +73,7 @@ import socket
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 import urllib.error
@@ -3345,6 +3346,635 @@ def command_policy(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+MERGE_CLASSES = frozenset({"implement", "mechanical", "ui"})
+VERDICT_CLASSES = frozenset({"verify", "review", "audit", "judge"})
+METRIC_CLASSES = frozenset({"decide"})
+REPAIR_WINDOW = timedelta(hours=72)
+REDISPATCH_WINDOW = timedelta(hours=2)
+SUBSCRIPTION_VENDORS = frozenset({"muse", "devin", "cognition"})
+CLOSEOUT_DATA_KEYS = ("ok", "error", "subagent_type", "worker_model", "worker_effort", "wrapper_model", "fallback",
+                      "session_ids", "pool_pct", "exit_code", "infra_reason", "wall_s", "tokens_in", "tokens_out")
+REVERT_LINE = re.compile(r"This reverts commit ([0-9a-f]{7,40})")
+MERGE_REFUSED = frozenset({"refused", "conflict", "failed", "error", "rejected"})
+
+
+def outcome_events_path() -> Path:
+    return _env_path("OUTCOME_EVENTS", Path.home() / ".claude" / "logs" / "outcome-events.jsonl")
+
+
+def outcomes_path() -> Path:
+    return _env_path("ROUTE_OUTCOMES", Path.home() / ".claude" / "logs" / "outcomes.jsonl")
+
+
+def merge_receipts_path() -> Path:
+    return _env_path("STUDIO_MERGE_RECEIPTS", Path.home() / ".agent-rails" / "studio-merge" / "receipts.jsonl")
+
+
+def outcome_event_id(source: str, key: str) -> str:
+    return "evt_" + hashlib.sha256(f"{source}|{key}".encode("utf-8")).hexdigest()[:32]
+
+
+def read_jsonl(path: Path | None) -> list[dict[str, Any]]:
+    if path is None:
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return []
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def utc_stamp(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def row_time(row: dict[str, Any]) -> datetime | None:
+    stamp = _parse_ts(row.get("ts"))
+    if stamp is None:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def parse_since(value: str) -> timedelta:
+    found = re.fullmatch(r"\s*(\d+)\s*([dhm])\s*", value or "")
+    if not found:
+        raise ValueError(f"--since wants <n>d, <n>h or <n>m, got {value!r}")
+    amount, unit = int(found.group(1)), found.group(2)
+    return {"d": timedelta(days=amount), "h": timedelta(hours=amount), "m": timedelta(minutes=amount)}[unit]
+
+
+def number_or_none(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+class OutcomeSources:
+    def __init__(self, *, decisions: list[dict[str, Any]], ledger: list[dict[str, Any]],
+                 receipts: list[dict[str, Any]], reverts: list[dict[str, Any]],
+                 request_logs: list[dict[str, Any]], seeds: list[dict[str, Any]], now: datetime) -> None:
+        self.decisions = [row for row in decisions if row.get("v") == 1 and row.get("decision_id")]
+        self.ledger = ledger
+        self.receipts = receipts
+        self.reverts = reverts
+        self.request_logs = request_logs
+        self.seeds = seeds
+        self.now = now
+
+
+def outcomes_now() -> datetime:
+    configured = _parse_ts((os.environ.get("ROUTE_OUTCOMES_NOW") or "").strip())
+    return configured if configured else datetime.now(timezone.utc)
+
+
+def git_reverts(receipts: list[dict[str, Any]], since: datetime) -> list[dict[str, Any]]:
+    repos = sorted({str(row.get("repo")) for row in receipts if isinstance(row.get("repo"), str)})
+    reverts = []
+    for repo in repos:
+        if not Path(repo).expanduser().is_dir():
+            continue
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(Path(repo).expanduser()), "log", "--all", f"--since={utc_stamp(since)}",
+                 "--grep=This reverts commit", "--format=%H%x1f%cI%x1f%B%x1e"],
+                capture_output=True, text=True, timeout=20, check=False)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        for chunk in result.stdout.split("\x1e"):
+            parts = chunk.strip().split("\x1f")
+            if len(parts) < 3:
+                continue
+            for reverted in REVERT_LINE.findall(parts[2]):
+                reverts.append({"sha": parts[0], "ts": parts[1], "reverts": reverted, "repo": repo})
+    return reverts
+
+
+def api_request_logs(since: datetime) -> list[dict[str, Any]]:
+    result = http_get(f"/api/request-logs?limit=1000&includeTotal=false&since={utc_stamp(since)}")
+    body = result.body if result.ok and isinstance(result.body, dict) else {}
+    rows = body.get("requests") if isinstance(body.get("requests"), list) else []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def live_sources(since: timedelta) -> OutcomeSources:
+    now = outcomes_now()
+    start = now - since
+    receipts = read_jsonl(merge_receipts_path())
+    reverts_file = (os.environ.get("ROUTE_OUTCOME_REVERTS") or "").strip()
+    logs_file = (os.environ.get("ROUTE_REQUEST_LOGS") or "").strip()
+    return OutcomeSources(
+        decisions=read_decisions(),
+        ledger=read_jsonl(ledger_path()),
+        receipts=receipts,
+        reverts=read_jsonl(Path(reverts_file).expanduser()) if reverts_file else git_reverts(receipts, start),
+        request_logs=read_jsonl(Path(logs_file).expanduser()) if logs_file else api_request_logs(start),
+        seeds=[],
+        now=now,
+    )
+
+
+def replay_sources(directory: Path) -> OutcomeSources:
+    meta = {}
+    with contextlib.suppress(OSError, json.JSONDecodeError):
+        meta = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
+    now = _parse_ts(meta.get("now")) if isinstance(meta, dict) else None
+    return OutcomeSources(
+        decisions=read_jsonl(directory / "route-decisions.jsonl"),
+        ledger=read_jsonl(directory / "dispatch.jsonl"),
+        receipts=read_jsonl(directory / "receipts.jsonl"),
+        reverts=read_jsonl(directory / "reverts.jsonl"),
+        request_logs=read_jsonl(directory / "request-logs.jsonl"),
+        seeds=read_jsonl(directory / "events.jsonl"),
+        now=now or datetime.now(timezone.utc),
+    )
+
+
+def outcome_event(kind: str, source: str, key: str, ts: datetime, decision: dict[str, Any],
+                  data: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
+    return {
+        "v": 1,
+        "event_id": outcome_event_id(source, key),
+        "job_id": job_id or decision.get("job_id"),
+        "decision_id": decision.get("decision_id"),
+        "attempt": decision.get("attempt"),
+        "parent_id": decision.get("parent_id"),
+        "kind": kind,
+        "ts": utc_stamp(ts),
+        "source": source,
+        "data": data,
+    }
+
+
+class DecisionIndex:
+    def __init__(self, decisions: list[dict[str, Any]]) -> None:
+        self.by_id = {row["decision_id"]: row for row in decisions}
+        self.by_job: dict[str, list[dict[str, Any]]] = {}
+        for row in decisions:
+            self.by_job.setdefault(str(row.get("job_id")), []).append(row)
+        for rows in self.by_job.values():
+            rows.sort(key=lambda row: (row.get("attempt") or 1, str(row.get("ts") or "")))
+
+    def lookup(self, ref: Any) -> dict[str, Any] | None:
+        if not isinstance(ref, str) or not ref:
+            return None
+        if ref in self.by_id:
+            return self.by_id[ref]
+        rows = self.by_job.get(ref)
+        return rows[-1] if rows else None
+
+    def parent(self, row: dict[str, Any]) -> dict[str, Any] | None:
+        parent = self.lookup(row.get("parent_id"))
+        if parent is None or parent.get("job_id") == row.get("job_id"):
+            return None
+        return self.by_job[str(parent.get("job_id"))][0]
+
+    def root(self, row: dict[str, Any]) -> dict[str, Any]:
+        seen = {row.get("job_id")}
+        current = row
+        while True:
+            parent = self.parent(current)
+            if parent is None or parent.get("job_id") in seen:
+                return current
+            seen.add(parent.get("job_id"))
+            current = parent
+
+
+def closeout_events(src: OutcomeSources, index: DecisionIndex, start: datetime) -> list[dict[str, Any]]:
+    events = []
+    for row in src.ledger:
+        ts = row_time(row)
+        if ts is None or ts < start:
+            continue
+        decision = index.lookup(row.get("decision_id"))
+        if decision is None:
+            continue
+        if row.get("event") == "closeout":
+            key = f"{row.get('session_id')}|{row.get('agent_id') or row.get('name')}|{row.get('ts')}"
+            data = {name: row.get(name) for name in CLOSEOUT_DATA_KEYS if name in row}
+            event = outcome_event("infra" if row.get("infra_reason") else "closeout", "subagent-closeout",
+                                  key, ts, decision, data)
+            if isinstance(row.get("event_id"), str) and re.fullmatch(r"evt_[0-9a-f]{32}", row["event_id"]):
+                event["event_id"] = row["event_id"]
+            events.append(event)
+        elif row.get("event") == "route_fallback" or isinstance(row.get("fallback"), dict):
+            fallback = row.get("fallback") if isinstance(row.get("fallback"), dict) else row
+            data = {"fallback": {"seat": fallback.get("seat"), "model": fallback.get("model"),
+                                 "reason": fallback.get("reason")},
+                    "pool_pct": number_or_none(row.get("pool_pct"))}
+            events.append(outcome_event("infra", "route-fallback",
+                                        f"{row.get('decision_id')}|{row.get('ts')}|{fallback.get('seat')}",
+                                        ts, decision, data))
+    return events
+
+
+def merge_events(src: OutcomeSources, index: DecisionIndex, start: datetime) -> list[dict[str, Any]]:
+    events = []
+    for receipt in src.receipts:
+        ts = row_time(receipt)
+        status = str(receipt.get("status") or "merged").lower()
+        if ts is None or ts < start or status in MERGE_REFUSED:
+            continue
+        merge_sha = receipt.get("merged_sha")
+        if not isinstance(merge_sha, str) or not merge_sha:
+            continue
+        commits = [commit for commit in receipt.get("commits") or [] if isinstance(commit, dict)]
+        if not commits and receipt.get("dispatch_ids"):
+            commits = [{"sha": merge_sha, "dispatch_ids": receipt.get("dispatch_ids")}]
+        for commit in commits:
+            commit_sha = str(commit.get("sha") or merge_sha)
+            for ref in commit.get("dispatch_ids") or []:
+                decision = index.lookup(ref)
+                if decision is None:
+                    continue
+                data = {"merge_sha": merge_sha, "commit_sha": commit_sha, "branch": receipt.get("branch"),
+                        "repo": receipt.get("repo")}
+                events.append(outcome_event("merge", "studio-merge", f"{merge_sha}|{commit_sha}|{ref}",
+                                            ts, decision, data))
+    return events
+
+
+def revert_events(src: OutcomeSources, merges: list[dict[str, Any]], index: DecisionIndex,
+                  start: datetime) -> list[dict[str, Any]]:
+    events = []
+    for row in src.reverts:
+        ts = row_time(row)
+        reverted = row.get("reverts")
+        targets = [reverted] if isinstance(reverted, str) else [ref for ref in reverted or [] if isinstance(ref, str)]
+        if ts is None or ts < start or not targets:
+            continue
+        for merge in merges:
+            shas = (merge["data"].get("merge_sha") or "", merge["data"].get("commit_sha") or "")
+            hit = next((target for target in targets if any(sha.startswith(target) or target.startswith(sha)
+                                                              for sha in shas if sha)), None)
+            if hit is None:
+                continue
+            decision = index.lookup(merge.get("decision_id")) or {}
+            events.append(outcome_event("revert", "git-revert", f"{row.get('sha')}|{merge['job_id']}", ts, decision,
+                                        {"revert_sha": row.get("sha"), "reverted_sha": hit}))
+    return events
+
+
+def repair_events(index: DecisionIndex, start: datetime) -> list[dict[str, Any]]:
+    events = []
+    for row in index.by_id.values():
+        ts = row_time(row)
+        if ts is None or ts < start or (row.get("attempt") or 1) != 1:
+            continue
+        parent = index.parent(row)
+        if parent is None:
+            continue
+        root = index.root(row)
+        kind = "repair" if row.get("seat") == parent.get("seat") and row.get("class") == parent.get("class") \
+            else "escalation"
+        events.append(outcome_event(kind, "route-decisions", str(row["decision_id"]), ts, row,
+                                    {"child_job": row.get("job_id"), "parent_job": parent.get("job_id"),
+                                     "root_decision": root.get("decision_id")}, job_id=str(root.get("job_id"))))
+    return events
+
+
+def collect_outcome_events(src: OutcomeSources, since: timedelta | None) -> list[dict[str, Any]]:
+    start = src.now - since if since is not None else datetime.min.replace(tzinfo=timezone.utc)
+    index = DecisionIndex(src.decisions)
+    merges = merge_events(src, index, start)
+    seeds = [row for row in src.seeds if row.get("v") == 1 and isinstance(row.get("event_id"), str)]
+    return (closeout_events(src, index, start) + merges + revert_events(src, merges, index, start)
+            + repair_events(index, start) + seeds)
+
+
+def worker_cost_source(table: dict[str, Any], seat: str | None, model: str | None) -> str:
+    seat = (seat or "").lower()
+    if seat.startswith("cursor-"):
+        return "cursor_pool"
+    if seat.startswith(("muse-", "devin-")):
+        return "subscription"
+    vendor = alias_vendor(table, model) if model else None
+    if vendor == "cursor":
+        return "cursor_pool"
+    if vendor in SUBSCRIPTION_VENDORS:
+        return "subscription"
+    return "request_logs"
+
+
+def log_value(row: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in row:
+            return row[key]
+    return None
+
+
+def summed_part(part: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    costs = [number_or_none(log_value(row, "cost_usd", "costUsd")) for row in rows]
+    if not rows or any(cost is None for cost in costs):
+        return {"part": part, "source": "unknown", "usd": None}
+    return {"part": part, "source": "request_logs", "usd": round(sum(costs), 6)}
+
+
+def pool_part(part: str, source: str, pool_pct: float | None) -> dict[str, Any]:
+    entry: dict[str, Any] = {"part": part, "source": source, "usd": None}
+    if source == "cursor_pool":
+        entry["pool_pct"] = pool_pct
+    return entry
+
+
+class JobView:
+    def __init__(self, job_id: str, decisions: list[dict[str, Any]], events: list[dict[str, Any]]) -> None:
+        self.job_id = job_id
+        self.decisions = decisions
+        self.first = decisions[0]
+        self.events = sorted(events, key=lambda event: (event["ts"], event["event_id"]))
+
+    def kind(self, *kinds: str) -> list[dict[str, Any]]:
+        return [event for event in self.events if event["kind"] in kinds]
+
+    def fallback(self) -> dict[str, Any] | None:
+        for event in reversed(self.kind("infra", "closeout")):
+            value = event["data"].get("fallback")
+            if isinstance(value, dict) and (value.get("seat") or value.get("model")):
+                return {"seat": value.get("seat"), "model": value.get("model"), "reason": value.get("reason")}
+        return None
+
+    def latest(self, key: str) -> Any:
+        for event in reversed(self.kind("closeout", "infra")):
+            value = event["data"].get(key)
+            if value not in (None, "", []):
+                return value
+        return None
+
+    def session_ids(self, decision_id: str | None = None) -> list[str]:
+        found: set[str] = set()
+        for event in self.kind("closeout", "infra"):
+            if decision_id is None or event.get("decision_id") == decision_id:
+                found.update(item for item in event["data"].get("session_ids") or [] if isinstance(item, str) and item)
+        return sorted(found)
+
+
+def job_own_parts(table: dict[str, Any], view: JobView, logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    fallback = view.fallback()
+    seat = (fallback or {}).get("seat") or view.first.get("seat")
+    model = (fallback or {}).get("model") or view.first.get("model_alias")
+    source = worker_cost_source(table, seat, model)
+    worker_vendor = alias_vendor(table, model) if model else None
+    wrapper = view.latest("wrapper_model") or view.first.get("wrapper_model")
+    pool_pct = number_or_none(view.latest("pool_pct"))
+    has_wrapper = bool(wrapper) and not (source == "request_logs" and worker_vendor == "anthropic")
+    parts = []
+    for decision in view.decisions:
+        decision_id = decision.get("decision_id")
+        sessions = set(view.session_ids(decision_id))
+        rows = [row for row in logs if log_value(row, "caller_seat", "callerSeat") == decision_id
+                or (sessions and log_value(row, "session_id", "sessionId") in sessions)]
+        wrapper_rows = [row for row in rows if has_wrapper
+                        and str(log_value(row, "model") or "").startswith("claude-")]
+        worker_rows = [row for row in rows if not any(row is other for other in wrapper_rows)]
+        if (decision.get("attempt") or 1) > 1:
+            if source == "request_logs":
+                parts.append(summed_part("retry", rows))
+            else:
+                parts.append(pool_part("retry", source, pool_pct))
+                if has_wrapper:
+                    parts.append(summed_part("retry", wrapper_rows))
+            continue
+        parts.append(summed_part("worker", worker_rows) if source == "request_logs"
+                     else pool_part("worker", source, pool_pct))
+        if has_wrapper:
+            parts.append(summed_part("wrapper", wrapper_rows))
+    return parts
+
+
+def parts_total(parts: list[dict[str, Any]]) -> tuple[float | None, float]:
+    known = round(sum(part["usd"] for part in parts if part["usd"] is not None), 6)
+    return (known if all(part["usd"] is not None for part in parts) else None), known
+
+
+def job_status(view: JobView, index: DecisionIndex, now: datetime) -> tuple[str, str]:
+    cls = str(view.first.get("class"))
+    closeouts = view.kind("closeout")
+    merges = view.kind("merge")
+    failures = [event for event in view.kind("infra") if event["data"].get("infra_reason")]
+    rule = ("merged_no_repair_72h" if cls in MERGE_CLASSES else "verdict_matches" if cls in VERDICT_CLASSES
+            else "metric_moved" if cls in METRIC_CLASSES else "closeout_ok_no_redispatch_2h")
+    if not closeouts and not merges:
+        return ("infra_failure" if failures else "pending"), rule
+    last_attempt = max((decision.get("attempt") or 1) for decision in view.decisions)
+    last_close = closeouts[-1] if closeouts else None
+    awaiting = last_close is None or (last_close.get("attempt") or 1) < last_attempt
+    failed = last_close is not None and not last_close["data"].get("ok", False) and not awaiting
+    if rule == "merged_no_repair_72h":
+        merged_at = _parse_ts(merges[0]["ts"]) if merges else None
+        horizon = merged_at + REPAIR_WINDOW if merged_at else None
+        trouble = [event for event in view.kind("repair", "escalation", "revert")
+                   if horizon is None or _parse_ts(event["ts"]) <= horizon]
+        if trouble:
+            return "rejected", rule
+        if merged_at is not None:
+            return ("accepted" if now >= horizon else "pending"), rule
+        return ("rejected" if failed else "pending"), rule
+    if view.kind("repair", "escalation"):
+        return "rejected", rule
+    if rule == "verdict_matches":
+        verdicts = view.kind("verdict")
+        if verdicts:
+            data = verdicts[-1]["data"]
+            matches = data["matches"] if isinstance(data.get("matches"), bool) else (
+                data.get("verdict") is not None and data.get("verdict") == data.get("expected"))
+            return ("accepted" if matches else "rejected"), rule
+        return ("rejected" if failed else "pending"), rule
+    if rule == "metric_moved":
+        metrics = view.kind("metric")
+        if metrics:
+            data = metrics[-1]["data"]
+            delta = number_or_none(data.get("delta"))
+            if delta is None and number_or_none(data.get("before")) is not None:
+                after = number_or_none(data.get("after"))
+                delta = after - float(data["before"]) if after is not None else None
+            moved = delta is not None and ((delta > 0) if data.get("direction") == "up" else (delta < 0)
+                                           if data.get("direction") == "down" else False)
+            return ("accepted" if moved else "rejected"), rule
+        return ("rejected" if failed else "pending"), rule
+    if failed:
+        return "rejected", rule
+    if awaiting or last_close is None:
+        return "pending", rule
+    closed_at = _parse_ts(last_close["ts"])
+    caller = view.first.get("caller")
+    if caller:
+        for rows in index.by_job.values():
+            other = rows[0]
+            stamp = row_time(other)
+            if (other.get("job_id") != view.job_id and other.get("caller") == caller
+                    and other.get("class") == cls and stamp is not None
+                    and closed_at < stamp <= closed_at + REDISPATCH_WINDOW):
+                return "rejected", rule
+    return ("accepted" if now >= closed_at + REDISPATCH_WINDOW else "pending"), rule
+
+
+def build_outcomes(table: dict[str, Any], events: list[dict[str, Any]], decisions: list[dict[str, Any]],
+                   logs: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
+    index = DecisionIndex([row for row in decisions if row.get("v") == 1 and row.get("decision_id")])
+    unique: dict[str, dict[str, Any]] = {}
+    for event in events:
+        unique.setdefault(event["event_id"], event)
+    by_job: dict[str, list[dict[str, Any]]] = {}
+    for event in unique.values():
+        by_job.setdefault(str(event.get("job_id")), []).append(event)
+    views = {job: JobView(job, rows, by_job.get(job, [])) for job, rows in index.by_job.items()}
+    own = {job: job_own_parts(table, view, logs) for job, view in views.items()}
+    children: dict[str, list[str]] = {}
+    for view in views.values():
+        for event in view.kind("repair", "escalation"):
+            child = event["data"].get("child_job")
+            if isinstance(child, str) and child in views and child != view.job_id:
+                children.setdefault(view.job_id, []).append(child)
+    rows = []
+    for job, view in sorted(views.items()):
+        status, rule = job_status(view, index, now)
+        parts = list(own[job])
+        for child in sorted(set(children.get(job, []))):
+            child_cost, _ = parts_total(own[child])
+            parts.append({"part": "repair", "source": "request_logs" if child_cost is not None else "unknown",
+                          "usd": child_cost})
+        cost, known = parts_total(parts)
+        fallback = view.fallback()
+        walls = [number_or_none(event["data"].get("wall_s")) for event in view.kind("closeout", "infra")]
+        walls = [wall for wall in walls if wall is not None]
+        infra = [event["data"].get("infra_reason") or (event["data"].get("fallback") or {}).get("reason")
+                 for event in view.kind("infra")]
+        infra = [reason for reason in infra if reason]
+        settled = {event.get("decision_id") for event in view.kind("closeout", "infra")}
+        first = view.first
+        rows.append({
+            "v": 1,
+            "job_id": job,
+            "decision_ids": [str(decision["decision_id"]) for decision in view.decisions],
+            "class": str(first.get("class")),
+            "arm": first.get("arm") if first.get("arm") in ("default", "explore", "explicit") else "default",
+            "arm_id": str(first.get("arm_id") or "standard"),
+            "propensity": float(first.get("propensity", 1.0)),
+            "policy_rev": str(first.get("policy_rev") or "unversioned"),
+            "seat": str(first.get("seat")),
+            "worker_model": view.latest("worker_model") or (fallback or {}).get("model") or first.get("model"),
+            "worker_effort_requested": first.get("effort"),
+            "worker_effort_effective": view.latest("worker_effort"),
+            "wrapper_model": view.latest("wrapper_model") or first.get("wrapper_model"),
+            "fallback": fallback,
+            "status": status,
+            "success_rule": rule,
+            "repairs": len(view.kind("repair")),
+            "escalations": len(view.kind("escalation")),
+            "infra_reason": infra[-1] if infra else None,
+            "merge_shas": sorted({str(event["data"].get("merge_sha")) for event in view.kind("merge")}),
+            "cost_usd": cost,
+            "cost_known_usd": known,
+            "cost_parts": parts,
+            "attribution_complete": cost is not None and all(
+                decision.get("decision_id") in settled for decision in view.decisions),
+            "wall_s": round(sum(walls), 1) if walls else None,
+            "session_ids": view.session_ids(),
+            "evidence": [event["event_id"] for event in view.events],
+        })
+    return rows
+
+
+def outcome_lines(rows: list[dict[str, Any]]) -> str:
+    return "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+
+
+def write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temp.write_text(text, encoding="utf-8")
+    os.replace(temp, path)
+
+
+def stored_events(path: Path) -> list[dict[str, Any]]:
+    return [row for row in read_jsonl(path) if row.get("v") == 1 and isinstance(row.get("event_id"), str)]
+
+
+def ingest_outcomes(table: dict[str, Any], src: OutcomeSources, since: timedelta | None, events_file: Path,
+                    outcomes_file: Path, write: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    existing = stored_events(events_file)
+    seen = {row["event_id"] for row in existing}
+    fresh = []
+    for event in collect_outcome_events(src, since):
+        if event["event_id"] not in seen:
+            seen.add(event["event_id"])
+            fresh.append(event)
+    outcomes = build_outcomes(table, existing + fresh, src.decisions, src.request_logs, src.now)
+    if write:
+        if fresh:
+            events_file.parent.mkdir(parents=True, exist_ok=True)
+            with events_file.open("a", encoding="utf-8") as handle:
+                handle.write("".join(json.dumps(event, sort_keys=True) + "\n" for event in fresh))
+        write_atomic(outcomes_file, outcome_lines(outcomes))
+    return fresh, outcomes
+
+
+def outcome_summary(outcomes: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in outcomes:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def print_outcomes(document: dict[str, Any], as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(document, sort_keys=True))
+        return
+    for row in document.get("outcomes", []):
+        cost = "?" if row["cost_usd"] is None else f"${row['cost_usd']:.2f}"
+        print(f"{row['job_id']} {row['class']} {row['seat']} {row['status']} {cost}")
+    print(" ".join(f"{key}={value}" for key, value in document.get("summary", {}).items()) or "no jobs")
+
+
+def command_outcomes(args: argparse.Namespace) -> int:
+    table = load_table()
+    if args.action == "replay":
+        if not args.directory or not Path(args.directory).is_dir():
+            print(f"route: outcomes replay needs a fixture directory, got {args.directory!r}", file=sys.stderr)
+            return EXIT_UNROUTABLE
+        src = replay_sources(Path(args.directory))
+        with tempfile.TemporaryDirectory(prefix="route-outcomes-") as scratch:
+            events_file = Path(scratch) / "outcome-events.jsonl"
+            outcomes_file = Path(scratch) / "outcomes.jsonl"
+            first_new, _ = ingest_outcomes(table, src, None, events_file, outcomes_file, True)
+            first_text = outcomes_file.read_text(encoding="utf-8")
+            second_new, outcomes = ingest_outcomes(table, src, None, events_file, outcomes_file, True)
+            idempotent = outcomes_file.read_text(encoding="utf-8") == first_text and not second_new
+            events = stored_events(events_file)
+        document = {"now": utc_stamp(src.now), "idempotent": idempotent, "events": events,
+                    "new_events": [len(first_new), len(second_new)], "outcomes": outcomes,
+                    "summary": outcome_summary(outcomes)}
+        print_outcomes(document, args.json)
+        return EXIT_OK if idempotent else EXIT_DEGRADED
+    if args.directory:
+        print(f"route: outcomes {args.action} takes no directory", file=sys.stderr)
+        return EXIT_UNROUTABLE
+    try:
+        since = parse_since(args.since)
+    except ValueError as error:
+        print(f"route: {error}", file=sys.stderr)
+        return EXIT_UNROUTABLE
+    src = live_sources(since)
+    if args.action == "ingest":
+        fresh, outcomes = ingest_outcomes(table, src, since, outcome_events_path(), outcomes_path(), args.write)
+        document = {"new_events": len(fresh), "written": args.write, "outcomes": outcomes,
+                    "summary": outcome_summary(outcomes)}
+    else:
+        outcomes = build_outcomes(table, stored_events(outcome_events_path()), src.decisions, src.request_logs,
+                                  src.now)
+        if args.write:
+            write_atomic(outcomes_path(), outcome_lines(outcomes))
+        document = {"written": args.write, "outcomes": outcomes, "summary": outcome_summary(outcomes)}
+    print_outcomes(document, args.json)
+    return EXIT_OK
+
+
 # --- doctor ------------------------------------------------------------------
 
 
@@ -4181,6 +4811,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     dispatch.add_argument("--dry-run", dest="dry_run", action="store_true")
     dispatch.add_argument("--json", action="store_true")
     dispatch.set_defaults(handler=command_dispatch)
+
+    outcomes = sub.add_parser("outcomes", help="outcome events and one outcome row per routed job")
+    outcomes.add_argument("action", choices=("ingest", "build", "replay"))
+    outcomes.add_argument("directory", nargs="?", default=None, help="fixture directory for replay")
+    outcomes.add_argument("--since", default="7d")
+    outcomes.add_argument("--write", action="store_true")
+    outcomes.add_argument("--json", action="store_true")
+    outcomes.set_defaults(handler=command_outcomes)
 
     policy = sub.add_parser("policy", help="the versioned routing policy")
     policy_sub = policy.add_subparsers(dest="policy_command", required=True)

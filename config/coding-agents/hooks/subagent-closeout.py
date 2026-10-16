@@ -15,7 +15,22 @@ LEDGER = Path(
     or os.environ.get("DISPATCH_LEDGER")
     or Path.home() / ".claude" / "logs" / "dispatch.jsonl"
 )
+DECISIONS = Path(
+    os.environ.get("ROUTE_DECISIONS_LOG") or Path.home() / ".claude" / "logs" / "route-decisions.jsonl"
+)
+EVENTS = Path(os.environ.get("OUTCOME_EVENTS") or Path.home() / ".claude" / "logs" / "outcome-events.jsonl")
 TAIL_LINES = 4000
+DISPATCH_LINE = re.compile(r"(?im)^[\s>*`-]*Dispatch:\s*`?(dcn_[0-9A-HJKMNP-TV-Z]{26})\b")
+INFRA = (
+    ("exit 75", re.compile(r"\bexit(?:ed)?(?:\s+(?:code|status|rc))?[\s:=]+75\b|\brc[\s:=]+75\b", re.IGNORECASE)),
+    ("not admitted", re.compile(r"\bnot admitted\b", re.IGNORECASE)),
+    ("no box", re.compile(r"\bno (?:box|host) (?:admits|admitted|available)|\bno box\b", re.IGNORECASE)),
+    ("governor refusal", re.compile(r"\bgovernor (?:refus|denied|declin)", re.IGNORECASE)),
+    ("usage limit", re.compile(r"\busage[- ]limit|\b429\b|rate limit reached", re.IGNORECASE)),
+)
+FORWARD_PREFIXES = ("gpt-", "codex-", "cursor-", "devin-", "muse-", "computer-use", "host-relay")
+SEAT_RUN_FORWARDERS = {"opus-seat", "opus-seat-full", "sonnet-implementer", "verifier"}
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 FAILURE = re.compile(
     r"\b(fabrication|cross-vendor-violation|verdict:?\s*fail|blocked|i (?:cannot|can't|was unable)"
     r"|error:|failed to|traceback \(most recent)",
@@ -492,6 +507,105 @@ def match(records: list, session_id, agent_type: str, agent_name: str, digests: 
     return resolve(open_dispatches, digests, [agent_name, agent_type], agent_type)
 
 
+def event_id(source: str, key: str) -> str:
+    return "evt_" + hashlib.sha256(f"{source}|{key}".encode("utf-8")).hexdigest()[:32]
+
+
+def json_objects(text: str) -> list:
+    found = []
+    candidates = [text.strip()] + [line.strip() for line in text.splitlines()]
+    for candidate in candidates:
+        if not (candidate.startswith("{") and candidate.endswith("}")):
+            continue
+        try:
+            value = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            found.append(value)
+    return found
+
+
+def seat_result(text: str) -> dict:
+    for value in reversed(json_objects(text)):
+        if any(key in value for key in ("worker_model", "worker_effort", "rc", "exit_code", "fallback")):
+            return value
+    return {}
+
+
+def decision_ref(last: str, prompt: str) -> str:
+    for text in (last, prompt):
+        found = DISPATCH_LINE.search(text or "")
+        if found:
+            return found.group(1)
+    value = (os.environ.get("AGENT_LB_DISPATCH") or "").strip()
+    return value if value.startswith("dcn_") else ""
+
+
+def decision_row(decision_id: str) -> dict:
+    if not decision_id:
+        return {}
+    try:
+        with DECISIONS.open(encoding="utf-8") as handle:
+            lines = handle.readlines()[-TAIL_LINES:]
+    except OSError:
+        return {}
+    for line in reversed(lines):
+        if decision_id not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("decision_id") == decision_id:
+            return row
+    return {}
+
+
+def in_process(seat: str) -> bool:
+    seat = seat.lower()
+    if seat.startswith(FORWARD_PREFIXES):
+        return False
+    return seat.endswith("-local") or seat not in SEAT_RUN_FORWARDERS
+
+
+def exit_code(result: dict):
+    for key in ("rc", "exit_code", "exit"):
+        value = result.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def infra_reason(result: dict, text: str):
+    if exit_code(result) == 75:
+        return "exit 75"
+    reason = result.get("infra_reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    for name, pattern in INFRA:
+        if pattern.search(text or ""):
+            return name
+    return None
+
+
+def effort_value(value):
+    return value if value in EFFORTS else None
+
+
+def string_list(value) -> list:
+    return [item for item in value if isinstance(item, str) and item] if isinstance(value, list) else []
+
+
+def append_event(row: dict) -> None:
+    try:
+        EVENTS.parent.mkdir(parents=True, exist_ok=True)
+        with EVENTS.open("a") as handle:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+    except Exception:
+        return
+
+
 def duration(dispatch) -> float:
     if not dispatch:
         return None
@@ -525,8 +639,20 @@ def main() -> None:
 
         shared, dispatch = {k: v for k, v in dispatch.items() if k != "_newest"}, None
     ok = bool(last.strip()) and not FAILURE.search(last)
+    path = transcript_path(payload)
+    decision_id = decision_ref(last, first_prompt(path) if path else "")
+    decision = decision_row(decision_id)
+    result = seat_result(last)
+    seat = str(decision.get("seat") or agent_type)
+    local = in_process(seat) and not result
+    infra = infra_reason(result, last if not ok or result else "")
+    if infra:
+        ok = False
+    fallback = result.get("fallback") if isinstance(result.get("fallback"), dict) else None
+    pool_pct = result.get("pool_pct")
+    moment = stamp(now())
     record = {
-        "ts": stamp(now()),
+        "ts": moment,
         "event": "closeout",
         "host": os.environ.get("FACTORY_LOCAL_HOST") or os.environ.get("FACTORY_ADMIT_HOST") or os.uname().nodename,
         "session_id": session_id,
@@ -563,7 +689,36 @@ def main() -> None:
         "error": None if ok else (last.strip()[:300] or "no final message"),
         "matched": bool(dispatch),
         "match": how,
+        "decision_id": decision_id or None,
+        "job_id": decision.get("job_id"),
+        "attempt": decision.get("attempt"),
+        "parent_id": decision.get("parent_id"),
+        "worker_model": result.get("worker_model") or (cost["model"] if local else None),
+        "worker_effort": effort_value(result.get("worker_effort")),
+        "wrapper_model": None if local else cost["model"],
+        "fallback": fallback,
+        "session_ids": string_list(result.get("session_ids")),
+        "pool_pct": pool_pct if isinstance(pool_pct, (int, float)) and not isinstance(pool_pct, bool) else None,
+        "exit_code": exit_code(result),
+        "infra_reason": infra,
     }
+    record["event_id"] = event_id("subagent-closeout", f"{session_id}|{record['agent_id'] or record['name']}|{moment}")
+    if decision_id or infra:
+        append_event({
+            "v": 1,
+            "event_id": record["event_id"],
+            "job_id": record["job_id"],
+            "decision_id": record["decision_id"],
+            "attempt": record["attempt"],
+            "parent_id": record["parent_id"],
+            "kind": "infra" if infra else "closeout",
+            "ts": moment,
+            "source": "subagent-closeout",
+            "data": {key: record[key] for key in (
+                "ok", "error", "subagent_type", "worker_model", "worker_effort", "wrapper_model", "fallback",
+                "session_ids", "pool_pct", "exit_code", "infra_reason", "wall_s", "tokens_in", "tokens_out",
+            )},
+        })
     try:
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
         with LEDGER.open("a") as handle:

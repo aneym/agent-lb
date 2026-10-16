@@ -1,0 +1,14 @@
+{"caller_seat": "dcn_01K7RETRYA0000000000000000", "cost_usd": 0.15, "model": "gpt-6.1-sol", "requested_at": "2026-10-10T10:10:00Z", "session_id": null}
+{"caller_seat": null, "cost_usd": 0.05, "model": "claude-sonnet-5-5", "requested_at": "2026-10-10T10:11:00Z", "session_id": "sess-retry-1"}
+{"caller_seat": "dcn_01K7RETRYB0000000000000000", "cost_usd": 0.2, "model": "gpt-6.1-sol", "requested_at": "2026-10-10T11:10:00Z", "session_id": null}
+{"caller_seat": null, "cost_usd": 0.02, "model": "claude-sonnet-5-5", "requested_at": "2026-10-10T11:11:00Z", "session_id": "sess-retry-2"}
+{"caller_seat": "dcn_01K7FALLBACK00000000000000", "cost_usd": 0.03, "model": "claude-sonnet-5-5", "requested_at": "2026-10-11T09:20:00Z", "session_id": null}
+{"caller_seat": "dcn_01K7SQASHA0000000000000000", "cost_usd": 0.1, "model": "gpt-6.1-sol", "requested_at": "2026-10-11T13:10:00Z", "session_id": null}
+{"caller_seat": "dcn_01K7SQASHA0000000000000000", "cost_usd": 0.01, "model": "claude-sonnet-5-5", "requested_at": "2026-10-11T13:11:00Z", "session_id": null}
+{"caller_seat": "dcn_01K7SQASHB0000000000000000", "cost_usd": 0.08, "model": "gpt-6.1-sol", "requested_at": "2026-10-11T13:15:00Z", "session_id": null}
+{"caller_seat": "dcn_01K7SQASHB0000000000000000", "cost_usd": 0.01, "model": "claude-sonnet-5-5", "requested_at": "2026-10-11T13:16:00Z", "session_id": null}
+{"caller_seat": "dcn_01K7RQQT000000000000000000", "cost_usd": 0.3, "model": "gpt-6.1-sol", "requested_at": "2026-10-12T08:10:00Z", "session_id": null}
+{"caller_seat": "dcn_01K7RQQT000000000000000000", "cost_usd": 0.02, "model": "claude-sonnet-5-5", "requested_at": "2026-10-12T08:11:00Z", "session_id": null}
+{"caller_seat": "dcn_01K7FX00000000000000000000", "cost_usd": 0.05, "model": "gpt-6.1-sol", "requested_at": "2026-10-12T20:10:00Z", "session_id": null}
+{"caller_seat": "dcn_01K7FX00000000000000000000", "cost_usd": 0.01, "model": "claude-sonnet-5-5", "requested_at": "2026-10-12T20:11:00Z", "session_id": null}
+{"caller_seat": "dcn_UNRELATED", "cost_usd": 0.99, "model": "gpt-6.1-sol", "requested_at": "2026-10-12T20:12:00Z", "session_id": null}

@@ -2,6 +2,7 @@
 import fcntl
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,32 @@ from pathlib import Path
 
 def number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 else None
+
+
+DISPATCH_LINE = re.compile(r'(?im)^[\s>*`-]*Dispatch:\s*`?(dcn_[0-9A-HJKMNP-TV-Z]{26})\b')
+
+
+def decision_id(agent):
+    value = agent.get('decision_id')
+    if isinstance(value, str) and value.startswith('dcn_'):
+        return value
+    for key in ('prompt', 'result'):
+        found = DISPATCH_LINE.search(agent.get(key) or '') if isinstance(agent.get(key), str) else None
+        if found:
+            return found.group(1)
+    return None
+
+
+def agent_rows(response):
+    agents = response.get('agents') or []
+    rows = []
+    for agent in agents if isinstance(agents, list) else []:
+        if not isinstance(agent, dict):
+            continue
+        rows.append({'label': agent.get('label') if isinstance(agent.get('label'), str) else None,
+                     'agent_type': agent.get('agentType'),
+                     'decision_id': decision_id(agent)})
+    return rows
 
 
 def main():
@@ -42,7 +69,8 @@ def main():
               'quota_percent': quota,
               'tokens_in': number(usage.get('input_tokens', usage.get('tokens_in'))),
               'tokens_out': number(usage.get('output_tokens', usage.get('tokens_out'))),
-              'usage_source': 'unified-utilization' if quota is not None else 'tokens'}
+              'usage_source': 'unified-utilization' if quota is not None else 'tokens',
+              'agents': agent_rows(response)}
     if quota is None and record['tokens_in'] is None and record['tokens_out'] is None:
         record['usage_source'] = 'unavailable'
     state.mkdir(parents=True, exist_ok=True)

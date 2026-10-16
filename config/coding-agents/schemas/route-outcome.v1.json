@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "route-outcome.v1.json",
+  "title": "route outcome row, one current row per job",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "job_id", "decision_ids", "class", "arm", "arm_id", "propensity", "policy_rev", "seat",
+               "worker_model", "worker_effort_requested", "worker_effort_effective", "wrapper_model", "fallback",
+               "status", "success_rule", "repairs", "escalations", "infra_reason", "merge_shas", "cost_usd",
+               "cost_known_usd", "cost_parts", "attribution_complete", "wall_s", "session_ids", "evidence"],
+  "properties": {
+    "v": {"const": 1},
+    "job_id": {"type": "string", "minLength": 1},
+    "decision_ids": {"type": "array", "items": {"type": "string", "pattern": "^dcn_"}},
+    "class": {"type": "string", "minLength": 1},
+    "arm": {"enum": ["default", "explore", "explicit"]},
+    "arm_id": {"type": "string", "minLength": 1},
+    "propensity": {"type": "number", "minimum": 0, "maximum": 1},
+    "policy_rev": {"type": "string", "minLength": 1},
+    "seat": {"type": "string", "minLength": 1},
+    "worker_model": {"type": ["string", "null"]},
+    "worker_effort_requested": {"enum": ["low", "medium", "high", "xhigh", "max", null]},
+    "worker_effort_effective": {"enum": ["low", "medium", "high", "xhigh", "max", null]},
+    "wrapper_model": {"type": ["string", "null"]},
+    "fallback": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["seat", "model", "reason"],
+      "properties": {
+        "seat": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "reason": {"type": ["string", "null"]}
+      }
+    },
+    "status": {"enum": ["accepted", "rejected", "infra_failure", "pending"]},
+    "success_rule": {"enum": ["merged_no_repair_72h", "closeout_ok_no_redispatch_2h", "metric_moved",
+                              "verdict_matches"]},
+    "repairs": {"type": "integer", "minimum": 0},
+    "escalations": {"type": "integer", "minimum": 0},
+    "infra_reason": {"type": ["string", "null"]},
+    "merge_shas": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "cost_usd": {"type": ["number", "null"], "minimum": 0},
+    "cost_known_usd": {"type": "number", "minimum": 0},
+    "cost_parts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["part", "source", "usd"],
+        "properties": {
+          "part": {"enum": ["worker", "wrapper", "retry", "repair"]},
+          "source": {"enum": ["request_logs", "subscription", "cursor_pool", "unknown"]},
+          "usd": {"type": ["number", "null"], "minimum": 0},
+          "pool_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100}
+        }
+      }
+    },
+    "attribution_complete": {"type": "boolean"},
+    "wall_s": {"type": ["number", "null"], "minimum": 0},
+    "session_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "evidence": {"type": "array", "items": {"type": "string", "pattern": "^evt_[0-9a-f]{32}$"}}
+  }
+}
