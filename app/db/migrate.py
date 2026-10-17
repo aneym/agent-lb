@@ -20,7 +20,7 @@ from sqlalchemy import exc as sa_exc
 from sqlalchemy.engine import Connection
 
 from app.core.config.settings import get_settings
-from app.db.alembic.revision_ids import LEGACY_MIGRATION_TO_NEW_REVISION, OLD_TO_NEW_REVISION_MAP, REVISION_ID_PATTERN
+from app.db.alembic.revision_ids import REVISION_ID_PATTERN
 from app.db.migration_url import to_sync_database_url
 from app.db.models import Base
 
@@ -28,44 +28,6 @@ logger = logging.getLogger(__name__)
 
 _ALEMBIC_VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_COLUMN = "version_num"
-_LEGACY_MIGRATIONS_TABLE = "schema_migrations"
-_REQUIRED_TABLES_FOR_LEGACY_STAMP = frozenset(
-    {
-        "accounts",
-        "usage_history",
-        "request_logs",
-        "sticky_sessions",
-        "dashboard_settings",
-    }
-)
-
-LEGACY_MIGRATION_ORDER: tuple[str, ...] = (
-    "001_normalize_account_plan_types",
-    "002_add_request_logs_reasoning_effort",
-    "003_add_accounts_reset_at",
-    "004_add_accounts_chatgpt_account_id",
-    "005_add_dashboard_settings",
-    "006_add_dashboard_settings_totp",
-    "007_add_dashboard_settings_password",
-    "008_add_api_keys",
-    "009_add_api_key_limits",
-    "010_add_idx_logs_requested_at",
-)
-
-LEGACY_TO_REVISION: dict[str, str] = {
-    migration_name: LEGACY_MIGRATION_TO_NEW_REVISION[migration_name] for migration_name in LEGACY_MIGRATION_ORDER
-}
-
-_BRANCHED_ENFORCEMENT_LEGACY_REVISION = "013_add_api_key_enforcement_fields"
-_BRANCHED_ENFORCEMENT_REPAIR_ANCESTOR = OLD_TO_NEW_REVISION_MAP[_BRANCHED_ENFORCEMENT_LEGACY_REVISION]
-_BRANCHED_ENFORCEMENT_DESCENDANT_REVISIONS = frozenset(
-    {
-        "20260225_000000_add_dashboard_settings_routing_strategy",
-        "20260228_020000_align_api_key_limit_enum_types",
-        "20260228_030000_add_api_firewall_allowlist",
-        "20260307_000000_add_api_key_enforcement_fields",
-    }
-)
 _MANUAL_DRIFT_INDEX_REQUIREMENTS: dict[str, frozenset[str]] = {
     "usage_history": frozenset(
         {
@@ -131,17 +93,8 @@ _EXISTING_COLUMN_REVISION_SKIPS: tuple[tuple[str, str, dict[str, frozenset[str]]
 
 
 @dataclass(frozen=True)
-class LegacyBootstrapResult:
-    stamped_revision: str | None
-    legacy_row_count: int
-    unknown_migrations: tuple[str, ...]
-    had_non_contiguous_entries: bool
-
-
-@dataclass(frozen=True)
 class MigrationRunResult:
     current_revision: str | None
-    bootstrap: LegacyBootstrapResult
 
 
 @dataclass(frozen=True)
@@ -149,7 +102,6 @@ class MigrationState:
     current_revision: str | None
     head_revision: str
     has_alembic_version_table: bool
-    has_legacy_migrations_table: bool
     needs_upgrade: bool
 
 
@@ -201,12 +153,6 @@ def _read_table_names(connection: Connection) -> set[str]:
     return set(inspector.get_table_names())
 
 
-def _read_legacy_migration_names(connection: Connection) -> set[str]:
-    result = connection.execute(text(f"SELECT name FROM {_LEGACY_MIGRATIONS_TABLE}"))
-    names = {str(row[0]) for row in result.fetchall() if row and row[0] is not None}
-    return names
-
-
 def _read_current_revisions_from_connection(connection: Connection) -> tuple[str, ...]:
     try:
         rows = connection.execute(text(f"SELECT {_ALEMBIC_VERSION_COLUMN} FROM {_ALEMBIC_VERSION_TABLE}")).fetchall()
@@ -234,94 +180,6 @@ def _read_current_revision_from_connection(connection: Connection) -> str | None
     return ",".join(sorted(revisions))
 
 
-def _contiguous_prefix_count(applied: set[str]) -> int:
-    contiguous = 0
-    for migration_name in LEGACY_MIGRATION_ORDER:
-        if migration_name in applied:
-            contiguous += 1
-            continue
-        break
-    return contiguous
-
-
-def _detect_non_contiguous_entries(applied: set[str], contiguous_prefix_count: int) -> bool:
-    trailing = LEGACY_MIGRATION_ORDER[contiguous_prefix_count:]
-    return any(name in applied for name in trailing)
-
-
-def _missing_required_legacy_tables_for_stamp(tables: set[str]) -> tuple[str, ...]:
-    return tuple(sorted(table for table in _REQUIRED_TABLES_FOR_LEGACY_STAMP if table not in tables))
-
-
-def _bootstrap_legacy_history(config: Config) -> LegacyBootstrapResult:
-    sync_database_url = _required_sqlalchemy_url(config)
-
-    with _sync_connection(sync_database_url) as connection:
-        tables = _read_table_names(connection)
-        if _ALEMBIC_VERSION_TABLE in tables:
-            return LegacyBootstrapResult(
-                stamped_revision=None,
-                legacy_row_count=0,
-                unknown_migrations=(),
-                had_non_contiguous_entries=False,
-            )
-
-        if _LEGACY_MIGRATIONS_TABLE not in tables:
-            return LegacyBootstrapResult(
-                stamped_revision=None,
-                legacy_row_count=0,
-                unknown_migrations=(),
-                had_non_contiguous_entries=False,
-            )
-
-        applied = _read_legacy_migration_names(connection)
-
-    if not applied:
-        return LegacyBootstrapResult(
-            stamped_revision=None,
-            legacy_row_count=0,
-            unknown_migrations=(),
-            had_non_contiguous_entries=False,
-        )
-
-    unknown = tuple(sorted(name for name in applied if name not in LEGACY_TO_REVISION))
-    contiguous_count = _contiguous_prefix_count(applied)
-    has_non_contiguous = _detect_non_contiguous_entries(applied, contiguous_count)
-
-    if contiguous_count <= 0:
-        return LegacyBootstrapResult(
-            stamped_revision=None,
-            legacy_row_count=len(applied),
-            unknown_migrations=unknown,
-            had_non_contiguous_entries=has_non_contiguous,
-        )
-
-    missing_required_tables = _missing_required_legacy_tables_for_stamp(tables)
-    if missing_required_tables:
-        logger.warning(
-            "Skipping legacy bootstrap stamp due to missing required tables tables=%s",
-            missing_required_tables,
-        )
-        return LegacyBootstrapResult(
-            stamped_revision=None,
-            legacy_row_count=len(applied),
-            unknown_migrations=unknown,
-            had_non_contiguous_entries=has_non_contiguous,
-        )
-
-    target_legacy_name = LEGACY_MIGRATION_ORDER[contiguous_count - 1]
-    target_revision = LEGACY_TO_REVISION[target_legacy_name]
-    _ensure_alembic_version_table_capacity(config)
-    command.stamp(config, target_revision)
-
-    return LegacyBootstrapResult(
-        stamped_revision=target_revision,
-        legacy_row_count=len(applied),
-        unknown_migrations=unknown,
-        had_non_contiguous_entries=has_non_contiguous,
-    )
-
-
 def _read_current_revision(sync_database_url: str) -> str | None:
     with _sync_connection(sync_database_url) as connection:
         tables = _read_table_names(connection)
@@ -338,11 +196,6 @@ def _head_revision(config: Config) -> str:
     if len(heads) == 1:
         return heads[0]
     return ",".join(heads)
-
-
-def _known_revisions(config: Config) -> set[str]:
-    script_directory = ScriptDirectory.from_config(config)
-    return {revision.revision for revision in script_directory.walk_revisions() if revision.revision}
 
 
 def _max_revision_id_length(config: Config) -> int:
@@ -439,63 +292,6 @@ def check_migration_policy(database_url: str) -> tuple[str, ...]:
     return _collect_migration_policy_violations(config)
 
 
-def _remap_legacy_alembic_revisions(config: Config) -> tuple[str, ...]:
-    sync_database_url = _required_sqlalchemy_url(config)
-    known_revisions = _known_revisions(config)
-
-    with _sync_transaction(sync_database_url) as connection:
-        tables = _read_table_names(connection)
-        if _ALEMBIC_VERSION_TABLE not in tables:
-            return ()
-
-        current_revisions = _read_current_revisions_from_connection(connection)
-        if not current_revisions:
-            return ()
-
-        unsupported = tuple(
-            sorted(
-                revision
-                for revision in current_revisions
-                if revision not in known_revisions and revision not in OLD_TO_NEW_REVISION_MAP
-            )
-        )
-        if unsupported:
-            raise MigrationBootstrapError(
-                "Unsupported alembic_version revision ids detected; manual intervention required "
-                f"unsupported={','.join(unsupported)}"
-            )
-
-        remapped_set = {OLD_TO_NEW_REVISION_MAP.get(revision, revision) for revision in current_revisions}
-
-        if (
-            _BRANCHED_ENFORCEMENT_LEGACY_REVISION in current_revisions
-            and _BRANCHED_ENFORCEMENT_REPAIR_ANCESTOR in remapped_set
-            and remapped_set & _BRANCHED_ENFORCEMENT_DESCENDANT_REVISIONS
-        ):
-            remapped_set.discard(_BRANCHED_ENFORCEMENT_REPAIR_ANCESTOR)
-
-        remapped = tuple(sorted(remapped_set))
-        if remapped == current_revisions:
-            return ()
-
-        connection.execute(text(f"DELETE FROM {_ALEMBIC_VERSION_TABLE}"))
-        for revision in remapped:
-            connection.execute(
-                text(
-                    f"INSERT INTO {_ALEMBIC_VERSION_TABLE} ({_ALEMBIC_VERSION_COLUMN}) "
-                    f"VALUES (:{_ALEMBIC_VERSION_COLUMN})"
-                ),
-                {_ALEMBIC_VERSION_COLUMN: revision},
-            )
-
-    logger.info(
-        "Remapped legacy alembic revision ids old=%s new=%s",
-        current_revisions,
-        remapped,
-    )
-    return current_revisions
-
-
 def inspect_migration_state(database_url: str) -> MigrationState:
     config = _build_alembic_config(database_url)
     sync_database_url = _required_sqlalchemy_url(config)
@@ -504,7 +300,6 @@ def inspect_migration_state(database_url: str) -> MigrationState:
     with _sync_connection(sync_database_url) as connection:
         tables = _read_table_names(connection)
         has_alembic = _ALEMBIC_VERSION_TABLE in tables
-        has_legacy = _LEGACY_MIGRATIONS_TABLE in tables
         current = _read_current_revision_from_connection(connection) if has_alembic else None
 
     if has_alembic:
@@ -517,7 +312,6 @@ def inspect_migration_state(database_url: str) -> MigrationState:
         current_revision=current,
         head_revision=head_revision,
         has_alembic_version_table=has_alembic,
-        has_legacy_migrations_table=has_legacy,
         needs_upgrade=needs_upgrade,
     )
 
@@ -683,63 +477,23 @@ def _upgrade_with_existing_column_revision_skips(
     command.upgrade(config, revision)
 
 
-def run_upgrade(
-    database_url: str,
-    revision: str = "head",
-    *,
-    bootstrap_legacy: bool,
-    auto_remap_legacy_revisions: bool = True,
-) -> MigrationRunResult:
+def run_upgrade(database_url: str, revision: str = "head") -> MigrationRunResult:
     config = _build_alembic_config(database_url)
     state_before = inspect_migration_state(database_url)
     config.attributes["agent_lb_fresh_install"] = (
-        state_before.current_revision is None
-        and not state_before.has_alembic_version_table
-        and not state_before.has_legacy_migrations_table
+        state_before.current_revision is None and not state_before.has_alembic_version_table
     )
-
-    bootstrap_result = LegacyBootstrapResult(
-        stamped_revision=None,
-        legacy_row_count=0,
-        unknown_migrations=(),
-        had_non_contiguous_entries=False,
-    )
-
-    if bootstrap_legacy:
-        bootstrap_result = _bootstrap_legacy_history(config)
-        if bootstrap_result.stamped_revision is not None:
-            config.attributes["agent_lb_fresh_install"] = False
 
     _ensure_alembic_version_table_capacity(config)
-    if auto_remap_legacy_revisions:
-        _remap_legacy_alembic_revisions(config)
 
     sync_database_url = _required_sqlalchemy_url(config)
     _upgrade_with_existing_column_revision_skips(config, revision=revision, sync_database_url=sync_database_url)
 
-    current_revision = _read_current_revision(sync_database_url)
-
-    if bootstrap_result.unknown_migrations:
-        logger.warning(
-            "Unknown legacy migration names detected names=%s",
-            bootstrap_result.unknown_migrations,
-        )
-    if bootstrap_result.had_non_contiguous_entries:
-        logger.warning("Legacy migration table has non-contiguous applied entries")
-
-    return MigrationRunResult(current_revision=current_revision, bootstrap=bootstrap_result)
+    return MigrationRunResult(current_revision=_read_current_revision(sync_database_url))
 
 
 async def run_startup_migrations(database_url: str) -> MigrationRunResult:
-    auto_remap = get_settings().database_alembic_auto_remap_enabled
-    return await to_thread.run_sync(
-        lambda: run_upgrade(
-            database_url,
-            "head",
-            bootstrap_legacy=True,
-            auto_remap_legacy_revisions=auto_remap,
-        ),
-    )
+    return await to_thread.run_sync(lambda: run_upgrade(database_url, "head"))
 
 
 def current_revision(database_url: str) -> str | None:
@@ -843,16 +597,6 @@ def _parse_args() -> argparse.Namespace:
 
     upgrade_parser = subparsers.add_parser("upgrade", help="Upgrade schema to a target revision.")
     upgrade_parser.add_argument("revision", nargs="?", default="head")
-    upgrade_parser.add_argument(
-        "--no-bootstrap-legacy",
-        action="store_true",
-        help="Disable automatic legacy schema_migrations bootstrap before upgrade.",
-    )
-    upgrade_parser.add_argument(
-        "--no-auto-remap-legacy-revisions",
-        action="store_true",
-        help="Disable automatic remap of legacy Alembic revision IDs.",
-    )
 
     subparsers.add_parser("current", help="Print current alembic revision.")
 
@@ -906,15 +650,8 @@ def main() -> None:
     database_url = args.db_url or get_settings().database_url
 
     if args.command == "upgrade":
-        result = run_upgrade(
-            database_url,
-            args.revision,
-            bootstrap_legacy=not bool(args.no_bootstrap_legacy),
-            auto_remap_legacy_revisions=not bool(args.no_auto_remap_legacy_revisions),
-        )
+        result = run_upgrade(database_url, args.revision)
         print(f"current_revision={result.current_revision or 'none'}")
-        if result.bootstrap.stamped_revision:
-            print(f"legacy_bootstrap_stamped={result.bootstrap.stamped_revision}")
         return
 
     if args.command == "rollback-refresh-intent":

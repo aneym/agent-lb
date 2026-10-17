@@ -12,20 +12,7 @@ from app.core.auth import DEFAULT_PLAN
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-
-try:
-    from app.db.alembic.revision_ids import OLD_TO_NEW_REVISION_MAP
-
-    _HAS_REVISION_REMAP = True
-except ImportError:
-    OLD_TO_NEW_REVISION_MAP = {
-        "001_normalize_account_plan_types": "001_normalize_account_plan_types",
-        "004_add_accounts_chatgpt_account_id": "004_add_accounts_chatgpt_account_id",
-    }
-    _HAS_REVISION_REMAP = False
-
 from app.db.migrate import (
-    LEGACY_MIGRATION_ORDER,
     _build_alembic_config,
     check_schema_drift,
     inspect_migration_state,
@@ -45,8 +32,6 @@ else:
 pytestmark = pytest.mark.integration
 _DATABASE_URL = get_settings().database_url
 _HEAD_REVISION = inspect_migration_state(_DATABASE_URL).head_revision
-_STAMPED_AFTER_LEGACY_PREFIX_4 = OLD_TO_NEW_REVISION_MAP["004_add_accounts_chatgpt_account_id"]
-_STAMPED_AFTER_LEGACY_PREFIX_1 = OLD_TO_NEW_REVISION_MAP["001_normalize_account_plan_types"]
 
 
 def _is_postgresql_database_url(url: str) -> bool:
@@ -78,7 +63,6 @@ async def test_run_startup_migrations_preserves_unknown_plan_types(db_setup):
 
     result = await run_startup_migrations(_DATABASE_URL)
     assert result.current_revision == _HEAD_REVISION
-    assert result.bootstrap.stamped_revision is None
 
     async with SessionLocal() as session:
         acc_one = await session.get(Account, "acc_one")
@@ -93,171 +77,6 @@ async def test_run_startup_migrations_preserves_unknown_plan_types(db_setup):
 
     rerun = await run_startup_migrations(_DATABASE_URL)
     assert rerun.current_revision == _HEAD_REVISION
-
-
-@pytest.mark.asyncio
-async def test_run_startup_migrations_bootstraps_legacy_history(db_setup):
-    async with SessionLocal() as session:
-        await session.execute(
-            text(
-                """
-                CREATE TABLE schema_migrations (
-                    name TEXT PRIMARY KEY,
-                    applied_at TEXT NOT NULL
-                )
-                """
-            )
-        )
-        for index, migration_name in enumerate(LEGACY_MIGRATION_ORDER[:4]):
-            await session.execute(
-                text("INSERT INTO schema_migrations (name, applied_at) VALUES (:name, :applied_at)"),
-                {"name": migration_name, "applied_at": f"2026-02-13T00:00:0{index}Z"},
-            )
-        await session.commit()
-
-    result = await run_startup_migrations(_DATABASE_URL)
-
-    assert result.bootstrap.stamped_revision == _STAMPED_AFTER_LEGACY_PREFIX_4
-    assert result.current_revision == _HEAD_REVISION
-
-    async with SessionLocal() as session:
-        revision_rows = await session.execute(text("SELECT version_num FROM alembic_version"))
-        revisions = [str(row[0]) for row in revision_rows.fetchall()]
-        assert revisions == [_HEAD_REVISION]
-
-
-@pytest.mark.asyncio
-async def test_run_startup_migrations_skips_legacy_stamp_when_required_tables_missing(db_setup):
-    async with SessionLocal() as session:
-        await session.execute(text("DROP TABLE dashboard_settings"))
-        await session.execute(
-            text(
-                """
-                CREATE TABLE schema_migrations (
-                    name TEXT PRIMARY KEY,
-                    applied_at TEXT NOT NULL
-                )
-                """
-            )
-        )
-        for index, migration_name in enumerate(LEGACY_MIGRATION_ORDER[:4]):
-            await session.execute(
-                text("INSERT INTO schema_migrations (name, applied_at) VALUES (:name, :applied_at)"),
-                {"name": migration_name, "applied_at": f"2026-02-13T00:00:0{index}Z"},
-            )
-        await session.commit()
-
-    result = await run_startup_migrations(_DATABASE_URL)
-
-    assert result.bootstrap.stamped_revision is None
-    assert result.current_revision == _HEAD_REVISION
-
-    async with SessionLocal() as session:
-        setting_id = await session.execute(text("SELECT id FROM dashboard_settings WHERE id = 1"))
-        assert setting_id.scalar_one() == 1
-
-
-@pytest.mark.asyncio
-async def test_run_startup_migrations_handles_unknown_legacy_rows(db_setup):
-    async with SessionLocal() as session:
-        await session.execute(
-            text(
-                """
-                CREATE TABLE schema_migrations (
-                    name TEXT PRIMARY KEY,
-                    applied_at TEXT NOT NULL
-                )
-                """
-            )
-        )
-        await session.execute(
-            text("INSERT INTO schema_migrations (name, applied_at) VALUES (:name, :applied_at)"),
-            {"name": "001_normalize_account_plan_types", "applied_at": "2026-02-13T00:00:00Z"},
-        )
-        await session.execute(
-            text("INSERT INTO schema_migrations (name, applied_at) VALUES (:name, :applied_at)"),
-            {"name": "900_custom_hotfix", "applied_at": "2026-02-13T00:00:01Z"},
-        )
-        await session.commit()
-
-    result = await run_startup_migrations(_DATABASE_URL)
-
-    assert result.bootstrap.stamped_revision == _STAMPED_AFTER_LEGACY_PREFIX_1
-    assert result.bootstrap.unknown_migrations == ("900_custom_hotfix",)
-    assert result.current_revision == _HEAD_REVISION
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(not _HAS_REVISION_REMAP, reason="requires revision remap support")
-async def test_run_startup_migrations_auto_remaps_legacy_alembic_revision_ids(db_setup):
-    await run_startup_migrations(_DATABASE_URL)
-
-    legacy_head = "013_add_dashboard_settings_routing_strategy"
-    async with SessionLocal() as session:
-        await session.execute(text("UPDATE alembic_version SET version_num = :legacy"), {"legacy": legacy_head})
-        await session.commit()
-
-    result = await run_startup_migrations(_DATABASE_URL)
-    assert result.current_revision == _HEAD_REVISION
-
-    async with SessionLocal() as session:
-        revision_rows = await session.execute(text("SELECT version_num FROM alembic_version"))
-        revisions = sorted(str(row[0]) for row in revision_rows.fetchall())
-        assert revisions == [_HEAD_REVISION]
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(not _HAS_REVISION_REMAP, reason="requires revision remap support")
-async def test_run_startup_migrations_auto_remaps_firewall_legacy_revision_id(db_setup):
-    await run_startup_migrations(_DATABASE_URL)
-
-    legacy_firewall_revision = "014_add_api_firewall_allowlist"
-    async with SessionLocal() as session:
-        await session.execute(
-            text("UPDATE alembic_version SET version_num = :legacy"),
-            {"legacy": legacy_firewall_revision},
-        )
-        await session.commit()
-
-    result = await run_startup_migrations(_DATABASE_URL)
-    assert result.current_revision == _HEAD_REVISION
-
-    async with SessionLocal() as session:
-        revision_rows = await session.execute(text("SELECT version_num FROM alembic_version"))
-        revisions = sorted(str(row[0]) for row in revision_rows.fetchall())
-        assert revisions == [_HEAD_REVISION]
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(not _HAS_REVISION_REMAP, reason="requires revision remap support")
-async def test_run_startup_migrations_handles_legacy_schema_table_and_legacy_alembic_id_together(db_setup):
-    await run_startup_migrations(_DATABASE_URL)
-
-    async with SessionLocal() as session:
-        await session.execute(
-            text(
-                """
-                CREATE TABLE schema_migrations (
-                    name TEXT PRIMARY KEY,
-                    applied_at TEXT NOT NULL
-                )
-                """
-            )
-        )
-        for index, migration_name in enumerate(LEGACY_MIGRATION_ORDER[:3]):
-            await session.execute(
-                text("INSERT INTO schema_migrations (name, applied_at) VALUES (:name, :applied_at)"),
-                {"name": migration_name, "applied_at": f"2026-02-13T00:00:0{index}Z"},
-            )
-        await session.execute(
-            text("UPDATE alembic_version SET version_num = :legacy"),
-            {"legacy": "013_add_dashboard_settings_routing_strategy"},
-        )
-        await session.commit()
-
-    result = await run_startup_migrations(_DATABASE_URL)
-    assert result.bootstrap.stamped_revision is None
-    assert result.current_revision == _HEAD_REVISION
 
 
 @pytest.mark.asyncio
@@ -292,29 +111,6 @@ async def test_postgresql_upgrade_head_from_empty_database(db_setup):
         revision_rows = await session.execute(text("SELECT version_num FROM alembic_version"))
         revisions = sorted(str(row[0]) for row in revision_rows.fetchall())
         assert revisions == [_HEAD_REVISION]
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(
-    (not _is_postgresql_database_url(_DATABASE_URL)) or (not _HAS_REVISION_REMAP),
-    reason="PostgreSQL-only migration remap test",
-)
-async def test_postgresql_startup_migration_auto_remap_legacy_head(db_setup):
-    await run_startup_migrations(_DATABASE_URL)
-
-    async with SessionLocal() as session:
-        await session.execute(
-            text("UPDATE alembic_version SET version_num = :legacy"),
-            {"legacy": "013_add_dashboard_settings_routing_strategy"},
-        )
-        await session.commit()
-
-    result = await run_startup_migrations(_DATABASE_URL)
-    assert result.current_revision == _HEAD_REVISION
-
-    async with SessionLocal() as session:
-        version_num = (await session.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))).scalar_one()
-        assert str(version_num) == _HEAD_REVISION
 
 
 @pytest.mark.asyncio
@@ -688,8 +484,8 @@ async def test_federation_usage_daily_migration_up_and_down(tmp_path):
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'federation-usage.sqlite'}"
     parent_revision = "20260715_160000_add_request_logs_session_time_index"
 
-    await to_thread.run_sync(lambda: run_upgrade(db_url, parent_revision, bootstrap_legacy=True))
-    await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+    await to_thread.run_sync(lambda: run_upgrade(db_url, parent_revision))
+    await to_thread.run_sync(lambda: run_upgrade(db_url, "head"))
 
     engine = create_async_engine(db_url, future=True)
     try:
@@ -733,7 +529,7 @@ async def test_federation_bigint_migration_preserves_rollups(db_setup):
             )
         )
         await session.commit()
-    await to_thread.run_sync(lambda: run_upgrade(_DATABASE_URL, "head", bootstrap_legacy=False))
+    await to_thread.run_sync(lambda: run_upgrade(_DATABASE_URL, "head"))
     async with SessionLocal() as session:
         values = (
             await session.execute(
@@ -769,7 +565,7 @@ async def test_dashboard_settings_default_flip_migration_does_not_infer_intent_f
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'dashboard-settings-defaults.sqlite'}"
     base_revision = "20260408_010000_merge_import_without_overwrite_and_assignment_heads"
 
-    await to_thread.run_sync(lambda: run_upgrade(db_url, base_revision, bootstrap_legacy=True))
+    await to_thread.run_sync(lambda: run_upgrade(db_url, base_revision))
 
     engine = create_async_engine(db_url, future=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -791,9 +587,7 @@ async def test_dashboard_settings_default_flip_migration_does_not_infer_intent_f
 
         await to_thread.run_sync(
             lambda: run_upgrade(
-                db_url,
-                "20260409_000000_switch_sticky_threads_and_prefer_earlier_reset_defaults_to_true",
-                bootstrap_legacy=False,
+                db_url, "20260409_000000_switch_sticky_threads_and_prefer_earlier_reset_defaults_to_true"
             )
         )
 
@@ -820,11 +614,7 @@ async def test_dashboard_settings_default_flip_migration_updates_fresh_seeded_ro
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'dashboard-settings-defaults-fresh.sqlite'}"
 
     await to_thread.run_sync(
-        lambda: run_upgrade(
-            db_url,
-            "20260409_000000_switch_sticky_threads_and_prefer_earlier_reset_defaults_to_true",
-            bootstrap_legacy=True,
-        )
+        lambda: run_upgrade(db_url, "20260409_000000_switch_sticky_threads_and_prefer_earlier_reset_defaults_to_true")
     )
 
     engine = create_async_engine(db_url, future=True)
@@ -853,14 +643,10 @@ async def test_dashboard_settings_default_flip_migration_updates_pristine_fresh_
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'dashboard-settings-defaults-staged-fresh.sqlite'}"
 
     await to_thread.run_sync(
-        lambda: run_upgrade(
-            db_url,
-            "20260408_010000_merge_import_without_overwrite_and_assignment_heads",
-            bootstrap_legacy=True,
-        )
+        lambda: run_upgrade(db_url, "20260408_010000_merge_import_without_overwrite_and_assignment_heads")
     )
 
-    await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+    await to_thread.run_sync(lambda: run_upgrade(db_url, "head"))
 
     engine = create_async_engine(db_url, future=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -887,13 +673,7 @@ async def test_dashboard_settings_default_flip_migration_updates_pristine_fresh_
 async def test_free_account_monthly_migration_renames_only_free_usage_windows(tmp_path):
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'free-monthly-migration.sqlite'}"
 
-    await to_thread.run_sync(
-        lambda: run_upgrade(
-            db_url,
-            "20260604_000000_add_reauth_required_account_status",
-            bootstrap_legacy=True,
-        )
-    )
+    await to_thread.run_sync(lambda: run_upgrade(db_url, "20260604_000000_add_reauth_required_account_status"))
 
     engine = create_async_engine(db_url, future=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -931,7 +711,7 @@ async def test_free_account_monthly_migration_renames_only_free_usage_windows(tm
             )
             await session.commit()
 
-        await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+        await to_thread.run_sync(lambda: run_upgrade(db_url, "head"))
 
         async with session_factory() as session:
             free_windows = [

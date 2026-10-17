@@ -35,21 +35,21 @@ def test_refresh_migration_fails_fast_on_account_lock_then_retries():
         connection.execute(text(f'CREATE DATABASE "{database_name}"'))
     engine = create_engine(to_sync_database_url(url))
     try:
-        run_upgrade(url, parent, bootstrap_legacy=False)
+        run_upgrade(url, parent)
         with engine.connect() as blocker:
             transaction = blocker.begin()
             blocker.execute(text("LOCK TABLE accounts IN ACCESS SHARE MODE"))
             started = time.monotonic()
             try:
                 with ThreadPoolExecutor(max_workers=1) as pool:
-                    job = pool.submit(run_upgrade, url, head, bootstrap_legacy=False)
+                    job = pool.submit(run_upgrade, url, head)
                     with pytest.raises(Exception, match="lock timeout"):
                         job.result(timeout=15)
             finally:
                 transaction.rollback()
             assert time.monotonic() - started < 15
         assert current_revision(url) == parent
-        run_upgrade(url, head, bootstrap_legacy=False)
+        run_upgrade(url, head)
         assert current_revision(url) == head
         with engine.connect() as connection:
             inspector = inspect(connection)

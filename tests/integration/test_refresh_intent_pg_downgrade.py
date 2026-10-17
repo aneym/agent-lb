@@ -51,7 +51,7 @@ def test_refresh_intent_pg_downgrade_preserves_defaults_and_enum_values() -> Non
     if parsed.get_backend_name() != "postgresql" or not (parsed.database or "").startswith("agent_lb_si_scratch_"):
         pytest.fail("PostgreSQL refresh-intent migration tests require a disposable SI scratch database")
 
-    run_upgrade(url, _HEAD, bootstrap_legacy=False)
+    run_upgrade(url, _HEAD)
     suffix = uuid4().hex
     account_id = f"pgdown-account-{suffix}"
     transfer_ids = [f"pgdown-aborting-{suffix}", f"pgdown-aborted-{suffix}"]
@@ -127,6 +127,6 @@ def test_refresh_intent_pg_downgrade_preserves_defaults_and_enum_values() -> Non
                 "reauth_required",
                 "deactivated",
             ]
-        run_upgrade(url, _HEAD, bootstrap_legacy=False)
+        run_upgrade(url, _HEAD)
     finally:
         engine.dispose()

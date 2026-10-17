@@ -33,7 +33,7 @@ def test_request_identity_migration_preserves_old_rows_and_round_trips(tmp_path,
             pytest.fail("PostgreSQL identity migration tests require a disposable identity scratch database")
 
 
-    run_upgrade(db_url, "head", bootstrap_legacy=False)
+    run_upgrade(db_url, "head")
     command.downgrade(_build_alembic_config(db_url), _PARENT)
     old_row = f"before-identity-{uuid4().hex}"
     engine = create_engine(to_sync_database_url(db_url))
@@ -46,7 +46,7 @@ def test_request_identity_migration_preserves_old_rows_and_round_trips(tmp_path,
             )
 
         for _ in range(2):
-            run_upgrade(db_url, "head", bootstrap_legacy=False)
+            run_upgrade(db_url, "head")
             with engine.connect() as connection:
                 assert _FIELDS <= {column["name"] for column in inspect(connection).get_columns("request_logs")}
                 assert connection.execute(
