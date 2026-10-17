@@ -146,6 +146,109 @@ def learning_lines(path: Path, pane: str, lane: str, project: str) -> list:
     ]
 
 
+STALE_SECONDS = 6 * 3600
+BOUNDARY_SCAN = 32 * 1024 * 1024
+
+
+def safe_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]", "_", value)[:120] or "unknown"
+
+
+def agent_dir(agents: Path, agent: str):
+    if (agents / agent / "agent.json").is_file():
+        return agents / agent
+    for path in sorted(agents.glob("*/agent.json")):
+        if read_object(path).get("name") == agent:
+            return path.parent
+    return None
+
+
+def checkpoint_path(lanes: Path, agents: Path, lane: str, agent: str, session: str) -> tuple:
+    if lane:
+        home = lanes / lane
+        return home / "compact-checkpoint.json", {"kind": "lane", "name": lane, "dir": str(home)}
+    home = agent_dir(agents, agent) if agent else None
+    if home is not None:
+        return home / "compact-checkpoint.json", {"kind": "agent", "name": agent, "dir": str(home)}
+    fallback = Path(os.environ.get("FACTORY_COMPACT_CHECKPOINTS_DIR")
+                    or "~/.agent-rails/factory/hooks/compact-checkpoints").expanduser()
+    return fallback / "{}.json".format(safe_name(session)), {"kind": "none", "name": "", "dir": str(fallback)}
+
+
+def boundaries_after(transcript: str, offset) -> int:
+    if not transcript or not isinstance(offset, int):
+        return -1
+    try:
+        with open(transcript, "rb") as stream:
+            size = stream.seek(0, 2)
+            if size < offset or size - offset > BOUNDARY_SCAN:
+                return -1
+            stream.seek(offset)
+            data = stream.read()
+    except OSError:
+        return -1
+    return sum(1 for line in data.splitlines() if b'"compact_boundary"' in line)
+
+
+def age_text(seconds: float) -> str:
+    return "{} min".format(int(seconds // 60)) if seconds < 7200 else "{:.1f} h".format(seconds / 3600)
+
+
+def checkpoint_lines(path: Path, payload: dict, now: datetime) -> list:
+    if not path.is_file():
+        return ["Compact checkpoint: none at {}.".format(path)]
+    data = read_object(path)
+    try:
+        written = datetime.fromisoformat(str(data.get("ts")).replace("Z", "+00:00"))
+        age = (now - written).total_seconds()
+    except ValueError:
+        age = None
+    reasons = []
+    if age is None or age > STALE_SECONDS:
+        reasons.append("older than 6 h" if age is not None else "no readable ts")
+    if str(data.get("session_id") or "") != str(payload.get("session_id") or ""):
+        reasons.append("session_id differs")
+    transcript = data.get("transcript") if isinstance(data.get("transcript"), dict) else {}
+    count = boundaries_after(str(payload.get("transcript_path") or transcript.get("path") or ""),
+                             transcript.get("offset"))
+    if count > 1:
+        reasons.append("a newer compact boundary follows its offset")
+    shown = age_text(age) if age is not None else "unknown"
+    if reasons:
+        return ["Compact checkpoint {} is stale ({}; age {}). Listing none of its items; rebuild from state and "
+                "the transcript.".format(path, ", ".join(reasons), shown)]
+    lines = ["Compact checkpoint: {} (age {}). Reconcile before new work; approval ids are references, "
+             "never consent.".format(path, shown)]
+    for entry in (data.get("bash") or [])[-2:]:
+        if isinstance(entry, dict):
+            lines.append("- cmd in {}: {}".format(entry.get("cwd") or "-", str(entry.get("command"))[:160]))
+    for entry in data.get("background_tasks") or []:
+        if isinstance(entry, dict):
+            lines.append("- running task {}".format(entry.get("task_id")))
+    for entry in data.get("agents") or []:
+        if isinstance(entry, dict):
+            lines.append("- open seat {} {}".format(entry.get("name") or entry.get("subagent_type") or "-",
+                                                    entry.get("agent_id") or entry.get("tool_use_id")))
+    for key, label in (("ask_ids", "ask"), ("approval_ids", "approval ref"), ("grant_ids", "grant")):
+        for entry in (data.get(key) or [])[-4:]:
+            if isinstance(entry, dict):
+                lines.append("- {} {}".format(label, entry.get("id")))
+    return lines[:1] + [line.replace("\r", " ").replace("\n", " ")[:240] for line in lines[1:]]
+
+
+def thread_card(home: Path, session: str):
+    cards = []
+    for path in home.glob("threads/*/thread.json"):
+        try:
+            cards.append((path.stat().st_mtime_ns, path))
+        except OSError:
+            continue
+    for _, path in sorted(cards, reverse=True):
+        if session and read_object(path).get("harness_session_id") == session:
+            return path
+    return max(cards)[1] if cards else None
+
+
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
@@ -161,7 +264,13 @@ def main() -> None:
     learned = Path(os.environ.get("FACTORY_LEARNED_FILE") or "~/.agent-rails/factory/learned.jsonl").expanduser()
     pane = os.environ.get("HERDR_PANE_ID", "")
     lane, agent, data = identity(payload, lanes, agents, pane)
+    session = str(payload.get("session_id") or "")
+    path, _ = checkpoint_path(lanes, agents, lane, agent, session)
     if not lane and not agent:
+        line = "Factory context: no lane or agent home resolved (cwd {}, pane {}); compact checkpoint {}: {}.".format(
+            payload.get("cwd") or os.getcwd(), pane or "-", "found" if path.is_file() else "none", path)
+        text = "\n".join(cap_lines([line[:1000]], 1024))
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
         return
     project = str(data.get("project") or "")
     state = []
@@ -181,6 +290,12 @@ def main() -> None:
         base = [
             "Factory role: agent home {} (herdr pane {}). Context re-injected after {}.".format(agent, pane, source)
         ]
+        home = agent_dir(agents, agent)
+        card = thread_card(home, session) if home is not None else None
+        base.append("Thread card: {}. Run memory.brief before acting.".format(card or "none found"))
+    if source == "compact":
+        base = base + cap_lines(checkpoint_lines(path, payload, datetime.now(timezone.utc)),
+                                1023 - len("\n".join(base).encode()))
     learnings = learning_lines(learned, pane, lane, project)
     while learnings and len("\n".join(base + state + learnings).encode()) > 1024:
         learnings.pop()

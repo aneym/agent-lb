@@ -72,7 +72,9 @@ def test_compact_reinjects_lane_context(tmp_path: Path) -> None:
             "Factory role: lead of lane ctxlane"
         )
         unknown = run(python, "compact", tmp_path, dict(env, HERDR_PANE_ID="unknown"))
-        assert unknown.stdout == "" and unknown.returncode == 0
+        diagnostic = json.loads(unknown.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert diagnostic.startswith("Factory context: no lane or agent home resolved")
+        assert len(diagnostic.splitlines()) == 1
 
 
 def test_install_policy_registers_session_start_hook(tmp_path: Path) -> None:

@@ -263,6 +263,12 @@ MANAGED_AGENTS = (
         Path("hooks/factory-context.py"),
     ),
     (
+        Path(".claude/hooks/compact-checkpoint.py"),
+        Path(".agent-lb/managed/coding-agents/compact-checkpoint"),
+        "agent-lb:compact-checkpoint:v1\n",
+        Path("hooks/compact-checkpoint.py"),
+    ),
+    (
 
 
         Path(".claude/hooks/wide-scan-guard.sh"),
@@ -508,6 +514,14 @@ FACTORY_CONTEXT_HOOK = {
 }
 
 
+COMPACT_CHECKPOINT_HOOK = {
+    "type": "command",
+    "command": '/usr/bin/python3 "$HOME/.claude/hooks/compact-checkpoint.py"',
+    "timeout": 10,
+    "statusMessage": "Compact checkpoint",
+}
+
+
 def is_closeout_hook(command: Any) -> bool:
     return isinstance(command, str) and "hooks/subagent-closeout.py" in command
 
@@ -537,6 +551,7 @@ SETTINGS_HOOKS = (
         "command": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-readback.py"',
         "timeout": 5}, False),
     ("SessionStart", "compact|resume", FACTORY_CONTEXT_HOOK, False),
+    ("PreCompact", None, COMPACT_CHECKPOINT_HOOK, False),
 )
 
 
