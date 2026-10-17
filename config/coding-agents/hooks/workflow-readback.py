@@ -76,8 +76,8 @@ def receipt_tokens(session_id, response, now):
     )
     if not script.is_file():
         return None, None
-    since = (now - timedelta(milliseconds=duration)).isoformat()
     try:
+        since = (now - timedelta(milliseconds=duration)).isoformat()
         result = subprocess.run(
             [
                 sys.executable,
@@ -96,9 +96,9 @@ def receipt_tokens(session_id, response, now):
             check=True,
         )
         total = json.loads(result.stdout)["summary"]["total"]
-    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, OverflowError):
         return None, None
-    if not total.get("requests"):
+    if not isinstance(total, dict) or not total.get("requests"):
         return None, None
     tokens_in = sum(number(total.get(key)) or 0 for key in ("input", "cache_read", "cache_write"))
     return tokens_in, number(total.get("output"))

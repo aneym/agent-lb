@@ -1225,7 +1225,7 @@ def attribution(lane_usd):
     return {
         "usd": total,
         "lane_usd": total - missing,
-        "unattributed_usd": missing,
+        "unattributed_usd": missing if total else None,
         "unattributed_pct": 100 * missing / total if total else None,
         "coverage": (total - missing) / total if total else None,
         "by_source": {source: usd for source, usd in sorted(lane_usd.items())},
