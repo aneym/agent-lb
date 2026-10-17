@@ -1,23 +1,32 @@
 #!/bin/bash
-
-
-
-
 set -u
-SRC="$HOME/repos/agent-lb"
-DST="$HOME/.agent-lb/runtime/agent-lb"
-LOG="$HOME/.agent-lb/runtime/sync.log"
-LOCKDIR="$HOME/.agent-lb/runtime/.sync.lock"
-UV=/opt/homebrew/bin/uv
-mkdir -p "$HOME/.agent-lb/runtime"
+SRC="${AGENT_LB_SYNC_SRC:-/Volumes/StudioExt/repos/agent-lb}"
+DST="${AGENT_LB_RUNTIME_DIR:-$HOME/.agent-lb/runtime/agent-lb}"
+ROOT="$(dirname "$DST")"
+LOG="$ROOT/sync.log"
+LOCKDIR="$ROOT/.sync.lock"
+UV="${AGENT_LB_SYNC_UV:-/opt/homebrew/bin/uv}"
+mkdir -p "$ROOT"
 ts() { date -u +%FT%TZ; }
 
+refuse() {
+  echo "$(ts) sync REFUSED: $1" >> "$LOG"
+  echo "sync-runtime: REFUSED: $1" >&2
+  exit 1
+}
 
 if ! perl -e 'alarm 5; exit((-f $ARGV[0]) ? 0 : 1)' "$SRC/pyproject.toml" 2>/dev/null; then
-  echo "$(ts) sync SKIPPED: $SRC unreachable; running last-good runtime" >> "$LOG"
-  exit 0
+  refuse "$SRC unreachable; runtime left as is"
 fi
 
+branch=$(git -C "$SRC" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")
+head=$(git -C "$SRC" rev-parse --verify --quiet HEAD 2>/dev/null || echo "")
+main=$(git -C "$SRC" rev-parse --verify --quiet refs/remotes/origin/main 2>/dev/null || echo "")
+[ -n "$head" ] || refuse "$SRC is not a git checkout"
+[ -n "$main" ] || refuse "$SRC has no origin/main ref"
+[ "$branch" = "main" ] || refuse "$SRC is on '${branch:-detached HEAD}', not main"
+[ "$head" = "$main" ] || refuse "$SRC HEAD ${head:0:10} is not origin/main ${main:0:10}; fetch and fast-forward first"
+git -C "$SRC" diff --quiet HEAD -- 2>/dev/null || refuse "$SRC has uncommitted changes to tracked files"
 
 if ! mkdir "$LOCKDIR" 2>/dev/null; then
   if [ -n "$(find "$LOCKDIR" -maxdepth 0 -mmin +30 2>/dev/null)" ]; then
@@ -38,8 +47,6 @@ run_rsync() {
     "$SRC/" "$DST/" >> "$LOG" 2>&1
 }
 
-
-
 run_rsync
 rc=$?
 if [ "$rc" -ne 0 ]; then
@@ -49,19 +56,18 @@ if [ "$rc" -ne 0 ]; then
   rc=$?
 fi
 if [ "$rc" -ne 0 ]; then
-  echo "$(ts) sync ALERT: rsync FAILED rc=$rc after retry; running last-good runtime (may be stale)" >> "$LOG"
-  exit 0
+  refuse "rsync failed rc=$rc after retry; runtime may be partial"
 fi
-
 
 STAMP="$DST/.venv/.uv-lock-sha"
 NEW=$(shasum -a 256 "$DST/uv.lock" | cut -d' ' -f1)
 if [ ! -x "$DST/.venv/bin/agent-lb" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$NEW" ]; then
   if (cd "$DST" && "$UV" sync --frozen) >> "$LOG" 2>&1; then
+    mkdir -p "$DST/.venv"
     echo "$NEW" > "$STAMP"
     echo "$(ts) venv rebuilt (uv.lock changed)" >> "$LOG"
   else
     echo "$(ts) uv sync FAILED; keeping previous venv" >> "$LOG"
   fi
 fi
-echo "$(ts) sync ok" >> "$LOG"
+echo "$(ts) sync ok ${head:0:10}" >> "$LOG"
