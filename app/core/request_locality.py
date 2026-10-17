@@ -16,6 +16,15 @@ _LOCAL_HOSTS = {
 }
 
 _TEST_SERVER_HOSTS = {"testserver", "testclient"}
+_CONTAINER_BRIDGE_HOSTS = {
+    "host.docker.internal",
+    "gateway.docker.internal",
+    "docker.for.mac.localhost",
+    "docker.for.mac.host.internal",
+    "0.250.250.254",
+}
+_CONTAINER_BRIDGE_SUFFIXES = (".orb.internal", ".orb.local")
+_HOST_GATE_EXEMPT_PREFIXES = ("/v1", "/backend-api", "/muse", "/muse-api", "/health")
 _FORWARDED_CLIENT_IP_HEADERS = {
     "x-forwarded-for",
     "forwarded",
@@ -203,6 +212,39 @@ def is_local_request(request: HTTPConnection) -> bool:
             return is_local_host(host_name) and _has_forwarded_client_ip_hint(request.headers)
         return is_local_host(host_name) and not _has_forwarded_client_ip_hint(request.headers)
     return address.is_loopback
+
+
+def is_container_bridge_host(host: str | None) -> bool:
+    if host is None:
+        return False
+    name = host.strip().lower().rstrip(".")
+    if name.startswith("[") and name.endswith("]"):
+        name = name[1:-1]
+    return name in _CONTAINER_BRIDGE_HOSTS or name.endswith(_CONTAINER_BRIDGE_SUFFIXES)
+
+
+def _is_host_gate_exempt_path(path: str) -> bool:
+    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in _HOST_GATE_EXEMPT_PREFIXES)
+
+
+def is_untrusted_loopback_host_request(request: HTTPConnection) -> bool:
+    if _is_host_gate_exempt_path(request.scope.get("path", "")) or _is_test_server_request(request):
+        return False
+    socket_ip = request.client.host if request.client else None
+    try:
+        if socket_ip is None or not ip_address(socket_ip).is_loopback:
+            return False
+    except ValueError:
+        return False
+    host_name = _parse_host_header_hostname(request.headers.get("host"))
+    if is_container_bridge_host(host_name):
+        return True
+    client_host = resolve_request_client_host(request)
+    try:
+        forwarded_remote = client_host is not None and not ip_address(client_host).is_loopback
+    except ValueError:
+        forwarded_remote = False
+    return not forwarded_remote and not is_local_host(host_name)
 
 
 def is_unauthenticated_client_allowed(request: HTTPConnection) -> bool:

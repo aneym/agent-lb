@@ -21,7 +21,11 @@ from app.core.exceptions import (
     ProxyAuthError,
     ProxyUpstreamError,
 )
-from app.core.request_locality import is_local_request, is_unauthenticated_client_allowed
+from app.core.request_locality import (
+    is_local_request,
+    is_unauthenticated_client_allowed,
+    is_untrusted_loopback_host_request,
+)
 from app.core.upstream_proxy import UpstreamProxyRouteError, resolve_upstream_route
 from app.core.utils.time import utcnow
 from app.db.session import get_background_session
@@ -165,6 +169,8 @@ async def validate_eval_api_access(request: HTTPConnection) -> None:
     token = _extract_bearer_token(authorization)
     if token:
         await _validate_api_key_token(token)
+    elif is_untrusted_loopback_host_request(request):
+        raise DashboardForbiddenError("Unkeyed local access requires a loopback Host", code="untrusted_local_host")
     if is_eval_request():
         raise DashboardForbiddenError("Eval traffic may only access model proxy routes", code="eval_proxy_only")
 
