@@ -1663,3 +1663,48 @@ def test_mac_without_local_lb_goes_straight_to_studio(
 
     assert launcher._lb_candidates() == expected
     assert launcher.AGENT_LB_BASE_URL == expected[0][1]
+
+
+def _launcher_named_claude(tmp_path: Path, with_real: bool) -> subprocess.CompletedProcess[str]:
+    launcher = Path(__file__).resolve().parents[2] / "clients" / "claude-lb-launch"
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "claude").symlink_to(launcher)
+    real = tmp_path / "real"
+    real.mkdir()
+    if with_real:
+        (real / "claude").write_text('#!/bin/sh\necho "real claude $*"\n')
+        (real / "claude").chmod(0o755)
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("AGENT_LB_", "CLAUDE_LB_", "ANTHROPIC_", "CC_"))
+    }
+    env.update(
+        CLAUDE_LB_DISABLE="1",
+        CLAUDE_LB_DOCTOR_SKIP="1",
+        PATH=os.pathsep.join([str(shadow), str(real), str(Path(sys.executable).parent), "/usr/bin", "/bin"]),
+    )
+    return subprocess.run(
+        [str(shadow / "claude"), "-p", "hello"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+
+def test_launcher_shadowing_claude_on_path_runs_the_real_claude(tmp_path: Path) -> None:
+    completed = _launcher_named_claude(tmp_path, with_real=True)
+
+    assert completed.returncode == 0, completed.stderr
+    assert "real claude" in completed.stdout
+    assert "-p hello" in completed.stdout
+
+
+def test_launcher_refuses_when_only_itself_is_claude_on_path(tmp_path: Path) -> None:
+    completed = _launcher_named_claude(tmp_path, with_real=False)
+
+    assert completed.returncode == 127
+    assert "refusing to start itself" in completed.stderr
