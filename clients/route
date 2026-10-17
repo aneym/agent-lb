@@ -4691,7 +4691,7 @@ def learning_window(value: str) -> tuple[datetime, datetime]:
     return until - timedelta(days=int(match[1])), until
 
 
-def learning_outcomes(since: datetime, until: datetime) -> list[dict[str, Any]]:
+def learning_outcomes(since: datetime, until: datetime, source: str = "prod") -> list[dict[str, Any]]:
     try:
         lines = outcomes_path().read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
@@ -4703,6 +4703,8 @@ def learning_outcomes(since: datetime, until: datetime) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
         if not isinstance(row, dict):
+            continue
+        if source != "all" and (row.get("source") == "eval") != (source == "eval"):
             continue
         stamp = _parse_ts(row.get("ts"))
         if stamp is None or stamp.tzinfo is None or not since <= stamp <= until:
@@ -4785,12 +4787,77 @@ def arm_paused(table: dict[str, Any], class_name: str, arm_id: str) -> bool:
                for entry in table.get("overrides", []) if isinstance(entry, dict))
 
 
-def learning_report(table: dict[str, Any], window: str, only: str | None = None) -> dict[str, Any]:
+EVAL_MDD = "MDD ~30pp per-trial at 30 trials/arm (alpha .1 one-sided, power .8)"
+EVAL_ARM_MAP = {"sol-med": "implement standard", "sol-low": "mechanical standard"}
+
+
+def eval_standings_path() -> Path:
+    return Path(os.environ.get("ROUTE_EVAL_STANDINGS")
+                or Path.home() / ".agent-lb/audits/routing/eval-standings.json").expanduser()
+
+
+def load_eval_standings() -> dict[str, Any]:
+    try:
+        data = json.loads(eval_standings_path().read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def eval_arm(standings: dict[str, Any], class_name: str, arm_id: str, default_arm: str) -> dict[str, Any] | None:
+    mapping = standings.get("_map") if isinstance(standings.get("_map"), dict) else EVAL_ARM_MAP
+    targets = {f"{class_name} {arm_id}"} | ({f"{class_name} standard"} if arm_id == default_arm else set())
+    names = [name for name, target in mapping.items() if target in targets]
+    if not names and isinstance(standings.get(arm_id), dict) and standings[arm_id].get("class") == class_name:
+        names = [arm_id]
+    for name in names:
+        entry = standings.get(name)
+        tasks = entry.get("tasks") if isinstance(entry, dict) else None
+        if not isinstance(tasks, dict):
+            continue
+        runs = sum(int(task.get("runs") or 0) for task in tasks.values() if isinstance(task, dict))
+        passes = sum(int(task.get("passes") or 0) for task in tasks.values() if isinstance(task, dict))
+        if not runs:
+            continue
+        rate = entry.get("per_trial_rate")
+        if not isinstance(rate, (float, int)) or isinstance(rate, bool):
+            rate = passes / runs
+        return {"eval_arm": name, "task_version_set": sorted(entry.get("task_version_set") or []),
+                "trials": runs, "passes": passes, "per_trial_rate": rate,
+                "upper_bound": wilson_interval(rate, runs)[1],
+                "solved_all3": int(entry.get("solved_all3") or 0)}
+    return None
+
+
+def eval_gate(class_name: str, candidate_arm: str, default_arm: str,
+              standings: dict[str, Any] | None = None) -> dict[str, Any]:
+    standings = load_eval_standings() if standings is None else standings
+    candidate = eval_arm(standings, class_name, candidate_arm, default_arm)
+    default = eval_arm(standings, class_name, default_arm, default_arm)
+    evidence = {"candidate": candidate, "default": default}
+    if (candidate is None or default is None or not candidate["task_version_set"]
+            or candidate["task_version_set"] != default["task_version_set"]):
+        return {"veto": False, "reason": "no-eval-evidence", "evidence": evidence}
+    if candidate["upper_bound"] < default["per_trial_rate"]:
+        return {"veto": True, "evidence": evidence,
+                "reason": f"eval per-trial upper bound {candidate['upper_bound']:.1%} is below "
+                          f"default {default['per_trial_rate']:.1%}"}
+    if candidate["solved_all3"] < default["solved_all3"] - 1:
+        return {"veto": True, "evidence": evidence,
+                "reason": f"eval solved_all3 {candidate['solved_all3']} is below "
+                          f"default {default['solved_all3']} - 1"}
+    return {"veto": False, "reason": "eval-ok", "evidence": evidence}
+
+
+def learning_report(table: dict[str, Any], window: str, only: str | None = None,
+                    source: str = "prod") -> dict[str, Any]:
     since, until = learning_window(window)
-    outcomes = learning_outcomes(since, until)
+    outcomes = learning_outcomes(since, until, source)
+    standings = load_eval_standings()
     standards = table.get("standards", {})
     classes = {}
     proposals = []
+    vetoed = []
     minimum = table.get("explore", {}).get("min_n_per_arm", 40)
     if not isinstance(minimum, int) or minimum < 1:
         fail("min_n_per_arm must be positive")
@@ -4811,26 +4878,31 @@ def learning_report(table: dict[str, Any], window: str, only: str | None = None)
             total = sum(row.get("arm_id") == arm_id for row in class_rows)
             metrics = learning_metrics(selected, total)
             paused = arm_paused(table, class_name, arm_id) or arm.get("paused", False)
+            gate = None if arm_id == default_id else eval_gate(class_name, arm_id, default_id, standings)
             arms.append({"arm_id": arm_id, "default": arm_id == default_id,
-                         **metrics, "paused": bool(paused)})
+                         **metrics, "paused": bool(paused), "eval_gate": gate})
             if arm_id == default_id:
                 continue
             baseline = learning_metrics([row for row in eligible if row.get("arm_id") == default_id],
                                         len(eligible))
-            if (metrics["n"] >= minimum and baseline["n"] >= minimum
+            if (source == "prod" and metrics["n"] >= minimum and baseline["n"] >= minimum
                     and metrics["interval"][0] >= baseline["accept_rate"] - 0.05
                     and metrics["cost_per_accepted"] is not None
                     and baseline["cost_per_accepted"] is not None
                     and metrics["cost_per_accepted"] < baseline["cost_per_accepted"]
                     and not paused):
-                proposals.append({"class": class_name, "action": "promote", "arm_id": arm_id,
-                                  "evidence": learning_evidence(metrics, window, table)})
+                proposal = {"class": class_name, "action": "promote", "arm_id": arm_id,
+                            "evidence": learning_evidence(metrics, window, table), "eval_gate": gate}
+                (vetoed if gate["veto"] else proposals).append(proposal)
         classes[class_name] = {"default": default_id, "arms": arms}
-    return {"window": window, "policy_rev": table.get("policy_rev"), "classes": classes,
-            "proposals": proposals,
+    report = {"window": window, "source": source, "policy_rev": table.get("policy_rev"), "classes": classes,
+              "proposals": proposals, "vetoed": vetoed,
             "pending_alex": [entry for entry in table.get("overrides", [])
                              if isinstance(entry, dict) and entry.get("pending_alex")
                              and not entry.get("reverted_at") and (not only or entry.get("class") == only)]}
+    if source != "prod":
+        report["mdd"] = EVAL_MDD
+    return report
 
 
 def learning_evidence(metrics: dict[str, Any], window: str, table: dict[str, Any]) -> dict[str, Any]:
@@ -4879,6 +4951,11 @@ def command_learn(args: argparse.Namespace) -> int:
             fail(f"unknown exploration arm: {class_name}/{arm_id}")
         if arm_id == report["classes"][class_name]["default"]:
             fail("arm is already the default")
+        gate = eval_gate(class_name, arm_id, report["classes"][class_name]["default"])
+        if gate["veto"] and not args.override_evidence:
+            print(f"route: eval gate veto: {gate['reason']}; --override-evidence must be explicit",
+                  file=sys.stderr)
+            return EXIT_SETUP
         proposal = next((p for p in report["proposals"] if p["class"] == class_name
                          and p["arm_id"] == arm_id), None)
         if proposal is None and not args.override_evidence:
@@ -4889,6 +4966,7 @@ def command_learn(args: argparse.Namespace) -> int:
         previous = table["standards"][class_name]
         entry["previous_default"] = previous
         entry["override_evidence"] = bool(args.override_evidence)
+        entry["eval_gate"] = gate
         protected = {"plan", "review", "design", "audit", "judge", "ui_critical", "trust"}
         claude = str(previous.get("model", "")).startswith(("opus", "sonnet", "haiku", "claude"))
         entry["pending_alex"] = class_name in protected and claude
@@ -4935,7 +5013,7 @@ def command_learn(args: argparse.Namespace) -> int:
     if changed:
         write_learning_table(table)
         updated = learning_report(table, args.since)
-        for key in ("classes", "proposals", "pending_alex"):
+        for key in ("classes", "proposals", "vetoed", "pending_alex"):
             report[key] = updated[key]
     print(json.dumps(report, indent=2) if args.json else learning_text(report))
     return EXIT_OK
@@ -4959,6 +5037,11 @@ def learning_text(report: dict[str, Any]) -> str:
         lines.append("")
     for proposal in report["proposals"]:
         lines.append(f"Propose promoting {proposal['arm_id']} for {proposal['class']}.")
+    for proposal in report.get("vetoed", []):
+        lines.append(f"Eval gate vetoed promoting {proposal['arm_id']} for {proposal['class']}: "
+                     f"{proposal['eval_gate']['reason']}.")
+    if report.get("mdd"):
+        lines.append(report["mdd"])
     for entry in report["pending_alex"]:
         lines.append(f"Alex's approval is pending for {entry['class']} promotion to {entry['arm_id']}.")
     if not report["proposals"]:
@@ -4967,7 +5050,7 @@ def learning_text(report: dict[str, Any]) -> str:
 
 
 def command_standings(args: argparse.Namespace) -> int:
-    report = learning_report(load_table(apply_default=False), args.since, args.task_class)
+    report = learning_report(load_table(apply_default=False), args.since, args.task_class, args.source)
     if args.mdx:
         atomic_write(Path(args.mdx).expanduser(), learning_text(report))
     print(json.dumps(report, indent=2) if args.json else learning_text(report))
@@ -5136,6 +5219,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     standings = sub.add_parser("standings", help="show attributed routing evidence by class and arm")
     standings.add_argument("--class", dest="task_class")
     standings.add_argument("--since", default="30d")
+    standings.add_argument("--source", choices=("prod", "eval", "all"), default="prod")
     standings.add_argument("--json", action="store_true")
     standings.add_argument("--mdx")
     standings.set_defaults(handler=command_standings)

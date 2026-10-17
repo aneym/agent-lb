@@ -1,0 +1,128 @@
+{
+  "_map": {
+    "sol-med": "implement standard",
+    "muse-med": "implement muse"
+  },
+  "sol-med": {
+    "class": "implement",
+    "task_version_set": [
+      "t00@1",
+      "t01@1",
+      "t02@1",
+      "t03@1",
+      "t04@1",
+      "t05@1",
+      "t06@1",
+      "t07@1",
+      "t08@1",
+      "t09@1"
+    ],
+    "tasks": {
+      "t00": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t01": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t02": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t03": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t04": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t05": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t06": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t07": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t08": {
+        "runs": 3,
+        "passes": 0
+      },
+      "t09": {
+        "runs": 3,
+        "passes": 0
+      }
+    },
+    "per_trial_rate": 0.8,
+    "solved_all3": 8,
+    "cost_known_usd": 1.5,
+    "cost_unknown_trials": 0
+  },
+  "muse-med": {
+    "class": "implement",
+    "task_version_set": [
+      "t00@1",
+      "t01@1",
+      "t02@1",
+      "t03@1",
+      "t04@1",
+      "t05@1",
+      "t06@1",
+      "t07@1",
+      "t08@1",
+      "t09@1"
+    ],
+    "tasks": {
+      "t00": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t01": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t02": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t03": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t04": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t05": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t06": {
+        "runs": 3,
+        "passes": 3
+      },
+      "t07": {
+        "runs": 3,
+        "passes": 2
+      },
+      "t08": {
+        "runs": 3,
+        "passes": 0
+      },
+      "t09": {
+        "runs": 3,
+        "passes": 0
+      }
+    },
+    "per_trial_rate": 0.7666666666666667,
+    "solved_all3": 7,
+    "cost_known_usd": 1.5,
+    "cost_unknown_trials": 0
+  }
+}
