@@ -15,6 +15,7 @@
     "class": {"type": "string", "minLength": 1},
     "arm": {"enum": ["default", "explore", "explicit"]},
     "arm_id": {"type": "string", "minLength": 1},
+    "eligible_arms": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "propensity": {"type": "number", "minimum": 0, "maximum": 1},
     "policy_rev": {"type": "string", "minLength": 1},
     "seat": {"type": "string", "minLength": 1},
@@ -33,6 +34,8 @@
       }
     },
     "status": {"enum": ["accepted", "rejected", "infra_failure", "pending"]},
+    "outcome": {"enum": ["accepted", "rejected", "infra_failure", "pending"]},
+    "ts": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"},
     "success_rule": {"enum": ["merged_no_repair_72h", "closeout_ok_no_redispatch_2h", "metric_moved",
                               "verdict_matches"]},
     "repairs": {"type": "integer", "minimum": 0},
@@ -41,6 +44,7 @@
     "merge_shas": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "cost_usd": {"type": ["number", "null"], "minimum": 0},
     "cost_known_usd": {"type": "number", "minimum": 0},
+    "cost_known": {"type": "boolean"},
     "cost_parts": {
       "type": "array",
       "items": {
