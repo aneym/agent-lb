@@ -13,9 +13,9 @@ from typing import Iterator
 
 import pytest
 
+from tests.integration.route_support import SCRIPT as ROUTE
+from tests.integration.route_support import setup, table_copy
 from tests.integration.test_route_reservations import route, server  # noqa: F401  (module-scoped server fixture)
-from tests.unit.test_route_ladder import SCRIPT as ROUTE
-from tests.unit.test_route_ladder import setup, table_copy
 
 REPO = Path(__file__).resolve().parents[2]
 SEAT = REPO / "clients" / "seat"

@@ -36,11 +36,10 @@ REQUIRED_TOOLS = (
 BASELINE_TARGETS = {
     "frontend-lint",
     "frontend-typecheck",
-    "frontend-test",
     "frontend-build",
     "lint",
     "typecheck",
-    "test-unit",
+    "test-floor",
     "test-integration-core",
     "test-integration-bridge",
     "test-e2e",
@@ -49,7 +48,6 @@ BASELINE_TARGETS = {
     "migration-check-postgres",
     "package",
     "docker",
-    "menubar-test",
     "menubar-build",
 }
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")

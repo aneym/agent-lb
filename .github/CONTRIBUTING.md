@@ -134,7 +134,7 @@ Local CI always runs the entire suite; a selector is not a merge gate.
 
 ```bash
 make lint
-make test-unit
+make test-floor
 make package
 ```
 
@@ -277,15 +277,14 @@ These rules are intentionally lightweight. They don't require:
 
 ## Tests
 
-- **Unit tests** live under `tests/unit/` and should be fast and hermetic.
+- **Kept-floor guards** live under `tests/floor/`.
 - **Integration tests** live under `tests/integration/` and may spin up the
   app, hit local sockets, or use fixtures that mimic upstream.
-- New behavior needs at least one unit test. New endpoints need an
-  integration test.
+- New behavior and endpoints need integration or end-to-end coverage.
 - Run a focused subset with:
 
 ```bash
-uv run pytest tests/unit/test_proxy_api_responses_contract.py -q
+uv run pytest tests/integration/test_request_logs_options_api.py -q
 ```
 
 ## Security issues

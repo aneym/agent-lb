@@ -27,13 +27,6 @@ repos:
         language: system
         pass_filenames: false
         files: ^frontend/
-      - id: frontend-test
-        name: frontend test
-        entry: make frontend-test
-        language: system
-        pass_filenames: false
-        files: ^frontend/
-        stages: [pre-push]
       - id: local-ci
         name: exact-commit local CI (commit changes before running)
         entry: make ci

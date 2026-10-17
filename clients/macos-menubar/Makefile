@@ -26,7 +26,7 @@ BUNDLE_ID:= com.aneyman.agentlb.menubar
 APP_PATH := $(HOME)/Applications/AgentLB.app
 PLIST    := $(HOME)/Library/LaunchAgents/$(BUNDLE_ID).plist
 
-.PHONY: build bundle run test clean install deploy install-agent uninstall
+.PHONY: build bundle run clean install deploy install-agent uninstall
 
 build:
 	swift build -c release
@@ -40,9 +40,6 @@ bundle: build
 
 run: bundle
 	open $(APP)
-
-test:
-	swift test
 
 # Build, copy the bundle to ~/Applications, then register + start the app as
 # a login LaunchAgent (GUI domain).

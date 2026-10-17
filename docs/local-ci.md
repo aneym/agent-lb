@@ -8,10 +8,10 @@ the complete tier for a pull request, commit SHA, or `main`:
 python3 scripts/local_ci.py run <PR|sha|main>
 ```
 
-This is a full suite, not a changed-file selector. It includes frontend lint,
-types, and tests; Python lint/types; SQLite unit, integration, and end-to-end
+This is a full suite, not a changed-file selector. It includes frontend lint
+and types; Python lint/types; SQLite kept-floor, integration, and end-to-end
 tests; disposable PostgreSQL parity and migration checks; package validation;
-Docker vulnerability gating; and native Swift tests and
+Docker vulnerability gating; and the native Swift
 release build. Missing or failed tools make the run red; they are never skipped.
 
 The runner writes a new same-machine receipt per attempt under
@@ -34,7 +34,6 @@ prove it. Run it on Windows when that surface changes:
 
 ```powershell
 uv sync --dev --frozen
-uv run pytest tests/unit/test_memory_monitor.py
 uv run python -c "from app.main import create_app; assert create_app() is not None"
 ```
 
@@ -52,7 +51,7 @@ useful during editing but do not issue a merge receipt.
 
 After merging, run `python3 scripts/local_ci.py run main` and check the exact
 merged SHA. A red baseline is a red receipt: do not re-label it green because
-the failing files were unchanged. SQLite, PostgreSQL, native macOS fixture,
+the failing files were unchanged. SQLite, PostgreSQL, native macOS build,
 Windows-native, and live-provider evidence are separate claims.
 
 GitHub remains the source/PR/release host. No

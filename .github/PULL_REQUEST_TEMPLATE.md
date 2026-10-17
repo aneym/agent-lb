@@ -55,11 +55,11 @@ Change directory: <!-- openspec/changes/<change>/ -->
 
 <!--
 How did you verify this works? Paste the commands you ran and the relevant outputs.
-Required: unit tests for new logic, integration tests for new endpoints.
+Required: integration or end-to-end coverage for new behavior.
 -->
 
 ```
-# uv run pytest tests/unit/test_<area>.py -q
+# uv run pytest tests/floor -q
 # uv run pytest tests/integration/test_<area>.py -q
 ```
 

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.integration.route_support import SCRIPT
 from tests.integration.test_route_reservations import route, scenario_env, server  # noqa: F401
-from tests.unit.test_route_ladder import SCRIPT
 
 
 def test_pick_skips_a_vendor_whose_reservation_refuses(tmp_path: Path, server: str):  # noqa: F811

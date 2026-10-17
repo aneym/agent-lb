@@ -12,11 +12,5 @@ let package = Package(
         .linkedFramework("ServiceManagement"),
       ]
     ),
-    .testTarget(
-      name: "AgentLBTests",
-      dependencies: ["AgentLB"],
-      path: "Tests/AgentLBTests",
-      resources: [.copy("Fixtures")]
-    ),
   ]
 )

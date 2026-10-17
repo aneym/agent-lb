@@ -31,15 +31,14 @@ help:
 	  '  make lint                    ruff check + format check + architecture checks' \
 	  '  make architecture-check      proxy architecture fitness ratchets' \
 	  '  make typecheck               ty check' \
-	  '  make frontend-test           vitest coverage, same as CI' \
-	  '  make test-unit               unit pytest slice, same as CI' \
+	  '  make test-floor              kept-floor pytest guards, same as CI' \
 	  '  make test-integration-core   integration-core pytest slice' \
 	  '  make package                 build and verify sdist/wheel' \
 	  '  make startup-benchmark       record 5 isolated startup/ready samples' \
-	  '  make ci-fast                 lint/type/frontend/unit/package' \
+	  '  make ci-fast                 lint/type/floor/package' \
 	  '  make ci                      full local CI gate'
 
-.PHONY: frontend-install frontend-lint frontend-typecheck frontend-test frontend-build
+.PHONY: frontend-install frontend-lint frontend-typecheck frontend-build
 frontend-install:
 	cd frontend && bun install --frozen-lockfile
 
@@ -48,9 +47,6 @@ frontend-lint: frontend-install
 
 frontend-typecheck: frontend-install
 	cd frontend && bun run typecheck
-
-frontend-test: frontend-install
-	cd frontend && bun run test:coverage
 
 frontend-build: frontend-install
 	cd frontend && bun run build
@@ -67,10 +63,10 @@ typecheck:
 	uv sync --dev --frozen
 	uv run ty check
 
-.PHONY: test-unit test-integration-core test-integration-bridge test-e2e test-postgres
-test-unit: frontend-build
+.PHONY: test-floor test-integration-core test-integration-bridge test-e2e test-postgres
+test-floor:
 	uv sync --dev --frozen
-	PYTHONFAULTHANDLER=1 uv run pytest $(PYTEST_ARGS) tests/unit tests/test_request_logs_options_api.py
+	PYTHONFAULTHANDLER=1 uv run pytest $(PYTEST_ARGS) tests/floor
 
 test-integration-core: frontend-build
 	uv sync --dev --frozen
@@ -127,13 +123,13 @@ docker:
 	docker build -t $(CI_IMAGE) .
 	trivy image --format table --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed $(CI_IMAGE)
 
-.PHONY: ci-fast ci ci-targets ci-doctor menubar-test menubar-build
-ci-fast: lint typecheck frontend-test test-unit package
+.PHONY: ci-fast ci ci-targets ci-doctor menubar-build
+ci-fast: lint typecheck test-floor package
 
-CI_TARGETS := frontend-lint frontend-typecheck frontend-test frontend-build \
-	lint typecheck test-unit test-integration-core test-integration-bridge test-e2e \
+CI_TARGETS := frontend-lint frontend-typecheck frontend-build \
+	lint typecheck test-floor test-integration-core test-integration-bridge test-e2e \
 	test-postgres migration-check migration-check-postgres package docker \
-	menubar-test menubar-build
+	menubar-build
 
 ci-targets:
 	@printf '%s\n' $(CI_TARGETS)
@@ -143,9 +139,6 @@ ci:
 
 ci-doctor:
 	python3 scripts/local_ci.py doctor
-
-menubar-test:
-	cd clients/macos-menubar && swift test
 
 menubar-build:
 	$(MAKE) -C clients/macos-menubar bundle

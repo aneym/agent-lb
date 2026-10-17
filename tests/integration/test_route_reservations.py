@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from tests.integration.route_http_fixtures import pick_http_env
-from tests.unit.test_route_ladder import SCRIPT, setup, table_copy
+from tests.integration.route_support import SCRIPT, setup, table_copy
 
 REPO = Path(__file__).resolve().parents[2]
 BOOT_SECONDS = 240
