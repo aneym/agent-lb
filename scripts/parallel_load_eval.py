@@ -330,7 +330,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description='Parallel-capacity eval: a staircase of concurrent tiny requests per path.', formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base-url", default=os.environ.get("AGENT_LB_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--paths", default="ccgpt,codex,anthropic", type=lambda s: [p for p in s.split(",") if p])
     parser.add_argument(

@@ -60,7 +60,7 @@ try:
         ready = shared / ".worktree-ready"
         if not ready.exists():
             env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(shared))
-            # Never install an editable project pointing at the builder's worktree.
+
             run(["uv", "sync", "--frozen", "--no-install-project", "--python", python], env=env)
             run([str(shared / "bin/python"), "-I", "-c",
                  "import importlib.util; assert importlib.util.find_spec('app') is None"])

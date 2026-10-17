@@ -40,7 +40,7 @@ def install_tab_audit(home: Path, domain: str, uninstall: bool) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Install the read-only routing audit outside /Volumes for launchd.')
     parser.add_argument("--uninstall", action="store_true")
     args = parser.parse_args()
     home = Path.home()

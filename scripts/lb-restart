@@ -1,49 +1,5 @@
 #!/usr/bin/env python3
-"""Controlled, zero-gap restart of the live agent-lb service (blue/green).
 
-Every Claude Code and Codex session on this machine sends its model traffic
-through agent-lb, so a restart is a production event. This is the only
-supported way to restart it or deploy files into the runtime:
-
-    lb-restart --reason "why"                                  # restart onto what is on disk
-    lb-restart --reason "why" --from <worktree> --files a b    # copy files in, then restart
-    lb-restart --reason "why" --backup <dir>                   # files already copied; roll back from <dir> on failure
-    lb-restart --reason "why" --reload-plist                   # also re-read the launchd plist
-    lb-restart --reason "why" --check                          # boot + health-gate the code on disk, touch nothing
-    lb-restart --reason "why" --force                          # do not wait for sign-ins in progress
-    lb-restart --reason "why" --sandbox <config.json>          # the same restart on an lb-sandbox instance
-
-What it does, in order:
-
-1. Takes a machine-wide lock (one restart at a time; others wait, up to --lock-wait).
-   OAuth sign-ins live only in the memory of the process that started them, so
-   before each move of the front, and again after it before that instance is
-   stopped, it waits (up to --oauth-wait in total) while the instance it moves
-   away from has a sign-in in progress or still holds the callback port (1455).
-   --force skips the wait. A sign-in can still be lost, and the browser then shows
-   "start the sign-in again", when:
-   - it starts in the moment between the last check and a front move or SIGTERM
-     (closing that fully would need a stop-the-world handoff);
-   - the primary is unhealthy (the watchdog path): a broken primary is replaced
-     at once and its sign-ins are not waited for;
-   - --force is given or --oauth-wait is used up.
-2. Optionally backs up and copies --files from --from into the runtime.
-3. Boots a standby instance of the new code on the standby port (2459) and
-   health-gates it. If the gate fails, the files are rolled back and the live
-   primary was never touched: no client sees anything.
-4. Points the TCP front (2455) at the standby for new connections, then
-   SIGTERMs the primary (launchd job on 2457). The primary stops accepting,
-   closes idle keep-alive sockets (clients reconnect to the standby) and lets
-   in-flight streams finish (uvicorn graceful shutdown), then launchd restarts it.
-5. Health-gates the new primary, points the front back at it, and drains and
-   stops the standby the same way.
-6. Appends one line with durations and in-flight counts to runtime/sync.log.
-
-New connections are served by some healthy instance throughout; the only
-client-visible cost is a keep-alive socket closed while idle, which clients
-reopen. Streams longer than the drain bound (UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN
-in the plist) are cut.
-"""
 
 from __future__ import annotations
 
@@ -85,16 +41,14 @@ PRIMARY_PORT = 2457
 STANDBY_PORT = 2459
 UID = os.getuid()
 
-# --sandbox <config.json> rebinds every constant above to an lb-sandbox instance
-# (scripts/lb-sandbox), so drills and checks run this exact code without the live
-# label, ports or state. The guard refuses before anything is touched.
+
 SANDBOX_LABEL_PREFIX = "com.agent-lb.drill."
 SANDBOX_FORBIDDEN_PORTS = frozenset({1455, 2455, 2457, 2459})
 SANDBOX_MIN_PORT = 2470
 SANDBOX_KEYS = ("root", "label", "plist", "runtime", "state_dir", "front_port", "primary_port", "standby_port")
 SANDBOX_CONFIG: Path | None = None
-SANDBOX_ROOT: Path | None = None  # set by --sandbox; processes outside it are never signalled
-# What apply_sandbox restores when a refusal comes after the constants were rebound.
+SANDBOX_ROOT: Path | None = None
+
 LIVE_BINDINGS: dict[str, object] = {
     name: globals()[name]
     for name in (
@@ -134,14 +88,12 @@ def _inside(path: Path, parent: Path) -> bool:
 
 
 def _lexical(path: Path) -> Path:
-    """path with . and .. folded by text alone: nothing on disk is followed."""
+
     return Path(os.path.normpath(str(path)))
 
 
 def _refuse_links_on(name: str, path: Path, leaf: str) -> None:
-    """Every existing component of absolute path must be a real directory, checked with lstat from / down and
-    before anything is resolved: a symlink anywhere (an ancestor, the root, the leaf) is refused, not followed.
-    The leaf may be missing, else a real directory (leaf="dir") or a single-link regular file (leaf="file")."""
+
     parts = path.parts
     for i in range(1, len(parts) + 1):
         prefix = Path(*parts[:i])
@@ -157,10 +109,7 @@ def _refuse_links_on(name: str, path: Path, leaf: str) -> None:
 
 
 def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object]:
-    """Validate an lb-sandbox config and return the module constants it rebinds. Raises SandboxRefused.
 
-    Paths are kept as written (lexically normalised), never resolved: resolving would turn an in-root symlink
-    (lb-restart.lock -> lb-restart.json) into its target and the link would then pass as a plain file."""
     missing = [key for key in SANDBOX_KEYS if key not in config]
     if missing:
         raise SandboxRefused(f"sandbox config lacks {', '.join(missing)}")
@@ -171,8 +120,8 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
     root = _lexical(root)
     if root.parent != sandboxes or root.name in ("", ".", ".."):
         raise SandboxRefused(f"sandbox root {root} is not directly under {sandboxes}")
-    # From / down: a sandboxes dir (or root) swapped for a link to ~/.agent-lb is refused here and, after this
-    # check, cannot redirect anything because every file operation goes through the pinned root descriptor.
+
+
     _refuse_links_on("root", root, "dir")
     label = str(config["label"])
     suffix = label.removeprefix(SANDBOX_LABEL_PREFIX)
@@ -209,14 +158,14 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
     }
     for name, path in (("RUNTIME", paths["runtime"]), ("STATE_DIR", state_dir), ("BACKUPS", derived["BACKUPS"])):
         _refuse_links_on(name, path, "dir")
-    # The store the standby opens: a data dir, DB or key planted as a link would boot it against live.
+
     _refuse_links_on("data", root / "data", "dir")
     for leaf in ("store.db", "encryption.key"):
         _refuse_links_on("data", root / "data" / leaf, "file")
     for name, path in derived.items():
         if name != "BACKUPS":
-            # A hard link passes a path rule: an in-root lock linked to the live front-preferred-port would be
-            # truncated and overwritten by lock acquisition. Only a missing or single-link regular file is ours.
+
+
             _refuse_links_on(name, path, "file")
     _refuse_links_on("plist", paths["plist"], "file")
     return {
@@ -235,8 +184,8 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
 
 SANDBOX_PORT_URL = re.compile(r"^http://127\.0\.0\.1:([0-9]{4})$")
 SANDBOX_LEADING_PORT = re.compile(r"^([0-9]{1,5})\b")
-# The keys lb-sandbox writes into the primary plist. Any other key (Program above all, which launchd runs in
-# place of ProgramArguments[0]) could start something other than the bootstrap.
+
+
 SANDBOX_PLIST_KEYS = frozenset(
     {
         "Label",
@@ -254,22 +203,18 @@ SANDBOX_PLIST_KEYS = frozenset(
 
 
 def sandbox_bootstrap() -> Path:
-    """The lb-sandbox a sandbox job runs: the one installed beside this lb-restart (lb-sandbox restart runs its
-    sibling lb-restart), outside every root. Never <root>/bin/lb-sandbox: the confined app can rewrite anything
-    under the root, and the standby and launchd's KeepAlive restart run the program before any confinement."""
+
     return Path(__file__).resolve().parent / "lb-sandbox"
 
 
 def _trusted_file(what: str, path: Path, info: os.stat_result) -> None:
-    """Only this user or root can change it: owned by one of them, no group or other write."""
+
     if info.st_uid not in (os.getuid(), 0) or info.st_mode & 0o022:
         raise SandboxRefused(f"{what} {path} is one another user could write")
 
 
 def check_sandbox_bootstrap(root: Path) -> None:
-    """The plist's program script, sandbox_bootstrap(), is lb-restart's own sibling: outside the sandboxes dir, no
-    link from the top, a single-link regular file owned by this user or root that group and other cannot write.
-    The identity is the path (pinned in check_sandbox_plist); nothing under the root is ever run."""
+
     script = sandbox_bootstrap()
     if _inside(script, root.parent):
         raise SandboxRefused(f"sandbox bootstrap {script} is inside the sandboxes dir")
@@ -282,15 +227,10 @@ def check_sandbox_bootstrap(root: Path) -> None:
 
 
 def sandbox_python_for(root: Path) -> Path:
-    """The interpreter a sandbox job and its standby run: the installed runtime's venv python, outside the root.
 
-    root is <home>/.agent-lb/sandboxes/<run> (sandbox_bindings proves it), so this is <home>/.agent-lb/runtime/
-    agent-lb/.venv/bin/python. Never <root>/runtime/.venv/bin/python: anything under the root can be swapped
-    for a shim (one that kickstarts the live agent-lb, say) after a check of its name."""
     return root.parent.parent / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
 
 
-# What an executable binary starts with: Mach-O (thin 64/32-bit, fat) on macOS, ELF elsewhere (unit tests only).
 NATIVE_MAGIC = (
     (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf")
     if sys.platform == "darwin"
@@ -300,8 +240,7 @@ BASE_INTERPRETER_NAME = re.compile(r"^python(3(\.[0-9]+)?)?$")
 
 
 def sandbox_venv_base_dir(python: Path) -> Path:
-    """The resolved `home` directory the venv's own pyvenv.cfg names. pyvenv.cfg is read without following a
-    link and must be a single-link regular file only this user or root can write, as must its home dir."""
+
     cfg = python.parent.parent / "pyvenv.cfg"
     try:
         fd = os.open(cfg, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -331,11 +270,7 @@ def sandbox_venv_base_dir(python: Path) -> Path:
 
 
 def check_sandbox_interpreter(python: Path, root: Path) -> None:
-    """The interpreter that will run is the installed venv's own base interpreter, by identity: every directory
-    from / to its bin is a real directory (no link), and the file it leads to sits in the directory the venv's
-    pyvenv.cfg names, is called python, python3 or python3.N, is a native executable (Mach-O: a script or shell
-    shim is refused), is owned by this user or root with no group or other write, and is outside every sandbox
-    root. Checked just before each exec. Raises SandboxRefused."""
+
     python = _lexical(python)
     sandboxes = root.parent
     if python != sandbox_python_for(root) or _inside(python, sandboxes):
@@ -362,14 +297,10 @@ def check_sandbox_interpreter(python: Path, root: Path) -> None:
 
 
 def sandbox_program(root: Path) -> list[str]:
-    """The head of ProgramArguments lb-sandbox writes: `<venv python> -I <installed lb-sandbox> _serve <root>`.
-    -I (isolated): no PYTHON* variable (the plist's PYTHONPATH names <root>/runtime, where a sitecustomize.py
-    could be planted), no user site and no script or working directory on sys.path before _boot confines."""
+
     return [str(sandbox_python_for(root)), "-I", str(sandbox_bootstrap()), "_serve", str(root)]
 
 
-# The environment keys lb-sandbox writes (sandbox_env). Any other key is refused: DYLD_INSERT_LIBRARIES naming a
-# library in the root, say, would load it into the interpreter before any guard runs.
 SANDBOX_ENV_KEYS = frozenset(
     {"HOME", "PATH", "PYTHONPATH", "LB_SANDBOX_ROOT", "FORWARDED_ALLOW_IPS", "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"}
 )
@@ -388,15 +319,11 @@ def _has_control_characters(value: object) -> bool:
 
 
 def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int) -> None:
-    """The sandbox plist must run `lb-sandbox _serve <root>` on its primary port with an env inside the root.
 
-    The standby runs the plist's ProgramArguments with its env, so an in-root plist that ran the app
-    directly with a live DB URL or key path would boot against the live store. Raises SandboxRefused.
-    """
     if not isinstance(data, dict):
         raise SandboxRefused("sandbox plist is not a dictionary")
     if _has_control_characters(data):
-        # launchctl print shows values raw: a line break in one could pass for a line of its own there.
+
         raise SandboxRefused("sandbox plist has a control character in a key or value")
     extra = sorted(str(key) for key in set(data) - SANDBOX_PLIST_KEYS)
     if extra:
@@ -445,28 +372,24 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
                 raise SandboxRefused(f"sandbox plist {key} points outside the sandbox's ports")
             continue
         for part in text.split(":"):
-            # A live port without a scheme (127.0.0.1:2457, 2455) is as live as a URL to it.
+
             port = SANDBOX_LEADING_PORT.match(part)
             if port and int(port.group(1)) in SANDBOX_FORBIDDEN_PORTS:
                 raise SandboxRefused(f"sandbox plist {key} names a live port")
             if part.startswith("~"):
                 raise SandboxRefused(f"sandbox plist {key} names a home-relative path")
-            # A relative path resolves against the working directory, so ../../.. climbs out of the root.
+
             if part.startswith("/") or "/" in part or part in (".", ".."):
                 if not _inside((cwd / part).resolve(), root):
                     raise SandboxRefused(f"sandbox plist {key} names a path outside the sandbox root")
 
 
-SANDBOX_CONFIG_NAME = "lb-restart.json"  # lb-sandbox writes it at <sandboxes>/<run>/lb-restart.json
+SANDBOX_CONFIG_NAME = "lb-restart.json"
 SANDBOX_CONFIG_MAX = 1 << 16
 
 
 def read_sandbox_config(config_path: Path) -> tuple[dict, int, os.stat_result]:
-    """The config at <sandboxes>/<run>/lb-restart.json, read only through the pinned root: the root is opened from
-    / down with no link (it must be a private directory of this user and its own volume, see open_sandbox_root),
-    then the config by name in it with O_NOFOLLOW, and it must be a single-link regular file of this user on the
-    root's volume before one byte of it is read. A config swapped for a link to live state (state/front.json, say)
-    is refused at the open, never read. Returns (config, root descriptor, root stat); the caller owns the fd."""
+
     path = _lexical(Path(config_path).expanduser().absolute())
     sandboxes = _lexical(_real_home() / ".agent-lb" / "sandboxes")
     if path.name != SANDBOX_CONFIG_NAME or path.parent.parent != sandboxes or path.parent.name in ("", ".", ".."):
@@ -506,7 +429,7 @@ def read_sandbox_config(config_path: Path) -> tuple[dict, int, os.stat_result]:
 
 
 def apply_sandbox(config_path: Path) -> None:
-    """Rebind the module constants to the sandbox in config_path. Raises SandboxRefused, touching nothing."""
+
     global SANDBOX_CONFIG, SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
     unpin_sandbox_root()
     config, root_fd, root_info = read_sandbox_config(config_path)
@@ -516,11 +439,11 @@ def apply_sandbox(config_path: Path) -> None:
         os.close(root_fd)
         raise
     globals().update(bindings)
-    # The root the config was read through is the root this run holds: never reopened by name in between.
+
     SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED = root_fd, (bindings["SANDBOX_ROOT"], root_info.st_dev, root_info.st_ino)
     try:
-        # Pin the root now (O_NOFOLLOW from / down) and read the plist through that descriptor: a link planted
-        # since the guard ran, at the plist or at any ancestor, is refused instead of followed.
+
+
         pin_sandbox_root()
         with os.fdopen(sandbox_open(bindings["PLIST"], os.O_RDONLY), "rb") as fh:
             plist = plistlib.load(fh)
@@ -536,18 +459,12 @@ def apply_sandbox(config_path: Path) -> None:
     SANDBOX_CONFIG = _lexical(Path(config_path).expanduser().absolute())
 
 
-# ---------------------------------------------------------------- sandbox file access
-# With --sandbox every file lb-restart writes is opened from a descriptor for the root, one component at a
-# time with O_NOFOLLOW, and must be a single-link regular file: a link or hard link planted after the guard
-# ran is refused (exit 2), never written through. Without --sandbox these helpers keep the old calls.
-
-
 SANDBOX_ROOT_FD: int | None = None
-SANDBOX_ROOT_PINNED: tuple[Path, int, int] | None = None  # (root path, st_dev, st_ino) the descriptor holds
+SANDBOX_ROOT_PINNED: tuple[Path, int, int] | None = None
 
 
 def _open_dir_nofollow(path: Path) -> int:
-    """Open absolute path from / down, one component at a time with O_NOFOLLOW: a link anywhere is refused."""
+
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -562,8 +479,7 @@ def _open_dir_nofollow(path: Path) -> int:
 
 
 def _check_owned_dir(fd: int, what: str, path: Path, private: bool) -> os.stat_result:
-    """fd is a directory this user owns; private: no group or other bits at all (lb-sandbox makes roots 0700),
-    else no group or other write. Raises SandboxRefused."""
+
     info = os.fstat(fd)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
         raise SandboxRefused(f"{what} {path} is not a directory owned by uid {os.getuid()}")
@@ -573,9 +489,7 @@ def _check_owned_dir(fd: int, what: str, path: Path, private: bool) -> os.stat_r
 
 
 def pin_sandbox_root() -> int:
-    """The descriptor for SANDBOX_ROOT, opened once (from / down, no links) and held for the whole run.
 
-    The root must be one lb-sandbox made: owned by this user, mode 0700, in a sandboxes dir this user owns."""
     global SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
     assert SANDBOX_ROOT is not None
     if SANDBOX_ROOT_FD is not None and SANDBOX_ROOT_PINNED is not None and SANDBOX_ROOT_PINNED[0] == SANDBOX_ROOT:
@@ -587,19 +501,12 @@ def pin_sandbox_root() -> int:
 
 
 def _root_on_own_volume(root_info: os.stat_result, sandboxes_info: os.stat_result) -> bool:
-    """lb-sandbox mounts every root as its own volume (an encrypted image attached at the root)."""
+
     return root_info.st_dev != sandboxes_info.st_dev
 
 
 def open_sandbox_root(root: Path) -> tuple[int, os.stat_result]:
-    """(descriptor, stat) of root, opened from / down with no link: a private (0700) directory of this user in a
-    sandboxes dir of this user, and the top of its own volume, as lb-sandbox start leaves every root.
 
-    The volume rule is what makes a same-user directory safe to write in: rename(2) and link(2) never cross
-    volumes, so no live file (state/front.json, the live plist, the live lock) can be moved or hard-linked into a
-    root that is its own volume, and no lock, pidfile or state write here can reach one. A 0700 directory of this
-    user on the home volume (one lb-sandbox did not make, or one whose volume is gone) is refused before
-    anything in it is opened. Raises SandboxRefused."""
     try:
         parent = _open_dir_nofollow(root.parent)
     except OSError as exc:
@@ -632,7 +539,7 @@ def unpin_sandbox_root() -> None:
 
 
 def verify_sandbox_ancestry() -> None:
-    """Before anything that must go by path (exec of the standby): the root path still names the pinned root."""
+
     fd = pin_sandbox_root()
     try:
         again = _open_dir_nofollow(SANDBOX_ROOT)
@@ -647,10 +554,7 @@ def verify_sandbox_ancestry() -> None:
 
 
 def _sandbox_dir_fd(directory: Path, create: bool = True) -> int:
-    """A descriptor for directory, walked from the pinned root with O_NOFOLLOW (missing dirs made 0700).
 
-    Every call first checks the root path still names the pinned root, so a sandboxes dir or root swapped
-    mid-run is refused at the next state operation instead of the run carrying on in the moved directory."""
     assert SANDBOX_ROOT is not None
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     try:
@@ -680,8 +584,7 @@ def _sandbox_dir_fd(directory: Path, create: bool = True) -> int:
 
 
 def _open_in(dir_fd: int, path: Path, flags: int, mode: int = 0o600) -> int:
-    """openat(dir_fd, path.name) with O_NOFOLLOW; the file must be a single-link regular file. O_TRUNC is applied
-    only after that check, so a hard link to live state is refused before a byte of it is lost."""
+
     try:
         fd = os.open(path.name, (flags & ~os.O_TRUNC) | os.O_NOFOLLOW, mode, dir_fd=dir_fd)
     except OSError as exc:
@@ -705,8 +608,7 @@ def _state_dir_fd(directory: Path, create: bool = True) -> int:
 
 
 def _same_dir_still(dir_fd: int, directory: Path) -> None:
-    """After a rename or unlink through dir_fd: the path still names that directory. A state dir swapped for a
-    link (or for another directory) while the operation ran is refused, so the run stops instead of going on."""
+
     again = _state_dir_fd(directory, create=False)
     try:
         now, held = os.fstat(again), os.fstat(dir_fd)
@@ -717,7 +619,7 @@ def _same_dir_still(dir_fd: int, directory: Path) -> None:
 
 
 def sandbox_open(path: Path, flags: int, mode: int = 0o600) -> int:
-    """Open a file under the sandbox root without following a link; O_TRUNC only after the link check."""
+
     dir_fd = _state_dir_fd(path.parent)
     try:
         return _open_in(dir_fd, path, flags, mode)
@@ -726,7 +628,7 @@ def sandbox_open(path: Path, flags: int, mode: int = 0o600) -> int:
 
 
 def read_state(path: Path) -> tuple[str, float] | None:
-    """(text, mtime) of a state file, None when it is missing or unreadable. With --sandbox, through the root fd."""
+
     if SANDBOX_ROOT is None:
         try:
             return path.read_text(), path.stat().st_mtime
@@ -738,9 +640,8 @@ def read_state(path: Path) -> tuple[str, float] | None:
         return None
     except OSError as exc:
         raise SandboxRefused(f"{path.parent} is a link or unreachable inside the sandbox root ({exc})") from exc
-    # The front replaces front.json atomically (write .tmp, rename). Replaced between our open and fstat, the inode
-    # we hold has no name left (st_nlink 0): that is the front's own write, not a planted link, so read the name
-    # again. Only a second name (st_nlink > 1, a hard link to live state) is refused.
+
+
     try:
         for attempt in range(5):
             try:
@@ -755,14 +656,14 @@ def read_state(path: Path) -> tuple[str, float] | None:
                     raise SandboxRefused(f"{path} is not a single-link regular file")
                 text = fh.read().decode(errors="replace")
             if info.st_nlink == 1 or attempt == 4:
-                return text, info.st_mtime  # after 5 replacements in a row, the last version read is still the front's
+                return text, info.st_mtime
     finally:
         os.close(dir_fd)
-    return None  # not reached
+    return None
 
 
 def remove_state(path: Path) -> None:
-    """unlink(missing_ok=True); with --sandbox, by name in the directory reached from the pinned root."""
+
     if SANDBOX_ROOT is None:
         path.unlink(missing_ok=True)
         return
@@ -773,7 +674,7 @@ def remove_state(path: Path) -> None:
         except FileNotFoundError:
             return
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            # Unlinking our name would not touch the target, but a planted link means the state is not ours.
+
             raise SandboxRefused(f"{path} is not a single-link regular file; refusing to remove it")
         try:
             os.unlink(path.name, dir_fd=dir_fd)
@@ -785,7 +686,7 @@ def remove_state(path: Path) -> None:
 
 
 def ensure_dir(path: Path) -> None:
-    """mkdir -p; with --sandbox the helpers above make missing dirs under the pinned root themselves."""
+
     if SANDBOX_ROOT is None:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -810,7 +711,7 @@ def read_plist() -> dict:
             return plistlib.load(fh)
     with os.fdopen(sandbox_open(PLIST, os.O_RDONLY), "rb") as fh:
         data = plistlib.load(fh)
-    check_sandbox_plist(data, SANDBOX_ROOT, LABEL, PRIMARY_PORT)  # again at use: the file may have changed
+    check_sandbox_plist(data, SANDBOX_ROOT, LABEL, PRIMARY_PORT)
     check_sandbox_bootstrap(SANDBOX_ROOT)
     return data
 
@@ -842,7 +743,7 @@ def http_get(port: int, path: str, timeout: float = 3.0) -> tuple[int, bytes]:
 
 
 def healthy(port: int) -> bool:
-    """Ready to serve: DB reachable and the proxy router answers."""
+
     code, body = http_get(port, "/health/ready")
     if code != 200:
         return False
@@ -869,7 +770,7 @@ OAUTH_POLL_S = 2.0
 
 
 def oauth_pending(port: int) -> tuple[int, list[float]] | None:
-    """(count, ages in seconds) of sign-ins in progress on port; None if it cannot say."""
+
     code, body = http_get(port, "/internal/oauth/pending", timeout=2.0)
     if code != 200:
         return None
@@ -881,7 +782,7 @@ def oauth_pending(port: int) -> tuple[int, list[float]] | None:
 
 
 def wait_for_oauth_flows(port: int, bound: float) -> float:
-    """Hold the swap while port has a sign-in in progress, up to bound seconds. Returns seconds waited."""
+
     start = time.monotonic()
     announced: int | None = None
     while True:
@@ -906,7 +807,7 @@ def wait_for_oauth_flows(port: int, bound: float) -> float:
 
 
 def established(port: int) -> int:
-    """Server-side sockets on port (the front's piped connections)."""
+
     out = subprocess.run(
         ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:ESTABLISHED"],
         capture_output=True,
@@ -916,8 +817,7 @@ def established(port: int) -> int:
 
 
 def launchctl_print(label: str) -> subprocess.CompletedProcess:
-    """`launchctl print` of one job. With --sandbox only the sandbox's own label: print shows a job's whole
-    environment, and the live agent-lb's holds its federation token."""
+
     if SANDBOX_ROOT is not None and label != LABEL:
         raise SandboxRefused(f"launchctl print of {label} refused in a sandbox restart (only {LABEL})")
     return subprocess.run(["launchctl", "print", f"gui/{UID}/{label}"], capture_output=True, text=True)
@@ -965,9 +865,8 @@ def set_preferred(port: int) -> None:
         tmp.write_text(f"{port}\n")
         os.replace(tmp, PREFERRED_FILE)
         return
-    # One descriptor for the state dir, reached from the pinned root: the temp file is written and renamed by
-    # name inside it, so a state dir swapped for a link to live state between the write and the rename cannot
-    # carry the rename to the live preference. The swap itself is then refused (exit 2).
+
+
     if tmp.parent != PREFERRED_FILE.parent:
         raise SandboxRefused("preference temp file is not beside the preference file")
     dir_fd = _state_dir_fd(PREFERRED_FILE.parent)
@@ -981,7 +880,7 @@ def set_preferred(port: int) -> None:
 
 
 def owned_by_sandbox(pid: int) -> bool:
-    """Without --sandbox, always True. With it, True only for a process whose command line names the root."""
+
     if SANDBOX_ROOT is None:
         return True
     cmd = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
@@ -990,9 +889,8 @@ def owned_by_sandbox(pid: int) -> bool:
 
 
 def front_understands_preference() -> bool:
-    """True when the running front is the blue/green build (writes front.json)."""
-    # launchd runs the front through a volta shim, so compare against the
-    # process that actually holds the public port.
+
+
     pid = listener_pid(FRONT_PORT)
     got = read_state(FRONT_STATE)
     if got is None:
@@ -1016,9 +914,6 @@ def front_routes_to(port: int, timeout: float = 5.0) -> bool:
     return wait_until(ok, timeout)
 
 
-# ---------------------------------------------------------------- lock
-
-
 class Lock:
     def __init__(self, reason: str, wait: float) -> None:
         self.reason = reason
@@ -1030,7 +925,7 @@ class Lock:
         if SANDBOX_ROOT is None:
             self.fh = LOCK_FILE.open("a+")
         else:
-            # Never truncate a lock that is a link or hard link to live state (front-preferred-port, say).
+
             self.fh = os.fdopen(sandbox_open(LOCK_FILE, os.O_RDWR | os.O_APPEND | os.O_CREAT), "a+")
         deadline = time.monotonic() + self.wait
         announced = False
@@ -1061,11 +956,8 @@ class Lock:
         self.fh.close()
 
 
-# ---------------------------------------------------------------- files
-
-
 class Files:
-    """Backup-and-copy of runtime files, with rollback."""
+
 
     def __init__(self, label: str) -> None:
         self.backup_dir: Path | None = None
@@ -1101,7 +993,7 @@ class Files:
         say(f"deployed {len(rel_paths)} file(s); backup {self.backup_dir}")
 
     def use_backup(self, backup: Path) -> None:
-        # Deploy scripts here keep either <dir>/<runtime-relative path> or <dir>/runtime/<path>.
+
         self.backup_dir = backup / "runtime" if (backup / "runtime").is_dir() else backup
 
     def rollback(self) -> bool:
@@ -1123,9 +1015,6 @@ class Files:
         return True
 
 
-# ---------------------------------------------------------------- standby
-
-
 def plist_env() -> dict[str, str]:
     data = read_plist()
     return {str(k): str(v) for k, v in data.get("EnvironmentVariables", {}).items()}
@@ -1138,7 +1027,7 @@ def plist_program() -> list[str]:
 def start_standby(drain_seconds: int) -> subprocess.Popen:
     env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "TMPDIR", "LANG") if k in os.environ}
     env.update(plist_env())
-    env["AGENT_LB_METRICS_ENABLED"] = "false"  # the primary owns :9090
+    env["AGENT_LB_METRICS_ENABLED"] = "false"
     env["UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"] = str(drain_seconds)
     args = [a for a in plist_program()]
     try:
@@ -1161,12 +1050,11 @@ def start_standby(drain_seconds: int) -> subprocess.Popen:
             start_new_session=True,
         )
     else:
-        # exec goes by path, so check the path still names the pinned root just before it, and start the
-        # standby in the pinned runtime dir (fchdir), not in whatever the runtime path names now.
+
+
         verify_sandbox_ancestry()
-        # The program is the installed venv's python running the installed lb-sandbox with -I
-        # (check_sandbox_plist pins all three), and what they are is checked here, just before the exec: a shim
-        # planted on the interpreter's path is refused, and nothing under the root runs before _boot confines.
+
+
         if args[: len(sandbox_program(SANDBOX_ROOT))] != sandbox_program(SANDBOX_ROOT):
             raise SandboxRefused("standby program is not `<venv python> -I <installed lb-sandbox> _serve <root>`")
         check_sandbox_interpreter(Path(args[0]), SANDBOX_ROOT)
@@ -1194,11 +1082,11 @@ def start_standby(drain_seconds: int) -> subprocess.Popen:
 
 
 def stop_pid_gracefully(pid: int, port: int, bound: float) -> tuple[float, bool]:
-    """SIGTERM, wait up to bound for exit, SIGKILL after. Returns (seconds, forced)."""
+
     start = time.monotonic()
     try:
-        # The standby runs under bash -> exec, so the pid is uvicorn itself; signal
-        # the whole session in case a wrapper stayed in between.
+
+
         os.killpg(os.getpgid(pid), signal.SIGTERM)
     except OSError:
         try:
@@ -1248,11 +1136,7 @@ def stop_leftover_standby(drain_seconds: int, hold_for_oauth=lambda port: None) 
     remove_state(STANDBY_PIDFILE)
 
 
-# A standby that got SIGTERM must exit within its drain bound. On 2026-09-25 two
-# stopped standbys hung in lifespan shutdown for 10+ minutes, still running
-# their schedulers and holding ~250 upstream sockets each. launchd bounds the
-# primary with ExitTimeOut; this reaper is the same bound for the standby.
-REAP_MARGIN_S = 90  # app drain (shutdown_drain_timeout_seconds 30) plus slack
+REAP_MARGIN_S = 90
 
 
 def is_standby(pid: int) -> bool:
@@ -1264,8 +1148,8 @@ def spawn_reaper(pid: int, drain_seconds: int) -> None:
     argv = [sys.executable, str(Path(__file__).resolve()), "--reap", str(pid), str(drain_seconds + REAP_MARGIN_S)]
     env = None
     if SANDBOX_CONFIG is not None:
-        # Isolated, like every sandbox interpreter: no PYTHON* or DYLD_* variable from this process's environment
-        # (PYTHONPATH naming <root>/runtime) loads code into the reaper, which can signal the standby.
+
+
         argv = [argv[0], "-I", *argv[1:], "--sandbox", str(SANDBOX_CONFIG)]
         env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "DYLD_"))}
     subprocess.Popen(
@@ -1279,7 +1163,7 @@ def spawn_reaper(pid: int, drain_seconds: int) -> None:
 
 
 def reap(pid: int, deadline_s: float) -> int:
-    """Wait for a stopped standby to exit; past the deadline dump its stacks and SIGKILL it."""
+
     end = time.monotonic() + deadline_s
     while time.monotonic() < end:
         if not pid_alive(pid) or not is_standby(pid):
@@ -1288,7 +1172,7 @@ def reap(pid: int, deadline_s: float) -> int:
     if not pid_alive(pid) or not is_standby(pid):
         return 0
     try:
-        os.kill(pid, signal.SIGUSR2)  # app.core.forensics: all-thread stack dump
+        os.kill(pid, signal.SIGUSR2)
         time.sleep(2)
     except OSError:
         pass
@@ -1304,31 +1188,21 @@ def reap(pid: int, deadline_s: float) -> int:
     return 1
 
 
-# ---------------------------------------------------------------- primary
-
-
 def job_loaded(label: str) -> bool:
     return launchctl_print(label).returncode == 0
 
 
-# The blocks of `launchctl print` that hold environment entries (`KEY => value`), and the keys launchd itself adds
-# to a job's own environment block.
 JOB_ENV_BLOCKS = ("environment", "inherited environment", "default environment")
 LAUNCHD_ENV_KEYS = frozenset({"XPC_SERVICE_NAME", "OSLogRateLimit", "XPC_FLAGS"})
-# Where launchd sends a job's standard streams, as `launchctl print` names them, and the plist keys behind them.
+
 JOB_STREAMS = {"stdout path": "StandardOutPath", "stderr path": "StandardErrorPath", "stdin path": "StandardInPath"}
-# The one bare top-level line launchd prints for a job submitted by value (SMJobSubmit, as lb-sandbox start loads
-# every sandbox job; measured on macOS 26). It carries no key or value; it is accepted once, exactly as printed.
+
+
 JOB_FLAG_LINES = frozenset({"submitted job. ignore execute allowed"})
 
 
 def parse_job_print(text: str) -> tuple[dict[str, str], dict[str, list[str]]]:
-    """(scalars, blocks) of one job in `launchctl print` output: `\\tkey = value` lines and `\\tname = {` ... `\\t}`
-    blocks of `\\t\\t` lines.
 
-    Raises SandboxRefused on anything it cannot place: a line at the wrong depth, a key or block seen twice, or an
-    environment entry (`KEY => value`) in any block but the environment ones. A value launchd prints with a line
-    break in it shows up as one of these, so a job cannot hide an entry from the checks below that way."""
     scalars: dict[str, str] = {}
     blocks: dict[str, list[str]] = {}
     lines = text.splitlines()
@@ -1378,10 +1252,7 @@ def job_env_block(entries: list[str]) -> dict[str, str]:
 
 
 def check_loaded_job_print(text: str, plist: dict, python: Path, want: list[str]) -> None:
-    """The job launchd holds is the checked plist's job, whole: program, every argument, the effective environment,
-    the working directory and every output destination. A job loaded from a hostile plist (DYLD_INSERT_LIBRARIES,
-    a stderr path into live state, an extra argument) and the plist on disk restored afterwards is refused, since
-    a kickstart runs what launchd loaded. Raises SandboxRefused."""
+
     scalars, blocks = parse_job_print(text)
     if scalars.get("program") != str(python) or blocks.get("arguments") != want:
         raise SandboxRefused(f"loaded job {LABEL} does not run exactly `lb-sandbox _serve` on the checked interpreter")
@@ -1406,15 +1277,12 @@ def check_loaded_job_print(text: str, plist: dict, python: Path, want: list[str]
 
 
 def check_loaded_sandbox_job() -> None:
-    """Before a kickstart of the sandbox label: the loaded job is exactly the checked plist's job, running the
-    checked interpreter on `-I <installed lb-sandbox> _serve <root> --host 127.0.0.1 --port <primary>`. launchd execs
-    what it loaded at bootstrap, so the loaded job is what is checked, against the plist file. Raises
-    SandboxRefused."""
+
     assert SANDBOX_ROOT is not None
     python = sandbox_python_for(SANDBOX_ROOT)
     check_sandbox_interpreter(python, SANDBOX_ROOT)
     check_sandbox_bootstrap(SANDBOX_ROOT)
-    plist = read_plist()  # checked by check_sandbox_plist on the way
+    plist = read_plist()
     out = launchctl_print(LABEL).stdout
     want = [*sandbox_program(SANDBOX_ROOT), "--host", "127.0.0.1", "--port", str(PRIMARY_PORT)]
     check_loaded_job_print(out, plist, python, want)
@@ -1434,9 +1302,8 @@ def restart_primary(reload_plist: bool, old_pid: int | None, bound: float) -> No
     if not reload_plist:
         kickstart_primary(wait=False)
         return
-    # Pause the watchdog so it does not re-bootstrap mid-swap. bootout returns
-    # while the old process is still draining and bootstrap fails with EIO
-    # until the job is fully gone, so wait for both before bootstrapping.
+
+
     WATCHDOG_PAUSE.touch()
     try:
         subprocess.run(["launchctl", "bootout", f"gui/{UID}/{LABEL}"], timeout=bound, check=False)
@@ -1462,15 +1329,8 @@ def exit_timeout() -> int:
     return int(read_plist().get("ExitTimeOut", 20))
 
 
-# ---------------------------------------------------------------- main
-
-
 def parse_reaper_args(argv: list[str]) -> tuple[int, float, Path | None]:
-    """The reaper's argv is exactly what spawn_reaper writes: --reap PID SECONDS [--sandbox CONFIG].
 
-    Anything else (--sandbox=CONFIG, an abbreviation, extra or missing words) is refused before a signal is
-    sent: an unparsed --sandbox would leave the live constants bound and the reaper would kill the live standby.
-    Raises SandboxRefused."""
     if len(argv) not in (3, 5) or argv[0] != "--reap":
         raise SandboxRefused(f"reaper takes --reap PID SECONDS [--sandbox CONFIG], got {len(argv)} word(s)")
     if not argv[1].isascii() or not argv[1].isdigit() or int(argv[1]) <= 1:
@@ -1497,10 +1357,10 @@ def main() -> int:
                 apply_sandbox(config)
             return reap(pid, deadline)
         except SandboxRefused as exc:
-            # Also at the reaper's own log write: a root swapped or removed while it waited.
+
             print(f"lb-restart --reap refused: {exc}", file=sys.stderr)
             return 2
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(description='Controlled, zero-gap restart of the live agent-lb service (blue/green).', formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--reason", required=True, help="Why; goes into sync.log.")
     p.add_argument("--from", dest="src", type=Path, help="Source root (a worktree) for --files.")
     p.add_argument("--files", nargs="+", default=[], help="Runtime-relative paths to copy from --from.")
@@ -1548,8 +1408,8 @@ def main() -> int:
         p.error(f"runtime {RUNTIME} or plist {PLIST} missing")
 
     if shutil.which("launchctl") != "/bin/launchctl":
-        # A test harness with a launchctl shim on PATH once ran this against the
-        # live agent-lb: the standby took traffic and the fake kickstart left it there.
+
+
         p.error(f"launchctl resolves to {shutil.which('launchctl')}, not /bin/launchctl; refusing to touch the live LB")
 
     try:
@@ -1568,7 +1428,7 @@ def main() -> int:
                 )
                 raise
     except SandboxRefused as exc:
-        # A link or hard link under the root (lock, pidfile, logs, plist): nothing was written through it.
+
         say(f"--sandbox refused: {exc}")
         return 2
 
@@ -1584,7 +1444,7 @@ def run(args) -> int:
     def hold_for_oauth(port: int) -> None:
         nonlocal oauth_waited
         if args.force or args.check or (oauth_waited > 0 and oauth_waited >= args.oauth_wait):
-            return  # skipped, or the bound is spent and already logged
+            return
         oauth_waited += wait_for_oauth_flows(port, max(0.0, args.oauth_wait - oauth_waited))
         stats["oauth_wait_s"] = round(oauth_waited, 1)
 
@@ -1597,7 +1457,7 @@ def run(args) -> int:
         return 3
 
     if SANDBOX_ROOT is not None:
-        check_loaded_sandbox_job()  # before anything moves; kickstart_primary checks it again at use
+        check_loaded_sandbox_job()
     stop_leftover_standby(drain, hold_for_oauth)
     set_preferred(PRIMARY_PORT)
     old_pid = launchd_pid(LABEL)
@@ -1611,7 +1471,7 @@ def run(args) -> int:
     elif args.backup:
         files.use_backup(args.backup)
 
-    # 1. standby on the new code
+
     t = time.monotonic()
     standby = start_standby(drain)
     if not wait_until(lambda: healthy(STANDBY_PORT) or standby.poll() is not None, args.boot_timeout):
@@ -1635,9 +1495,9 @@ def run(args) -> int:
         say(f"--check: code on disk boots and passes health; standby stopped in {secs:.1f}s; primary untouched")
         return 0
 
-    # 2. front -> standby, then drain and restart the primary
-    if healthy(PRIMARY_PORT):  # an unhealthy primary (watchdog restart) is not kept for sign-ins
-        hold_for_oauth(PRIMARY_PORT)  # a sign-in may have started while the standby booted
+
+    if healthy(PRIMARY_PORT):
+        hold_for_oauth(PRIMARY_PORT)
     set_preferred(STANDBY_PORT)
     if not front_routes_to(STANDBY_PORT):
         say("front did not pick up the standby preference; aborting before touching the primary")
@@ -1646,7 +1506,7 @@ def run(args) -> int:
         return 4
     time.sleep(0.5)
     if healthy(PRIMARY_PORT):
-        hold_for_oauth(PRIMARY_PORT)  # one that started between the check and the move
+        hold_for_oauth(PRIMARY_PORT)
     stats["primary_in_flight_at_cutover"] = in_flight(PRIMARY_PORT)
     stats["primary_conns_at_cutover"] = established(PRIMARY_PORT)
     say(
@@ -1691,16 +1551,15 @@ def run(args) -> int:
             return 2
     say(f"new primary healthy on :{PRIMARY_PORT} (pid {launchd_pid(LABEL)}) {stats['primary_boot_s']}s after exit")
 
-    # 3. front -> primary, drain and stop the standby
+
     hold_for_oauth(STANDBY_PORT)
     set_preferred(PRIMARY_PORT)
     front_routes_to(PRIMARY_PORT)
     time.sleep(0.5)
-    hold_for_oauth(STANDBY_PORT)  # one that started between the check and the move
+    hold_for_oauth(STANDBY_PORT)
     stats["standby_in_flight_at_cutover"] = in_flight(STANDBY_PORT)
-    # SIGTERM closes the standby's listener at once, so the port is free for
-    # the next restart; the process finishes its in-flight streams on its own
-    # (uvicorn graceful bound) and exits; a detached reaper kills it if it hangs.
+
+
     try:
         os.killpg(standby.pid, signal.SIGTERM)
     except OSError:

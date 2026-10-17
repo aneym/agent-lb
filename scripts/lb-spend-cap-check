@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Sandbox-port check that API key cost_usd caps bite on Claude traffic (bops S16 spend floor).
 
-Boots agent-lb from a git ref on a private 127.0.0.1 port with its own SQLite store, behind a
-fake Anthropic upstream on another private port. No live service, account, credential or model
-spend is touched: the sandbox account carries a placeholder token and the upstream is local.
-
-Scenario:
-  1. A key with a cost_usd cap sends Claude requests whose list price comes from the price
-     table and the fake upstream's token counts; it must trip at request ceil(cap / cost) + 1.
-  2. A capped key on a model with no list price is refused (403) before any upstream call.
-  3. An uncapped key and keyless calls pass unchanged, bytes identical to the upstream.
-
-Writes <out>/result.json (factory harden result schema 1); exit 0 pass, 1 fail, 2 infra_error.
-"""
 
 from __future__ import annotations
 
@@ -39,8 +26,8 @@ LIVE_PORTS = {1455, 2455, 2457, 2459}
 PRICED_MODEL = "claude-sonnet-4-5-20250929"
 PRICE_KEY = "claude-sonnet-4-5"
 UNPRICED_MODEL = "claude-unpriced-sandbox-0"
-# Names a wildcard alias once priced (claude-sonnet-4*, claude-opus-5*) and a blank model are
-# unpriced too: each must be refused under a cost cap before upstream (fix round, 2026-10-07).
+
+
 REFUSED_UNDER_CAP = [UNPRICED_MODEL, "claude-sonnet-4-99", "claude-opus-5-99", "gpt-5.99", "gpt-5.1-unpriced", "gpt-5*", "gpt-5.5*", "files-create", "files-finalize", ""]
 INPUT_TOKENS = 1_000
 CACHE_READ_TOKENS = 4_000
@@ -130,7 +117,7 @@ class _FakeHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
-        return  # never log request lines or headers
+        return
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib name
         length = int(self.headers.get("Content-Length") or 0)
@@ -252,7 +239,7 @@ def export_app(repo: Path, ref: str, dest: Path) -> str:
 
 
 def copy_tree(src: Path, dest: Path) -> str:
-    """Copy a working tree's tracked and unignored files, so ignored files such as .env never come along."""
+
     listed = subprocess.run(
         ["git", "-C", str(src), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         check=True,
@@ -277,7 +264,7 @@ def copy_tree(src: Path, dest: Path) -> str:
 
 
 def scrub_dotenv(app_root: Path) -> None:
-    # Settings read <app root>/.env and .env.local; the sandbox copy must carry neither.
+
     for name in (".env", ".env.local"):
         target = app_root / name
         if target.exists() or target.is_symlink():
@@ -360,7 +347,7 @@ asyncio.run(main())
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description='Sandbox-port check that API key cost_usd caps bite on Claude traffic (bops S16 spend floor).', formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=Path(os.environ.get("HARDEN_OUT_DIR", "")) or None)
     parser.add_argument("--repo", type=Path, default=Path("/Volumes/StudioExt/repos/agent-lb"))
     parser.add_argument("--ref", default="origin/main")
