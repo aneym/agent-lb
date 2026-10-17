@@ -1,0 +1,16 @@
+[python]
+roots = ["app", "clients", "config", "scripts", "tests"]
+
+[ts]
+build = ["frontend/tsconfig.json"]
+
+[js]
+roots = ["frontend/src"]
+
+[shell]
+globs = ["**/*.sh", "scripts/**"]
+
+[[custom]]
+name = "proxy-architecture"
+cmd = [".venv/bin/python", "scripts/check_proxy_architecture.py"]
+globs = ["app/modules/proxy/service.py", "app/modules/proxy/_service/**", "scripts/check_proxy_architecture.py"]

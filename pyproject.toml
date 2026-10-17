@@ -123,13 +123,13 @@ line-length = 120
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["F", "E9", "E722", "I"]
 
-[tool.ty.src]
-exclude = [".agents/hooks/"]
-
-[tool.ty.environment]
+[tool.pyrefly]
+preset = "default"
 python-version = "3.13"
+project-includes = ["app", "clients", "scripts"]
+project-excludes = [".agents/hooks/**"]
 
 [project.scripts]
 agent-lb = "app.cli:main"
