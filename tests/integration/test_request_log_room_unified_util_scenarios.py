@@ -170,7 +170,7 @@ def test_room_utilization_migration_preserves_rows_and_round_trips(tmp_path):
     parent = "20261001_180000_add_request_log_caller_seat"
     url = f"sqlite:///{tmp_path / 'room-utilization.sqlite'}"
     config = _build_alembic_config(url)
-    run_upgrade(url, parent, bootstrap_legacy=False)
+    run_upgrade(url, parent)
     engine = create_engine(url)
     fields = {"room", "unified_5h_utilization", "unified_7d_utilization"}
     try:
@@ -182,7 +182,7 @@ def test_room_utilization_migration_preserves_rows_and_round_trips(tmp_path):
                 )
             )
         for _ in range(2):
-            run_upgrade(url, "head", bootstrap_legacy=False)
+            run_upgrade(url, "head")
             with engine.begin() as connection:
                 columns = {column["name"]: column for column in inspect(connection).get_columns("request_logs")}
                 assert fields <= columns.keys()
@@ -195,7 +195,7 @@ def test_room_utilization_migration_preserves_rows_and_round_trips(tmp_path):
                 )
             # Replay the migration against already-present columns.
             command.stamp(config, parent)
-            run_upgrade(url, "head", bootstrap_legacy=False)
+            run_upgrade(url, "head")
             with engine.connect() as connection:
                 assert connection.execute(
                     text("SELECT room, unified_5h_utilization, unified_7d_utilization FROM request_logs")

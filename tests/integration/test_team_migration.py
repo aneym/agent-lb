@@ -14,7 +14,7 @@ def test_team_upgrade_downgrade_preserves_existing_key_and_settings(tmp_path):
     db_url = f"sqlite+aiosqlite:///{db_path}"
     parent = "20260918_000000_add_usage_credits_window"
     head = "20260918_000000_add_team_members"
-    run_upgrade(db_url, parent, bootstrap_legacy=False)
+    run_upgrade(db_url, parent)
     engine = create_engine(f"sqlite:///{db_path}")
     try:
         with engine.begin() as connection:
@@ -25,7 +25,7 @@ def test_team_upgrade_downgrade_preserves_existing_key_and_settings(tmp_path):
                 )
             )
             connection.execute(text("UPDATE dashboard_settings SET api_key_auth_enabled=1 WHERE id=1"))
-        run_upgrade(db_url, head, bootstrap_legacy=False)
+        run_upgrade(db_url, head)
         assert check_migration_policy(db_url) == ()
         with engine.begin() as connection:
             assert connection.execute(text("SELECT member_id, is_active FROM api_keys WHERE id='existing'")).one() == (
@@ -45,7 +45,7 @@ def test_team_upgrade_downgrade_preserves_existing_key_and_settings(tmp_path):
                 1,
             )
             assert connection.execute(text("SELECT api_key_auth_enabled FROM dashboard_settings")).scalar_one() == 1
-        run_upgrade(db_url, head, bootstrap_legacy=False)
+        run_upgrade(db_url, head)
         with engine.connect() as connection:
             assert connection.execute(text("SELECT member_id FROM api_keys WHERE id='existing'")).scalar_one() is None
     finally:
@@ -57,7 +57,7 @@ def test_pool_share_upgrade_downgrade_keeps_member(tmp_path):
     db_url = f"sqlite+aiosqlite:///{db_path}"
     parent = "20260925_020000_add_account_resume_schedules"
     head = "20260926_200000_add_team_pool_share"
-    run_upgrade(db_url, parent, bootstrap_legacy=False)
+    run_upgrade(db_url, parent)
     engine = create_engine(f"sqlite:///{db_path}")
     try:
         with engine.begin() as connection:
@@ -65,7 +65,7 @@ def test_pool_share_upgrade_downgrade_keeps_member(tmp_path):
             assert "pool_share_percent" not in {
                 column["name"] for column in inspect(connection).get_columns("team_members")
             }
-        run_upgrade(db_url, head, bootstrap_legacy=False)
+        run_upgrade(db_url, head)
         with engine.begin() as connection:
             assert (
                 connection.execute(text("SELECT pool_share_percent FROM team_members WHERE id='member'")).scalar_one()
@@ -82,7 +82,7 @@ def test_pool_share_upgrade_downgrade_keeps_member(tmp_path):
                 column["name"] for column in inspect(connection).get_columns("team_members")
             }
             assert connection.execute(text("SELECT name FROM team_members WHERE id='member'")).scalar_one() == "Member"
-        run_upgrade(db_url, head, bootstrap_legacy=False)
+        run_upgrade(db_url, head)
         assert check_migration_policy(db_url) == ()
     finally:
         engine.dispose()
