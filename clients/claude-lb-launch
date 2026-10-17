@@ -2124,8 +2124,29 @@ def _without_option(argv: list[str], option: str) -> list[str]:
     return cleaned
 
 
+def claude_executable() -> str:
+    own = Path(__file__).resolve()
+    shadowed = False
+    for entry in os.environ.get("PATH", os.defpath).split(os.pathsep):
+        candidate = Path(entry or ".") / "claude"
+        if not (candidate.is_file() and os.access(candidate, os.X_OK)):
+            continue
+        if candidate.resolve() == own:
+            shadowed = True
+            continue
+        return str(candidate) if shadowed else "claude"
+    if shadowed:
+        print(
+            f"cc: every claude on PATH is this launcher ({own}); refusing to start itself. "
+            "Put the real Claude Code binary on PATH.",
+            file=sys.stderr,
+        )
+        raise SystemExit(127)
+    return "claude"
+
+
 def build_command(argv: list[str]) -> list[str]:
-    command = ["claude"]
+    command = [claude_executable()]
     if CCGPT_MODE:
         argv = _without_option(_without_option(argv, "--model"), "--effort")
         command.extend(["--model", CCGPT_MODEL, "--effort", "high"])
@@ -2191,7 +2212,7 @@ def auto_resume_enabled() -> bool:
 
 
 def build_resume_command(argv: list[str], claude_session_id: str) -> list[str]:
-    command = ["claude"]
+    command = [claude_executable()]
     effort = (os.environ.get("CC_EFFORT_LEVEL") or "").strip()
     if effort and effort.lower() not in {"none", "off"}:
         command.extend(["--effort", effort])
