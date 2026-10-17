@@ -65,9 +65,6 @@ ALLOWED_SERVICE_INTERNAL_IMPORTS = {
 }
 
 
-
-
-
 ALLOWED_SERVICE_IMPORT_DOMAINS_BY_DOMAIN = {
     "api_key_usage": {"support"},
     "codex_control": {"support"},
@@ -126,22 +123,6 @@ def _proxy_service_methods(module: ast.Module) -> list[ast.FunctionDef | ast.Asy
         if isinstance(node, ast.ClassDef) and node.name == "ProxyService":
             return [child for child in node.body if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)]
     raise AssertionError("ProxyService class not found in service.py")
-
-
-def _assert_shim_only(path: Path) -> None:
-    module = _parse(path)
-    allowed = (ast.Expr, ast.ImportFrom)
-    for node in module.body:
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            continue
-        if not isinstance(node, allowed):
-            raise AssertionError(
-                f"{path.relative_to(ROOT)} must remain a compatibility shim; found {type(node).__name__}"
-            )
-        if isinstance(node, ast.ImportFrom) and not (node.module or "").startswith("app.modules.proxy._service."):
-            raise AssertionError(
-                f"{path.relative_to(ROOT)} may only re-export from app.modules.proxy._service.*, found {node.module}"
-            )
 
 
 def _check_service_line_count() -> None:
@@ -246,8 +227,6 @@ def main() -> int:
         _check_service_does_not_import_shims(service_module)
         _check_required_service_packages()
         _check_required_service_modules()
-        _assert_shim_only(PROXY_DIR / "_support.py")
-        _assert_shim_only(PROXY_DIR / "_warmup.py")
         _check_no_cross_domain_service_imports()
     except AssertionError as exc:
         print(f"proxy architecture check failed: {exc}", file=sys.stderr)

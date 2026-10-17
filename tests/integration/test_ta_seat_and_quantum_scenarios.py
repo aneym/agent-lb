@@ -16,10 +16,6 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
-import os
-import subprocess
-import sys
-import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -95,32 +91,7 @@ def test_the_audit_names_the_seat_from_the_request_log():
     assert seats["codex:codex_exec"] == pytest.approx(1)
 
 
-def test_codex_sends_the_launchers_seat_and_the_claude_launcher_tags_it(tmp_path: Path):
-    config = tmp_path / "config.toml"
-    config.write_text(
-        'model_provider = "agent-lb"\n\n'
-        "[model_providers.agent-lb]\n"
-        'name = "Local Agent LB"\n'
-        'base_url = "http://127.0.0.1:2455/backend-api/codex"\n'
-        'wire_api = "responses"\n'
-        "supports_websockets = true\n"
-        "requires_openai_auth = true\n"
-    )
-    env = {
-        **os.environ,
-        "CODEX_ROUTING_GUARD_SKIP_HEALTH": "1",
-        "CODEX_ROUTING_GUARD_LOG": str(tmp_path / "guard.log"),
-    }
-    command = [sys.executable, str(ROOT / "clients" / "codex-routing-guard"), "--config", str(config)]
-    first = subprocess.run([*command, "--provider", "agent-lb"], env=env, capture_output=True, text=True)
-    assert first.returncode == 0, first.stderr
-    provider = tomllib.loads(config.read_text())["model_providers"]["agent-lb"]
-    assert provider["env_http_headers"] == {"x-agent-lb-seat": "AGENT_LB_SEAT"}
-    settled = config.read_text()
-    second = subprocess.run([*command, "--provider", "agent-lb"], env=env, capture_output=True, text=True)
-    assert second.returncode == 0, second.stderr
-    assert config.read_text() == settled
-
+def test_the_claude_launcher_tags_the_seat_header():
     loader = importlib.machinery.SourceFileLoader("claude_lb_launch_seat", str(ROOT / "clients" / "claude-lb-launch"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)

@@ -2,7 +2,7 @@
 # route — pick the live seat for a task class, and keep the routing state honest.
 #
 # Contract C4 of docs/router-program.md. Stdlib only, same style family as
-# clients/opus-runtime-doctor and clients/codex-routing-guard.
+# clients/opus-runtime-doctor.
 #
 # Commands:
 #   route pools  [--json]                        pool headroom (C1, or an accounts approximation)
