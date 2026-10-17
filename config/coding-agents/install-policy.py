@@ -132,6 +132,8 @@ POLICY_FILES = (
     "verify-routing",
     "routing-table.json",
     "codex-seat-home.py",
+    "codex-AGENTS.md",
+    "codex/port-kill.rules",
 )
 LEGACY_HEADINGS = (
     "Coding-agent routing",
@@ -1472,7 +1474,7 @@ def main() -> int:
     if args.check:
         return check_policy(source, args.home, snapshot)
     if not (args.preview or args.uninstall):
-        verify_install_revision(source, args.force, args.reason)
+        verify_install_revision(source, args.force, args.reason, args.home)
     claude_path = args.home / ".claude" / "CLAUDE.md"
     codex_path = args.home / ".codex" / "AGENTS.md"
     template = (source / "claude-adapter.md").read_text()
@@ -1927,8 +1929,11 @@ def same_policy_tree(bundle: Path, checkout: Path) -> bool:
         return False
 
 
-def verify_install_revision(source: Path, force: bool = False, reason: str | None = None) -> None:
+def verify_install_revision(source: Path, force: bool = False, reason: str | None = None,
+                            home: Path | None = None) -> None:
 
+    if home is not None and source.resolve() == (home.expanduser() / ".agents/policy/coding-agents").resolve():
+        return
     repo = source.parent.parent
     if not (repo / ".git").exists():
         origin_repo = os.environ.get("AGENT_LB_POLICY_SOURCE_REPO")
@@ -1959,7 +1964,7 @@ def locked_main() -> int:
 
     args = parse_args()
     if not (args.check_hook_paths or args.preview or args.uninstall or args.check):
-        verify_install_revision(Path(__file__).resolve().parent, args.force, args.reason)
+        verify_install_revision(Path(__file__).resolve().parent, args.force, args.reason, args.home)
     home = args.home.expanduser().resolve()
     digest = hashlib.sha256(str(home).encode()).hexdigest()[:16]
     lock_dir = Path(tempfile.gettempdir())
