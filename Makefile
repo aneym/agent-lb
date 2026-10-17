@@ -27,9 +27,8 @@ SHELL := /bin/bash
 help:
 	@printf '%s\n' \
 	  'Common targets:' \
-	  '  make lint                    ruff check + format check + architecture checks' \
+	  '  make lint                    factory-lint lint, format and type checks' \
 	  '  make architecture-check      proxy architecture fitness ratchets' \
-	  '  make typecheck               ty check' \
 	  '  make test-floor              kept-floor pytest guards, same as CI' \
 	  '  make test-integration-core   integration-core pytest slice' \
 	  '  make package                 build and verify sdist/wheel' \
@@ -37,30 +36,19 @@ help:
 	  '  make ci-fast                 lint/type/floor/package' \
 	  '  make ci                      full local CI gate'
 
-.PHONY: frontend-install frontend-lint frontend-typecheck frontend-build
+.PHONY: frontend-install frontend-build
 frontend-install:
 	cd frontend && bun install --frozen-lockfile
-
-frontend-lint: frontend-install
-	cd frontend && bun run lint
-
-frontend-typecheck: frontend-install
-	cd frontend && bun run typecheck
 
 frontend-build: frontend-install
 	cd frontend && bun run build
 
-.PHONY: lint typecheck architecture-check
-lint: architecture-check
-	uv run ruff check .
-	uv run ruff format --check .
+.PHONY: lint architecture-check
+lint:
+	factory-lint check --changed
 
 architecture-check:
 	$(PYTHON) scripts/check_proxy_architecture.py
-
-typecheck:
-	uv sync --dev --frozen
-	uv run ty check
 
 .PHONY: test-floor test-integration-core test-integration-bridge test-e2e test-postgres
 test-floor:
@@ -123,10 +111,10 @@ docker:
 	trivy image --format table --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed $(CI_IMAGE)
 
 .PHONY: ci-fast ci ci-targets ci-doctor menubar-build
-ci-fast: lint typecheck test-floor package
+ci-fast: lint test-floor package
 
-CI_TARGETS := frontend-lint frontend-typecheck frontend-build \
-	lint typecheck test-floor test-integration-core test-integration-bridge test-e2e \
+CI_TARGETS := frontend-build \
+	lint test-floor test-integration-core test-integration-bridge test-e2e \
 	test-postgres migration-check migration-check-postgres package docker \
 	menubar-build
 

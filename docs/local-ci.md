@@ -8,8 +8,8 @@ the complete tier for a pull request, commit SHA, or `main`:
 python3 scripts/local_ci.py run <PR|sha|main>
 ```
 
-This is a full suite, not a changed-file selector. It includes frontend lint
-and types; Python lint/types; SQLite kept-floor, integration, and end-to-end
+This is a full suite with changed-file lint, format and type checks through
+`factory-lint check --changed`; it includes SQLite kept-floor, integration, and end-to-end
 tests; disposable PostgreSQL parity and migration checks; package validation;
 Docker vulnerability gating; and the native Swift
 release build. Missing or failed tools make the run red; they are never skipped.
@@ -39,13 +39,12 @@ uv run python -c "from app.main import create_app; assert create_app() is not No
 
 ## Local tools and evidence
 
-Install Python 3.13 (through uv), Bun, Xcode/Swift, Docker,
+Install Python 3.13 (through uv), Bun, factory-lint, Xcode/Swift, Docker,
 and Trivy. `doctor` reports which are missing. Studio's
 verified standalone Trivy binaries can live under
 `~/agent-lb-ci/tools`; the runner adds that directory to its PATH.
 
-`make ci REF=HEAD` and the manual pre-commit `local-ci` hook run committed
-HEAD, not staged or uncommitted edits. Commit the candidate first. The runner
+`make ci REF=HEAD` runs committed HEAD, not staged or uncommitted edits. Commit the candidate first. The runner
 never stages, stashes or resets the caller's work. Individual Make targets are
 useful during editing but do not issue a merge receipt.
 

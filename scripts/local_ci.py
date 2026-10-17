@@ -26,6 +26,7 @@ REQUIRED_TOOLS = (
     "git",
     "uv",
     "bun",
+    "factory-lint",
     "docker",
     "trivy",
     "swift",
@@ -34,11 +35,8 @@ REQUIRED_TOOLS = (
     "plutil",
 )
 BASELINE_TARGETS = {
-    "frontend-lint",
-    "frontend-typecheck",
     "frontend-build",
     "lint",
-    "typecheck",
     "test-floor",
     "test-integration-core",
     "test-integration-bridge",

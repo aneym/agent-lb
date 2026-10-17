@@ -63,10 +63,7 @@ uv sync --all-extras --dev
 # 3. Activate the venv (optional — `uv run` works without activating)
 source .venv/bin/activate
 
-# 4. Install pre-commit hooks
-uv run pre-commit install
-
-# 5. Run the proxy locally
+# 4. Run the proxy locally
 uv run agent-lb --help
 ```
 
@@ -111,10 +108,10 @@ and ask — a maintainer will tell you.
 
 ## Coding conventions
 
-- **Python**: 3.13+. Code is formatted with `ruff format`, linted with
-  `ruff check`, and type-checked with `ty` (Astral's type checker).
+- **Python**: 3.13+. Run `factory-lint check --changed` for lint, format
+  and type checks.
 - **Imports / style**: follow what you see in nearby files; the linter is
-  authoritative — if `ruff` and your style guide disagree, ruff wins.
+  authoritative — if `factory-lint` and your style guide disagree, factory-lint wins.
 - **Type hints**: required on new public functions and new modules. Existing
   code is being typed incrementally.
 - **Logging**: prefer the project's structured logger over `print`.
