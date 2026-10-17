@@ -58,7 +58,7 @@ SOL_MODEL = re.compile(r"(?:^|[-/_])(?:sol|luna|gpt)(?:$|[-_.\d])", re.IGNORECAS
 MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 
 
-def emit_advisory(advisory: str) -> None:
+def emit_advisory(advisory: str, extra: str = "") -> None:
     print(
         json.dumps(
             {
@@ -68,6 +68,7 @@ def emit_advisory(advisory: str) -> None:
                         "seat-guard advisory: " + advisory + ". "
                         "Capacity is status, not admission control. Check "
                         "`route pools` or `agent-lb status --provider anthropic --json`."
+                        + ("\n" + extra if extra else "")
                     ),
                 }
             }
@@ -75,7 +76,7 @@ def emit_advisory(advisory: str) -> None:
     )
 
 
-def emit_warning(reason: str) -> None:
+def emit_warning(reason: str, extra: str = "") -> None:
 
     print(
         json.dumps(
@@ -85,6 +86,7 @@ def emit_warning(reason: str) -> None:
                     "additionalContext": (
                         "seat-guard (warn only, not blocked): " + reason + "; logged in the routing ledger. "
                         "Default work names a family alias (`route pick <class>`)."
+                        + ("\n" + extra if extra else "")
                     ),
                 }
             }
@@ -92,7 +94,8 @@ def emit_warning(reason: str) -> None:
     )
 
 
-def emit_context(text: str) -> None:
+def emit_context(text: str, extra: str = "") -> None:
+    text += "\n" + extra if extra else ""
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": text}}))
 
 
@@ -333,6 +336,15 @@ def main() -> None:
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "cwd": payload.get("cwd"),
     }
+    open_ended = (
+        not re.search(r"^(?:One check:|check:)", prompt, re.IGNORECASE | re.MULTILINE)
+        and re.search(r"fix (every|all|each) (gap|issue|bug|problem)s?|end to end and fix|until (it|everything) (works|passes)",
+                      prompt, re.IGNORECASE)
+    )
+    budget_advisory = (
+        "seat-guard advisory: open-ended brief; name one check and a bounded deliverable, "
+        "or the seat runs as a coordinator" if open_ended else ""
+    )
     advisories: list[str] = []
     if subagent in SUBMIT_SEATS and WORKTREE_BRIEF.search(prompt) and not NEEDS_LINE.search(prompt) \
             and not STUDIO_ONLY.search(prompt):
@@ -369,7 +381,7 @@ def main() -> None:
     if warn_reason:
         record["warned"] = warn_reason
         append(record, ledger)
-        emit_warning(warn_reason + ("; " + NEEDS_MISSING if record.get("needs_missing") else ""))
+        emit_warning(warn_reason + ("; " + NEEDS_MISSING if record.get("needs_missing") else ""), budget_advisory)
         return
     lean = lean_studio_refusal(subagent, prompt)
     if lean:
@@ -396,15 +408,17 @@ def main() -> None:
     if brief_on_sol:
         record["brief_on_sol"] = True
     if not append(record, ledger):
-        emit_advisory("could not record routing telemetry; dispatch was not blocked")
+        emit_advisory("could not record routing telemetry; dispatch was not blocked", budget_advisory)
     elif brief_on_sol:
         emit_context(
             "seat-guard warning: scope, spec, contract and design briefs default to opus-latest "
             "(models.md 2026-10-14); this Sol dispatch still runs."
-            + (" Capacity: " + "; ".join(advisories) + "." if advisories else "")
+            + (" Capacity: " + "; ".join(advisories) + "." if advisories else ""), budget_advisory
         )
     elif advisories:
-        emit_advisory("; ".join(advisories))
+        emit_advisory("; ".join(advisories), budget_advisory)
+    elif budget_advisory:
+        emit_context(budget_advisory)
 
 
 if __name__ == "__main__":

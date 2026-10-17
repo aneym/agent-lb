@@ -278,3 +278,13 @@ def test_scope_brief_on_a_sol_seat_warns_in_one_line_and_still_runs(tmp_path: Pa
     assert "brief_on_sol" not in record
     output, record = needs_dispatch(tmp_path, "Implement slice 3 to the spec.", subagent="gpt-implementer")
     assert "brief_on_sol" not in record
+
+
+@pytest.mark.parametrize("check_line", ["", "One check: pytest -q x", "CHECK: pytest -q x"])
+def test_open_ended_brief_advisory_requires_no_check_line(tmp_path: Path, check_line: str) -> None:
+    output, _ = needs_dispatch(tmp_path, "Prove it end to end and fix every gap.\n" + check_line,
+                               subagent="opus-seat")
+    assert "permissionDecision" not in output
+    advisory = ("seat-guard advisory: open-ended brief; name one check and a bounded deliverable, "
+                "or the seat runs as a coordinator")
+    assert (advisory in output.get("additionalContext", "")) is (not check_line)

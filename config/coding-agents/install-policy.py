@@ -245,6 +245,12 @@ MANAGED_AGENTS = (
         Path("hooks/subagent-closeout.py"),
     ),
     (
+        Path(".claude/hooks/seat-budget.py"),
+        Path(".agent-lb/managed/coding-agents/seat-budget"),
+        "agent-lb:seat-budget:v1\n",
+        Path("hooks/seat-budget.py"),
+    ),
+    (
         Path(".claude/hooks/seat-guard.py"),
         Path(".agent-lb/managed/coding-agents/seat-guard"),
         "agent-lb:seat-guard:v1\n",
@@ -591,6 +597,9 @@ SETTINGS_HOOKS = (
     ("PreToolUse", "Bash", KILL_SCOPE_GUARD_HOOK, True),
     ("SubagentStop", None, CLOSEOUT_HOOK, False),
     ("SubagentStop", None, FOCUS_STEAL_HOOK, False),
+    ("PostToolUse", "*", {"type": "command",
+        "command": '/usr/bin/python3 "$HOME/.claude/hooks/seat-budget.py"',
+        "timeout": 5}, False),
     ("PostToolUse", "Workflow", {"type": "command",
         "command": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-readback.py"',
         "timeout": 5}, False),
