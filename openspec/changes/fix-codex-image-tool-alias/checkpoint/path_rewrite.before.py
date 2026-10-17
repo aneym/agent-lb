@@ -6,9 +6,6 @@ from typing import Any
 
 from fastapi import FastAPI
 
-
-
-
 _CODEX_V1_PREFIX = "/backend-api/codex/v1/"
 _CODEX_V1_PREFIX_BYTES = _CODEX_V1_PREFIX.encode("ascii")
 _CODEX_CANONICAL_PREFIX = "/backend-api/codex/"

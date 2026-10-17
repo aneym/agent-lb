@@ -15,7 +15,17 @@ import pytest
 from tests.integration.test_reservation_release import FakeLB, reserve_argv
 from tests.integration.test_route_reservations import route, server  # noqa: F401  (module-scoped server fixture)
 from tests.integration.test_seat_run_reservation import (  # noqa: F401  (env is a fixture)
-    HOLDERS, _script, env, invocations, mine, reservations, seat_argv, slow_discovery)
+    HOLDERS,
+    _script,
+    invocations,
+    mine,
+    reservations,
+    seat_argv,
+    slow_discovery,
+)
+from tests.integration.test_seat_run_reservation import (
+    env as env,
+)
 
 pytestmark = pytest.mark.timeout(600)
 

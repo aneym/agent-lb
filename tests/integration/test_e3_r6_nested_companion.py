@@ -1,10 +1,10 @@
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -59,7 +59,7 @@ def world():
                                   timeout=90)
 
         def recorded():
-            return [json.loads(l) for l in calls.read_text().splitlines()] if calls.exists() else []
+            return [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
         yield companion, recorded, scratch
 
 

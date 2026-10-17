@@ -17,7 +17,16 @@ from app.core.clients.proxy import ProxyResponseError
 from app.core.openai.model_registry import ReasoningLevel, UpstreamModel, get_model_registry
 from app.core.openai.models import OpenAIResponsePayload
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, ApiKey, ApiKeyUsageReservation, LimitWindow, RequestLog, TeamMember, UsageHistory
+from app.db.models import (
+    Account,
+    AccountStatus,
+    ApiKey,
+    ApiKeyUsageReservation,
+    LimitWindow,
+    RequestLog,
+    TeamMember,
+    UsageHistory,
+)
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService, LimitRuleInput

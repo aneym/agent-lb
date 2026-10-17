@@ -27,7 +27,9 @@ raise SystemExit(1)
 
 
 def seat(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([sys.executable, str(SEAT), *args], env=env, capture_output=True, text=True, timeout=60, check=False)
+    return subprocess.run(
+        [sys.executable, str(SEAT), *args], env=env, capture_output=True, text=True, timeout=60, check=False
+    )
 
 
 def test_leased_cursor_runs_are_priced_into_two_monthly_pools(tmp_path: Path) -> None:

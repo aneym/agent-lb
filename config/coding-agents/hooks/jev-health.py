@@ -4,10 +4,10 @@ import datetime
 import fcntl
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 HOME = Path.home() / '.jev'
 STATUS = HOME / 'status.json'
@@ -60,16 +60,40 @@ def probe():
     key = config.get('TYPESAFE_API_KEY', '')
     if not key or any(c in key for c in '\r\n"\\'):
         return False
-    body = json.dumps({'model': config.get('TYPESAFE_MODEL', 'jev-latest'),
-                       'state': 'connectivity healthcheck',
-                       'questions': {'alive': {'type': 'noul', 'instructions': 'Respond true to confirm the model is reachable'}}})
+    body = json.dumps(
+        {
+            "model": config.get("TYPESAFE_MODEL", "jev-latest"),
+            "state": "connectivity healthcheck",
+            "questions": {"alive": {"type": "noul", "instructions": "Respond true to confirm the model is reachable"}},
+        }
+    )
     env = {k: v for k, v in os.environ.items() if not k.lower().endswith('_proxy')}
     try:
-        result = subprocess.run(['curl', '-q', '--config', '-', '-sS', '--max-time', '40',
-                                 '-w', '\n%{http_code}', '-X', 'POST',
-                                 config.get('TYPESAFE_BASE_URL', 'https://api.typesafe.ai').rstrip('/') + '/v1/systemone', '-H', 'Content-Type: application/json',
-                                 '--data', body], input=f'header = "Authorization: Bearer {key}"\n',
-                                text=True, capture_output=True, env=env, timeout=41)
+        result = subprocess.run(
+            [
+                "curl",
+                "-q",
+                "--config",
+                "-",
+                "-sS",
+                "--max-time",
+                "40",
+                "-w",
+                "\n%{http_code}",
+                "-X",
+                "POST",
+                config.get("TYPESAFE_BASE_URL", "https://api.typesafe.ai").rstrip("/") + "/v1/systemone",
+                "-H",
+                "Content-Type: application/json",
+                "--data",
+                body,
+            ],
+            input=f'header = "Authorization: Bearer {key}"\n',
+            text=True,
+            capture_output=True,
+            env=env,
+            timeout=41,
+        )
         response, _, code = result.stdout.rstrip('\n').rpartition('\n')
         data = json.loads(response)
         return result.returncode == 0 and code == '200' and isinstance(data, dict) and bool(data.get('answers'))
@@ -93,7 +117,14 @@ def refresh():
         ok = probe()
         if ok:
             clear()
-            write(STATUS, {'status': 'ok', 'checkedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'message': 'ok'})
+            write(
+                STATUS,
+                {
+                    "status": "ok",
+                    "checkedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "message": "ok",
+                },
+            )
         else:
             state = read(STATE)
             failures = state.get('failures', 0)

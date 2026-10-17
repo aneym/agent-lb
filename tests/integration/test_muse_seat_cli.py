@@ -15,7 +15,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 def test_muse_exec_receipt_pool_limit_and_version_pin(tmp_path: Path) -> None:
     vendor = tmp_path / "muse"
-    vendor.write_text('''#!/usr/bin/env python3
+    vendor.write_text("""#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
 if sys.argv[1:] == ['--version']:
@@ -36,8 +36,11 @@ if Path('limited').exists():
     print('usage limit reached; try again in 2 hours', file=sys.stderr)
     raise SystemExit(1)
 Path('result.txt').write_text('Muse seat check\\n')
-print(json.dumps({'id':'event-1', 'stream':{'kind':'session','id':'00000000-0000-4000-8000-000000000001'}, 'payload_type':'run.terminal.completed', 'payload':{'terminal':'completed','text':'Created result.txt'}}))
-''')
+print(json.dumps({'id':'event-1',
+    'stream':{'kind':'session','id':'00000000-0000-4000-8000-000000000001'},
+    'payload_type':'run.terminal.completed',
+    'payload':{'terminal':'completed','text':'Created result.txt'}}))
+""")
     vendor.chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("SEAT_", "ROUTE_", "META_"))}
     env.update(SEAT_HOME=str(tmp_path / "seats"), ROUTE_BIN=str(REPO / "clients/route"),
@@ -46,7 +49,7 @@ print(json.dumps({'id':'event-1', 'stream':{'kind':'session','id':'00000000-0000
                META_API_KEY="synthetic-test-key")
 
     def seat(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([sys.executable, "-c", "import runpy,sys; sys.platform='darwin'; "
+        return subprocess.run([sys.executable, "-c", "import runpy,sys,urllib.request,zoneinfo; sys.platform='darwin'; "
                                "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
                                str(REPO / "clients/seat"), *args], env=env,
                               cwd=tmp_path, capture_output=True, text=True, timeout=30, check=False)
@@ -130,7 +133,7 @@ time.sleep(120)
                XDG_DATA_HOME=str(tmp_path / "xdg"))
 
     def seat(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([sys.executable, "-c", "import runpy,sys; sys.platform='darwin'; "
+        return subprocess.run([sys.executable, "-c", "import runpy,sys,urllib.request,zoneinfo; sys.platform='darwin'; "
                                "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
                                str(REPO / "clients/seat"), *args], env=env,
                               cwd=tmp_path, capture_output=True, text=True, timeout=60, check=False)

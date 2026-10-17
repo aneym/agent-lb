@@ -25,30 +25,54 @@ OBLIGATIONS = {
     "no yes needed list": r"No yes needed: merges, deploys, money path, migrations",
     "relayed yes list": r"His yes, relayed: spend past a cap, destructive data with no record, going public",
     "alex himself": r"Alex himself: his credentials, a click in his own signed-in account, a message to a real person",
-    "cos quote qualification": r"CoS message that quotes Alex first-hand with a time, or points at an `alex-\*` approval record, is his yes; never ask him again",
+    "cos quote qualification": (
+        r"CoS message that quotes Alex first-hand with a time, or points "
+        r"at an `alex-\*` approval record, is his yes; never ask him again"
+    ),
     "decide after scope": r"After a scope is approved, agents decide and log why",
-    "mac clicks scope": r"Click macOS consent and TCC prompts, Privacy & Security toggles, system dialogs and app permission prompts yourself",
+    "mac clicks scope": (
+        r"Click macOS consent and TCC prompts, Privacy & Security toggles, "
+        r"system dialogs and app permission prompts yourself"
+    ),
     "mac clicks log": r"log each with `ledger\.event` and a screenshot",
-    "mac clicks exclusions": r"Never his password, Touch ID or codes \(ask for that step only\), no messages, no spend past a cap",
+    "mac clicks exclusions": (
+        r"Never his password, Touch ID or codes \(ask for that step "
+        r"only\), no messages, no spend past a cap"
+    ),
     "no code comments": r"No code comments \(2026-10-14\)\*\* in any repo the factory works in",
     "comment exceptions": r"Keep only shebangs, license headers, compiler/lint/type directives, generated-file markers",
-    "opus architects": r"Opus \(opus-latest medium\) owns architecture, contracts, specs, plans, verdicts and UI design",
+    "opus architects": (
+        r"Opus \(opus-latest medium\) owns architecture, contracts, specs, "
+        r"plans, verdicts and UI design"
+    ),
     "top level medium": r"never xhigh, max or Fable by default",
-    "sol only to spec": r"Sol implements only to an Opus spec and writes no scopes, specs, contracts, docs, research synthesis or rulings",
+    "sol only to spec": (
+        r"Sol implements only to an Opus spec and writes no scopes, specs, "
+        r"contracts, docs, research synthesis or rulings"
+    ),
     "opus seat for trust code": r"UI-critical, contract and trust-boundary code: opus-seat",
     "astra only": r"Architecture review is `astra-consult` only, never `sol-consult`",
     "seat table implement": r"Code to a spec: gpt-implementer sol-latest medium",
-    "seat table review": r"verifier sonnet-latest high for non-Claude authors, codex-verifier sol-latest high for Claude authors",
+    "seat table review": (
+        r"verifier sonnet-latest high for non-Claude authors, "
+        r"codex-verifier sol-latest high for Claude authors"
+    ),
     "grok never reviews": r"Grok and Composer never review",
     "precedence explicit": r"explicit flags win; constraints only narrow",
     "precedence reserve": r"under the reserve waits \(exit 3\), never another model",
     "precedence sticky": r"a job keeps its first arm",
-    "never explore list": r"exploration never touches plan, review, spec, contract, verdict, judge, design, audit, UI-critical, trust-boundary, money-path or fix work",
+    "never explore list": (
+        r"exploration never touches plan, review, spec, contract, verdict, "
+        r"judge, design, audit, UI-critical, trust-boundary, money-path or fix work"
+    ),
     "hook cap": r"at most 1024 UTF-8 bytes per hook",
     "270 s": r"No tool call blocks past 270 s",
     "no watchers": r"No watchers or gh poll loops",
     "factory-wait": r"`factory-wait --repo <repo> --sha <sha> --until <state> --max 270`",
-    "rails merge path": r"merges only with `scripts/studio_merge\.py merge <branch>` on the main machine; never `gh pr merge`",
+    "rails merge path": (
+        r"merges only with `scripts/studio_merge\.py merge <branch>` on "
+        r"the main machine; never `gh pr merge`"
+    ),
     "conflict rebase once": r"on a conflict rebase once, then hand to the lane lead",
     "other repos ff": r"Other repos land by fast-forward push to `origin/main`",
     "check evidence": r"harness check record or a commit-body `check:` line",

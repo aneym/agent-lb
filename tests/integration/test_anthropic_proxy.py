@@ -5120,6 +5120,7 @@ async def test_helper_cache_ttl_at_upstream_boundary(async_client, monkeypatch, 
 @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "PATCH", "DELETE"])
 @pytest.mark.parametrize("auth_case", ["accepted", "recovered", "rejected"])
 async def test_frame_database_proxy(async_client, monkeypatch, method, auth_case):
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_FRAME_ACCOUNT_ID", "frame-account")
 
     from aiohttp import web
 

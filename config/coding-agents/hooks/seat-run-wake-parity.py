@@ -3,9 +3,9 @@
 import argparse
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
+from pathlib import Path
 
 
 def main():
@@ -46,7 +46,12 @@ def main():
                                                        else prefix + ' ' + expected['command']))
                     assert specific['updatedInput'] == expected, (payload, answer, expected)
                 cases += 1
-        print(f'PASS: {cases} dispatcher subprocess cases; main loop, subagent, explicit owner, idempotence, rewrite composition, denial')
+        print(
+            (
+                f"PASS: {cases} dispatcher subprocess cases; main loop, subagent, "
+                f"explicit owner, idempotence, rewrite composition, denial"
+            )
+        )
     print('PASS: test-owned fixture directory cleaned up')
 
 

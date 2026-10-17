@@ -16,7 +16,19 @@ import pytest
 
 from tests.integration.test_route_reservations import route, server  # noqa: F401  (module-scoped server fixture)
 from tests.integration.test_seat_run_reservation import (  # noqa: F401  (env is a fixture)
-    HOLDERS, ROUTE, _script, env, invocations, mine, pid_alive, reservations, seat_argv, slow_discovery)
+    HOLDERS,
+    ROUTE,
+    _script,
+    invocations,
+    mine,
+    pid_alive,
+    reservations,
+    seat_argv,
+    slow_discovery,
+)
+from tests.integration.test_seat_run_reservation import (
+    env as env,
+)
 
 pytestmark = pytest.mark.timeout(600)
 

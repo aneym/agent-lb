@@ -13,8 +13,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
-
 FORWARDER_SEATS = {
     "codex-sol",
     "codex-verifier",
@@ -336,10 +334,10 @@ def main() -> None:
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "cwd": payload.get("cwd"),
     }
-    open_ended = (
-        not re.search(r"^(?:One check:|check:)", prompt, re.IGNORECASE | re.MULTILINE)
-        and re.search(r"fix (every|all|each) (gap|issue|bug|problem)s?|end to end and fix|until (it|everything) (works|passes)",
-                      prompt, re.IGNORECASE)
+    open_ended = not re.search(r"^(?:One check:|check:)", prompt, re.IGNORECASE | re.MULTILINE) and re.search(
+        r"fix (every|all|each) (gap|issue|bug|problem)s?|end to end and fix|until (it|everything) (works|passes)",
+        prompt,
+        re.IGNORECASE,
     )
     budget_advisory = (
         "seat-guard advisory: open-ended brief; name one check and a bounded deliverable, "

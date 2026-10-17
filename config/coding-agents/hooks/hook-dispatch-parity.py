@@ -16,7 +16,9 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-DESCRIPTION = 'Parity fixture for hook-dispatch.py: the per-hook config and the dispatcher give Claude Code the same answers.'
+DESCRIPTION = (
+    "Parity fixture for hook-dispatch.py: the per-hook config and the dispatcher give Claude Code the same answers."
+)
 
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DEFAULT_TIMEOUT = 600.0

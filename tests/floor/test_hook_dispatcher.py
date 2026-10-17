@@ -1502,8 +1502,17 @@ def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path)
 
     home, settings = make_home(tmp_path)
     install, _env = installer(tmp_path, home)
-    settings["hooks"]["PreToolUse"].append({"matcher": "Agent", "hooks": [
-        {"type": "command", "command": "bash -c 'python3 \"$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny\" || true'"}]})
+    settings["hooks"]["PreToolUse"].append(
+        {
+            "matcher": "Agent",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "bash -c 'python3 \"$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny\" || true'",
+                }
+            ],
+        }
+    )
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     before = (home / ".claude/settings.json").read_bytes()
     refused = install("--hook-dispatcher", "on", check=False)
@@ -1575,9 +1584,12 @@ def test_the_bootout_guard_accepts_the_rails_cos_approval_record(tmp_path: Path)
         return run_hook(hook["command"], call, env)
 
     assert run(" # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-restart-2026-10-08.md").returncode == 0
-    for suffix in ("", " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-missing-2026-10-08.md",
-                   " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-notime-2026-10-08.md",
-                   " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/../orchestrator-refs/alex-restart-2026-10-08.md"):
+    for suffix in (
+        "",
+        " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-missing-2026-10-08.md",
+        " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-notime-2026-10-08.md",
+        " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/../orchestrator-refs/alex-restart-2026-10-08.md",
+    ):
         assert run(suffix).returncode == 2, suffix
 
 
@@ -1602,7 +1614,11 @@ def test_the_dangerous_command_guard_keeps_only_the_drop_floor(tmp_path: Path) -
     assert "BLOCKED: Dangerous command" in blocked.stderr
     approved = run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-drop-2026-10-08.md")
     assert approved.returncode == 0, approved
-    assert run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-none-2026-10-08.md").returncode == 2
+    assert (
+        run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-none-2026-10-08.md").returncode
+        == 2
+    )
+
 
 @pytest.mark.parametrize("command,rc", [
     ("printf '%s\\n' 'DROP TABLE accounts'", 0),

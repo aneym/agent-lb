@@ -467,7 +467,9 @@ async def test_gpt_model_names_resolve_from_the_served_model_list(
     expected_effort: str | None,
 ) -> None:
 
-    served = dict.fromkeys(["gpt-5.6-sol", "gpt-6.1-sol", "gpt-7-sol", "gpt-6-luna", "gpt-6-astra", "codex-auto-review"])
+    served = dict.fromkeys(
+        ["gpt-5.6-sol", "gpt-6.1-sol", "gpt-7-sol", "gpt-6-luna", "gpt-6-astra", "codex-auto-review"]
+    )
     monkeypatch.setattr(
         proxy_api, "get_model_registry", lambda: SimpleNamespace(get_models_with_fallback=lambda: served)
     )

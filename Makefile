@@ -52,7 +52,7 @@ frontend-build: frontend-install
 
 .PHONY: lint typecheck architecture-check
 lint: architecture-check
-	uv run ruff check .
+	uv run --frozen ruff check .
 	uv run ruff format --check .
 
 architecture-check:
@@ -122,7 +122,8 @@ docker:
 	docker build -t $(CI_IMAGE) .
 	trivy image --format table --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed $(CI_IMAGE)
 
-.PHONY: ci-fast ci ci-targets ci-doctor menubar-build
+.PHONY: check ci-fast ci ci-targets ci-doctor menubar-build
+check: ci-fast
 ci-fast: lint typecheck test-floor package
 
 CI_TARGETS := frontend-lint frontend-typecheck frontend-build \
