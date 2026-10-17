@@ -70,13 +70,20 @@ def test_dry_installed_writer_and_launcher_patch(tmp_path: Path, policy_checkout
 
     source = tmp_path / "policy-repo" / "config/coding-agents"
     shutil.copytree(ROOT / "config/coding-agents", source)
+    (source.parents[1] / "clients").mkdir()
+    shutil.copy2(ROOT / "clients/route", source.parents[1] / "clients/route")
     policy_checkout(tmp_path / "policy-repo")
     home = tmp_path / "home"
+    lab = home / ".agent-rails/workflows/codex-lab-home.py"
+    lab.parent.mkdir(parents=True)
+    lab_bytes = b'requires_openai_auth = false\n'
+    lab.write_bytes(lab_bytes)
     result = subprocess.run([sys.executable, str(source / "install-policy.py"), "--home", str(home)],
                             env=os.environ | {"HOME": str(home), "AGENT_LB_URL": "http://127.0.0.1:1"},
                             capture_output=True, text=True, check=True, timeout=30)
     assert result.returncode == 0
-    installed = home / ".agent-rails/workflows/codex-lab-home.py"
+    assert lab.read_bytes() == lab_bytes
+    installed = home / ".agent-lb/managed/coding-agents/codex-seat-home.py"
     job = tmp_path / "job"
     subprocess.run([sys.executable, str(installed), str(job)],
                    env=os.environ | {"HOME": str(home)}, check=True, capture_output=True, timeout=10)
