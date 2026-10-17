@@ -52,11 +52,11 @@ import posixpath
 
 
 def strip_heredocs(text):
-    # Quoted data is inert, but shell input and unquoted expansions execute.
+
     kept, pending, bodies = [], [], []
     quote, stack, i, line_start = None, [], 0, 0
-    # Walk the full command: $(...) opens a fresh quoting context even inside
-    # double quotes. Its opening line is not a complete shlex input.
+
+
     while i < len(text):
         char = text[i]
         if char == '\\' and quote != "'":
@@ -234,7 +234,7 @@ def search_paths(name, args):
                     paths.append(args[i])
                     i += 1
                     continue
-                break  # the remaining words are find expressions, not paths
+                break
             for j, flag in enumerate(arg[1:], 1):
                 recursive |= name in ('grep', 'egrep', 'fgrep', 'ggrep') and flag in 'rR'
                 pattern |= flag in 'ef'
@@ -256,7 +256,7 @@ def search_paths(name, args):
 
 
 def shell_tokens(text):
-    # shlex's commenters also eat mid-word '#'; shell comments start a word.
+
     cleaned = []
     quote = None
     escaped = False
@@ -293,7 +293,7 @@ def shell_tokens(text):
 
 
 def substitutions(text, heredoc=False):
-    # Extract executable expansions even inside double quotes, never single quotes.
+
     bodies = []
     quote = None
     boundary = True
@@ -358,7 +358,6 @@ def resolve_path(path, cwd):
     return posixpath.normpath(path if path.startswith('/') else posixpath.join(cwd, path))
 
 
-# Options that consume the following word (attached values consume no word).
 wrapper_values = {
     'env': ('uC', ('--unset', '--chdir', '--split-string')),
     'timeout': ('sk', ('--signal', '--kill-after')),
@@ -426,7 +425,7 @@ def unsafe(args, depth, cwd):
                     return command < len(args) and scan(args[command], depth + 1, cwd)
                 j += 1
                 if not arg.startswith('--') and any(flag in arg[1:] for flag in 'oO'):
-                    j += 1  # shell option name, e.g. -euo pipefail
+                    j += 1
             return False
         if name == 'ssh':
             host = after_options(args, i + 1, name)
@@ -452,7 +451,7 @@ def unsafe(args, depth, cwd):
         if name == 'watch':
             return i < len(args) and scan(' '.join(args[i:]), depth + 1, cwd)
         if name in ('timeout', 'gtimeout'):
-            i += 1  # duration
+            i += 1
         elif name == 'nice' and i < len(args) and re.match(r'^\+?\d+$', args[i]):
             i += 1
     args = args[i:]
@@ -463,7 +462,7 @@ def unsafe(args, depth, cwd):
     if name == 'rtk':
         j = 1
         while j < len(args) and args[j].startswith('-'):
-            j += 1  # rtk's global options (-v, --ultra-compact) take no value
+            j += 1
         sub = args[j] if j < len(args) else ''
         rest = args[j + 1:]
         if sub == 'run':
@@ -479,7 +478,7 @@ def unsafe(args, depth, cwd):
             return unsafe(rest, depth, cwd)
         if sub not in ('grep', 'rg', 'find'):
             return False
-        # rtk grep runs ripgrep: recursive whatever its flags say, and it skips FIFOs.
+
         tool, name, args = 'rtk ' + sub, ('find' if sub == 'find' else 'rg'), [sub] + rest
     if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep'):
         roots, recursive, word = search_paths(name, args[1:])
@@ -552,7 +551,7 @@ def unsafe(args, depth, cwd):
 
 def scan(text, depth=0, cwd=None):
     if depth > 8:
-        # Do not let additional remote-shell nesting bypass the FIFO policy.
+
         return True
     cwd = cwd or os.environ.get('SCAN_CWD') or os.getcwd()
     try:
@@ -561,7 +560,7 @@ def scan(text, depth=0, cwd=None):
         bodies.extend(substitutions(text))
         tokens = shell_tokens(text)
     except Exception as error:
-        raise SystemExit(4)  # unparsed: not checked, the call goes through with a warning
+        raise SystemExit(4)
     if any(scan(body, depth + 1, cwd) for body in bodies):
         return True
     segment = []
@@ -570,7 +569,7 @@ def scan(text, depth=0, cwd=None):
         if token and all(char in '<>&' for char in token) and ('<' in token or '>' in token):
             if segment and segment[-1].isdigit():
                 segment.pop()
-            target = next(items, None)  # redirect target is not a search operand
+            target = next(items, None)
             if token == '<<<' and target is not None and any(
                 word.rsplit('/', 1)[-1] in ('bash', 'sh', 'zsh', 'dash', 'ksh') for word in segment
             ) and scan(target, depth + 1, cwd):
@@ -579,7 +578,7 @@ def scan(text, depth=0, cwd=None):
         if token and all(char in ';&|()<>\n' for char in token):
             if unsafe(segment, depth, cwd):
                 return True
-            # Track cd across a command list (including && and loop bodies).
+
             words = segment[:]
             while words and words[0] in ('do', 'then', 'else', 'elif', 'if', 'while', 'until', '{', '!'):
                 words.pop(0)
@@ -595,8 +594,6 @@ def scan(text, depth=0, cwd=None):
     return False
 
 
-# 0: a FIFO grep to rewrite; 2: a refused root (its line on stderr); 6: a wide scan to warn about; 3: nothing to do.
-# Anything else is a failure.
 try:
     fifo = scan(os.environ['SCAN_COMMAND'])
 except Refused as refused:
@@ -614,8 +611,8 @@ try:
     ti = data['tool_input']
     cmd = ti['command']
     match = re.match(r'^[ \t]*grep(?=[ \t])', cmd)
-    # Deliberately conservative: no shell syntax, expansions, comments, escapes,
-    # newlines, or later device flags that could override the inserted skip.
+
+
     if not match or any(c in cmd for c in '|;&()<>`$\\\n\r#'):
         raise ValueError('not a simple grep')
     words = shlex.split(cmd)

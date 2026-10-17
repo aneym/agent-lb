@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Build a job-local CODEX_HOME; never read authentication contents.')
     parser.add_argument("destination", type=Path)
     args = parser.parse_args()
     source = Path(os.environ.get("CODEX_SOURCE_HOME", "~/.codex")).expanduser()

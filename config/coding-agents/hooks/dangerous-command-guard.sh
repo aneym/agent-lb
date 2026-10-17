@@ -80,7 +80,7 @@ providers = {
     'neonctl': ('Neon', ('NEON_API_KEY',)),
 }
 text = sys.argv[1]
-# An approval must be explicitly referenced, within the approval directory, and name this exact command.
+
 match = re.search(r'\s+# alex-approval:\s*(\S+)\s*$', text)
 if match:
     path = os.path.expanduser(match[1].replace('${HOME}', os.path.expanduser('~')).replace('$HOME', os.path.expanduser('~')))
@@ -96,7 +96,7 @@ if match:
             pass
 
 def without_heredocs(source):
-    # Heredoc bodies are data, including provider-looking commands.
+
     lines = source.splitlines(keepends=True)
     clean = []
     delimiters = []
@@ -185,7 +185,7 @@ def inspect(source, inherited, depth=0):
                     words.pop(0)
             if '=' in word:
                 key, value = word.split('=', 1)
-                # Literal empty values and references to absent exported variables do not provide a token.
+
                 ref = re.fullmatch(r'\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?', value)
                 local[key] = exported.get(ref[1], '') if ref else value
         if not words:
@@ -225,7 +225,7 @@ if [ -n "$PROVIDER" ]; then
 fi
 SQL=$(python3 - "$CMD" <<'PY'
 import os, re, shlex, sys
-# Quoted heredocs sent to data readers are inert. Shell consumers are reparsed.
+
 def commands(text):
     lines = text.splitlines(keepends=True)
     clean = []
@@ -270,7 +270,7 @@ parts = list(commands(sys.argv[1]))
 for index, words in enumerate(parts):
     name = os.path.basename(words[0])
     if name in ('bash', 'sh', 'zsh') and '-c' in words:
-        # Shell strings execute, unlike an ssh argument or echo's quoted words.
+
         at = words.index('-c')
         if at + 1 < len(words):
             parts.extend(commands(words[at + 1]))
@@ -287,7 +287,7 @@ for index, words in enumerate(parts):
             print(read_file(word.split('=', 1)[1]))
     if index and parts[index-1][0] == 'cat' and len(parts[index-1]) == 2:
         print(read_file(parts[index-1][1]))
-# DROP/**/TABLE is an accepted residual: this accidental-command guard does not normalize SQL comments.
+
 PY
 ) || {
   if grep -qiE 'rm[[:space:]]+-rf|DROP|launchctl[[:space:]]+disable' <<<"$CMD"; then

@@ -17,7 +17,7 @@ from pathlib import Path
 
 DENIAL = ('Railway destructive delete refused (destructive data floor): use a custody '
           "RAILWAY_TOKEN or RAILWAY_API_TOKEN, not the owner's CLI login.")
-# GA-RESTORE: secret floor; set RAILWAY_SECRET_FLOOR=1 at launch.
+
 SECRET_FLOOR = os.environ.get('RAILWAY_SECRET_FLOOR') == '1'
 WARNINGS = set()
 ARGV_DENIAL = 'Railway secret-looking argv detected (secret floor); use stdin or an env file.'
@@ -32,7 +32,7 @@ READS = {'status', 'logs', 'list', 'whoami', 'version', 'help'}
 SECRET_NAME = re.compile(r'(?:token|secret|password|passwd|api[_-]?key|authorization|bearer|credential)', re.I)
 SECRET_VALUE = re.compile(r'''(?:^|[=\s'"])(?:bearer\s+|(?:sk|rk|pk|ghp|gho|github_pat|xox[baprs])[-_]|eyJ[A-Za-z0-9_-]+\.)''', re.I)
 ASSIGNMENT = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', re.S)
-# Never suggest --json | jq: values still pass through the shell before filtering.
+
 KV_DENIAL = "railway variables read prints values (secret floor)."
 PRINTENV_DENIAL = "railway run printenv/env prints every secret (secret floor)."
 
@@ -71,7 +71,7 @@ def run_value_output(args):
             if flag == '--':
                 break
             if flag in {'-n', '-u', '-g', '--user', '--group', '--adjustment'}:
-                # sudo -n is a switch; nice -n takes an adjustment.
+
                 if flag != '-n' or name == 'nice':
                     i += 1
         args = args[i:]
@@ -107,15 +107,14 @@ def run_value_output(args):
                             segment.append(word)
                 except ValueError:
                     return True
-    # Arbitrary Python/script bodies are an accepted residual; this is accident
-    # prevention, not an interpreter or an adversarial execution boundary.
+
+
     return False
 
 
 def production_environment(args):
-    # Do not run status --json: it can use the owner's session and needs network
-    # access, so it is neither cheap nor offline-safe. Explicit flags are the
-    # only reliable local evidence; an unknown link is allowed and logged below.
+
+
     for i, arg in enumerate(args):
         value = None
         if arg in {'--environment', '-e'} and i + 1 < len(args):
@@ -130,7 +129,7 @@ def production_environment(args):
 
 
 def substitutions(text, heredoc=False):
-    """Return executable expansions and mask them for the outer lexer."""
+
     result, out = [], []
     i, quote = 0, None
     while i < len(text):
@@ -196,11 +195,11 @@ def heredocs(command):
                 quote = None if quote else c
             elif not quote:
                 if c == '#' and (i == 0 or line[i - 1] in ' \t;|&()'):
-                    # Keep the separator, but never lex quotes or expansions
-                    # from a shell comment as executable syntax.
+
+
                     cleaned.append('\n' if line.endswith('\n') else '')
                     break
-                # Only an attached IO number belongs to a redirection.
+
                 fd = re.match(r'\d+(?=[<>])', line[i:])
                 if fd and (i == 0 or line[i - 1] in ' \t;|&()'):
                     i += len(fd[0])
@@ -231,8 +230,8 @@ def expand(value, env):
 
 
 def check(command, inherited, value_output=False):
-    # Accidental-use guard, not an adversarial shell boundary: deliberately
-    # obfuscated rail''way / rail\\way and shell-level unset remain unsupported.
+
+
     if not value_output and not re.search(r'\brailway\b', command):
         return ''
     command, nested = heredocs(command)
@@ -245,13 +244,13 @@ def check(command, inherited, value_output=False):
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()<>\n')
         lexer.whitespace = ' \t\r'
-        lexer.commenters = ''  # heredocs() already removed shell comments.
+        lexer.commenters = ''
         lexer.whitespace_split = True
         for word in lexer:
             words.append(word)
     except ValueError:
-        # Keep the incomplete final argument so a shell wrapper's destructive
-        # executable prefix is still checked; other parse failures are advisory.
+
+
         if lexer.token:
             words.append(lexer.token)
     segments, current = [], []
@@ -259,7 +258,7 @@ def check(command, inherited, value_output=False):
     while i < len(words):
         word = words[i]
         if re.fullmatch(r'[<>]+|[<>]+&', word):
-            i += 2  # A redirection's target isn't argv; later words still are.
+            i += 2
             continue
         if word and all(c in ';&|()\n' for c in word):
             segments.append(current)
@@ -332,13 +331,13 @@ def check(command, inherited, value_output=False):
                     elif name == 'sudo' and not option.startswith('--'):
                         for j, flag in enumerate(option[1:], 1):
                             if '-' + flag in operands:
-                                # The rest of a bundle is its attached operand;
-                                # otherwise the operand is the next argv word.
+
+
                                 if j == len(option) - 1:
                                     i += 1
                                 break
                 if name == 'timeout':
-                    i += 1  # duration
+                    i += 1
                 continue
             if name in {'npx', 'bunx', 'pnpm', 'yarn', 'npm'}:
                 i += 1
@@ -363,7 +362,7 @@ def check(command, inherited, value_output=False):
                 for j, arg in enumerate(args):
                     if '$UNKNOWN_SUBSTITUTION' in arg and (
                             arg.startswith('--set=') or (j > 0 and args[j - 1] in {'--set', 'set'})):
-                        secret_warning(ARGV_DENIAL)  # An expanded value still lands in argv.
+                        secret_warning(ARGV_DENIAL)
                     if (j > 0 and args[j - 1] in {'set', '--set'} and SECRET_NAME.search(arg)
                             and '=' not in arg and j + 1 < len(args) and not args[j + 1].startswith('-')):
                         secret_warning(ARGV_DENIAL)
@@ -377,7 +376,7 @@ def check(command, inherited, value_output=False):
                         secret_warning(ARGV_DENIAL)
                     if SECRET_VALUE.search(arg):
                         secret_warning(ARGV_DENIAL)
-                # Help belongs to the CLI only before its subcommand.
+
                 command_args = list(args)
                 help_requested = False
                 while command_args and command_args[0].startswith('-'):
@@ -411,8 +410,8 @@ def check(command, inherited, value_output=False):
                     break
                 if subcommand in {'variables', 'variable', 'vars'}:
                     write = variable_write(command_args[1:])
-                    # Bare listings, get, --json and --kv all expose values.
-                    # No supported names-only CLI output is known.
+
+
                     if (not write or 'get' in command_args[1:]
                             or any(arg in {'--kv', '--json'} or re.fullmatch(r'-[^-]*k[^-]*', arg)
                                    for arg in command_args[1:])):
@@ -434,7 +433,7 @@ def check(command, inherited, value_output=False):
                 if destructive and not any(env.get(key) for key in TOKEN_NAMES):
                     return DENIAL
                 break
-            # Ordinary arguments naming Railway are data, not executable words.
+
             break
     return ''
 
@@ -448,7 +447,7 @@ try:
         command = ''
     denied = check(command, dict(os.environ))
 except Exception as error:
-    # A parser failure is advisory unless a destructive action is explicit.
+
     destructive = re.search(r'\brailway\s+(?:(?:service|volume|environment)\s+)?(?:delete|down)\b', command)
     denied = (f'{DENIAL} railway guard error: {type(error).__name__}'
               if destructive and not any(os.environ.get(key) for key in TOKEN_NAMES) else '')

@@ -120,7 +120,7 @@ def first_word(prefix):
 
 
 def split_heredocs(text):
-    """Text without heredoc bodies; unquoted bodies (their $( ) runs); bodies fed to a shell (they run)."""
+
     text = text.replace("\\\n", "")
     out, live, shell, ends, quote = [], [], [], [], None
     for line in text.split("\n"):
@@ -147,7 +147,7 @@ def split_heredocs(text):
 
 
 def substitutions(text):
-    """$( ) and backtick bodies outside single quotes: they run, even inside double quotes."""
+
     bodies, quote, k = [], None, 0
     while k < len(text):
         c = text[k]
@@ -229,7 +229,7 @@ def restarts(text, depth=0):
         while argv and argv[0] in KEYWORDS:
             argv = argv[1:]
         while argv and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]) or os.path.basename(argv[0]) in WRAPPERS):
-            # Skip a wrapper and its options; the command it runs is the next word naming a command we judge.
+
             later = [i for i, a in enumerate(argv) if i and os.path.basename(a) in SHELLS | {"launchctl", "eval"}]
             argv = argv[later[0]:] if later else []
         if not argv:
