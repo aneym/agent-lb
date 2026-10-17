@@ -26,9 +26,6 @@ from app.modules.usage.additional_quota_keys import (
 _PRIMARY_WINDOW_LITERAL = literal_column("'primary'")
 
 
-
-
-
 BULK_HISTORY_MAX_ROWS_PER_ACCOUNT = 720
 
 
@@ -626,9 +623,6 @@ class UsageRepository:
             )
 
 
-
-
-
         ranked = (
             select(
                 UsageHistory.id,
@@ -1038,14 +1032,13 @@ class AdditionalUsageRepository:
             conditions.append(AdditionalUsageHistory.recorded_at >= since)
         bind = self._session.get_bind()
         if bind is not None and bind.dialect.name == "sqlite":
-            # Each alias gets an equality seek; OR-ing aliases before LIMIT can
-            # otherwise rank/scan the entire historical quota table.
+
+
             if account_ids is not None and not account_ids:
                 return {}
             if account_ids is not None and len(account_ids) > 400:
-                # SQLite limits compound SELECTs to 500 terms by default.
-                # Keep each seek batch bounded without sharing a session
-                # concurrently or dropping rows from a large account pool.
+
+
                 result: dict[str, AdditionalUsageHistory] = {}
                 ids = sorted(set(account_ids))
                 for offset in range(0, len(ids), 400):
@@ -1107,8 +1100,6 @@ class AdditionalUsageRepository:
             ids = select(latest_id.label("usage_id")).select_from(accounts).subquery("latest_quota_ids")
             stmt = select(AdditionalUsageHistory).join(ids, AdditionalUsageHistory.id == ids.c.usage_id)
         elif bind is not None and bind.dialect.name == "postgresql" and account_ids:
-
-
 
 
             conditions[0] = AdditionalUsageHistory.quota_key.in_(

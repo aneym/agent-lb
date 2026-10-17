@@ -21,7 +21,7 @@ def arguments(parser):
 
 
 def add_parser(commands):
-    arguments(commands.add_parser("forwarded", help=__doc__))
+    arguments(commands.add_parser("forwarded", help='Compare requested values with logged forwarded values, not upstream confirmation.'))
 
 
 def database_url():
@@ -107,7 +107,7 @@ def run(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Compare requested values with logged forwarded values, not upstream confirmation.')
     arguments(parser)
     run(parser.parse_args())
 
