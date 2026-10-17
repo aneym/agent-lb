@@ -144,7 +144,6 @@ def test_model_class_extraction_for_all_model_types():
     assert _extract_model_class("gpt-5.3-codex-spark") == "codex"
     assert _extract_model_class("gpt-5.1-codex-mini") == "codex"
 
-
     assert _extract_model_class("gpt-5.4") == "std"
     assert _extract_model_class("gpt-4") == "std"
     assert _extract_model_class("gpt-4-turbo") == "std"
@@ -235,8 +234,6 @@ async def test_prompt_cache_holds_its_account_until_a_real_rate_limit_then_stays
     async_client, monkeypatch
 ):
 
-
-
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -296,16 +293,13 @@ async def test_prompt_cache_holds_its_account_until_a_real_rate_limit_then_stays
     await turn()
     assert seen == ["acc_hold_a"]
 
-
     await set_usage(85.0, 5.0)
     await turn()
     assert seen == ["acc_hold_a"] * 2
 
-
     limited.add("acc_hold_a")
     await turn()
     assert seen == ["acc_hold_a"] * 3 + ["acc_hold_b"]
-
 
     async with SessionLocal() as session:
         account = await session.get(Account, acc_a_id)

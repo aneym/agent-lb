@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -45,7 +43,6 @@ async def test_receipts_and_summary(async_client, db_setup):
             )
         await session.flush()
         rows = [
-
             (1, timestamp(0), "openai", "acc-a", "key-a", "sess-a", None, 100, 40, 10, 20, 1.0, "success"),
             (2, timestamp(0, 30), "anthropic", "acc-b", "key-b", "sess-b", "client-a", 50, 20, 5, 10, 2.0, "error"),
             (3, timestamp(2), "openai", "acc-a", "key-a", "sess-a", None, 30, 10, 0, 5, 0.5, "success"),
@@ -155,17 +152,29 @@ async def test_receipts_and_summary(async_client, db_setup):
         "cacheReadRatio": 0.2299,
         "costUsd": 2.5,
     }
-    filtered = (await async_client.get(
-        "/api/receipts/summary", params={**bounds, "session_id": "client-a", "group_by": "key"}
-    )).json()
-    assert (filtered["totals"]["requests"], filtered["totals"]["errors"],
-            filtered["groups"][0]["key"], filtered["groups"][0]["tokens"]) == (1, 1, "key-b", 85)
+    filtered = (
+        await async_client.get("/api/receipts/summary", params={**bounds, "session_id": "client-a", "group_by": "key"})
+    ).json()
+    assert (
+        filtered["totals"]["requests"],
+        filtered["totals"]["errors"],
+        filtered["groups"][0]["key"],
+        filtered["groups"][0]["tokens"],
+    ) == (1, 1, "key-b", 85)
 
-    repeated = (await async_client.get("/api/receipts/summary", params=[
-        ("since", bounds["since"]), ("until", bounds["until"]),
-        ("account_id", "acc-a"), ("account_id", "acc-b"),
-        ("api_key_id", "key-a"), ("api_key_id", "key-b"),
-    ])).json()
+    repeated = (
+        await async_client.get(
+            "/api/receipts/summary",
+            params=[
+                ("since", bounds["since"]),
+                ("until", bounds["until"]),
+                ("account_id", "acc-a"),
+                ("account_id", "acc-b"),
+                ("api_key_id", "key-a"),
+                ("api_key_id", "key-b"),
+            ],
+        )
+    ).json()
     assert repeated["totals"]["requests"] == 6
     daily = (await async_client.get("/api/receipts/summary", params={**bounds, "group_by": "day"})).json()
     assert daily["groups"] == [

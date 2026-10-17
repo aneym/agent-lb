@@ -52,7 +52,6 @@ def build_weekly_credit_pace(
     working_days: set[int] | None = None,
 ) -> WeeklyCreditPaceResponse | None:
 
-
     now_ms = naive_utc_to_epoch(now) * 1000.0
     if not _is_finite_positive(now_ms):
         return None

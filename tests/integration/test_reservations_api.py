@@ -12,7 +12,11 @@ def reservation_store(tmp_path, monkeypatch):
 
 def reservation_request(job: str, *, pinned: bool = False) -> dict:
     payload = {
-        "job": job, "class": "implement", "host": "test-host", "ttl_s": 1200, "pinned": pinned,
+        "job": job,
+        "class": "implement",
+        "host": "test-host",
+        "ttl_s": 1200,
+        "pinned": pinned,
         "candidates": [
             {"rung": "first", "seat": "first-seat", "model": "first-model", "capacity_key": "first", "capacity": 1},
             {"rung": "second", "seat": "second-seat", "model": "second-model", "capacity_key": "second", "capacity": 1},

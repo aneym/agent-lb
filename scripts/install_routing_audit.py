@@ -27,8 +27,7 @@ def install_tab_audit(home: Path, domain: str, uninstall: bool) -> None:
     template = Path(__file__).resolve().parent.parent / "deploy/launchd" / (TAB_LABEL + ".plist")
     payload = plistlib.loads(template.read_bytes())
     payload["ProgramArguments"] = [
-        value.replace("@AGENT_LB@", executable).replace("@HOME@", str(home))
-        for value in payload["ProgramArguments"]
+        value.replace("@AGENT_LB@", executable).replace("@HOME@", str(home)) for value in payload["ProgramArguments"]
     ]
     for key in ("StandardOutPath", "StandardErrorPath", "WorkingDirectory"):
         payload[key] = payload[key].replace("@HOME@", str(home))
@@ -40,7 +39,7 @@ def install_tab_audit(home: Path, domain: str, uninstall: bool) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Install the read-only routing audit outside /Volumes for launchd.')
+    parser = argparse.ArgumentParser(description="Install the read-only routing audit outside /Volumes for launchd.")
     parser.add_argument("--uninstall", action="store_true")
     args = parser.parse_args()
     home = Path.home()
@@ -61,10 +60,10 @@ def main():
     shutil.copyfile(Path(__file__).with_name("routing_daily_audit.py"), target)
     target.chmod(0o755)
 
-
     homebrew = "/opt/homebrew/bin/python3"
-    interpreter = (homebrew if os.path.isfile(homebrew) and os.access(homebrew, os.X_OK)
-                   else str(Path(sys.executable).resolve()))
+    interpreter = (
+        homebrew if os.path.isfile(homebrew) and os.access(homebrew, os.X_OK) else str(Path(sys.executable).resolve())
+    )
     payload = {
         "Label": LABEL,
         "ProgramArguments": [interpreter, str(target), "--scheduled", "--post"],

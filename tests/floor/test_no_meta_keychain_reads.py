@@ -11,7 +11,10 @@ PATTERN = re.compile(r"find-generic-password|SecItemCopyMatching")
 def test_no_tracked_code_reads_meta_keychain_items() -> None:
     tracked = subprocess.run(
         ["git", "ls-files", "app", "clients", "scripts", "bin", "config"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.split()
     offenders = []
     for name in tracked:

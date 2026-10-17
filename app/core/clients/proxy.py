@@ -188,14 +188,6 @@ _WEBSOCKET_HANDSHAKE_ERROR_HINTS = (
 logger = logging.getLogger(__name__)
 
 
-
-
-
-
-
-
-
-
 _EDGE_REJECT_RETRY_WINDOW_SECONDS = 180.0
 _EDGE_REJECT_FIRST_BACKOFF_SECONDS = 1.0
 _EDGE_REJECT_MAX_BACKOFF_SECONDS = 30.0
@@ -503,8 +495,6 @@ def _build_upstream_transcribe_headers(
     access_token: str,
     account_id: str | None,
 ) -> dict[str, str]:
-
-
 
     headers: dict[str, str] = {}
     headers["Authorization"] = f"Bearer {access_token}"
@@ -1177,8 +1167,6 @@ def _payload_uses_image_generation_tool(payload: Mapping[str, JsonValue]) -> boo
 
 
 def _ws_transport_payload_budget_bytes(settings: Settings | object) -> int:
-
-
 
     max_sse_event_bytes = getattr(settings, "max_sse_event_bytes", 16 * 1024 * 1024)
     return max(1 * 1024 * 1024, max_sse_event_bytes - _WEBSOCKET_TRANSPORT_HEADROOM_BYTES)
@@ -2237,8 +2225,6 @@ async def _stream_responses_with_session(
     if route is None and route_trace is not None:
         route_trace.record_direct()
     pre_request_started_at = time.monotonic()
-
-
 
     request_total_timeout = _effective_stream_timeout(
         settings.proxy_request_budget_seconds,

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import time
@@ -72,9 +70,6 @@ def _totals(row: tuple[object, ...] | None) -> _Totals:
 
 
 def _local_upper_fraction(member: _Totals, account: _Totals) -> float:
-
-
-
 
     if account.priced_rows == 0:
         total = account.priced_tokens + account.unpriced_tokens
@@ -176,8 +171,6 @@ async def _aggregate(
             RequestLog,
             and_(RequestLog.account_id == windows.c.account_id, RequestLog.requested_at >= windows.c.start),
         )
-
-
         .where(
             RequestLog.account_id.in_({snapshot.account_id for snapshot in snapshots}),
             RequestLog.requested_at >= min(snapshot.start for snapshot in snapshots),
@@ -202,7 +195,6 @@ async def pool_share_windows(session: AsyncSession, member_id: str, limit: float
     accounts = await _reachable_accounts(session, member_id)
     snapshots = await _snapshots(session, accounts, now)
     current = [snapshot for snapshot in snapshots if snapshot.current]
-
 
     denominators = await _aggregate(session, current)
     members = await _aggregate(session, current, member_id=member_id)

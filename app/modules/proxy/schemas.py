@@ -15,8 +15,6 @@ from app.modules.proxy.types import (
 
 
 class FileCreateRequest(BaseModel):
-
-
     model_config = ConfigDict(extra="allow")
 
     file_name: str = Field(min_length=1)
@@ -178,10 +176,6 @@ class ModelMetadata(BaseModel):
 
 
 class ModelListItem(BaseModel):
-
-
-
-
     model_config = ConfigDict(extra="allow")
 
     id: str
@@ -196,11 +190,6 @@ class ModelListResponse(BaseModel):
 
     object: str = "list"
     data: list[ModelListItem]
-
-
-
-
-
 
     models: list[CodexModelEntry] = []
 

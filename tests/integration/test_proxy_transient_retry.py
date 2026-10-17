@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import base64
@@ -157,7 +155,6 @@ async def test_stream_server_error_succeeds_on_second_try_same_account(async_cli
     completed = [e for e in events if e.get("type") == "response.completed"]
     assert len(completed) == 1
 
-
     assert len(seen_account_ids) == 2
     assert seen_account_ids[0] == seen_account_ids[1]
 
@@ -221,7 +218,6 @@ async def test_stream_server_error_exhausts_inner_retries_then_failover(async_cl
     completed = [e for e in events if e.get("type") == "response.completed"]
     assert len(completed) == 1
 
-
     a_calls = [aid for aid in seen_account_ids if aid == "acc_trans_fo_a"]
     b_calls = [aid for aid in seen_account_ids if aid == "acc_trans_fo_b"]
     assert len(a_calls) == 3
@@ -276,7 +272,6 @@ async def test_stream_server_error_succeeds_on_third_try(async_client, monkeypat
     events = _extract_events(lines)
     completed = [e for e in events if e.get("type") == "response.completed"]
     assert len(completed) == 1
-
 
     assert len(seen_account_ids) == 3
     assert len(set(seen_account_ids)) == 1
@@ -447,7 +442,6 @@ async def test_stream_non_server_error_not_retried_as_transient(async_client, mo
     events = _extract_events(lines)
     failed = [e for e in events if e.get("type") == "response.failed"]
     assert len(failed) == 1
-
 
     assert call_count == 1
 
@@ -882,7 +876,6 @@ async def test_compact_non_500_error_not_retried_as_transient(async_client, monk
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
     assert response.status_code == 400
 
-
     assert call_count == 1
 
 
@@ -912,7 +905,6 @@ async def test_compact_502_still_uses_safe_retry_budget(async_client, monkeypatc
     payload = {"model": "gpt-5.1", "instructions": "hi", "input": []}
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
     assert response.status_code == 200
-
 
     assert call_count == 2
     assert seen_account_ids[0] == seen_account_ids[1]

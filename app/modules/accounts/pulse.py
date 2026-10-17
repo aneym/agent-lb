@@ -145,8 +145,6 @@ class _FailureBackoff:
 
 @dataclass(slots=True)
 class AccountPulseScheduler:
-
-
     interval_seconds: int
     enabled: bool
     concurrency: int
@@ -195,9 +193,6 @@ class AccountPulseScheduler:
 
     async def _run_loop(self) -> None:
 
-
-
-
         wake_seconds = min(self.interval_seconds, self.recovery_interval_seconds)
         next_full_pass_monotonic = time.monotonic()
         while not self._stop.is_set():
@@ -233,9 +228,6 @@ class AccountPulseScheduler:
         if not await self.leader_election_factory().try_acquire():
             return
         async with self._lock:
-
-
-
             async with self.repo_factory() as repo:
                 accounts = await repo.list_accounts(refresh_existing=True)
                 candidate_ids = [
@@ -244,7 +236,6 @@ class AccountPulseScheduler:
             if not candidate_ids:
                 return
             semaphore = asyncio.Semaphore(max(1, self.concurrency))
-
 
             results = await asyncio.gather(
                 *(self._pulse_candidate(account_id, semaphore) for account_id in candidate_ids),
@@ -265,9 +256,6 @@ class AccountPulseScheduler:
             return not self._in_backoff(account.id)
         if not _is_recovery_pending(account):
             return False
-
-
-
 
         return not self._in_backoff(account.id, max_delay_seconds=float(self.recovery_interval_seconds))
 
@@ -318,8 +306,6 @@ class AccountPulseScheduler:
                 ):
                     verdict = await self._confirm_openai_rejection(fresh_account, access_token, status, message)
                 await self._apply_verdict(repo, fresh_account, verdict, status, message)
-
-
 
                 await self._maybe_probe_fable_access(fresh_account, access_token)
                 await self._reconcile_fable_quota_cooldowns(fresh_account, access_token)
@@ -470,9 +456,6 @@ class AccountPulseScheduler:
                 )
                 logger.info("Account pulse reactivated account_id=%s", account.id)
             elif account.status == AccountStatus.ACTIVE and account.deactivation_reason is not None:
-
-
-
                 updated = await repo.update_status_if_current(
                     account.id,
                     AccountStatus.ACTIVE,
@@ -501,9 +484,6 @@ class AccountPulseScheduler:
         if verdict is probes.ProbeVerdict.UNSUBSCRIBED:
             self._failures.pop(account.id, None)
             if account.status in (AccountStatus.DEACTIVATED, AccountStatus.REAUTH_REQUIRED):
-
-
-
                 updated = await repo.update_status_if_current(
                     account.id,
                     AccountStatus.ACTIVE,
@@ -667,8 +647,6 @@ async def _default_openai_auth_check_sender(account: Account, access_token: str)
 
 
 async def _default_fable_probe_sender(account: Account, access_token: str) -> tuple[int, str | None]:
-
-
 
     del account
     from app.core.config.settings import get_settings

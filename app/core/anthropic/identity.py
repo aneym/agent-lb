@@ -6,9 +6,6 @@ from typing import Any
 CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
 
-
-
-
 CLAUDE_CODE_BILLING_PREFIX = "x-anthropic-billing-header:"
 
 
@@ -45,7 +42,6 @@ def ensure_claude_code_identity(system: Any) -> list[dict[str, Any]] | Any:
         return [_identity_block(), {"type": "text", "text": system}]
     if isinstance(system, list):
         return [_identity_block(), *system]
-
 
     return system
 

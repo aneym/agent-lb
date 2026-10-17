@@ -16,8 +16,10 @@ HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(\\?)(['\"]?)([A-Za-z0-9_.-]+)\2")
 
 VALUED = set("FGgPstUu")
 LSOF_T = r"\blsof\b[^|;&\n]*\s-[A-Za-z]*t[A-Za-z]*\b"
-PORT_KILL = (re.compile(LSOF_T + r"[^|;&\n]*\|\s*(?:sudo\s+)?(?:xargs\b[^|;&\n]*\bkill\b|kill\b)"),
-             re.compile(r"\bkill\b[^|;&\n]*(?:\$\(|`)\s*" + LSOF_T))
+PORT_KILL = (
+    re.compile(LSOF_T + r"[^|;&\n]*\|\s*(?:sudo\s+)?(?:xargs\b[^|;&\n]*\bkill\b|kill\b)"),
+    re.compile(r"\bkill\b[^|;&\n]*(?:\$\(|`)\s*" + LSOF_T),
+)
 
 
 class Doubt(Exception):
@@ -81,8 +83,11 @@ def split_heredocs(text):
         out.append(line)
         free, next_quote = unquoted(line, quote)
         if quote is None:
-            ends += [(m.group(3), not (m.group(1) or m.group(2)), first_word(line[:m.start()]) in SHELLS, [])
-                     for m in HEREDOC.finditer(line) if m.start() in free]
+            ends += [
+                (m.group(3), not (m.group(1) or m.group(2)), first_word(line[: m.start()]) in SHELLS, [])
+                for m in HEREDOC.finditer(line)
+                if m.start() in free
+            ]
         quote = next_quote
     if ends:
         raise Doubt
@@ -107,7 +112,7 @@ def substitutions(text):
                 end = text.find("`", k + 1)
                 if end < 0:
                     raise Doubt
-                body, nxt = text[k + 1:end], end
+                body, nxt = text[k + 1 : end], end
             else:
                 depth, j = 1, k + 2
                 while j < len(text) and depth:
@@ -115,7 +120,7 @@ def substitutions(text):
                     j += 1
                 if depth:
                     raise Doubt
-                body, nxt = text[k + 2:j - 1], j - 1
+                body, nxt = text[k + 2 : j - 1], j - 1
             head = re.split(r"[;&|\n]", text[:k])[-1]
             found.append((body, re.search(r"(^|\s)(\S*/)?kill(\s|$)", head) is not None))
             k = nxt
@@ -128,8 +133,10 @@ def pipelines(text):
     if any(0xE000 <= ord(c) < 0xE000 + len(OPERATORS) for c in text):
         raise Doubt
     free, _ = unquoted(text, None)
-    text = "".join(("\n ; " if c == "\n" else c) if k in free else
-                   chr(0xE000 + OPERATORS.index(c)) if c in OPERATORS else c for k, c in enumerate(text))
+    text = "".join(
+        ("\n ; " if c == "\n" else c) if k in free else chr(0xE000 + OPERATORS.index(c)) if c in OPERATORS else c
+        for k, c in enumerate(text)
+    )
     restore = {0xE000 + i: c for i, c in enumerate(OPERATORS)}
     lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|()<>")
     lexer.whitespace_split = True
@@ -172,7 +179,7 @@ def shell_string(args):
         if arg == "--" or not arg.startswith(("-", "+")):
             return None
         if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
-            rest = [a for a in args[i + 1:] if not a.startswith(("-", "+"))]
+            rest = [a for a in args[i + 1 :] if not a.startswith(("-", "+"))]
             return rest[0] if rest else None
     return None
 
@@ -180,21 +187,20 @@ def shell_string(args):
 def selector(argv):
 
     name = os.path.basename(argv[0])
-    sel = {"full": False, "exact": name == "killall", "ignore": False, "parents": None, "pattern": None,
-           "tool": name}
+    sel = {"full": False, "exact": name == "killall", "ignore": False, "parents": None, "pattern": None, "tool": name}
     args, i = argv[1:], 0
     while i < len(args):
         arg = args[i]
         if arg == "--":
-            rest = args[i + 1:]
+            rest = args[i + 1 :]
             sel["pattern"] = rest[-1] if rest else None
             break
         if arg.startswith("-") and len(arg) > 1 and not re.fullmatch(r"-\d+|-(SIG)?[A-Z]{2,}[0-9]*", arg):
             flags = arg[1:]
             for j, flag in enumerate(flags):
                 if flag in VALUED and name != "killall":
-                    value = flags[j + 1:] or (args[i + 1] if i + 1 < len(args) else None)
-                    if not flags[j + 1:]:
+                    value = flags[j + 1 :] or (args[i + 1] if i + 1 < len(args) else None)
+                    if not flags[j + 1 :]:
                         i += 1
                     if flag == "P":
                         sel["parents"] = value
@@ -310,10 +316,20 @@ def main():
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
     if "port-free" not in command and any(p.search(command) for p in PORT_KILL):
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": (
-            "kill-scope-guard (warn only, not blocked): lsof -t lists every client of a port, not just its "
-            "listener (2026-10-16 this SIGKILLed the VPN daemon); free a port with `port-free <port>`, which kills "
-            "only a listener you started.")}}))
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "additionalContext": (
+                            "kill-scope-guard (warn only, not blocked): lsof -t lists every client of a port, not just its "
+                            "listener (2026-10-16 this SIGKILLed the VPN daemon); free a port with `port-free <port>`, which kills "
+                            "only a listener you started."
+                        ),
+                    }
+                }
+            )
+        )
         return 0
     if not re.search(r"\b(pkill|killall|pgrep)\b", command):
         return 0
@@ -323,11 +339,24 @@ def main():
         selections = None
     if selections == []:
         return 0
-    if selections is None or any(s["pattern"] is None and s["parents"] is None for s in selections) or any(
-            s["pattern"] and re.search(r"[$`]", s["pattern"]) for s in selections):
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": (
-            "kill-scope-guard (warn only, not blocked): this kill's pattern cannot be read before it runs; make sure "
-            "it matches only this session's processes (kill <pid>, or pkill -P $$).")}}))
+    if (
+        selections is None
+        or any(s["pattern"] is None and s["parents"] is None for s in selections)
+        or any(s["pattern"] and re.search(r"[$`]", s["pattern"]) for s in selections)
+    ):
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "additionalContext": (
+                            "kill-scope-guard (warn only, not blocked): this kill's pattern cannot be read before it runs; make sure "
+                            "it matches only this session's processes (kill <pid>, or pkill -P $$)."
+                        ),
+                    }
+                }
+            )
+        )
         return 0
     table = process_table()
     start = int(os.environ.get("KILL_GUARD_SELF") or os.getppid())
@@ -344,8 +373,18 @@ def main():
         try:
             hit = matches(sel, table)
         except re.error:
-            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": (
-                "kill-scope-guard (warn only, not blocked): the kill pattern is not a regex this guard can read.")}}))
+            print(
+                json.dumps(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "additionalContext": (
+                                "kill-scope-guard (warn only, not blocked): the kill pattern is not a regex this guard can read."
+                            ),
+                        }
+                    }
+                )
+            )
             return 0
         others = [pid for pid in hit if pid not in own and not (len(session) >= 8 and session in table[pid][1])]
         if others:
@@ -354,10 +393,12 @@ def main():
         return 0
     sel, others = foreign[0]
     sample = "; ".join("%s %s" % (p, table[p][1][:60]) for p in others[:3] if isinstance(p, int))
-    print("BLOCKED (%s): `%s %s` would signal %s process(es) outside this session (%s). Kill only your own: find "
-          "them with `pgrep -fl <pattern>`, check each is yours, then `kill <pid>`; or `pkill -P $$` for this "
-          "shell's children." % (FLOOR, sel["tool"], sel["pattern"] or "", len(others), sample or others[0]),
-          file=sys.stderr)
+    print(
+        "BLOCKED (%s): `%s %s` would signal %s process(es) outside this session (%s). Kill only your own: find "
+        "them with `pgrep -fl <pattern>`, check each is yours, then `kill <pid>`; or `pkill -P $$` for this "
+        "shell's children." % (FLOOR, sel["tool"], sel["pattern"] or "", len(others), sample or others[0]),
+        file=sys.stderr,
+    )
     return 2
 
 

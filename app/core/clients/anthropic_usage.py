@@ -35,7 +35,6 @@ class AnthropicExtraUsage(BaseModel):
 
     is_enabled: bool | None = None
 
-
     monthly_limit: float | None = None
     used_credits: float | None = None
     utilization: float | None = None
@@ -141,7 +140,6 @@ def _reset_count(raw: dict[str, Any] | None) -> int | None:
             and (grant.starts_at is None or _utc(grant.starts_at) <= now)
         )
     except (ValidationError, ResetCreditsError):
-
         return None
 
 

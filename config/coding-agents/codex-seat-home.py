@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='Build a job-local CODEX_HOME; never read authentication contents.')
+    parser = argparse.ArgumentParser(description="Build a job-local CODEX_HOME; never read authentication contents.")
     parser.add_argument("destination", type=Path)
     args = parser.parse_args()
     source = Path(os.environ.get("CODEX_SOURCE_HOME", "~/.codex")).expanduser()
@@ -29,16 +29,29 @@ def main() -> None:
     if provider:
         lines.append(f'model_provider = "{provider}"')
     lines += ["", "[sandbox_workspace_write]", "network_access = true", "", "[features]"]
-    lines += [f"{feature} = false" for feature in (
-        "apps", "plugins", "hooks", "memories", "multi_agent", "goals", "chronicle", "js_repl",
-        "responses_websockets", "responses_websockets_v2",
-    )]
+    lines += [
+        f"{feature} = false"
+        for feature in (
+            "apps",
+            "plugins",
+            "hooks",
+            "memories",
+            "multi_agent",
+            "goals",
+            "chronicle",
+            "js_repl",
+            "responses_websockets",
+            "responses_websockets_v2",
+        )
+    ]
     lines += ["", "[agents]", "max_depth = 1"]
     if provider:
-        header = re.compile(r'\[\s*model_providers\.(?:"%s"|%s)\s*\]\s*(?:#.*)?$'
-                            % (re.escape(provider), re.escape(provider)))
-        subheader = re.compile(r'\[\s*model_providers\.(?:"%s"|%s)\.[^\]]+\]\s*(?:#.*)?$'
-                               % (re.escape(provider), re.escape(provider)))
+        header = re.compile(
+            r'\[\s*model_providers\.(?:"%s"|%s)\s*\]\s*(?:#.*)?$' % (re.escape(provider), re.escape(provider))
+        )
+        subheader = re.compile(
+            r'\[\s*model_providers\.(?:"%s"|%s)\.[^\]]+\]\s*(?:#.*)?$' % (re.escape(provider), re.escape(provider))
+        )
         block, subtables, active, main_table = [], [], False, False
         for line in text:
             if line.lstrip().startswith("["):
@@ -53,9 +66,13 @@ def main() -> None:
         if not block:
             if text:
                 parser.error("selected provider has no configuration table")
-            block = ['[model_providers.agent-lb]', 'name = "Agent LB"',
-                     'base_url = "http://127.0.0.1:2455/backend-api/codex"',
-                     'wire_api = "responses"', 'requires_openai_auth = true']
+            block = [
+                "[model_providers.agent-lb]",
+                'name = "Agent LB"',
+                'base_url = "http://127.0.0.1:2455/backend-api/codex"',
+                'wire_api = "responses"',
+                "requires_openai_auth = true",
+            ]
         lines += [""] + block + ["supports_websockets = false"] + subtables
     destination.mkdir(parents=True, exist_ok=True)
     sessions = destination / "sessions"

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import hashlib
@@ -110,7 +108,6 @@ def _projection(row: dict, index: int, closeout: dict | None, match: str) -> Dec
         duration_s=_number(closeout.get("duration_s")) if closeout else None,
         tokens_in=closeout.get("tokens_in") if closeout and isinstance(closeout.get("tokens_in"), int) else None,
         tokens_out=closeout.get("tokens_out") if closeout and isinstance(closeout.get("tokens_out"), int) else None,
-
         error="subagent failed" if closeout and closeout.get("ok") is not True else None,
         match=match,
     )

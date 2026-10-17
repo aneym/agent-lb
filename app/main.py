@@ -312,8 +312,6 @@ async def lifespan(app: FastAPI):
         set_cache_invalidation_poller(cache_poller)
         await cache_poller.start()
 
-
-
     async with startup_recorder.phase("accounts_cache_warm"):
         accounts_cache_warmer = build_accounts_cache_warmer()
         await accounts_cache_warmer.start()
@@ -348,7 +346,6 @@ async def lifespan(app: FastAPI):
                 await proxy_service.close_all_http_bridge_sessions()
             except Exception:
                 logger.warning("Failed to close HTTP bridge sessions during shutdown", exc_info=True)
-
 
         if heartbeat_task is not None:
             heartbeat_task.cancel()
@@ -410,7 +407,6 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-
 
     upload_throttle.install()
     settings = get_settings()
@@ -529,8 +525,6 @@ def create_app() -> FastAPI:
 
         if not index_html.is_file():
             raise HTTPException(status_code=503, detail=frontend_build_hint)
-
-
 
         return FileResponse(
             index_html,

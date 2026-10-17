@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import hashlib
@@ -101,10 +99,6 @@ def observe(
     return result
 
 
-
-
-
-
 CACHE_ALERT_READ_PERCENT = 90
 CACHE_ALERT_MIN_REQUESTS = 50
 
@@ -135,8 +129,6 @@ def _anthropic_cache_observation(summary: Any) -> dict[str, Any]:
         return observation
     observation["ratio_percent"] = 100 * read / denominator
     if count < CACHE_ALERT_MIN_REQUESTS:
-
-
         observation["state"] = "ok"
     else:
         observation["state"] = "alert" if read * 100 < CACHE_ALERT_READ_PERCENT * denominator else "ok"
@@ -311,7 +303,6 @@ def _account_usability(status: str, subscription: str | None, account: dict[str,
         ("primaryRemainingPercent", "resetAtPrimary"),
         ("secondaryRemainingPercent", "resetAtSecondary"),
     ):
-
         if usage.get(key) is None:
             continue
         remaining = _number(usage.get(key))

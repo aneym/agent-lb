@@ -75,8 +75,6 @@ def build_trends_from_buckets(
     top_error: str | None = None,
 ) -> tuple[MetricsTrends, ActivityMetricsSummary, ActivityCostSummary]:
 
-
-
     first_bucket = align_bucket_window_start(since, bucket_seconds)
     first_bucket_epoch = (
         int(first_bucket.replace(tzinfo=timezone.utc).timestamp())
@@ -85,7 +83,6 @@ def build_trends_from_buckets(
     )
     slots = [first_bucket_epoch + i * bucket_seconds for i in range(bucket_count)]
     slot_set = set(slots)
-
 
     bucket_requests: dict[int, int] = defaultdict(int)
     bucket_errors: dict[int, int] = defaultdict(int)
@@ -204,7 +201,6 @@ def build_usage_summary_response(
     cost_override: UsageCostSummary | None = None,
 ) -> UsageSummaryResponse:
     account_map = {account.id: account for account in accounts}
-
 
     codex_only = bool(accounts) and all(account.provider.lower() == OPENAI_PROVIDER_NAME for account in accounts)
     primary_window = None if codex_only else usage_core.summarize_usage_window(primary_rows, account_map, "primary")
@@ -396,15 +392,8 @@ def _metrics_summary_to_model(metrics: UsageMetricsSummary) -> UsageMetrics:
     )
 
 
-
-
-
-
-
 @dataclass(frozen=True)
 class AdditionalWindowSummary:
-
-
     used_percent: float
     reset_at: int | None
     window_minutes: int | None
@@ -412,8 +401,6 @@ class AdditionalWindowSummary:
 
 @dataclass(frozen=True)
 class AdditionalQuotaSummary:
-
-
     limit_name: str
     metered_feature: str
     primary_window: AdditionalWindowSummary | None
@@ -429,7 +416,6 @@ def build_additional_usage_summary(
     for limit_name, windows in additional_usage_data.items():
         primary_entries = windows.get("primary", {})
         secondary_entries = windows.get("secondary", {})
-
 
         metered_feature = _metered_feature_from_entries(primary_entries, secondary_entries)
 

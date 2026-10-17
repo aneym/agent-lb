@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260330_010000_merge_scheduler_leader_and_cache_locality_heads"

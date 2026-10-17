@@ -81,7 +81,6 @@ async def test_eligible_exchange_recovers_without_reset(db_setup, monkeypatch, e
             )
         )
 
-
         session.add(
             UsageHistory(
                 account_id=account_id,
@@ -191,7 +190,6 @@ async def test_automatic_recovery_preserves_closed_exchange_guards(db_setup, mon
         async with SessionLocal() as session:
             repo = AccountsRepository(session)
             account = await repo.get_by_id(account_id)
-
 
             if guard == "permanent":
                 assert not await repo.begin_exchange(

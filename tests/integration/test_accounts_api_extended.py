@@ -733,13 +733,10 @@ async def test_accounts_list_defers_request_usage_unless_fresh(async_client, db_
             error_code=None,
         )
 
-
-
     default_response = await async_client.get("/api/accounts")
     assert default_response.status_code == 200
     default_accounts = {item["accountId"]: item for item in default_response.json()["accounts"]}
     assert default_accounts["acc_defer"]["requestUsage"] is None
-
 
     fresh_response = await async_client.get("/api/accounts?fresh=1")
     assert fresh_response.status_code == 200

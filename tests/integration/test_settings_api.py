@@ -199,11 +199,20 @@ async def test_settings_api_returns_known_additional_quota_policies(async_client
 
     assert payload["additionalQuotaRoutingPolicies"] == {}
     policies_by_key = {policy["quotaKey"]: policy for policy in payload["additionalQuotaPolicies"]}
-    assert {key: policies_by_key[key] for key in (
-        "codex_spark", "anthropic_standard", "anthropic_top", "anthropic_top_thinking",
-        "anthropic_fast", "glm_coding", "glm_coding_thinking",
-        "kimi_coding", "kimi_coding_thinking",
-    )} == {
+    assert {
+        key: policies_by_key[key]
+        for key in (
+            "codex_spark",
+            "anthropic_standard",
+            "anthropic_top",
+            "anthropic_top_thinking",
+            "anthropic_fast",
+            "glm_coding",
+            "glm_coding_thinking",
+            "kimi_coding",
+            "kimi_coding_thinking",
+        )
+    } == {
         "codex_spark": {
             "quotaKey": "codex_spark",
             "displayLabel": "GPT-5.3-Codex-Spark",

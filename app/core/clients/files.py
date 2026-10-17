@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -27,18 +25,13 @@ OPENAI_FILE_USE_CASE: str = "codex"
 _DEFAULT_FILE_REQUEST_TIMEOUT_SECONDS: float = 60.0
 
 
-
 _DEFAULT_FILE_FINALIZE_BUDGET_SECONDS: float = 30.0
 
 
 _FILE_FINALIZE_POLL_DELAY_SECONDS: float = 0.25
 
 
-
-
 _FILES_FORWARD_HEADER_PREFIXES: tuple[str, ...] = ("x-openai-", "x-codex-")
-
-
 
 
 _FILES_CONNECT_TIMEOUT_OVERRIDE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
@@ -84,8 +77,6 @@ def _effective_files_connect_timeout(default_seconds: float) -> float:
 
 
 class FileProxyError(Exception):
-
-
     def __init__(self, status_code: int, payload: Any, *, failure_phase: str | None = None) -> None:
         super().__init__(f"upstream file request failed: status={status_code}")
         self.status_code = status_code
@@ -240,9 +231,6 @@ async def finalize_file(
     url = f"{upstream_base}/files/{file_id}/uploaded"
     upstream_headers = _build_files_headers(headers, access_token, account_id)
 
-
-
-
     effective_per_poll_total = _effective_files_total_timeout()
     effective_connect = _effective_files_connect_timeout(settings.upstream_connect_timeout_seconds)
     require_route_or_direct_egress_opt_in(
@@ -294,22 +282,12 @@ async def finalize_file(
             if owns_codex_client:
                 await active_codex_client.close()
     async with lease_http_session(session) as client_session:
-
-
         finalize_budget = min(_DEFAULT_FILE_FINALIZE_BUDGET_SECONDS, effective_per_poll_total)
         deadline = time.monotonic() + finalize_budget
         parsed: dict[str, JsonValue] = {"status": "retry"}
         while True:
-
-
-
-
-
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-
-
-
                 return parsed
             per_poll_total = min(effective_per_poll_total, remaining)
             timeout = aiohttp.ClientTimeout(
@@ -366,16 +344,9 @@ async def finalize_file(
             if status != "retry":
                 return parsed
             if time.monotonic() >= deadline:
-
-
-
-
                 return parsed
             await asyncio.sleep(_FILE_FINALIZE_POLL_DELAY_SECONDS)
             if time.monotonic() >= deadline:
-
-
-
                 return parsed
 
 

@@ -249,7 +249,6 @@ async def test_device_oauth_reauth_reuses_existing_row_for_same_chatgpt_identity
     monkeypatch,
 ):
 
-
     await oauth_module._OAUTH_STORE.reset()
 
     settings = await async_client.put(
@@ -329,7 +328,6 @@ async def test_device_oauth_reauth_reuses_existing_row_for_same_chatgpt_identity
     assert len(data) == 1
     base_id = generate_unique_account_id(raw_account_id, email)
     assert data[0]["accountId"] == base_id
-
 
     assert data[0]["planType"] == "team"
 
@@ -514,12 +512,6 @@ async def test_device_oauth_flow_keeps_same_email_distinct_upstream_identities_i
     call_count = {"value": 0}
 
     async def fake_exchange_device_token(**_):
-
-
-
-
-
-
 
         call_count["value"] += 1
         if call_count["value"] == 1:
@@ -1508,7 +1500,6 @@ async def test_internal_oauth_pending_refuses_non_loopback_clients(app_instance)
 @pytest.mark.asyncio
 async def test_abandoned_browser_flow_releases_the_callback_port(monkeypatch):
 
-
     import socket
 
     await oauth_module._OAUTH_STORE.reset()
@@ -1564,7 +1555,6 @@ async def test_failed_browser_flow_releases_the_callback_port(monkeypatch):
 @pytest.mark.asyncio
 async def test_concurrent_browser_flows_never_trust_an_unbound_callback_server(monkeypatch):
 
-
     await oauth_module._OAUTH_STORE.reset()
     release_bind = asyncio.Event()
     bind_attempts: list[object] = []
@@ -1601,7 +1591,6 @@ async def test_concurrent_browser_flows_never_trust_an_unbound_callback_server(m
 
 @pytest.mark.asyncio
 async def test_cancelled_sign_in_request_still_registers_the_port_it_bound(monkeypatch):
-
 
     await oauth_module._OAUTH_STORE.reset()
     release_bind = asyncio.Event()
@@ -1674,7 +1663,6 @@ async def test_bind_crash_after_request_cancelled_fails_the_flow(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_held_callback_port_counts_as_pending_until_released():
-
 
     await oauth_module._OAUTH_STORE.reset()
     now = time.time()

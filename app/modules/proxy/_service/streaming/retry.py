@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import asyncio
@@ -128,10 +127,6 @@ class _StreamingRetryMixin:
         if upstream_stream_transport is None:
             upstream_stream_transport = _facade()._resolve_upstream_stream_transport(settings.upstream_stream_transport)
         if request_transport == _REQUEST_TRANSPORT_HTTP and upstream_stream_transport == "websocket":
-
-
-
-
             upstream_stream_transport = "http"
         if rewritten_file_account_id is None:
             proxy._raise_for_unsupported_input_image_references(payload)
@@ -197,9 +192,6 @@ class _StreamingRetryMixin:
                 )
                 require_preferred_account = preferred_account_id is not None
 
-
-
-
                 if preferred_account_id is None:
                     selection_inputs = await proxy._load_balancer._load_selection_inputs(
                         model=payload.model,
@@ -241,12 +233,6 @@ class _StreamingRetryMixin:
                         return
             file_required_preferred_account = False
             if preferred_account_id is None:
-
-
-
-
-
-
                 if rewritten_file_account_id is not None:
                     preferred_account_id = rewritten_file_account_id
                     file_required_preferred_account = True
@@ -400,8 +386,6 @@ class _StreamingRetryMixin:
                             useragent_group=useragent_group,
                         )
                         return
-
-
 
                     if propagate_http_errors and last_transient_exc is not None:
                         raise last_transient_exc
@@ -878,7 +862,6 @@ class _StreamingRetryMixin:
                             )
                             await proxy._handle_stream_error(account, error_payload, error_code)
 
-
                             await proxy._load_balancer.record_errors(account, transient_retries - 1)
 
                             if isinstance(tex, ProxyResponseError):
@@ -1315,7 +1298,6 @@ class _StreamingRetryMixin:
                     )
                     yield format_sse_event(event)
                     return
-
 
             if propagate_http_errors and last_transient_exc is not None:
                 raise last_transient_exc

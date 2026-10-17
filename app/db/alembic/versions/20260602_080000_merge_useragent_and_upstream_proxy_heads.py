@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260602_080000_merge_useragent_and_upstream_proxy_heads"

@@ -2209,7 +2209,6 @@ def test_v1_responses_websocket_marks_fresh_turn_as_retry_safe_at_prep_time(
     monkeypatch,
 ):
 
-
     upstream_socket = _SequencedUpstreamWebSocket(
         [
             _FakeUpstreamMessage(
@@ -2288,10 +2287,6 @@ def test_v1_responses_websocket_marks_fresh_turn_as_retry_safe_at_prep_time(
         nonlocal connect_count
         connect_count += 1
 
-
-
-
-
         connect_record.append(
             {
                 "connect_count": connect_count,
@@ -2315,9 +2310,6 @@ def test_v1_responses_websocket_marks_fresh_turn_as_retry_safe_at_prep_time(
                         "model": "gpt-5.4",
                         "input": "hello",
                         "stream": True,
-
-
-
                     }
                 )
             )
@@ -2326,10 +2318,6 @@ def test_v1_responses_websocket_marks_fresh_turn_as_retry_safe_at_prep_time(
 
     assert created["type"] == "response.created"
     assert completed["type"] == "response.completed"
-
-
-
-
 
     assert len(connect_record) == 1
     assert connect_record[0]["fresh_upstream_request_is_retry_safe"] is True

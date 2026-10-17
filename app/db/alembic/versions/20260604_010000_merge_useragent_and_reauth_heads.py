@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260604_010000_merge_useragent_and_reauth_heads"

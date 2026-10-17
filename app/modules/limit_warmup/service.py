@@ -419,8 +419,6 @@ class LimitWarmupService:
     ) -> None:
         selected_windows = _selected_windows(settings.limit_warmup_windows)
 
-
-
         if (
             not selected_windows
             and planner_settings is None
@@ -514,10 +512,6 @@ class LimitWarmupService:
 
             window_minutes = _primary_window_minutes(account, after_primary.get(account.id))
 
-
-
-
-
             if planner_settings is not None and _within_seed_window(current, planner_settings, window_minutes):
                 if _primary_window_is_cold(account, after_primary.get(account.id), current):
                     enqueued = await self._enqueue_warmup_send(
@@ -533,9 +527,6 @@ class LimitWarmupService:
                         send_task, attempt = enqueued
                         send_tasks[send_task] = attempt
                     continue
-
-
-
 
             if planner_settings is not None and not _within_hold_window(current, planner_settings, window_minutes):
                 continue
@@ -806,8 +797,6 @@ class LimitWarmupService:
                 error_code="warmup_send_failed",
                 error_message=_truncate(outcome.error_message),
             )
-
-
 
         status = "sent_unconfirmed" if result.success else "failed"
         completed = await self._warmup_repo.complete_attempt(

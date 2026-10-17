@@ -15,9 +15,7 @@ LEDGER = Path(
     or os.environ.get("DISPATCH_LEDGER")
     or Path.home() / ".claude" / "logs" / "dispatch.jsonl"
 )
-DECISIONS = Path(
-    os.environ.get("ROUTE_DECISIONS_LOG") or Path.home() / ".claude" / "logs" / "route-decisions.jsonl"
-)
+DECISIONS = Path(os.environ.get("ROUTE_DECISIONS_LOG") or Path.home() / ".claude" / "logs" / "route-decisions.jsonl")
 EVENTS = Path(os.environ.get("OUTCOME_EVENTS") or Path.home() / ".claude" / "logs" / "outcome-events.jsonl")
 TAIL_LINES = 4000
 DISPATCH_LINE = re.compile(r"(?im)^[\s>*`-]*Dispatch:\s*`?(dcn_[0-9A-HJKMNP-TV-Z]{26})\b")
@@ -91,8 +89,6 @@ def first_prompt(path: str):
 def transcript_path(payload: dict) -> str:
     path = str(payload.get("agent_transcript_path") or "")
     if not path:
-
-
         candidate = str(payload.get("transcript_path") or "")
         path = candidate if "/subagents/" in candidate else ""
     return path
@@ -113,7 +109,11 @@ def structured_result(path: str) -> str:
                 except ValueError:
                     continue
                 for block in (row.get("message") or {}).get("content") or []:
-                    if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
+                    if (
+                        isinstance(block, dict)
+                        and block.get("type") == "tool_use"
+                        and block.get("name") == "StructuredOutput"
+                    ):
                         found = json.dumps(block.get("input"))[:300]
     except OSError:
         return ""
@@ -183,21 +183,12 @@ def transcript_cost(path: str) -> dict:
     return cost
 
 
-
-
-
-
 NAV_TOOLS = {"Read", "Grep", "Glob", "LS"}
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 NAV_BASH = re.compile(
     r"(^|[;&|(]\s*|\s)(grep|rg|find|ls|cat|sed -n|head|tail|wc|git (log|show|grep|ls-files|diff)|tree|fd|rtk read)\b"
 )
 EDIT_BASH = re.compile(r"(apply_patch|sed -i|cat\s*>\s*[^&]|tee\s+[^|]|python3? - <<.*open\(.*['\"]w)")
-
-
-
-
-
 
 
 RTK_VERBS = {"cat", "head", "tail", "ls", "grep", "find", "git", "wc", "gh", "tree", "diff", "curl", "ps"}
@@ -217,7 +208,6 @@ FAIL_LINE = {
         r"|(?:<tool_use_error>)?(?:File|Path) does not exist)"
     ),
     "cmd_not_found": re.compile(r": command not found|command not found: "),
-
     "too_large": re.compile(
         r"Output too large \(|exceeds maximum allowed tokens|truncated output \(original token count"
     ),
@@ -268,14 +258,14 @@ def rtk_rewrite(command: str) -> str:
         while words and re.match(r"^[A-Za-z_]\w*=", words[0]):
             words = words[1:]
         verb = words[0] if words else ""
-        body = lead[lead.find(verb):] if verb else lead
+        body = lead[lead.find(verb) :] if verb else lead
         if (
             sep != "|"
             and verb in RTK_VERBS
             and not re.search(r"(?<![0-9&])>", body)
             and (verb not in RTK_SHAPES or RTK_SHAPES[verb].match(body))
         ):
-            new = ("rtk read" + body[len(verb):]) if verb in ("cat", "head", "tail") else "rtk " + body
+            new = ("rtk read" + body[len(verb) :]) if verb in ("cat", "head", "tail") else "rtk " + body
             segment = segment[: len(segment) - len(body)] + new
         out.append(sep + segment)
     return "".join(out)
@@ -284,7 +274,6 @@ def rtk_rewrite(command: str) -> str:
 def classify_call(name: str, tool_input, output: str, is_error: bool) -> dict:
 
     tool_input = tool_input if isinstance(tool_input, dict) else {}
-
 
     command = (str(tool_input.get("command") or "") if name == "Bash" else "")[:COMMAND_CAP]
     ran = rtk_rewrite(command) if command else ""
@@ -321,9 +310,7 @@ def result_text(content) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return "\n".join(
-            str(block.get("text") or "") if isinstance(block, dict) else str(block) for block in content
-        )
+        return "\n".join(str(block.get("text") or "") if isinstance(block, dict) else str(block) for block in content)
     return "" if content is None else str(content)
 
 
@@ -399,7 +386,6 @@ def nav_counters(calls) -> dict:
         target = facts["read_target"]
         if target:
             if target in seen_reads:
-
                 counts["status_polls" if LOG_TARGET.search(target) else "repeat_reads"] += 1
             seen_reads.add(target)
         counts["outputs_over_20k"] += facts["out_len"] > BIG_OUTPUT
@@ -436,8 +422,6 @@ def prompt_digests(payload: dict) -> list:
 
 def resolve(open_dispatches: list, digests: list, names: list, seat: str):
 
-
-
     wanted = [name.lower() for name in names if name]
     for digest in digests:
         for record in reversed(open_dispatches):
@@ -448,13 +432,9 @@ def resolve(open_dispatches: list, digests: list, names: list, seat: str):
             record for record in reversed(open_dispatches) if digest and record.get("prompt_sha256") == digest
         ]
 
-
         if len(candidates) == 1:
             return candidates[0], "prompt_hash"
         if candidates:
-
-
-
             shared = {
                 key: candidates[0].get(key)
                 for key in ("task_class", "subagent_type", "model")
@@ -499,7 +479,6 @@ def match(records: list, session_id, agent_type: str, agent_name: str, digests: 
             open_dispatches.append(record)
         elif record.get("event") == "closeout":
             if record.get("match") == "prompt_hash_ambiguous" and not record.get("matched"):
-
                 continue
             closed = replayed_dispatch(open_dispatches, record)
             if closed is not None:
@@ -635,8 +614,6 @@ def main() -> None:
     dispatch, how = match(tail(), session_id, agent_type, agent_name, digests)
     shared = None
     if how == "prompt_hash_ambiguous":
-
-
         shared, dispatch = {k: v for k, v in dispatch.items() if k != "_newest"}, None
     ok = bool(last.strip()) and not FAILURE.search(last)
     path = transcript_path(payload)
@@ -656,12 +633,7 @@ def main() -> None:
         "event": "closeout",
         "host": os.environ.get("FACTORY_LOCAL_HOST") or os.environ.get("FACTORY_ADMIT_HOST") or os.uname().nodename,
         "session_id": session_id,
-
-
-
         "agent_type": agent_type or None,
-
-
         "subagent_type": (
             shared.get("subagent_type")
             if shared is not None
@@ -670,13 +642,8 @@ def main() -> None:
         "name": (dispatch or {}).get("name") or agent_name or None,
         "agent_id": payload.get("agent_id"),
         "task_class": (dispatch or shared or {}).get("task_class"),
-
-
         "model": cost["model"],
         "dispatch_model": (dispatch or shared or {}).get("model"),
-
-
-
         "prompt_sha256": (dispatch or {}).get("prompt_sha256"),
         "digest_seen": None if how == "prompt_hash" else (digests[0] if digests else None),
         "duration_s": duration(dispatch),
@@ -704,21 +671,38 @@ def main() -> None:
     }
     record["event_id"] = event_id("subagent-closeout", f"{session_id}|{record['agent_id'] or record['name']}|{moment}")
     if decision_id or infra:
-        append_event({
-            "v": 1,
-            "event_id": record["event_id"],
-            "job_id": record["job_id"],
-            "decision_id": record["decision_id"],
-            "attempt": record["attempt"],
-            "parent_id": record["parent_id"],
-            "kind": "infra" if infra else "closeout",
-            "ts": moment,
-            "source": "subagent-closeout",
-            "data": {key: record[key] for key in (
-                "ok", "error", "subagent_type", "worker_model", "worker_effort", "wrapper_model", "fallback",
-                "session_ids", "pool_pct", "exit_code", "infra_reason", "wall_s", "tokens_in", "tokens_out",
-            )},
-        })
+        append_event(
+            {
+                "v": 1,
+                "event_id": record["event_id"],
+                "job_id": record["job_id"],
+                "decision_id": record["decision_id"],
+                "attempt": record["attempt"],
+                "parent_id": record["parent_id"],
+                "kind": "infra" if infra else "closeout",
+                "ts": moment,
+                "source": "subagent-closeout",
+                "data": {
+                    key: record[key]
+                    for key in (
+                        "ok",
+                        "error",
+                        "subagent_type",
+                        "worker_model",
+                        "worker_effort",
+                        "wrapper_model",
+                        "fallback",
+                        "session_ids",
+                        "pool_pct",
+                        "exit_code",
+                        "infra_reason",
+                        "wall_s",
+                        "tokens_in",
+                        "tokens_out",
+                    )
+                },
+            }
+        )
     try:
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
         with LEDGER.open("a") as handle:

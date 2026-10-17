@@ -186,13 +186,11 @@ class Settings(BaseSettings):
     compact_request_budget_seconds: float = Field(default=180.0, gt=0)
     stream_idle_timeout_seconds: float = 600.0
 
-
     anthropic_first_byte_timeout_seconds: float = Field(default=180.0, ge=0)
     anthropic_stream_idle_timeout_seconds: float = Field(default=300.0, ge=0)
     sse_keepalive_interval_seconds: float = Field(default=10.0, ge=0)
     anthropic_frame_account_id: str = "2c436b54-a7e2-4299-9d6b-689ad2dda8cb"
     proxy_downstream_websocket_idle_timeout_seconds: float = Field(default=120.0, gt=0)
-
 
     max_sse_event_bytes: int = Field(default=16 * 1024 * 1024, gt=0)
     upstream_response_create_max_bytes: int = Field(default=15 * 1024 * 1024, gt=0)
@@ -234,45 +232,32 @@ class Settings(BaseSettings):
     auth_guardian_failure_backoff_base_seconds: float = Field(default=300.0, ge=0)
     auth_guardian_failure_backoff_max_seconds: float = Field(default=3600.0, ge=0)
 
-
     anthropic_helper_cache_1h_enabled: bool = True
     anthropic_claude_code_identity_enabled: bool = True
     anthropic_fable_routing_enabled: bool = True
     anthropic_fable_weekly_max_used_percent: float = Field(default=50.0, ge=0, le=100)
 
-
     anthropic_fable_sticky_drain_enabled: bool = True
-
 
     anthropic_fable_burn_first_enabled: bool = False
 
-
     anthropic_fable_over_threshold_probe_enabled: bool = True
-
 
     anthropic_fable_probe_ttl_seconds: int = 43200
 
-
     anthropic_fable_scoped_max_used_percent: float = Field(default=100.0, ge=0, le=100)
-
 
     anthropic_sticky_headroom_reallocation_enabled: bool = True
 
-
     anthropic_sticky_hold_until_exhausted: bool = True
-
 
     openai_sticky_hold_until_exhausted: bool = True
 
-
     anthropic_route_to_extra_usage: bool = False
-
 
     openai_route_to_credits: bool = False
 
-
     refuse_untagged_headless_opus: bool = False
-
 
     anthropic_pool_exhausted_wait_enabled: bool = False
     anthropic_pool_exhausted_wait_max_seconds: float = Field(default=21600.0, gt=0)
@@ -292,7 +277,6 @@ class Settings(BaseSettings):
     reset_credit_auto_redeem_enabled: bool = True
     reset_credit_auto_redeem_interval_seconds: int = Field(default=60, gt=0)
 
-
     reset_credit_auto_redeem_max_per_day: int = Field(default=2, ge=0)
     reset_credit_auto_redeem_cooldown_seconds: int = Field(default=900, ge=0)
     reset_credit_expiry_redeem_enabled: bool = True
@@ -306,9 +290,7 @@ class Settings(BaseSettings):
     http_responses_session_bridge_enabled: bool = True
     http_responses_session_bridge_request_budget_seconds: float = Field(default=7200.0, gt=0)
 
-
     http_bridge_first_event_timeout_seconds: float = Field(default=60.0, gt=0)
-
 
     http_bridge_strip_foreign_encrypted_reasoning: bool = True
     http_responses_session_bridge_idle_ttl_seconds: float = Field(default=120.0, gt=0)
@@ -319,7 +301,6 @@ class Settings(BaseSettings):
     http_responses_session_bridge_response_create_concurrency: int = Field(default=64, gt=0)
     http_responses_session_bridge_gateway_safe_mode: bool = False
     http_responses_session_bridge_instance_id: str = Field(default_factory=_default_http_bridge_instance_id)
-
 
     local_instance_id: str = Field(default_factory=_default_local_instance_id)
 
@@ -341,7 +322,6 @@ class Settings(BaseSettings):
     federation_usage_window_days: int = Field(default=7, gt=0)
 
     federation_forward_request_logs: bool = True
-
 
     federation_push_path: Path = DEFAULT_HOME_DIR / "federation-push.json"
     federation_push_interval_seconds: int = Field(default=300, gt=0)
@@ -372,11 +352,9 @@ class Settings(BaseSettings):
     image_inline_fetch_enabled: bool = True
     image_inline_allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
-
     images_host_model: str = "gpt-5.5"
     images_default_model: str = "gpt-image-2"
     images_max_partial_images: int = Field(default=3, ge=0, le=3)
-
 
     model_registry_enabled: bool = True
     model_registry_refresh_interval_seconds: int = Field(default=300, gt=0)
@@ -402,24 +380,19 @@ class Settings(BaseSettings):
 
     dashboard_auth_proxy_header: str = "Remote-User"
 
-
     metrics_enabled: bool = False
     metrics_host: str = "127.0.0.1"
     metrics_port: int = 9090
     event_loop_lag_warning_threshold_seconds: float = 0.5
 
-
     log_format: str = "text"
-
 
     leader_election_enabled: bool = False
     leader_election_ttl_seconds: int = 600
 
-
     circuit_breaker_enabled: bool = False
     circuit_breaker_failure_threshold: int = 5
     circuit_breaker_recovery_timeout_seconds: int = 60
-
 
     soft_drain_enabled: bool = True
     deterministic_failover_enabled: bool = True
@@ -429,7 +402,6 @@ class Settings(BaseSettings):
     drain_error_count_threshold: int = 2
     probe_quiet_seconds: float = 60.0
     probe_success_streak_required: int = 3
-
 
     backpressure_max_concurrent_requests: int = 0
 
@@ -455,13 +427,10 @@ class Settings(BaseSettings):
     memory_warning_threshold_mb: int = 0
     memory_reject_threshold_mb: int = 0
 
-
     otel_enabled: bool = False
     otel_exporter_endpoint: str = ""
 
-
     shutdown_drain_timeout_seconds: int = 30
-
 
     http_connector_limit: int = 1024
     http_connector_limit_per_host: int = 0

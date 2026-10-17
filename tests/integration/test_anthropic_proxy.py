@@ -281,8 +281,6 @@ def test_messages_affinity_quota_key_scopes_fable_class_separately():
         }
     )
 
-
-
     assert (
         anthropic_proxy_module._messages_affinity_quota_key(fable_payload, provider_name="anthropic")
         == "anthropic_top_thinking_fable"
@@ -391,8 +389,6 @@ async def test_anthropic_session_route_surfaces_provider_status_failure(async_cl
             status=AccountStatus.ACTIVE if runtime_only else AccountStatus.RATE_LIMITED,
         )
 
-
-
     blocked_at = int(time.time())
     retry_at = blocked_at + 60
     if runtime_only:
@@ -485,7 +481,6 @@ def eastern_local_time(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_anthropic_messages_quota_cooldown_returns_native_rate_limit(async_client, eastern_local_time):
-
 
     await _insert_account(
         account_id="anthropic-cooling",
@@ -756,7 +751,6 @@ async def test_anthropic_session_route_failure_counts_only_routable_accounts(asy
     async def fake_select_account(self, **kwargs):
         del self
 
-
         assert kwargs["account_ids"] == ["anthropic-routable"]
         return AccountSelection(
             account=None,
@@ -785,7 +779,6 @@ async def test_anthropic_session_route_failure_counts_only_routable_accounts(asy
 
 @pytest.mark.asyncio
 async def test_anthropic_messages_mid_stream_failure_emits_sse_error_event(async_client, monkeypatch):
-
 
     _disable_pool_exhausted_wait(monkeypatch)
     await _insert_account(
@@ -912,8 +905,6 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
     assert "x-api-key" not in {key.lower() for key in captured["headers"]}
 
-
-
     assert captured["json_body"]["system"] == [
         {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."},
         {"type": "text", "text": payload["system"]},
@@ -946,9 +937,6 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
 
 @pytest.mark.asyncio
 async def test_anthropic_upstream_stream_error_event_is_logged_as_error(async_client, monkeypatch):
-
-
-
 
     await _insert_account(
         account_id="anthropic-account",
@@ -991,7 +979,6 @@ async def test_anthropic_upstream_stream_error_event_is_logged_as_error(async_cl
         assert response.status_code == 200
         body = await response.aread()
 
-
     assert body == upstream_bytes
 
     async with SessionLocal() as session:
@@ -1008,7 +995,6 @@ async def test_anthropic_upstream_stream_error_event_is_logged_as_error(async_cl
 
 @pytest.mark.asyncio
 async def test_kimi_count_tokens_served_locally_without_upstream_call(async_client, monkeypatch):
-
 
     await _insert_account(
         account_id="kimi-account",
@@ -1085,8 +1071,6 @@ async def test_anthropic_count_tokens_forwards_verbatim_without_usage_writes(asy
     assert captured["headers"]["anthropic-beta"] == "oauth-2025-04-20"
     assert "x-api-key" not in {key.lower() for key in captured["headers"]}
 
-
-
     async with SessionLocal() as session:
         logs = list((await session.execute(select(RequestLog))).scalars())
         cooldowns = list((await session.execute(select(AdditionalUsageHistory))).scalars())
@@ -1124,8 +1108,6 @@ async def test_anthropic_count_tokens_passes_through_upstream_error_envelope(asy
 
     assert response.status_code == 429
     assert response.content == upstream_error
-
-
 
     async with SessionLocal() as session:
         account = (await session.execute(select(Account))).scalar_one()
@@ -1231,7 +1213,6 @@ async def test_glm_messages_selects_glm_account_and_upstream(async_client, monke
 @pytest.mark.parametrize("model", ["k3-256k", "kimi-k3"])
 async def test_kimi_messages_selects_kimi_account_and_upstream(async_client, monkeypatch, model):
     from app.core.config.settings import get_settings
-
 
     monkeypatch.setenv("AGENT_LB_KIMI_ANTHROPIC_UPSTREAM_BASE_URL", "https://api.kimi.com/coding")
     get_settings.cache_clear()
@@ -1736,10 +1717,6 @@ async def test_anthropic_429_records_quota_cooldown_and_bounded_account_backoff_
             )
         ).scalar_one()
 
-
-
-
-
     assert accounts["anthropic-a"].status == AccountStatus.RATE_LIMITED
     assert accounts["anthropic-a"].blocked_at is not None
     assert 0 < accounts["anthropic-a"].reset_at - accounts["anthropic-a"].blocked_at <= 60
@@ -1845,8 +1822,6 @@ async def test_anthropic_429_failover_repins_durable_mapping_to_serving_account(
             return row.account_id
 
     assert await _durable_mapping() == "anthropic-b"
-
-
 
     second = await async_client.post("/v1/messages", json=payload, headers=headers)
     assert second.status_code == 200
@@ -2079,7 +2054,6 @@ async def test_fable_requests_fall_back_when_all_accounts_over_threshold(async_c
         },
     )
 
-
     assert response.status_code == 200
     assert response.json()["accountId"].startswith("anthropic-weekly-over-")
 
@@ -2109,8 +2083,6 @@ async def test_non_fable_requests_prefer_accounts_over_weekly_threshold(async_cl
             "quotaKey": "anthropic_standard",
         },
     )
-
-
 
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-burn-hot"
@@ -2145,7 +2117,6 @@ async def test_non_fable_burn_preference_respects_preserve_policy(async_client):
             "quotaKey": "anthropic_standard",
         },
     )
-
 
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-preserve-fresh"
@@ -2260,9 +2231,6 @@ async def test_non_fable_sticky_session_drains_to_over_threshold_account(
         },
     )
 
-
-
-
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-drain-hot"
 
@@ -2282,12 +2250,7 @@ async def test_non_fable_sticky_session_drains_to_over_threshold_account(
 @pytest.mark.parametrize(
     ("live_429", "expected_account"),
     [
-
-
-
         (False, "anthropic-hold-pinned"),
-
-
         (True, "anthropic-hold-idle"),
     ],
 )
@@ -2515,9 +2478,6 @@ async def test_over_threshold_account_with_fresh_capable_marker_joins_fable_pool
         },
     )
 
-
-
-
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-fable-probe-capable"
 
@@ -2556,7 +2516,6 @@ async def test_over_threshold_accounts_without_fresh_capable_marker_stay_exclude
         reset_at=past_reset_at,
     )
 
-
     response = await async_client.post(
         "/api/anthropic/session-route",
         json={
@@ -2565,9 +2524,6 @@ async def test_over_threshold_accounts_without_fresh_capable_marker_stay_exclude
             "quotaKey": "anthropic_top_thinking",
         },
     )
-
-
-
 
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-fable-probe-control"
@@ -2605,8 +2561,6 @@ async def test_non_fable_burn_preference_unchanged_by_capable_fable_marker(async
         },
     )
 
-
-
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-burn-marker-hot"
 
@@ -2637,11 +2591,6 @@ async def _insert_fable_scoped_weekly(
 
 @pytest.mark.asyncio
 async def test_fable_scoped_exhaustion_excludes_despite_overall_headroom(async_client):
-
-
-
-
-
 
     await _insert_account(
         account_id="anthropic-scoped-exhausted",
@@ -2859,7 +2808,6 @@ async def test_planner_api_key_reservation_and_settlement_use_effective_model(
     )
 
     assert response.status_code == 200
-
 
     assert captured == {
         "reserved_model": "claude-opus-5-5",
@@ -3125,9 +3073,6 @@ async def test_all_fable_scoped_snapshot_exhaustions_still_attempt_upstream(
 @pytest.mark.asyncio
 async def test_fable_scoped_headroom_admits_despite_overall_heuristic(async_client):
 
-
-
-
     await _insert_account(
         account_id="anthropic-scoped-headroom",
         provider="anthropic",
@@ -3152,10 +3097,6 @@ async def test_fable_scoped_headroom_admits_despite_overall_heuristic(async_clie
 
 @pytest.mark.asyncio
 async def test_non_fable_burn_set_derived_from_scoped_percents_when_fresh(async_client):
-
-
-
-
 
     await _insert_account(
         account_id="anthropic-burn-scoped-hot",
@@ -3197,7 +3138,6 @@ async def test_stale_fable_scoped_row_falls_back_to_overall_heuristic(async_clie
     )
     await _insert_weekly_usage(account_id="anthropic-scoped-stale", used_percent=10.0)
     stale_recorded_at = utcnow() - timedelta(hours=7)
-
 
     await _insert_fable_scoped_weekly(
         account_id="anthropic-scoped-stale",
@@ -3401,7 +3341,6 @@ async def test_pool_of_exhausted_window_snapshots_still_attempts_upstream_by_def
         },
         headers={"anthropic-beta": "oauth-2025-04-20"},
     )
-
 
     assert response.status_code == 200
     assert len(upstream_calls) == 1
@@ -3906,7 +3845,6 @@ async def test_count_tokens_stays_exempt_from_message_quota_cooldowns(async_clie
 
 
 _OVERAGE_BILLING_HEADERS = {
-
     "anthropic-ratelimit-unified-status": "rejected",
     "anthropic-ratelimit-unified-5h-status": "rejected",
     "anthropic-ratelimit-unified-5h-utilization": "1.0",
@@ -3960,8 +3898,6 @@ async def test_credit_billing_response_trips_cooldown_and_rotates_next_request(a
         "anthropic-beta": "oauth-2025-04-20",
         "x-claude-session-id": "tripwire-session",
     }
-
-
 
     request = AnthropicMessageRequest.model_validate(payload)
     sticky_key = anthropic_proxy_module._anthropic_sticky_key(
@@ -4215,9 +4151,7 @@ async def test_overage_200_fails_over_without_forwarding_billed_body(async_clien
     assert billed.body_consumed is False
     async with SessionLocal() as session:
         logs = list(
-            (
-                await session.execute(select(RequestLog).where(RequestLog.account_id == "anthropic-overage-a"))
-            ).scalars()
+            (await session.execute(select(RequestLog).where(RequestLog.account_id == "anthropic-overage-a"))).scalars()
         )
         cooldown = (
             await session.execute(
@@ -4280,9 +4214,7 @@ async def test_overage_200_only_account_returns_usage_limit_not_body(async_clien
 
 
 @pytest.mark.asyncio
-async def test_overage_200_is_streamed_when_routing_on_and_account_is_not_paid_fallback(
-    async_client, monkeypatch
-):
+async def test_overage_200_is_streamed_when_routing_on_and_account_is_not_paid_fallback(async_client, monkeypatch):
 
     from app.core.config.settings import get_settings
 
@@ -4297,9 +4229,9 @@ async def test_overage_200_is_streamed_when_routing_on_and_account_is_not_paid_f
     )
     reset_at = int((utcnow() + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
     await _insert_primary_usage(account_id=account_id, used_percent=8.0, reset_at=reset_at)
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility("anthropic", "anthropic_top", model="claude-sonnet-4-20250514")
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
+        "anthropic", "anthropic_top", model="claude-sonnet-4-20250514"
+    )
     assert account_id in eligibility.account_ids
     assert account_id not in eligibility.paid_fallback_account_ids
     billed = _BodyTrackingResponse(
@@ -4581,8 +4513,6 @@ async def test_upstream_529_fails_over_to_next_account(async_client, monkeypatch
         )
         logs = list((await session.execute(select(RequestLog))).scalars())
 
-
-
     assert brownout_cooldowns == []
     error_logs = [log for log in logs if log.status == "error"]
     assert [log.error_code for log in error_logs] == ["upstream_529"]
@@ -4634,7 +4564,6 @@ async def test_upstream_529_full_outage_fails_fast_with_overloaded_error(async_c
     body = response.json()
     assert body["error"]["type"] == "overloaded_error"
     assert body["error"]["message"] == "Overloaded"
-
 
     assert len(upstream_calls) == 4
     assert len(set(upstream_calls)) == 4
@@ -4755,7 +4684,6 @@ async def test_anthropic_messages_forward_claude_code_billing_first_payloads_unc
         ("You are Claude Code, Anthropic's official CLI for Claude.", "7122f"),
         ("You are Claude Code, Anthropic's official CLI for Claude.", "dc618"),
         ("You are a Claude agent, built on Anthropic's Claude Agent SDK.", "60f1e"),
-
         ("You are a Claude agent, built on Anthropic's Claude Agent SDK.", "f8d14"),
     ):
         marker = f"x-anthropic-billing-header: cc_version=2.1.282.190; cc_entrypoint=cli; cch={cch};"
@@ -4792,13 +4720,10 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
     cooldown_reset_at = int((cooldown_recorded_at + timedelta(minutes=6)).replace(tzinfo=timezone.utc).timestamp())
     await _insert_quota_cooldown(
         account_id="anthropic-cooling",
-
-
         quota_key="anthropic_opus",
         reset_at=cooldown_reset_at,
         recorded_at=cooldown_recorded_at,
     )
-
 
     bounded_retry_at = int(cooldown_recorded_at.replace(tzinfo=timezone.utc).timestamp()) + 60
     await _insert_account(
@@ -4813,9 +4738,6 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
         used_percent=100.0,
         reset_at=weekly_reset_at,
     )
-
-
-
 
     await _insert_account(
         account_id="anthropic-healthy",
@@ -4843,7 +4765,6 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
     message = response.json()["error"]["message"]
     quota_sentence = message.split("Model quota: ", 1)[1].split(". ", 1)[0]
     clauses = [clause.strip() for clause in quota_sentence.split(";")]
-
 
     assert clauses == [
         f"anthropic_opus cooldown excluded 1 account until {datetime.fromtimestamp(bounded_retry_at).isoformat()}",
@@ -4911,8 +4832,6 @@ async def test_opus_specific_cooldown_remains_a_real_blocker(async_client):
 
 
 class _FailingConnectContext:
-
-
     def __init__(self, error: BaseException) -> None:
         self._error = error
 
@@ -5035,9 +4954,14 @@ async def test_session_route_retry_uses_earliest_live_guard_across_disjoint_acco
     service = get_anthropic_proxy_service_for_app(app_instance)
     service._load_balancer._runtime["runtime-cooling"] = RuntimeState(cooldown_until=now + runtime_delay)
 
-    response = await async_client.post("/api/anthropic/session-route", json={
-        "sessionId": "mixed-live-guards", "model": "claude-opus-5", "quotaKey": "anthropic_top",
-    })
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "mixed-live-guards",
+            "model": "claude-opus-5",
+            "quotaKey": "anthropic_top",
+        },
+    )
 
     assert response.status_code == 503
     error = response.json()["error"]

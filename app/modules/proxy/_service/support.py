@@ -36,9 +36,6 @@ _HARD_HTTP_BRIDGE_AFFINITY_KINDS = frozenset({"turn_state_header", "session_head
 _PROTOCOL_ONLY_RESPONSE_EVENT_TYPES = frozenset({"response.created", "response.in_progress", "response.queued"})
 
 
-
-
-
 _HTTP_BRIDGE_FIRST_EVENT_COOLDOWN_SECONDS = 300.0
 
 
@@ -111,8 +108,6 @@ class _WebSocketConnectFailureEmitted(Exception):
 
 
 class _TransientStreamError(Exception):
-
-
     def __init__(self, code: str, error: UpstreamError) -> None:
         super().__init__(code)
         self.code = code
@@ -133,8 +128,6 @@ class _ApiKeyReservationTouchState:
 
 @dataclass
 class _StreamSettlement:
-
-
     status: str = "success"
     model: str = ""
     service_tier: str | None = None
@@ -220,13 +213,6 @@ class _WebSocketRequestState:
     expose_stale_previous_response_classifier: bool = False
     fresh_upstream_request_text: str | None = None
 
-
-
-
-
-
-
-
     fresh_upstream_request_is_retry_safe: bool = False
     request_stage: str = "first_turn"
     preferred_account_id: str | None = None
@@ -266,11 +252,6 @@ class _WebSocketRequestState:
     suppress_next_created_downstream: bool = False
     replay_downstream_response_id: str | None = None
     draining_until_terminal: bool = False
-
-
-
-
-
 
     is_compaction_request: bool = False
     compaction_output_items: list[JsonValue] = field(default_factory=list)

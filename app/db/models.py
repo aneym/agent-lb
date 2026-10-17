@@ -137,7 +137,6 @@ class Account(Base):
         nullable=False,
     )
 
-
     owner_instance: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     api_key_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(
@@ -441,8 +440,6 @@ class AccountLimitWarmup(Base):
 
 
 class AccountTransfer(Base):
-
-
     __tablename__ = "account_transfers"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -457,7 +454,6 @@ class AccountTransfer(Base):
         ),
         nullable=False,
     )
-
 
     counterparty_instance_id: Mapped[str] = mapped_column(String, nullable=False)
     state: Mapped[AccountTransferState] = mapped_column(
@@ -1006,7 +1002,6 @@ class QuotaPlannerSettings(Base):
     )
     prewarm_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     prewarm_lead_minutes: Mapped[int] = mapped_column(Integer, default=300, server_default=text("300"), nullable=False)
-
 
     seed_target_offset_minutes: Mapped[int] = mapped_column(
         Integer,

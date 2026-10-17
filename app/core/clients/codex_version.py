@@ -42,14 +42,12 @@ class CodexVersionCache:
                 self._cached_at = now
                 return version
 
-
             if self._cached_version is not None:
                 logger.warning(
                     "Upstream version sources failed; using stale cached version %s",
                     self._cached_version,
                 )
                 return self._cached_version
-
 
             fallback = get_settings().model_registry_client_version
             logger.warning(
@@ -101,8 +99,6 @@ class CodexVersionCache:
         return name
 
     async def _fetch_from_npm(self, session: aiohttp.ClientSession) -> str | None:
-
-
 
         try:
             headers = {"Accept": "application/json"}

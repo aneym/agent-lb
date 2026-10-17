@@ -144,7 +144,6 @@ def build_owner_forward_headers(
     context: HTTPBridgeForwardContext,
 ) -> dict[str, str]:
 
-
     forwarded = {
         key: value
         for key, value in headers.items()

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import pytest
@@ -45,7 +43,6 @@ async def test_forwarded_public_request_without_key_is_rejected_even_with_loopba
     )
 
     async with app_instance.router.lifespan_context(app_instance):
-
         transport = ASGITransport(app=app_instance, client=("127.0.0.1", 443))
         async with AsyncClient(transport=transport, base_url="http://lb.example") as client:
             response = await client.get(

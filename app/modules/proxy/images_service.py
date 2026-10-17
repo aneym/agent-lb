@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import base64
@@ -30,16 +28,12 @@ from app.core.utils.sse import format_sse_event, parse_sse_data_json
 logger = logging.getLogger(__name__)
 
 
-
-
 _IMAGE_GENERATION_INSTRUCTIONS: Final[str] = (
     "You are an image generator. When asked, you MUST call the image_generation "
     "tool exactly once and return only that tool call. Do not produce any "
     "additional text output. Mirror the user's request verbatim into the tool's "
     "prompt argument."
 )
-
-
 
 
 _IMAGE_EDIT_MASK_HINT: Final[str] = (
@@ -55,11 +49,6 @@ _UPSTREAM_RESPONSE_INCOMPLETE_EVENT: Final[str] = "response.incomplete"
 _UPSTREAM_ERROR_EVENT: Final[str] = "error"
 
 
-
-
-
-
-
 _GENERATION_PARTIAL_EVENT: Final[str] = "image_generation.partial_image"
 _GENERATION_COMPLETED_EVENT: Final[str] = "image_generation.completed"
 _EDIT_PARTIAL_EVENT: Final[str] = "image_edit.partial_image"
@@ -70,11 +59,6 @@ _DATA_URL_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^data:(?P<mime>[^;]+);base64,(?P<b64>.+)$",
     re.DOTALL,
 )
-
-
-
-
-
 
 
 def _build_image_generation_tool(
@@ -93,12 +77,6 @@ def _build_image_generation_tool(
     is_edit: bool = False,
 ) -> dict[str, JsonValue]:
 
-
-
-
-
-
-
     assert n == 1, "image_generation tool does not accept n; fan-out is not implemented"
     del n
     tool: dict[str, JsonValue] = {
@@ -112,11 +90,6 @@ def _build_image_generation_tool(
         "moderation": moderation,
     }
     if is_edit:
-
-
-
-
-
         tool["action"] = "edit"
     if input_fidelity is not None:
         tool["input_fidelity"] = input_fidelity
@@ -158,7 +131,6 @@ def images_generation_to_responses_request(
 
     streaming = bool(payload.stream)
 
-
     assert payload.model is not None, "payload.model must be resolved before translation"
     tool = _build_image_generation_tool(
         model=payload.model,
@@ -179,10 +151,6 @@ def images_generation_to_responses_request(
             "instructions": _IMAGE_GENERATION_INSTRUCTIONS,
             "input": _build_user_message_input(payload.prompt),
             "tools": [tool],
-
-
-
-
             "tool_choice": {"type": "image_generation"},
             "stream": True,
             "store": False,
@@ -199,8 +167,6 @@ def images_edit_to_responses_request(
 ) -> ResponsesRequest:
 
     if not images:
-
-
         raise ValueError("/v1/images/edits requires at least one image part")
 
     streaming = bool(payload.stream)
@@ -214,8 +180,6 @@ def images_edit_to_responses_request(
     prompt_text = payload.prompt
     if mask is not None:
         prompt_text = f"{prompt_text}{_IMAGE_EDIT_MASK_HINT}"
-
-
 
     assert payload.model is not None, "payload.model must be resolved before translation"
     tool = _build_image_generation_tool(
@@ -238,24 +202,11 @@ def images_edit_to_responses_request(
             "instructions": _IMAGE_GENERATION_INSTRUCTIONS,
             "input": _build_user_message_input(prompt_text, attached_images=attached),
             "tools": [tool],
-
-
-
-
-
-
             "tool_choice": {"type": "image_generation"},
-
-
             "stream": True,
             "store": False,
         }
     )
-
-
-
-
-
 
 
 def resolve_public_image_model(requested: str | None) -> str:
@@ -277,9 +228,6 @@ def validate_generations_payload(payload: V1ImagesGenerationsRequest) -> V1Image
     settings = get_settings()
     resolved_model = resolve_public_image_model(payload.model)
 
-
-
-
     validate_image_request_parameters(
         model=resolved_model,
         quality=payload.quality,
@@ -295,9 +243,6 @@ def validate_generations_payload(payload: V1ImagesGenerationsRequest) -> V1Image
         images_max_partial_images=settings.images_max_partial_images,
     )
     if payload.model != resolved_model:
-
-
-
         return payload.model_copy(update={"model": resolved_model})
     return payload
 
@@ -323,11 +268,6 @@ def validate_edits_payload(payload: V1ImagesEditsForm) -> V1ImagesEditsForm:
     if payload.model != resolved_model:
         return payload.model_copy(update={"model": resolved_model})
     return payload
-
-
-
-
-
 
 
 def _select_image_items(output: list[JsonValue]) -> list[Mapping[str, JsonValue]]:
@@ -369,8 +309,6 @@ def _extract_image_usage(response: Mapping[str, JsonValue]) -> V1ImageUsage | No
     output_details_raw = image_usage.get("output_tokens_details")
     input_details = dict(input_details_raw) if is_json_mapping(input_details_raw) else None
     output_details = dict(output_details_raw) if is_json_mapping(output_details_raw) else None
-
-
 
     extra_usage: dict[str, JsonValue] = {}
     for key, value in image_usage.items():
@@ -414,7 +352,6 @@ def images_response_from_responses(response: Mapping[str, JsonValue]) -> V1Image
             "Upstream response did not include any image_generation_call items",
             error_type="server_error",
         )
-
 
     for item in items:
         status = item.get("status")
@@ -463,11 +400,6 @@ def images_response_from_responses(response: Mapping[str, JsonValue]) -> V1Image
     )
 
 
-
-
-
-
-
 def _stash_image_usage_tokens(captured: dict[str, object], usage: V1ImageUsage) -> None:
 
     if usage.input_tokens is not None:
@@ -500,11 +432,6 @@ def _build_partial_image_event(payload: Mapping[str, JsonValue], *, event_type: 
     event: dict[str, JsonValue] = {
         "type": event_type,
         "b64_json": partial_b64,
-
-
-
-
-
         "created_at": _coerce_created_at(payload.get("created_at")),
     }
     for key in ("partial_image_index", "size", "quality", "background", "output_format", "output_index"):
@@ -523,9 +450,6 @@ def _build_completed_event(item: Mapping[str, JsonValue], *, event_type: str) ->
     event: dict[str, JsonValue] = {
         "type": event_type,
         "b64_json": result,
-
-
-
         "created_at": _coerce_created_at(item.get("created_at")),
     }
     for key in ("revised_prompt", "size", "quality", "background", "output_format"):
@@ -619,13 +543,6 @@ async def translate_responses_stream_to_images_stream(
     terminal_emitted = False
     completion_pending = True
 
-
-
-
-
-
-
-
     pending_completed_events: list[dict[str, JsonValue]] = []
 
     async for line in upstream:
@@ -633,7 +550,6 @@ async def translate_responses_stream_to_images_stream(
             continue
         stripped = line.strip()
         if stripped == "data: [DONE]":
-
             continue
         payload = parse_sse_data_json(line)
         if payload is None:
@@ -641,9 +557,6 @@ async def translate_responses_stream_to_images_stream(
         event_type = payload.get("type")
         if not isinstance(event_type, str):
             continue
-
-
-
 
         if captured is not None and "response_id" not in captured:
             response_value = payload.get("response")
@@ -672,12 +585,6 @@ async def translate_responses_stream_to_images_stream(
                 break
             event = _build_completed_event(item, event_type=completed_event_type)
             if event is not None:
-
-
-
-
-
-
                 pending_completed_events.append(event)
             continue
 
@@ -685,16 +592,9 @@ async def translate_responses_stream_to_images_stream(
             response_obj = payload.get("response")
             usage = _extract_image_usage(response_obj) if is_json_mapping(response_obj) else None
 
-
-
-
-
             if captured is not None and usage is not None:
                 _stash_image_usage_tokens(captured, usage)
             if pending_completed_events:
-
-
-
                 last_index = len(pending_completed_events) - 1
                 for idx, event in enumerate(pending_completed_events):
                     if idx == last_index and usage is not None:
@@ -737,14 +637,7 @@ async def translate_responses_stream_to_images_stream(
             completion_pending = False
             break
 
-
-
-
         continue
-
-
-
-
 
     if pending_completed_events and not terminal_emitted:
         for event in pending_completed_events:
@@ -786,9 +679,6 @@ async def collect_responses_stream_for_images(
         if not isinstance(event_type, str):
             continue
 
-
-
-
         if captured is not None and "response_id" not in captured:
             response_value = payload.get("response")
             if is_json_mapping(response_value):
@@ -804,8 +694,6 @@ async def collect_responses_stream_for_images(
             if isinstance(output_index, int):
                 output_items[output_index] = dict(item)
             else:
-
-
                 fallback_items.append(dict(item))
             continue
 
@@ -823,24 +711,15 @@ async def collect_responses_stream_for_images(
                 base["output"] = merged_output
             final_response = base
 
-
-
-
             if captured is not None:
                 tool_usage_payload = base
                 usage = _extract_image_usage(tool_usage_payload)
                 if usage is not None:
                     _stash_image_usage_tokens(captured, usage)
 
-
-
-
             continue
 
         if event_type == _UPSTREAM_RESPONSE_INCOMPLETE_EVENT and terminal_error is None:
-
-
-
             terminal_error = openai_error(
                 "image_generation_failed",
                 "Upstream response was incomplete before the image was generated",
@@ -849,11 +728,6 @@ async def collect_responses_stream_for_images(
             break
 
         if event_type == _UPSTREAM_RESPONSE_FAILED_EVENT:
-
-
-
-
-
             if final_response is not None:
                 continue
             response_value = payload.get("response")
@@ -879,9 +753,6 @@ async def collect_responses_stream_for_images(
             break
 
         if event_type == _UPSTREAM_ERROR_EVENT:
-
-
-
             if final_response is not None:
                 continue
             error_value = payload.get("error")
@@ -912,11 +783,6 @@ async def collect_responses_stream_for_images(
             error_type="server_error",
         )
     return final_response, None
-
-
-
-
-
 
 
 def decode_data_url(data_url: str) -> tuple[bytes, str | None]:

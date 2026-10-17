@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -54,9 +52,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-
-
-
-
 
     return

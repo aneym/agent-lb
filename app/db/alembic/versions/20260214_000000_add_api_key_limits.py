@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -56,7 +54,6 @@ def upgrade() -> None:
             unique=False,
         )
 
-
     api_keys_cols = _columns(bind, "api_keys")
     if "weekly_token_limit" in api_keys_cols:
         api_keys = sa.table(
@@ -99,7 +96,6 @@ def upgrade() -> None:
                 )
             )
 
-
         with op.batch_alter_table("api_keys") as batch_op:
             batch_op.drop_column("weekly_token_limit")
             batch_op.drop_column("weekly_tokens_used")
@@ -108,7 +104,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
-
 
     api_keys_cols = _columns(bind, "api_keys")
     with op.batch_alter_table("api_keys") as batch_op:

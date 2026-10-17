@@ -112,10 +112,6 @@ async def test_ccgpt_context_overflow_returns_prompt_too_long_not_api_error(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 
-
-
-
-
     overflow_envelope = {
         "error": {
             "type": "invalid_request_error",
@@ -156,12 +152,6 @@ async def test_ccgpt_midstream_context_overflow_emits_prompt_too_long_without_su
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 
-
-
-
-
-
-
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
             yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-6.1-sol"}}\n\n'
@@ -201,13 +191,6 @@ async def test_ccgpt_midstream_context_overflow_emits_prompt_too_long_without_su
 @pytest.mark.asyncio
 async def test_ccgpt_precontent_stream_overflow_returns_http_400(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
 
-
-
-
-
-
-
-
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
             yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-6.1-sol"}}\n\n'
@@ -243,8 +226,6 @@ async def test_ccgpt_precontent_stream_overflow_returns_http_400(async_client, m
 async def test_ccgpt_precontent_top_level_overflow_frame_returns_http_400(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-
-
 
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
@@ -311,8 +292,6 @@ async def test_ccgpt_account_rejection_is_retryable_not_a_login_prompt(
     async_client, monkeypatch: pytest.MonkeyPatch, status: int
 ) -> None:
 
-
-
     async def fake_stream(request, payload, context, api_key, **kwargs):
         return proxy_api._stream_startup_error_response(
             request,
@@ -338,9 +317,6 @@ async def test_ccgpt_account_rejection_is_retryable_not_a_login_prompt(
 
 @pytest.mark.asyncio
 async def test_ccgpt_stream_reports_usage_the_way_anthropic_does(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
-
-
-
 
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
@@ -452,7 +428,6 @@ async def test_messages_route_serves_worker_alias_via_bridge(
         ("/v1/messages", "sol-latest", "gpt-7-sol", None),
         ("/v1/messages", "sol-latest-low", "gpt-7-sol", "low"),
         ("/v1/messages", "luna-latest-xhigh", "gpt-6-luna", "xhigh"),
-
         ("/v1/messages", "astra-latest-high", "gpt-6-astra", "high"),
         ("/v1/messages", "gpt-7-sol-high", "gpt-7-sol", "high"),
         ("/v1/ccgpt/messages", "gpt-6.1-sol-low", CCGPT_WORKER_MODEL, "low"),
@@ -467,7 +442,9 @@ async def test_gpt_model_names_resolve_from_the_served_model_list(
     expected_effort: str | None,
 ) -> None:
 
-    served = dict.fromkeys(["gpt-5.6-sol", "gpt-6.1-sol", "gpt-7-sol", "gpt-6-luna", "gpt-6-astra", "codex-auto-review"])
+    served = dict.fromkeys(
+        ["gpt-5.6-sol", "gpt-6.1-sol", "gpt-7-sol", "gpt-6-luna", "gpt-6-astra", "codex-auto-review"]
+    )
     monkeypatch.setattr(
         proxy_api, "get_model_registry", lambda: SimpleNamespace(get_models_with_fallback=lambda: served)
     )
@@ -501,8 +478,6 @@ async def test_gpt_model_names_resolve_from_the_served_model_list(
 async def test_bridged_turns_of_one_conversation_share_a_stable_prefix_and_cache_key(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-
-
 
     captured: list = []
 
@@ -556,9 +531,6 @@ async def test_bridged_turns_of_one_conversation_share_a_stable_prefix_and_cache
     assert one.prompt_cache_key is not None
     assert one.prompt_cache_key == two.prompt_cache_key
     assert other.prompt_cache_key not in (None, one.prompt_cache_key)
-
-
-
 
     captured.clear()
     for agent_id, body in (("a1", turn_1), ("a2", turn_1), ("a1", turn_2)):
@@ -636,9 +608,6 @@ async def test_messages_count_tokens_worker_alias_is_local(async_client, alias: 
 async def test_messages_route_refuses_message_threads_before_upstream(
     async_client, monkeypatch: pytest.MonkeyPatch, thread: dict[str, str]
 ) -> None:
-
-
-
 
     called = False
 

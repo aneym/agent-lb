@@ -348,8 +348,6 @@ class ApiKeysRepository:
     async def rollback(self) -> None:
         await self._session.rollback()
 
-
-
     async def get_limits_by_key(self, key_id: str) -> list[ApiKeyLimit]:
         result = await self._session.execute(select(ApiKeyLimit).where(ApiKeyLimit.api_key_id == key_id))
         return list(result.scalars().all())

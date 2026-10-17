@@ -83,7 +83,6 @@ async def test_usage_summary_codex_only_scope_has_no_primary_window(async_client
     assert payload["primaryWindow"] is None
     assert payload["secondaryWindow"]["remainingPercent"] == pytest.approx(70.0)
 
-
     response = await async_client.get("/api/usage/summary")
     assert response.status_code == 200
     assert response.json()["primaryWindow"] is None

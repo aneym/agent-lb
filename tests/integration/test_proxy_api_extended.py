@@ -1071,11 +1071,6 @@ async def test_proxy_stream_usage_limit_returns_http_error(async_client, monkeyp
 
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
 
-
-
-
-
-
     monkeypatch.setattr(proxy_module, "_STREAM_MAX_ACCOUNT_ATTEMPTS", 1)
     monkeypatch.setattr(proxy_api_module, "_STREAM_STARTUP_ERROR_PROBE_SECONDS", 30.0)
 

@@ -29,7 +29,6 @@ _INPUT_BUDGET_EXCLUDED_FIELDS = frozenset(
 
 def estimate_api_key_request_usage(payload: ApiKeyUsageEstimableRequest) -> ApiKeyRequestUsageBudget:
 
-
     upstream_payload = payload.to_payload()
     return ApiKeyRequestUsageBudget(
         input_tokens=_estimate_request_input_tokens(payload, upstream_payload),

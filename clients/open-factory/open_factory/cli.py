@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import argparse
@@ -90,7 +89,6 @@ def scaffold(project: Path, goal: str, name: str | None) -> Path:
         text = text.replace("{{PATH}}", str(project))
         text = text.replace("{{DATE}}", utc_now()[:10])
         dst.write_text(text)
-
 
     pointer = project / "OPEN_FACTORY.md"
     if not pointer.exists():
@@ -355,7 +353,6 @@ def cmd_aa_sync(args: argparse.Namespace) -> int:
     try:
         result = aa.sync(dry_run=args.dry_run, fixture=Path(args.fixture) if args.fixture else None, force=args.force)
     except (OSError, ValueError) as error:
-
         raise SystemExit(f"open-factory aa-sync: {error}") from None
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

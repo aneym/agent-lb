@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import re
@@ -16,17 +14,12 @@ GPT_IMAGE_MODEL_PREFIX: Final[str] = "gpt-image-"
 _GPT_IMAGE_2_MODELS: Final[frozenset[str]] = frozenset({"gpt-image-2"})
 
 
-
 _LEGACY_GPT_IMAGE_MODELS: Final[frozenset[str]] = frozenset({"gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"})
 
 _GPT_IMAGE_2_QUALITY: Final[frozenset[str]] = frozenset({"low", "medium", "high", "auto"})
 
 
-
-
 _LEGACY_QUALITY: Final[frozenset[str]] = frozenset({"low", "medium", "high", "auto"})
-
-
 
 
 _INPUT_FIDELITY_SUPPORTED_MODELS: Final[frozenset[str]] = frozenset({"gpt-image-1.5", "gpt-image-1"})
@@ -138,15 +131,6 @@ def validate_image_request_parameters(
             param="model",
         )
 
-
-
-
-
-
-
-
-
-
     if n < 1 or n > 1:
         raise _images_invalid(
             "n must be 1; multiple images per request are not supported by the "
@@ -203,7 +187,6 @@ def validate_image_request_parameters(
                 param="input_fidelity",
             )
     else:
-
         if quality not in _LEGACY_QUALITY:
             raise _images_invalid(
                 f"Invalid quality '{quality}' for model '{model}'.",
@@ -229,18 +212,8 @@ def validate_image_request_parameters(
     validate_image_size(model, size)
 
 
-
-
-
-
-
 class V1ImagesGenerationsRequest(BaseModel):
-
-
     model_config = ConfigDict(extra="ignore")
-
-
-
 
     model: str | None = Field(default=None, min_length=1)
     prompt: str = Field(min_length=1)
@@ -253,8 +226,6 @@ class V1ImagesGenerationsRequest(BaseModel):
     moderation: str = "auto"
     partial_images: int | None = None
     stream: bool = False
-
-
 
     input_fidelity: str | None = None
     user: str | None = None
@@ -270,12 +241,7 @@ class V1ImagesGenerationsRequest(BaseModel):
 
 
 class V1ImagesEditsForm(BaseModel):
-
-
     model_config = ConfigDict(extra="ignore")
-
-
-
 
     model: str | None = Field(default=None, min_length=1)
     prompt: str = Field(min_length=1)
@@ -301,14 +267,7 @@ class V1ImagesEditsForm(BaseModel):
         return value
 
 
-
-
-
-
-
 class V1ImageData(BaseModel):
-
-
     model_config = ConfigDict(extra="ignore")
 
     b64_json: str
@@ -316,10 +275,6 @@ class V1ImageData(BaseModel):
 
 
 class V1ImageUsage(BaseModel):
-
-
-
-
     model_config = ConfigDict(extra="allow")
 
     input_tokens: int | None = None
@@ -330,8 +285,6 @@ class V1ImageUsage(BaseModel):
 
 
 class V1ImageResponse(BaseModel):
-
-
     model_config = ConfigDict(extra="ignore")
 
     created: int

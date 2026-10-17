@@ -56,7 +56,6 @@ async def _refresh(account_id: str) -> Account:
 
 async def _refresh_in_background_session(account_id: str) -> Account:
 
-
     async with get_background_session() as session:
         repo = AccountsRepository(session)
         account = await repo.get_by_id(account_id)
@@ -811,7 +810,6 @@ async def test_relogin_between_reload_and_begin_returns_rotated_account(db_setup
 @pytest.mark.parametrize("session_kind", ["session_local", "background"])
 async def test_relogin_during_exchange_returns_rotated_account(db_setup, monkeypatch, session_kind):
 
-
     account_id = f"relogin-during-exchange-{session_kind}"
     await _account(account_id)
     encryptor = TokenEncryptor()
@@ -841,7 +839,6 @@ async def test_relogin_during_exchange_returns_rotated_account(db_setup, monkeyp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_kind", ["session_local", "background"])
 async def test_rotation_during_chatgpt_account_id_backfill_returns_rotated_account(db_setup, monkeypatch, session_kind):
-
 
     account_id = f"backfill-race-{session_kind}"
     encryptor = TokenEncryptor()
@@ -896,9 +893,6 @@ async def test_rotation_during_chatgpt_account_id_backfill_returns_rotated_accou
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_kind", ["session_local", "background"])
 async def test_account_deleted_before_ensure_fresh_returns_detached_copy(db_setup, session_kind):
-
-
-
 
     account_id = f"deleted-before-fresh-{session_kind}"
     encryptor = TokenEncryptor()

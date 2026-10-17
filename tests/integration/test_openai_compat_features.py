@@ -585,7 +585,6 @@ async def test_v1_chat_completions_rejects_strict_schema_violation(async_client)
             "json_schema": {
                 "name": "result_schema",
                 "strict": True,
-
                 "schema": {
                     "type": "object",
                     "properties": {"ok": {"type": "boolean"}},
@@ -620,7 +619,6 @@ async def test_v1_chat_completions_rejects_strict_function_tool_violation(async_
                         "type": "object",
                         "properties": {"city": {"type": "string"}},
                         "required": ["city"],
-
                     },
                     "strict": True,
                 },
@@ -643,7 +641,6 @@ async def test_v1_chat_completions_strict_violation_param_uses_original_index(as
         "model": "gpt-5.2",
         "messages": [{"role": "user", "content": "Weather in Seoul?"}],
         "tools": [
-
             {
                 "type": "function",
                 "function": {
@@ -651,7 +648,6 @@ async def test_v1_chat_completions_strict_violation_param_uses_original_index(as
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
-
             {
                 "type": "function",
                 "function": {
@@ -684,8 +680,6 @@ async def test_v1_chat_completions_strict_violation_when_type_omitted_in_chat_to
         "messages": [{"role": "user", "content": "Weather in Seoul?"}],
         "tools": [
             {
-
-
                 "function": {
                     "name": "get_weather",
                     "description": "x",
@@ -693,7 +687,6 @@ async def test_v1_chat_completions_strict_violation_when_type_omitted_in_chat_to
                         "type": "object",
                         "properties": {"city": {"type": "string"}},
                         "required": ["city"],
-
                     },
                     "strict": True,
                 },

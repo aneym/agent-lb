@@ -21,18 +21,8 @@ from app.modules.api_keys.service import ApiKeyData
 logger = logging.getLogger(__name__)
 
 
-
-
-
-
-
-
 _UNSUPPORTED_UPSTREAM_REASONING_EFFORTS: frozenset[str] = frozenset({"minimal"})
 _DEFAULT_REASONING_EFFORT_FALLBACK = "low"
-
-
-
-
 
 
 _GPT5_ALIAS_BASE_MODELS: tuple[str, ...] = (
@@ -71,12 +61,6 @@ _MODEL_ALIAS_TOKENS: frozenset[str] = frozenset(
         *tuple(_MODEL_ALIAS_IGNORED_TOKENS),
     }
 )
-
-
-
-
-
-
 
 
 _UPSTREAM_OMIT_SERVICE_TIERS: frozenset[str] = frozenset({"auto", "default"})
@@ -135,11 +119,6 @@ def apply_api_key_enforcement(
     if api_key.enforced_service_tier is not None:
         requested_service_tier = getattr(payload, "service_tier", None)
 
-
-
-
-
-
         if api_key.enforced_service_tier in _UPSTREAM_OMIT_SERVICE_TIERS:
             effective_service_tier: str | None = None
         else:
@@ -166,7 +145,6 @@ def resolve_model_alias(model: str | None) -> str | None:
 
 
 def strip_model_alias_suffix(model: str) -> str:
-
 
     parts = model.strip().lower().split("-")
     while len(parts) > 1 and parts[-1] in _MODEL_ALIAS_TOKENS:
@@ -267,7 +245,6 @@ def normalize_unsupported_reasoning_effort(
     registry: ModelRegistry | None = None,
 ) -> None:
 
-
     if payload.reasoning is None or payload.reasoning.effort is None:
         return
 
@@ -304,8 +281,6 @@ def _resolve_reasoning_effort_fallback(
     if upstream is None:
         return _DEFAULT_REASONING_EFFORT_FALLBACK
     advertised = [level.effort for level in upstream.supported_reasoning_levels if level.effort]
-
-
 
     for effort in advertised:
         if effort.strip().lower() not in _UNSUPPORTED_UPSTREAM_REASONING_EFFORTS:
@@ -395,15 +370,6 @@ def enforce_strict_function_tools_format(
         if not isinstance(tool, dict):
             continue
         if nested:
-
-
-
-
-
-
-
-
-
             function_value = tool.get("function")
             if not isinstance(function_value, dict):
                 continue

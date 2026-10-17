@@ -15,26 +15,26 @@ MAX_BASH = 8
 MAX_IDS = 12
 TERMINAL = {"completed", "failed", "killed", "stopped", "cancelled", "error"}
 INTERPRETER = re.compile(
-    r'(?:^|(?<=[\s;&|(]))((?:[\w.~${}+-]*/)*(?:python(?:\d+(?:\.\d+)*)?|pytest|uv|node|bun|deno|npx|npm|pnpm'
-    r'|ruby|perl|go|cargo))(?=[\s;&|)]|$)'
+    r"(?:^|(?<=[\s;&|(]))((?:[\w.~${}+-]*/)*(?:python(?:\d+(?:\.\d+)*)?|pytest|uv|node|bun|deno|npx|npm|pnpm"
+    r"|ruby|perl|go|cargo))(?=[\s;&|)]|$)"
 )
 LEADING_CD = re.compile(r'^\s*cd\s+("[^"]+"|\'[^\']+\'|[^\s;&|]+)\s*(?:&&|;)')
 LONG_QUOTE = re.compile(r'"[^"\n]{60,}"|\'[^\'\n]{60,}\'')
-BACKGROUND_ID = re.compile(r'running in background with ID:?\s*([A-Za-z0-9_-]+)')
+BACKGROUND_ID = re.compile(r"running in background with ID:?\s*([A-Za-z0-9_-]+)")
 AGENT_ID = re.compile(r'agentId:?\s*"?([A-Za-z0-9_-]{6,})')
-NOTIFY = re.compile(r'<task-notification>(.*?)</task-notification>', re.S)
+NOTIFY = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 ASK_PATTERNS = (
-    re.compile(r'\b(ub_[a-z0-9]{6,})\b'),
-    re.compile(r'\b(held-[0-9a-f]{8})\b'),
+    re.compile(r"\b(ub_[a-z0-9]{6,})\b"),
+    re.compile(r"\b(held-[0-9a-f]{8})\b"),
     re.compile(r'\bask[_ -]?id["\']?\s*[:=]\s*["\']?([A-Za-z0-9_-]{6,})'),
 )
 APPROVAL_PATTERNS = (
-    re.compile(r'\b(alex-[a-z0-9][a-z0-9-]{5,})\b'),
+    re.compile(r"\b(alex-[a-z0-9][a-z0-9-]{5,})\b"),
     re.compile(r'\bapproval[_ -]?(?:record[_ -]?)?id["\']?\s*[:=]\s*["\']?([A-Za-z0-9_.-]{6,})'),
 )
 GRANT_PATTERNS = (
-    re.compile(r'\b(g-[a-z0-9-]+-r\d+-[0-9a-f]{12})\b'),
-    re.compile(r'AUTHORITY:\s*([A-Za-z0-9_.-]{4,})'),
+    re.compile(r"\b(g-[a-z0-9-]+-r\d+-[0-9a-f]{12})\b"),
+    re.compile(r"AUTHORITY:\s*([A-Za-z0-9_.-]{4,})"),
 )
 
 
@@ -113,9 +113,9 @@ def scan(records: list) -> dict:
     for row, line in records:
         for match in NOTIFY.finditer(line.replace("\\n", "\n")):
             body = match.group(1)
-            task = re.search(r'<task-id>([^<]+)</task-id>', body)
-            tool = re.search(r'<tool-use-id>([^<]+)</tool-use-id>', body)
-            status = re.search(r'<status>([^<]+)</status>', body)
+            task = re.search(r"<task-id>([^<]+)</task-id>", body)
+            tool = re.search(r"<tool-use-id>([^<]+)</tool-use-id>", body)
+            status = re.search(r"<status>([^<]+)</status>", body)
             state = status.group(1).strip() if status else ""
             for key in (task.group(1).strip() if task else None, tool.group(1).strip() if tool else None):
                 if key:
@@ -143,8 +143,11 @@ def scan(records: list) -> dict:
                 add_ids(approvals, APPROVAL_PATTERNS, text, "transcript tool result")
                 add_ids(grants, GRANT_PATTERNS, text, "transcript tool result")
     bash, tasks, agents = [], [], []
-    stopped = {str(uses[key]["input"].get("task_id") or uses[key]["input"].get("shell_id") or "")
-               for key in order if uses[key]["name"] in ("TaskStop", "KillShell", "KillBash")}
+    stopped = {
+        str(uses[key]["input"].get("task_id") or uses[key]["input"].get("shell_id") or "")
+        for key in order
+        if uses[key]["name"] in ("TaskStop", "KillShell", "KillBash")
+    }
     for key in order:
         use = uses[key]
         name, tool_input, cwd = use["name"], use["input"], use["cwd"]
@@ -154,34 +157,57 @@ def scan(records: list) -> dict:
             found = BACKGROUND_ID.search(text)
             task_id = found.group(1) if found else None
         if task_id and notified.get(task_id, notified.get(key, "")) not in TERMINAL and task_id not in stopped:
-            tasks.append({"task_id": task_id, "tool": name, "tool_use_id": key,
-                          "source": "transcript tool_result without a terminal task-notification"})
+            tasks.append(
+                {
+                    "task_id": task_id,
+                    "tool": name,
+                    "tool_use_id": key,
+                    "source": "transcript tool_result without a terminal task-notification",
+                }
+            )
         if name == "Bash" and isinstance(tool_input.get("command"), str):
             command = tool_input["command"]
             shown = safe_command(command)
             interpreter, absolute = interpreter_of(shown, cwd)
             cd = LEADING_CD.match(shown)
-            entry = {"command": shown, "cwd": cwd, "cd": cd.group(1).strip("\"'") if cd else None,
-                     "interpreter": interpreter,
-                     "interpreter_path": absolute, "background": bool(tool_input.get("run_in_background")),
-                     "task_id": task_id, "status": "pending" if key not in results else "returned",
-                     "source": "transcript Bash tool_use"}
+            entry = {
+                "command": shown,
+                "cwd": cwd,
+                "cd": cd.group(1).strip("\"'") if cd else None,
+                "interpreter": interpreter,
+                "interpreter_path": absolute,
+                "background": bool(tool_input.get("run_in_background")),
+                "task_id": task_id,
+                "status": "pending" if key not in results else "returned",
+                "source": "transcript Bash tool_use",
+            }
             bash.append(entry)
         if name in ("Agent", "Task"):
             agent_id = extra.get("agentId")
             if not agent_id:
                 found = AGENT_ID.search(text)
                 agent_id = found.group(1) if found else None
-            launched = key in results and (extra.get("status") in ("async_launched", "launched")
-                                           or "async agent launched" in text.lower()
-                                           or bool(tool_input.get("run_in_background")))
-            closed = (key in results and not launched) or notified.get(key) in TERMINAL \
+            launched = key in results and (
+                extra.get("status") in ("async_launched", "launched")
+                or "async agent launched" in text.lower()
+                or bool(tool_input.get("run_in_background"))
+            )
+            closed = (
+                (key in results and not launched)
+                or notified.get(key) in TERMINAL
                 or (agent_id and notified.get(agent_id) in TERMINAL)
+            )
             if not closed:
-                agents.append({"name": tool_input.get("name"), "subagent_type": tool_input.get("subagent_type"),
-                               "description": str(tool_input.get("description") or "")[:80],
-                               "agent_id": agent_id, "tool_use_id": key,
-                               "source": "transcript Agent tool_use without a closeout"})
+                agents.append(
+                    {
+                        "name": tool_input.get("name"),
+                        "subagent_type": tool_input.get("subagent_type"),
+                        "description": str(tool_input.get("description") or "")[:80],
+                        "agent_id": agent_id,
+                        "tool_use_id": key,
+                        "source": "transcript Agent tool_use without a closeout",
+                    }
+                )
     return {
         "bash": bash[-MAX_BASH:],
         "background_tasks": tasks[-MAX_IDS:],
@@ -223,17 +249,27 @@ def build(payload: dict, context) -> tuple:
     if owner.get("kind") == "lane":
         state = Path(owner["dir"]) / "STATE.md"
         if state.is_file():
-            checkpoint["state_md"] = {"path": str(state), "mtime": datetime.fromtimestamp(
-                state.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"), "source": "stat"}
+            checkpoint["state_md"] = {
+                "path": str(state),
+                "mtime": datetime.fromtimestamp(state.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"),
+                "source": "stat",
+            }
     transcript = Path(str(payload.get("transcript_path") or "")).expanduser()
     if payload.get("transcript_path") and transcript.is_file():
         records, size, start = tail_records(transcript)
-        checkpoint["transcript"] = {"path": str(transcript), "offset": size, "read_from": start,
-                                    "source": "hook stdin transcript_path, bounded tail read"}
+        checkpoint["transcript"] = {
+            "path": str(transcript),
+            "offset": size,
+            "read_from": start,
+            "source": "hook stdin transcript_path, bounded tail read",
+        }
         checkpoint.update(scan(records))
     else:
-        checkpoint["transcript"] = {"path": str(transcript) if payload.get("transcript_path") else None,
-                                    "offset": None, "source": "transcript unreadable"}
+        checkpoint["transcript"] = {
+            "path": str(transcript) if payload.get("transcript_path") else None,
+            "offset": None,
+            "source": "transcript unreadable",
+        }
     return path, checkpoint
 
 
@@ -260,8 +296,11 @@ def instructions(path, checkpoint) -> str:
     for entry in (checkpoint or {}).get("background_tasks", []):
         facts.append("running task {}".format(entry["task_id"]))
     for entry in (checkpoint or {}).get("agents", []):
-        facts.append("open seat {} {}".format(entry.get("name") or entry.get("subagent_type") or "-",
-                                              entry.get("agent_id") or entry["tool_use_id"]))
+        facts.append(
+            "open seat {} {}".format(
+                entry.get("name") or entry.get("subagent_type") or "-", entry.get("agent_id") or entry["tool_use_id"]
+            )
+        )
     for key, label in (("ask_ids", "ask"), ("approval_ids", "approval ref"), ("grant_ids", "grant")):
         for entry in (checkpoint or {}).get(key, [])[-4:]:
             facts.append("{} {}".format(label, entry["id"]))

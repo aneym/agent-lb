@@ -1,5 +1,3 @@
-
-
 import os
 import shutil
 import subprocess
@@ -33,7 +31,12 @@ def test_worktrees_share_dependencies_but_import_their_own_app(tmp_path):
         targets.append(local.resolve())
         result = subprocess.run(
             [str(local / "bin/python"), "-c", "import app; print(app.WORKTREE); print(app.__file__)"],
-            cwd=root, env=env, check=True, capture_output=True, text=True, timeout=10,
+            cwd=root,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.stdout.splitlines() == [name, str(root / "app/__init__.py")]
     assert targets[0] == targets[1]

@@ -17,7 +17,16 @@ from app.core.clients.proxy import ProxyResponseError
 from app.core.openai.model_registry import ReasoningLevel, UpstreamModel, get_model_registry
 from app.core.openai.models import OpenAIResponsePayload
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, ApiKey, ApiKeyUsageReservation, LimitWindow, RequestLog, TeamMember, UsageHistory
+from app.db.models import (
+    Account,
+    AccountStatus,
+    ApiKey,
+    ApiKeyUsageReservation,
+    LimitWindow,
+    RequestLog,
+    TeamMember,
+    UsageHistory,
+)
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService, LimitRuleInput
@@ -807,7 +816,6 @@ async def test_api_key_usage_tracking_and_request_log_link(async_client, monkeyp
         row = await repo.get_by_id(key_id)
         assert row is not None
         assert row.last_used_at is not None
-
 
         limits = await repo.get_limits_by_key(key_id)
         assert len(limits) == 1
@@ -2399,11 +2407,6 @@ async def test_allowed_but_unsupported_model_is_exposed(async_client):
     assert _HIDDEN_MODEL in ids
 
 
-
-
-
-
-
 @pytest.mark.asyncio
 async def test_stream_401_retry_success_finalizes_once(async_client, monkeypatch):
 
@@ -2501,8 +2504,6 @@ async def test_stream_no_accounts_releases_reservation(async_client, monkeypatch
     key = payload["key"]
     key_id = payload["id"]
 
-
-
     async with async_client.stream(
         "POST",
         "/backend-api/codex/responses",
@@ -2555,14 +2556,12 @@ async def test_compact_unexpected_exception_releases_reservation(async_client, m
 
     monkeypatch.setattr(proxy_module, "core_compact_responses", raising_compact)
 
-
     with pytest.raises(RuntimeError, match="unexpected internal error"):
         await async_client.post(
             "/v1/responses/compact",
             headers={"Authorization": f"Bearer {key}"},
             json={"model": _TEST_MODELS[0], "instructions": "hi", "input": []},
         )
-
 
     async with SessionLocal() as session:
         repo = ApiKeysRepository(session)

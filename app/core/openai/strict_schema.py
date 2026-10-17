@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -11,8 +9,6 @@ from app.core.utils.json_guards import is_json_list, is_json_mapping
 
 @dataclass(frozen=True)
 class StrictSchemaError:
-
-
     code: str
     message: str
     param: str
@@ -24,7 +20,6 @@ def validate_strict_json_schema(
     name: str | None,
     param: str,
 ) -> StrictSchemaError | None:
-
 
     label = name or "response_format"
     violation = _find_violation(schema, ())
@@ -46,7 +41,6 @@ def validate_strict_function_tool_schema(
     name: str | None,
     param: str,
 ) -> StrictSchemaError | None:
-
 
     label = name or "function"
     violation = _find_violation(schema, ())
@@ -74,11 +68,7 @@ def _find_violation(
     path: tuple[str, ...],
 ) -> tuple[tuple[str, ...], str] | None:
     if not is_json_mapping(node):
-
-
         return None
-
-
 
     if "type" not in node and not _has_combinator(node) and not _is_ref(node):
         return path, "schema must have a 'type' key"

@@ -96,7 +96,6 @@ _SPARKLINE_DAYS = 7
 _DETAIL_BUCKET_SECONDS = 3600
 
 
-
 DEFAULT_PROBE_MODEL = probes.DEFAULT_PROBE_MODEL
 DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = probes.DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL
 DEFAULT_GLM_PROBE_MODEL = probes.DEFAULT_GLM_PROBE_MODEL
@@ -117,13 +116,10 @@ _anthropic_models_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, as
 
 def _anthropic_models_refresh_lock() -> asyncio.Lock:
     return _anthropic_models_locks.setdefault(asyncio.get_running_loop(), asyncio.Lock())
+
+
 PROBE_CONNECT_TIMEOUT_SECONDS = probes.PROBE_CONNECT_TIMEOUT_SECONDS
 PROBE_NETWORK_FAILURE_STATUS = probes.PROBE_NETWORK_FAILURE_STATUS
-
-
-
-
-
 
 
 _REQUEST_USAGE_CACHE_TTL_SECONDS = 60.0
@@ -136,8 +132,6 @@ _additional_quotas_cache: StaleWhileRevalidate[dict[str, list[AccountAdditionalQ
 )
 
 _T = TypeVar("_T")
-
-
 
 
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
@@ -197,8 +191,6 @@ def _additional_quota_window(
     if entry is None:
         return None
 
-
-
     if float(entry.used_percent) >= 100.0 and (entry.reset_at is None or entry.reset_at <= now_epoch):
         return AccountAdditionalWindow(
             used_percent=0.0,
@@ -250,8 +242,6 @@ class AccountsService:
         last_primed_by_account = (
             await self._limit_warmup_repo.last_primed_by_account(account_ids) if self._limit_warmup_repo else {}
         )
-
-
 
         request_usage_by_account: dict[str, AccountRequestUsage] = {}
         if include_request_usage:
@@ -340,8 +330,6 @@ class AccountsService:
         if additional_usage_repo:
             additional_quota_routing_overrides = await self._repo.additional_quota_routing_policy_overrides()
             quota_keys = [definition.quota_key for definition in list_additional_quota_definitions()]
-
-
 
             if _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY not in quota_keys:
                 quota_keys.append(_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY)
@@ -1019,8 +1007,6 @@ class AccountsService:
                 windows_reset=attempt.windows_reset,
             )
         else:
-
-
             inventory = await rate_limit_resets.fetch_reset_credits(
                 access_token=access_token,
                 chatgpt_account_id=credit_account.chatgpt_account_id,
@@ -1051,7 +1037,6 @@ class AccountsService:
                 )
 
             if payload.code in ("reset", "already_redeemed"):
-
                 await attempts.applied(attempt, payload.code, payload.windows_reset)
             else:
                 await attempts.settle(attempt, payload.code)
@@ -1078,8 +1063,6 @@ class AccountsService:
                 recovered = await refresh_standard_capacity(credit_account, self._usage_updater, self._usage_repo)
                 get_account_selection_cache().invalidate()
                 if recovered is not True:
-
-
                     await self.probe_account(account_id)
                     recovered = await refresh_standard_capacity(credit_account, self._usage_updater, self._usage_repo)
                 if recovered is True:
@@ -1118,8 +1101,6 @@ class AccountsService:
             if not await attempts.acquire(attempt):
                 raise AccountResetCreditsUnavailableError("Reset recovery is already running or cooling down")
             if attempt.state != "applied":
-
-
                 raise AccountResetCreditsUnavailableError(
                     "Claude reset outcome is unresolved; no additional credit will be consumed"
                 )
@@ -1139,7 +1120,6 @@ class AccountsService:
                     secondary_used_percent_before=secondary_before,
                     secondary_used_percent_after=secondary_before,
                 )
-
 
             attempt_trigger = "manual_override" if override_daily_limit else trigger
             attempt = await attempts.create(account_id, grant.id, attempt_trigger)

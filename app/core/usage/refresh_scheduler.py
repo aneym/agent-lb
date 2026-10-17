@@ -200,7 +200,6 @@ class UsageRefreshScheduler:
                         ):
                             await updater.force_refresh(account)
 
-
                     ordinary_usage_written = False
                     if not near_anthropic_reset:
                         ordinary_usage_written = await updater.refresh_accounts(

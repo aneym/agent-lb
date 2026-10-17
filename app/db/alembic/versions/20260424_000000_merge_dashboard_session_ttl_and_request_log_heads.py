@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260424_000000_merge_dashboard_session_ttl_and_request_log_heads"

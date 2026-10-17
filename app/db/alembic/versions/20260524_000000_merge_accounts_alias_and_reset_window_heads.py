@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260524_000000_merge_accounts_alias_and_reset_window_heads"

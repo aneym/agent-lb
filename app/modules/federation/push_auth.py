@@ -50,10 +50,13 @@ def load_push_sources(path: Path) -> list[PushSource]:
             name, logins = entry["name"], entry["tailscale_logins"]
             maximum = entry.get("max_accounts", 25)
             if (
-                not isinstance(name, str) or not name.strip()
-                or not isinstance(logins, list) or not logins
+                not isinstance(name, str)
+                or not name.strip()
+                or not isinstance(logins, list)
+                or not logins
                 or any(not isinstance(login, str) or not login.strip() for login in logins)
-                or type(maximum) is not int or maximum < 0
+                or type(maximum) is not int
+                or maximum < 0
             ):
                 raise ValueError("invalid source")
             sources.append(PushSource(name, tuple(logins), maximum))
@@ -71,17 +74,25 @@ async def resolve_tailscale_login(ip: str) -> str | None:
         return cached[1]
     settings = get_settings()
     binary = settings.federation_tailscale_bin or next(
-        (str(path) for path in (
-            Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale"),
-            Path("/usr/local/bin/tailscale"),
-            Path("/opt/homebrew/bin/tailscale"),
-        ) if path.is_file()),
+        (
+            str(path)
+            for path in (
+                Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale"),
+                Path("/usr/local/bin/tailscale"),
+                Path("/opt/homebrew/bin/tailscale"),
+            )
+            if path.is_file()
+        ),
         "tailscale",
     )
     try:
         process = await asyncio.create_subprocess_exec(
-            binary, "whois", "--json", ip,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            binary,
+            "whois",
+            "--json",
+            ip,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         try:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
@@ -92,7 +103,7 @@ async def resolve_tailscale_login(ip: str) -> str | None:
         if process.returncode != 0:
             return None
         output = stdout.decode("utf-8")
-        profile = json.loads(output[output.index("{"):])["UserProfile"]
+        profile = json.loads(output[output.index("{") :])["UserProfile"]
         login = profile["LoginName"]
         if not isinstance(login, str) or not login:
             return None
@@ -105,9 +116,10 @@ async def resolve_tailscale_login(ip: str) -> str | None:
 def match_source(login: str | None, sources: list[PushSource]) -> PushSource | None:
     if login is None:
         return None
-    return next((source for source in sources if login.casefold() in (
-        entry.casefold() for entry in source.tailscale_logins
-    )), None)
+    return next(
+        (source for source in sources if login.casefold() in (entry.casefold() for entry in source.tailscale_logins)),
+        None,
+    )
 
 
 async def require_federation_push_source(request: Request) -> PushSource:

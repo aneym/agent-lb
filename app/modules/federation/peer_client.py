@@ -65,8 +65,6 @@ class FederationPeerClient(Protocol):
 
 
 class AiohttpFederationPeerClient:
-
-
     def __init__(self, *, timeout_seconds: float = 15.0) -> None:
         self._timeout_seconds = timeout_seconds
 

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 from app.core import usage as usage_core

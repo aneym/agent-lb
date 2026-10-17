@@ -32,12 +32,7 @@ class AnthropicCompatProfile:
     upstream_base_url: str | None = None
     import_defaults: AnthropicCompatImportDefaults | None = None
 
-
-
-
     supports_upstream_count_tokens: bool = True
-
-
 
     supports_oauth_bundle_import: bool = False
 
@@ -116,8 +111,6 @@ ANTHROPIC_COMPAT_PROFILES: tuple[AnthropicCompatProfile, ...] = (
         quota_cooldown_code="kimi_quota_cooldown",
         other_provider_routing_message="OpenAI and Anthropic accounts are not eligible for Kimi routing.",
         upstream_settings_attr="kimi_anthropic_upstream_base_url",
-
-
         default_probe_model="kimi-k3",
         import_defaults=AnthropicCompatImportDefaults(
             email="kimi@moonshot.ai",

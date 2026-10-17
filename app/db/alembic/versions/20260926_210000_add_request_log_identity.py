@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -22,7 +20,6 @@ def upgrade() -> None:
 
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-
         op.execute("SET LOCAL lock_timeout = '5s'")
     existing = {column["name"] for column in sa.inspect(bind).get_columns("request_logs")}
     with op.batch_alter_table("request_logs") as batch_op:
@@ -34,7 +31,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-
         op.execute("SET LOCAL lock_timeout = '5s'")
     existing = {column["name"] for column in sa.inspect(bind).get_columns("request_logs")}
     with op.batch_alter_table("request_logs") as batch_op:

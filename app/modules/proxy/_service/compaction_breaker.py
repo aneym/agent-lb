@@ -38,15 +38,11 @@ class _FingerprintWindow:
 class CompactionAdmission:
     admitted: bool
 
-
-
     should_audit: bool
     count: int
 
 
 class CompactionRetryBreaker:
-
-
     def __init__(
         self,
         *,

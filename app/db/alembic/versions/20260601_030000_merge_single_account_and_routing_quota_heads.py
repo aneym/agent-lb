@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260601_030000_merge_single_account_and_routing_quota_heads"

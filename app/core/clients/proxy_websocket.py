@@ -431,24 +431,12 @@ async def connect_responses_websocket(
         "additional_headers": upstream_headers or None,
         "user_agent_header": user_agent,
         "open_timeout": settings.upstream_connect_timeout_seconds,
-
-
-
-
-
         "ping_timeout": None,
         "max_size": settings.max_sse_event_bytes,
-
-
-
-
         "compression": None,
     }
     connect_kwargs["proxy"] = proxy_url
     if url.startswith("wss://"):
-
-
-
         connect_kwargs["ssl"] = _shared_upstream_ssl_context()
     try:
         response = await _websocket_connect_through_edge_rejections(url, connect_kwargs)

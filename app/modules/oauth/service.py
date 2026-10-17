@@ -106,10 +106,8 @@ class OAuthStateStore:
         self._callback_server: OAuthCallbackServer | None = None
         self._callback_server_stop_task: asyncio.Task[None] | None = None
 
-
         self._callback_server_start_lock = asyncio.Lock()
         self._callback_server_bound_at: float | None = None
-
 
         self._callback_server_bind_tasks: set[asyncio.Task[None]] = set()
 
@@ -434,13 +432,10 @@ class OauthService:
                 )
             )
 
-
-
             asyncio.get_running_loop().call_later(
                 _PENDING_BROWSER_OAUTH_FLOW_TTL_SECONDS + _CALLBACK_PORT_RELEASE_GRACE_SECONDS,
                 lambda: asyncio.ensure_future(self._stop_callback_server_if_idle()),
             )
-
 
         bind_task = asyncio.ensure_future(self._ensure_callback_server(flow_id))
         self._store._callback_server_bind_tasks.add(bind_task)
@@ -457,7 +452,6 @@ class OauthService:
     async def _ensure_callback_server(self, flow_id: str) -> None:
         settings = get_settings()
         callback_server: OAuthCallbackServer | None = None
-
 
         async with self._store._callback_server_start_lock:
             while True:
@@ -477,15 +471,11 @@ class OauthService:
                 try:
                     await callback_server.start()
                 except OSError:
-
-
                     logger.warning(
                         "OAuth callback port %s is busy; this sign-in can finish only by pasting the callback URL",
                         settings.oauth_callback_port,
                     )
                 except Exception:
-
-
                     await callback_server.stop()
                     await self._set_error("Could not open the OAuth callback listener.", flow_id)
                     raise
@@ -494,7 +484,6 @@ class OauthService:
                         self._store._callback_server = callback_server
                         self._store._callback_server_bound_at = time.time()
         if callback_server is not None:
-
             await self._stop_callback_server_if_idle()
 
     async def manual_callback(self, callback_url: str, flow_id: str | None = None) -> ManualCallbackResponse:
@@ -796,8 +785,6 @@ class OauthService:
 
     async def _set_error(self, message: str, flow_id: str | None = None) -> None:
         await self._record_error(message, flow_id)
-
-
 
         asyncio.create_task(self._stop_callback_server_if_idle())
 

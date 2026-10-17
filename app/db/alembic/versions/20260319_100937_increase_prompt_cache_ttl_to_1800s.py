@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -22,7 +20,6 @@ def upgrade() -> None:
     if not _table_exists(bind, "dashboard_settings"):
         return
 
-
     bind.execute(
         sa.text(
             """
@@ -32,7 +29,6 @@ def upgrade() -> None:
             """
         )
     )
-
 
     with op.batch_alter_table("dashboard_settings") as batch_op:
         batch_op.alter_column(
@@ -47,7 +43,6 @@ def downgrade() -> None:
     if not _table_exists(bind, "dashboard_settings"):
         return
 
-
     bind.execute(
         sa.text(
             """
@@ -57,7 +52,6 @@ def downgrade() -> None:
             """
         )
     )
-
 
     with op.batch_alter_table("dashboard_settings") as batch_op:
         batch_op.alter_column(

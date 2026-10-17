@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -27,7 +25,9 @@ raise SystemExit(1)
 
 
 def seat(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([sys.executable, str(SEAT), *args], env=env, capture_output=True, text=True, timeout=60, check=False)
+    return subprocess.run(
+        [sys.executable, str(SEAT), *args], env=env, capture_output=True, text=True, timeout=60, check=False
+    )
 
 
 def test_leased_cursor_runs_are_priced_into_two_monthly_pools(tmp_path: Path) -> None:
@@ -35,8 +35,12 @@ def test_leased_cursor_runs_are_priced_into_two_monthly_pools(tmp_path: Path) ->
     fake.write_text(FAKE_CURSOR)
     fake.chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("SEAT_", "ROUTE_", "CURSOR_", "XDG_"))}
-    env.update(HOME=str(tmp_path), SEAT_HOME=str(tmp_path / "seats"), ROUTE_LEDGER=str(tmp_path / "ledger.jsonl"),
-               SEAT_CURSOR_BIN=str(fake))
+    env.update(
+        HOME=str(tmp_path),
+        SEAT_HOME=str(tmp_path / "seats"),
+        ROUTE_LEDGER=str(tmp_path / "ledger.jsonl"),
+        SEAT_CURSOR_BIN=str(fake),
+    )
     key = tmp_path / "main.key"
     key.write_text("SENTINEL-" + uuid.uuid4().hex + "\n")
     key.chmod(0o600)
@@ -50,14 +54,45 @@ def test_leased_cursor_runs_are_priced_into_two_monthly_pools(tmp_path: Path) ->
         ("composer-2.5", 10_000_000, 1_000_000),
         ("claude-sonnet-5-5-high", 2_000_000, 200_000),
     ):
-        leased = seat(env, "lease", "--vendor", "cursor", "--for", f"unit-{model}", "--ttl", "600",
-                      "--out", str(tmp_path / uuid.uuid4().hex), "--json")
+        leased = seat(
+            env,
+            "lease",
+            "--vendor",
+            "cursor",
+            "--for",
+            f"unit-{model}",
+            "--ttl",
+            "600",
+            "--out",
+            str(tmp_path / uuid.uuid4().hex),
+            "--json",
+        )
         assert leased.returncode == 0, leased.stderr
         usage = tmp_path / f"{model}.usage.json"
-        usage.write_text(json.dumps({"vendor": "cursor", "tokens_in": tokens_in, "tokens_out": tokens_out,
-                                     "cache_read_tokens": 0, "session_id": "s", "is_error": False}))
-        released = seat(env, "release", json.loads(leased.stdout)["lease"], "--outcome", "ok",
-                        "--model", model, "--usage-file", str(usage), "--json")
+        usage.write_text(
+            json.dumps(
+                {
+                    "vendor": "cursor",
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "cache_read_tokens": 0,
+                    "session_id": "s",
+                    "is_error": False,
+                }
+            )
+        )
+        released = seat(
+            env,
+            "release",
+            json.loads(leased.stdout)["lease"],
+            "--outcome",
+            "ok",
+            "--model",
+            model,
+            "--usage-file",
+            str(usage),
+            "--json",
+        )
         assert released.returncode == 0, released.stderr
 
     config = json.loads(TABLE.read_text(encoding="utf-8"))["cli_pools"]

@@ -20,8 +20,6 @@ from app.core.utils.client_session import (
 
 
 class ClientSessionMiddleware:
-
-
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 

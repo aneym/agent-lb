@@ -160,7 +160,6 @@ class DashboardAuthService:
         else:
             authenticated = password_authenticated
 
-
         totp_required_on_login = bool(totp_required and password_authenticated)
         return DashboardAuthSessionResponse(
             authenticated=authenticated,
@@ -280,11 +279,6 @@ class DashboardAuthService:
             AuditService.log_async("login_failed", actor_ip=actor_ip, details={"method": "totp"})
             raise TotpInvalidCodeError("Invalid TOTP code")
         AuditService.log_async("login_success", actor_ip=actor_ip, details={"method": "totp"})
-
-
-
-
-
 
         now = int(time())
         inherited_ttl = max(1, existing_state.expires_at - now)

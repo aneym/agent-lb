@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260602_060000_merge_account_workspace_and_failure_heads"

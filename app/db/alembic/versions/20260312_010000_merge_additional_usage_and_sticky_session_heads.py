@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260312_010000_merge_additional_usage_and_sticky_session_heads"

@@ -266,7 +266,6 @@ async def test_proxy_sticky_switches_when_pinned_rate_limited(async_client, monk
     response = await async_client.post("/backend-api/codex/responses", json=payload)
     assert response.status_code == 200
 
-
     assert seen[:2] == [acc_a.id, acc_b.id]
 
 

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -56,7 +54,6 @@ def fetch_models(key: str) -> dict[str, Any]:
             raise ValueError("Artificial Analysis returned an invalid models response")
         return data
     except (OSError, ValueError):
-
         raise ValueError("Artificial Analysis fetch failed or returned invalid JSON") from None
 
 

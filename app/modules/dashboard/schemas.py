@@ -46,8 +46,6 @@ class DashboardUsageWindows(DashboardModel):
 
 
 class DepletionResponse(DashboardModel):
-
-
     risk: float
     risk_level: str
     burn_rate: float
@@ -108,7 +106,6 @@ class DashboardOverviewResponse(DashboardModel):
 class DashboardProjectionsResponse(DashboardModel):
     depletion_primary: DepletionResponse | None = None
     depletion_secondary: DepletionResponse | None = None
-
 
     depletion_primary_by_provider: dict[str, DepletionResponse] | None = None
     depletion_secondary_by_provider: dict[str, DepletionResponse] | None = None

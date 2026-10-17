@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -91,8 +90,8 @@ def state_lines(path: Path) -> list:
                 lines.append(line.rstrip("\r\n")[:400])
     except OSError:
         return []
-    preview = next((line for line in lines if line.strip() and not line.startswith('#')), '')
-    return [f'Lane state: {preview[:120]} (full: cat {path})']
+    preview = next((line for line in lines if line.strip() and not line.startswith("#")), "")
+    return [f"Lane state: {preview[:120]} (full: cat {path})"]
 
 
 def expired(value: object, now: datetime) -> bool:
@@ -170,8 +169,9 @@ def checkpoint_path(lanes: Path, agents: Path, lane: str, agent: str, session: s
     home = agent_dir(agents, agent) if agent else None
     if home is not None:
         return home / "compact-checkpoint.json", {"kind": "agent", "name": agent, "dir": str(home)}
-    fallback = Path(os.environ.get("FACTORY_COMPACT_CHECKPOINTS_DIR")
-                    or "~/.agent-rails/factory/hooks/compact-checkpoints").expanduser()
+    fallback = Path(
+        os.environ.get("FACTORY_COMPACT_CHECKPOINTS_DIR") or "~/.agent-rails/factory/hooks/compact-checkpoints"
+    ).expanduser()
     return fallback / "{}.json".format(safe_name(session)), {"kind": "none", "name": "", "dir": str(fallback)}
 
 
@@ -209,16 +209,21 @@ def checkpoint_lines(path: Path, payload: dict, now: datetime) -> list:
     if str(data.get("session_id") or "") != str(payload.get("session_id") or ""):
         reasons.append("session_id differs")
     transcript = data.get("transcript") if isinstance(data.get("transcript"), dict) else {}
-    count = boundaries_after(str(payload.get("transcript_path") or transcript.get("path") or ""),
-                             transcript.get("offset"))
+    count = boundaries_after(
+        str(payload.get("transcript_path") or transcript.get("path") or ""), transcript.get("offset")
+    )
     if count > 1:
         reasons.append("a newer compact boundary follows its offset")
     shown = age_text(age) if age is not None else "unknown"
     if reasons:
-        return ["Compact checkpoint {} is stale ({}; age {}). Listing none of its items; rebuild from state and "
-                "the transcript.".format(path, ", ".join(reasons), shown)]
-    lines = ["Compact checkpoint: {} (age {}). Reconcile before new work; approval ids are references, "
-             "never consent.".format(path, shown)]
+        return [
+            "Compact checkpoint {} is stale ({}; age {}). Listing none of its items; rebuild from state and "
+            "the transcript.".format(path, ", ".join(reasons), shown)
+        ]
+    lines = [
+        "Compact checkpoint: {} (age {}). Reconcile before new work; approval ids are references, "
+        "never consent.".format(path, shown)
+    ]
     for entry in (data.get("bash") or [])[-2:]:
         if isinstance(entry, dict):
             lines.append("- cmd in {}: {}".format(entry.get("cwd") or "-", str(entry.get("command"))[:160]))
@@ -227,8 +232,12 @@ def checkpoint_lines(path: Path, payload: dict, now: datetime) -> list:
             lines.append("- running task {}".format(entry.get("task_id")))
     for entry in data.get("agents") or []:
         if isinstance(entry, dict):
-            lines.append("- open seat {} {}".format(entry.get("name") or entry.get("subagent_type") or "-",
-                                                    entry.get("agent_id") or entry.get("tool_use_id")))
+            lines.append(
+                "- open seat {} {}".format(
+                    entry.get("name") or entry.get("subagent_type") or "-",
+                    entry.get("agent_id") or entry.get("tool_use_id"),
+                )
+            )
     for key, label in (("ask_ids", "ask"), ("approval_ids", "approval ref"), ("grant_ids", "grant")):
         for entry in (data.get(key) or [])[-4:]:
             if isinstance(entry, dict):
@@ -268,7 +277,8 @@ def main() -> None:
     path, _ = checkpoint_path(lanes, agents, lane, agent, session)
     if not lane and not agent:
         line = "Factory context: no lane or agent home resolved (cwd {}, pane {}); compact checkpoint {}: {}.".format(
-            payload.get("cwd") or os.getcwd(), pane or "-", "found" if path.is_file() else "none", path)
+            payload.get("cwd") or os.getcwd(), pane or "-", "found" if path.is_file() else "none", path
+        )
         text = "\n".join(cap_lines([line[:1000]], 1024))
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
         return
@@ -294,8 +304,9 @@ def main() -> None:
         card = thread_card(home, session) if home is not None else None
         base.append("Thread card: {}. Run memory.brief before acting.".format(card or "none found"))
     if source == "compact":
-        base = base + cap_lines(checkpoint_lines(path, payload, datetime.now(timezone.utc)),
-                                1023 - len("\n".join(base).encode()))
+        base = base + cap_lines(
+            checkpoint_lines(path, payload, datetime.now(timezone.utc)), 1023 - len("\n".join(base).encode())
+        )
     learnings = learning_lines(learned, pane, lane, project)
     while learnings and len("\n".join(base + state + learnings).encode()) > 1024:
         learnings.pop()

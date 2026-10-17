@@ -306,8 +306,6 @@ class Admission:
         upload_class: str = "batch",
     ) -> AsyncIterator[None]:
         if not upload_throttle.is_bulk():
-
-
             yield
             return
         enabled, rate = upload_throttle.read_state()

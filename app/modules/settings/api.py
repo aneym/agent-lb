@@ -601,7 +601,6 @@ async def update_settings(
         if getattr(current, field_name) != getattr(updated, field_name)
     ]
     if "additional_quota_routing_policies" in changed_fields:
-
         invalidate_additional_quotas_cache()
     AuditService.log_async(
         "settings_changed",

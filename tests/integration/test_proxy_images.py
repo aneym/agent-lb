@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import base64
@@ -88,11 +86,6 @@ def _disable_http_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _SettingsCache())
     monkeypatch.setattr(proxy_module, "get_settings", lambda: app_settings)
-
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -224,7 +217,6 @@ async def test_images_generations_returns_envelope_on_success(async_client, monk
     assert "created" in body
     assert body["data"] == [{"b64_json": "b64-image-bytes", "revised_prompt": "a clean red circle"}]
     assert body["usage"] == {"input_tokens": 7, "output_tokens": 13, "total_tokens": 20}
-
 
     assert captured["model"] == "gpt-5.5"
     tools = cast(list[Any], captured["tools"])
@@ -364,11 +356,6 @@ async def test_images_generations_failed_image_returns_5xx(async_client, monkeyp
     assert body["error"]["code"] in {"content_policy_violation", "image_generation_failed"}
 
 
-
-
-
-
-
 @pytest.mark.asyncio
 async def test_images_edits_basic_round_trip(async_client, monkeypatch):
     await _import_account(async_client, "acc_images_edit", "img-edit@example.com")
@@ -423,8 +410,6 @@ async def test_images_edits_basic_round_trip(async_client, monkeypatch):
     body = response.json()
     assert body["data"] == [{"b64_json": "EDITED_B64", "revised_prompt": "edited"}]
 
-
-
     input_value = cast(list[Any], captured["input"])
     assert input_value
     first_message = cast(dict[str, Any], input_value[0])
@@ -473,11 +458,6 @@ async def test_images_edits_unsupported_model(async_client):
     assert body["error"]["type"] == "invalid_request_error"
 
 
-
-
-
-
-
 @pytest.mark.asyncio
 async def test_images_variations_returns_404(async_client):
     response = await async_client.post(
@@ -487,11 +467,6 @@ async def test_images_variations_returns_404(async_client):
     assert response.status_code == 404
     body = response.json()
     assert body["error"]["code"] == "not_found_error"
-
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -807,7 +782,6 @@ async def test_images_generations_succeeds_when_reservation_finalize_fails(async
 
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
     monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh)
-
 
     from app.modules.api_keys.service import ApiKeysService
 

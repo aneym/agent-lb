@@ -213,7 +213,6 @@ _ANTHROPIC_SESSION_ROUTE_AFFINITY_QUOTA_KEYS: Final[frozenset[str]] = frozenset(
         "anthropic_standard",
         "anthropic_top",
         "anthropic_top_thinking",
-
         "anthropic_standard_fable",
         "anthropic_top_fable",
         "anthropic_top_thinking_fable",
@@ -233,11 +232,6 @@ _PUBLIC_RESPONSE_OUTPUT_ITEM_TYPES = frozenset(
         "mcp_approval_request",
         "mcp_list_tools",
         "output_image",
-
-
-
-
-
         "compaction",
     }
 )
@@ -355,9 +349,6 @@ def _default_anthropic_affinity_quota_key(model: str, quota_key: str) -> str:
     else:
         resolved = "anthropic_top_thinking"
 
-
-
-
     return f"{resolved}_fable" if _is_fable_model(model) else resolved
 
 
@@ -396,9 +387,6 @@ _V1_MAX_OUTPUT_TOKEN_OVERRIDES: Final[dict[str, int]] = {
 _OPPORTUNISTIC_RETRY_AFTER_SECONDS = 60
 
 
-
-
-
 _IMAGE_ERROR_TYPE_STATUS: Final[dict[str, int]] = {
     "invalid_request_error": 400,
     "authentication_error": 401,
@@ -407,7 +395,6 @@ _IMAGE_ERROR_TYPE_STATUS: Final[dict[str, int]] = {
     "rate_limit_error": 429,
     "insufficient_quota": 429,
 }
-
 
 
 _IMAGE_ERROR_CODE_STATUS: Final[dict[str, int]] = {
@@ -688,10 +675,6 @@ async def responses(
             return breaker_response
     openai_sdk_request = _is_openai_sdk_request(request, payload)
 
-
-
-
-
     if openai_sdk_request and is_compaction_turn:
         openai_sdk_request = False
     openai_compat_payload = _has_openai_responses_shape(payload)
@@ -715,9 +698,6 @@ async def responses(
         codex_session_affinity=True,
         openai_cache_affinity=True,
         prefer_http_bridge=True,
-
-
-
         enforce_openai_sdk_contract=openai_sdk_request,
     )
 
@@ -847,10 +827,6 @@ async def v1_messages(
     if refusal is not None:
         return refusal
     try:
-
-
-
-
         request_usage_budget = (
             _estimate_anthropic_request_usage(payload, raw_body=await request.body()) if api_key is not None else None
         )
@@ -1006,23 +982,13 @@ async def v1_messages_count_tokens(
     validate_model_access(api_key, model)
     profile = get_anthropic_compat_profile(resolved_request.provider_name)
     if not profile.supports_upstream_count_tokens:
-
-
         return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
-
-
-
 
     try:
         result = await context.service.count_tokens(payload, request.headers, model=model)
     except AnthropicProxyError as exc:
         return _anthropic_proxy_error_response(exc)
     return Response(content=result.body, status_code=result.status_code, media_type=result.media_type)
-
-
-
-
-
 
 
 CCGPT_EFFORTS = ("low", "medium", "high", "xhigh")
@@ -1085,11 +1051,6 @@ async def _ccgpt_messages_response(
     locked_model: str | None = None,
 ) -> Response:
 
-
-
-
-
-
     thread = (payload.model_extra or {}).get("thread")
     if thread is not None:
         return _anthropic_error_response(
@@ -1109,14 +1070,6 @@ async def _ccgpt_messages_response(
     responses_payload = claude_to_responses(payload)
     responses_payload.model = locked_model
     if client_session_id:
-
-
-
-
-
-
-
-
         agent_id = request.headers.get("x-claude-code-agent-id", "").strip()
         if agent_id:
             conversation = f"agent:{agent_id}"
@@ -1156,9 +1109,6 @@ async def _ccgpt_messages_response(
         body = getattr(upstream, "body", b"")
         body_bytes = body if isinstance(body, bytes) else str(body).encode()
         if upstream.status_code in (401, 403):
-
-
-
             return _anthropic_error_response(
                 503,
                 "api_error",
@@ -1166,11 +1116,6 @@ async def _ccgpt_messages_response(
             )
         error = anthropic_error_from_response(upstream.status_code, body_bytes)
         return JSONResponse(content=error, status_code=upstream.status_code)
-
-
-
-
-
 
     startup_error, events = await split_startup_error(
         responses_to_claude_events(
@@ -1299,16 +1244,6 @@ async def internal_bridge_responses(
         forwarded_downstream_turn_state=forwarded_request_context.context.downstream_turn_state,
         forwarded_affinity_kind=forwarded_request_context.context.original_affinity_kind,
         forwarded_affinity_key=forwarded_request_context.context.original_affinity_key,
-
-
-
-
-
-
-
-
-
-
         enforce_openai_sdk_contract=False,
     )
 
@@ -1685,9 +1620,6 @@ async def backend_transcribe(
     )
 
 
-
-
-
 _FILES_CREATE_LIMIT_MODEL: Final = "files-create"
 _FILES_FINALIZE_LIMIT_MODEL: Final = "files-finalize"
 
@@ -1812,17 +1744,8 @@ async def v1_images_generations(
 @v1_router.post("/images/edits", response_model=None)
 async def v1_images_edits(
     request: Request,
-
-
-
-
     model: str | None = Form(None),
     prompt: str = Form(...),
-
-
-
-
-
     image: list[UploadFile] | None = File(None),
     image_brackets: list[UploadFile] | None = File(None, alias="image[]"),
     mask: UploadFile | None = File(None),
@@ -1852,9 +1775,6 @@ async def v1_images_edits(
         "user": user,
     }
 
-
-
-
     if n is not None:
         raw_form["n"] = n
     else:
@@ -1873,9 +1793,6 @@ async def v1_images_edits(
         form_payload = V1ImagesEditsForm.model_validate(raw_form)
     except ValidationError as exc:
         return _logged_error_json_response(request, 400, openai_validation_error(exc))
-
-
-
 
     merged_images: list[UploadFile] = []
     if image:
@@ -1942,11 +1859,6 @@ async def v1_images_variations(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
 
-
-
-
-
-
     del api_key
     return _logged_error_json_response(
         request,
@@ -1997,12 +1909,6 @@ async def _proxy_images_generation_request(
     api_key: ApiKeyData | None,
 ) -> Response:
 
-
-
-
-
-
-
     settings = proxy_service_module.get_settings()
     requested_model = payload.model
     effective_model = _effective_model_for_api_key(
@@ -2021,9 +1927,6 @@ async def _proxy_images_generation_request(
             ),
         )
     if effective_model != requested_model:
-
-
-
         payload = payload.model_copy(update={"model": effective_model})
 
     try:
@@ -2038,7 +1941,6 @@ async def _proxy_images_generation_request(
     try:
         validate_model_access(api_key, effective_model)
     except Exception:
-
         raise
 
     rate_limit_headers = await context.service.rate_limit_headers()
@@ -2059,18 +1961,6 @@ async def _proxy_images_generation_request(
             headers=rate_limit_headers,
         )
 
-
-
-
-
-
-
-
-
-
-
-
-
     upstream = context.service.stream_responses(
         responses_payload,
         request.headers,
@@ -2081,17 +1971,7 @@ async def _proxy_images_generation_request(
         api_key_reservation=None,
     )
 
-
-
-
-
     captured: dict[str, object] = {}
-
-
-
-
-
-
 
     primed_upstream, prime_error = await _prime_upstream_stream(
         request,
@@ -2113,18 +1993,9 @@ async def _proxy_images_generation_request(
                 async for chunk in translated:
                     yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
             finally:
-
-
-
-
                 response_id = captured.get("response_id")
                 if response_id and isinstance(response_id, str):
                     await context.service.rewrite_request_log_model(response_id, public_model)
-
-
-
-
-
 
                 _input = captured.get("image_input_tokens")
                 _output = captured.get("image_output_tokens")
@@ -2203,9 +2074,6 @@ async def _proxy_images_edit_request(
     api_key: ApiKeyData | None,
 ) -> Response:
 
-
-
-
     settings = proxy_service_module.get_settings()
     requested_model = payload.model
     effective_model = _effective_model_for_api_key(
@@ -2267,9 +2135,6 @@ async def _proxy_images_edit_request(
             headers=rate_limit_headers,
         )
 
-
-
-
     upstream = context.service.stream_responses(
         responses_payload,
         request.headers,
@@ -2302,18 +2167,9 @@ async def _proxy_images_edit_request(
                 async for chunk in translated:
                     yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
             finally:
-
-
-
-
                 response_id = captured.get("response_id")
                 if response_id and isinstance(response_id, str):
                     await context.service.rewrite_request_log_model(response_id, public_model)
-
-
-
-
-
 
                 _input = captured.get("image_input_tokens")
                 _output = captured.get("image_output_tokens")
@@ -2528,7 +2384,6 @@ def _to_codex_model_entry(model: UpstreamModel, *, visibility: str | None = None
         if key not in skip_keys and isinstance(value, (bool, int, float, str, type(None), list, Mapping)):
             extra[key] = value
 
-
     effective_cw = _effective_context_window(model)
     if effective_cw != model.context_window and "max_context_window" in extra:
         extra["max_context_window"] = effective_cw
@@ -2656,14 +2511,6 @@ async def v1_chat_completions(
     try:
         responses_shaped_payload = not payload.messages and payload.input is not None
         if not responses_shaped_payload:
-
-
-
-
-
-
-
-
             enforce_strict_function_tools_format(
                 payload.tools,
                 param_template="tools[{index}].function.parameters",
@@ -3650,8 +3497,6 @@ def _logged_error_json_response(
     if status_code == 429 and is_local_overload_error_code(code):
         effective_headers = merge_retry_after_headers(effective_headers)
 
-
-
     if status_code in (429, 503) and "Retry-After" not in effective_headers:
         error_detail = public_content.get("error") if isinstance(public_content, Mapping) else None
         retry_after = retry_after_seconds_from_error_detail(error_detail)
@@ -3665,9 +3510,6 @@ def _logged_error_json_response(
         message,
         category="proxy_error_response",
     )
-
-
-
 
     return JSONResponse(status_code=status_code, content=public_content, headers=effective_headers or None)
 
@@ -3737,8 +3579,6 @@ async def _validate_internal_bridge_api_key(
     dashboard_settings = await get_settings_cache().get()
     try:
         if not dashboard_settings.api_key_auth_enabled:
-
-
             member_authorization = select_member_key_authorization(request.headers.get("authorization"), None)
             if member_authorization is None:
                 return None, None
@@ -3827,7 +3667,6 @@ async def _opportunistic_admission_denial(
     if not message.startswith("opportunistic burn window closed"):
         message = f"opportunistic burn window closed: {message}"
     if getattr(api_key, "member_id", None):
-
         message = (
             "The shared accounts are busy right now, so this request was held back. "
             f"Try again in a minute. {MEMBER_CONTACT_LINE}"
@@ -3875,8 +3714,6 @@ def _anthropic_error_response(
     if code is not None:
         error["code"] = code
 
-
-
     if details is not None:
         error["details"] = details
     return JSONResponse(
@@ -3899,8 +3736,6 @@ def _retry_headers(retry_at: int | None) -> dict[str, str] | None:
 
 
 def _anthropic_proxy_error_response(exc: AnthropicProxyError) -> JSONResponse:
-
-
 
     if exc.retry_at is not None or exc.status_code == 429:
         return _anthropic_error_response(429, "rate_limit_error", exc.message, retry_at=exc.retry_at)
@@ -4108,29 +3943,9 @@ async def _normalize_public_responses_stream(
     contract_violation_kind: str | None = None
     seen_text_delta_keys: set[tuple[str | None, int | None]] = set()
 
-
-
-
-
-
-
-
     output_items: dict[int, dict[str, JsonValue]] = {}
 
-
-
-
-
-
-
-
-
     created_emitted = False
-
-
-
-
-
 
     pre_created_buffer: list[dict[str, JsonValue]] = []
 
@@ -4435,8 +4250,6 @@ def _format_legacy_pre_created_payloads(
             normalized["item_id"] = item_id
             formatted.append(format_sse_event(normalized))
         else:
-
-
             formatted.append(format_sse_event(payload))
 
     if text_item_opened:
@@ -4487,14 +4300,6 @@ def _normalize_public_stream_payload(
 ) -> tuple[dict[str, JsonValue] | None, str | None]:
     event_type = payload.get("type")
 
-
-
-
-
-
-
-
-
     if enforce_openai_sdk_contract and isinstance(event_type, str) and event_type.startswith("codex."):
         return None, None
     if event_type == "error":
@@ -4513,13 +4318,6 @@ def _normalize_public_stream_payload(
         return payload, None
     if event_type in ("response.completed", "response.incomplete"):
         if not enforce_openai_sdk_contract:
-
-
-
-
-
-
-
             return payload, None
         response = payload.get("response")
         if not is_json_mapping(response):
@@ -4551,8 +4349,6 @@ def _normalize_public_stream_payload(
         return normalized_payload, violation_kind
     if event_type in ("response.output_item.added", "response.output_item.done"):
         if not enforce_openai_sdk_contract:
-
-
             return payload, None
         item = payload.get("item")
         if not is_json_mapping(item):

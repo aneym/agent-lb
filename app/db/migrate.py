@@ -157,10 +157,6 @@ def _read_current_revisions_from_connection(connection: Connection) -> tuple[str
     try:
         rows = connection.execute(text(f"SELECT {_ALEMBIC_VERSION_COLUMN} FROM {_ALEMBIC_VERSION_TABLE}")).fetchall()
     except (sa_exc.ProgrammingError, sa_exc.OperationalError) as exc:
-
-
-
-
         message = str(exc).lower()
         if _ALEMBIC_VERSION_TABLE in message and (
             "does not exist" in message or "undefinedtable" in message or "no such table" in message
@@ -305,7 +301,6 @@ def inspect_migration_state(database_url: str) -> MigrationState:
     if has_alembic:
         needs_upgrade = current != head_revision
     else:
-
         needs_upgrade = True
 
     return MigrationState(
@@ -455,9 +450,6 @@ def _upgrade_with_existing_column_revision_skips(
     if _head_revision_target(config, revision) is None:
         command.upgrade(config, revision)
         return
-
-
-
 
     for skip_revision, parent_revision, required_columns in _EXISTING_COLUMN_REVISION_SKIPS:
         current_revision = _read_current_revision(sync_database_url)

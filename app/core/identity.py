@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -73,8 +71,6 @@ UNATTRIBUTED_FORWARD_IDENTITY = _UNRESOLVED_IDENTITY
 
 
 class NodeLookup(Protocol):
-
-
     def get(self, ip: str, /) -> str | None: ...
 
 
@@ -94,9 +90,6 @@ def set_node_lookup(lookup: NodeLookup | None) -> None:
 
     global _node_lookup
     _node_lookup = lookup if lookup is not None else _NoNodes()
-
-
-
 
 
 def get_request_identity() -> RequestIdentity | None:
@@ -136,9 +129,6 @@ def internal_identity(settings: Settings | None = None) -> RequestIdentity:
     if not settings.identity_enabled:
         return DISABLED_IDENTITY
     return RequestIdentity(INTERNAL, INTERNAL, local_machine_handle(settings), INTERNAL)
-
-
-
 
 
 def resolve_identity(
@@ -211,7 +201,6 @@ def _resolve_machine(
     first_hand: bool,
 ) -> tuple[str, str]:
 
-
     if headers.get(_FUNNEL_HEADER) is not None:
         return FUNNEL_MACHINE, MACHINE_FUNNEL
     address = _client_address(
@@ -225,13 +214,9 @@ def _resolve_machine(
     if address is None:
         return MACHINE_REMOTE, MACHINE_REMOTE
     if address.is_loopback:
-
-
-
         peer = _client_address(socket_ip)
         if peer is None or not peer.is_loopback or not first_hand:
             return MACHINE_REMOTE, MACHINE_REMOTE
-
 
         forwarding_headers = ("x-forwarded-for", "forwarded", "x-real-ip", "true-client-ip", "cf-connecting-ip")
         if not settings.firewall_trust_proxy_headers and any(headers.get(name) for name in forwarding_headers):
@@ -280,9 +265,6 @@ def _handle(value: str | None, limit: int) -> str | None:
     return identity_handle(value, limit)
 
 
-
-
-
 async def attach_member(identity: RequestIdentity | None, member_id: str | None) -> RequestIdentity | None:
 
     if identity is None or not member_id or identity.caller_user_source in (None, INTERNAL):
@@ -312,7 +294,6 @@ async def _lookup_member_name(member_id: str) -> str | None:
     try:
         async with asyncio.timeout(_MEMBER_LOOKUP_TIMEOUT_SECONDS):
             async with get_background_session() as session:
-
                 name = await session.scalar(select(TeamMember.name).where(TeamMember.id == member_id))
     except Exception:
         _warn_hourly("member", "team member lookup failed; recording unknown user", exc_info=True)

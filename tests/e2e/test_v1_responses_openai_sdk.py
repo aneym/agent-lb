@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -13,11 +11,6 @@ import app.modules.proxy.service as proxy_module
 from app.core.openai.model_registry import ReasoningLevel, UpstreamModel, get_model_registry
 
 pytestmark = pytest.mark.e2e
-
-
-
-
-
 
 
 def _sse(payload: dict) -> str:
@@ -241,10 +234,6 @@ def _response_failed_only(resp_id: str) -> str:
     )
 
 
-
-
-
-
 DEFAULT_MODEL = "gpt-5.5"
 
 
@@ -305,17 +294,11 @@ async def sdk_client(
 
 def _patch_upstream_stream(monkeypatch, blocks: list[str]) -> None:
 
-
     async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
         for block in blocks:
             yield block
 
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
-
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -439,8 +422,6 @@ async def test_sdk_responses_stream_upstream_rejection_synthesizes_created(
     ) as stream:
         async for event in stream:
             events_seen.append(event.type)
-
-
 
     assert "response.created" in events_seen
     assert "response.failed" in events_seen

@@ -163,15 +163,6 @@ _REQUEST_TRANSPORT_HTTP = "http"
 
 
 class _FileOpsMixin:
-
-
-
-
-
-
-
-
-
     _FILE_ACCOUNT_PIN_TTL_SECONDS: float = 30 * 60.0
 
     async def _pin_file_account(
@@ -227,27 +218,10 @@ class _FileOpsMixin:
 
         proxy = cast(_FileOpsServiceProtocol, self)
 
-
-
-
-
-
-
-
-
-
-
         explicit_fields = getattr(payload, "model_fields_set", set())
         explicit_cache_key = "prompt_cache_key" in explicit_fields or "promptCacheKey" in explicit_fields
         if explicit_cache_key and _prompt_cache_key_from_request_model(payload) is not None:
             return None
-
-
-
-
-
-
-
 
         turn_state_value = _sticky_key_from_turn_state_header(headers)
         if turn_state_value is not None and not _is_synthesized_turn_state(turn_state_value):
@@ -440,10 +414,6 @@ class _FileOpsMixin:
                     )
                     _raise_proxy_budget_exhausted()
 
-
-
-
-
                 timeout_tokens = push_files_timeout_overrides(
                     connect_timeout_seconds=remaining_budget,
                     total_timeout_seconds=remaining_budget,
@@ -566,8 +536,6 @@ class _FileOpsMixin:
                     _raise_proxy_unavailable(str(timeout_exc) or "Request to upstream timed out")
                 try:
                     result = await _call(account)
-
-
 
                     account_id_value = account.id
                     await proxy._load_balancer.record_success(account)

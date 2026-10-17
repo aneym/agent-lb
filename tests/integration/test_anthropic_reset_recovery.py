@@ -179,9 +179,7 @@ async def test_provider_early_use_grant_redeems_before_limit(db_setup, reset_ups
             "at_limit": False,
             "exhausted": [],
             "next_grant_id": "launch",
-            "grants": [
-                {"id": "launch", "resets_left": 1, "usable_now": True, "use_requires_limit": False}
-            ],
+            "grants": [{"id": "launch", "resets_left": 1, "usable_now": True, "use_requires_limit": False}],
         }
     )
     async with SessionLocal() as session:

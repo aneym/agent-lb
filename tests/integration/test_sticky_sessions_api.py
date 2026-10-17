@@ -649,7 +649,6 @@ async def test_durable_bridge_closed_session_purge_drains_multiple_batches(db_se
 @pytest.mark.asyncio
 async def test_sticky_sessions_api_deletes_filtered_chunks_large_match_set(async_client):
 
-
     accounts = await _create_accounts()
     await _set_affinity_ttl(60)
 

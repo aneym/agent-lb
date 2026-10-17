@@ -85,8 +85,11 @@ def dispatch(path, since, until, errors):
                 stamp = date(row.get("ts", row.get("timestamp")))
                 if stamp is None or not since <= stamp < until:
                     continue
-                key = (row.get("source", "agent"), row.get("session_id"),
-                       row.get("name") or row.get("agent_type") or row.get("agent_id") or row.get("subagent_type"))
+                key = (
+                    row.get("source", "agent"),
+                    row.get("session_id"),
+                    row.get("name") or row.get("agent_type") or row.get("agent_id") or row.get("subagent_type"),
+                )
                 if not key[1]:
                     key = (*key, index)
                 merged = records.setdefault(key, {})
@@ -108,8 +111,19 @@ def store(path, since, until, errors):
                     source.backup(copy)
                     copy.row_factory = sqlite3.Row
                     fields = {r[1] for r in copy.execute("PRAGMA table_info(request_logs)")}
-                    allowed = ("requested_at", "session_id", "client_session_id", "account_id", "provider", "model",
-                               "input_tokens", "output_tokens", "cached_input_tokens", "cache_read_tokens", "cost_usd")
+                    allowed = (
+                        "requested_at",
+                        "session_id",
+                        "client_session_id",
+                        "account_id",
+                        "provider",
+                        "model",
+                        "input_tokens",
+                        "output_tokens",
+                        "cached_input_tokens",
+                        "cache_read_tokens",
+                        "cost_usd",
+                    )
                     selected = [field for field in allowed if field in fields]
                     if "requested_at" not in selected:
                         raise sqlite3.OperationalError("missing request timestamps")
@@ -129,14 +143,21 @@ def store(path, since, until, errors):
     except (OSError, sqlite3.Error) as exc:
         errors.append(f"store: {type(exc).__name__}")
     if path == Path.home() / ".agent-lb/store.db" and not any(r.get("provider") == "anthropic" for r in usage):
-
-
-        query = "SELECT json_agg(r) FROM (SELECT account_id,provider,\"window\",recorded_at,used_percent,reset_at "
+        query = 'SELECT json_agg(r) FROM (SELECT account_id,provider,"window",recorded_at,used_percent,reset_at '
         query += "FROM usage_history WHERE \"window\" IN ('secondary','weekly','7d') "
         query += "AND recorded_at < '" + until.isoformat() + "' ORDER BY recorded_at) r;"
-        raw = command(["psql", "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb?connect_timeout=5",
-                       "-w", "-At", "-c", query],
-                      errors, "live quota")
+        raw = command(
+            [
+                "psql",
+                "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb?connect_timeout=5",
+                "-w",
+                "-At",
+                "-c",
+                query,
+            ],
+            errors,
+            "live quota",
+        )
         try:
             live = json.loads(raw) if raw.strip() else []
             if live:
@@ -146,9 +167,19 @@ def store(path, since, until, errors):
         query = "SELECT json_agg(r) FROM (SELECT requested_at,session_id,client_session_id,account_id,provider,model,"
         query += "input_tokens,output_tokens,cache_read_tokens,cost_usd FROM request_logs WHERE requested_at >= '"
         query += since.isoformat() + "' AND requested_at < '" + until.isoformat() + "') r;"
-        raw = command(["psql", "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb?connect_timeout=5",
-                       "-w", "-At", "-c", query],
-                      errors, "live requests", timeout=90)
+        raw = command(
+            [
+                "psql",
+                "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb?connect_timeout=5",
+                "-w",
+                "-At",
+                "-c",
+                query,
+            ],
+            errors,
+            "live requests",
+            timeout=90,
+        )
         try:
             live = json.loads(raw) if raw.strip() else []
             if live:
@@ -190,9 +221,10 @@ def quota_points(requests, usage, since, errors=None):
         if start < since:
             continue
         times = account_times.get((key[0], key[1]), [])
-        candidates = accounts[(key[0], key[1])][bisect_right(times, start):bisect_right(times, stamp)]
-        weights = [sum(number(r.get(k)) for k in ("input_tokens", "output_tokens", "cache_read_tokens"))
-                   for r in candidates]
+        candidates = accounts[(key[0], key[1])][bisect_right(times, start) : bisect_right(times, stamp)]
+        weights = [
+            sum(number(r.get(k)) for k in ("input_tokens", "output_tokens", "cache_read_tokens")) for r in candidates
+        ]
         total = sum(weights)
         burn = max(0, number(sample["used_percent"]) - number(before["used_percent"]))
         if total:
@@ -204,9 +236,19 @@ def quota_points(requests, usage, since, errors=None):
 
 def prs(since, until, errors):
     args = [
-        "gh", "pr", "list", "--repo", "shelf-group/agent-rails", "--state", "merged", "--search",
-        "merged:>=" + (since - timedelta(hours=48)).strftime("%Y-%m-%d"), "--limit", "1000",
-        "--json", "number,title,mergedAt,headRefName",
+        "gh",
+        "pr",
+        "list",
+        "--repo",
+        "shelf-group/agent-rails",
+        "--state",
+        "merged",
+        "--search",
+        "merged:>=" + (since - timedelta(hours=48)).strftime("%Y-%m-%d"),
+        "--limit",
+        "1000",
+        "--json",
+        "number,title,mergedAt,headRefName",
     ]
     payload = []
     for attempt in range(2):
@@ -226,8 +268,11 @@ def prs(since, until, errors):
 
     def comments(pr):
         failures = []
-        raw = document(["gh", "api", f"repos/shelf-group/agent-rails/issues/{pr['number']}/comments",
-                        "--paginate", "--slurp"], failures, "PR comments")
+        raw = document(
+            ["gh", "api", f"repos/shelf-group/agent-rails/issues/{pr['number']}/comments", "--paginate", "--slurp"],
+            failures,
+            "PR comments",
+        )
         found = []
         for page in raw if isinstance(raw, list) else []:
             for comment in page if isinstance(page, list) else []:
@@ -249,9 +294,22 @@ def prs(since, until, errors):
     clone = Path("/Volumes/StudioExt/repos/agent-rails")
     git = "/opt/homebrew/bin/git" if Path("/opt/homebrew/bin/git").exists() else "git"
     command([git, "-C", str(clone), "fetch", "-q"], errors, "revert fetch", timeout=90)
-    raw = command([git, "-C", str(clone), "log", "origin/main", "--grep=^Revert",
-                   "--since=" + since.isoformat(), "--until=" + until.isoformat(),
-                   "--format=%cI%x09%B%x00"], errors, "revert log", timeout=90)
+    raw = command(
+        [
+            git,
+            "-C",
+            str(clone),
+            "log",
+            "origin/main",
+            "--grep=^Revert",
+            "--since=" + since.isoformat(),
+            "--until=" + until.isoformat(),
+            "--format=%cI%x09%B%x00",
+        ],
+        errors,
+        "revert log",
+        timeout=90,
+    )
     for record in raw.split("\0"):
         if "\t" not in record:
             continue
@@ -261,16 +319,20 @@ def prs(since, until, errors):
             continue
         original_prs = {int(n) for n in re.findall(r"(?:#|/pull/)(\d+)\b", text)}
         for sha in re.findall(r"This reverts commit ([0-9a-f]{40})", text):
-            subject = command([git, "-C", str(clone), "show", "-s", "--format=%s", sha],
-                              errors, "reverted commit")
+            subject = command([git, "-C", str(clone), "show", "-s", "--format=%s", sha], errors, "reverted commit")
             original_prs.update(int(n) for n in re.findall(r"#(\d+)\b", subject))
         reverts.extend({"pr": pr, "ts": stamp.isoformat()} for pr in original_prs)
-    if any((failure.startswith("PR comments:") or failure.startswith("PR list:"))
-           and "row limit" not in failure for failure in errors):
+    if any(
+        (failure.startswith("PR comments:") or failure.startswith("PR list:")) and "row limit" not in failure
+        for failure in errors
+    ):
         errors.append("verdict fallback: queue_pr.py stores verdicts in GitHub issue comments, not a local store")
 
-    return verdicts, [{"number": p["number"], "mergedAt": p.get("mergedAt"),
-                       "headRefName": p.get("headRefName")} for p in entries], reverts
+    return (
+        verdicts,
+        [{"number": p["number"], "mergedAt": p.get("mergedAt"), "headRefName": p.get("headRefName")} for p in entries],
+        reverts,
+    )
 
 
 ACCEPTED_OUTCOMES = ("accepted", "held_pass", "override")
@@ -350,14 +412,26 @@ def summarize_outcomes(records):
                 fix_rounds += number(item.get("fix_rounds"))
                 overrides += outcome == "override"
         counted = accepted + rejected
-        rungs.append(dict(
-            seat=seat, model=model, job=kind, pieces=len(items), accepted=accepted, overrides=overrides,
-            rejected=rejected, infra_blocked=infra, dropped=dropped, acceptance_observed=counted,
-            accepted_rate=accepted / counted if counted else None, fix_rounds=fix_rounds,
-            fix_rounds_per_accepted=fix_rounds / accepted if accepted else None,
-            median_wall_s=_median(walls),
-            multi_attempt=multi, acceptance_source="outcomes",
-        ))
+        rungs.append(
+            dict(
+                seat=seat,
+                model=model,
+                job=kind,
+                pieces=len(items),
+                accepted=accepted,
+                overrides=overrides,
+                rejected=rejected,
+                infra_blocked=infra,
+                dropped=dropped,
+                acceptance_observed=counted,
+                accepted_rate=accepted / counted if counted else None,
+                fix_rounds=fix_rounds,
+                fix_rounds_per_accepted=fix_rounds / accepted if accepted else None,
+                median_wall_s=_median(walls),
+                multi_attempt=multi,
+                acceptance_source="outcomes",
+            )
+        )
     return sorted(rungs, key=lambda row: (row["job"], row["seat"], row["model"]))
 
 
@@ -403,8 +477,11 @@ def row_matches_rung(row, rung):
 def _matching_rungs(rungs, rung, kind):
     if isinstance(rung, dict):
         return [row for row in rungs if (row.get("job") or "implement") == kind and row_matches_rung(row, rung)]
-    return [row for row in rungs if row["job"] == kind and rung in (
-        row["model"], row["seat"], f"{row['seat']}/{row['model']}")]
+    return [
+        row
+        for row in rungs
+        if row["job"] == kind and rung in (row["model"], row["seat"], f"{row['seat']}/{row['model']}")
+    ]
 
 
 def _combine_rungs(matches):
@@ -413,13 +490,16 @@ def _combine_rungs(matches):
     fix_rounds = sum(row["fix_rounds"] for row in matches)
     walls = [row["median_wall_s"] for row in matches if row["median_wall_s"] is not None]
     return dict(
-        pieces=sum(row["pieces"] for row in matches), accepted=accepted,
+        pieces=sum(row["pieces"] for row in matches),
+        accepted=accepted,
         overrides=sum(row["overrides"] for row in matches),
         rejected=sum(row["rejected"] for row in matches),
         infra_blocked=sum(row["infra_blocked"] for row in matches),
         dropped=sum(row.get("dropped", 0) for row in matches),
-        acceptance_observed=observed, accepted_rate=accepted / observed if observed else None,
-        fix_rounds=fix_rounds, fix_rounds_per_accepted=fix_rounds / accepted if accepted else None,
+        acceptance_observed=observed,
+        accepted_rate=accepted / observed if observed else None,
+        fix_rounds=fix_rounds,
+        fix_rounds_per_accepted=fix_rounds / accepted if accepted else None,
         median_wall_s=sum(walls) / len(walls) if walls else None,
         multi_attempt=sum(row.get("multi_attempt", 0) for row in matches),
     )
@@ -452,15 +532,18 @@ def _outcome_proposals(rungs, ladder):
                 chosen.append(None)
                 continue
             combined = _combine_rungs(matches)
-            chosen.append(combined if combined["accepted_rate"] is not None and combined["median_wall_s"] is not None
-                          else None)
+            chosen.append(
+                combined if combined["accepted_rate"] is not None and combined["median_wall_s"] is not None else None
+            )
         for index, upper in enumerate(order):
-            for lower_index, lower in enumerate(order[index + 1:], start=index + 1):
+            for lower_index, lower in enumerate(order[index + 1 :], start=index + 1):
                 slower, faster = chosen[lower_index], chosen[index]
                 if not slower or not faster:
                     continue
-                if (slower["accepted_rate"] >= faster["accepted_rate"] - 1 / 6
-                        and slower["median_wall_s"] <= 1.10 * faster["median_wall_s"]):
+                if (
+                    slower["accepted_rate"] >= faster["accepted_rate"] - 1 / 6
+                    and slower["median_wall_s"] <= 1.10 * faster["median_wall_s"]
+                ):
                     result.append(
                         f"propose: move {_rung_name(lower)} above {_rung_name(upper)} ({kind}; "
                         f"accepted {slower['accepted']}/{slower['acceptance_observed']} vs "
@@ -493,6 +576,7 @@ def fold_acceptance(home, runs, errors):
             payload = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
+
         def walk(value):
             if isinstance(value, list):
                 for child in value:
@@ -501,16 +585,25 @@ def fold_acceptance(home, runs, errors):
                 outcome = value.get("latest_verdict", value.get("verdict"))
                 if isinstance(outcome, dict):
                     outcome = outcome.get("pass")
-                accepted = (outcome is True or str(outcome).upper() == "PASS")
+                accepted = outcome is True or str(outcome).upper() == "PASS"
                 known = isinstance(outcome, bool) or str(outcome).upper() in ("PASS", "FAIL")
                 cwd = value.get("worktree", value.get("cwd"))
-                candidates = [r for r in runs if job(r) == "implement" and (
-                    (cwd and r.get("cwd") == cwd and stamp and
-                     abs((date(r["ts"]) - stamp).total_seconds()) <= 86400)
-                    or (session and r.get("session_id") == session and not cwd))]
+                candidates = [
+                    r
+                    for r in runs
+                    if job(r) == "implement"
+                    and (
+                        (
+                            cwd
+                            and r.get("cwd") == cwd
+                            and stamp
+                            and abs((date(r["ts"]) - stamp).total_seconds()) <= 86400
+                        )
+                        or (session and r.get("session_id") == session and not cwd)
+                    )
+                ]
                 if known and candidates:
-                    run = min(candidates, key=lambda r: abs((date(r["ts"]) - stamp).total_seconds())
-                              if stamp else 0)
+                    run = min(candidates, key=lambda r: abs((date(r["ts"]) - stamp).total_seconds()) if stamp else 0)
                     run["accepted"] = accepted
                     run["acceptance_source"] = "fold"
                     run["fix_rounds"] = number(value.get("fix_rounds"))
@@ -518,6 +611,7 @@ def fold_acceptance(home, runs, errors):
                 for key in ("pieces", "results", "units"):
                     if key in value:
                         walk(value[key])
+
         walk(payload)
     return len(matched)
 
@@ -533,8 +627,11 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, er
     for request in requests:
         request_models[request.get("model")].append(request)
         receipt_counts[(request.get("client_session_id") or request.get("session_id"), request.get("model"))] += 1
-    fleet_spend = sum(number(r.get("cost_usd")) for r in requests
-                      if r.get("provider") == "anthropic" and since <= date(r["requested_at"]) < until)
+    fleet_spend = sum(
+        number(r.get("cost_usd"))
+        for r in requests
+        if r.get("provider") == "anthropic" and since <= date(r["requested_at"]) < until
+    )
     fleet_weekly = 0.0
     previous = {}
     for sample in usage:
@@ -542,8 +639,12 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, er
         before = previous.get(key)
         previous[key] = sample
         stamp = date(sample["recorded_at"])
-        if (before and sample["provider"] == "anthropic" and since <= stamp < until
-                and before["reset_at"] == sample["reset_at"]):
+        if (
+            before
+            and sample["provider"] == "anthropic"
+            and since <= stamp < until
+            and before["reset_at"] == sample["reset_at"]
+        ):
             fleet_weekly += max(0, number(sample["used_percent"]) - number(before["used_percent"]))
     by_pr = defaultdict(list)
     for row in verdicts:
@@ -553,12 +654,27 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, er
     merges = {p["number"]: date(p.get("mergedAt")) for p in merged}
     for run in selected:
         model, kind = label(run.get("rung") or run.get("model")), job(run)
-        row = groups.setdefault((model, kind), dict(
-            model=model, job=kind, runs=0, finished=0, accepted=0, acceptance_observed=0, redone=0,
-            fix_rounds=0, review_fails=0, reverted_48h=0, minutes=0.0, claude_weekly_points=0.0,
-            openai_weekly_points=0.0, cursor_envelope_tokens=0.0, devin_envelope_tokens=0.0,
-            anthropic_spend_usd=0.0,
-        ))
+        row = groups.setdefault(
+            (model, kind),
+            dict(
+                model=model,
+                job=kind,
+                runs=0,
+                finished=0,
+                accepted=0,
+                acceptance_observed=0,
+                redone=0,
+                fix_rounds=0,
+                review_fails=0,
+                reverted_48h=0,
+                minutes=0.0,
+                claude_weekly_points=0.0,
+                openai_weekly_points=0.0,
+                cursor_envelope_tokens=0.0,
+                devin_envelope_tokens=0.0,
+                anthropic_spend_usd=0.0,
+            ),
+        )
         row["runs"] += 1
         row["finished"] += run.get("ok") is True
         row["minutes"] += number(run.get("wall_s")) / 60
@@ -566,11 +682,17 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, er
         seat = run.get("agent_type") or run.get("subagent_type") or run.get("name")
         ended = stamp + timedelta(seconds=number(run.get("wall_s")))
         rejected = run.get("accepted") is False or ("accepted" not in run and run.get("ok") is False)
-        row["redone"] += bool(cwd and rejected and any(
-            other.get("cwd") == cwd and job(other) == kind
-            and (other.get("agent_type") or other.get("subagent_type") or other.get("name")) == seat
-            and 0 < (date(other["ts"]) - ended).total_seconds() <= 3600 for other in runs
-        ))
+        row["redone"] += bool(
+            cwd
+            and rejected
+            and any(
+                other.get("cwd") == cwd
+                and job(other) == kind
+                and (other.get("agent_type") or other.get("subagent_type") or other.get("name")) == seat
+                and 0 < (date(other["ts"]) - ended).total_seconds() <= 3600
+                for other in runs
+            )
+        )
         if isinstance(run.get("accepted"), bool):
             row["acceptance_observed"] += 1
             row["accepted"] += run["accepted"]
@@ -578,16 +700,17 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, er
         sid = run.get("session_id")
         quota = points.get((sid, run.get("model")), {})
         if not quota:
-
-
             matching = []
             for request in request_models[run.get("model")]:
                 request_stamp = date(request["requested_at"])
                 if request.get("model") != run.get("model") or not stamp <= request_stamp <= ended:
                     continue
-                contenders = [r for r in selected if r.get("model") == run.get("model")
-                              and date(r["ts"]) <= request_stamp <= date(r["ts"]) +
-                              timedelta(seconds=number(r.get("wall_s")))]
+                contenders = [
+                    r
+                    for r in selected
+                    if r.get("model") == run.get("model")
+                    and date(r["ts"]) <= request_stamp <= date(r["ts"]) + timedelta(seconds=number(r.get("wall_s")))
+                ]
                 if contenders:
                     matching.append((request, len(contenders)))
             allocated = defaultdict(float)
@@ -597,9 +720,12 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, er
                     allocated[provider] += amount / max(1, receipt_counts[(request_sid, request.get("model"))]) / count
             quota = allocated
         row["anthropic_spend_usd"] += sum(
-            number(r.get("cost_usd")) for r in requests if r.get("provider") == "anthropic"
+            number(r.get("cost_usd"))
+            for r in requests
+            if r.get("provider") == "anthropic"
             and (r.get("client_session_id") or r.get("session_id")) == sid
-            and r.get("model") == run.get("model") and since <= date(r["requested_at"]) < until
+            and r.get("model") == run.get("model")
+            and since <= date(r["requested_at"]) < until
         )
         row["claude_weekly_points"] += quota.get("anthropic", 0)
         row["openai_weekly_points"] += quota.get("openai", 0)
@@ -611,14 +737,24 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, er
     for pr, items in by_pr.items():
         items.sort(key=lambda item: date(item["ts"]))
         sessions = {v.get("session_id") or v.get("session") for v in items} - {None}
-        authors = [r for r in selected if job(r) != "review" and (
-            str(r.get("pr", r.get("pr_number"))) == str(pr) or r.get("session_id") in sessions)]
+        authors = [
+            r
+            for r in selected
+            if job(r) != "review"
+            and (str(r.get("pr", r.get("pr_number"))) == str(pr) or r.get("session_id") in sessions)
+        ]
         for item in items:
             if not since <= date(item["ts"]) < until:
                 continue
-            reviewers = [r for r in selected if job(r) == "review" and (
-                str(r.get("pr", r.get("pr_number"))) == str(pr)
-                or (item.get("session_id") and r.get("session_id") == item["session_id"]))]
+            reviewers = [
+                r
+                for r in selected
+                if job(r) == "review"
+                and (
+                    str(r.get("pr", r.get("pr_number"))) == str(pr)
+                    or (item.get("session_id") and r.get("session_id") == item["session_id"])
+                )
+            ]
             if item.get("pass") is False and reviewers:
                 groups[reviewers[-1]["_group"]]["review_fails"] += 1
         if not authors:
@@ -628,12 +764,16 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, er
         if outcomes and "accepted" not in authors[-1]:
             group["acceptance_observed"] += 1
             group["accepted"] += outcomes[-1]["pass"] is True
-            group["fix_rounds"] += sum(a["pass"] is False and b["pass"] is True
-                                      for a, b in zip(outcomes, outcomes[1:]) if since <= date(b["ts"]) < until)
+            group["fix_rounds"] += sum(
+                a["pass"] is False and b["pass"] is True
+                for a, b in zip(outcomes, outcomes[1:])
+                if since <= date(b["ts"]) < until
+            )
         merge = merges.get(pr)
-        group["reverted_48h"] += bool(merge and any(
-            r["pr"] == pr and timedelta(0) <= date(r["ts"]) - merge <= timedelta(hours=48) for r in reverts
-        ))
+        group["reverted_48h"] += bool(
+            merge
+            and any(r["pr"] == pr and timedelta(0) <= date(r["ts"]) - merge <= timedelta(hours=48) for r in reverts)
+        )
     for row in groups.values():
         for field in ("minutes", "claude_weekly_points", "openai_weekly_points"):
             row[field + "_per_finished"] = row[field] / row["finished"] if row["finished"] else None
@@ -658,20 +798,30 @@ def proposals(rows, ladder, outcome_rungs=None):
     result = []
     for kind in ("implement", "mechanical"):
         order = [_rung_name(item) for item in ladder.get(kind, [])]
-        eligible = {r["model"]: r for r in rows if r["job"] == kind and r["finished"] >= 6
-                    and r["acceptance_observed"] >= 6 and r["accepted_rate"] is not None}
+        eligible = {
+            r["model"]: r
+            for r in rows
+            if r["job"] == kind
+            and r["finished"] >= 6
+            and r["acceptance_observed"] >= 6
+            and r["accepted_rate"] is not None
+        }
         for i, upper in enumerate(order):
-            for lower in order[i + 1:]:
+            for lower in order[i + 1 :]:
                 a, b = eligible.get(lower), eligible.get(upper)
                 if not a or not b:
                     continue
-                if (a["accepted_rate"] >= b["accepted_rate"] - 1 / 6
-                        and a["minutes_per_finished"] <= 1.10 * b["minutes_per_finished"]):
-                    result.append(f"propose: move {lower} above {upper} ({kind}; "
-                                  f"accepted {a['accepted']}/{a['acceptance_observed']} vs "
-                                  f"{b['accepted']}/{b['acceptance_observed']}; "
-                                  f"minutes/finished {a['minutes_per_finished']:.2f} vs "
-                                  f"{b['minutes_per_finished']:.2f})")
+                if (
+                    a["accepted_rate"] >= b["accepted_rate"] - 1 / 6
+                    and a["minutes_per_finished"] <= 1.10 * b["minutes_per_finished"]
+                ):
+                    result.append(
+                        f"propose: move {lower} above {upper} ({kind}; "
+                        f"accepted {a['accepted']}/{a['acceptance_observed']} vs "
+                        f"{b['accepted']}/{b['acceptance_observed']}; "
+                        f"minutes/finished {a['minutes_per_finished']:.2f} vs "
+                        f"{b['minutes_per_finished']:.2f})"
+                    )
     return result or ["no change"]
 
 
@@ -692,12 +842,32 @@ def stand_ins(path, since, until, errors):
 
 
 def render(report):
-    columns = ("model", "job", "runs", "finished", "accepted", "redone", "fix_rounds", "review_fails",
-               "reverted_48h", "minutes_per_finished", "claude_weekly_points_per_finished",
-               "claude_weekly_points_status", "claude_weekly_points_fleet_estimate",
-               "openai_weekly_points_per_finished", "cursor_envelope_tokens", "devin_envelope_tokens")
-    lines = ["# Routing daily audit", "", report["line"], "", "| " + " | ".join(columns) + " |",
-             "| " + " | ".join("---" for _ in columns) + " |"]
+    columns = (
+        "model",
+        "job",
+        "runs",
+        "finished",
+        "accepted",
+        "redone",
+        "fix_rounds",
+        "review_fails",
+        "reverted_48h",
+        "minutes_per_finished",
+        "claude_weekly_points_per_finished",
+        "claude_weekly_points_status",
+        "claude_weekly_points_fleet_estimate",
+        "openai_weekly_points_per_finished",
+        "cursor_envelope_tokens",
+        "devin_envelope_tokens",
+    )
+    lines = [
+        "# Routing daily audit",
+        "",
+        report["line"],
+        "",
+        "| " + " | ".join(columns) + " |",
+        "| " + " | ".join("---" for _ in columns) + " |",
+    ]
     for row in report["rows"]:
         lines.append("| " + " | ".join(str(row[k]) if row[k] is not None else "unverified" for k in columns) + " |")
     lines += ["", "## Rolling 7-day ladder", "", *report["proposals"], ""]
@@ -729,18 +899,20 @@ def write_outputs(report, out, page):
             history.append(item)
         except (OSError, ValueError):
             continue
-    body = "".join("<tr><td>" + html.escape(r["until"][:10]) + "</td><td>" + html.escape(r["line"])
-                   + "</td></tr>" for r in history)
+    body = "".join(
+        "<tr><td>" + html.escape(r["until"][:10]) + "</td><td>" + html.escape(r["line"]) + "</td></tr>" for r in history
+    )
     latest = history[0] if history else report
     page.parent.mkdir(parents=True, exist_ok=True)
-    page.write_text('<!doctype html><html lang="en"><meta charset="utf-8">'
-                    '<meta name="viewport" content="width=device-width,initial-scale=1">'
-                    '<title>Routing daily audit</title><link rel="stylesheet" href="_themes/agent-rails.css">'
-                    '<style>body{max-width:1200px;margin:40px auto;padding:20px}pre{white-space:pre-wrap}'
-                    'td,th{padding:12px;text-align:left;border-bottom:1px solid #ccc}</style><main>'
-                    '<h1>Routing daily audit</h1><pre>' + html.escape(render(latest)) + '</pre>'
-                    '<h2>14-day history</h2><table><tr><th>Day</th><th>Score</th></tr>'
-                    + body + '</table></main></html>')
+    page.write_text(
+        '<!doctype html><html lang="en"><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Routing daily audit</title><link rel="stylesheet" href="_themes/agent-rails.css">'
+        "<style>body{max-width:1200px;margin:40px auto;padding:20px}pre{white-space:pre-wrap}"
+        "td,th{padding:12px;text-align:left;border-bottom:1px solid #ccc}</style><main>"
+        "<h1>Routing daily audit</h1><pre>" + html.escape(render(latest)) + "</pre>"
+        "<h2>14-day history</h2><table><tr><th>Day</th><th>Score</th></tr>" + body + "</table></main></html>"
+    )
 
 
 def _zulu(value):
@@ -807,14 +979,19 @@ def daily_report(report, outcome_records_for_day, rungs, percent, errors):
     pinned = _keyed_count(records, implement, "pinned", lambda row: row.get("pinned") is True)
     pins_ignored = _keyed_count(records, implement, "pin_ignored", lambda row: row.get("pin_ignored") is True)
     fell_back = _keyed_count(
-        records, implement, "first_seat",
-        lambda row: row.get("first_seat") is not None and row.get("first_seat") != row.get("seat"))
+        records,
+        implement,
+        "first_seat",
+        lambda row: row.get("first_seat") is not None and row.get("first_seat") != row.get("seat"),
+    )
     if n == 0:
         line = "No fold code pieces finished in the window."
     else:
         model = (head_rung or {}).get("resolved") or (head_rung or {}).get("model")
-        line = (f"{head} of {n} fold code pieces ran on {_head_label(model)}, "
-                f"{sol} on Sol, {claude} on Claude; {head_accepted} of {head_observed} accepted.")
+        line = (
+            f"{head} of {n} fold code pieces ran on {_head_label(model)}, "
+            f"{sol} on Sol, {claude} on Claude; {head_accepted} of {head_observed} accepted."
+        )
     ratio = (sol + claude) / n if n else 0
     ladder_unread = any("ladder ordering: unavailable" in str(item) for item in errors)
     if n >= 10 and ratio > 0.5:
@@ -873,7 +1050,9 @@ def write_daily_report(payload, path, errors):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Read-only daily routing observations; proposals never change the ladder.')
+    parser = argparse.ArgumentParser(
+        description="Read-only daily routing observations; proposals never change the ladder."
+    )
     parser.add_argument("--since")
     parser.add_argument("--until")
     parser.add_argument("--out", type=Path)
@@ -903,33 +1082,38 @@ def main():
         table = json.loads((home / ".agents/policy/coding-agents/routing-table.json").read_text())
         for kind in ("implement", "mechanical"):
             rungs = table.get("ladders", {}).get(table.get("ladder", "interim"), {}).get(kind, [])
-            ladder[kind] = resolve_rungs(
-                [r for r in rungs if isinstance(r, dict) and r.get("id")], errors)
+            ladder[kind] = resolve_rungs([r for r in rungs if isinstance(r, dict) and r.get("id")], errors)
             for run in runs:
                 if job(run) != kind or run.get("rung"):
                     continue
                 model = str(run.get("model", ""))
                 effort = run.get("effort") or run.get("reasoning_effort")
                 if not effort:
-                    effort = next((e for e in ("low", "medium", "high", "xhigh")
-                                   if model.endswith("-" + e)), None)
+                    effort = next((e for e in ("low", "medium", "high", "xhigh") if model.endswith("-" + e)), None)
                 family = next((f for f in ("sol", "grok", "composer", "swe", "sonnet") if f in model), None)
-                candidates = [r for r in rungs if isinstance(r, dict) and family
-                              and family in str(r.get("model", "")) and r.get("effort") == effort]
+                candidates = [
+                    r
+                    for r in rungs
+                    if isinstance(r, dict)
+                    and family
+                    and family in str(r.get("model", ""))
+                    and r.get("effort") == effort
+                ]
                 if len(candidates) == 1:
                     run["rung"] = candidates[0]["id"]
     except (OSError, ValueError, AttributeError):
         errors.append("ladder ordering: unavailable")
     outcomes_source, outcome_records = load_outcomes(
-        home / ".agent-lb/audits/routing/outcomes.jsonl", min(since, rolling), until, errors)
+        home / ".agent-lb/audits/routing/outcomes.jsonl", min(since, rolling), until, errors
+    )
     day_records = [row for row in outcome_records if since <= date(row["ts"]) < until]
     et_day = until.astimezone(ZoneInfo("America/New_York")).date().isoformat()
     report_root = args.out if args.out else home / ".agent-rails/factory"
 
     try:
         payload = daily_report(
-            {"since": since.isoformat(), "until": until.isoformat()},
-            day_records, ladder, percent, list(errors))
+            {"since": since.isoformat(), "until": until.isoformat()}, day_records, ladder, percent, list(errors)
+        )
         write_daily_report(payload, report_root / "daily" / et_day / "routing.json", errors)
     except Exception as exc:
         errors.append(f"daily report: {type(exc).__name__}")
@@ -947,34 +1131,49 @@ def main():
     usage = timestamp_rows(usage, "recorded_at", "usage", errors)
     rows = summarize(runs, verdicts, merges, reverts, requests, usage, since, until)
     week = summarize(runs, verdicts, merges, reverts, requests, usage, rolling, until)
-    daily_rungs = summarize_outcomes(
-        [row for row in outcome_records if since <= date(row["ts"]) < until])
-    rolling_rungs = summarize_outcomes(
-        [row for row in outcome_records if rolling <= date(row["ts"]) < until])
+    daily_rungs = summarize_outcomes([row for row in outcome_records if since <= date(row["ts"]) < until])
+    rolling_rungs = summarize_outcomes([row for row in outcome_records if rolling <= date(row["ts"]) < until])
     overlay_outcomes(rows, daily_rungs)
     overlay_outcomes(week, rolling_rungs)
-    proposal = (proposals(week, ladder, outcome_rungs=rolling_rungs)
-                if outcomes_source == "outcomes" else proposals(week, ladder))
+    proposal = (
+        proposals(week, ladder, outcome_rungs=rolling_rungs)
+        if outcomes_source == "outcomes"
+        else proposals(week, ladder)
+    )
     swaps = stand_ins(home / ".agent-lb/agent-lb.out.log", since, until, errors)
     errors.append("stand-in events: current server does not emit swap/return log lines; counts unverified")
     observed = sum(r["acceptance_observed"] for r in rows)
     total_runs = sum(r["runs"] for r in rows)
-    notes = [f"Acceptance join rate: {observed}/{total_runs} daily runs; {joined} rolling runs joined to fold results.",
-             "Execution ok is not acceptance; missing PR attribution cannot earn a ladder move.",
-             "Redone is the same-worktree, same-job 60-minute heuristic, not proof of rejection.",
-             "Weekly points are token-weighted positive same-reset snapshot deltas, not exact per-run quota.",
-             "Missing quota attribution is unverified; zero attributed points is not proof of zero consumption.",
-             "Recent merges have not completed their 48-hour revert observation window."]
+    notes = [
+        f"Acceptance join rate: {observed}/{total_runs} daily runs; {joined} rolling runs joined to fold results.",
+        "Execution ok is not acceptance; missing PR attribution cannot earn a ladder move.",
+        "Redone is the same-worktree, same-job 60-minute heuristic, not proof of rejection.",
+        "Weekly points are token-weighted positive same-reset snapshot deltas, not exact per-run quota.",
+        "Missing quota attribution is unverified; zero attributed points is not proof of zero consumption.",
+        "Recent merges have not completed their 48-hour revert observation window.",
+    ]
     if until.weekday() == 0:
         notes.append("Monday: recalibrate Cursor-models percent against the Cursor dashboard (retests 5 and 6).")
-    line = (f"routing audit {until:%Y-%m-%d}: {sum(r['finished'] for r in rows)}/{sum(r['runs'] for r in rows)} "
-            f"finished; swaps {swaps['swaps']}/{swaps['swap_backs']}; cursor-models "
-            f"{percent if percent is not None else 'unverified'}%; {'; '.join(proposal)}; "
-            f"unverified sources {len(errors)}")
-    report = dict(since=since.isoformat(), until=until.isoformat(), rows=rows, rolling_7d=week,
-                  proposals=proposal, stand_ins=swaps, cursor_models_percent=percent,
-                  notes=notes, errors=errors, line=line, outcomes_source=outcomes_source,
-                  outcome_rungs=daily_rungs)
+    line = (
+        f"routing audit {until:%Y-%m-%d}: {sum(r['finished'] for r in rows)}/{sum(r['runs'] for r in rows)} "
+        f"finished; swaps {swaps['swaps']}/{swaps['swap_backs']}; cursor-models "
+        f"{percent if percent is not None else 'unverified'}%; {'; '.join(proposal)}; "
+        f"unverified sources {len(errors)}"
+    )
+    report = dict(
+        since=since.isoformat(),
+        until=until.isoformat(),
+        rows=rows,
+        rolling_7d=week,
+        proposals=proposal,
+        stand_ins=swaps,
+        cursor_models_percent=percent,
+        notes=notes,
+        errors=errors,
+        line=line,
+        outcomes_source=outcomes_source,
+        outcome_rungs=daily_rungs,
+    )
     out = args.out or home / ".agent-lb/audits/routing"
 
     page = out / "routing-daily-audit.html" if args.out else home / ".claude/pretty-docs/routing-daily-audit.html"
@@ -986,8 +1185,25 @@ def main():
         errors.append(f"daily report: {type(exc).__name__}")
     if args.post:
         before = len(errors)
-        command(["lane-post", "post", "--to", "w5H:pNE", "--from", "routing-audit", "--kind", "info",
-                 "--topic", "routing-audit", "--wake", "never", line], errors, "lane-post")
+        command(
+            [
+                "lane-post",
+                "post",
+                "--to",
+                "w5H:pNE",
+                "--from",
+                "routing-audit",
+                "--kind",
+                "info",
+                "--topic",
+                "routing-audit",
+                "--wake",
+                "never",
+                line,
+            ],
+            errors,
+            "lane-post",
+        )
         if len(errors) != before:
             write_outputs(report, out, page)
     print(line)

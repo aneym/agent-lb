@@ -14,8 +14,6 @@ class OpenAIErrorDetail(TypedDict, total=False):
     resets_at: int | float
     resets_in_seconds: int | float
 
-
-
     diagnostics: dict
 
 
@@ -99,7 +97,6 @@ def is_previous_response_not_found_error(
         return True
     if code != "invalid_request_error":
         return False
-
 
     if param in (None, "previous_response_id") and message is not None:
         if " ".join(message.lower().split()) == "invalid `previous_response_id`.":

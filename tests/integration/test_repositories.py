@@ -459,12 +459,6 @@ async def test_accounts_upsert_merge_by_chatgpt_identity_reuses_deactivated_row(
         reauth.plan_type = "team"
         saved = await repo.upsert(reauth, merge_by_email=False, merge_by_chatgpt_identity=True)
 
-
-
-
-
-
-
         assert saved.id == "acc_canonical"
         assert saved.plan_type == "team"
         assert saved.status == AccountStatus.ACTIVE
@@ -493,8 +487,6 @@ async def test_accounts_upsert_merge_by_chatgpt_identity_picks_oldest_canonical(
         reauth = _make_account_with_chatgpt_id("acc_first", "shared@example.com", "chatgpt_dup")
         reauth.plan_type = "team"
         saved = await repo.upsert(reauth, merge_by_email=False, merge_by_chatgpt_identity=True)
-
-
 
         assert saved.id == "acc_first"
         assert saved.plan_type == "team"
@@ -809,7 +801,6 @@ async def test_accounts_upsert_merge_by_chatgpt_identity_creates_when_missing(db
 @pytest.mark.asyncio
 async def test_accounts_upsert_merge_by_chatgpt_identity_skips_without_upstream_id(db_setup):
 
-
     async with SessionLocal() as session:
         repo = AccountsRepository(session)
 
@@ -819,8 +810,6 @@ async def test_accounts_upsert_merge_by_chatgpt_identity_skips_without_upstream_
         again = _make_account("acc_no_id", "noid@example.com")
         again.plan_type = "team"
         saved = await repo.upsert(again, merge_by_email=False, merge_by_chatgpt_identity=True)
-
-
 
         assert saved.id.startswith("acc_no_id__copy")
 

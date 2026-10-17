@@ -7,7 +7,6 @@ TEAM_WINDOWS: tuple[str, ...] = ("day", "week", "month")
 
 def window_start(window: str, now: datetime) -> datetime:
 
-
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if window == "day":
         return midnight
@@ -19,7 +18,6 @@ def window_start(window: str, now: datetime) -> datetime:
 
 
 def window_end(window: str, now: datetime) -> datetime:
-
 
     start = window_start(window, now)
     if window == "day":

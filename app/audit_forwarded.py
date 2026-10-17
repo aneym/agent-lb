@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import argparse
@@ -21,7 +19,11 @@ def arguments(parser):
 
 
 def add_parser(commands):
-    arguments(commands.add_parser("forwarded", help='Compare requested values with logged forwarded values, not upstream confirmation.'))
+    arguments(
+        commands.add_parser(
+            "forwarded", help="Compare requested values with logged forwarded values, not upstream confirmation."
+        )
+    )
 
 
 def database_url():
@@ -37,9 +39,7 @@ def resolved_model(model):
     from app.modules.proxy.request_policy import resolve_model_alias
 
     if "-latest" in model:
-        result = subprocess.run(
-            ["route", "resolve", model], capture_output=True, text=True, timeout=30, check=True
-        )
+        result = subprocess.run(["route", "resolve", model], capture_output=True, text=True, timeout=30, check=True)
         model = result.stdout.strip()
         if not model or len(model.split()) != 1:
             raise ValueError("Model alias could not be resolved.")
@@ -61,7 +61,9 @@ def run(args):
         from psycopg.rows import dict_row
 
         with psycopg.connect(
-            database_url(), connect_timeout=10, row_factory=dict_row,
+            database_url(),
+            connect_timeout=10,
+            row_factory=dict_row,
             options="-c default_transaction_read_only=on -c statement_timeout=90000",
         ) as connection:
             with connection.cursor() as cursor:
@@ -74,12 +76,25 @@ def run(args):
                 )
                 forwarded = cursor.fetchall()
         rows = sum(row["count"] for row in forwarded)
-        outcome = "unknown" if not rows else (
-            "match" if all(row["model"] == model and (args.effort is None or row["effort"] == args.effort)
-                           for row in forwarded) else "mismatch"
+        outcome = (
+            "unknown"
+            if not rows
+            else (
+                "match"
+                if all(
+                    row["model"] == model and (args.effort is None or row["effort"] == args.effort) for row in forwarded
+                )
+                else "mismatch"
+            )
         )
-        report = dict(label="requested_vs_forwarded", caller_seat=args.caller_seat,
-                      requested=dict(model=model, effort=args.effort), forwarded=forwarded, rows=rows, outcome=outcome)
+        report = dict(
+            label="requested_vs_forwarded",
+            caller_seat=args.caller_seat,
+            requested=dict(model=model, effort=args.effort),
+            forwarded=forwarded,
+            rows=rows,
+            outcome=outcome,
+        )
         if args.ledger:
             ledger = Path(os.environ.get("ROUTE_LEDGER", "~/.claude/logs/dispatch.jsonl")).expanduser()
             ledger.parent.mkdir(parents=True, exist_ok=True)
@@ -95,10 +110,12 @@ def run(args):
             for row in forwarded:
                 print(f"forwarded: {row['model']} effort={row['effort']} count={row['count']}")
     except ValueError as exc:
-
         message = str(exc)
-        safe = ("Live PostgreSQL database URL is not resolvable; configure AGENT_LB_DATABASE_URL.",
-                "Model alias could not be resolved.", "--since must be an ISO timestamp.")
+        safe = (
+            "Live PostgreSQL database URL is not resolvable; configure AGENT_LB_DATABASE_URL.",
+            "Model alias could not be resolved.",
+            "--since must be an ISO timestamp.",
+        )
         print(message if message in safe else "Forwarded audit failed; check configuration.", file=sys.stderr)
         raise SystemExit(3) from None
     except Exception:
@@ -107,7 +124,9 @@ def run(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Compare requested values with logged forwarded values, not upstream confirmation.')
+    parser = argparse.ArgumentParser(
+        description="Compare requested values with logged forwarded values, not upstream confirmation."
+    )
     arguments(parser)
     run(parser.parse_args())
 

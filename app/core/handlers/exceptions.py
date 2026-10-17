@@ -69,7 +69,6 @@ def _error_format(request: Request) -> str | None:
 
 def add_exception_handlers(app: FastAPI) -> None:
 
-
     for exc_cls in _OPENAI_EXCEPTION_TYPES:
 
         @app.exception_handler(exc_cls)
@@ -89,8 +88,6 @@ def add_exception_handlers(app: FastAPI) -> None:
                 content=openai_error(exc.code, exc.message, error_type=error_type),
                 headers=headers,
             )
-
-
 
     for exc_cls in _DASHBOARD_EXCEPTION_TYPES:
 
@@ -112,8 +109,6 @@ def add_exception_handlers(app: FastAPI) -> None:
                 content=dashboard_error(exc.code, exc.message),
                 headers=headers,
             )
-
-
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
@@ -208,8 +203,6 @@ def add_exception_handlers(app: FastAPI) -> None:
             )
             return JSONResponse(status_code=exc.status_code, content=openai_error(code, detail, error_type=error_type))
         return await http_exception_handler(request, exc)
-
-
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:

@@ -22,66 +22,73 @@ REV = re.compile(r"[0-9a-f]{12}")
 REV_SHA = re.compile(r"[0-9a-f]{64}")
 
 
-
-
-
-
-
-
-
-FLOOR_SCRIPTS = ("rm-dynamic-deny",
-                 "stash-guard", "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard",
-                 "agent-lb-bootout-guard.sh", "dangerous-command-guard.sh",
-
-                 "no-chrome-guard.sh")
+FLOOR_SCRIPTS = (
+    "rm-dynamic-deny",
+    "stash-guard",
+    "railway-vars-guard.sh",
+    "link-cli-guard.sh",
+    "plutil-guard.sh",
+    "kill-guard",
+    "agent-lb-bootout-guard.sh",
+    "dangerous-command-guard.sh",
+    "no-chrome-guard.sh",
+)
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
 FLOOR_TEXT = "BLOCKED: Dangerous command"
 INLINE_FLOOR = "dangerous-command"
 
 
 LEGACY_FLOOR_COMMANDS = {
-
-    "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c":
-        '"$HOME/.claude/hooks/dangerous-command-guard.sh"',
-
-
-    "85663684c44150f611a408af4d442c891ce1b66ba43f3e47610b7262c9b26525":
-        '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"',
-    "487abcd9095bc74d791c3371413cf424ba2a562e10e1f4a4e2f559d63f71de89":
-        '/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"',
+    "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c": '"$HOME/.claude/hooks/dangerous-command-guard.sh"',
+    "85663684c44150f611a408af4d442c891ce1b66ba43f3e47610b7262c9b26525": '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"',
+    "487abcd9095bc74d791c3371413cf424ba2a562e10e1f4a4e2f559d63f71de89": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"',
 }
 RECEIPT_ENV = "HOOK_FLOOR_RECEIPT"
 RECEIPT = "floor-ok %s"
 NOTICE_PREFIX = "Failed with non-blocking status code: "
 
 
-
-ENV_SENSITIVE = ("BASH_ENV", "ENV", "BASHOPTS", "SHELLOPTS", "POSIXLY_CORRECT", "GREP_OPTIONS", "GLOBIGNORE",
-                 "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH")
-
+ENV_SENSITIVE = (
+    "BASH_ENV",
+    "ENV",
+    "BASHOPTS",
+    "SHELLOPTS",
+    "POSIXLY_CORRECT",
+    "GREP_OPTIONS",
+    "GLOBIGNORE",
+    "LD_PRELOAD",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+)
 
 
 HAZARD = re.compile(
     r"os\._exit|os\.fork|os\.exec|os\.setsid|os\.dup2|os\.closerange|os\.kill\(\s*os\.getpid|threading|_thread|"
     r"multiprocessing|concurrent\.futures|asyncio|atexit|\bsignal\.|faulthandler|ctypes|sys\.settrace|sys\.setprofile|"
     r"except\s*:|except\s+BaseException|except\s*\(\s*BaseException|sys\.modules\[\s*['\"]__main__|importlib\.reload|"
-    r"sys\.__std(?:in|out|err)__|os\.close\(\s*[012]\s*\)")
+    r"sys\.__std(?:in|out|err)__|os\.close\(\s*[012]\s*\)"
+)
 
 DUP2_STD = re.compile(r"os\.dup2\((?:[^()]|\([^()]*(?:\([^()]*\))?[^()]*\))*,\s*[012]\s*\)")
 IMPORT_NAMES = re.compile(
-    r"^\s*(?:from\s+([A-Za-z_][\w.]*)\s+import|import\s+([A-Za-z_][\w.]*(?:\s*,\s*[A-Za-z_][\w.]*)*))", re.M)
+    r"^\s*(?:from\s+([A-Za-z_][\w.]*)\s+import|import\s+([A-Za-z_][\w.]*(?:\s*,\s*[A-Za-z_][\w.]*)*))", re.M
+)
 
-_PATH_WORD = (r'"\$HOME/[^"$`\\]*"|\$HOME/[^\s"\'$`\\;&|<>(){}*?\[\]]*|~/[^\s"\'$`\\;&|<>(){}*?\[\]]*|'
-              r'"/[^"$`\\]*"|/[^\s"\'$`\\;&|<>(){}*?\[\]]+')
+_PATH_WORD = (
+    r'"\$HOME/[^"$`\\]*"|\$HOME/[^\s"\'$`\\;&|<>(){}*?\[\]]*|~/[^\s"\'$`\\;&|<>(){}*?\[\]]*|'
+    r'"/[^"$`\\]*"|/[^\s"\'$`\\;&|<>(){}*?\[\]]+'
+)
 _ARG_WORD = r"[A-Za-z0-9_./=:+-]+"
 SHAPE = re.compile(
     r"^\s*(?:(?P<interp>/usr/bin/python3|python3)\s+)?(?P<script>%s)(?P<args>(?:\s+%s)*)"
     r"(?P<devnull>\s+2>\s*/dev/null)?"
-    r"(?:\s+\|\|\s+(?:(?P<true>true)|\{\s*printf\s+%%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?\s*$" % (_PATH_WORD, _ARG_WORD))
+    r"(?:\s+\|\|\s+(?:(?P<true>true)|\{\s*printf\s+%%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?\s*$" % (_PATH_WORD, _ARG_WORD)
+)
 
 FLOOR_EXEC = re.compile(
     r"^\s*(?:(?P<interp>/usr/bin/python3|python3|/bin/bash|bash)\s+)?(?P<script>%s)(?P<args>(?:\s+%s)*)\s*$"
-    % (_PATH_WORD, _ARG_WORD))
+    % (_PATH_WORD, _ARG_WORD)
+)
 
 
 class Result(object):
@@ -100,9 +107,6 @@ class Result(object):
 
 class _GuardTimeout(BaseException):
     pass
-
-
-
 
 
 def registry_path():
@@ -137,7 +141,7 @@ def expand_word(word):
         word = word[1:-1]
     home = os.environ.get("HOME", "")
     if word.startswith("$HOME/"):
-        return home + word[len("$HOME"):]
+        return home + word[len("$HOME") :]
     if word.startswith("~/"):
         return home + word[1:]
     return word
@@ -182,11 +186,6 @@ def sha256_file(path):
             return hashlib.sha256(handle.read()).hexdigest()
     except OSError:
         return None
-
-
-
-
-
 
 
 def _jq_field(payload, field):
@@ -248,22 +247,17 @@ def pf_no_chrome(payload):
     if command is None:
         return True
 
-
-
-
-
-
     literals = ("--remote-debugging-port", "--headless", "puppeteer.launch", "launchPersistentContext")
     return any(text in command for text in literals) or "chrom" in re.sub(r"[\"'\\\n]", "", command).lower()
 
 
 _WIDE_TOOL = re.compile(r"(^|[;&|(`\s])(grep\s+([^;&|]*\s)?-[a-zA-Z]*[rR]|rg\s|find\s|fd\s)", re.M)
 _WIDE_PATH = re.compile(
-
     r"\s(/|~|~/|\$HOME/?|\"\$HOME\"/?|/(?:Users)/[^/ \t\n\r\f\v]+/?|/(?:Volumes)/[^/ \t\n\r\f\v]+/?|"
     r"/(?:Volumes)/[^/ \t\n\r\f\v]+/repos/?|"
     r"/System/?|/Library/?|/home/?|/home/[^/ \t\n\r\f\v]+/?|/home/[^/ \t\n\r\f\v]+/repos/?|/root/?)(\s|$|;|\||\))",
-    re.M)
+    re.M,
+)
 
 
 def pf_wide_scan(payload):
@@ -273,8 +267,13 @@ def pf_wide_scan(payload):
     if not command:
         return False
     norm = re.sub(r"[\s'\"\\]", "", command)
-    places = [norm.lower(), str(payload.get("cwd") or "").lower(), os.getcwd().lower(),
-              os.environ.get("HOME", "").lower(), os.path.expanduser("~").lower()]
+    places = [
+        norm.lower(),
+        str(payload.get("cwd") or "").lower(),
+        os.getcwd().lower(),
+        os.environ.get("HOME", "").lower(),
+        os.path.expanduser("~").lower(),
+    ]
     if "grep" in norm and any(".agent-rails" in place for place in places):
         return True
     if ".agent-rails" in command and re.search(r"(rg|grep|find|fd)\s", command):
@@ -329,7 +328,6 @@ def pf_wide_scan_paths(payload):
     pieces, cds = {"."}, 0
     for word in _SCAN_SPLIT.split(re.sub(r"[\"'\\]", "", command)):
         if word:
-
             forms = {word, word.split("=", 1)[-1], word[2:] if word.startswith("-S") else word}
             pieces |= forms
             cds += bool(forms & {"cd", "pushd"})
@@ -352,6 +350,7 @@ def pf_wide_scan_paths(payload):
 def _guard_shell_tokens(text):
 
     import shlex
+
     cleaned, quote, escaped, boundary, comment = [], None, False, True, False
     for char in text:
         if comment:
@@ -468,67 +467,63 @@ def pf_prettier(payload):
     return _prettier_config_near(directory)
 
 
-
 SCRIPT_PREFILTERS = {
-
     "agent-lb-bootout-guard.sh": ("8f4a0eea5f7639e7d0f6e8d02a048ffd00db3c37daa9b6f4acb86d612a36d304", pf_bootout),
     "display-wake.sh": ("e701783e043516bdca4397ae0a1acdb8838645ee125931921e345704ce64056b", pf_display_wake),
-
-
-
-
-
-
-
-
-
-
     "wide-scan-guard.sh": ((), pf_wide_scan_parse),
-
     "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
-
     "dangerous-command-guard.sh": ((), pf_dangerous),
-
-
-
-
-    "no-chrome-guard.sh": (("110606670fe66ed2f9dc5824e6d9cb4ed0819286d4b2f73f99b97a73196d9468",
-                            "02f4782aadb16febacc1544cfc84dc270d28350fae29c2ce77facdd511b68b82",
-                            "3464abbaaf2e8c8ed5ce6fa6203dc51745aad9bb17e220580b442026356bbeee",
-                            "64cf185450a08b3faab701fb8c289d32b55611ebe6049065854b2c92fd2450c8",
-                            "77520a3185bc8d146aa0ae2a3cf2d0b0267240db5820448fde3487c085c5eb48",
-                            "67708a8bbd00fa5fed75e70422ecd1281855606d32bb60c811e78f152e0ec75b",
-                            "6dab221f51c25d4c97645ffe8e34318426fa9682e4a7db6ce77fc45a3178ea84",
-
-
-
-
-                            "6c8dfc6a63731027e0a27bdfa1a2de3093f0d100ce94a1870e68dc37515801b3"), pf_no_chrome),
-
+    "no-chrome-guard.sh": (
+        (
+            "110606670fe66ed2f9dc5824e6d9cb4ed0819286d4b2f73f99b97a73196d9468",
+            "02f4782aadb16febacc1544cfc84dc270d28350fae29c2ce77facdd511b68b82",
+            "3464abbaaf2e8c8ed5ce6fa6203dc51745aad9bb17e220580b442026356bbeee",
+            "64cf185450a08b3faab701fb8c289d32b55611ebe6049065854b2c92fd2450c8",
+            "77520a3185bc8d146aa0ae2a3cf2d0b0267240db5820448fde3487c085c5eb48",
+            "67708a8bbd00fa5fed75e70422ecd1281855606d32bb60c811e78f152e0ec75b",
+            "6dab221f51c25d4c97645ffe8e34318426fa9682e4a7db6ce77fc45a3178ea84",
+            "6c8dfc6a63731027e0a27bdfa1a2de3093f0d100ce94a1870e68dc37515801b3",
+        ),
+        pf_no_chrome,
+    ),
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
     "route.sh": ("36bbdd44a69543ff7fe2865985443a2a09ab2f540d6bf09df25ec6c978e1d629", pf_jev_alert),
 }
 
 
-SCRIPT_NEEDS = {"wide-scan-guard.sh": (("cat",), ("jq",), ("python3",)),
-                "agent-lb-bootout-guard.sh": (("/opt/homebrew/bin/jq", "jq"), ("grep",)),
-                "railway-vars-guard.sh": (("cat",), ("python3",)),
-                "link-cli-guard.sh": (("jq",), ("grep",)),
-                "dangerous-command-guard.sh": (("jq",), ("grep",))}
+SCRIPT_NEEDS = {
+    "wide-scan-guard.sh": (("cat",), ("jq",), ("python3",)),
+    "agent-lb-bootout-guard.sh": (("/opt/homebrew/bin/jq", "jq"), ("grep",)),
+    "railway-vars-guard.sh": (("cat",), ("python3",)),
+    "link-cli-guard.sh": (("jq",), ("grep",)),
+    "dangerous-command-guard.sh": (("jq",), ("grep",)),
+}
 
 
 COMMAND_PREFILTERS = {
-
     "55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": pf_prettier,
 }
 
 
-
-
-
 class Plan(object):
-    __slots__ = ("hook", "command", "timeout", "kind", "script", "argv", "interp", "devnull", "fallback_true",
-                 "fallback_text", "source", "reason", "prefilter", "floor", "exec_argv", "opaque")
+    __slots__ = (
+        "hook",
+        "command",
+        "timeout",
+        "kind",
+        "script",
+        "argv",
+        "interp",
+        "devnull",
+        "fallback_true",
+        "fallback_text",
+        "source",
+        "reason",
+        "prefilter",
+        "floor",
+        "exec_argv",
+        "opaque",
+    )
 
     def __init__(self, hook):
         self.hook = hook
@@ -613,8 +608,10 @@ def plan_hook(hook, inproc_names, script_pins=None):
         plan.exec_argv = floor_exec(command, plan.floor)
         if plan.exec_argv is None:
             plan.reason = "floor guard"
-            plan.opaque = ("is not registered as a direct exec of its own script (`[python3|bash] <script> [args]`; "
-                           "a floor guard never runs through a shell, S44)")
+            plan.opaque = (
+                "is not registered as a direct exec of its own script (`[python3|bash] <script> [args]`; "
+                "a floor guard never runs through a shell, S44)"
+            )
             return plan
         command = legacy_floor(command) or command
     if command.strip() in REWRITERS:
@@ -636,9 +633,6 @@ def plan_hook(hook, inproc_names, script_pins=None):
     plan.fallback_true = bool(match.group("true"))
     plan.fallback_text = match.group("fb")
     if match.group("interp") is None:
-
-
-
         name = os.path.basename(os.path.realpath(expand_word(match.group("script"))))
         pinned = SCRIPT_PREFILTERS.get(name)
         if pinned is not None:
@@ -697,20 +691,23 @@ def plan_hook(hook, inproc_names, script_pins=None):
     return plan
 
 
-
-
 _SPAWNS = [0]
 
 
 def _audit(event, _args):
-    if event in ("subprocess.Popen", "os.posix_spawn", "os.fork", "os.forkpty", "os.system", "os.spawn",
-                 "os.startfile"):
+    if event in (
+        "subprocess.Popen",
+        "os.posix_spawn",
+        "os.fork",
+        "os.forkpty",
+        "os.system",
+        "os.spawn",
+        "os.startfile",
+    ):
         _SPAWNS[0] += 1
 
 
 class Payload(object):
-
-
     def __init__(self, raw):
         self.raw = raw
         self.path = None
@@ -722,7 +719,7 @@ class Payload(object):
         try:
             raw = self.raw
             while raw:
-                raw = raw[os.write(fd, raw):]
+                raw = raw[os.write(fd, raw) :]
         except BaseException:
             os.close(fd)
             os.unlink(path)
@@ -768,7 +765,6 @@ def run_inproc(plan, payload):
         os.dup2(out_file.fileno(), 1)
         os.dup2(err_file.fileno(), 2)
     except BaseException:
-
         for target, fd in enumerate(saved_fds):
             os.dup2(fd, target)
             os.close(fd)
@@ -779,10 +775,13 @@ def run_inproc(plan, payload):
     err_out = getattr(saved_std[1], "errors", None) or "strict"
     enc_err = getattr(saved_std[2], "encoding", None) or "utf-8"
     sys.stdin = io.TextIOWrapper(io.BufferedReader(io.FileIO(0, "r", closefd=False)), encoding=enc_in, errors=err_in)
-    sys.stdout = io.TextIOWrapper(io.BufferedWriter(io.FileIO(1, "w", closefd=False)), encoding=enc_out,
-                                  errors=err_out)
-    sys.stderr = io.TextIOWrapper(io.BufferedWriter(io.FileIO(2, "w", closefd=False)), encoding=enc_err,
-                                  errors="backslashreplace", line_buffering=True)
+    sys.stdout = io.TextIOWrapper(io.BufferedWriter(io.FileIO(1, "w", closefd=False)), encoding=enc_out, errors=err_out)
+    sys.stderr = io.TextIOWrapper(
+        io.BufferedWriter(io.FileIO(2, "w", closefd=False)),
+        encoding=enc_err,
+        errors="backslashreplace",
+        line_buffering=True,
+    )
     module = types.ModuleType("__main__")
     module.__file__ = plan.script
     module.__builtins__ = builtins
@@ -804,8 +803,6 @@ def run_inproc(plan, payload):
     try:
         signal.setitimer(signal.ITIMER_REAL, plan.timeout)
         try:
-
-
             exec(compile(plan.source, plan.script, "exec", dont_inherit=True), module.__dict__)
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
@@ -828,6 +825,7 @@ def run_inproc(plan, payload):
         code = 1
         try:
             import traceback
+
             kind, value, tb = sys.exc_info()
             traceback.print_exception(kind, value, tb.tb_next if tb is not None else None, file=sys.stderr)
         except Exception:
@@ -946,22 +944,17 @@ def finish(plan, raw):
 
 
 class External(object):
-
-
     def __init__(self, plan, payload):
         import subprocess
         import threading
+
         self.plan, self.started = plan, time.monotonic()
         self.outcome = None
         self.thread = None
         argv, executable, env = [SHELL, "-c", plan.command], None, None
         if plan.exec_argv:
-
             argv, env = list(plan.exec_argv), dict(os.environ, **{RECEIPT_ENV: "1"})
         elif plan.kind == "rewriter":
-
-
-
             words = plan.command.split()
             target = which(words[0])
             if target:
@@ -969,15 +962,28 @@ class External(object):
             env = rewriter_env()
         stdin = payload.open_fd()
         try:
-            self.proc = subprocess.Popen(argv, executable=executable, stdin=stdin, stdout=subprocess.PIPE,
-                                         stderr=subprocess.PIPE, start_new_session=True, env=env)
+            self.proc = subprocess.Popen(
+                argv,
+                executable=executable,
+                stdin=stdin,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+                env=env,
+            )
         except OSError as exc:
             if not plan.exec_argv:
                 raise
 
             code = 127 if isinstance(exc, FileNotFoundError) else 126
-            self.outcome = Result(code, b"", ("hook-dispatch: %s: %s\n" % (argv[0], exc.strerror or exc)).encode(
-                "utf-8", "backslashreplace"), False, "external", 0)
+            self.outcome = Result(
+                code,
+                b"",
+                ("hook-dispatch: %s: %s\n" % (argv[0], exc.strerror or exc)).encode("utf-8", "backslashreplace"),
+                False,
+                "external",
+                0,
+            )
             return
         finally:
             os.close(stdin)
@@ -987,6 +993,7 @@ class External(object):
 
     def _drain(self):
         import subprocess
+
         try:
             out, err = self.proc.communicate(timeout=self.plan.timeout)
             code = self.proc.returncode
@@ -1002,15 +1009,19 @@ class External(object):
                 pass
             self.outcome = Result(1, b"", b"", True, "external", 1)
         except Exception as exc:
-            self.outcome = Result(2, b"", ("hook-dispatch: could not read this guard's answer (%s); refused\n"
-                                           % exc.__class__.__name__).encode(), False, "external", 1)
+            self.outcome = Result(
+                2,
+                b"",
+                ("hook-dispatch: could not read this guard's answer (%s); refused\n" % exc.__class__.__name__).encode(),
+                False,
+                "external",
+                1,
+            )
 
     def result(self):
         if self.thread is not None:
             self.thread.join()
         return self.outcome
-
-
 
 
 _RANK = {"allow": 1, "ask": 2, "deny": 3}
@@ -1061,8 +1072,13 @@ def refusal(event, note, blocked=False):
 
     err = (note.rstrip("\n") + "\n").encode("utf-8", "backslashreplace")
     if event == "PreToolUse":
-        obj = {"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "deny",
-                                      "permissionDecisionReason": note}}
+        obj = {
+            "hookSpecificOutput": {
+                "hookEventName": event,
+                "permissionDecision": "deny",
+                "permissionDecisionReason": note,
+            }
+        }
     elif blocked:
         obj = {"decision": "block", "reason": note}
     else:
@@ -1080,10 +1096,18 @@ def refuse_failed_floor(plan, result):
     if result is None or not result.floor_failure:
         return result
     note = "hook-dispatch: floor guard %s %s, so this call is refused (a floor guard that fails denies)" % (
-        plan.floor, result.floor_failure)
+        plan.floor,
+        result.floor_failure,
+    )
     detail = result.err.decode("utf-8", "replace").strip()[-500:]
-    return Result(2, b"", (note + ("\n" + detail if detail else "") + "\n").encode("utf-8", "backslashreplace"),
-                  False, "floor-refused", result.spawned)
+    return Result(
+        2,
+        b"",
+        (note + ("\n" + detail if detail else "") + "\n").encode("utf-8", "backslashreplace"),
+        False,
+        "floor-refused",
+        result.spawned,
+    )
 
 
 def merge(event, plans, results):
@@ -1103,8 +1127,7 @@ def merge(event, plans, results):
                 messages.append("[%s]: answer unreadable" % plan.command)
         blocked = bool(messages)
         if not messages:
-            messages.append("hook-dispatch: could not merge the guards' answers (%s); refused"
-                            % exc.__class__.__name__)
+            messages.append("hook-dispatch: could not merge the guards' answers (%s); refused" % exc.__class__.__name__)
         return refusal(event, "\n".join(messages), blocked)
 
 
@@ -1122,9 +1145,9 @@ def merge_answers(event, plans, results):
         _p, only, _obj = parsed[0]
         return Result(only.code, only.out, only.err)
 
-
-    items = [obj if obj is not None else notice_text(r) for _p, r, obj in parsed
-             if obj is not None or r.code not in (0, 2)]
+    items = [
+        obj if obj is not None else notice_text(r) for _p, r, obj in parsed if obj is not None or r.code not in (0, 2)
+    ]
     objects = [item for item in items if isinstance(item, dict)]
     notices = [item for item in items if not isinstance(item, dict)]
     plain = [r.out for _p, r, obj in parsed if obj is None and r.code == 0 and r.out]
@@ -1145,13 +1168,12 @@ def merge_answers(event, plans, results):
             merged["reason"] = "\n".join(messages)
         return Result(2, encode(merged), b"".join(r.err for _p, r, _obj in blocks))
 
-
-    notice_err = ("\n".join(notices)[len(NOTICE_PREFIX):] + "\n").encode("utf-8", "backslashreplace") \
-        if notices else b""
+    notice_err = (
+        ("\n".join(notices)[len(NOTICE_PREFIX) :] + "\n").encode("utf-8", "backslashreplace") if notices else b""
+    )
     if not objects and not plain:
         return Result(errors[0].code, b"", notice_err)
     if not objects and (not errors or event != "UserPromptSubmit"):
-
         return Result(errors[0].code if errors else 0, b"".join(plain), notice_err)
 
     return Result(0, encode(merge_objects(event, items, plain)), b"")
@@ -1228,9 +1250,6 @@ def merge_objects(event, objects, plain):
     return merged
 
 
-
-
-
 def registry_candidates(rev=None):
 
     base = registry_path()
@@ -1259,12 +1278,12 @@ def load_entry(event, key, rev=None):
             errors.append("%s: not a registry" % os.path.basename(path))
             continue
         if (registry.get("rev") or None) != rev:
-            errors.append("%s: fold %s, not this entry's %s" % (
-                os.path.basename(path), registry.get("rev") or "without a rev", rev or "(without a rev)"))
+            errors.append(
+                "%s: fold %s, not this entry's %s"
+                % (os.path.basename(path), registry.get("rev") or "without a rev", rev or "(without a rev)")
+            )
             continue
         if rev and entries_rev(registry["entries"]) != rev:
-
-
             errors.append("%s: entries do not hash to rev %s" % (os.path.basename(path), rev))
             continue
         try:
@@ -1288,8 +1307,12 @@ def entry_hooks(registry, event, key):
     if not isinstance(hooks, list) or not hooks:
         raise ValueError("the %s '%s' entry is %s, not a list of hooks" % (event, key, type(hooks).__name__))
     for hook in hooks:
-        if not (isinstance(hook, dict) and hook.get("type", "command") == "command"
-                and isinstance(hook.get("command"), str) and hook["command"].strip()):
+        if not (
+            isinstance(hook, dict)
+            and hook.get("type", "command") == "command"
+            and isinstance(hook.get("command"), str)
+            and hook["command"].strip()
+        ):
             raise ValueError("the %s '%s' entry holds %r, not a command hook" % (event, key, hook))
     seen, kept = set(), []
     for hook in hooks:
@@ -1317,8 +1340,14 @@ def trace_hooks(plans, results):
     for plan, result in zip(plans, results):
         row = {"command": plan.command, "kind": plan.kind, "reason": plan.reason}
         if result is not None:
-            row.update(mode=result.mode, code=result.code, timed_out=result.timed_out, spawned=result.spawned,
-                       out=result.out.decode("utf-8", "replace"), err=result.err.decode("utf-8", "replace"))
+            row.update(
+                mode=result.mode,
+                code=result.code,
+                timed_out=result.timed_out,
+                spawned=result.spawned,
+                out=result.out.decode("utf-8", "replace"),
+                err=result.err.decode("utf-8", "replace"),
+            )
         rows.append(row)
     return rows
 
@@ -1368,8 +1397,12 @@ def updates_input(result):
 
 def subagent_bash(payload, event):
 
-    return (event == "PreToolUse" and isinstance(payload, dict) and "agent_id" in payload
-            and payload.get("tool_name") == "Bash")
+    return (
+        event == "PreToolUse"
+        and isinstance(payload, dict)
+        and "agent_id" in payload
+        and payload.get("tool_name") == "Bash"
+    )
 
 
 def suppress_subagent_owner(result, payload, event):
@@ -1399,13 +1432,25 @@ def log_failures(event, key, plans, results):
     for plan, result in zip(plans, results):
         if result is None or result.mode.startswith("skipped"):
             continue
-        failure = result.floor_failure if plan.floor else (
-            "timed out" if result.timed_out else
-            ("exited %d" % result.code if result.code not in (0, 2) else None))
+        failure = (
+            result.floor_failure
+            if plan.floor
+            else (
+                "timed out" if result.timed_out else ("exited %d" % result.code if result.code not in (0, 2) else None)
+            )
+        )
         if failure:
-            rows.append({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "event": event, "key": key,
-                         "command": plan.command[:300], "floor": plan.floor, "failure": failure,
-                         "outcome": "refused" if plan.floor and event == "PreToolUse" else "failed open"})
+            rows.append(
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "event": event,
+                    "key": key,
+                    "command": plan.command[:300],
+                    "floor": plan.floor,
+                    "failure": failure,
+                    "outcome": "refused" if plan.floor and event == "PreToolUse" else "failed open",
+                }
+            )
     if not rows:
         return
     try:
@@ -1439,8 +1484,13 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
         for index, plan in enumerate(plans):
             if plan.opaque and event == "PreToolUse":
                 plan.kind, plan.reason = "opaque", plan.reason + ", " + plan.opaque
-                results[index] = Result(1, b"", ("hook-dispatch: %s\n" % plan.command[:300]).encode(
-                    "utf-8", "backslashreplace"), False, "opaque")
+                results[index] = Result(
+                    1,
+                    b"",
+                    ("hook-dispatch: %s\n" % plan.command[:300]).encode("utf-8", "backslashreplace"),
+                    False,
+                    "opaque",
+                )
                 results[index].floor_failure = plan.opaque
                 continue
             if plan.kind == "filtered":
@@ -1480,11 +1530,16 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
                 results[index] = Result(0, b"", b"", False, "skipped (%s)" % ("blocked" if blocked else "superseded"))
                 continue
 
-
-            others_quiet = not started and all(r.empty() and not r.floor_failure for _i, r in known) and \
-                all(p.kind == "rewriter" or results[i] is not None for i, p in enumerate(plans) if i != index)
-            if others_quiet and sum(1 for p in plans if p.kind == "rewriter") == 1 \
-                    and not subagent_bash(payload_obj, event):
+            others_quiet = (
+                not started
+                and all(r.empty() and not r.floor_failure for _i, r in known)
+                and all(p.kind == "rewriter" or results[i] is not None for i, p in enumerate(plans) if i != index)
+            )
+            if (
+                others_quiet
+                and sum(1 for p in plans if p.kind == "rewriter") == 1
+                and not subagent_bash(payload_obj, event)
+            ):
                 record["hooks"] = trace_hooks(plans, results)
                 record["spawned"] = _SPAWNS[0]
                 exec_into(plan, payload, record)
@@ -1495,8 +1550,11 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
         record["hooks"] = trace_hooks(plans, results)
         record["spawned"] = _SPAWNS[0]
         answer = suppress_subagent_owner(merge(event, plans, results), payload_obj, event)
-        record["answer"] = {"code": answer.code, "out": answer.out.decode("utf-8", "replace"),
-                            "err": answer.err.decode("utf-8", "replace")}
+        record["answer"] = {
+            "code": answer.code,
+            "out": answer.out.decode("utf-8", "replace"),
+            "err": answer.err.decode("utf-8", "replace"),
+        }
         trace(record)
         return answer
     finally:
@@ -1518,9 +1576,9 @@ def answer(result):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) < 2 or argv[0] not in EVENTS:
-
-        sys.stderr.write("hook-dispatch: usage: hook-dispatch.py <%s> <matcher> [<rev>]; its guards did not run\n"
-                         % "|".join(EVENTS))
+        sys.stderr.write(
+            "hook-dispatch: usage: hook-dispatch.py <%s> <matcher> [<rev>]; its guards did not run\n" % "|".join(EVENTS)
+        )
         return 2 if argv[:1] == ["PreToolUse"] else 1
     event, key = argv[0], argv[1]
     rev = argv[2] if len(argv) > 2 else None
@@ -1532,24 +1590,30 @@ def main(argv=None):
                 raise ValueError("bad rev %r" % rev)
             registry, hooks, _path = load_entry(event, key, rev)
         except ValueError as exc:
-            note = ("hook-dispatch: registry unreadable (%s); the %s '%s' guards did not run. Restore the per-hook "
-                    "config: python3 ~/.agents/policy/coding-agents/install-policy.py --hook-dispatcher off\n"
-                    % (exc, event, key))
+            note = (
+                "hook-dispatch: registry unreadable (%s); the %s '%s' guards did not run. Restore the per-hook "
+                "config: python3 ~/.agents/policy/coding-agents/install-policy.py --hook-dispatcher off\n"
+                % (exc, event, key)
+            )
             return answer(refusal(event, note))
         if os.environ.get("HOOK_DISPATCH_TRACE"):
             sys.addaudithook(_audit)
 
-
-        inproc_names = registry.get("inproc_sha") if isinstance(registry.get("inproc_sha"), dict) else \
-            dict.fromkeys(name for name in registry.get("inproc") or [] if isinstance(name, str))
+        inproc_names = (
+            registry.get("inproc_sha")
+            if isinstance(registry.get("inproc_sha"), dict)
+            else dict.fromkeys(name for name in registry.get("inproc") or [] if isinstance(name, str))
+        )
         script_pins = registry.get("script_sha") if isinstance(registry.get("script_sha"), dict) else None
         result = run_entry(event, hooks, raw, inproc_names, key, script_pins)
     except BaseException as exc:
-
-
-        note = ("hook-dispatch: failed (%s: %s); the %s '%s' guards did not all run%s\n"
-                % (exc.__class__.__name__, str(exc)[:200], event, key,
-                   ", so this call is refused" if event == "PreToolUse" else ""))
+        note = "hook-dispatch: failed (%s: %s); the %s '%s' guards did not all run%s\n" % (
+            exc.__class__.__name__,
+            str(exc)[:200],
+            event,
+            key,
+            ", so this call is refused" if event == "PreToolUse" else "",
+        )
         try:
             return answer(refusal(event, note))
         except BaseException:

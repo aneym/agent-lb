@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import base64
@@ -27,11 +25,6 @@ pytestmark = pytest.mark.e2e
 DEFAULT_MODEL = "gpt-5.5"
 TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
 IMAGE_MODEL = "gpt-image-2"
-
-
-
-
-
 
 
 def _sse(payload: dict) -> str:
@@ -202,11 +195,6 @@ def _function_call_output_block(call_id: str, name: str, args: str, output_index
     ]
 
 
-
-
-
-
-
 def _make_upstream_model(slug: str, *, modalities: tuple[str, ...] = ("text",)) -> UpstreamModel:
     return UpstreamModel(
         slug=slug,
@@ -299,11 +287,6 @@ def _patch_upstream_stream(monkeypatch, blocks: list[str]) -> None:
             yield block
 
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
-
-
-
-
-
 
 
 class TestChatCompletions:
@@ -438,14 +421,8 @@ class TestChatCompletions:
 
         assert result.choices[0].message.content == "ack"
 
-
         forwarded = seen_payload["payload"]
         assert hasattr(forwarded, "input") or "input" in (forwarded if isinstance(forwarded, dict) else {})
-
-
-
-
-
 
 
 class _CityForecast(BaseModel):
@@ -475,16 +452,10 @@ class TestResponsesParse:
             text_format=_CityForecast,
         )
 
-
         assert result.output_parsed == _CityForecast(
             city="Seoul",
             temperature_c=21,
         )
-
-
-
-
-
 
 
 class TestModels:
@@ -493,11 +464,6 @@ class TestModels:
         result = await sdk_client.models.list()
         ids = {model.id for model in result.data}
         assert DEFAULT_MODEL in ids
-
-
-
-
-
 
 
 def _make_wav_bytes(*, seconds: float = 0.05, sample_rate: int = 16_000) -> bytes:
@@ -518,8 +484,6 @@ class TestAudioTranscriptions:
         sdk_client,
         monkeypatch,
     ):
-
-
 
         captured: dict[str, Any] = {}
 
@@ -542,12 +506,6 @@ class TestAudioTranscriptions:
         assert captured["bytes_len"] == len(wav)
 
 
-
-
-
-
-
-
 _PNG_1X1_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII="
 _PNG_1X1_BYTES = base64.b64decode(_PNG_1X1_B64)
 
@@ -564,7 +522,6 @@ def _patch_images_upstream(
     output_tokens: int = 17,
     captured: dict[str, Any] | None = None,
 ) -> None:
-
 
     async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
         del headers, access_token, base_url, raise_for_status, kwargs
@@ -643,7 +600,6 @@ class TestImages:
 
         assert result.data[0].revised_prompt == "a clean red circle"
 
-
         assert captured["model"] not in {None, ""}
         tools = captured["tools"]
         assert tools, "image_generation tool must be forwarded to upstream"
@@ -652,8 +608,6 @@ class TestImages:
 
     @pytest.mark.asyncio
     async def test_edit_returns_b64_image(self, sdk_client, monkeypatch):
-
-
 
         _patch_images_upstream(
             monkeypatch,
@@ -685,14 +639,7 @@ class TestImages:
         assert 400 <= ei.value.status_code < 500, f"images.variation returned non-4xx: {ei.value.status_code}"
 
 
-
-
-
-
-
 class TestUnsupportedSurfaces:
-
-
     @staticmethod
     def _assert_clean_4xx(exc: openai.APIStatusError) -> None:
         assert 400 <= exc.status_code < 500, f"Unsupported route returned non-4xx status: {exc.status_code}"

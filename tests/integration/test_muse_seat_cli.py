@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -15,7 +14,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 def test_muse_exec_receipt_pool_limit_and_version_pin(tmp_path: Path) -> None:
     vendor = tmp_path / "muse"
-    vendor.write_text('''#!/usr/bin/env python3
+    vendor.write_text("""#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
 if sys.argv[1:] == ['--version']:
@@ -37,23 +36,44 @@ if Path('limited').exists():
     raise SystemExit(1)
 Path('result.txt').write_text('Muse seat check\\n')
 print(json.dumps({'id':'event-1', 'stream':{'kind':'session','id':'00000000-0000-4000-8000-000000000001'}, 'payload_type':'run.terminal.completed', 'payload':{'terminal':'completed','text':'Created result.txt'}}))
-''')
+""")
     vendor.chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("SEAT_", "ROUTE_", "META_"))}
-    env.update(SEAT_HOME=str(tmp_path / "seats"), ROUTE_BIN=str(REPO / "clients/route"),
-               ROUTE_TABLE=str(REPO / "config/coding-agents/routing-table.json"),
-               ROUTE_LEDGER=str(tmp_path / "dispatch.jsonl"), SEAT_MUSE_BIN=str(vendor),
-               META_API_KEY="synthetic-test-key")
+    env.update(
+        SEAT_HOME=str(tmp_path / "seats"),
+        ROUTE_BIN=str(REPO / "clients/route"),
+        ROUTE_TABLE=str(REPO / "config/coding-agents/routing-table.json"),
+        ROUTE_LEDGER=str(tmp_path / "dispatch.jsonl"),
+        SEAT_MUSE_BIN=str(vendor),
+        META_API_KEY="synthetic-test-key",
+    )
 
     def seat(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([sys.executable, "-c", "import runpy,sys; sys.platform='darwin'; "
-                               "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
-                               str(REPO / "clients/seat"), *args], env=env,
-                              cwd=tmp_path, capture_output=True, text=True, timeout=30, check=False)
+        return subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import runpy,sys; sys.platform='darwin'; "
+                "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
+                str(REPO / "clients/seat"),
+                *args,
+            ],
+            env=env,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
 
     if sys.platform != "darwin":
-        refused = subprocess.run([sys.executable, str(REPO / "clients/seat"), "add", "muse-box",
-                                  "--vendor", "muse"], env=env, cwd=tmp_path, capture_output=True, text=True)
+        refused = subprocess.run(
+            [sys.executable, str(REPO / "clients/seat"), "add", "muse-box", "--vendor", "muse"],
+            env=env,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
         assert refused.returncode != 0 and "Studio-local" in refused.stderr
     added = seat("add", "muse-test", "--vendor", "muse")
     assert added.returncode == 0, added.stderr
@@ -61,14 +81,38 @@ print(json.dumps({'id':'event-1', 'stream':{'kind':'session','id':'00000000-0000
     probe = seat("probe", "--vendor", "muse", "--json")
     assert probe.returncode == 0
     assert json.loads(probe.stdout)["muse-test"]["identity"]["auth_source"] == "existing-login-unverified"
-    args = ("run", "--vendor", "muse", "--account", "muse-test", "--model", "muse-latest",
-            "--cwd", str(tmp_path), "--", "Create result.txt")
+    args = (
+        "run",
+        "--vendor",
+        "muse",
+        "--account",
+        "muse-test",
+        "--model",
+        "muse-latest",
+        "--cwd",
+        str(tmp_path),
+        "--",
+        "Create result.txt",
+    )
     (tmp_path / "write-mode").touch()
     completed = seat(*args)
     assert completed.returncode == 0, completed.stderr
     (tmp_path / "write-mode").unlink()
-    asked = seat("run", "--vendor", "muse", "--account", "muse-test", "--model", "muse-latest", "--mode", "ask",
-                 "--cwd", str(tmp_path), "--", "Create result.txt")
+    asked = seat(
+        "run",
+        "--vendor",
+        "muse",
+        "--account",
+        "muse-test",
+        "--model",
+        "muse-latest",
+        "--mode",
+        "ask",
+        "--cwd",
+        str(tmp_path),
+        "--",
+        "Create result.txt",
+    )
     assert asked.returncode == 0, asked.stderr
     (tmp_path / "write-mode").touch()
     outcome = json.loads(completed.stdout)
@@ -91,8 +135,14 @@ print(json.dumps({'id':'event-1', 'stream':{'kind':'session','id':'00000000-0000
     fixtures.mkdir()
     (fixtures / "api_pools.json").write_text(json.dumps({"pools": [pool.model_dump(mode="json")]}))
     pool_env = dict(env, ROUTE_FIXTURE_DIR=str(fixtures), ROUTE_POOL_HISTORY=str(tmp_path / "pool-history"))
-    pools = subprocess.run([sys.executable, str(REPO / "clients/route"), "pools", "--json"], env=pool_env,
-                           capture_output=True, text=True, timeout=30, check=False)
+    pools = subprocess.run(
+        [sys.executable, str(REPO / "clients/route"), "pools", "--json"],
+        env=pool_env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
     assert pools.returncode == 0, pools.stderr
     assert "muse" in pools.stdout and "cli_seat" in pools.stdout
     (tmp_path / "limited").touch()
@@ -109,35 +159,64 @@ print(json.dumps({'id':'event-1', 'stream':{'kind':'session','id':'00000000-0000
 
 def test_muse_run_that_goes_silent_is_stopped_and_owner_is_told(tmp_path: Path) -> None:
     vendor = tmp_path / "muse"
-    vendor.write_text('''#!/usr/bin/env python3
+    vendor.write_text("""#!/usr/bin/env python3
 import json, sys, time
 if sys.argv[1:] == ['--version']:
     print('Muse Code 1.4.9 (1.4.9-R6297.1)')
     raise SystemExit(0)
 print(json.dumps({'stream': {'kind': 'session', 'id': '00000000-0000-4000-8000-000000000002'}}), flush=True)
 time.sleep(120)
-''')
+""")
     vendor.chmod(0o755)
     posted = tmp_path / "posted.json"
     poster = tmp_path / "lane-post"
     poster.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {posted}\n")
     poster.chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("SEAT_", "ROUTE_", "META_", "HERDR_"))}
-    env.update(SEAT_HOME=str(tmp_path / "seats"), ROUTE_BIN=str(REPO / "clients/route"),
-               ROUTE_TABLE=str(REPO / "config/coding-agents/routing-table.json"),
-               ROUTE_LEDGER=str(tmp_path / "dispatch.jsonl"), SEAT_MUSE_BIN=str(vendor),
-               SEAT_STALL_SECONDS="2", SEAT_OWNER_PANE="w-test:owner", SEAT_LANE_POST=str(poster),
-               XDG_DATA_HOME=str(tmp_path / "xdg"))
+    env.update(
+        SEAT_HOME=str(tmp_path / "seats"),
+        ROUTE_BIN=str(REPO / "clients/route"),
+        ROUTE_TABLE=str(REPO / "config/coding-agents/routing-table.json"),
+        ROUTE_LEDGER=str(tmp_path / "dispatch.jsonl"),
+        SEAT_MUSE_BIN=str(vendor),
+        SEAT_STALL_SECONDS="2",
+        SEAT_OWNER_PANE="w-test:owner",
+        SEAT_LANE_POST=str(poster),
+        XDG_DATA_HOME=str(tmp_path / "xdg"),
+    )
 
     def seat(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([sys.executable, "-c", "import runpy,sys; sys.platform='darwin'; "
-                               "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
-                               str(REPO / "clients/seat"), *args], env=env,
-                              cwd=tmp_path, capture_output=True, text=True, timeout=60, check=False)
+        return subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import runpy,sys; sys.platform='darwin'; "
+                "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
+                str(REPO / "clients/seat"),
+                *args,
+            ],
+            env=env,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
 
     assert seat("add", "muse-test", "--vendor", "muse").returncode == 0
-    completed = seat("run", "--vendor", "muse", "--account", "muse-test", "--model", "muse-latest",
-                     "--cwd", str(tmp_path), "--", "Do the work")
+    completed = seat(
+        "run",
+        "--vendor",
+        "muse",
+        "--account",
+        "muse-test",
+        "--model",
+        "muse-latest",
+        "--cwd",
+        str(tmp_path),
+        "--",
+        "Do the work",
+    )
     assert completed.returncode != 0
     assert "seat: STALLED: no vendor output" in completed.stderr
     assert "stalled: no vendor output" in json.loads(completed.stdout)["error"]

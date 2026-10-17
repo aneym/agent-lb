@@ -29,8 +29,6 @@ class AnthropicUsageCostBreakdown:
 
 
 DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
-
-
     "claude-opus-5-5": AnthropicModelPrice(
         input_per_1m=4.0,
         cache_creation_5m_input_per_1m=5.0,
@@ -66,8 +64,6 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
         cache_read_input_per_1m=1.0,
         output_per_1m=50.0,
     ),
-
-
     "claude-sonnet-5-5": AnthropicModelPrice(
         input_per_1m=2.0,
         cache_creation_5m_input_per_1m=2.50,
@@ -82,8 +78,6 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
         cache_read_input_per_1m=0.20,
         output_per_1m=10.0,
     ),
-
-
     "claude-opus-4-8": AnthropicModelPrice(
         input_per_1m=5.0,
         cache_creation_5m_input_per_1m=6.25,
@@ -192,8 +186,6 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
 }
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
-
-
     "claude-opus-5-5*": "claude-opus-5-5",
     "claude-opus-5*": "claude-opus-5",
     "claude-fable-5-1*": "claude-fable-5-1",
@@ -252,8 +244,6 @@ def get_pricing_for_model(
         if key.lower() == alias.lower():
             return key, value
     return None
-
-
 
 
 _SNAPSHOT_SUFFIX = re.compile(r"(?:-\d{8}|-latest)?(?:\[[0-9a-z]+\])?")

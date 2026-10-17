@@ -64,8 +64,6 @@ class UtcAccessFormatter(AccessFormatter):
 
 
 class ArgsPreservingQueueHandler(logging.handlers.QueueHandler):
-
-
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
         record = copy.copy(record)
         if record.exc_info and not record.exc_text:
@@ -189,9 +187,6 @@ def build_log_config() -> LogConfig:
             "use_colors": None,
         }
 
-
-
-
     handlers.setdefault(
         "default", {"class": "logging.StreamHandler", "formatter": "default", "stream": "ext://sys.stderr"}
     )
@@ -201,8 +196,6 @@ def build_log_config() -> LogConfig:
     }
     _queue_stream_handlers(handlers)
     return cast(LogConfig, config)
-
-
 
 
 _QUEUED_HANDLER_NAMES = ("default", "access")

@@ -39,8 +39,6 @@ class TeamRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-
-
     async def create(self, row: TeamMember, *, commit: bool = True) -> TeamMember:
         self._session.add(row)
         if commit:
@@ -79,8 +77,6 @@ class TeamRepository:
     async def rollback(self) -> None:
         await self._session.rollback()
 
-
-
     async def list_keys_by_member(self, member_id: str) -> list[ApiKey]:
         result = await self._session.execute(
             select(ApiKey).where(ApiKey.member_id == member_id).order_by(ApiKey.created_at.desc())
@@ -98,8 +94,6 @@ class TeamRepository:
             if row.member_id is not None:
                 grouped.setdefault(row.member_id, []).append(row)
         return grouped
-
-
 
     async def aggregate_usage(self, member_id: str, *, since: datetime) -> TeamUsageTotals:
         member_key_ids = select(ApiKey.id).where(ApiKey.member_id == member_id)

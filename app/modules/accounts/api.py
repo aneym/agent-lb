@@ -129,16 +129,13 @@ async def list_accounts(
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountsResponse:
 
-
     state_path = get_settings().federation_push_sources_path.with_name("federation-push-state.json")
     try:
         source_bindings = load_binding(state_path)
     except (OSError, ValueError, TypeError):
         source_bindings = {}
     owner_source_names = {instance_id: source for source, instance_id in source_bindings.items()}
-    accounts = await context.service.list_accounts(
-        include_request_usage=fresh, owner_source_names=owner_source_names
-    )
+    accounts = await context.service.list_accounts(include_request_usage=fresh, owner_source_names=owner_source_names)
     return AccountsResponse(accounts=accounts)
 
 
@@ -338,8 +335,6 @@ async def probe_account(
     if result is None:
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     if result.probe_status_code == 200:
-
-
         account = await context.repository.get_by_id(account_id)
         service = getattr(request.app.state, "anthropic_proxy_service", None)
         if account is not None and account.provider != "openai" and service is not None:

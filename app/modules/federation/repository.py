@@ -302,9 +302,6 @@ class FederationRepository:
     ) -> AccountTransfer | None:
 
         try:
-
-
-
             locked = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
             if locked is None or await self.has_exchange_intent(account_id):
                 await self._session.rollback()
@@ -353,7 +350,6 @@ class FederationRepository:
                 account_id, direction=AccountTransferDirection.CHECKIN, counterparty_instance_id=counterparty
             )
             if pending and account.owner_instance == counterparty:
-
                 pending_nonce = pending.nonce
                 await self._session.commit()
                 await self._session.refresh(account)
@@ -395,7 +391,6 @@ class FederationRepository:
 
         try:
             account = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
-
 
             settled = await self._session.execute(
                 update(AccountTransfer)

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -36,11 +34,6 @@ def _make_account(account_id: str, email: str, plan_type: str = "plus") -> Accou
     )
 
 
-
-
-
-
-
 @pytest.mark.asyncio
 async def test_parse_additional_rate_limits_from_fixture(db_setup):
     raw = json.loads(FIXTURE_PATH.read_text())
@@ -53,11 +46,6 @@ async def test_parse_additional_rate_limits_from_fixture(db_setup):
         assert item.limit_name
         assert item.metered_feature
         assert item.rate_limit is not None
-
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -81,7 +69,6 @@ async def test_additional_usage_persisted_to_db(db_setup):
             window_minutes=300,
             recorded_at=now,
         )
-
 
         latest = await additional_repo.latest_by_account("codex_spark", "primary")
         assert account_id in latest
@@ -107,14 +94,12 @@ async def test_accounts_list_returns_additional_quotas(async_client, db_setup):
 
         await accounts_repo.upsert(_make_account(account_id, "dash_additional@example.com"))
 
-
         await usage_repo.add_entry(
             account_id,
             25.0,
             window="primary",
             recorded_at=now - timedelta(minutes=1),
         )
-
 
         await additional_repo.add_entry(
             account_id=account_id,
@@ -187,7 +172,6 @@ async def test_dashboard_overview_omits_additional_quotas(async_client, db_setup
 
     data = response.json()
     assert "additionalQuotas" not in data
-
 
     assert "depletionPrimary" in data
     assert data["depletionPrimary"] is None or isinstance(data["depletionPrimary"], dict)

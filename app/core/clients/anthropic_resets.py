@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -66,7 +64,6 @@ class ResetStatus(BaseModel):
 
     def usable_grant(self, now: datetime, credit_id: str | None = None) -> ResetGrant | None:
 
-
         if self.redemption_blocker(now, credit_id) is not None:
             return None
         grant_id = credit_id or self.next_grant_id
@@ -99,7 +96,6 @@ async def fetch_status(*, access_token: str) -> ResetStatus:
 
 
 async def redeem(*, access_token: str, grant_id: str, request_id: str) -> ResetResult:
-
 
     profile = await _request("GET", "api/oauth/profile", access_token)
     organization = profile.get("organization")

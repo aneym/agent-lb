@@ -2,8 +2,6 @@ from __future__ import annotations
 
 
 class ClientPayloadError(ValueError):
-
-
     def __init__(
         self,
         message: str,

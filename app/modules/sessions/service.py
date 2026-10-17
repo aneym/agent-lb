@@ -53,9 +53,7 @@ class SessionsService:
         sparklines = {session_id: [0] * 24 for session_id in session_ids}
         for sparkline_row in sparkline_rows:
             if 0 <= sparkline_row.bucket_index < 24:
-                sparklines[sparkline_row.session_id][sparkline_row.bucket_index] = (
-                    sparkline_row.requests
-                )
+                sparklines[sparkline_row.session_id][sparkline_row.bucket_index] = sparkline_row.requests
         return SessionListPage(
             sessions=to_session_aggregates(rows, model_rows, sparklines),
             total=total,

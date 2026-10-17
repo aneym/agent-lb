@@ -83,20 +83,15 @@ _MIRROR_TOKEN_UNAVAILABLE_COOLDOWN_SECONDS = 60
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 
 
-
-
 _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY = "anthropic_extra_usage"
-
 
 
 _ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"
 _ANTHROPIC_FABLE_ACCESS_WINDOW = "primary"
 
 
-
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
-
 
 
 _FABLE_SCOPED_FRESH_SECONDS = 21600
@@ -111,10 +106,6 @@ _ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 _COUNT_TOKENS_TIMEOUT_SECONDS = 30.0
 
 
-
-
-
-
 _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER = "anthropic-ratelimit-unified-overage-in-use"
 _ANTHROPIC_UNIFIED_STATUS_HEADERS = (
     "anthropic-ratelimit-unified-status",
@@ -122,9 +113,6 @@ _ANTHROPIC_UNIFIED_STATUS_HEADERS = (
     "anthropic-ratelimit-unified-7d-status",
 )
 _ANTHROPIC_UNIFIED_ALLOWED_STATUSES = frozenset({"allowed", "allowed_warning"})
-
-
-
 
 
 _OVERLOADED_BACKOFF_BASE_SECONDS = 0.25
@@ -136,12 +124,7 @@ def _default_overloaded_backoff_jitter() -> float:
     return random.uniform(0.0, _OVERLOADED_BACKOFF_MAX_JITTER_SECONDS)
 
 
-
 _OVERLOADED_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
-
-
-
-
 
 
 _CONNECT_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
@@ -170,8 +153,6 @@ async def _admitted_http_session(
 
 
 class UpstreamStallTimeout(Exception):
-
-
     def __init__(self, phase: str, seconds: float) -> None:
         self.phase = phase
         self.seconds = seconds
@@ -184,8 +165,6 @@ class UpstreamStallTimeout(Exception):
 
 
 class UpstreamTruncatedEvent(UpstreamStallTimeout):
-
-
     def __init__(self) -> None:
         Exception.__init__(self, "Anthropic closed the stream inside an event (upstream_truncated_event)")
         self.phase = "truncated_event"
@@ -194,8 +173,6 @@ class UpstreamTruncatedEvent(UpstreamStallTimeout):
 
 
 class UpstreamBrokenStream(UpstreamStallTimeout):
-
-
     def __init__(self) -> None:
         Exception.__init__(self, "Anthropic stream broke before the response finished (upstream_stream_broken)")
         self.phase = "stream_broken"
@@ -204,8 +181,6 @@ class UpstreamBrokenStream(UpstreamStallTimeout):
 
 
 class _StallCatcher:
-
-
     def __init__(self) -> None:
         self.stall: UpstreamStallTimeout | None = None
 
@@ -217,8 +192,6 @@ class _StallCatcher:
             self.stall = exc
             return True
         return False
-
-
 
 
 _SSE_BLANK_LINE = re.compile(rb"(?>\r\n|\r|\n)(?>\r\n|\r|\n)")
@@ -267,13 +240,10 @@ async def _stall_bounded_chunks(
 
 def _compression_deadline_error() -> AnthropicProxyError:
 
-
     return AnthropicProxyError(504, "Proxy request budget exhausted", code="upstream_request_timeout")
 
 
 class _ConnectRetryingResponse:
-
-
     def __init__(
         self,
         open_response: Callable[[], AsyncContextManager[aiohttp.ClientResponse]],
@@ -297,15 +267,10 @@ class _ConnectRetryingResponse:
             async with bound:
                 response = await self._open_with_retries()
                 if self._first_byte_deadline is not None and response.status >= 400:
-
-
-
                     await response.read()
                 return response
         except BaseException as exc:
             if response is not None:
-
-
                 response.close()
                 self._context = None
             if isinstance(exc, TimeoutError) and bound.expired():
@@ -354,10 +319,6 @@ def _overloaded_backoff_seconds(attempt: int) -> float:
     return base + _OVERLOADED_RETRY_JITTER()
 
 
-
-
-
-
 _POOL_WAIT_MIN_POLL_SECONDS = 5.0
 _POOL_WAIT_MAX_POLL_SECONDS = 300.0
 _POOL_WAIT_MAX_JITTER_SECONDS = 5.0
@@ -365,7 +326,6 @@ _POOL_WAIT_MAX_JITTER_SECONDS = 5.0
 
 def _default_pool_wait_jitter() -> float:
     return random.uniform(0.0, _POOL_WAIT_MAX_JITTER_SECONDS)
-
 
 
 _POOL_WAIT_CLOCK: Callable[[], float] = time.time
@@ -413,18 +373,10 @@ class _AnthropicQuotaEligibility:
     blocked_count: int = 0
     next_reset_at: int | None = None
 
-
-
-
-
-
     cooldown_blocked_count: int = 0
     cooldown_reset_at: int | None = None
 
-
-
     paid_fallback_account_ids: frozenset[str] = frozenset()
-
 
     burn_first_account_ids: frozenset[str] = frozenset()
 
@@ -433,9 +385,6 @@ class _AnthropicQuotaEligibility:
 class _AnthropicErrorDetails:
     message: str
     error_type: str | None = None
-
-
-
 
     details: Any | None = None
 
@@ -523,8 +472,6 @@ class AnthropicProxyService:
             if not wait_enabled or exc.retry_at is None:
                 raise
 
-
-
             first_account = None
             initial_wait_error = exc
         if first_account is not None:
@@ -536,7 +483,6 @@ class AnthropicProxyService:
             last_error_status: int | None = None
             last_error_message: str | None = None
             streamed_bytes = False
-
 
             last_stall: UpstreamStallTimeout | None = None
             latency_first_token_ms: int | None = None
@@ -554,8 +500,6 @@ class AnthropicProxyService:
                     last_error_message = None
                     last_stall = None
                 try:
-
-
                     wake_eligibility = await self._provider_quota_eligibility(
                         provider_name, quota_key, model=payload.model
                     )
@@ -608,12 +552,6 @@ class AnthropicProxyService:
                             provider_name == ANTHROPIC_PROVIDER_NAME
                             and get_settings().anthropic_claude_code_identity_enabled
                         ):
-
-
-
-
-
-
                             body_payload = ensure_claude_code_identity_body(body_payload)
 
                         unified_headers: dict[str, str] | None = None
@@ -626,7 +564,6 @@ class AnthropicProxyService:
 
                         body_payload, _ = strip_eval_web_tools(body_payload, "anthropic")
                         nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
-
 
                         first_byte_seconds = get_settings().anthropic_first_byte_timeout_seconds
                         idle_seconds = get_settings().anthropic_stream_idle_timeout_seconds if payload.stream else 0.0
@@ -659,7 +596,8 @@ class AnthropicProxyService:
                                 quota_observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                                 unified_headers = (
                                     capture_unified_headers(resp.headers)
-                                    if provider_name == ANTHROPIC_PROVIDER_NAME else None
+                                    if provider_name == ANTHROPIC_PROVIDER_NAME
+                                    else None
                                 )
                                 unified_5h_utilization = None
                                 unified_7d_utilization = None
@@ -807,11 +745,6 @@ class AnthropicProxyService:
                                     last_error_message = error_message
                                     continue
                                 if resp.status == 529:
-
-
-
-
-
                                     error_message = await _read_error_message(resp)
                                     await self._load_balancer.record_error(account)
                                     await self._persist_request_log(
@@ -841,12 +774,6 @@ class AnthropicProxyService:
                                 if resp.status >= 400:
                                     error_details = await _read_error_details(resp)
 
-
-
-
-
-
-
                                     if resp.status != 404:
                                         await self._load_balancer.record_error(account)
                                     await self._persist_request_log(
@@ -874,12 +801,6 @@ class AnthropicProxyService:
                                         code=error_details.error_type or _anthropic_error_type_for_status(resp.status),
                                         details=error_details.details,
                                     )
-
-
-
-
-
-
 
                                 tripwire_error: UpstreamError | None = None
                                 if provider_name == ANTHROPIC_PROVIDER_NAME:
@@ -943,11 +864,7 @@ class AnthropicProxyService:
                                 text_buffer = ""
                                 stream_error: AnthropicErrorEvent | None = None
 
-
                                 raw_body = bytearray() if not payload.stream else None
-
-
-
 
                                 unsent = bytearray()
                                 scanned = 0
@@ -983,17 +900,11 @@ class AnthropicProxyService:
                                 if unsent.strip(b"\r\n"):
                                     raise UpstreamTruncatedEvent()
                                 if unsent:
-
-
                                     yield bytes(unsent)
                                 if raw_body is not None:
                                     usage = _usage_from_json_body(bytes(raw_body)) or usage
 
                                 if stream_error is not None:
-
-
-
-
                                     stream_error_type = stream_error.error.type or "unknown"
                                     logger.warning(
                                         "anthropic_stream_error_event request_id=%s account_id=%s "
@@ -1081,8 +992,6 @@ class AnthropicProxyService:
                         if stall is None:
                             continue
 
-
-
                         logger.warning(
                             "anthropic_upstream_stall request_id=%s account_id=%s phase=%s bound_seconds=%g "
                             "streamed_bytes=%s",
@@ -1092,8 +1001,6 @@ class AnthropicProxyService:
                             stall.seconds,
                             streamed_bytes,
                         )
-
-
 
                         await self._shielded(
                             self._record_stall(
@@ -1119,14 +1026,10 @@ class AnthropicProxyService:
                             )
                         )
                         if not streamed_bytes:
-
                             last_stall = stall
                             last_error_status = 529
                             last_error_message = str(stall)
                             continue
-
-
-
 
                         error_event = json.dumps(
                             {"type": "error", "error": {"type": "overloaded_error", "message": str(stall)}},
@@ -1154,15 +1057,9 @@ class AnthropicProxyService:
                     raise AnthropicProxyError(503, message, code=code) from exc
                 except AnthropicProxyError as exc:
                     if exc.code == "upstream_request_timeout":
-
-
                         raise
                     if last_stall is not None:
-
-
-
                         raise AnthropicProxyError(529, str(last_stall), code="overloaded_error") from exc
-
 
                     if not streamed_bytes and _pool_wait_should_hold(
                         exc, wait_enabled=wait_enabled, deadline=wait_deadline
@@ -1171,9 +1068,6 @@ class AnthropicProxyService:
                         account_override = None
                         continue
                     if last_error_status == 529 and exc.retry_at is None:
-
-
-
                         raise AnthropicProxyError(
                             529,
                             last_error_message or "Upstream overloaded",
@@ -1186,10 +1080,7 @@ class AnthropicProxyService:
                     raise AnthropicProxyError(529, str(last_stall), code="overloaded_error")
                 message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
 
-
                 eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=payload.model)
-
-
 
                 exhausted_code = (
                     "overloaded_error" if last_error_status == 529 else _no_available_accounts_code(provider_name)
@@ -1339,11 +1230,6 @@ class AnthropicProxyService:
                 body=json.dumps({"input_tokens": estimated}).encode(),
                 media_type="application/json",
             )
-
-
-
-
-
 
         account = await self._select_account(
             model,
@@ -1525,14 +1411,7 @@ class AnthropicProxyService:
             )
         settings = await get_settings_cache().get()
 
-
-
         app_settings = get_settings()
-
-
-
-
-
 
         hold_until_exhausted = app_settings.anthropic_sticky_hold_until_exhausted
         selection = await self._load_balancer.select_account(
@@ -1609,8 +1488,6 @@ class AnthropicProxyService:
                 account for account in await repos.accounts.list_accounts() if account.provider.lower() == provider_name
             ]
 
-
-
             accounts = selectable_accounts(provider_accounts)
             unusable_count = len(provider_accounts) - len(accounts)
             account_count = len(accounts)
@@ -1625,8 +1502,6 @@ class AnthropicProxyService:
                 for entry in primary_usage.values()
                 if entry.reset_at and float(entry.used_percent) >= 100.0
             )
-
-
 
         live_retries = [
             candidate
@@ -1706,9 +1581,6 @@ class AnthropicProxyService:
         settings = get_settings()
         fable_routing = provider_name == ANTHROPIC_PROVIDER_NAME and settings.anthropic_fable_routing_enabled
 
-
-
-
         extra_usage_gate = provider_name == ANTHROPIC_PROVIDER_NAME and quota_key != _count_tokens_quota_key(
             provider_name
         )
@@ -1716,10 +1588,6 @@ class AnthropicProxyService:
             provider_accounts = [
                 account for account in await repos.accounts.list_accounts() if account.provider.lower() == provider_name
             ]
-
-
-
-
 
             account_ids = [account.id for account in selectable_accounts(provider_accounts)]
             request_quota_latest = await repos.additional_usage.latest_by_account(
@@ -1746,9 +1614,6 @@ class AnthropicProxyService:
                     )
                     for account_id, entry in extra_usage_tripwire_latest.items()
                 }
-
-
-
 
             primary_exhaustion: dict[str, int] = {}
             primary_headroom_recorded_at: dict[str, int] = {}
@@ -1808,8 +1673,6 @@ class AnthropicProxyService:
             fable_access_markers: dict[str, tuple[float, int | None]] = {}
             fable_scoped_markers: dict[str, tuple[float, int | None, int]] = {}
             if fable_routing:
-
-
                 fable_access = await repos.additional_usage.latest_by_account(
                     _ANTHROPIC_FABLE_ACCESS_QUOTA_KEY,
                     _ANTHROPIC_FABLE_ACCESS_WINDOW,
@@ -1824,8 +1687,6 @@ class AnthropicProxyService:
                     _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW,
                     account_ids=account_ids,
                 )
-
-
 
                 fable_scoped_markers = {
                     account_id: (
@@ -1844,9 +1705,6 @@ class AnthropicProxyService:
             return weekly_usage_used_percent.get(account_id, 0.0)
 
         def _fresh_scoped_percent(account_id: str) -> float | None:
-
-
-
 
             marker = fable_scoped_markers.get(account_id)
             if marker is None:
@@ -1872,7 +1730,6 @@ class AnthropicProxyService:
             preferred_ids: set[str] = set()
             for account_id in account_ids:
                 scoped_percent = _fresh_scoped_percent(account_id)
-
 
                 model_scope_account_ids.append(account_id)
                 if (
@@ -1902,8 +1759,6 @@ class AnthropicProxyService:
                 tripwire[2],
             )
 
-
-
             if route_paid_extra or account_id not in secondary_snapshot_recorded_at:
                 return not primary_recovered
             if not primary_recovered:
@@ -1914,9 +1769,6 @@ class AnthropicProxyService:
             )
 
         for account_id in model_scope_account_ids:
-
-
-
             request_cooldown = request_quota_cooldowns.get(account_id)
             if (
                 request_cooldown is not None
@@ -1927,8 +1779,6 @@ class AnthropicProxyService:
                 request_quota_blocked_account_ids.add(account_id)
                 blocked_reset_by_account_id[account_id] = min(int(request_cooldown[1]), request_cooldown[2] + 60)
                 continue
-
-
 
             if extra_usage_gate and not route_paid_extra and account_id in secondary_exhaustion:
                 blocked_count += 1
@@ -1951,9 +1801,6 @@ class AnthropicProxyService:
             if preferred_standard_account_ids:
                 eligible_account_ids = preferred_standard_account_ids
             else:
-
-
-
                 logger.warning(
                     "All subscription-covered Anthropic accounts are soft Fable fallbacks "
                     "past the weekly threshold (%.0f%%); using that headroom model=%s",
@@ -1966,13 +1813,6 @@ class AnthropicProxyService:
         )
         paid_fallback_account_ids: frozenset[str] = frozenset()
         if not eligible_account_ids and pool_primary_exhausted and settings.anthropic_route_to_extra_usage:
-
-
-
-
-
-
-
             paid_candidates = [
                 account_id
                 for account_id in model_scope_account_ids
@@ -1994,8 +1834,6 @@ class AnthropicProxyService:
 
         burn_first_account_ids: frozenset[str] = frozenset()
 
-
-
         if fable_routing and settings.anthropic_fable_burn_first_enabled and not fable_request and eligible_account_ids:
 
             def _is_over_fable_threshold(account_id: str) -> bool:
@@ -2007,8 +1845,6 @@ class AnthropicProxyService:
             burn_first_account_ids = frozenset(
                 account_id for account_id in eligible_account_ids if _is_over_fable_threshold(account_id)
             )
-
-
 
         cooling_account_ids = request_quota_blocked_account_ids - set(eligible_account_ids)
         cooldown_resets = [
@@ -2108,8 +1944,6 @@ class AnthropicProxyService:
             if exc.code == "exchange_uncertain":
                 raise AnthropicProxyError(503, exc.message, code=exc.code) from exc
 
-
-
             if exc.is_permanent or classify_refresh_error(exc.code):
                 get_account_selection_cache().invalidate()
             raise AnthropicProxyError(401, exc.message, code=exc.code) from exc
@@ -2140,7 +1974,6 @@ class AnthropicProxyService:
         request_kind: str = "normal",
     ) -> None:
 
-
         task = asyncio.create_task(
             self._persist_request_log_row(
                 account=account,
@@ -2170,7 +2003,6 @@ class AnthropicProxyService:
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
-
             self._pending_request_logs.add(task)
             task.add_done_callback(self._request_log_finished)
             raise
@@ -2446,7 +2278,6 @@ def _anthropic_quota_key(payload: AnthropicMessageRequest) -> str:
 
 def _resolve_planner_model(model: str) -> str:
 
-
     if model.strip().lower() == _ANTHROPIC_PLANNER_MODEL_ALIAS:
         return _ANTHROPIC_PLANNER_MODEL
     return model
@@ -2468,7 +2299,6 @@ def _provider_name_for_model(model: str) -> str:
 
 
 def _count_tokens_quota_key(provider_name: str) -> str:
-
 
     return get_anthropic_compat_profile(provider_name).count_tokens_quota_key
 
@@ -2501,9 +2331,6 @@ def _messages_affinity_quota_key(payload: AnthropicMessageRequest, *, provider_n
         base = "anthropic_top"
     elif base == "anthropic_opus_thinking":
         base = "anthropic_top_thinking"
-
-
-
 
     return f"{base}_fable" if _is_fable_model(payload.model) else base
 
@@ -2661,10 +2488,6 @@ def _anthropic_selection_quota_detail(
 ) -> str | None:
     parts: list[str] = []
 
-
-
-
-
     if cooldown_blocked_count > 0:
         noun = "account" if cooldown_blocked_count == 1 else "accounts"
         reset_text = (
@@ -2693,9 +2516,6 @@ def _hash_for_key(value: str) -> str:
 def _anthropic_cooldown_is_active(used_percent: float, reset_at: int | None, *, now: int) -> bool:
     if float(used_percent) < 100.0:
         return False
-
-
-
 
     if reset_at is None:
         return False
@@ -2821,8 +2641,6 @@ def _collect_usage_from_chunk(
     while "\n\n" in normalized:
         block, normalized = normalized.split("\n\n", 1)
 
-
-
         if _FIRST_OUTPUT_EVENT_RE.search(block):
             saw_output = True
         event = parse_sse_event(block)
@@ -2917,7 +2735,6 @@ def _pool_wait_should_hold(
     if not wait_enabled or deadline is None:
         return False
 
-
     if exc.retry_at is None:
         return False
     return _POOL_WAIT_CLOCK() < deadline
@@ -2990,9 +2807,6 @@ def _unified_limit_exhausted(headers: Mapping[str, str]) -> bool:
         if value is None:
             continue
         normalized = value.strip().lower()
-
-
-
 
         if normalized and normalized not in _ANTHROPIC_UNIFIED_ALLOWED_STATUSES:
             return True

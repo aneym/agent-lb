@@ -317,9 +317,6 @@ async def test_v1_messages_count_tokens_requires_model(async_client) -> None:
     }
 
 
-
-
-
 _HEALTHY_UNIFIED_HEADERS = {
     "anthropic-ratelimit-unified-status": "allowed",
     "anthropic-ratelimit-unified-5h-status": "allowed",
@@ -372,7 +369,6 @@ def test_unified_tripwire_ignores_responses_without_unified_headers() -> None:
 
 def test_pool_wait_delay_clamps_to_poll_bounds_and_remaining(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(anthropic_service_module, "_POOL_WAIT_JITTER", lambda: 0.0)
-
 
     assert (
         anthropic_service_module._pool_wait_delay_seconds(10_000, now=0.0, remaining=100_000.0)

@@ -33,9 +33,6 @@ def _get_encryptor() -> TokenEncryptor:
 
 def log_bootstrap_token(logger: logging.Logger, token: str, *, reason: str = "first-run") -> None:
 
-
-
-
     logger.warning(
         "\n"
         "============================================\n"

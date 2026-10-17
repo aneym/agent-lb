@@ -12,9 +12,6 @@ _NORMALIZE_PATTERN = re.compile(r"[^a-z0-9]+")
 ADDITIONAL_QUOTA_ROUTING_POLICIES = frozenset({"inherit", "burn_first", "normal", "preserve"})
 
 
-
-
-
 ADDITIONAL_QUOTA_USAGE_SOURCES = frozenset({"additional", "primary"})
 
 

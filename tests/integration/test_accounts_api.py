@@ -167,7 +167,6 @@ async def test_import_glm_api_key_account_uses_unchanged_defaults(async_client):
 @pytest.mark.asyncio
 async def test_import_glm_api_key_account_rejects_refresh_token(async_client):
 
-
     response = await async_client.post(
         "/api/accounts/import/api-key",
         json={"provider": "glm", "apiKey": "zai-key", "refreshToken": "zai-other"},
@@ -182,7 +181,6 @@ async def test_import_glm_api_key_account_rejects_refresh_token(async_client):
 
 @pytest.mark.asyncio
 async def test_import_glm_api_key_account_explicit_null_alias_leaves_alias_unset(async_client):
-
 
     response = await async_client.post(
         "/api/accounts/import/api-key",
@@ -224,9 +222,7 @@ async def test_import_kimi_oauth_bundle_and_static_api_key(async_client):
     assert oauth_response.json()["planType"] == "kimi-coding"
 
     async with SessionLocal() as session:
-        accounts = (
-            await session.execute(select(Account).where(Account.id.in_([oauth_id, static_id])))
-        ).scalars().all()
+        accounts = (await session.execute(select(Account).where(Account.id.in_([oauth_id, static_id])))).scalars().all()
     by_id = {account.id: account for account in accounts}
     encryptor = TokenEncryptor()
     assert encryptor.decrypt(by_id[oauth_id].access_token_encrypted) == "oauth-access-token"
@@ -670,12 +666,10 @@ async def test_set_and_clear_account_alias(async_client):
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
-
     listing = await async_client.get("/api/accounts")
     matched = next(a for a in listing.json()["accounts"] if a["accountId"] == expected_account_id)
     assert matched["alias"] is None
     assert matched["displayName"] == email
-
 
     set_response = await async_client.put(
         f"/api/accounts/{expected_account_id}/alias",
@@ -688,7 +682,6 @@ async def test_set_and_clear_account_alias(async_client):
     matched = next(a for a in listing.json()["accounts"] if a["accountId"] == expected_account_id)
     assert matched["alias"] == "Personal Plus"
     assert matched["displayName"] == "Personal Plus"
-
 
     clear_response = await async_client.put(
         f"/api/accounts/{expected_account_id}/alias",
@@ -789,7 +782,6 @@ async def test_list_accounts_surfaces_owner_instance(async_client, monkeypatch, 
         repo = AccountsRepository(session)
         await repo.upsert(_account("owner-null", None), merge_by_email=False)
 
-
         await repo.upsert(_account("owner-remote", "federation-other-instance"), merge_by_email=False)
         await repo.upsert(_account("owner-pushed", "nates-host"), merge_by_email=False)
 
@@ -884,19 +876,13 @@ async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_c
 
     now = utcnow()
     async with SessionLocal() as session:
-
-
         session.add(_anthropic_account("acc-scoped-hot", "scoped-hot@example.com"))
         session.add(_weekly_usage("acc-scoped-hot", 30.0))
         session.add(_fable_scoped_weekly("acc-scoped-hot", 100.0, now))
 
-
-
         session.add(_anthropic_account("acc-scoped-cool", "scoped-cool@example.com"))
         session.add(_weekly_usage("acc-scoped-cool", 62.0))
         session.add(_fable_scoped_weekly("acc-scoped-cool", 45.0, now))
-
-
 
         session.add(
             _anthropic_account(
@@ -917,8 +903,6 @@ async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_c
         )
         session.add(_weekly_usage("acc-scoped-canceled", 10.0))
         session.add(_fable_scoped_weekly("acc-scoped-canceled", 45.0, now))
-
-
 
         session.add(_anthropic_account("acc-scoped-stale", "scoped-stale@example.com"))
         session.add(_weekly_usage("acc-scoped-stale", 30.0))

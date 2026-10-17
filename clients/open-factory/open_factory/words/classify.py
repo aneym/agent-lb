@@ -1,5 +1,3 @@
-
-
 import fnmatch
 import re
 from pathlib import Path

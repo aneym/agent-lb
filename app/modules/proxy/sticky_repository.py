@@ -19,12 +19,6 @@ from app.modules.sticky_sessions.schemas import StickySessionSortBy, StickySessi
 logger = logging.getLogger(__name__)
 
 
-
-
-
-
-
-
 _DELETE_ENTRIES_CHUNK_SIZE = 250
 
 

@@ -15,8 +15,11 @@ def now():
 
 def seconds(stamp):
     try:
-        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).astimezone(timezone.utc).isoformat(
-            timespec="seconds")
+        return (
+            datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+            .astimezone(timezone.utc)
+            .isoformat(timespec="seconds")
+        )
     except ValueError:
         return None
 
@@ -41,8 +44,10 @@ def steals(since):
 
 def message(name, since, rows):
     tools = ",".join(sorted({str(r.get("tool") or "?") for r in rows}))
-    return (f"FOCUS-STEAL {name}: {len(rows)} focus steal(s) on Alex's desktop during this Studio-local run "
-            f"({tools}); the run failed (Alex, 2026-10-16). Rows: desktop-guard-focus check --since {since}")
+    return (
+        f"FOCUS-STEAL {name}: {len(rows)} focus steal(s) on Alex's desktop during this Studio-local run "
+        f"({tools}); the run failed (Alex, 2026-10-16). Rows: desktop-guard-focus check --since {since}"
+    )
 
 
 def first_timestamp(path):
@@ -76,8 +81,15 @@ def subagent_stop():
     since = first_timestamp(str(payload.get("agent_transcript_path") or ""))
     rows = steals(since)
     if rows:
-        print(json.dumps({"decision": "block", "reason": message(agent_type, since, rows) +
-                          ". End your report with `FAILED: focus steal` and the rows; do not claim success."}))
+        print(
+            json.dumps(
+                {
+                    "decision": "block",
+                    "reason": message(agent_type, since, rows)
+                    + ". End your report with `FAILED: focus steal` and the rows; do not claim success.",
+                }
+            )
+        )
     return 0
 
 

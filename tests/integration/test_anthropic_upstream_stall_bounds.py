@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -66,8 +64,6 @@ JSON_MESSAGE = {
 
 
 class StandIn:
-
-
     def __init__(self, mode: str) -> None:
         self.mode = mode
         self.calls = 0
@@ -106,14 +102,12 @@ class StandIn:
         elif first and self.mode == "closes_mid_event":
             await response.write(MESSAGE_START + REST[:CUT])
         elif first and self.mode == "breaks_mid_body":
-
             await response.write(MESSAGE_START + REST[:CUT])
             await asyncio.sleep(0.05)
             assert request.transport is not None
             request.transport.close()
             return response
         elif self.mode == "crlf_split_last_terminator":
-
             await response.write(CRLF_SSE[:-1])
             await asyncio.sleep(0.05)
             await response.write(CRLF_SSE[-1:])
@@ -367,7 +361,6 @@ async def test_a_stream_that_closes_mid_event_ends_with_a_clean_retryable_error_
 @pytest.mark.parametrize("upstream", ["breaks_mid_body"], indirect=True)
 async def test_a_stream_whose_connection_breaks_mid_body_is_logged_as_a_failed_attempt(upstream, async_client):
 
-
     await _insert_anthropic_accounts(1)
 
     status, body, _ = await _call(async_client, stream=True)
@@ -413,7 +406,6 @@ async def test_a_client_gone_during_stall_bookkeeping_still_settles_and_records_
     monkeypatch.setattr(service._load_balancer, "record_error", record_error)
     chunks = await _stream_with_reservation(service)
     assert await anext(chunks) == MESSAGE_START
-
 
     reader = asyncio.ensure_future(anext(chunks))
     await asyncio.wait_for(entered.wait(), BOUNDED_SECONDS)

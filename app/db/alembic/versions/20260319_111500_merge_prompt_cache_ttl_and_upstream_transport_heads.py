@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260319_111500_merge_prompt_cache_ttl_and_upstream_transport_heads"

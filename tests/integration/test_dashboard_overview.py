@@ -136,14 +136,12 @@ async def test_dashboard_overview_combines_data(async_client, db_setup):
     assert "requestLogs" not in payload
     assert payload["lastSyncAt"] == secondary_time.isoformat() + "Z"
 
-
     assert "trends" in payload
     trends = payload["trends"]
     assert len(trends["requests"]) == 28
     assert len(trends["tokens"]) == 28
     assert len(trends["cost"]) == 28
     assert len(trends["errorRate"]) == 28
-
 
     request_values = [p["v"] for p in trends["requests"]]
     assert any(v > 0 for v in request_values)

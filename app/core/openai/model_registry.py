@@ -142,12 +142,6 @@ def _bootstrap_model(
     )
 
 
-
-
-
-
-
-
 _BOOTSTRAP_STATIC_MODELS: tuple[UpstreamModel, ...] = (
     _bootstrap_model(
         "gpt-5.6-sol",
@@ -273,7 +267,6 @@ class ModelRegistry:
                 models: dict[str, UpstreamModel] = {}
                 model_plans: dict[str, set[str]] = {}
 
-
                 if previous is not None:
                     previous_plans = set(previous.plan_models.keys())
                     refreshed_plans = set(per_plan_results.keys())
@@ -286,7 +279,6 @@ class ModelRegistry:
                                 models[slug] = previous.models[slug]
                             model_plans.setdefault(slug, set()).add(plan_type)
 
-
                 for plan_type, plan_models_list in per_plan_results.items():
                     for model in plan_models_list:
                         models[model.slug] = model
@@ -295,7 +287,6 @@ class ModelRegistry:
                 frozen_model_plans: dict[str, frozenset[str]] = {
                     slug: frozenset(plans) for slug, plans in model_plans.items()
                 }
-
 
                 plan_models_index: dict[str, set[str]] = {}
                 for slug, plans in frozen_model_plans.items():

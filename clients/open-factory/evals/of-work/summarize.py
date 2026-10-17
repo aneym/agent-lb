@@ -88,7 +88,11 @@ def mean(values: list) -> float | None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Summarize an of-work run: one Harbor job dir per arm, graded with CIs and agent-lb receipts.'.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="Summarize an of-work run: one Harbor job dir per arm, graded with CIs and agent-lb receipts.".splitlines()[
+            0
+        ]
+    )
     parser.add_argument("run", type=Path)
     parser.add_argument("--reference")
     parser.add_argument("--no-receipts", action="store_true")

@@ -622,7 +622,6 @@ class UsageRepository:
                 since,
             )
 
-
         ranked = (
             select(
                 UsageHistory.id,
@@ -1032,20 +1031,19 @@ class AdditionalUsageRepository:
             conditions.append(AdditionalUsageHistory.recorded_at >= since)
         bind = self._session.get_bind()
         if bind is not None and bind.dialect.name == "sqlite":
-
-
             if account_ids is not None and not account_ids:
                 return {}
             if account_ids is not None and len(account_ids) > 400:
-
-
                 result: dict[str, AdditionalUsageHistory] = {}
                 ids = sorted(set(account_ids))
                 for offset in range(0, len(ids), 400):
                     result.update(
                         await self.latest_by_account(
-                            quota_key, window, limit_name=limit_name,
-                            account_ids=ids[offset:offset + 400], since=since,
+                            quota_key,
+                            window,
+                            limit_name=limit_name,
+                            account_ids=ids[offset : offset + 400],
+                            since=since,
                         )
                     )
                 return result
@@ -1100,15 +1098,11 @@ class AdditionalUsageRepository:
             ids = select(latest_id.label("usage_id")).select_from(accounts).subquery("latest_quota_ids")
             stmt = select(AdditionalUsageHistory).join(ids, AdditionalUsageHistory.id == ids.c.usage_id)
         elif bind is not None and bind.dialect.name == "postgresql" and account_ids:
-
-
             conditions[0] = AdditionalUsageHistory.quota_key.in_(
                 tuple(scope.quota_key_match_values or {scope.quota_key})
             )
             accounts = (
-                select(Account.id.label("account_id"))
-                .where(Account.id.in_(account_ids))
-                .subquery("quota_accounts")
+                select(Account.id.label("account_id")).where(Account.id.in_(account_ids)).subquery("quota_accounts")
             )
             latest = (
                 select(AdditionalUsageHistory.id.label("usage_id"))

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260409_010000_merge_http_bridge_and_import_without_overwrite_heads"

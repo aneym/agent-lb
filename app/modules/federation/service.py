@@ -53,8 +53,6 @@ class FederationService:
         self._encryptor = encryptor or TokenEncryptor()
         self._peer_client = peer_client or AiohttpFederationPeerClient()
 
-
-
     async def accept_usage_report(
         self, instance_id: str, rollups: list[FederationUsageDayRollup]
     ) -> FederationUsageReportResponse:
@@ -137,12 +135,6 @@ class FederationService:
         if await self._repo.has_exchange_intent(account_id):
             raise FederationConflictError(account_id, current_owner=account.owner_instance)
 
-
-
-
-
-
-
         transfer = await self._repo.release_for_checkout(
             account_id, taker_instance_id, local_instance_id=local_id, nonce=nonce
         )
@@ -207,7 +199,6 @@ class FederationService:
         peer_url, token = self._require_peer_config()
         transfer = await self._repo.get_open_transfer(account_id)
         if transfer is None:
-
             transfer = await self._repo.get_latest_transfer(account_id, direction=AccountTransferDirection.CHECKOUT)
             if transfer is None or transfer.state != AccountTransferState.SETTLED:
                 return False
@@ -238,8 +229,6 @@ class FederationService:
         else:
             raise RuntimeError(f"Inconsistent peer transfer state for account {account_id} nonce {nonce}")
         return True
-
-
 
     async def execute_checkout(self, account_id: str) -> FederationCheckoutExecuteResponse:
         local_id = self._settings.local_instance_id
@@ -279,8 +268,6 @@ class FederationService:
         except ValueError as exc:
             raise FederationConflictError(account_id, current_owner=None) from exc
         except Exception:
-
-
             raise
         confirmed = False
         try:
@@ -329,15 +316,12 @@ class FederationService:
             except Exception as reclaim_error:
                 raise RuntimeError(f"Checkin unresolved; reclaim {account_id} to retry") from reclaim_error
 
-
             latest = await self._repo.get_transfer_by_nonce(nonce)
             if latest is not None and latest.state == AccountTransferState.SETTLED:
                 return FederationCheckinExecuteResponse(account_id=account_id, nonce=nonce, settled=True)
             raise FederationConflictError(account_id, current_owner=self._settings.local_instance_id) from exc
         await self._repo.settle_checkin_and_blank(nonce, encryptor=self._encryptor)
         return FederationCheckinExecuteResponse(account_id=account_id, nonce=nonce, settled=True)
-
-
 
     @staticmethod
     def _totals(rollups: list[FederationUsageDayRollup]) -> FederationUsageTotals:

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import hashlib
@@ -163,8 +161,6 @@ def decide(task: str, task_class: str, *, decider: str, context: str | None = No
                 receipt["validation"] = "unknown_id"
                 chosen = None
             elif chosen is not None and chosen != default:
-
-
                 default_fit = (answer.get("fits") or {}).get(default)
                 receipt["default_fit"] = default_fit
                 if isinstance(default_fit, (int, float)) and default_fit >= float(policy.get("default_min_fit", 0.8)):

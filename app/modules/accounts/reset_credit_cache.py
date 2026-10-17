@@ -1,5 +1,3 @@
-
-
 from time import monotonic
 
 _COUNTS_TTL_SECONDS = 300

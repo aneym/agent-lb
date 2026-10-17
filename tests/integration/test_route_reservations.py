@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -20,8 +18,12 @@ from tests.integration.route_support import SCRIPT, setup, table_copy
 
 REPO = Path(__file__).resolve().parents[2]
 BOOT_SECONDS = 240
-CONCURRENCY = {"per_account": {"devin": 1, "openai": 3, "anthropic": 4, "cursor": 2}, "default": 2,
-               "ttl_s": 1200, "heartbeat_s": 300}
+CONCURRENCY = {
+    "per_account": {"devin": 1, "openai": 3, "anthropic": 4, "cursor": 2},
+    "default": 2,
+    "ttl_s": 1200,
+    "heartbeat_s": 300,
+}
 
 pytestmark = pytest.mark.timeout(600)
 
@@ -51,8 +53,13 @@ def server(tmp_path_factory: pytest.TempPathFactory):
         AGENT_LB_ACCOUNTS_CACHE_WARMER_ENABLED="false",
     )
     log = (data / "server.log").open("w")
-    proc = subprocess.Popen([sys.executable, "-c", "from app.cli import main; main()", "--host", "127.0.0.1",
-                             "--port", str(port)], cwd=REPO, env=env, stdout=log, stderr=subprocess.STDOUT)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "from app.cli import main; main()", "--host", "127.0.0.1", "--port", str(port)],
+        cwd=REPO,
+        env=env,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
     url = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + BOOT_SECONDS
     while True:
@@ -94,13 +101,20 @@ def route(env: dict[str, str], *args: str, host: str = "host-a") -> tuple[int, d
     if args[0] == "pick" and env.get("ROUTE_FIXTURE_DIR"):
         with pick_http_env(env) as network_env:
             return route(network_env, *args, host=host)
-    result = subprocess.run([sys.executable, str(SCRIPT), *args, "--json"], capture_output=True, text=True,
-                            timeout=60, env={**env, "ROUTE_HOST": host}, check=False)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), *args, "--json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**env, "ROUTE_HOST": host},
+        check=False,
+    )
     try:
         body = json.loads(result.stdout)
     except json.JSONDecodeError:
-        pytest.fail(f"route {' '.join(args)} printed no JSON (rc {result.returncode}):\n"
-                    f"{result.stdout}\n{result.stderr}")
+        pytest.fail(
+            f"route {' '.join(args)} printed no JSON (rc {result.returncode}):\n{result.stdout}\n{result.stderr}"
+        )
     return result.returncode, body
 
 
@@ -114,9 +128,9 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     env = scenario_env(tmp_path, server, "main")
     _, advisory_before = route(env, "pick", "implement")
 
-
     def reserve(index: int) -> tuple[int, dict]:
         return route(env, "reserve", "implement", "--job", f"j{index}", host="host-a" if index % 2 else "host-b")
+
     with ThreadPoolExecutor(max_workers=9) as pool:
         results = list(pool.map(reserve, range(9)))
     reserved = [body for rc, body in results if rc == 0 and body["status"] == "reserved"]
@@ -135,17 +149,14 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     rows = live(env)
     assert len(rows) == 7 and {row["host"] for row in rows} == {"host-a", "host-b"}, rows
 
-
     first_sol = next(body for body in reserved if body["seat"] == "gpt-implementer")
     rc, again = route(env, "reserve", "implement", "--job", first_sol["job"])
     assert rc == 0 and again["reservation_id"] == first_sol["reservation_id"], again
     assert len(live(env)) == 7
 
-
     rc, pinned = route(env, "reserve", "implement", "--job", "pin1", "--prefer", "devin-seat", "--reason", "A4a pin")
     assert rc == 75 and pinned["status"] == "wait" and "seat" not in pinned, pinned
     assert len(live(env)) == 7
-
 
     rc, released = route(env, "release", devin["reservation_id"], "--outcome", "failed")
     assert rc == 0 and (released["status"], released["outcome"]) == ("released", "failed"), released
@@ -153,7 +164,6 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     assert rc == 0 and (pinned["status"], pinned["seat"]) == ("reserved", "devin-seat"), pinned
     rc, twice = route(env, "release", devin["reservation_id"], "--outcome", "ok")
     assert rc == 0 and twice["outcome"] == "failed", twice
-
 
     rc, freed = route(env, "release", first_sol["reservation_id"], "--outcome", "ok")
     assert rc == 0 and freed["outcome"] == "ok"
@@ -168,7 +178,6 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     expired = [row for row in listing["recent"] if row["job"] == "dead1"]
     assert expired and expired[0]["outcome"] == "expired", listing
 
-
     route(env, "release", after["reservation_id"], "--outcome", "cancelled")
     rc, beating = route(env, "reserve", "implement", "--job", "hb1", "--ttl", "4")
     assert rc == 0, beating
@@ -182,14 +191,13 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     rc, gone = route(env, "heartbeat", beating["reservation_id"])
     assert rc == 2 and gone["status"] == "gone", gone
 
-
-
     before = len(live(env))
     _, advisory_after = route(env, "pick", "implement")
     assert advisory_after["seat"] == advisory_before["seat"] == "gpt-implementer"
     assert all(row["seat"] != "devin-seat" for row in advisory_after["fallbacks"])
-    assert any(row["rung"] == "swe2-high" and "lease capacity reserved" in row["reason"]
-               for row in advisory_after["skipped"])
+    assert any(
+        row["rung"] == "swe2-high" and "lease capacity reserved" in row["reason"] for row in advisory_after["skipped"]
+    )
     assert len(live(env)) == before
 
 

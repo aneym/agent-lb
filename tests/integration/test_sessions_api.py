@@ -240,15 +240,11 @@ async def test_session_analytics_groups_series_seats_and_histograms(async_client
         "gpt-5.6-sol",
     }
     assert sum(len(bucket["byModel"]) for bucket in body["series"]) == 3
-    assert sum(
-        model["outputTokens"]
-        for bucket in body["series"]
-        for model in bucket["byModel"]
-    ) == body["session"]["outputTokens"]
-    assert [
-        (seat["model"], seat["reasoningEffort"], seat["requests"], seat["errors"])
-        for seat in body["seats"]
-    ] == [
+    assert (
+        sum(model["outputTokens"] for bucket in body["series"] for model in bucket["byModel"])
+        == body["session"]["outputTokens"]
+    )
+    assert [(seat["model"], seat["reasoningEffort"], seat["requests"], seat["errors"]) for seat in body["seats"]] == [
         ("claude-fable-5", None, 1, 0),
         ("gpt-5.6-sol", "medium", 1, 0),
         ("gpt-5.6-sol", "xhigh", 1, 1),
@@ -301,11 +297,7 @@ async def test_sessions_list_includes_zero_filled_sparkline(async_client, db_set
 
 @pytest.mark.asyncio
 async def test_sessions_router_declares_dashboard_auth_dependency(app_instance) -> None:
-    sessions_routes = [
-        route
-        for route in app_instance.routes
-        if getattr(route, "path", "").startswith("/api/sessions")
-    ]
+    sessions_routes = [route for route in app_instance.routes if getattr(route, "path", "").startswith("/api/sessions")]
     assert sessions_routes
     for route in sessions_routes:
         dependencies = [dependency.call for dependency in route.dependant.dependencies]

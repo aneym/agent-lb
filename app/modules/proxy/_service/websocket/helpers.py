@@ -876,10 +876,6 @@ def _websocket_event_error_payload(
         if isinstance(error, dict):
             return cast(dict[str, JsonValue], error)
 
-
-
-
-
         return _websocket_top_level_error_payload(payload)
     if event_type == "response.failed":
         response = payload.get("response")

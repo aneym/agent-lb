@@ -121,8 +121,6 @@ _ACCESS_TOKEN_SERVING_MARGIN_SECONDS = 300
 
 
 class AccountNotOwnedError(Exception):
-
-
     def __init__(self, account_id: str, owner_instance: str | None, local_instance_id: str) -> None:
         message = (
             f"Account {account_id} is owned by instance {owner_instance!r}, not the "
@@ -274,25 +272,17 @@ class AuthManager:
         self._encryptor = TokenEncryptor()
         self._acquire_refresh_admission = acquire_refresh_admission
 
-
-
-
-
-
         self._refresh_repo_factory = refresh_repo_factory
 
     async def ensure_fresh(self, account: Account, *, force: bool = False, recover_uncertain: bool = False) -> Account:
         settings = get_settings()
 
-
         latest = await self._repo.reload_by_id(account.id)
         if latest is not None:
             account = latest
 
-
         account = _snapshot(self._repo, account)
         if not is_locally_owned(account, settings):
-
             if force or access_token_hard_expired(self._encryptor, account):
                 raise AccountNotOwnedError(account.id, account.owner_instance, settings.local_instance_id)
             return await self._ensure_chatgpt_account_id(account)
@@ -560,7 +550,6 @@ class AuthManager:
             account.workspace_label = result.workspace_label
         if workspace_matches_current_slot and result.seat_type:
             account.seat_type = result.seat_type
-
 
         if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
             self._repo.session.expunge(account)

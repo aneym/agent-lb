@@ -143,9 +143,7 @@ async def test_flag_off_sdk_ts_logs_unless_priority_is_high(async_client, monkey
     _flag(monkeypatch, False)
     caplog.set_level(logging.INFO, logger="app.modules.proxy.api")
 
-    untagged = await _send(
-        async_client, model="claude-opus-5-5", user_agent=_SDK_TS, session="sess-sdk-ts-1"
-    )
+    untagged = await _send(async_client, model="claude-opus-5-5", user_agent=_SDK_TS, session="sess-sdk-ts-1")
     await _send(
         async_client,
         model="claude-opus-5-5",

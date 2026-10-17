@@ -18,8 +18,6 @@ _STALL_DUMP_RATE_LIMIT_SECONDS = 60.0
 
 @dataclass(slots=True)
 class EventLoopLagMonitor:
-
-
     warning_threshold_seconds: float = 0.5
     check_interval_seconds: float = 1.0
     stall_dump_threshold_seconds: float = 5.0

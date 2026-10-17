@@ -54,9 +54,6 @@ def _postgres_async_engine_kwargs(url: str, *, background: bool) -> dict[str, ob
         kwargs["max_overflow"] = _database_max_overflow(background=background)
         kwargs["pool_timeout"] = _settings.database_pool_timeout_seconds
 
-
-
-
         kwargs["pool_pre_ping"] = True
         kwargs["pool_recycle"] = _settings.database_pool_recycle_seconds
     return kwargs
@@ -137,8 +134,6 @@ def _ensure_sqlite_dir(url: str) -> None:
     if marker_index < 0:
         return
 
-
-
     path = url[marker_index + len(marker) :]
     path = path.partition("?")[0]
     path = path.partition("#")[0]
@@ -200,9 +195,6 @@ def init_background_db(url: str | None = None) -> None:
     if _is_sqlite_url(db_url):
         is_sqlite_memory = _is_sqlite_memory_url(db_url)
         if is_sqlite_memory:
-
-
-
             _background_engine = engine
             _background_session_factory = SessionLocal
             return

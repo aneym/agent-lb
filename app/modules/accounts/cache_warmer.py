@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class AccountsCacheWarmer:
-
-
     interval_seconds: float
     startup_timeout_seconds: float
     enabled: bool

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -150,7 +148,6 @@ def test_pick_and_spread(home: tuple) -> None:
     copied = dict(env, SEAT_HOME=str(copy), ROUTE_LEDGER=str(root / "copy-ledger"))
     assert run(copied, root)["account"] == "acct-c"
     assert lease(env, root)["account"] == "acct-c"
-
 
     assert lease(env, root)["account"] == "acct-a"
     assert lease(env, root)["account"] == "acct-b"
@@ -335,8 +332,6 @@ def test_release_outcomes_as_the_lb_sees_them(tmp_path: Path, variant: str) -> N
     assert [row["event"] for row in ledger(root)] == ["lease", "release"]
     assert {row["session_id"] for row in ledger(root)} == {meta["lease"]}
     if variant == "limit":
-
-
         assert not record.get("cooldown_until")
         until = datetime.fromisoformat(record["cooldowns"]["cursor-other"].replace("Z", "+00:00"))
         assert abs((until - datetime.now(timezone.utc) - timedelta(hours=2)).total_seconds()) < 60
@@ -423,9 +418,7 @@ def test_box_run_uses_shipped_lease(home: tuple) -> None:
     env, root, key, _ = home
     add_cursor(env, root, "acct-a", key)
     out = root / "bundle"
-    issued = seat(
-        env, "lease", "--vendor", "cursor", "--for", "unit-1", "--ttl", "3600", "--out", str(out), "--json"
-    )
+    issued = seat(env, "lease", "--vendor", "cursor", "--for", "unit-1", "--ttl", "3600", "--out", str(out), "--json")
     assert issued.returncode == 0, issued.stderr
     meta = json.loads(issued.stdout)
     box = root / "box"

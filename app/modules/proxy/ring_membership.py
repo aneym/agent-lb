@@ -25,15 +25,12 @@ RING_STALE_GRACE_SECONDS = RING_HEARTBEAT_INTERVAL_SECONDS + 5
 
 
 class RingMembershipService:
-
-
     def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def register(self, instance_id: str, *, endpoint_base_url: str | None = None) -> None:
 
         async with self._session() as session:
-
             dialect = session.get_bind().dialect.name
             metadata_json = _bridge_ring_metadata_json(endpoint_base_url)
             if dialect == "postgresql":

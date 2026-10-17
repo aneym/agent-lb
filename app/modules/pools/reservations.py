@@ -92,19 +92,39 @@ def reserve(body: ReservationRequest) -> dict:
         for candidate in body.candidates:
             rows = [row for row in state["live"] if row["capacity_key"] == candidate.capacity_key]
             if len(rows) < candidate.capacity:
-                row = {**candidate.model_dump(), "reservation_id": "rsv-" + uuid.uuid4().hex[:12],
-                       "job": body.job, "class": body.task_class, "host": body.host, "pinned": body.pinned,
-                       "ttl_s": body.ttl_s, "created_at": _timestamp(now),
-                       "expires_at": _timestamp(now + timedelta(seconds=body.ttl_s))}
+                row = {
+                    **candidate.model_dump(),
+                    "reservation_id": "rsv-" + uuid.uuid4().hex[:12],
+                    "job": body.job,
+                    "class": body.task_class,
+                    "host": body.host,
+                    "pinned": body.pinned,
+                    "ttl_s": body.ttl_s,
+                    "created_at": _timestamp(now),
+                    "expires_at": _timestamp(now + timedelta(seconds=body.ttl_s)),
+                }
                 state["live"].append(row)
                 return {**row, "status": "reserved", "overflow_from": [item["rung"] for item in full]}
-            full.append({"rung": candidate.rung, "capacity_key": candidate.capacity_key,
-                         "live": len(rows), "capacity": candidate.capacity})
-        expiries = [datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
-                    for row in state["live"] if row["capacity_key"] == full[0]["capacity_key"]]
+            full.append(
+                {
+                    "rung": candidate.rung,
+                    "capacity_key": candidate.capacity_key,
+                    "live": len(rows),
+                    "capacity": candidate.capacity,
+                }
+            )
+        expiries = [
+            datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+            for row in state["live"]
+            if row["capacity_key"] == full[0]["capacity_key"]
+        ]
         wait = math.ceil((min(expiries) - now).total_seconds()) if expiries else 5
-        return {"status": "wait", "wait": max(5, min(60, wait)), "reason": "all candidate capacity is reserved",
-                "full": full}
+        return {
+            "status": "wait",
+            "wait": max(5, min(60, wait)),
+            "reason": "all candidate capacity is reserved",
+            "full": full,
+        }
 
 
 def heartbeat(reservation_id: str, body: HeartbeatRequest) -> tuple[int, dict]:

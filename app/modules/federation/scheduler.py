@@ -45,8 +45,6 @@ _RepoFactory = Callable[[], AbstractAsyncContextManager[FederationRepository]]
 
 @dataclass(slots=True)
 class FederationMirrorScheduler:
-
-
     interval_seconds: int
     enabled: bool
     peer_url: str | None
@@ -140,10 +138,6 @@ class FederationMirrorScheduler:
                     or applied
                 )
         if applied:
-
-
-
-
             get_account_selection_cache().invalidate()
 
     async def _push_usage_report(self) -> None:
@@ -173,8 +167,6 @@ class FederationMirrorScheduler:
             cursor = await self._cursor_for_forward()
             for _ in range(_REQUEST_LOG_BATCHES_PER_CYCLE):
                 since = None if cursor is not None else utcnow() - _REQUEST_LOG_LOOKBACK
-
-
 
                 async with self.repo_factory() as repo:
                     logs = await repo.list_request_logs_to_forward(

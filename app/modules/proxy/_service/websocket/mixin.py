@@ -1318,14 +1318,6 @@ class _WebSocketMixin:
         )
         request_state.affinity_policy = affinity_policy
 
-
-
-
-
-
-
-
-
         if request_state.preferred_account_id is None:
             request_state.preferred_account_id = rewritten_file_account_id
             request_state.file_required_preferred_account = request_state.preferred_account_id is not None
@@ -1334,22 +1326,6 @@ class _WebSocketMixin:
                 responses_payload, headers
             )
             request_state.file_required_preferred_account = request_state.preferred_account_id is not None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
         if responses_payload.previous_response_id is None and not request_state.proxy_injected_previous_response_id:
             request_state.fresh_upstream_request_text = text_data
@@ -2845,8 +2821,6 @@ class _WebSocketMixin:
             and request_state.preferred_account_id is not None
         ):
             if _websocket_request_can_rotate_account(request_state, continuity_state):
-
-
                 request_state.excluded_account_ids.add(account.id)
                 request_state.preferred_account_id = None
             else:
@@ -2866,11 +2840,6 @@ class _WebSocketMixin:
                 if not (
                     request_state.fresh_upstream_request_is_retry_safe and request_state.fresh_upstream_request_text
                 ):
-
-
-
-
-
                     retry_error_code = None
                 else:
                     upstream_control.reconnect_requested = True

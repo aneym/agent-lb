@@ -59,9 +59,6 @@ class _CancelThenRetryUpstreamWebSocket:
             return
 
         if len(self.sent_text) == 2:
-
-
-
             await self._messages.put(
                 _FakeUpstreamMessage(
                     "text",
@@ -204,10 +201,6 @@ async def test_cancelled_http_bridge_stream_retires_before_retry_can_share_upstr
         first_payload = proxy_service.parse_sse_data_json(first_block)
         assert isinstance(first_payload, dict)
         assert first_payload["type"] == "response.created"
-
-
-
-
 
         await first_stream.aclose()
     finally:

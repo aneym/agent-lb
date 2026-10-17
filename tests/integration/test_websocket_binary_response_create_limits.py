@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -94,7 +92,6 @@ async def test_binary_response_create_is_refused_for_unpriced_model_under_cost_c
 
             websocket.send_bytes(json.dumps(unpriced).encode())
             refusal = websocket.receive_json()
-
 
             websocket.send_bytes(json.dumps(priced).encode())
             assert websocket.receive_json()["type"] == "response.created"

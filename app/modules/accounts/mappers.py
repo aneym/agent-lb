@@ -147,13 +147,10 @@ def _account_to_summary(
         and usage_core.is_weekly_window_minutes(primary_usage.window_minutes)
     )
 
-
     primary_used_percent = _normalize_used_percent(effective_primary_usage)
     secondary_used_percent = _normalize_used_percent(effective_secondary_usage)
     primary_remaining_percent = usage_core.remaining_percent_from_used(primary_used_percent)
     secondary_remaining_percent = usage_core.remaining_percent_from_used(secondary_used_percent)
-
-
 
     if (
         primary_remaining_percent is None
@@ -263,7 +260,6 @@ def _account_to_summary(
         credits_balance=credits_balance,
         allow_missing_runtime_reset_recovery=allow_missing_runtime_reset_recovery,
     )
-
 
     credits_cap = None
     credits_spent = None
@@ -490,8 +486,6 @@ def _effective_status_from_usage(
     long_window_usage = monthly_usage or secondary_usage
     long_window_used_percent = monthly_used_percent if monthly_usage is not None else secondary_used_percent
 
-
-
     credit_override_enabled = account.provider != ANTHROPIC_PROVIDER_NAME
     if not credit_override_enabled:
         credits_has, credits_unlimited, credits_balance = None, None, None
@@ -659,7 +653,6 @@ def build_account_usage_trends(
     bucket_count: int,
 ) -> dict[str, AccountUsageTrend]:
 
-
     grouped: dict[tuple[str, str], dict[int, float]] = {}
     secondary_schedule: dict[str, dict[int, tuple[int, int]]] = {}
     for b in _effective_usage_trend_buckets(buckets):
@@ -676,7 +669,6 @@ def build_account_usage_trends(
                 b.reset_at,
                 b.window_minutes,
             )
-
 
     aligned_start = (since_epoch // bucket_seconds) * bucket_seconds
     time_grid = [aligned_start + i * bucket_seconds for i in range(bucket_count)]

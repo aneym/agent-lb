@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import base64
@@ -342,14 +340,11 @@ async def test_backend_files_finalize_pins_to_create_account(async_client, monke
     assert finalize_resp.status_code == 200
     assert finalize_seen["file_id"] == "file_pinned"
 
-
-
     assert finalize_seen["account_id"] == creating_account
 
 
 @pytest.mark.asyncio
 async def test_backend_files_finalize_pinned_401_retry_fails_closed(async_client, monkeypatch):
-
 
     await _import_account(async_client, "acc_pin_401_a", "pin-401-a@example.com")
     await _import_account(async_client, "acc_pin_401_b", "pin-401-b@example.com")
@@ -403,7 +398,6 @@ async def test_resolve_file_account_for_responses_returns_pin_when_no_other_affi
     from app.dependencies import get_proxy_service_for_app
 
     service = get_proxy_service_for_app(async_client._transport.app)
-
 
     await service._pin_file_account("file_response_pin", "acc_resp_a")
 
@@ -484,11 +478,6 @@ async def test_v1_responses_prompt_cache_key_overrides_file_id_pin(async_client,
     )
     assert create_resp.status_code == 200
 
-
-
-
-
-
     from app.core.openai.requests import ResponsesRequest
     from app.dependencies import get_proxy_service_for_app
 
@@ -540,12 +529,6 @@ async def test_derived_prompt_cache_key_does_not_block_file_id_pin(async_client)
         }
     )
 
-
-
-
-
-
-
     payload.prompt_cache_key = "derived-key-load-balancer-set"
     payload.model_fields_set.discard("prompt_cache_key")
     assert "prompt_cache_key" not in payload.model_fields_set
@@ -582,15 +565,11 @@ async def test_synthesized_turn_state_does_not_block_file_id_pin(async_client):
         }
     )
 
-
     synth_turn_state = ensure_downstream_turn_state({})
     assert synth_turn_state.startswith("turn_")
     headers_synth = {"x-codex-turn-state": synth_turn_state}
     resolved = await service._resolve_file_account_for_responses(payload, headers_synth)
     assert resolved == "acc_ts_a"
-
-
-
 
     headers_client = {"x-codex-turn-state": "client-conversation-handle-42"}
     resolved_blocked = await service._resolve_file_account_for_responses(payload, headers_client)

@@ -11,7 +11,6 @@ _MAX_LENGTH = 128
 _CLIENT_SESSION_ID: ContextVar[str | None] = ContextVar("client_session_id", default=None)
 
 
-
 _SEAT_HEADER = b"x-agent-lb-seat"
 _SEAT_RE = re.compile(r"[a-z0-9][a-z0-9@._:-]{0,63}\Z")
 _DISPATCH_ID: ContextVar[str | None] = ContextVar("dispatch_id", default=None)

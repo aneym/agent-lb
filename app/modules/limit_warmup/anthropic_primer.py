@@ -19,10 +19,6 @@ _DEFAULT_ANTHROPIC_PRIMER_PROMPT = "OK"
 _ERROR_MESSAGE_LIMIT = 1000
 
 
-
-
-
-
 @dataclass(frozen=True, slots=True)
 class AnthropicPrimerResult:
     success: bool

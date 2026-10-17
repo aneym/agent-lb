@@ -62,7 +62,6 @@ def reset_team_usage_cache() -> None:
 
 def invalidate_team_member_caches() -> None:
 
-
     reset_team_usage_cache()
     reset_pool_share_cache()
     get_api_key_cache().clear()
@@ -169,8 +168,6 @@ class TeamMemberWindowStatus:
 
 @dataclass(frozen=True, slots=True)
 class TeamMemberSelfStatus:
-
-
     id: str
     name: str
     status: str
@@ -194,7 +191,6 @@ class TeamMemberUsageDetail:
 
 def serialize_allowed_models(models: list[str] | None) -> str | None:
 
-
     if not models:
         return None
     return json.dumps(models)
@@ -216,7 +212,6 @@ _MODEL_CONTEXT_SUFFIX = re.compile(r"(?:\[[^\]]*\]|-1m)$")
 
 
 def _model_match_keys(model: str) -> set[str]:
-
 
     normalized = model.strip().lower()
     if not normalized:
@@ -246,15 +241,10 @@ class TeamService:
     def __init__(self, repository: TeamRepository) -> None:
         self._repository = repository
 
-
-
     async def check_member_gate(self, api_key: ApiKeyData, model: str | None) -> None:
         try:
             await self._check_member_gate(api_key, model)
         except (TeamMemberSuspendedError, TeamModelNotAllowedError, TeamMemberOverCapError) as exc:
-
-
-
             logger.warning(
                 "team_gate_refused key_id=%s model=%r code=%s message=%r",
                 getattr(api_key, "id", None),
@@ -320,8 +310,6 @@ class TeamService:
         if member.pool_share_percent is None:
             return []
         return await pool_share_windows(self._repository._session, member.id, float(member.pool_share_percent), now=now)
-
-
 
     async def list_members(self) -> list[TeamMemberData]:
         members = await self._repository.list_all()
@@ -447,7 +435,6 @@ class TeamService:
         )
 
     async def get_member_self_status(self, member_id: str) -> TeamMemberSelfStatus | None:
-
 
         member = await self._repository.get_by_id(member_id)
         if member is None:

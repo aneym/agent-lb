@@ -230,8 +230,6 @@ class _HTTPBridgeStreamingMixin:
     ) -> AsyncIterator[str]:
         _maybe_log_proxy_request_payload("stream_http", payload, headers)
 
-
-
         proxy_api_authorization = select_member_key_authorization(
             _header_value_case_insensitive(headers, "authorization"),
             _header_value_case_insensitive(headers, "x-api-key"),
@@ -263,7 +261,6 @@ class _HTTPBridgeStreamingMixin:
     async def _stream_with_forwarded_identity(
         stream: AsyncIterator[str], identity: RequestIdentity
     ) -> AsyncIterator[str]:
-
 
         try:
             while True:
@@ -590,10 +587,6 @@ class _HTTPBridgeStreamingMixin:
             )
         file_required_preferred_account = False
         if request_state.preferred_account_id is None:
-
-
-
-
             if rewritten_file_account_id is not None:
                 request_state.preferred_account_id = rewritten_file_account_id
                 file_required_preferred_account = True
@@ -605,13 +598,6 @@ class _HTTPBridgeStreamingMixin:
         if proxy_injected_previous_response_id:
             request_state.proxy_injected_previous_response_id = True
             request_state.fresh_upstream_request_text = fresh_upstream_request_text or text_data
-
-
-
-
-
-
-
 
             request_state.fresh_upstream_request_is_retry_safe = False
         try:
@@ -881,23 +867,6 @@ class _HTTPBridgeStreamingMixin:
             session.last_completed_input_count = durable_full_resend_anchor_count
             session.last_completed_input_prefix_fingerprint = durable_full_resend_anchor_fingerprint
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         incoming_input_preview = effective_payload.input
         stored_count_preview = session.last_completed_input_count
         stored_fingerprint_preview = session.last_completed_input_prefix_fingerprint
@@ -934,12 +903,6 @@ class _HTTPBridgeStreamingMixin:
             request_state.preferred_account_id = durable_lookup.account_id if durable_lookup is not None else None
             request_state.proxy_injected_previous_response_id = True
             request_state.fresh_upstream_request_text = fresh_upstream_request_text
-
-
-
-
-
-
 
             request_state.fresh_upstream_request_is_retry_safe = False
             logger.info(
@@ -990,11 +953,6 @@ class _HTTPBridgeStreamingMixin:
                 if proxy_injected_previous_response_id:
                     request_state.proxy_injected_previous_response_id = True
                     request_state.fresh_upstream_request_text = fresh_upstream_request_text
-
-
-
-
-
 
                     request_state.fresh_upstream_request_is_retry_safe = True
                 logger.info(
@@ -1420,13 +1378,6 @@ class _HTTPBridgeStreamingMixin:
                                     True,
                                 )
                             ):
-
-
-
-
-
-
-
                                 first_event_degraded_retry_attempted = True
                                 (
                                     degraded_text,
@@ -1521,10 +1472,6 @@ class _HTTPBridgeStreamingMixin:
                                     _extract_model_class(session.request_model) if session.request_model else None
                                 ),
                             )
-
-
-
-
 
                             try:
                                 _service_write_response_create_dump(
@@ -1649,19 +1596,8 @@ class _HTTPBridgeStreamingMixin:
                 await self._detach_http_bridge_request(session, request_state=request_state)
                 session.last_used_at = _service_time().monotonic()
                 if first_event_timed_out:
-
-
-
-
-
-
-
-
                     if session.account.id not in first_event_quarantined_account_ids:
                         await self._quarantine_http_bridge_first_event_account(session)
-
-
-
 
                     try:
                         await self._retire_stale_pending_http_bridge_session(

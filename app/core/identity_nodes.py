@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -65,8 +63,6 @@ def _nodes_from_status(raw: bytes) -> dict[str, str]:
 
 
 class IdentityNodeCache:
-
-
     def __init__(self, settings: Settings) -> None:
         self._enabled = settings.identity_enabled
         self._bin = settings.identity_tailscale_bin

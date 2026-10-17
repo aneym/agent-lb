@@ -83,7 +83,6 @@ async def test_public_usage_aggregates_without_auth(async_client):
         latency_ms=100,
     )
 
-
     for kind in ("limit_warmup", "warmup"):
         await _insert_log(
             request_id=f"edge-{kind}",
@@ -96,7 +95,6 @@ async def test_public_usage_aggregates_without_auth(async_client):
             source="edge:ax42",
             request_kind=kind,
         )
-
 
     response = await async_client.get("/api/usage/public?days=30")
     assert response.status_code == 200
@@ -121,12 +119,10 @@ async def test_public_usage_aggregates_without_auth(async_client):
     assert body["byProvider"]["anthropic"]["requests"] == 1
     assert body["byProvider"]["anthropic"]["costUsd"] == pytest.approx(0.01)
 
-
     by_model = body["byModel"]
     assert [m["model"] for m in by_model] == ["gpt-5.4-mini", "claude-haiku-4-5-20251001"]
     claude = next(m for m in by_model if m["provider"] == "anthropic")
     assert claude["label"] == "Claude Haiku 4.5"
-
 
     dates = [d["date"] for d in body["daily"]]
     assert dates == sorted(dates)
@@ -137,7 +133,6 @@ async def test_public_usage_aggregates_without_auth(async_client):
     empty_days = [d for d in body["daily"] if d["requests"] == 0]
     assert empty_days and all(d["topModel"] == "" for d in empty_days)
     assert isinstance(totals["avgLatencyMs"], (int, float))
-
 
     raw = json.dumps(body)
     for forbidden in ("accountId", "account_id", "apiKey", "api_key", "email"):

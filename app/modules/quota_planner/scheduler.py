@@ -87,9 +87,6 @@ class QuotaPlannerScheduler:
             now = datetime.now(timezone.utc)
             demand_bins = await planner_repo.aggregate_demand_slots()
 
-
-
-
             forecast = await asyncio.to_thread(build_demand_forecast, settings=settings, bins=demand_bins, now=now)
             base_simulation = await asyncio.to_thread(
                 simulate_pool, settings=settings, states=states, demand_forecast=forecast, now=now

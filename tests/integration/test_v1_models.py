@@ -130,10 +130,8 @@ async def test_v1_models_also_carries_codex_models_field(async_client):
     assert resp.status_code == 200
     payload = resp.json()
 
-
     assert payload["object"] == "list"
     assert {item["id"] for item in payload["data"]} == {"gpt-5.2", "gpt-5.3-codex"}
-
 
     assert "models" in payload
     entries = payload["models"]
@@ -625,12 +623,10 @@ async def test_model_context_window_override(async_client, monkeypatch):
     patched = original_settings.model_copy(update={"model_context_window_overrides": {"gpt-5.4": 515000}})
     monkeypatch.setattr(proxy_api_module, "get_settings", lambda: patched)
 
-
     resp = await async_client.get("/backend-api/codex/models")
     assert resp.status_code == 200
     entry = next(m for m in resp.json()["models"] if m["slug"] == "gpt-5.4")
     assert entry["context_window"] == 515000
-
 
     resp_v1 = await async_client.get("/v1/models")
     assert resp_v1.status_code == 200

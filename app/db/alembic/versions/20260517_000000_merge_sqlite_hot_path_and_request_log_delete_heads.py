@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260517_000000_merge_sqlite_hot_path_and_request_log_delete_heads"

@@ -233,12 +233,6 @@ def _normalize_message_content(message: OpenAIMessage) -> OpenAIMessage:
     role_str = role if isinstance(role, str) else "user"
     refusal = _get_assistant_refusal(message) if role_str == "assistant" else None
 
-
-
-
-
-
-
     if content is None and refusal is None:
         if "content" in message:
             return cast(OpenAIMessage, {"role": role, "content": content})

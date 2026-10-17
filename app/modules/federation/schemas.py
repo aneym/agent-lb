@@ -8,8 +8,6 @@ from app.modules.shared.schemas import DashboardModel
 
 
 class FederationMirrorAccount(BaseModel):
-
-
     account_id: str
     provider: str
     alias: str | None = None
@@ -40,8 +38,6 @@ class FederationUsageDayRollup(BaseModel):
 
 
 class FederationPushRequest(BaseModel):
-
-
     instance_id: str = Field(min_length=1)
     accounts: list[FederationMirrorAccount]
 
@@ -52,8 +48,6 @@ class FederationPushSkip(BaseModel):
 
 
 class FederationPushResponse(BaseModel):
-
-
     source: str
     accepted: list[str]
     skipped: list[FederationPushSkip]
@@ -138,8 +132,6 @@ class FederationStatusResponse(DashboardModel):
 
 
 class FederationAuthPayload(BaseModel):
-
-
     access_token: str
     refresh_token: str
     id_token: str | None = None
@@ -229,8 +221,6 @@ ROOM_MAX_LENGTH = 128
 
 
 class FederationRequestLogRow(BaseModel):
-
-
     source_row_id: int
     account_id: str | None = None
     provider: str

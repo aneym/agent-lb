@@ -249,8 +249,6 @@ def normalize_weekly_only_rows(
     secondary_rows: Iterable[UsageWindowRow],
 ) -> tuple[list[UsageWindowRow], list[UsageWindowRow]]:
 
-
-
     primary_by_account = {row.account_id: row for row in primary_rows}
     normalized_secondary_by_account = {row.account_id: row for row in secondary_rows}
 
@@ -285,7 +283,6 @@ def _should_prefer_primary_row(primary_row: UsageWindowRow, secondary_row: Usage
         return True
     elif secondary_row.reset_at is not None:
         return False
-
 
     return True
 

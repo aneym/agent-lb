@@ -84,14 +84,11 @@ async def test_mirror_requires_bearer_auth(async_client, monkeypatch: pytest.Mon
 
     _enable_federation(monkeypatch)
 
-
     response = await async_client.get("/api/federation/mirror")
     assert response.status_code == 403
 
-
     response = await async_client.get("/api/federation/mirror", headers={"Authorization": "Bearer wrong-token"})
     assert response.status_code == 403
-
 
     response = await async_client.get("/api/federation/mirror", headers=_auth_headers())
     assert response.status_code == 200
@@ -444,7 +441,6 @@ async def test_checkout_happy_path_and_idempotent_retry(async_client, monkeypatc
     account_after_release = await _get_account("acc_checkout")
     assert account_after_release.owner_instance == _TAKER_INSTANCE_ID
 
-
     second = await async_client.post(
         "/api/federation/checkout",
         json={
@@ -588,9 +584,6 @@ async def test_checkin_retry_after_success_does_not_reimport(async_client, monke
     encryptor = TokenEncryptor()
     assert encryptor.decrypt(account_after_first.access_token_encrypted) == "payload-a-access"
 
-
-
-
     payload_b = dict(payload_a)
     payload_b["auth"] = dict(payload_a["auth"])
     payload_b["auth"]["access_token"] = "payload-b-access-should-not-apply"
@@ -733,8 +726,6 @@ async def test_postgres_checkout_crash_before_and_after_commit_retries_without_d
     encryptor = TokenEncryptor()
     retry_nonce = ""
     for crash_before_commit in (True, False):
-
-
         async with SessionLocal() as session:
             repo = FederationRepository(session)
             original_commit = session.commit
@@ -782,7 +773,6 @@ async def test_postgres_checkout_crash_before_and_after_commit_retries_without_d
             assert rows[0].nonce == (retry.nonce if crash_before_commit else retry_nonce)
             assert (await repo.get_account("checkout-crash")).owner_instance == _TAKER_INSTANCE_ID
         if crash_before_commit:
-
             async with SessionLocal() as session:
                 from sqlalchemy import delete
 
@@ -847,7 +837,6 @@ async def test_postgres_checkin_crash_before_commit_preserves_owner_and_old_toke
     account = await _get_account("checkin-crash")
     assert account.owner_instance == _TAKER_INSTANCE_ID
     assert TokenEncryptor().decrypt(account.refresh_token_encrypted) == "seed-refresh"
-
 
     async with SessionLocal() as session:
         rows = (
@@ -1017,8 +1006,6 @@ async def test_mirror_snapshot_cannot_overwrite_concurrent_local_checkout(db_set
     await _seed_account("mirror-owner-race", owner_instance="peer", refresh_token="local-live")
     encryptor = TokenEncryptor()
     async with SessionLocal() as mirror_session:
-
-
         await mirror_session.get(Account, "mirror-owner-race")
         async with SessionLocal() as owner_session:
             await owner_session.execute(

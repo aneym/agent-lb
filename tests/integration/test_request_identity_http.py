@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -59,7 +57,6 @@ async def _create_key(*, name: str, member_name: str | None = None, account_id: 
     async with SessionLocal() as session:
         member_id = None
         if member_name is not None:
-
             member_id = f"member-{uuid4().hex}"
             session.add(TeamMember(id=member_id, name=member_name, created_at=utcnow(), updated_at=utcnow()))
             await session.commit()
@@ -156,12 +153,10 @@ async def test_proxy_request_logs_carry_caller_identity(identity_env, async_clie
             {"authorization": f"Bearer {member_key}"},
             ("member-a", "member", "box-1", "local"),
         ),
-
         "identity-named-key": (
             {"authorization": f"Bearer {named_key}"},
             ("owner-a", "owner-machine", "box-1", "local"),
         ),
-
         "identity-keyless-tailnet": (
             {"x-forwarded-for": TAILNET_PEER, "x-forwarded-proto": "https"},
             ("unknown", "unknown", "tailnet-unknown", "tailnet"),

@@ -209,8 +209,6 @@ class ApiKeyInvalidError(ValueError):
 
 
 class ApiKeyValidationError(ValueError):
-
-
     pass
 
 
@@ -225,8 +223,6 @@ class ApiKeyRateLimitExceededError(ValueError):
 
 
 class ApiKeyUnpricedModelError(ValueError):
-
-
     def __init__(self, *, model: str, limit_window: str, max_microdollars: int) -> None:
         self.model = model
         self.limit_window = limit_window
@@ -776,7 +772,6 @@ class ApiKeysService:
             normalized_usage_budget = _normalize_request_usage_budget(request_usage_budget)
             try:
                 for limit in refreshed.limits:
-
                     if (
                         request_is_file_operation
                         and request_model in {"files-create", "files-finalize"}

@@ -48,8 +48,6 @@ def _extract_first_event(lines: list[str]) -> dict:
         if event.get("type") == "response.created":
             response = event.get("response")
             if isinstance(response, dict) and response.get("status") == "in_progress" and response.get("output") == []:
-
-
                 continue
         return event
     raise AssertionError("No SSE data event found")
@@ -1160,7 +1158,6 @@ async def test_proxy_responses_streams_upstream(async_client, monkeypatch):
         "POST",
         "/backend-api/codex/responses",
         json=payload,
-
         headers={"x-request-id": request_id, "session-id": "01a0d9f6-f125-75a2-a6dd-0efe73e324d7"},
     ) as resp:
         assert resp.status_code == 200
@@ -1823,8 +1820,6 @@ async def test_proxy_responses_codex_compaction_v2_item_passthrough(async_client
 
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
 
-
-
     payload = {
         "model": "gpt-5.5",
         "instructions": "compact the conversation",
@@ -1883,9 +1878,6 @@ async def test_proxy_responses_codex_compaction_v2_item_passthrough_without_inst
         )
 
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
-
-
-
 
     payload = {
         "model": "gpt-5.5",

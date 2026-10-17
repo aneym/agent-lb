@@ -76,8 +76,6 @@ class UsageMetricsSummary:
 
 @dataclass(frozen=True)
 class UsageSummaryPayload:
-
-
     primary_window: UsageWindowSnapshot | None
     secondary_window: UsageWindowSnapshot | None
     monthly_window: UsageWindowSnapshot | None

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -60,7 +58,6 @@ async def post_json(
     headers: Mapping[str, str],
     timeout: aiohttp.ClientTimeout,
 ) -> AsyncIterator[aiohttp.ClientResponse]:
-
 
     deadline = time.monotonic() + timeout.total if timeout.total is not None else None
     gzipped = await gzip_body(json_body_bytes(json_body), deadline=deadline)

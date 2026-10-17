@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260518_010000_merge_http_bridge_and_sqlite_recovery_heads"

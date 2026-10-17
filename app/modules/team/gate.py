@@ -8,7 +8,6 @@ from app.modules.team.service import TeamMemberSelfStatus, TeamService
 
 async def check_member_gate(api_key: ApiKeyData | None, *, model: str | None) -> None:
 
-
     if api_key is None or getattr(api_key, "member_id", None) is None:
         return
 
@@ -17,7 +16,6 @@ async def check_member_gate(api_key: ApiKeyData | None, *, model: str | None) ->
 
 
 async def get_member_self_status(api_key: ApiKeyData | None) -> TeamMemberSelfStatus | None:
-
 
     member_id = None if api_key is None else getattr(api_key, "member_id", None)
     if member_id is None:

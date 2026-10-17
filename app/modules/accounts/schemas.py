@@ -80,8 +80,6 @@ class AccountAdditionalQuota(DashboardModel):
 
 
 class AccountFableScopedWeekly(DashboardModel):
-
-
     used_percent: float
     reset_at: datetime | None = None
     recorded_at: datetime | None = None
@@ -99,8 +97,6 @@ class AccountSubscriptionLedger(DashboardModel):
 
 
 class AccountIdentityMismatch(DashboardModel):
-
-
     count: int
     first_at: datetime
     last_at: datetime
@@ -122,10 +118,7 @@ class AccountSummary(DashboardModel):
     status: str
     security_work_authorized: bool = False
 
-
     fable_eligible: bool | None = None
-
-
 
     fable_scoped_weekly: AccountFableScopedWeekly | None = None
     usage: AccountUsage | None = None
@@ -159,20 +152,9 @@ class AccountSummary(DashboardModel):
     limit_warmup: AccountLimitWarmupStatus | None = None
     last_primed_at: datetime | None = None
 
-
-
-
-
-
-
-
     is_email_duplicate: bool = False
 
-
     identity_mismatch: AccountIdentityMismatch | None = None
-
-
-
 
     owner_instance: str | None = None
     is_locally_owned: bool = True
@@ -202,15 +184,11 @@ class DegradationStatus(DashboardModel):
 
 
 class AvailabilityResponse(DashboardModel):
-
-
     degradation: DegradationStatus
     providers: dict[str, ProviderAvailability] = Field(default_factory=dict)
 
 
 class AnthropicModelsResponse(DashboardModel):
-
-
     models: list[str] = Field(default_factory=list)
     fetched_at: datetime | None = None
     stale: bool = False

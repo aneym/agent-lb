@@ -103,13 +103,16 @@ def test_full_text_is_routing_without_markers() -> None:
     assert "<!-- core:" not in full
 
 
-@pytest.mark.parametrize("text, error", [
-    ("<!-- core:begin a -->\nx\n", "never closed"),
-    ("<!-- core:begin a -->\n<!-- core:begin b -->\n<!-- core:end b -->\n<!-- core:end a -->\n", "opens inside"),
-    ("<!-- core:begin a -->\n<!-- core:end a -->\n<!-- core:begin a -->\n<!-- core:end a -->\n", "not unique"),
-    ("<!-- core:end a -->\n", "does not close"),
-    ("<!-- core:begin A -->\n", "malformed"),
-])
+@pytest.mark.parametrize(
+    "text, error",
+    [
+        ("<!-- core:begin a -->\nx\n", "never closed"),
+        ("<!-- core:begin a -->\n<!-- core:begin b -->\n<!-- core:end b -->\n<!-- core:end a -->\n", "opens inside"),
+        ("<!-- core:begin a -->\n<!-- core:end a -->\n<!-- core:begin a -->\n<!-- core:end a -->\n", "not unique"),
+        ("<!-- core:end a -->\n", "does not close"),
+        ("<!-- core:begin A -->\n", "malformed"),
+    ],
+)
 def test_invalid_markers_are_refused(text: str, error: str) -> None:
     with pytest.raises(ValueError, match=error):
         installer().split_core(text)
@@ -137,7 +140,11 @@ def test_install_renders_core_within_budget_and_is_idempotent(tmp_path: Path, po
     def install(*options: str) -> str:
         return subprocess.run(
             [sys.executable, str(source / "install-policy.py"), "--home", str(home), *options],
-            env=env, capture_output=True, text=True, check=True, timeout=60,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=60,
         ).stdout
 
     def snapshot() -> dict[str, bytes]:

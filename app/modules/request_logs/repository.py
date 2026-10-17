@@ -133,7 +133,6 @@ class RequestLogsRepository:
         if dialect == "postgresql":
             bucket_expr = func.floor(func.extract("epoch", RequestLog.requested_at) / bucket_seconds) * bucket_seconds
         else:
-
             epoch_col = cast(func.strftime("%s", RequestLog.requested_at), Integer)
             bucket_expr = cast(epoch_col / bucket_seconds, Integer) * bucket_seconds
         bucket_col = bucket_expr.label("bucket_epoch")
@@ -493,11 +492,6 @@ class RequestLogsRepository:
         async with sqlite_writer_section(self._session):
             resolved_request_id = ensure_request_id(request_id)
             try:
-
-
-
-
-
                 stmt = select(RequestLog).where(RequestLog.request_id == resolved_request_id)
                 result_rows = await self._session.execute(stmt)
                 logs = list(result_rows.scalars())
@@ -780,7 +774,6 @@ def _account_scope_clause(account_ids: Collection[str], *, include_unattributed:
 
 
 def _least(dialect: str, a: ColumnElement, b: ColumnElement) -> ColumnElement:
-
 
     if dialect == "postgresql":
         return func.least(a, b)

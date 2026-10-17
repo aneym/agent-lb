@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -166,7 +164,6 @@ def _run_policy(args: Any) -> None:
             assert base_url is not None and decision.account_id is not None
             path = f"/api/accounts/{quote(decision.account_id, safe='')}/rate-limit-reset-credits/consume"
 
-
             outcome = _request(base_url, path, args.timeout, body={"creditId": decision.grant_id})
             record["redemption"] = outcome
             if not isinstance(outcome, dict) or outcome.get("status") != "redeemed":
@@ -179,7 +176,6 @@ def _run_policy(args: Any) -> None:
         else:
             print(f"hold {decision.reason}")
     except (OSError, ValueError, ValidationError, ResetCliError, StatusObservationError) as exc:
-
         message = str(exc) if isinstance(exc, (ResetCliError, StatusObservationError)) else "invalid policy state"
         print(f"agent-lb resets policy: {message}", file=sys.stderr)
         raise SystemExit(2) from exc
@@ -236,7 +232,6 @@ def _observe_policy(base_url: str, timeout: float, samples_path: Path) -> Policy
         if account["usable"] == "unknown":
             raise ResetCliError("Claude quota telemetry is incomplete; no redemption attempted")
         if account["usable"] != "usable":
-
             if account["status"] not in {"active", "rate_limited", "quota_exceeded"}:
                 continue
             if account["subscription"]["usable"] is False:

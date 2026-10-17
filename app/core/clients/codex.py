@@ -12,8 +12,6 @@ _RESERVED = frozenset({"proxy", "proxies", "impersonate", "ja3", "akamai", "extr
 
 
 class CodexTransportError(RuntimeError):
-
-
     def __init__(
         self, message: str, *, status_code: int | None = None, phase: ExchangePhase = ExchangePhase.AMBIGUOUS
     ) -> None:

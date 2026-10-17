@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import importlib.machinery
@@ -35,21 +34,47 @@ def launcher_env(tmp_path, kind, stage="all", tab="w5H:tC8"):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     herdr = bin_dir / "herdr"
-    herdr.write_text(f"#!{sys.executable}\nimport json, os\nfrom pathlib import Path\n"
-                     "Path(os.environ['HOME'], 'herdr-called').touch()\n"
-                     "print(json.dumps({'result': {'tab': {'label': os.environ.get('TEST_TAB_LABEL', '')}}}))\n")
+    herdr.write_text(
+        f"#!{sys.executable}\nimport json, os\nfrom pathlib import Path\n"
+        "Path(os.environ['HOME'], 'herdr-called').touch()\n"
+        "print(json.dumps({'result': {'tab': {'label': os.environ.get('TEST_TAB_LABEL', '')}}}))\n"
+    )
     herdr.chmod(0o755)
-    return {"HOME": str(tmp_path), "PATH": f"{bin_dir}{os.pathsep}{os.defpath}",
-            "ROUTE_TABLE": str(table), "HERDR_TAB_ID": tab,
-            "CLAUDE_LB_DRY_RUN": "1", "CLAUDE_LB_DISABLE": "1"}
+    return {
+        "HOME": str(tmp_path),
+        "PATH": f"{bin_dir}{os.pathsep}{os.defpath}",
+        "ROUTE_TABLE": str(table),
+        "HERDR_TAB_ID": tab,
+        "CLAUDE_LB_DRY_RUN": "1",
+        "CLAUDE_LB_DISABLE": "1",
+    }
 
 
-@pytest.mark.parametrize("kind", [
-    {"lane": "Review-build"}, {"lane": "verify-money"}, {"lane": "AUDIT"},
-    {"kind": "review"}, {"title": "[Review] routing"}, {"lane": "audit — unicode title"},
-    *({"lane": lane} for lane in ("code_review", "review_build", "pr_review", "review2", "audit3",
-                                  "verification", "verified-build", "reviews", "auditing")),
-])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        {"lane": "Review-build"},
+        {"lane": "verify-money"},
+        {"lane": "AUDIT"},
+        {"kind": "review"},
+        {"title": "[Review] routing"},
+        {"lane": "audit — unicode title"},
+        *(
+            {"lane": lane}
+            for lane in (
+                "code_review",
+                "review_build",
+                "pr_review",
+                "review2",
+                "audit3",
+                "verification",
+                "verified-build",
+                "reviews",
+                "auditing",
+            )
+        ),
+    ],
+)
 @pytest.mark.parametrize("stage", ["all", "half"])
 def test_stand_in_review_launcher_untagged(tmp_path, kind, stage):
     env = launcher_env(tmp_path, kind, stage)
@@ -104,9 +129,19 @@ def test_stand_in_banner_and_ccgpt_tags(tmp_path, monkeypatch, capsys, ccgpt):
         return "http://example.invalid"
 
     monkeypatch.setattr(launcher, "start_lb_proxy", proxy)
-    for name in ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "NODE_EXTRA_CA_CERTS",
-                 "ANTHROPIC_BASE_URL", "ANTHROPIC_UNIX_SOCKET", "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL",
-                 "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"):
+    for name in (
+        "HTTPS_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+        "NODE_EXTRA_CA_CERTS",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_UNIX_SOCKET",
+        "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+    ):
         monkeypatch.setenv(name, "")
     launcher.main()
     output = capsys.readouterr()
@@ -133,11 +168,27 @@ def test_stand_in_internal_headers_not_forwarded():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("lane", [
-    "build", "preview-build", "Review-build", "VERIFY", "audit-money", "reviewer",
-    "code_review", "review_build", "pr_review", "review2", "audit3", "verification",
-    "verified-build", "reviews", "auditing", "review\x1b[31m" + "x" * 100,
-])
+@pytest.mark.parametrize(
+    "lane",
+    [
+        "build",
+        "preview-build",
+        "Review-build",
+        "VERIFY",
+        "audit-money",
+        "reviewer",
+        "code_review",
+        "review_build",
+        "pr_review",
+        "review2",
+        "audit3",
+        "verification",
+        "verified-build",
+        "reviews",
+        "auditing",
+        "review\x1b[31m" + "x" * 100,
+    ],
+)
 async def test_stand_in_forced_swap_and_recovery(async_client, monkeypatch, tmp_path, caplog, lane):
     table = tmp_path / "routing.json"
     table.write_text(json.dumps({"policy": {"stand_in": {"lane-tab": "sol-latest-high"}}}))
@@ -153,9 +204,12 @@ async def test_stand_in_forced_swap_and_recovery(async_client, monkeypatch, tmp_
         async def body():
             if mode["failed"]:
                 raise AnthropicProxyError(429, "fake upstream exhausted", code="rate_limit_error")
-            yield (b'event: message_start\ndata: {"type":"message_start",'
-                   b'"message":{"id":"msg_claude","model":"claude-opus-5-5"}}\n\n')
+            yield (
+                b'event: message_start\ndata: {"type":"message_start",'
+                b'"message":{"id":"msg_claude","model":"claude-opus-5-5"}}\n\n'
+            )
             yield b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+
         return AnthropicProxyStream(body=body(), media_type="text/event-stream")
 
     async def responses(request, payload, context, api_key, **kwargs):
@@ -165,14 +219,19 @@ async def test_stand_in_forced_swap_and_recovery(async_client, monkeypatch, tmp_
             yield 'data: {"type":"response.created","response":{"id":"resp_sol","model":"gpt-6.1-sol"}}\n\n'
             yield 'data: {"type":"response.output_text.delta","delta":"fake sol answer"}\n\n'
             yield 'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n'
+
         return StreamingResponse(body(), media_type="text/event-stream")
 
     monkeypatch.setattr(proxy_api, "_enforce_request_limits", no_limits)
     monkeypatch.setattr(AnthropicProxyService, "stream_messages", anthropic)
     monkeypatch.setattr(proxy_api, "_stream_responses", responses)
     caplog.set_level("INFO", logger=proxy_api.__name__)
-    body = {"model": "claude-opus-5-5", "max_tokens": 10, "stream": True,
-            "messages": [{"role": "user", "content": "next"}]}
+    body = {
+        "model": "claude-opus-5-5",
+        "max_tokens": 10,
+        "stream": True,
+        "messages": [{"role": "user", "content": "next"}],
+    }
     headers = {"x-agent-lb-intent": "lane-tab", "x-agent-lb-lane": lane, "x-claude-session-id": "forced-swap"}
     mode["failed"] = False
     healthy = await async_client.post("/v1/messages", json=body, headers=headers)

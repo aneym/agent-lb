@@ -87,8 +87,6 @@ def retag_codex_sessions(
     log(f"Using Codex home {codex_home}")
     log(f"Retagging Codex sessions from {source_provider} to {target_provider}")
 
-
-
     jsonl_files = tuple(_find_jsonl_session_files(sessions_dir))
     state_dbs = tuple(_find_state_dbs(codex_home))
     provider_counts_before = _provider_counts(codex_home)
@@ -159,7 +157,6 @@ def _validate_providers(source_provider: str, target_provider: str) -> None:
 
 
 def _running_in_container() -> bool:
-
 
     if Path("/.dockerenv").exists() or Path("/run/.containerenv").exists():
         return True
@@ -245,8 +242,6 @@ def _retag_jsonl_file(path: Path, source_provider: str, target_provider: str) ->
                     output_handle.write(raw_line)
                     continue
                 if isinstance(record, dict) and _retag_jsonl_record_provider(record, source_provider, target_provider):
-
-
                     changed = True
                     output_handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
                 else:
@@ -326,8 +321,6 @@ def _update_sqlite_provider(db_path: Path, source_provider: str, target_provider
     except sqlite3.OperationalError as exc:
         if "unable to open database file" not in str(exc).casefold():
             raise
-
-
 
         return _update_sqlite_provider_via_copy(db_path, source_provider, target_provider)
 

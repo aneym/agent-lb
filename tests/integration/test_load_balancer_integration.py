@@ -90,7 +90,6 @@ async def test_request_scoped_primary_quota_bypass_is_exact_and_not_persisted(db
         routing_strategy="usage_weighted",
     )
 
-
     assert blocked.account is None
     assert wrong_id.account is None
     assert bypassed.account is not None
@@ -147,7 +146,6 @@ async def test_request_scoped_primary_quota_bypass_secondary_exhaustion_is_advis
         ignore_primary_quota_account_ids=[account.id],
         routing_strategy="usage_weighted",
     )
-
 
     assert selection.account is not None
     assert selection.account.id == account.id

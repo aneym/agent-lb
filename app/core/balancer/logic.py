@@ -18,11 +18,6 @@ PERMANENT_FAILURE_CODES = {
     "refresh_token_invalidated": "Refresh token was revoked - re-login required",
     "invalid_grant": "Refresh token grant invalid - re-login required",
     "token_invalidated": "Authentication token invalidated - re-login required",
-
-
-
-
-
     "token_expired": "Authentication token expired - re-login required",
     "account_session_expired": "ChatGPT session ended - re-login required",
     "account_auth_invalidated": "Authentication failed after token refresh - re-login required",
@@ -160,8 +155,6 @@ class ExcludedAccount:
 
 @dataclass(frozen=True, slots=True)
 class RoutingCost:
-
-
     total: float = 0.0
     reason: str | None = None
 
@@ -477,11 +470,6 @@ def select_account(
             if state.last_error_at and current - state.last_error_at < backoff:
                 in_error_backoff.append(state)
                 continue
-
-
-
-
-
 
             state.error_count = 0
             state.last_error_at = None
@@ -1003,7 +991,6 @@ def _select_capacity_weighted(available: list[AccountState]) -> AccountState:
     weights = [_remaining_secondary_credits(s) for s in available]
     total = sum(weights)
     if total <= 0.0:
-
         return min(available, key=_usage_sort_key)
     return random.choices(available, weights=weights, k=1)[0]
 
@@ -1033,14 +1020,6 @@ def handle_rate_limit(state: AccountState, error: UpstreamError) -> None:
 QUOTA_EXCEEDED_COOLDOWN_SECONDS = 120.0
 
 
-
-
-
-
-
-
-
-
 SELECTOR_RETRY_HINT_MAX_SECONDS = 300
 
 
@@ -1063,7 +1042,6 @@ def handle_quota_exceeded(state: AccountState, error: UpstreamError) -> None:
 
 
 def _live_quota_retry_at(error: UpstreamError, failures: int, *, now: float) -> float:
-
 
     delays = (60, 300, 900, 3600)
     delay = delays[min(max(failures, 1) - 1, len(delays) - 1)]

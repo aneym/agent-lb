@@ -141,6 +141,5 @@ async def test_probe_uses_default_model_when_body_omitted(async_client, monkeypa
     response = await async_client.post(f"/api/accounts/{account_id}/probe")
     assert response.status_code == 200, response.text
 
-
     assert isinstance(captured["model"], str)
     assert captured["model"]

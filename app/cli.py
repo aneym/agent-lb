@@ -248,25 +248,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         ssl_certfile=args.ssl_certfile,
         ssl_keyfile=args.ssl_keyfile,
         timeout_keep_alive=timeout_keep_alive,
-
-
-
         timeout_graceful_shutdown=timeout_graceful_shutdown,
-
-
-
-
-
         ws_ping_interval=20.0,
         ws_ping_timeout=None,
-
-
-
-
         ws_per_message_deflate=False,
-
-
-
         log_config=None,
     )
 

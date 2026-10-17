@@ -36,21 +36,10 @@ async def test_codex_style_responses_payload_is_accepted(async_client):
         assert resp.status_code == 200
         lines = [line async for line in resp.aiter_lines() if line]
 
-
-
-
-
     assert not lines[0].startswith(":"), lines[:3]
-
-
-
-
-
-
 
     event = _extract_first_event(lines)
     assert event["type"] == "response.created"
-
 
     terminal_types = {"response.completed", "response.incomplete", "response.failed", "error"}
     terminal_events = [

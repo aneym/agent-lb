@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import os
@@ -58,7 +56,6 @@ def test_refresh_intent_pg_downgrade_preserves_defaults_and_enum_values() -> Non
     engine = create_engine(to_sync_database_url(url))
     try:
         with engine.begin() as connection:
-
             if _column_default(connection, "accounts", "status") is None:
                 connection.execute(
                     text("ALTER TABLE accounts ALTER COLUMN status SET DEFAULT 'active'::account_status")

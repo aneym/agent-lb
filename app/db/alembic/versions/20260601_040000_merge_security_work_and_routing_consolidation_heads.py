@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260601_040000_merge_security_work_and_routing_consolidation_heads"

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260313_024500_merge_request_log_transport_heads"

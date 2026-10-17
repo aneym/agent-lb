@@ -54,7 +54,6 @@ class ExchangeIntentWindow:
     ready: bool
 
 
-
 _REPLAYED_REQUEST_ID_CHUNK = 500
 
 
@@ -223,24 +222,8 @@ class AccountsRepository:
             merge_by_email = await self._merge_by_email_enabled()
 
         if dialect_name == "sqlite" and not sqlite_lock_acquired:
-
-
-
             await self._acquire_sqlite_merge_lock()
         elif dialect_name == "postgresql":
-
-
-
-
-
-
-
-
-
-
-
-
-
             identity_locked = False
             if merge_by_chatgpt_identity and account.chatgpt_account_id:
                 await self._acquire_postgresql_identity_lock(f"chatgpt:{account.chatgpt_account_id}")
@@ -249,17 +232,6 @@ class AccountsRepository:
                 await self._acquire_postgresql_merge_lock(account.email)
             elif not identity_locked:
                 await self._acquire_postgresql_identity_lock(account.id)
-
-
-
-
-
-
-
-
-
-
-
 
         if merge_by_chatgpt_identity and account.chatgpt_account_id:
             canonical = await self._account_by_chatgpt_identity(
@@ -376,7 +348,6 @@ class AccountsRepository:
         *,
         workspace_id: str | None,
     ) -> Account | None:
-
 
         stmt = select(Account).where(Account.chatgpt_account_id == chatgpt_account_id)
         order_by: list[Any] = [Account.created_at.asc(), Account.id.asc()]
@@ -506,7 +477,6 @@ class AccountsRepository:
         if expected_refresh_token_encrypted is not None:
             stmt = stmt.where(Account.refresh_token_encrypted == expected_refresh_token_encrypted)
         elif status != AccountStatus.EXCHANGE_UNCERTAIN:
-
             stmt = stmt.where(Account.status != AccountStatus.EXCHANGE_UNCERTAIN)
         result = await self._session.execute(stmt.values(**values).returning(Account.id))
         await self._session.commit()
@@ -785,7 +755,7 @@ class AccountsRepository:
                 )
             )
         ).scalar_one()
-        available_at = intent.started_at + timedelta(seconds=timeout_seconds + base_seconds * 2 ** attempt)
+        available_at = intent.started_at + timedelta(seconds=timeout_seconds + base_seconds * 2**attempt)
         if available_at.tzinfo is not None and database_now.tzinfo is None:
             available_at = available_at.replace(tzinfo=None)
         if database_now.tzinfo is not None and available_at.tzinfo is None:
@@ -868,7 +838,6 @@ class AccountsRepository:
             async with self._session.begin_nested():
                 eligible = not replay or timeout_seconds is not None
                 if replay:
-
                     account_row = await self._session.execute(
                         select(Account.id)
                         .where(
@@ -1102,7 +1071,6 @@ class AccountsRepository:
             message = str(exc).lower()
             if "within a transaction" not in message:
                 raise
-
 
             await self._session.execute(text("UPDATE accounts SET id = id WHERE 1 = 0"))
 

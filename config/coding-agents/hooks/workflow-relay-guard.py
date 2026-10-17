@@ -9,8 +9,10 @@ RECEIPT = "floor-ok workflow-relay-guard.py"
 
 
 def refuse(why):
-    sys.stderr.write("BLOCKED: workflow-relay-guard could not read the hook input (%s), so this call is refused "
-                     "(the guard fails closed).\n" % why)
+    sys.stderr.write(
+        "BLOCKED: workflow-relay-guard could not read the hook input (%s), so this call is refused "
+        "(the guard fails closed).\n" % why
+    )
     sys.exit(2)
 
 
@@ -30,7 +32,6 @@ def main():
     if not isinstance(script, str):
         refuse("the script is not text")
 
-
     if not script:
         return
     if MARK in script:
@@ -44,8 +45,17 @@ def main():
         "prefix and say how this task answers it; if it is unrelated, dispatch with Agent or a Codex job "
         "instead (memory workflow-relayed-user-request.md; 8 derailed runs to date)"
     )
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                             "permissionDecision": "allow", "additionalContext": advice}}))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "additionalContext": advice,
+                }
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

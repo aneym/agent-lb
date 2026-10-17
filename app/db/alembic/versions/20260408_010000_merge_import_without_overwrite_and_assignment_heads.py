@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260408_010000_merge_import_without_overwrite_and_assignment_heads"

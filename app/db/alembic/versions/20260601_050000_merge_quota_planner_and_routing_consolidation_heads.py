@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260601_050000_merge_quota_planner_and_routing_consolidation_heads"

@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-
 FORWARDER_SEATS = {
     "codex-sol",
     "codex-verifier",
@@ -29,15 +28,16 @@ FORWARDER_SEATS = {
 }
 
 
-
 SUBMIT_SEATS = {"gpt-implementer", "sonnet-implementer"}
 WORKTREE_BRIEF = re.compile(r"worktree|-wt/", re.IGNORECASE)
 NEEDS_LINE = re.compile(r"^\ufeff?[ \t]*NEEDS:", re.MULTILINE)
 STUDIO_ONLY = re.compile(r"^\ufeff?[ \t]*PLACEMENT:[ \t]*studio-only(?![\w-])", re.MULTILINE)
-NEEDS_MISSING = ("no NEEDS line: add one line `NEEDS: land=yes|no local=yes|no tools=a,b paths=/x,/y os=linux|mac` "
-                 "(land and local required); without it seat-submit treats the brief as needing nothing Mac-only and "
-                 "places it on the roomiest reachable box, never on Studio; with no box free it waits, then holds the "
-                 "contract for a retry")
+NEEDS_MISSING = (
+    "no NEEDS line: add one line `NEEDS: land=yes|no local=yes|no tools=a,b paths=/x,/y os=linux|mac` "
+    "(land and local required); without it seat-submit treats the brief as needing nothing Mac-only and "
+    "places it on the roomiest reachable box, never on Studio; with no box free it waits, then holds the "
+    "contract for a retry"
+)
 ANTHROPIC_MODEL_MARKERS = ("opus", "sonnet", "fable", "haiku", "claude")
 SNAPSHOT_MAX_AGE_SECONDS = 600
 SNAPSHOT_MAX_FUTURE_SECONDS = 60
@@ -85,8 +85,7 @@ def emit_warning(reason: str, extra: str = "") -> None:
                     "hookEventName": "PreToolUse",
                     "additionalContext": (
                         "seat-guard (warn only, not blocked): " + reason + "; logged in the routing ledger. "
-                        "Default work names a family alias (`route pick <class>`)."
-                        + ("\n" + extra if extra else "")
+                        "Default work names a family alias (`route pick <class>`)." + ("\n" + extra if extra else "")
                     ),
                 }
             }
@@ -121,8 +120,11 @@ def retired_patterns(table: Path, subagent: str = "") -> tuple:
         return DEFAULT_RETIRED
     readmitted = loaded.get("readmitted") if isinstance(loaded.get("readmitted"), dict) else {}
 
-    names = [entry["alias"] + "*" for entry in readmitted.values()
-             if isinstance(entry, dict) and isinstance(entry.get("alias"), str) and entry["alias"]]
+    names = [
+        entry["alias"] + "*"
+        for entry in readmitted.values()
+        if isinstance(entry, dict) and isinstance(entry.get("alias"), str) and entry["alias"]
+    ]
     entry = readmitted.get(subagent) if subagent else None
     exempt = list(entry.get("patterns") or []) if isinstance(entry, dict) else []
     if isinstance(entry, dict) and isinstance(entry.get("alias"), str) and entry["alias"]:
@@ -144,10 +146,6 @@ def blocked_patterns(table: Path) -> tuple:
 def forbidden_model(model: str, patterns: tuple = DEFAULT_RETIRED) -> bool:
     bare = model.strip().strip("`'\"").lower().split("[", 1)[0]
     return bool(bare) and any(fnmatch.fnmatchcase(bare, pattern) for pattern in patterns)
-
-
-
-
 
 
 REMOVAL_CONTEXT = re.compile(
@@ -290,8 +288,17 @@ def lean_studio_refusal(subagent: str, prompt: str) -> str | None:
 
 
 def emit_lean_refusal(why: str) -> None:
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                             "permissionDecisionReason": "seat-guard: " + why}}))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": "seat-guard: " + why,
+                }
+            }
+        )
+    )
 
 
 def main() -> None:
@@ -336,18 +343,24 @@ def main() -> None:
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "cwd": payload.get("cwd"),
     }
-    open_ended = (
-        not re.search(r"^(?:One check:|check:)", prompt, re.IGNORECASE | re.MULTILINE)
-        and re.search(r"fix (every|all|each) (gap|issue|bug|problem)s?|end to end and fix|until (it|everything) (works|passes)",
-                      prompt, re.IGNORECASE)
+    open_ended = not re.search(r"^(?:One check:|check:)", prompt, re.IGNORECASE | re.MULTILINE) and re.search(
+        r"fix (every|all|each) (gap|issue|bug|problem)s?|end to end and fix|until (it|everything) (works|passes)",
+        prompt,
+        re.IGNORECASE,
     )
     budget_advisory = (
         "seat-guard advisory: open-ended brief; name one check and a bounded deliverable, "
-        "or the seat runs as a coordinator" if open_ended else ""
+        "or the seat runs as a coordinator"
+        if open_ended
+        else ""
     )
     advisories: list[str] = []
-    if subagent in SUBMIT_SEATS and WORKTREE_BRIEF.search(prompt) and not NEEDS_LINE.search(prompt) \
-            and not STUDIO_ONLY.search(prompt):
+    if (
+        subagent in SUBMIT_SEATS
+        and WORKTREE_BRIEF.search(prompt)
+        and not NEEDS_LINE.search(prompt)
+        and not STUDIO_ONLY.search(prompt)
+    ):
         record["needs_missing"] = True
         advisories.append(NEEDS_MISSING)
     agents_dir = Path(os.environ.get("SEAT_GUARD_AGENTS_DIR") or Path.home() / ".claude" / "agents")
@@ -358,26 +371,34 @@ def main() -> None:
     blocked_pins = retired_pins(prompt, blocked)
     warn_reason = None
 
-
-
     if forbidden_model(model, blocked):
         warn_reason = f"this dispatch pins {model!r}, which is no longer served"
     elif not model and pinned and forbidden_model(pinned, blocked):
         warn_reason = f"subagent type {subagent!r} is defined on {pinned!r}, which is no longer served"
     elif not model and pinned and forbidden_model(pinned, retired) and pinned not in [p.lower() for p in brief_pins]:
-        warn_reason = (f"subagent type {subagent!r} is defined on the retired model {pinned!r} and nothing asked "
-                       "for it; name the model on the dispatch or in the brief to request it")
+        warn_reason = (
+            f"subagent type {subagent!r} is defined on the retired model {pinned!r} and nothing asked "
+            "for it; name the model on the dispatch or in the brief to request it"
+        )
     explicit = [{"model": model, "source": "dispatch"}] if model and forbidden_model(model, retired) else []
-    explicit += [{"model": pin, "source": "brief", **({"blocked": True} if pin in blocked_pins else {})}
-                 for pin in dict.fromkeys(brief_pins + blocked_pins)]
+    explicit += [
+        {"model": pin, "source": "brief", **({"blocked": True} if pin in blocked_pins else {})}
+        for pin in dict.fromkeys(brief_pins + blocked_pins)
+    ]
     if explicit and not warn_reason:
         record["explicit_models"] = explicit
         record["why"] = str(tool_input.get("description") or tool_input.get("name") or "") or None
-        advisories.append("explicit request for a model off the default ladder ("
-                          + ", ".join(item["model"] for item in explicit) + "), recorded in the routing ledger")
+        advisories.append(
+            "explicit request for a model off the default ladder ("
+            + ", ".join(item["model"] for item in explicit)
+            + "), recorded in the routing ledger"
+        )
         if blocked_pins:
-            advisories.append("the brief names " + ", ".join(repr(pin) for pin in blocked_pins)
-                              + ", no longer served upstream; prose is not enforced, the seat may fail on it")
+            advisories.append(
+                "the brief names "
+                + ", ".join(repr(pin) for pin in blocked_pins)
+                + ", no longer served upstream; prose is not enforced, the seat may fail on it"
+            )
     if warn_reason:
         record["warned"] = warn_reason
         append(record, ledger)
@@ -413,7 +434,8 @@ def main() -> None:
         emit_context(
             "seat-guard warning: scope, spec, contract and design briefs default to opus-latest "
             "(models.md 2026-10-14); this Sol dispatch still runs."
-            + (" Capacity: " + "; ".join(advisories) + "." if advisories else ""), budget_advisory
+            + (" Capacity: " + "; ".join(advisories) + "." if advisories else ""),
+            budget_advisory,
         )
     elif advisories:
         emit_advisory("; ".join(advisories), budget_advisory)
@@ -422,8 +444,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-
-
     try:
         main()
     except Exception as error:

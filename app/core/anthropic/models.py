@@ -57,9 +57,6 @@ class AnthropicMessageRequestContentPart(BaseModel):
 class AnthropicMessageRequestMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-
-
-
     role: StrictStr
     content: StrictStr | list[AnthropicMessageRequestContentPart]
 

@@ -8,11 +8,17 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-async def test_policy_versions_observe_files_and_drafts_without_installing(async_client, db_setup, monkeypatch, tmp_path):
+async def test_policy_versions_observe_files_and_drafts_without_installing(
+    async_client, db_setup, monkeypatch, tmp_path
+):
     del db_setup
     table_path = tmp_path / "routing-table.json"
     decider_path = tmp_path / "decider.json"
-    original_table = {"classes": {"plan": {"chain": [{"seat": "a"}, {"seat": "b"}]}}, "aliases": {"a": "b"}, "retired": ["old"]}
+    original_table = {
+        "classes": {"plan": {"chain": [{"seat": "a"}, {"seat": "b"}]}},
+        "aliases": {"a": "b"},
+        "retired": ["old"],
+    }
     table_path.write_text(json.dumps(original_table))
     decider_path.write_text('{"decider":"jev"}')
     monkeypatch.setenv("ROUTE_TABLE", str(table_path))
@@ -29,7 +35,8 @@ async def test_policy_versions_observe_files_and_drafts_without_installing(async
     second = (await async_client.get("/api/routing-policy/versions")).json()
     assert second["activeVersion"] == 2
     assert [(v["version"], v["state"], v["source"]) for v in second["versions"]] == [
-        (2, "active", "file"), (1, "retired", "file")
+        (2, "active", "file"),
+        (1, "retired", "file"),
     ]
     assert (await async_client.get("/api/routing-policy/versions")).json()["versions"] == second["versions"]
 

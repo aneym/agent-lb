@@ -27,8 +27,6 @@ os.environ["AGENT_LB_ACCOUNTS_CACHE_WARMER_ENABLED"] = "false"
 os.environ["AGENT_LB_SEAT_STATE"] = str(Path(tempfile.gettempdir()) / "agent-lb-tests-no-seat-state.json")
 
 
-
-
 VENDOR_CLI_STUBS = Path(tempfile.mkdtemp(prefix="agent-lb-vendor-cli-stubs-"))
 VENDOR_CLI_STUB_EXIT = 97
 for _name in ("cursor-agent", "agent", "devin", "muse"):
@@ -105,8 +103,6 @@ async def async_client(app_instance):
 
 @pytest.fixture(autouse=True)
 def _clear_account_read_caches():
-
-
 
     from app.modules.accounts.service import clear_account_caches
 
@@ -198,15 +194,31 @@ def _commit_as_origin_main(repo: Path) -> Path:
     import subprocess
 
     def git(*words: str) -> None:
-        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
-                        "-c", "commit.gpgsign=false", *words], check=True, capture_output=True, timeout=60)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *words,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
 
     git("init", "-q", "-b", "main")
     git("add", "-A")
     git("commit", "-q", "-m", "policy")
     origin = repo.with_name(repo.name + "-origin.git")
-    subprocess.run(["git", "clone", "-q", "--bare", str(repo), str(origin)], check=True, capture_output=True,
-                   timeout=60)
+    subprocess.run(
+        ["git", "clone", "-q", "--bare", str(repo), str(origin)], check=True, capture_output=True, timeout=60
+    )
     git("remote", "add", "origin", str(origin))
     git("fetch", "-q", "origin", "main")
     return repo

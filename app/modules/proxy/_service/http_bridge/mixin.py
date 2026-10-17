@@ -1561,9 +1561,6 @@ class _HTTPBridgeMixin(
     def _prune_http_bridge_sessions_locked(self) -> list["_HTTPBridgeSession"]:
         now = _service_time().monotonic()
 
-
-
-
         if now - self._http_bridge_last_idle_prune_monotonic < _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS:
             return []
         self._http_bridge_last_idle_prune_monotonic = now
@@ -1814,19 +1811,10 @@ class _HTTPBridgeMixin(
             if _service_time().monotonic() >= cooldown.expires_at:
                 self._http_bridge_account_cooldowns.pop(key, None)
             elif cooldown.account_id != preferred_account_id:
-
-
-
-
-
-
-
                 excluded_account_ids.add(cooldown.account_id)
         retry_same_account_once = preferred_account_id is not None
         preferred_candidate_id = preferred_account_id
         selected_account_lease: AccountLease | None = None
-
-
 
         account_rejection: ProxyResponseError | None = None
         while True:

@@ -33,8 +33,6 @@ class AdaptiveThinking(TypedDict):
     type: Literal["adaptive"]
 
 
-
-
 SUBSCRIPTION_REFUSED_MARKERS = ("oauth authentication is currently not allowed",)
 
 
@@ -105,8 +103,6 @@ async def send_openai_probe_with_error_code(
                 "content": [{"type": "input_text", "text": "."}],
             }
         ],
-
-
         "stream": True,
         "store": False,
     }
@@ -117,8 +113,6 @@ async def send_openai_probe_with_error_code(
     try:
         async with lease_http_session() as session:
             async with session.post(url, headers=headers, json=body, timeout=timeout) as resp:
-
-
                 if resp.status >= 400:
                     return resp.status, await read_probe_error_code(resp)
                 return resp.status, None

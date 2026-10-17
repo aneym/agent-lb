@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import argparse
@@ -119,9 +117,12 @@ def markdown(rows: list[TabRow]) -> str:
     )
     mismatches = [row.tab for row in rows if row.requests and not row.ok_model]
     lines += ["", "Model mismatches: " + (", ".join(mismatches) or "none") + "."]
-    lines += ["", "Requests include subagents and workflow agents started from the tab's session; "
-              "a mismatch means most "
-              "of the session's traffic ran on another model, not that the tab itself did."]
+    lines += [
+        "",
+        "Requests include subagents and workflow agents started from the tab's session; "
+        "a mismatch means most "
+        "of the session's traffic ran on another model, not that the tab itself did.",
+    ]
     lines.extend(f"{row.tab}: {row.note}" for row in rows if row.note)
     return "\n".join(lines) + "\n"
 
@@ -203,8 +204,6 @@ def run(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-
-
     _parser = argparse.ArgumentParser(prog="agent-lb audit tabs")
     _commands = _parser.add_subparsers(dest="audit_command", required=True)
     add_parser(_commands)

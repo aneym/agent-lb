@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -174,8 +172,6 @@ class ResetCreditAutoRedeemScheduler:
                             continue
                         available = await refresh_standard_capacity(account, updater, usage_repo)
                         if available is not False:
-
-
                             break
                     else:
                         candidates = exhausted_pool_or_none(await repo.list_accounts(refresh_existing=True))
@@ -218,7 +214,6 @@ class ResetCreditAutoRedeemScheduler:
             expiring = [credit for credit in available if _expires_within(credit.expires_at, now, window)]
             for credit in expiring:
                 await self._redeem_expiring(service, account, credit.id, credit.expires_at)
-
 
                 return
 
@@ -388,7 +383,6 @@ async def _rank_candidates_by_credit_expiry(
 
 
 def _build_accounts_service(repo: AccountsRepository, session: AsyncSession):  # noqa: ANN202
-
 
     from app.dependencies import _accounts_repo_context
     from app.modules.accounts.auth_manager import AuthManager

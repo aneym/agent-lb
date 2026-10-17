@@ -32,10 +32,7 @@ class _SignedHistory(list):
         self.depletion_history_signature = signature
 
 
-
-
 _ewma_states: dict[_StateKey, EWMAState] = {}
-
 
 
 _history_signatures: dict[_StateKey, _HistorySignature] = {}
@@ -62,8 +59,6 @@ class AggregateDepletionMetrics:
     projected_exhaustion_at: datetime | None
     seconds_until_exhaustion: float | None
 
-
-
     worst_account_id: str | None = None
     worst_risk: float | None = None
     worst_risk_level: str | None = None
@@ -85,9 +80,6 @@ def compute_depletion_for_account(
     key: _StateKey = (account_id, limit_name, window)
 
     if len(history) < 2:
-
-
-
         entry = history[0]
         _ewma_states[key] = ewma_update(
             None, entry.used_percent, naive_utc_to_epoch(entry.recorded_at), reset_at=entry.reset_at
@@ -100,10 +92,6 @@ def compute_depletion_for_account(
     cached_signature = _history_signatures.get(key)
 
     if cached_state is not None and cached_signature == signature:
-
-
-
-
         state: EWMAState | None = cached_state
     else:
         state = _rebuild_ewma_state(history)
@@ -121,15 +109,9 @@ def compute_depletion_for_account(
     if latest.reset_at is not None:
         seconds_until_reset = max(0.0, latest.reset_at - naive_utc_to_epoch(now))
         if seconds_until_reset == 0.0:
-
-
             _ewma_states.pop(key, None)
             return None
     elif latest.window_minutes is not None:
-
-
-
-
         seconds_until_reset = float(latest.window_minutes * 60)
 
     total_window_seconds = (latest.window_minutes * 60) if latest.window_minutes else 0.0
@@ -148,7 +130,6 @@ def compute_depletion_for_account(
         if secs <= seconds_until_reset:
             seconds_until_exhaustion = secs
             projected_exhaustion_at = now + timedelta(seconds=secs)
-
 
     return DepletionMetrics(
         risk=risk,
@@ -238,9 +219,6 @@ def _signed_history_from_rows(history: list) -> list:
 
 
 def _history_signature_from_edges(history: Sequence) -> _HistorySignature:
-
-
-
 
     if not history:
         raise ValueError("history must not be empty")

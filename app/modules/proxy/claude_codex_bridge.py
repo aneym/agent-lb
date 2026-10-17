@@ -22,9 +22,6 @@ CCGPT_SERVICE_TIER = "priority"
 _SIGNATURE_PREFIX = "codex:"
 
 
-
-
-
 _PROMPT_TOO_LONG = "Prompt is too long"
 _CONTEXT_OVERFLOW_CODE = "context_length_exceeded"
 _CONTEXT_OVERFLOW_MESSAGE_MARKERS = (
@@ -177,15 +174,6 @@ def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
     )
 
 
-
-
-
-
-
-
-
-
-
 _RELAYED_REQUEST_HEADER = "[Workflow harness \u2014 user request]"
 _COMPUTED_TASK_HEADER = "[Workflow harness \u2014 computed task]"
 _COMPUTED_TASK_LEAD_IN = "The computed task text follows:"
@@ -286,11 +274,6 @@ async def format_claude_events(events: AsyncIterator[JsonObject]) -> AsyncIterat
         yield format_sse_event(event)
 
 
-
-
-
-
-
 _CONTENT_FRAME_TYPES = frozenset({"content_block_start", "content_block_delta"})
 
 _ERROR_STATUS_BY_TYPE: Mapping[str, int] = {
@@ -316,12 +299,6 @@ def anthropic_status_for_error(error_frame: JsonObject) -> int:
 async def _empty_events() -> AsyncIterator[JsonObject]:
     return
     yield  # pragma: no cover - makes this a (never-yielding) async generator
-
-
-
-
-
-
 
 
 STARTUP_FIRST_FRAME_TIMEOUT_SECONDS = 90.0
@@ -486,10 +463,6 @@ def _text_message(role: str, text: str) -> JsonObject:
     }
 
 
-
-
-
-
 BILLING_HEADER_PREFIX = "x-anthropic-billing-header:"
 
 
@@ -583,8 +556,6 @@ class _ClaudeStreamState:
     emitted_text: bool = False
     emitted_tool: bool = False
     actual_model: str = CCGPT_MODEL
-
-
 
     input_tokens_estimate: int = 0
 
@@ -752,7 +723,6 @@ class _ClaudeStreamState:
             if isinstance(details, dict):
                 cache_tokens = _int_value(details.get("cached_tokens"))
         stop_reason = "tool_use" if self.emitted_tool else "end_turn"
-
 
         message_usage: JsonObject = {
             "input_tokens": max(0, input_tokens - cache_tokens),

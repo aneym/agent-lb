@@ -403,10 +403,6 @@ class _CompactMixin:
         )
         routing_strategy = _routing_strategy(settings)
 
-
-
-
-
         file_preferred_account_id = rewritten_file_account_id
         if file_preferred_account_id is None:
             file_preferred_account_id = await proxy._resolve_file_account_for_responses(payload, headers)
@@ -730,7 +726,6 @@ class _CompactMixin:
                                 transient_retries,
                             )
                             await proxy._handle_proxy_error(account, exc)
-
 
                             await proxy._load_balancer.record_errors(account, transient_retries - 1)
                             last_exc = exc

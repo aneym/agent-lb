@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import http.server
@@ -16,14 +14,22 @@ import pytest
 
 from tests.integration.test_route_reservations import route, server  # noqa: F401  (module-scoped server fixture)
 from tests.integration.test_seat_run_reservation import (  # noqa: F401  (env is a fixture)
-    HOLDERS, ROUTE, _script, env, invocations, mine, pid_alive, reservations, seat_argv, slow_discovery)
+    HOLDERS,
+    ROUTE,
+    _script,
+    env,
+    invocations,
+    mine,
+    pid_alive,
+    reservations,
+    seat_argv,
+    slow_discovery,
+)
 
 pytestmark = pytest.mark.timeout(600)
 
 
 class FakeLB:
-
-
     def __init__(self, *, heartbeat: str = "ok", list_failures: int = 0, release_failures: int = 0) -> None:
         self.holds: dict[str, dict] = {}
         self.released: list[tuple[str, str]] = []
@@ -71,8 +77,11 @@ class FakeLB:
                         return self.reply(410, {"status": "gone", "reservation_id": rid})
                     return self.reply(200, {**live, "status": "reserved"})
                 row = outer.holds.get(body["job"]) or {
-                    **body["candidates"][0], "reservation_id": f"rsv-{len(outer.released) + len(outer.holds):012d}",
-                    "job": body["job"], "expires_at": "2099-01-01T00:00:00Z"}
+                    **body["candidates"][0],
+                    "reservation_id": f"rsv-{len(outer.released) + len(outer.holds):012d}",
+                    "job": body["job"],
+                    "expires_at": "2099-01-01T00:00:00Z",
+                }
                 outer.holds[body["job"]] = row
                 self.reply(200, {**row, "status": "reserved"})
 
@@ -82,14 +91,28 @@ class FakeLB:
 
 
 def reserve_argv(job: str) -> list[str]:
-    return [sys.executable, str(ROUTE), "reserve", "mechanical", "--job", job, "--prefer", "cursor-seat",
-            "--model", "grok-latest-low", "--reason", "a4d-5", "--json"]
+    return [
+        sys.executable,
+        str(ROUTE),
+        "reserve",
+        "mechanical",
+        "--job",
+        job,
+        "--prefer",
+        "cursor-seat",
+        "--model",
+        "grok-latest-low",
+        "--reason",
+        "a4d-5",
+        "--json",
+    ]
 
 
 def stop_route_during_listing(env: dict[str, str], job: str, marker: Path) -> tuple[int, dict]:
 
-    process = subprocess.Popen(reserve_argv(job), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
-                               start_new_session=True)
+    process = subprocess.Popen(
+        reserve_argv(job), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=True
+    )
     HOLDERS.append(process)
     deadline = time.monotonic() + 60
     while not marker.exists():
@@ -106,13 +129,15 @@ def stop_route_during_listing(env: dict[str, str], job: str, marker: Path) -> tu
 
 
 @pytest.mark.parametrize("heartbeat", ["500", "slow"])
-def test_a_failed_heartbeat_under_the_hold_releases_it_before_walking_on(env: dict[str, str], tmp_path: Path,
-                                                                        heartbeat: str) -> None:
+def test_a_failed_heartbeat_under_the_hold_releases_it_before_walking_on(
+    env: dict[str, str], tmp_path: Path, heartbeat: str
+) -> None:
     lb = FakeLB(heartbeat=heartbeat)
     try:
         env = {**slow_discovery(env, tmp_path, 0), "AGENT_LB_URL": lb.url}
-        result = subprocess.run(reserve_argv("beat-failed"), capture_output=True, text=True, timeout=90, env=env,
-                                check=False)
+        result = subprocess.run(
+            reserve_argv("beat-failed"), capture_output=True, text=True, timeout=90, env=env, check=False
+        )
         body = json.loads(result.stdout.strip().splitlines()[-1])
 
         assert ("rsv-000000000000", "failed") in lb.released, (lb.released, body)
@@ -120,7 +145,6 @@ def test_a_failed_heartbeat_under_the_hold_releases_it_before_walking_on(env: di
         assert "rsv-000000000000" not in [row["reservation_id"] for row in lb.holds.values()], lb.holds
     finally:
         lb.server.shutdown()
-
 
 
 STUBBORN_DISCOVERY = """#!/usr/bin/env python3
@@ -134,10 +158,14 @@ print("grok-4.7-low - Grok 4.7 Low")
 """
 
 
-def test_a_stop_during_the_listing_releases_only_once_a_stubborn_descendant_is_gone(env: dict[str, str],
-                                                                                   tmp_path: Path) -> None:
-    env = {**slow_discovery(env, tmp_path, 0), "DISCOVERY_CHILD": str(tmp_path / "discovery.child"),
-           "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'stubborn', STUBBORN_DISCOVERY)}"}
+def test_a_stop_during_the_listing_releases_only_once_a_stubborn_descendant_is_gone(
+    env: dict[str, str], tmp_path: Path
+) -> None:
+    env = {
+        **slow_discovery(env, tmp_path, 0),
+        "DISCOVERY_CHILD": str(tmp_path / "discovery.child"),
+        "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'stubborn', STUBBORN_DISCOVERY)}",
+    }
     child = tmp_path / "discovery.child"
     try:
         rc, body = stop_route_during_listing(env, "stubborn-listing", child)
@@ -177,8 +205,6 @@ def test_a_stop_whose_release_keeps_failing_is_not_reported_cancelled(env: dict[
         lb.server.shutdown()
 
 
-
-
 ZOMBIE_CURSOR = """#!/usr/bin/env python3
 import json, os, sys, time
 if sys.argv[1:] == ["models"]:
@@ -208,9 +234,14 @@ def test_a_group_of_zombies_is_drained_and_the_lease_released(env: dict[str, str
     env = {**env, "SEAT_CURSOR_BIN": str(_script(tmp_path / "zombie-cursor", ZOMBIE_CURSOR))}
     launcher = tmp_path / "subreaper.py"
     launcher.write_text(NON_REAPING_SUBREAPER)
-    process = subprocess.Popen([sys.executable, str(launcher), *seat_argv(env, "zombie1", "--class", "mechanical")],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
-                               start_new_session=True)
+    process = subprocess.Popen(
+        [sys.executable, str(launcher), *seat_argv(env, "zombie1", "--class", "mechanical")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
     try:
         out, err = process.communicate(timeout=45)
     except subprocess.TimeoutExpired:

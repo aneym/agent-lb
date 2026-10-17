@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260407_010000_merge_api_key_assignment_and_bridge_gateway_heads"

@@ -233,7 +233,6 @@ async def _load_projection_histories(
     now: datetime,
 ) -> tuple[dict[str, list[UsageHistory]], dict[str, list[UsageHistory]]]:
 
-
     primary_rows_raw = _rows_from_latest(primary_usage)
     secondary_rows_raw = _rows_from_latest(secondary_usage)
     primary_rows, _ = usage_core.normalize_weekly_only_rows(
@@ -242,8 +241,6 @@ async def _load_projection_histories(
     )
     normalized_primary_ids = {row.account_id for row in primary_rows}
     all_account_ids = set(primary_usage.keys()) | set(secondary_usage.keys())
-
-
 
     pri_fetch_ids: list[str] = []
     sec_fetch_ids: list[str] = []

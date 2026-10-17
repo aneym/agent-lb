@@ -73,13 +73,8 @@ def resolve_connection_client_ip(
             if resolved is not None:
                 return resolved
 
-
-
         if _has_forwarded_client_ip_hint(headers):
             return None
-
-
-
 
         return socket_ip
     return socket_ip

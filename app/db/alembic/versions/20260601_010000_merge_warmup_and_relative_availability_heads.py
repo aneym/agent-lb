@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260601_010000_merge_warmup_and_relative_availability_heads"

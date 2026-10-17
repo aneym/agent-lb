@@ -228,12 +228,6 @@ class _HTTPBridgeRequestSubmitMixin:
             and isinstance(payload.input, list)
             and getattr(_service_get_settings(), "http_bridge_strip_foreign_encrypted_reasoning", True)
         ):
-
-
-
-
-
-
             unsanitized_input_items = cast(list[JsonValue], payload.input)
             sanitized_input_items, stripped_reasoning_count, dropped_reasoning_count = (
                 strip_encrypted_reasoning_input_items(unsanitized_input_items)
@@ -354,7 +348,6 @@ class _HTTPBridgeRequestSubmitMixin:
         if not settings.image_inline_fetch_enabled:
             return text_data
 
-
         if "input_image" not in text_data:
             return text_data
         try:
@@ -370,8 +363,6 @@ class _HTTPBridgeRequestSubmitMixin:
                 connect_timeout,
             )
             inlined = await _inline_top_level_input_image_urls(inlined, image_fetch_session, connect_timeout)
-
-
 
         remaining_external = _count_external_image_urls(inlined)
         if remaining_external > 0:
@@ -459,13 +450,6 @@ class _HTTPBridgeRequestSubmitMixin:
                             cache_key_family=session.key.affinity_kind,
                             model_class=_extract_model_class(session.request_model) if session.request_model else None,
                         )
-
-
-
-
-
-
-
 
                     recovered = await self._retry_http_bridge_request_on_fresh_upstream(
                         session,
@@ -634,10 +618,6 @@ class _HTTPBridgeRequestSubmitMixin:
             except Exception:
                 logger.debug("Failed to close HTTP bridge upstream websocket after send failure", exc_info=True)
 
-
-
-
-
             raise ProxyResponseError(
                 502,
                 openai_error("upstream_unavailable", str(exc) or "Upstream websocket closed"),
@@ -749,9 +729,6 @@ class _HTTPBridgeRequestSubmitMixin:
                         )
                         session.prewarmed = False
                         try:
-
-
-
                             await self._reconnect_http_bridge_session(
                                 session,
                                 request_state=request_state,
@@ -846,10 +823,6 @@ class _HTTPBridgeRequestSubmitMixin:
                 detached = True
         request_state.event_queue = None
 
-
-
-
-
         await _release_websocket_response_create_gate(request_state, session.response_create_gate)
         if not detached:
             return False
@@ -932,15 +905,6 @@ class _HTTPBridgeRequestSubmitMixin:
     ) -> bool:
         retry_text_data = text_data
         if request_state.previous_response_id is not None and send_request:
-
-
-
-
-
-
-
-
-
             if (
                 not request_state.proxy_injected_previous_response_id
                 or not request_state.fresh_upstream_request_text
@@ -997,11 +961,6 @@ class _HTTPBridgeRequestSubmitMixin:
                 and request_state.fresh_upstream_request_is_retry_safe
                 and request_state.fresh_upstream_request_text
             ):
-
-
-
-
-
                 return False
             close_classification = _classify_upstream_close(
                 session.last_upstream_close_code,

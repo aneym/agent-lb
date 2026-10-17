@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -14,8 +12,6 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-
-
         op.execute("SET LOCAL lock_timeout = '5s'")
 
     columns = {column["name"] for column in sa.inspect(bind).get_columns("team_members")}

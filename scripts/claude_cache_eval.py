@@ -38,7 +38,9 @@ def redact(text: str) -> str:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='End-to-end prompt-cache eval for Claude Code through agent-lb.'.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="End-to-end prompt-cache eval for Claude Code through agent-lb.".splitlines()[0]
+    )
     parser.add_argument("--model", default="sonnet")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--arm", choices=("cli", "sdk"), default="cli")
@@ -215,15 +217,28 @@ def write_receipt(report: dict, model: str, arm: str) -> Path:
 
 def run_cli(args: argparse.Namespace, started: float) -> int:
     proc = subprocess.run(
-        [str(args.launcher), "-p", PROMPT, "--model", args.model, "--output-format", "json",
-         "--permission-mode", "bypassPermissions"],
-        cwd=WORKDIR, capture_output=True, text=True, timeout=args.timeout,
+        [
+            str(args.launcher),
+            "-p",
+            PROMPT,
+            "--model",
+            args.model,
+            "--output-format",
+            "json",
+            "--permission-mode",
+            "bypassPermissions",
+        ],
+        cwd=WORKDIR,
+        capture_output=True,
+        text=True,
+        timeout=args.timeout,
     )
     try:
         session_id = json.loads(proc.stdout.strip().splitlines()[-1])["session_id"]
     except (IndexError, KeyError, json.JSONDecodeError):
-        print(f"FAIL: no session id from claude (exit {proc.returncode}): {redact(proc.stderr[-400:])}",
-              file=sys.stderr)
+        print(
+            f"FAIL: no session id from claude (exit {proc.returncode}): {redact(proc.stderr[-400:])}", file=sys.stderr
+        )
         return 1
 
     project = project_dir(WORKDIR)
@@ -247,7 +262,10 @@ def run_cli(args: argparse.Namespace, started: float) -> int:
         total_5m += split["ephemeral_5m_input_tokens"]
         total_1h += split["ephemeral_1h_input_tokens"]
         report["conversations"][name] = {
-            "calls": len(rows), "busts": busts, "rows": rows, "write_split": split,
+            "calls": len(rows),
+            "busts": busts,
+            "rows": rows,
+            "write_split": split,
         }
         if len(rows) < 3:
             failures.append(f"{name}: only {len(rows)} calls")
@@ -289,13 +307,23 @@ def run_sdk(args: argparse.Namespace, started: float) -> int:
         print(f"npm i --prefix {directory} @anthropic-ai/claude-agent-sdk", file=sys.stderr)
         return 2
     proc = subprocess.run(
-        ["node", str(SDK_DRIVER),
-         "--sdk-dir", str(directory),
-         "--model", args.model,
-         "--idle-seconds", str(args.idle_seconds),
-         "--launcher", str(args.launcher),
-         "--workdir", str(WORKDIR)],
-        cwd=WORKDIR, capture_output=True, text=True,
+        [
+            "node",
+            str(SDK_DRIVER),
+            "--sdk-dir",
+            str(directory),
+            "--model",
+            args.model,
+            "--idle-seconds",
+            str(args.idle_seconds),
+            "--launcher",
+            str(args.launcher),
+            "--workdir",
+            str(WORKDIR),
+        ],
+        cwd=WORKDIR,
+        capture_output=True,
+        text=True,
         timeout=args.timeout + args.idle_seconds,
     )
     try:

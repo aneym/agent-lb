@@ -155,10 +155,6 @@ class ChatCompletionsRequest(BaseModel):
                 data["stream_options"] = {"include_obfuscation": include_obfuscation}
 
         if messages is None or (not messages and "input" in data):
-
-
-
-
             if not isinstance(data.get("instructions"), str):
                 data["instructions"] = ""
             data["tools"] = raw_tools
@@ -223,10 +219,6 @@ def _normalize_chat_tools(tools: list[JsonValue]) -> list[JsonValue]:
             name = function.get("name")
             if not isinstance(name, str) or not name:
                 continue
-
-
-
-
 
             normalized_tool: dict[str, JsonValue] = {
                 "type": tool_type or "function",

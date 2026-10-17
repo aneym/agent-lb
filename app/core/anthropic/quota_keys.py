@@ -1,6 +1,3 @@
-
-
-
 def model_quota_key(model: str | None, quota_key: str) -> str:
     if model and "opus" in model.lower():
         if quota_key == "anthropic_top":

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 revision = "20260410_040000_merge_dashboard_defaults_and_import_default_heads"

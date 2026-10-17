@@ -63,11 +63,6 @@ async def health_ready() -> HealthCheckResponse:
                 checks = {"database": "ok"}
                 status = "ok"
 
-
-
-
-
-
                 bridge_ring = await _get_bridge_ring_info(session)
                 failure_detail = _bridge_readiness_failure_detail(bridge_ring)
                 if failure_detail is not None:

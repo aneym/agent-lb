@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -84,7 +82,6 @@ async def test_checkout_import_and_reclaim_serialize_on_reservation(db_setup: bo
         async with SessionLocal() as session:
             repo = FederationRepository(session)
             if not abort_first:
-
                 original = session.commit
 
                 async def paused_commit() -> None:

@@ -381,13 +381,6 @@ class _HTTPBridgeUpstreamEventsMixin:
                     matched_request_state.suppress_next_created_downstream = False
                     suppress_downstream_event = True
                 if matched_request_state.is_compaction_request and payload is not None:
-
-
-
-
-
-
-
                     if event_type == "response.output_item.done":
                         done_item = payload.get("item")
                         if (
@@ -706,13 +699,8 @@ class _HTTPBridgeUpstreamEventsMixin:
                 ) = _build_stream_incomplete_terminal_event_for_request(status_request_state)
 
         if event_type == "response.completed" and terminal_request_state is not None:
-
-
-
-
             if response_id is not None:
                 session.last_completed_response_id = response_id
-
 
             if terminal_request_state.input_item_count > 0:
                 session.last_completed_input_count = terminal_request_state.input_item_count

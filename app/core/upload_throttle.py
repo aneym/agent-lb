@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +22,6 @@ DEFAULT_BYTES_PER_SEC = 1_500_000
 BURST_BYTES = 64 * 1024
 
 
-
 MIN_RELEASE_BYTES = 16 * 1024
 STATE_REFRESH_SECONDS = 1.0
 
@@ -32,7 +29,6 @@ ADAPTIVE_FRESH_SECONDS = 90
 
 MIN_BYTES_PER_SEC = 65_000
 MAX_BYTES_PER_SEC = 1_000_000_000
-
 
 
 PAUSE_HIGH_BYTES = 256 * 1024
@@ -73,7 +69,6 @@ def valid_rate(value: object) -> bool:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False
     try:
-
         return math.isfinite(float(value)) and MIN_BYTES_PER_SEC <= value <= MAX_BYTES_PER_SEC
     except (OverflowError, ValueError):
         return False
@@ -229,7 +224,6 @@ def write_state(
         fcntl.flock(lock, fcntl.LOCK_EX)
         policy = read_policy()
 
-
         holds = policy["holds"] if policy["source"] != "default" or path.exists() else {}
         rate = policy["rate"]
         if clear_all:
@@ -260,8 +254,6 @@ def write_state(
 
 
 class _Bucket:
-
-
     def __init__(self) -> None:
         self.enabled, self.rate = read_state()
         self._tokens = float(BURST_BYTES)
@@ -300,8 +292,6 @@ def bucket() -> _Bucket:
 
 
 class ThrottledTransport(asyncio.Transport):
-
-
     def __init__(self, transport: asyncio.Transport, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__()
         self._transport = transport
@@ -316,7 +306,6 @@ class ThrottledTransport(asyncio.Transport):
         except Exception:  # pragma: no cover
             logger.debug("upload_throttle could not hook flow control", exc_info=True)
 
-
     def write(self, data: bytes | bytearray | memoryview) -> None:
         if not data:
             return
@@ -324,9 +313,6 @@ class ThrottledTransport(asyncio.Transport):
             self._transport.write(data)
             return
         if not self._pending and not is_bulk():
-
-
-
             self._transport.write(data)
             return
         chunk = bytes(data)
@@ -407,7 +393,6 @@ class ThrottledTransport(asyncio.Transport):
         if self._scheduled is not None:
             return
 
-
         delay = min(delay, STATE_REFRESH_SECONDS)
         if delay <= 0:
             self._scheduled = self._loop.call_soon(self._drain)
@@ -444,7 +429,6 @@ class ThrottledTransport(asyncio.Transport):
             while self._pending:
                 self._transport.write(self._pending.popleft())
             self._pending_size = 0
-
 
     def close(self) -> None:
         if self._pending:
@@ -524,7 +508,6 @@ def install() -> None:
         finally:
             _IN_PROXY_CONNECTION.reset(token)
 
-
         host = str(getattr(req, "host", "") or "").strip("[]").lower()
         if host in _LOCAL_HOSTS:
             return transport, protocol
@@ -537,7 +520,6 @@ def install() -> None:
         if _IN_PROXY_CONNECTION.get():
             return transport, protocol
         host = str(getattr(req, "host", "") or "").strip("[]").lower()
-
 
         if host in _LOCAL_HOSTS or str(getattr(req, "method", "")).upper() == "CONNECT":
             return transport, protocol

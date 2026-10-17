@@ -13,8 +13,6 @@ T = TypeVar("T")
 
 
 class StaleWhileRevalidate(Generic[T]):
-
-
     def __init__(self, name: str, *, ttl_seconds: float) -> None:
         self._name = name
         self._ttl_seconds = ttl_seconds
@@ -22,7 +20,6 @@ class StaleWhileRevalidate(Generic[T]):
         self._value: T | None = None
         self._loaded_at = 0.0
         self._generation = 0
-
 
         self._clear_epoch = 0
         self._refresh_task: asyncio.Task[None] | None = None
@@ -44,7 +41,6 @@ class StaleWhileRevalidate(Generic[T]):
         started_at = time.monotonic()
         clear_epoch = self._clear_epoch
         value = await load()
-
 
         if self._clear_epoch == clear_epoch:
             self._store(key, value, started_at)

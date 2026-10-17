@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -26,7 +24,6 @@ if key in Path(os.environ["FAKE_LIMITED_KEYS"]).read_text().split():
 print(json.dumps({"type": "result", "is_error": False, "result": "done", "session_id": f"chat-{key}",
                   "usage": {"inputTokens": 120, "outputTokens": 7, "cacheReadTokens": 0}}))
 """
-
 
 
 FAKE_ROUTE = """#!/bin/sh
@@ -69,8 +66,6 @@ def test_limit_fails_over_then_exhausts_the_pool(tmp_path: Path) -> None:
         added = _seat(env, "add", f"cursor-{account_id}", "--vendor", "cursor", "--api-key-file", str(key_file))
         assert added.returncode == 0, added.stderr
 
-
-
     first = _seat(
         env,
         "run",
@@ -102,8 +97,6 @@ def test_limit_fails_over_then_exhausts_the_pool(tmp_path: Path) -> None:
     assert (closeout["account"], closeout["ok"], closeout["tokens_in"]) == ("cursor-b", True, 120)
     assert rows[0]["session_id"] == closeout["session_id"]
 
-
-
     seats = read_seat_accounts(tmp_path / "seats" / "state.json")
     by_id = {account.id: account for account in seats.accounts}
     assert by_id["cursor-a"].cooldown_until is None and by_id["cursor-a"].ready
@@ -111,8 +104,6 @@ def test_limit_fails_over_then_exhausts_the_pool(tmp_path: Path) -> None:
     assert by_id["cursor-b"].ready and by_id["cursor-b"].last_day.tokens_in == 120
     (pool,) = cli_seat_pools(seats)
     assert (pool.id, pool.status, pool.eligible_accounts, pool.observed_runs) == ("cursor", "ok", 2, 2)
-
-
 
     limited.write_text("key-a\nkey-b\n")
     second = _seat(env, "run", "--vendor", "cursor", "--model", "grok-latest", "--cwd", str(tmp_path), "--", "x")

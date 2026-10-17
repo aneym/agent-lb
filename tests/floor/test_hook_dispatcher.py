@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import hashlib
@@ -62,8 +61,13 @@ def make_home(tmp_path: Path) -> tuple[Path, dict]:
     home = tmp_path / "home"
     hooks = home / ".claude/hooks"
     hooks.mkdir(parents=True)
-    for name, text in (("no-direct-merge.py", MERGE_GUARD), ("herdr-shell-host-guard.py", HOST_GUARD),
-                       ("idle-agents.py", QUIET), ("routing-pulse.py", CONTEXT), ("herdr-tab-autoname.py", QUIET)):
+    for name, text in (
+        ("no-direct-merge.py", MERGE_GUARD),
+        ("herdr-shell-host-guard.py", HOST_GUARD),
+        ("idle-agents.py", QUIET),
+        ("routing-pulse.py", CONTEXT),
+        ("herdr-tab-autoname.py", QUIET),
+    ):
         (hooks / name).write_text(text)
     bin_dir = home / ".local/bin"
     bin_dir.mkdir(parents=True)
@@ -73,29 +77,51 @@ def make_home(tmp_path: Path) -> tuple[Path, dict]:
     settings = {
         "hooks": {
             "PreToolUse": [
-                {"matcher": "Bash", "hooks": [{"type": "command",
-                                               "command": 'python3 "$HOME/.claude/hooks/no-direct-merge.py"'}]},
+                {
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": 'python3 "$HOME/.claude/hooks/no-direct-merge.py"'}],
+                },
                 {"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "true", "timeout": 5}]},
-                {"matcher": "Bash", "hooks": [{"type": "command",
-                                               "command": f'{py} "$HOME/.claude/hooks/herdr-shell-host-guard.py"'}]},
+                {
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": f'{py} "$HOME/.claude/hooks/herdr-shell-host-guard.py"'}],
+                },
                 {"matcher": "mcp__.*", "hooks": [{"type": "command", "command": "true"}]},
             ],
             "PostToolUse": [
-                {"hooks": [{"type": "command", "command": '"$HOME/.local/bin/lane-bulletin-hook" 2>/dev/null || true',
-                            "timeout": 3}]},
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": '"$HOME/.local/bin/lane-bulletin-hook" 2>/dev/null || true',
+                            "timeout": 3,
+                        }
+                    ]
+                },
             ],
             "UserPromptSubmit": [
-                {"hooks": [
-                    {"type": "command", "command": f'{py} "$HOME/.claude/hooks/routing-pulse.py" 2>/dev/null || true',
-                     "timeout": 3, "statusMessage": "Routing pulse"},
-                    {"type": "command",
-                     "command": f'{py} "$HOME/.claude/hooks/herdr-tab-autoname.py" 2>/dev/null || true',
-                     "timeout": 10},
-                ]},
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f'{py} "$HOME/.claude/hooks/routing-pulse.py" 2>/dev/null || true',
+                            "timeout": 3,
+                            "statusMessage": "Routing pulse",
+                        },
+                        {
+                            "type": "command",
+                            "command": f'{py} "$HOME/.claude/hooks/herdr-tab-autoname.py" 2>/dev/null || true',
+                            "timeout": 10,
+                        },
+                    ]
+                },
             ],
             "Stop": [
-                {"hooks": [{"type": "command", "command": f'{py} "$HOME/.claude/hooks/idle-agents.py" stop',
-                            "timeout": 10}]},
+                {
+                    "hooks": [
+                        {"type": "command", "command": f'{py} "$HOME/.claude/hooks/idle-agents.py" stop', "timeout": 10}
+                    ]
+                },
             ],
             "SessionStart": [{"hooks": [{"type": "command", "command": "true"}]}],
         }
@@ -105,14 +131,23 @@ def make_home(tmp_path: Path) -> tuple[Path, dict]:
 
 
 def installer(tmp_path: Path, home: Path):
-    env = os.environ | {"HOME": str(home), "AGENT_LB_URL": "http://127.0.0.1:1",
-                        "ROUTE_MODELS_CACHE": str(tmp_path / "models-cache.json"), "LANG": "en_US.UTF-8"}
+    env = os.environ | {
+        "HOME": str(home),
+        "AGENT_LB_URL": "http://127.0.0.1:1",
+        "ROUTE_MODELS_CACHE": str(tmp_path / "models-cache.json"),
+        "LANG": "en_US.UTF-8",
+    }
     for key in ("ROUTE_FIXTURE_DIR", "ROUTE_TABLE", "HOOK_DISPATCH_TRACE", "HOOK_DISPATCH_REGISTRY"):
         env.pop(key, None)
 
     def install(*options: str, check: bool = True) -> subprocess.CompletedProcess:
-        result = subprocess.run([sys.executable, str(SOURCE / "install-policy.py"), "--home", str(home), *options],
-                                env=env, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(
+            [sys.executable, str(SOURCE / "install-policy.py"), "--home", str(home), *options],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
         if check:
             assert result.returncode == 0, result.stdout + result.stderr
         return result
@@ -125,8 +160,9 @@ def hooks_of(home: Path) -> dict:
 
 
 def run_hook(command: str, payload: dict, env: dict) -> subprocess.CompletedProcess:
-    return subprocess.run(["/bin/sh", "-c", command], input=json.dumps(payload), env=env, capture_output=True,
-                          text=True, timeout=60)
+    return subprocess.run(
+        ["/bin/sh", "-c", command], input=json.dumps(payload), env=env, capture_output=True, text=True, timeout=60
+    )
 
 
 def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
@@ -143,39 +179,52 @@ def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
     bash = [group for group in folded["PreToolUse"] if group.get("matcher") == "Bash"]
     registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
 
-
-    assert bash == [{"matcher": "Bash", "hooks": [{"type": "command",
-                                                   "command": f"{DISPATCH} PreToolUse 'Bash' {registry['rev']}",
-                                                   "timeout": 1235}]}]
+    assert bash == [
+        {
+            "matcher": "Bash",
+            "hooks": [
+                {"type": "command", "command": f"{DISPATCH} PreToolUse 'Bash' {registry['rev']}", "timeout": 1235}
+            ],
+        }
+    ]
     bash_entry = [hook["command"] for hook in registry["entries"]["PreToolUse"]["Bash"]]
     assert 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"' in bash_entry
     assert '"$HOME/.claude/hooks/dangerous-command-guard.sh"' in bash_entry
 
     assert json.loads((home / f".claude/hooks/dispatch/registry.{registry['rev']}.json").read_text()) == registry
 
-    for kept in ({"matcher": "mcp__.*", "hooks": [{"type": "command", "command": "true"}]},
-                 {"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "true", "timeout": 5}]}):
+    for kept in (
+        {"matcher": "mcp__.*", "hooks": [{"type": "command", "command": "true"}]},
+        {"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "true", "timeout": 5}]},
+    ):
         assert kept in folded["PreToolUse"]
     assert folded["SessionStart"] == per_hook["SessionStart"]
-    assert all("hook-dispatch.py" in group["hooks"][0]["command"] for event in ("UserPromptSubmit", "Stop")
-               for group in folded[event]) or folded["Stop"] == per_hook["Stop"]
+    assert (
+        all(
+            "hook-dispatch.py" in group["hooks"][0]["command"]
+            for event in ("UserPromptSubmit", "Stop")
+            for group in folded[event]
+        )
+        or folded["Stop"] == per_hook["Stop"]
+    )
     report = json.loads((home / ".claude/hooks/dispatch/parity-last.json").read_text())
 
     assert report["parity"] == "pass" and report["floor"] == "pass" and report["floor_replay"]
 
-
-    payload = {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 5"}, "cwd": str(tmp_path),
-               "hook_event_name": "PreToolUse"}
+    payload = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "gh pr merge 5"},
+        "cwd": str(tmp_path),
+        "hook_event_name": "PreToolUse",
+    }
     new = run_hook(bash[0]["hooks"][0]["command"], payload, env)
     assert new.returncode == 2
     reason = json.loads(new.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
     assert reason == '[python3 "$HOME/.claude/hooks/no-direct-merge.py"]: BLOCKED: merge through the queue\n'
 
-
     before = (home / ".claude/settings.json").read_bytes()
     assert "already converged" in install().stdout
     assert (home / ".claude/settings.json").read_bytes() == before
-
 
     added = {"matcher": "Bash", "hooks": [{"type": "command", "command": "true # added later"}]}
     settings = json.loads(before)
@@ -186,13 +235,11 @@ def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
     assert added in refolded["PreToolUse"]
     assert bash[0] in refolded["PreToolUse"]
 
-
     guard = home / ".claude/hooks/no-direct-merge.py"
     guard.write_text(MERGE_GUARD + "# edited\n")
     assert "hook dispatcher parity passed" in install().stdout
     registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
     assert registry["inproc_sha"]["no-direct-merge.py"] == __import__("hashlib").sha256(guard.read_bytes()).hexdigest()
-
 
     install("--hook-dispatcher", "off")
     restored = hooks_of(home)
@@ -210,7 +257,8 @@ def test_parity_failure_keeps_the_per_hook_config(tmp_path: Path) -> None:
     before = (home / ".claude/settings.json").read_bytes()
 
     (home / ".claude/hooks/no-direct-merge.py").write_text(
-        "import sys, time\nsys.stdin.read()\nprint(time.time_ns())\n")
+        "import sys, time\nsys.stdin.read()\nprint(time.time_ns())\n"
+    )
     result = install("--hook-dispatcher", "on", check=False)
     assert result.returncode != 0
     assert "parity fixture failed" in result.stderr
@@ -242,7 +290,6 @@ def test_missing_registry_fails_closed(tmp_path: Path) -> None:
     assert json.loads(pre.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "--hook-dispatcher off" in pre.stderr
 
-
     for event in ("Stop", "UserPromptSubmit", "PostToolUse"):
         other = run_hook(f"{DISPATCH} {event} '*'", {"hook_event_name": event}, env)
         assert other.returncode == 1 and not other.stdout and "--hook-dispatcher off" in other.stderr, event
@@ -261,7 +308,8 @@ def test_settings_edited_during_the_parity_run_are_not_overwritten(tmp_path: Pat
     (home / ".claude/hooks/idle-agents.py").write_text(
         "import json, sys\nsys.stdin.read()\n"
         f"p = {str(settings_path)!r}\n"
-        "s = json.load(open(p))\ns['concurrentEdit'] = True\njson.dump(s, open(p, 'w'))\n")
+        "s = json.load(open(p))\ns['concurrentEdit'] = True\njson.dump(s, open(p, 'w'))\n"
+    )
     result = install("--hook-dispatcher", "on", check=False)
     assert result.returncode != 0
     assert "changed while this install ran" in result.stderr
@@ -269,10 +317,6 @@ def test_settings_edited_during_the_parity_run_are_not_overwritten(tmp_path: Pat
     assert after["concurrentEdit"] is True
     assert "hook-dispatch.py" not in json.dumps(after)
     assert not (home / ".claude/hooks/dispatch/registry.json").exists()
-
-
-
-
 
 
 MERGE_CALL = {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 5"}, "hook_event_name": "PreToolUse"}
@@ -292,8 +336,11 @@ def dispatcher_home(tmp_path: Path, entry: Any) -> tuple[Path, dict]:
     (home / "g/merge.py").write_text(MERGE_GUARD)
     registry = {"schema": 1, "entries": {"PreToolUse": {"Bash": entry}}, "inproc": []}
     (home / ".claude/hooks/dispatch/registry.json").write_text(json.dumps(registry))
-    env = {key: value for key, value in os.environ.items()
-           if not key.startswith(("HOOK_DISPATCH_", "BASH_FUNC_")) and key not in ("BASH_ENV", "ENV", "BASHOPTS")}
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("HOOK_DISPATCH_", "BASH_FUNC_")) and key not in ("BASH_ENV", "ENV", "BASHOPTS")
+    }
     return home, env | {"HOME": str(home)}
 
 
@@ -322,13 +369,27 @@ def test_a_damaged_entry_list_refuses(tmp_path: Path, entry: Any) -> None:
     assert "not a list of hooks" in reason or "not a command hook" in reason
 
 
-@pytest.mark.parametrize("peer", [
-    {"hookSpecificOutput": {"permissionDecision": []}},
-    {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                            "permissionDecisionReason": 5}},
-    {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                            "permissionDecisionReason": "\ud800"}},
-], ids=["list-decision", "int-reason", "lone-surrogate"])
+@pytest.mark.parametrize(
+    "peer",
+    [
+        {"hookSpecificOutput": {"permissionDecision": []}},
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": 5,
+            }
+        },
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "\ud800",
+            }
+        },
+    ],
+    ids=["list-decision", "int-reason", "lone-surrogate"],
+)
 def test_malformed_peer_output_still_denies(tmp_path: Path, peer: dict) -> None:
     peer_hook = {"type": "command", "command": "printf %s '" + json.dumps(peer) + "'"}
     _home, env = dispatcher_home(tmp_path, [MERGE_HOOK, peer_hook])
@@ -342,10 +403,15 @@ def test_malformed_peer_output_still_denies(tmp_path: Path, peer: dict) -> None:
 def test_no_temp_file_refuses(tmp_path: Path) -> None:
     _home, env = dispatcher_home(tmp_path, [MERGE_HOOK])
 
-
-    result = subprocess.run(["/bin/sh", "-c", DISPATCH_BASH], input=json.dumps(MERGE_CALL), env=env,
-                            capture_output=True, text=True, timeout=60,
-                            preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0)))
+    result = subprocess.run(
+        ["/bin/sh", "-c", DISPATCH_BASH],
+        input=json.dumps(MERGE_CALL),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0)),
+    )
     assert result.returncode == 2, result.stdout + result.stderr
     assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
@@ -359,8 +425,11 @@ def test_env_that_changes_a_pinned_guard_runs_it(tmp_path: Path, variable: str) 
     startup.write_text("shopt -s xpg_echo\n")
     env[variable] = str(startup) if variable == "BASH_ENV" else "xpg_echo"
 
-    call = {"tool_name": "Bash", "tool_input": {"command": "eval $'l\\x69nk-cli auth status'"},
-            "hook_event_name": "PreToolUse"}
+    call = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "eval $'l\\x69nk-cli auth status'"},
+        "hook_event_name": "PreToolUse",
+    }
     if run_hook(LINK_HOOK, call, env).returncode != 2:
         pytest.skip(f"this bash ignores {variable} (BASHOPTS needs bash 4.1+)")
     assert decision(run_hook(DISPATCH_BASH, call, env)) == "deny"
@@ -374,8 +443,10 @@ def test_env_that_changes_a_pinned_guard_runs_it(tmp_path: Path, variable: str) 
 
 
 def test_a_pinned_guard_with_a_fallback_answer_runs(tmp_path: Path) -> None:
-    hook = {"type": "command",
-            "command": LINK_HOOK + " || { printf %s '{\"decision\":\"block\",\"reason\":\"startup failed\"}'; }"}
+    hook = {
+        "type": "command",
+        "command": LINK_HOOK + ' || { printf %s \'{"decision":"block","reason":"startup failed"}\'; }',
+    }
     _home, env = dispatcher_home(tmp_path, [hook])
     startup = tmp_path / "startup.sh"
     startup.write_text("exit 1\n")
@@ -399,8 +470,11 @@ print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permiss
 
 def bash_groups(hooks: dict) -> list[dict]:
 
-    return [group for group in hooks["PreToolUse"]
-            if group.get("matcher") in (None, "", "*") or "Bash" in group["matcher"].split("|")]
+    return [
+        group
+        for group in hooks["PreToolUse"]
+        if group.get("matcher") in (None, "", "*") or "Bash" in group["matcher"].split("|")
+    ]
 
 
 def test_a_refold_never_runs_old_settings_against_a_weaker_registry(tmp_path: Path) -> None:
@@ -408,26 +482,36 @@ def test_a_refold_never_runs_old_settings_against_a_weaker_registry(tmp_path: Pa
     (home / "g").mkdir()
     (home / "g/deny.py").write_text(DENY_ALL)
     guard = {"type": "command", "command": 'python3 "$HOME/g/deny.py"'}
-    settings = {"hooks": {"PreToolUse": [{"matcher": "Bash|Write", "hooks": [guard]},
-                                         {"matcher": "Bash|Write", "hooks": [{"type": "command", "command": "true"},
-                                                                             {"type": "command", "command": ":"}]}]}}
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {"matcher": "Bash|Write", "hooks": [guard]},
+                {
+                    "matcher": "Bash|Write",
+                    "hooks": [{"type": "command", "command": "true"}, {"type": "command", "command": ":"}],
+                },
+            ]
+        }
+    }
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install, env = installer(tmp_path, home)
     install("--hook-dispatcher", "on")
 
-    folded = [hook["command"] for group in bash_groups(hooks_of(home)) if group["matcher"] == "Bash|Write"
-              for hook in group["hooks"]]
+    folded = [
+        hook["command"]
+        for group in bash_groups(hooks_of(home))
+        if group["matcher"] == "Bash|Write"
+        for hook in group["hooks"]
+    ]
     assert len(folded) == 1 and "hook-dispatch.py" in folded[0]
     call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
     assert decision(run_hook(folded[0], call, env)) == "deny"
-
 
     edited = json.loads((home / ".claude/settings.json").read_text())
     edited["hooks"]["PreToolUse"].append({"matcher": "Write|Read", "hooks": [guard]})
     (home / ".claude/settings.json").write_text(json.dumps(edited, indent=2) + "\n")
     install()
     assert per_hook([hook for group in bash_groups(hooks_of(home)) for hook in group["hooks"]], call, env) == "deny"
-
 
     assert decision(run_hook(folded[0], call, env)) == "deny"
 
@@ -437,11 +521,15 @@ def test_a_fold_keeps_config_order_across_overlapping_matchers(tmp_path: Path) -
     (home / "g").mkdir()
     (home / "g/wipe.py").write_text(REWRITE % "rm -rf /")
     (home / "g/safe.py").write_text(REWRITE % "echo safe")
-    settings = {"hooks": {"PreToolUse": [
-        {"matcher": "Bash", "hooks": [{"type": "command", "command": "true"}]},
-        {"matcher": "Bash|Write", "hooks": [{"type": "command", "command": 'python3 "$HOME/g/wipe.py"'}]},
-        {"matcher": "Bash", "hooks": [{"type": "command", "command": 'python3 "$HOME/g/safe.py"'}]},
-    ]}}
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "true"}]},
+                {"matcher": "Bash|Write", "hooks": [{"type": "command", "command": 'python3 "$HOME/g/wipe.py"'}]},
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": 'python3 "$HOME/g/safe.py"'}]},
+            ]
+        }
+    }
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install, env = installer(tmp_path, home)
     call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
@@ -461,11 +549,6 @@ def test_a_fold_keeps_config_order_across_overlapping_matchers(tmp_path: Path) -
     assert last_rewrite(hooks_of(home)) == "echo safe"
 
 
-
-
-
-
-
 def parity_module():
     import importlib.util
 
@@ -482,15 +565,19 @@ def as_result(command: str, done: subprocess.CompletedProcess) -> dict:
 def test_a_crash_notice_survives_beside_a_json_answer(tmp_path: Path) -> None:
 
     crash = {"type": "command", "command": "echo 'guard crashed: synthetic' >&2; exit 1"}
-    context = {"type": "command", "command": "printf %s '" + json.dumps(
-        {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "ctx"}}) + "'"}
+    context = {
+        "type": "command",
+        "command": "printf %s '"
+        + json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "ctx"}})
+        + "'",
+    }
     _home, env = dispatcher_home(tmp_path, [crash, context])
     call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
     parity = parity_module()
-    old = parity.effect("PreToolUse", [as_result(h["command"], run_hook(h["command"], call, env))
-                                       for h in (crash, context)])
+    old = parity.effect(
+        "PreToolUse", [as_result(h["command"], run_hook(h["command"], call, env)) for h in (crash, context)]
+    )
     new = parity.effect("PreToolUse", [as_result(DISPATCH_BASH, run_hook(DISPATCH_BASH, call, env))])
-
 
     assert old["shown"] == "Failed with non-blocking status code: guard crashed: synthetic" and old["context"] == "ctx"
     assert new == old
@@ -503,8 +590,10 @@ def test_a_damaged_entry_falls_back_to_a_good_backup(tmp_path: Path) -> None:
     (home / ".claude/hooks/dispatch/registry.json.bak").write_text(json.dumps(good))
     result = run_hook(DISPATCH_BASH, MERGE_CALL, env)
     assert result.returncode == 2, result.stdout + result.stderr
-    assert "BLOCKED: merge through the queue" in json.loads(result.stdout)["hookSpecificOutput"][
-        "permissionDecisionReason"]
+    assert (
+        "BLOCKED: merge through the queue"
+        in json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    )
 
 
 def test_a_payload_that_cannot_be_written_refuses_and_leaves_no_file(tmp_path: Path) -> None:
@@ -514,9 +603,15 @@ def test_a_payload_that_cannot_be_written_refuses_and_leaves_no_file(tmp_path: P
     tmp.mkdir()
     env["TMPDIR"] = str(tmp)
     call = dict(MERGE_CALL, padding="x" * 4096)
-    result = subprocess.run(["/bin/sh", "-c", DISPATCH_BASH], input=json.dumps(call), env=env,
-                            capture_output=True, text=True, timeout=60,
-                            preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (64, 64)))
+    result = subprocess.run(
+        ["/bin/sh", "-c", DISPATCH_BASH],
+        input=json.dumps(call),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (64, 64)),
+    )
     assert result.returncode == 2, result.stdout + result.stderr
     assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert not [name for name in os.listdir(tmp) if name.startswith("hook-dispatch-")]
@@ -552,8 +647,15 @@ print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "updated
 
 def run_owned(command: str, payload: dict, env: dict, timeout: float) -> subprocess.CompletedProcess | None:
 
-    proc = subprocess.Popen(["/bin/sh", "-c", command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, env=env, text=True, start_new_session=True)
+    proc = subprocess.Popen(
+        ["/bin/sh", "-c", command],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        text=True,
+        start_new_session=True,
+    )
     try:
         out, err = proc.communicate(json.dumps(payload), timeout=timeout)
         return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
@@ -608,8 +710,10 @@ def test_the_process_watch_counts_whole_trees(tmp_path: Path) -> None:
 
     call = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}).encode()
     env = os.environ | {"TMPDIR": str(tmp_path)}
-    tree = ("python3 -c 'import subprocess, sys; [subprocess.run([sys.executable, \"-c\", \"pass\"]) "
-            "for _ in range(2)]'; exit 0")
+    tree = (
+        'python3 -c \'import subprocess, sys; [subprocess.run([sys.executable, "-c", "pass"]) '
+        "for _ in range(2)]'; exit 0"
+    )
     seen = observe(tree, b"", env, str(tmp_path), 30)
     assert seen["observed"] and seen["processes"] == 4 and seen["hook_layer"] == 1, seen
     (tmp_path / "plain").mkdir()
@@ -622,8 +726,9 @@ def test_the_process_watch_counts_whole_trees(tmp_path: Path) -> None:
     wrapped = observe(DISPATCH_BASH, call, env, str(tmp_path), 30)
     assert wrapped["observed"] and wrapped["processes"] == 2 and wrapped["hook_layer"] == 1, wrapped
     (tmp_path / "e").mkdir()
-    _home, env = dispatcher_home(tmp_path / "e", [{"type": "command", "command": "sleep 0.2"},
-                                                  {"type": "command", "command": "sleep 0.3"}])
+    _home, env = dispatcher_home(
+        tmp_path / "e", [{"type": "command", "command": "sleep 0.2"}, {"type": "command", "command": "sleep 0.3"}]
+    )
     spawned = observe(DISPATCH_BASH, call, env, str(tmp_path), 30)
     assert spawned["observed"] and spawned["hook_layer"] == 3 and spawned["processes"] >= 3, spawned
 
@@ -649,12 +754,13 @@ def test_sessions_on_settings_without_a_rev_keep_their_fold(tmp_path: Path) -> N
         current = json.loads((dispatch / name).read_text())
         current["entries"]["PreToolUse"].pop("Bash")
         (dispatch / name).write_text(json.dumps(current))
-    payload = {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 5"}, "cwd": str(tmp_path),
-               "hook_event_name": "PreToolUse"}
+    payload = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "gh pr merge 5"},
+        "cwd": str(tmp_path),
+        "hook_event_name": "PreToolUse",
+    }
     assert decision(run_hook(DISPATCH_BASH, payload, env)) == "deny"
-
-
-
 
 
 DENY_MERGE = {"type": "command", "command": 'python3 "$HOME/g/merge.py"'}
@@ -683,8 +789,7 @@ def test_an_entry_never_runs_another_folds_registry(tmp_path: Path) -> None:
     assert per_hook([DENY_MERGE], MERGE_CALL, env) == "deny"
     old_session = run_hook(f"{DISPATCH_BASH} {r1}", MERGE_CALL, env)
     assert old_session.returncode == 2, old_session.stdout + old_session.stderr
-    assert f"not this entry's {r1}" in json.loads(old_session.stdout)["hookSpecificOutput"][
-        "permissionDecisionReason"]
+    assert f"not this entry's {r1}" in json.loads(old_session.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
     write_registry(home, "registry.legacy.json", None, [DENY_MERGE])
     no_rev = run_hook(DISPATCH_BASH, MERGE_CALL, env)
     assert decision(no_rev) == "deny" and "BLOCKED: merge through the queue" in no_rev.stdout
@@ -707,78 +812,116 @@ def test_a_registry_edited_after_its_fold_never_answers(tmp_path: Path) -> None:
     assert decision(run_hook(f"{DISPATCH_BASH} {rev}", MERGE_CALL, env)) == "deny"
 
 
-
-
-SEAT_FALLBACK = (" 2>/dev/null || { printf %s '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\","
-                 "\"additionalContext\":\"seat-guard advisory: routing telemetry unavailable\"}}'; }")
-LEGACY_SEAT = ('/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || '
-               '{ printf %s \'{"hookSpecificOutput":'
-               '{"hookEventName":"PreToolUse","additionalContext":"seat-guard advisory: routing telemetry unavailable; '
-               'dispatch was not blocked. Check agent-lb status."}}\'; }')
-DANGEROUS = ("bash -c 'CMD=$(cat | jq -r \".tool_input.command // empty\"); [ -z \"$CMD\" ] && exit 0; "
-             "echo \"$CMD\" | grep -qiE \"rm\\s+-rf\\s+/|DROP\\s+(DATABASE|TABLE)\" && { echo \"BLOCKED: "
-             "Dangerous command requires explicit user approval.\" >&2; exit 2; }; exit 0'")
+SEAT_FALLBACK = (
+    ' 2>/dev/null || { printf %s \'{"hookSpecificOutput":{"hookEventName":"PreToolUse",'
+    '"additionalContext":"seat-guard advisory: routing telemetry unavailable"}}\'; }'
+)
+LEGACY_SEAT = (
+    '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || '
+    '{ printf %s \'{"hookSpecificOutput":'
+    '{"hookEventName":"PreToolUse","additionalContext":"seat-guard advisory: routing telemetry unavailable; '
+    "dispatch was not blocked. Check agent-lb status.\"}}'; }"
+)
+DANGEROUS = (
+    'bash -c \'CMD=$(cat | jq -r ".tool_input.command // empty"); [ -z "$CMD" ] && exit 0; '
+    'echo "$CMD" | grep -qiE "rm\\s+-rf\\s+/|DROP\\s+(DATABASE|TABLE)" && { echo "BLOCKED: '
+    "Dangerous command requires explicit user approval.\" >&2; exit 2; }; exit 0'"
+)
 FLOOR_LEAVES = {
-    "rm-dynamic-deny": ('/usr/bin/python3 "$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny"',
-                        ".agent-rails/factory-runtime/bin/rm-dynamic-deny", "py"),
-    "stash-guard": ('/usr/bin/python3 "$HOME/.agent-rails/factory-runtime/bin/stash-guard"',
-                    ".agent-rails/factory-runtime/bin/stash-guard", "py"),
+    "rm-dynamic-deny": (
+        '/usr/bin/python3 "$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny"',
+        ".agent-rails/factory-runtime/bin/rm-dynamic-deny",
+        "py",
+    ),
+    "stash-guard": (
+        '/usr/bin/python3 "$HOME/.agent-rails/factory-runtime/bin/stash-guard"',
+        ".agent-rails/factory-runtime/bin/stash-guard",
+        "py",
+    ),
     "link-cli-guard.sh": ('"$HOME/.claude/hooks/link-cli-guard.sh"', ".claude/hooks/link-cli-guard.sh", "sh"),
-    "railway-vars-guard.sh": ('"$HOME/.claude/hooks/railway-vars-guard.sh"', ".claude/hooks/railway-vars-guard.sh",
-                              "sh"),
-    "workflow-relay-guard.py": ('/usr/bin/python3 "$HOME/.claude/hooks/workflow-relay-guard.py"',
-                                ".claude/hooks/workflow-relay-guard.py", "py"),
-    "seat-guard.py": ('/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"' + SEAT_FALLBACK,
-                      ".claude/hooks/seat-guard.py", "py"),
-    "workflow-seat-guard.py": ('/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"' + SEAT_FALLBACK,
-                               ".claude/hooks/workflow-seat-guard.py", "py"),
+    "railway-vars-guard.sh": (
+        '"$HOME/.claude/hooks/railway-vars-guard.sh"',
+        ".claude/hooks/railway-vars-guard.sh",
+        "sh",
+    ),
+    "workflow-relay-guard.py": (
+        '/usr/bin/python3 "$HOME/.claude/hooks/workflow-relay-guard.py"',
+        ".claude/hooks/workflow-relay-guard.py",
+        "py",
+    ),
+    "seat-guard.py": (
+        '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"' + SEAT_FALLBACK,
+        ".claude/hooks/seat-guard.py",
+        "py",
+    ),
+    "workflow-seat-guard.py": (
+        '/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"' + SEAT_FALLBACK,
+        ".claude/hooks/workflow-seat-guard.py",
+        "py",
+    ),
     "plutil-guard.sh": ('"$HOME/.claude/hooks/plutil-guard.sh"', ".claude/hooks/plutil-guard.sh", "sh"),
-
-
-    "dangerous-command-guard.sh": ('"$HOME/.claude/hooks/dangerous-command-guard.sh"',
-                                   ".claude/hooks/dangerous-command-guard.sh", "sh"),
+    "dangerous-command-guard.sh": (
+        '"$HOME/.claude/hooks/dangerous-command-guard.sh"',
+        ".claude/hooks/dangerous-command-guard.sh",
+        "sh",
+    ),
     "dangerous-command-guard.sh:legacy inline": (DANGEROUS, ".claude/hooks/dangerous-command-guard.sh", "sh"),
     "dangerous-command:inline copy": (DANGEROUS + " ", None, "sh"),
-
     "seat-guard.py:legacy wrapper": (LEGACY_SEAT, ".claude/hooks/seat-guard.py", "py"),
-
-
-    "seat-guard.py:bash -c": ("bash -c 'python3 \"$HOME/.claude/hooks/seat-guard.py\" || true'",
-                              ".claude/hooks/seat-guard.py", "py"),
-
+    "seat-guard.py:bash -c": (
+        "bash -c 'python3 \"$HOME/.claude/hooks/seat-guard.py\" || true'",
+        ".claude/hooks/seat-guard.py",
+        "py",
+    ),
     "wide-scan-guard.sh": ('"$HOME/.claude/hooks/wide-scan-guard.sh"', ".claude/hooks/wide-scan-guard.sh", "sh"),
-
-
-    "seat-guard.py:python3 -u": ('python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true',
-                                 ".claude/hooks/seat-guard.py", "py"),
-
-
-    "seat-guard.py:|| true;": ('python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true;',
-                               ".claude/hooks/seat-guard.py", "py"),
-    "seat-guard.py:||true &": ('/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" ||true & ',
-                               ".claude/hooks/seat-guard.py", "py"),
-
-
-    "seat-guard.py:|| true # comment": ('python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true # advisory',
-                                        ".claude/hooks/seat-guard.py", "py"),
-
-    "seat-guard.py:|| exit 0": ('python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || exit 0',
-                                ".claude/hooks/seat-guard.py", "py"),
-
-    "agent-lb-bootout-guard.sh": ('"$HOME/.claude/hooks/agent-lb-bootout-guard.sh"',
-                                  ".claude/hooks/agent-lb-bootout-guard.sh", "sh"),
+    "seat-guard.py:python3 -u": (
+        'python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true',
+        ".claude/hooks/seat-guard.py",
+        "py",
+    ),
+    "seat-guard.py:|| true;": (
+        'python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true;',
+        ".claude/hooks/seat-guard.py",
+        "py",
+    ),
+    "seat-guard.py:||true &": (
+        '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" ||true & ',
+        ".claude/hooks/seat-guard.py",
+        "py",
+    ),
+    "seat-guard.py:|| true # comment": (
+        'python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true # advisory',
+        ".claude/hooks/seat-guard.py",
+        "py",
+    ),
+    "seat-guard.py:|| exit 0": (
+        'python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || exit 0',
+        ".claude/hooks/seat-guard.py",
+        "py",
+    ),
+    "agent-lb-bootout-guard.sh": (
+        '"$HOME/.claude/hooks/agent-lb-bootout-guard.sh"',
+        ".claude/hooks/agent-lb-bootout-guard.sh",
+        "sh",
+    ),
 }
 FAIL_STUBS = {
-    "py": {"timeout": "import time\ntime.sleep(30)\n", "crash": "raise RuntimeError('synthetic floor crash')\n",
-           "malformed": "import sys\nsys.stdin.read()\nprint('not a hook answer {')\n",
-           "no-receipt": "import sys\nsys.stdin.read()\n"},
-    "sh": {"timeout": "#!/bin/bash\nexec sleep 30\n", "crash": "#!/bin/bash\necho 'synthetic crash' >&2\nexit 1\n",
-           "missing": "#!/bin/bash\necho \"bash: $0: No such file or directory\" >&2\nexit 127\n",
-           "malformed": "#!/bin/bash\ncat >/dev/null\necho 'not a hook answer {'\n",
-           "no-receipt": "#!/bin/bash\ncat >/dev/null\nexit 0\n"},
+    "py": {
+        "timeout": "import time\ntime.sleep(30)\n",
+        "crash": "raise RuntimeError('synthetic floor crash')\n",
+        "malformed": "import sys\nsys.stdin.read()\nprint('not a hook answer {')\n",
+        "no-receipt": "import sys\nsys.stdin.read()\n",
+    },
+    "sh": {
+        "timeout": "#!/bin/bash\nexec sleep 30\n",
+        "crash": "#!/bin/bash\necho 'synthetic crash' >&2\nexit 1\n",
+        "missing": '#!/bin/bash\necho "bash: $0: No such file or directory" >&2\nexit 127\n',
+        "malformed": "#!/bin/bash\ncat >/dev/null\necho 'not a hook answer {'\n",
+        "no-receipt": "#!/bin/bash\ncat >/dev/null\nexit 0\n",
+    },
 }
 
-REACHES_PREFILTERS = "echo railway link-cli launchctl; rm -" "rf /tmp/never-run"
+REACHES_PREFILTERS = "echo railway link-cli launchctl; rm -rf /tmp/never-run"
 INPROC = ["rm-dynamic-deny", "stash-guard", "workflow-relay-guard.py"]
 
 
@@ -812,7 +955,6 @@ def test_a_floor_guard_that_fails_refuses_the_call(tmp_path: Path, leaf: str, mo
     call = {"tool_name": "Bash", "tool_input": {"command": REACHES_PREFILTERS}, "hook_event_name": "PreToolUse"}
     result = run_owned(DISPATCH_BASH, call, env, 30)
     if leaf.startswith(("seat-guard.py", "workflow-seat-guard.py", "workflow-relay-guard.py", "wide-scan-guard.sh")):
-
         if mode == "missing" and kind == "py" and not any(x in command for x in ("||", "bash -c")):
             assert result is not None and result.returncode == 2
         else:
@@ -847,10 +989,14 @@ def test_a_floor_guards_block_stands_under_its_fallback_wrapper(tmp_path: Path) 
     command = 'python3 "$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny" 2>/dev/null || true'
     rel = ".agent-rails/factory-runtime/bin/rm-dynamic-deny"
     home, env = failing_guard_home(tmp_path, command, rel, "py", "crash")
-    (home / rel).write_text("import sys\nsys.stdin.read()\nsys.stderr.write('seat-guard: blocked model\\n')\n"
-                            "sys.exit(2)\n")
-    call = {"tool_name": "Agent", "tool_input": {"subagent_type": "Explore", "prompt": "x"},
-            "hook_event_name": "PreToolUse"}
+    (home / rel).write_text(
+        "import sys\nsys.stdin.read()\nsys.stderr.write('seat-guard: blocked model\\n')\nsys.exit(2)\n"
+    )
+    call = {
+        "tool_name": "Agent",
+        "tool_input": {"subagent_type": "Explore", "prompt": "x"},
+        "hook_event_name": "PreToolUse",
+    }
     result = run_owned(DISPATCH_BASH, call, env, 30)
     assert result is not None and result.returncode == 2, result
     assert "floor guard rm-dynamic-deny" in json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
@@ -864,7 +1010,7 @@ def test_an_escaped_command_runs_the_pinned_guard(tmp_path: Path) -> None:
         pytest.skip("the inline guard reads its input with jq")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "bash").write_text("#!/bin/sh\nexec /bin/bash -O xpg_echo \"$@\"\n")
+    (bin_dir / "bash").write_text('#!/bin/sh\nexec /bin/bash -O xpg_echo "$@"\n')
     (bin_dir / "bash").chmod(0o755)
     env = env | {"PATH": f"{bin_dir}:{env['PATH']}"}
     call = {"tool_name": "Bash", "tool_input": {"command": "rm -" + "rf \\x2f"}, "hook_event_name": "PreToolUse"}
@@ -872,37 +1018,64 @@ def test_an_escaped_command_runs_the_pinned_guard(tmp_path: Path) -> None:
     assert decision(run_hook(DISPATCH_BASH, call, env)) == "deny"
 
 
-@pytest.mark.parametrize("matcher, tool, event, expected", [
-    (None, "Bash", "PreToolUse", True), ("", "Read", "PreToolUse", True), ("*", "Bash", "PreToolUse", True),
-    ("Bash", "Bash", "PreToolUse", True), ("Bash", "Read", "PreToolUse", False),
-    ("Edit|Write", "Write", "PreToolUse", True), ("Edit, Write", "Write", "PostToolUse", True),
-    ("Task", "Agent", "PreToolUse", True),
-    ("^Bash$", "Bash", "PreToolUse", True), ("^Bash$", "BashOutput", "PreToolUse", False),
-    ("mcp__.*", "mcp__aside__repl", "PreToolUse", True), (".*", "Read", "PreToolUse", True),
-    ("Ba.*h", "Bash", "PreToolUse", True), ("^Task$", "Agent", "PreToolUse", True),
-    ("(", "Bash", "PreToolUse", False),
-    ("Bash", None, "UserPromptSubmit", True), ("Read", "Bash", "Stop", True),
-])
+@pytest.mark.parametrize(
+    "matcher, tool, event, expected",
+    [
+        (None, "Bash", "PreToolUse", True),
+        ("", "Read", "PreToolUse", True),
+        ("*", "Bash", "PreToolUse", True),
+        ("Bash", "Bash", "PreToolUse", True),
+        ("Bash", "Read", "PreToolUse", False),
+        ("Edit|Write", "Write", "PreToolUse", True),
+        ("Edit, Write", "Write", "PostToolUse", True),
+        ("Task", "Agent", "PreToolUse", True),
+        ("^Bash$", "Bash", "PreToolUse", True),
+        ("^Bash$", "BashOutput", "PreToolUse", False),
+        ("mcp__.*", "mcp__aside__repl", "PreToolUse", True),
+        (".*", "Read", "PreToolUse", True),
+        ("Ba.*h", "Bash", "PreToolUse", True),
+        ("^Task$", "Agent", "PreToolUse", True),
+        ("(", "Bash", "PreToolUse", False),
+        ("Bash", None, "UserPromptSubmit", True),
+        ("Read", "Bash", "Stop", True),
+    ],
+)
 def test_the_fixture_matches_tools_as_claude_code_does(matcher: Any, tool: Any, event: str, expected: bool) -> None:
 
     assert parity_module().matches(matcher, tool, event) is expected
 
 
-@pytest.mark.parametrize("first, middle, tool", [("Bash", "Write, Bash", "Bash"), ("Agent", "Task", "Agent"),
-                                                   ("Agent", "Write|Task", "Agent"), ("Bash", "*", "Bash"),
-                                                   ("Bash", "", "Bash")])
+@pytest.mark.parametrize(
+    "first, middle, tool",
+    [
+        ("Bash", "Write, Bash", "Bash"),
+        ("Agent", "Task", "Agent"),
+        ("Agent", "Write|Task", "Agent"),
+        ("Bash", "*", "Bash"),
+        ("Bash", "", "Bash"),
+    ],
+)
 def test_a_fold_keeps_order_past_a_name_list_matcher(tmp_path: Path, first: str, middle: str, tool: str) -> None:
 
     home, _ = make_home(tmp_path)
     (home / "g").mkdir()
     for name, text in (("a.py", "first"), ("b.py", "second"), ("c.py", "third")):
         (home / "g" / name).write_text(REWRITE % text)
-    settings = {"hooks": {"PreToolUse": [
-        {"matcher": first, "hooks": [{"type": "command", "command": 'python3 "$HOME/g/a.py"'},
-                                     {"type": "command", "command": "true"}]},
-        {"matcher": middle, "hooks": [{"type": "command", "command": 'python3 "$HOME/g/b.py"'}]},
-        {"matcher": first, "hooks": [{"type": "command", "command": 'python3 "$HOME/g/c.py"'}]},
-    ]}}
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": first,
+                    "hooks": [
+                        {"type": "command", "command": 'python3 "$HOME/g/a.py"'},
+                        {"type": "command", "command": "true"},
+                    ],
+                },
+                {"matcher": middle, "hooks": [{"type": "command", "command": 'python3 "$HOME/g/b.py"'}]},
+                {"matcher": first, "hooks": [{"type": "command", "command": 'python3 "$HOME/g/c.py"'}]},
+            ]
+        }
+    }
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install, env = installer(tmp_path, home)
     call = {"tool_name": tool, "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
@@ -924,9 +1097,11 @@ def test_a_fold_keeps_order_past_a_name_list_matcher(tmp_path: Path, first: str,
     assert last_rewrite() == "third"
 
 
-PRETTIER = ("bash -c 'FILE=$(cat | jq -r \".tool_input.file_path // empty\"); if [[ -n \"$FILE\" && \"$FILE\" =~ "
-            "\\.(ts|tsx|js|jsx|json|css|md)$ ]] && (cd \"$(dirname \"$FILE\")\" && npx prettier --find-config-path "
-            "\"$FILE\" >/dev/null 2>&1); then npx prettier --write \"$FILE\" 2>/dev/null; fi'")
+PRETTIER = (
+    'bash -c \'FILE=$(cat | jq -r ".tool_input.file_path // empty"); if [[ -n "$FILE" && "$FILE" =~ '
+    '\\.(ts|tsx|js|jsx|json|css|md)$ ]] && (cd "$(dirname "$FILE")" && npx prettier --find-config-path '
+    '"$FILE" >/dev/null 2>&1); then npx prettier --write "$FILE" 2>/dev/null; fi\''
+)
 
 
 def test_the_fold_drops_the_global_prettier_hook(tmp_path: Path) -> None:
@@ -935,8 +1110,9 @@ def test_the_fold_drops_the_global_prettier_hook(tmp_path: Path) -> None:
 
     assert hashlib.sha256(PRETTIER.encode()).hexdigest().startswith("55c67a61")
     home, settings = make_home(tmp_path)
-    settings["hooks"]["PostToolUse"].insert(0, {"matcher": "Edit|Write|MultiEdit",
-                                                "hooks": [{"type": "command", "command": PRETTIER, "timeout": 10}]})
+    settings["hooks"]["PostToolUse"].insert(
+        0, {"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": PRETTIER, "timeout": 10}]}
+    )
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install, _env = installer(tmp_path, home)
     out = install("--hook-dispatcher", "on").stdout
@@ -963,10 +1139,14 @@ def test_an_install_puts_the_adopted_wide_scan_guard_in_place(tmp_path: Path) ->
 
     mirror = home / ".agents/policy/coding-agents"
     assert os.access(mirror / "hooks/wide-scan-guard.sh", os.X_OK)
-    rollback = subprocess.run([sys.executable, str(mirror / "install-policy.py"), "--home", str(home),
-                               "--hook-dispatcher", "off"], env=env, capture_output=True, text=True, timeout=600)
+    rollback = subprocess.run(
+        [sys.executable, str(mirror / "install-policy.py"), "--home", str(home), "--hook-dispatcher", "off"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
     assert rollback.returncode == 0, rollback.stdout + rollback.stderr
-
 
     install("--uninstall")
     assert guard.read_bytes() == (SOURCE / "hooks/wide-scan-guard.sh").read_bytes() and os.access(guard, os.X_OK)
@@ -1025,8 +1205,12 @@ def test_concurrent_installs_leave_settings_and_registry_in_step(tmp_path: Path)
     home, _ = make_home(tmp_path)
     _install, env = installer(tmp_path, home)
     command = [sys.executable, str(SOURCE / "install-policy.py"), "--home", str(home), "--hook-dispatcher", "on"]
-    runs = [subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                             start_new_session=True) for _ in range(2)]
+    runs = [
+        subprocess.Popen(
+            command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
+        )
+        for _ in range(2)
+    ]
     try:
         outputs = [run.communicate(timeout=600)[0] for run in runs]
     finally:
@@ -1036,8 +1220,13 @@ def test_concurrent_installs_leave_settings_and_registry_in_step(tmp_path: Path)
                 run.wait(timeout=30)
     assert all(run.returncode == 0 for run in runs), outputs
     hooks = hooks_of(home)
-    revs = {hook["command"].split()[-1] for event in hooks for group in hooks[event] for hook in group["hooks"]
-            if "hook-dispatch.py" in hook["command"]}
+    revs = {
+        hook["command"].split()[-1]
+        for event in hooks
+        for group in hooks[event]
+        for hook in group["hooks"]
+        if "hook-dispatch.py" in hook["command"]
+    }
     assert len(revs) == 1
     rev = revs.pop()
     registry = json.loads((home / f".claude/hooks/dispatch/registry.{rev}.json").read_text())
@@ -1057,9 +1246,14 @@ def test_the_fixture_waits_for_a_running_install(tmp_path: Path) -> None:
     digest = hashlib.sha256(str(home.resolve()).encode()).hexdigest()[:16]
     with open(f"/tmp/agent-lb-install-policy-{os.getuid()}-{digest}.lock", "a") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        run = subprocess.Popen([sys.executable, str(SOURCE / "hooks/hook-dispatch-parity.py"), "--home", str(home),
-                                "--only", "allow-ls"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               text=True, start_new_session=True)
+        run = subprocess.Popen(
+            [sys.executable, str(SOURCE / "hooks/hook-dispatch-parity.py"), "--home", str(home), "--only", "allow-ls"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
         try:
             time.sleep(3)
             assert run.poll() is None
@@ -1070,10 +1264,6 @@ def test_the_fixture_waits_for_a_running_install(tmp_path: Path) -> None:
             if run.poll() is None:
                 os.killpg(run.pid, 9)
                 run.wait(timeout=30)
-
-
-
-
 
 
 def policy_module():
@@ -1088,8 +1278,9 @@ def policy_module():
 def test_registry_problem_rejects_edited_entries_and_records():
 
     policy = policy_module()
-    hooks = {"PreToolUse": [{"matcher": "Bash", "hooks": [DENY_MERGE, {"type": "command", "command": "true",
-                                                                       "timeout": 1}]}]}
+    hooks = {
+        "PreToolUse": [{"matcher": "Bash", "hooks": [DENY_MERGE, {"type": "command", "command": "true", "timeout": 1}]}]
+    }
     _folded, registry = policy.fold_hooks(hooks)
     assert policy.registry_problem(registry) is None
     emptied = json.loads(json.dumps(registry))
@@ -1113,9 +1304,6 @@ def test_unfold_splits_hooks_another_installer_appended_to_a_dispatcher_group():
     assert unfolded["PreToolUse"] == hooks["PreToolUse"] + [{"matcher": "Bash", "hooks": [added]}]
 
 
-
-
-
 COUNTED = """import sys
 sys.stdin.read()
 with open(sys.argv[1], "a") as handle:
@@ -1130,10 +1318,14 @@ def test_a_command_shared_with_a_per_hook_group_runs_once_per_call(tmp_path: Pat
     (home / "g/count.py").write_text(COUNTED)
     counter = tmp_path / "runs.txt"
     guard = {"type": "command", "command": f'python3 "$HOME/g/count.py" "{counter}"'}
-    settings = {"hooks": {"PreToolUse": [
-        {"matcher": "Bash", "hooks": [guard, {"type": "command", "command": "true"}]},
-        {"matcher": "^Bash$", "hooks": [guard]},
-    ]}}
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {"matcher": "Bash", "hooks": [guard, {"type": "command", "command": "true"}]},
+                {"matcher": "^Bash$", "hooks": [guard]},
+            ]
+        }
+    }
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install, env = installer(tmp_path, home)
     call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
@@ -1178,30 +1370,68 @@ def test_the_rewriter_beside_another_hook_is_the_rtk_on_the_callers_path(tmp_pat
     assert json.loads(result.stdout)["hookSpecificOutput"]["updatedInput"]["command"] == "rewritten", result
 
 
-
 WIDE_SCAN = SOURCE / "hooks/wide-scan-guard.sh"
 WIDE_SCAN_COMMANDS = (
-    "rg -n foo src", "find . -name '*.py'", "ls -la", "git status", "rg x /tmp/project", "find /tmp -name x",
-    "rg foo .", "rg foo ..", "find ..", "fd x ../..", "cd .. && rg foo .", "cd / && rg x src",
-    "cd src && cd .. && cd .. && rg x .", "rg x /", "rg x ~", "rg x $HOME", "rg x \"$HOME/repos\"",
-    "grep -r x .", "grep -rn x ~/.agent-rails/lanes", "grep -r x ~/.agent-rails/agents/home 2>/dev/null",
-    "rg x ~/.agent-rails", "fd x /Volumes/Media500", "bash -c 'cd ~ && rg x .'", "env -S'rg x /'",
-    "echo \"$(find ~ -name x)\"", "rg x \"/Volumes/StudioExt/repos/a b/../..\"", "rg x '/tmp/a b/../../..'",
-    "cat <<'EOF'\nrg x /\nEOF", "xargs grep -r x ..", "printf x | rg foo /Volumes/Media500 | head",
-
-
-    "rg foo", "cd && rg x .", "pushd / && rg x .", "find -f / -name x", "rg --files /", "watch " * 9 + "ls",
-    "echo \"unbalanced", "bash -c 'echo \"x'", "cat <<EOF\nx", "echo x #\" \necho \"y", "ls -la # it's fine",
+    "rg -n foo src",
+    "find . -name '*.py'",
+    "ls -la",
+    "git status",
+    "rg x /tmp/project",
+    "find /tmp -name x",
+    "rg foo .",
+    "rg foo ..",
+    "find ..",
+    "fd x ../..",
+    "cd .. && rg foo .",
+    "cd / && rg x src",
+    "cd src && cd .. && cd .. && rg x .",
+    "rg x /",
+    "rg x ~",
+    "rg x $HOME",
+    'rg x "$HOME/repos"',
+    "grep -r x .",
+    "grep -rn x ~/.agent-rails/lanes",
+    "grep -r x ~/.agent-rails/agents/home 2>/dev/null",
+    "rg x ~/.agent-rails",
+    "fd x /Volumes/Media500",
+    "bash -c 'cd ~ && rg x .'",
+    "env -S'rg x /'",
+    'echo "$(find ~ -name x)"',
+    'rg x "/Volumes/StudioExt/repos/a b/../.."',
+    "rg x '/tmp/a b/../../..'",
+    "cat <<'EOF'\nrg x /\nEOF",
+    "xargs grep -r x ..",
+    "printf x | rg foo /Volumes/Media500 | head",
+    "rg foo",
+    "cd && rg x .",
+    "pushd / && rg x .",
+    "find -f / -name x",
+    "rg --files /",
+    "watch " * 9 + "ls",
+    'echo "unbalanced',
+    "bash -c 'echo \"x'",
+    "cat <<EOF\nx",
+    'echo x #" \necho "y',
+    "ls -la # it's fine",
     "python3 -c 'print(1)'",
-
-    "bash <<< 'rg x /'", "cat <<< 'rg x /'", "git commit -F - <<'EOF'\nrg x /\nEOF", "bash <<EOF\nrg x /\nEOF",
-
-    "grep -rl x ~/.agent-rails/agents ~/.agent-rails/evidence", "rtk grep x ~/.agent-rails", "rtk grep x src",
-    "rtk proxy grep -r x ~", "rtk run -c 'rg x /'", "rtk grep x ~/.agent-rails/lanes/a", "rtk git status",
-
-    "grep -rln x .", "rtk grep -rln cost_cmd --include=*.py .", "rg x /Volumes/StudioExt/repos",
-    "grep -rln x /Volumes/StudioExt/repos/agent-lb-wt", "rtk rg x /Volumes/StudioExt/repos/factory-wt/",
-    "rg -n x /Volumes/StudioExt/repos/agent-lb-wt/topic", "grep -rln x ..",
+    "bash <<< 'rg x /'",
+    "cat <<< 'rg x /'",
+    "git commit -F - <<'EOF'\nrg x /\nEOF",
+    "bash <<EOF\nrg x /\nEOF",
+    "grep -rl x ~/.agent-rails/agents ~/.agent-rails/evidence",
+    "rtk grep x ~/.agent-rails",
+    "rtk grep x src",
+    "rtk proxy grep -r x ~",
+    "rtk run -c 'rg x /'",
+    "rtk grep x ~/.agent-rails/lanes/a",
+    "rtk git status",
+    "grep -rln x .",
+    "rtk grep -rln cost_cmd --include=*.py .",
+    "rg x /Volumes/StudioExt/repos",
+    "grep -rln x /Volumes/StudioExt/repos/agent-lb-wt",
+    "rtk rg x /Volumes/StudioExt/repos/factory-wt/",
+    "rg -n x /Volumes/StudioExt/repos/agent-lb-wt/topic",
+    "grep -rln x ..",
 )
 
 
@@ -1224,13 +1454,23 @@ def test_the_pinned_wide_scan_guard_is_skipped_only_where_it_cannot_act(tmp_path
     registry_path = home / ".claude/hooks/dispatch/registry.json"
     registry_path.write_text(json.dumps(dict(json.loads(registry_path.read_text()), script_sha=pins)))
     trace = tmp_path / "trace.jsonl"
-    cwds = [str(home / "project"), str(home), str(home / ".agent-rails/lanes/a"), "/Volumes/StudioExt/repos/x",
-            "/Volumes/StudioExt/repos", "/Volumes/StudioExt/repos/x-wt"]
+    cwds = [
+        str(home / "project"),
+        str(home),
+        str(home / ".agent-rails/lanes/a"),
+        "/Volumes/StudioExt/repos/x",
+        "/Volumes/StudioExt/repos",
+        "/Volumes/StudioExt/repos/x-wt",
+    ]
     differ, skipped = [], set()
     for cwd in cwds:
         for command in WIDE_SCAN_COMMANDS:
-            call = {"tool_name": "Bash", "tool_input": {"command": command}, "hook_event_name": "PreToolUse",
-                    "cwd": cwd}
+            call = {
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+                "hook_event_name": "PreToolUse",
+                "cwd": cwd,
+            }
             old = run_hook(hook["command"], call, env)
             new = run_hook(DISPATCH_BASH, call, env | {"HOOK_DISPATCH_TRACE": str(trace)})
             if (decision(old), rewrite_of(old)) != (decision(new), rewrite_of(new)):
@@ -1239,17 +1479,19 @@ def test_the_pinned_wide_scan_guard_is_skipped_only_where_it_cannot_act(tmp_path
             if row["hooks"][0].get("mode") == "skipped":
                 skipped.add((cwd, command))
     assert not differ, differ
-    for command in ("rg -n foo src", "find . -name '*.py'", "ls -la", "rg x /tmp/project", "ls -la # it's fine",
-                    "python3 -c 'print(1)'"):
+    for command in (
+        "rg -n foo src",
+        "find . -name '*.py'",
+        "ls -la",
+        "rg x /tmp/project",
+        "ls -la # it's fine",
+        "python3 -c 'print(1)'",
+    ):
         assert (str(home / "project"), command) in skipped, command
 
 
-
-
-
-
 BOOTOUT = SOURCE / "hooks/agent-lb-bootout-guard.sh"
-RAW_RESTART = "launch" "ctl kickstart -k gui/501/com.aneyman.agent-lb"
+RAW_RESTART = "launchctl kickstart -k gui/501/com.aneyman.agent-lb"
 
 
 def guard_home(tmp_path: Path, name: str, source: Path, timeout: float = 20) -> tuple[Path, dict, dict]:
@@ -1269,16 +1511,24 @@ def stub_bin(tmp_path: Path, env: dict, name: str, text: str) -> dict:
     return env | {"PATH": f"{bin_dir}:{env['PATH']}"}
 
 
-@pytest.mark.parametrize("jq", [
-    "#!/bin/sh\necho 'jq: error: something broke' >&2\nexit 5\n",
-    "#!/bin/sh\necho 'sh: jq: command not found' >&2\nexit 127\n",
-], ids=["jq-fails", "jq-missing"])
+@pytest.mark.parametrize(
+    "jq",
+    [
+        "#!/bin/sh\necho 'jq: error: something broke' >&2\nexit 5\n",
+        "#!/bin/sh\necho 'sh: jq: command not found' >&2\nexit 127\n",
+    ],
+    ids=["jq-fails", "jq-missing"],
+)
 def test_the_wide_scan_guard_refuses_when_jq_fails(tmp_path: Path, jq: str) -> None:
 
     _home, env, hook = guard_home(tmp_path, "wide-scan-guard.sh", WIDE_SCAN)
     env = stub_bin(tmp_path, env, "jq", jq)
-    call = {"tool_name": "Bash", "tool_input": {"command": "rg needle /"}, "hook_event_name": "PreToolUse",
-            "cwd": str(tmp_path)}
+    call = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "rg needle /"},
+        "hook_event_name": "PreToolUse",
+        "cwd": str(tmp_path),
+    }
     old = run_hook(hook["command"], call, env)
     assert old.returncode == 2 and "could not read the hook input" in old.stderr, old
     new = run_owned(DISPATCH_BASH, call, env, 30)
@@ -1290,8 +1540,9 @@ def test_a_guard_missing_a_tool_it_needs_is_never_skipped(tmp_path: Path) -> Non
 
     home, env, hook = guard_home(tmp_path, "wide-scan-guard.sh", WIDE_SCAN)
     registry_path = home / ".claude/hooks/dispatch/registry.json"
-    registry_path.write_text(json.dumps(dict(json.loads(registry_path.read_text()),
-                                             script_sha=policy_module().script_pins(SOURCE))))
+    registry_path.write_text(
+        json.dumps(dict(json.loads(registry_path.read_text()), script_sha=policy_module().script_pins(SOURCE)))
+    )
     tools = tmp_path / "tools"
     tools.mkdir()
     for name in ("bash", "sh", "cat", "python3", "printf", "env"):
@@ -1299,8 +1550,12 @@ def test_a_guard_missing_a_tool_it_needs_is_never_skipped(tmp_path: Path) -> Non
         if found:
             (tools / name).symlink_to(found)
     env = env | {"PATH": str(tools)}
-    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse",
-            "cwd": str(home / "project")}
+    call = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "ls"},
+        "hook_event_name": "PreToolUse",
+        "cwd": str(home / "project"),
+    }
     assert decision(run_hook(hook["command"], call, env)) == "deny"
     result = run_owned(DISPATCH_BASH, call, env, 30)
     assert result is not None and decision(result) == "deny", result
@@ -1311,12 +1566,21 @@ def test_the_wide_scan_guard_refuses_when_its_scanner_fails(tmp_path: Path) -> N
     _home, env, hook = guard_home(tmp_path, "wide-scan-guard.sh", WIDE_SCAN)
     real = shutil.which("python3", path=env["PATH"])
     assert real
-    env = stub_bin(tmp_path, env, "python3", f"""#!/bin/sh
+    env = stub_bin(
+        tmp_path,
+        env,
+        "python3",
+        f"""#!/bin/sh
 if [ "$1" = "-" ]; then echo 'Traceback (most recent call last): synthetic scanner crash' >&2; exit 1; fi
 exec "{real}" "$@"
-""")
-    call = {"tool_name": "Bash", "tool_input": {"command": "rg needle /"}, "hook_event_name": "PreToolUse",
-            "cwd": str(tmp_path)}
+""",
+    )
+    call = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "rg needle /"},
+        "hook_event_name": "PreToolUse",
+        "cwd": str(tmp_path),
+    }
     old = run_hook(hook["command"], call, env)
     assert old.returncode == 2 and "scanner failed (python3 exit 1)" in old.stderr, old
     new = run_owned(DISPATCH_BASH, call, env, 30)
@@ -1345,8 +1609,14 @@ def test_the_adopted_bootout_guard_refuses_input_it_cannot_read(tmp_path: Path) 
     assert refused.returncode == 2 and "raw launchctl restart of agent-lb" in refused.stderr, refused
     assert "floor: keeps the orchestrators up" in refused.stderr, refused
     assert decision(run_hook(hook["command"], dict(call, tool_input={"command": "ls"}), env)) == "allow"
-    broken = subprocess.run(["/bin/sh", "-c", hook["command"]], input="{not json " + RAW_RESTART, env=env,
-                            capture_output=True, text=True, timeout=60)
+    broken = subprocess.run(
+        ["/bin/sh", "-c", hook["command"]],
+        input="{not json " + RAW_RESTART,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     assert broken.returncode == 2 and "could not read the hook input" in broken.stderr, broken
 
 
@@ -1386,15 +1656,30 @@ def test_install_derives_the_guard_pins_from_their_source(tmp_path: Path) -> Non
     if shutil.which("jq", path=env["PATH"]) is None:
         pytest.skip("the wide-scan guard reads its input with jq")
     trace = tmp_path / "trace.jsonl"
-    hooks = [{"type": "command", "command": '"$HOME/.claude/hooks/wide-scan-guard.sh"'},
-             {"type": "command", "command": '"$HOME/.claude/hooks/agent-lb-bootout-guard.sh"'}]
+    hooks = [
+        {"type": "command", "command": '"$HOME/.claude/hooks/wide-scan-guard.sh"'},
+        {"type": "command", "command": '"$HOME/.claude/hooks/agent-lb-bootout-guard.sh"'},
+    ]
     pinned = tmp_path / "pinned-registry.json"
-    pinned.write_text(json.dumps({"schema": 1, "entries": {"PreToolUse": {"Bash": hooks}}, "inproc": [],
-                                  "script_sha": registry["script_sha"]}))
-    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse",
-            "cwd": str(home / "project")}
-    result = run_hook(DISPATCH_BASH, call, env | {"HOOK_DISPATCH_TRACE": str(trace),
-                                                  "HOOK_DISPATCH_REGISTRY": str(pinned)})
+    pinned.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "entries": {"PreToolUse": {"Bash": hooks}},
+                "inproc": [],
+                "script_sha": registry["script_sha"],
+            }
+        )
+    )
+    call = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "ls"},
+        "hook_event_name": "PreToolUse",
+        "cwd": str(home / "project"),
+    }
+    result = run_hook(
+        DISPATCH_BASH, call, env | {"HOOK_DISPATCH_TRACE": str(trace), "HOOK_DISPATCH_REGISTRY": str(pinned)}
+    )
     assert decision(result) == "allow", result
     modes = [row.get("mode") for row in json.loads(trace.read_text().splitlines()[-1])["hooks"]]
     assert modes == ["skipped", "skipped"], modes
@@ -1402,10 +1687,21 @@ def test_install_derives_the_guard_pins_from_their_source(tmp_path: Path) -> Non
 
 RAILWAY = SOURCE / "hooks/railway-vars-guard.sh"
 RAILWAY_PAYLOADS = [
-    {"command": c} for c in (
-        "ls -la", "git status", "railway status", "railway variables --set KEY=v", "npx @railway/cli up",
-        "echo railway", "RAILWAY_TOKEN=x railway up", "bash -c 'railway up'", "cat <<EOF\nrailway up\nEOF",
-        "echo $(railway up)", "railwayish thing", "grep -r railway docs")
+    {"command": c}
+    for c in (
+        "ls -la",
+        "git status",
+        "railway status",
+        "railway variables --set KEY=v",
+        "npx @railway/cli up",
+        "echo railway",
+        "RAILWAY_TOKEN=x railway up",
+        "bash -c 'railway up'",
+        "cat <<EOF\nrailway up\nEOF",
+        "echo $(railway up)",
+        "railwayish thing",
+        "grep -r railway docs",
+    )
 ] + [{"command": None}, {"command": 5}, {}, None, "text"]
 
 
@@ -1414,8 +1710,9 @@ def test_the_pinned_railway_guard_is_skipped_only_where_it_cannot_act(tmp_path: 
     hook = {"type": "command", "command": '"$HOME/.claude/hooks/railway-vars-guard.sh"'}
     home, env, _hook = guard_home(tmp_path, "railway-vars-guard.sh", RAILWAY)
     registry_path = home / ".claude/hooks/dispatch/registry.json"
-    registry_path.write_text(json.dumps(dict(json.loads(registry_path.read_text()),
-                                             script_sha=policy_module().script_pins(SOURCE))))
+    registry_path.write_text(
+        json.dumps(dict(json.loads(registry_path.read_text()), script_sha=policy_module().script_pins(SOURCE)))
+    )
     trace = tmp_path / "trace.jsonl"
     differ, skipped = [], set()
     for tool_input in RAILWAY_PAYLOADS:
@@ -1430,16 +1727,13 @@ def test_the_pinned_railway_guard_is_skipped_only_where_it_cannot_act(tmp_path: 
     assert {json.dumps({"command": "ls -la"}), json.dumps({"command": "git status"})} <= skipped, skipped
 
 
-
-
-
-
 DANGER = SOURCE / "hooks/dangerous-command-guard.sh"
-DROP_DB = 'psql -c "DR' 'OP DATA' 'BASE app"'
+DROP_DB = 'psql -c "DROP DATABASE app"'
 
 
-def tools_without(tmp_path: Path, env: dict, missing: str, names=("bash", "sh", "cat", "jq", "grep", "python3",
-                                                                    "env", "printf")) -> dict:
+def tools_without(
+    tmp_path: Path, env: dict, missing: str, names=("bash", "sh", "cat", "jq", "grep", "python3", "env", "printf")
+) -> dict:
 
     tools = tmp_path / f"no-{missing}"
     tools.mkdir()
@@ -1454,8 +1748,12 @@ def test_the_wide_scan_guard_refuses_when_cat_fails(tmp_path: Path) -> None:
 
     _home, env, hook = guard_home(tmp_path, "wide-scan-guard.sh", WIDE_SCAN)
     env = tools_without(tmp_path, env, "cat")
-    call = {"tool_name": "Bash", "tool_input": {"command": "rg needle /"}, "hook_event_name": "PreToolUse",
-            "cwd": str(tmp_path)}
+    call = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "rg needle /"},
+        "hook_event_name": "PreToolUse",
+        "cwd": str(tmp_path),
+    }
     assert decision(run_hook(hook["command"], call, env)) == "deny"
     new = run_owned(DISPATCH_BASH, call, env, 30)
     assert new is not None and decision(new) == "deny", new
@@ -1463,10 +1761,12 @@ def test_the_wide_scan_guard_refuses_when_cat_fails(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("missing", ["jq", "grep"])
-@pytest.mark.parametrize("command", ['"$HOME/.claude/hooks/dangerous-command-guard.sh"', DANGEROUS],
-                         ids=["script", "legacy-inline"])
-def test_the_dangerous_command_guard_refuses_when_its_reader_or_matcher_fails(tmp_path: Path, missing: str,
-                                                                              command: str) -> None:
+@pytest.mark.parametrize(
+    "command", ['"$HOME/.claude/hooks/dangerous-command-guard.sh"', DANGEROUS], ids=["script", "legacy-inline"]
+)
+def test_the_dangerous_command_guard_refuses_when_its_reader_or_matcher_fails(
+    tmp_path: Path, missing: str, command: str
+) -> None:
 
     hook = {"type": "command", "command": command, "timeout": 20}
     home, env = dispatcher_home(tmp_path, [hook])
@@ -1502,8 +1802,17 @@ def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path)
 
     home, settings = make_home(tmp_path)
     install, _env = installer(tmp_path, home)
-    settings["hooks"]["PreToolUse"].append({"matcher": "Agent", "hooks": [
-        {"type": "command", "command": "bash -c 'python3 \"$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny\" || true'"}]})
+    settings["hooks"]["PreToolUse"].append(
+        {
+            "matcher": "Agent",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "bash -c 'python3 \"$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny\" || true'",
+                }
+            ],
+        }
+    )
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     before = (home / ".claude/settings.json").read_bytes()
     refused = install("--hook-dispatcher", "on", check=False)
@@ -1517,7 +1826,8 @@ def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path)
     registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
 
     commands = [hook["command"] for hooks in registry["entries"]["PreToolUse"].values() for hook in hooks] + [
-        hook["command"] for group in hooks_of(home)["PreToolUse"] for hook in group["hooks"]]
+        hook["command"] for group in hooks_of(home)["PreToolUse"] for hook in group["hooks"]
+    ]
     assert '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"' in commands
     assert '"$HOME/.claude/hooks/dangerous-command-guard.sh"' in commands
     assert LEGACY_SEAT not in commands and DANGEROUS not in commands
@@ -1547,15 +1857,20 @@ def test_install_folds_a_guard_whose_source_checkout_is_not_executable(tmp_path:
 
     assert not os.access(RAILWAY, os.X_OK), "the source is executable now; this test no longer reaches the bug"
     home, settings = make_home(tmp_path)
-    settings["hooks"]["PreToolUse"].append({"matcher": "Bash", "hooks": [
-        {"type": "command", "command": '"$HOME/.claude/hooks/railway-vars-guard.sh"', "timeout": 10}]})
+    settings["hooks"]["PreToolUse"].append(
+        {
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": '"$HOME/.claude/hooks/railway-vars-guard.sh"', "timeout": 10}],
+        }
+    )
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install, _env = installer(tmp_path, home)
     folded = install("--hook-dispatcher", "on", check=False)
     assert folded.returncode == 0, folded.stdout[-2000:] + folded.stderr[-2000:]
     registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
     assert '"$HOME/.claude/hooks/railway-vars-guard.sh"' in [
-        hook["command"] for hook in registry["entries"]["PreToolUse"]["Bash"]]
+        hook["command"] for hook in registry["entries"]["PreToolUse"]["Bash"]
+    ]
     assert os.access(home / ".claude/hooks/railway-vars-guard.sh", os.X_OK)
 
 
@@ -1575,9 +1890,12 @@ def test_the_bootout_guard_accepts_the_rails_cos_approval_record(tmp_path: Path)
         return run_hook(hook["command"], call, env)
 
     assert run(" # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-restart-2026-10-08.md").returncode == 0
-    for suffix in ("", " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-missing-2026-10-08.md",
-                   " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-notime-2026-10-08.md",
-                   " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/../orchestrator-refs/alex-restart-2026-10-08.md"):
+    for suffix in (
+        "",
+        " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-missing-2026-10-08.md",
+        " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-notime-2026-10-08.md",
+        " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/../orchestrator-refs/alex-restart-2026-10-08.md",
+    ):
         assert run(suffix).returncode == 2, suffix
 
 
@@ -1588,12 +1906,13 @@ def test_the_dangerous_command_guard_keeps_only_the_drop_floor(tmp_path: Path) -
     refs.mkdir(parents=True)
     (refs / "alex-drop-2026-10-08.md").write_text('Alex, 09:18 ET: "drop the scratch database"\n')
     env = dict(os.environ, HOME=str(home))
-    root_delete = "r" "m -r" "f /"
+    root_delete = "rm -rf /"
 
     def run(command: str) -> subprocess.CompletedProcess:
         call = {"tool_name": "Bash", "tool_input": {"command": command}, "hook_event_name": "PreToolUse"}
-        return subprocess.run(["bash", str(DANGER)], input=json.dumps(call), env=env, capture_output=True, text=True,
-                              timeout=60)
+        return subprocess.run(
+            ["bash", str(DANGER)], input=json.dumps(call), env=env, capture_output=True, text=True, timeout=60
+        )
 
     assert run(f"cat > notes.md <<'EOF'\nthe guard used to block {root_delete} in prose\nEOF").returncode == 0
     assert run(f"ssh studio '{root_delete}tmp/old'").returncode == 0
@@ -1602,73 +1921,114 @@ def test_the_dangerous_command_guard_keeps_only_the_drop_floor(tmp_path: Path) -
     assert "BLOCKED: Dangerous command" in blocked.stderr
     approved = run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-drop-2026-10-08.md")
     assert approved.returncode == 0, approved
-    assert run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-none-2026-10-08.md").returncode == 2
+    assert (
+        run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-none-2026-10-08.md").returncode
+        == 2
+    )
 
-@pytest.mark.parametrize("command,rc", [
-    ("printf '%s\\n' 'DROP TABLE accounts'", 0),
-    ('echo "rm -rf /"', 0),
-    ("cat > contract <<'EOF'\nDROP TABLE accounts; rm -rf /\nEOF", 0),
-    ("cat > brief <<'B'\nrefuse rm -rf / and DROP TABLE accounts\nB", 0),
-    ("psql -c 'DROP TABLE accounts'", 2),
-    ("psql -c 'TRUNCATE TABLE accounts'", 2),
-    ("psql -f {file}", 2),
-    ("psql < {file}", 2),
-    ("cat {file} | psql", 2),
-])
+
+@pytest.mark.parametrize(
+    "command,rc",
+    [
+        ("printf '%s\\n' 'DROP TABLE accounts'", 0),
+        ('echo "rm -rf /"', 0),
+        ("cat > contract <<'EOF'\nDROP TABLE accounts; rm -rf /\nEOF", 0),
+        ("cat > brief <<'B'\nrefuse rm -rf / and DROP TABLE accounts\nB", 0),
+        ("psql -c 'DROP TABLE accounts'", 2),
+        ("psql -c 'TRUNCATE TABLE accounts'", 2),
+        ("psql -f {file}", 2),
+        ("psql < {file}", 2),
+        ("cat {file} | psql", 2),
+    ],
+)
 def test_guard_trim_review_sql_counterexamples(tmp_path, command, rc):
-    sql = tmp_path / 'drop.sql'
-    sql.write_text('DROP TABLE accounts;')
-    result = subprocess.run(['bash', str(DANGER)],
-                            input=json.dumps({'tool_input': {'command': command.format(file=sql)}}),
-                            text=True, capture_output=True)
+    sql = tmp_path / "drop.sql"
+    sql.write_text("DROP TABLE accounts;")
+    result = subprocess.run(
+        ["bash", str(DANGER)],
+        input=json.dumps({"tool_input": {"command": command.format(file=sql)}}),
+        text=True,
+        capture_output=True,
+    )
     assert result.returncode == rc, result.stderr
+
 
 @pytest.mark.xfail(reason="Accepted residual: SQL comment obfuscation", strict=True)
 def test_guard_trim_sql_comment_residual():
-    result = subprocess.run(['bash', str(DANGER)],
-                            input=json.dumps({'tool_input': {'command': "psql -c 'DROP/**/TABLE accounts;'"}}),
-                            text=True, capture_output=True)
+    result = subprocess.run(
+        ["bash", str(DANGER)],
+        input=json.dumps({"tool_input": {"command": "psql -c 'DROP/**/TABLE accounts;'"}}),
+        text=True,
+        capture_output=True,
+    )
     assert result.returncode == 2
 
 
-@pytest.mark.parametrize("command,rc", [
-
-
-    (RAW_RESTART, 2), ("sudo " + RAW_RESTART, 2), ("bash -c '" + RAW_RESTART + "'", 2), ("x=$(" + RAW_RESTART + ")", 2),
-    ("echo \"$(" + RAW_RESTART + ")\"", 2), ("bash <<'EOF'\n" + RAW_RESTART + "\nEOF", 2),
-    ("true && " + RAW_RESTART + " # done", 2), ("cat <<EOF\n$(" + RAW_RESTART + ")\nEOF", 2),
-    ("cat > notes.md <<'EOF'\n" + RAW_RESTART + "\nEOF", 0), ("echo '" + RAW_RESTART + "'", 0),
-    ("git commit -m 'guard: " + RAW_RESTART + " is refused'", 0), ("ssh ax42 '" + RAW_RESTART + "'", 0),
-    ("echo '$(" + RAW_RESTART + ")'", 0), ("launch" "ctl print gui/501/com.aneyman.agent-lb", 0),
-])
+@pytest.mark.parametrize(
+    "command,rc",
+    [
+        (RAW_RESTART, 2),
+        ("sudo " + RAW_RESTART, 2),
+        ("bash -c '" + RAW_RESTART + "'", 2),
+        ("x=$(" + RAW_RESTART + ")", 2),
+        ('echo "$(' + RAW_RESTART + ')"', 2),
+        ("bash <<'EOF'\n" + RAW_RESTART + "\nEOF", 2),
+        ("true && " + RAW_RESTART + " # done", 2),
+        ("cat <<EOF\n$(" + RAW_RESTART + ")\nEOF", 2),
+        ("cat > notes.md <<'EOF'\n" + RAW_RESTART + "\nEOF", 0),
+        ("echo '" + RAW_RESTART + "'", 0),
+        ("git commit -m 'guard: " + RAW_RESTART + " is refused'", 0),
+        ("ssh ax42 '" + RAW_RESTART + "'", 0),
+        ("echo '$(" + RAW_RESTART + ")'", 0),
+        ("launchctl print gui/501/com.aneyman.agent-lb", 0),
+    ],
+)
 def test_the_bootout_guard_reads_only_the_command_that_runs(tmp_path, command, rc):
-    result = subprocess.run(['bash', str(BOOTOUT)], input=json.dumps({'tool_input': {'command': command}}),
-                            text=True, capture_output=True, env={**os.environ, 'HOME': str(tmp_path)})
+    result = subprocess.run(
+        ["bash", str(BOOTOUT)],
+        input=json.dumps({"tool_input": {"command": command}}),
+        text=True,
+        capture_output=True,
+        env={**os.environ, "HOME": str(tmp_path)},
+    )
     assert result.returncode == rc, result.stderr
 
 
-@pytest.mark.parametrize("guard,command", [
-    (DANGER, "psql -c 'DROP TABLE accounts'"),
-    (SOURCE / 'hooks/agent-lb-bootout-guard.sh', 'launchctl bootout gui/501/com.aneyman.agent-lb'),
-])
-@pytest.mark.parametrize("prefix,suffix,rc", [
-    ("", " # alex-approval: {ref}", 0),
-    ("# alex-approval: {ref}\n", "", 2),
-    ("", " x# alex-approval: {ref}", 2),
-    ("", " ' # alex-approval: {ref}'", 2),
-])
+@pytest.mark.parametrize(
+    "guard,command",
+    [
+        (DANGER, "psql -c 'DROP TABLE accounts'"),
+        (SOURCE / "hooks/agent-lb-bootout-guard.sh", "launchctl bootout gui/501/com.aneyman.agent-lb"),
+    ],
+)
+@pytest.mark.parametrize(
+    "prefix,suffix,rc",
+    [
+        ("", " # alex-approval: {ref}", 0),
+        ("# alex-approval: {ref}\n", "", 2),
+        ("", " x# alex-approval: {ref}", 2),
+        ("", " ' # alex-approval: {ref}'", 2),
+    ],
+)
 def test_guard_trim_approval_comment_boundary(tmp_path, guard, command, prefix, suffix, rc):
-    refs = tmp_path / '.agent-rails/lanes/orchestrator-refs'
+    refs = tmp_path / ".agent-rails/lanes/orchestrator-refs"
     refs.mkdir(parents=True)
-    ref = refs / 'alex-test-2026-10-08.md'
-    ref.write_text('Alex 09:18 approved')
+    ref = refs / "alex-test-2026-10-08.md"
+    ref.write_text("Alex 09:18 approved")
     cmd = prefix.format(ref=ref) + command + suffix.format(ref=ref)
+
     def run():
-        return subprocess.run(['bash', str(guard)], input=json.dumps({'tool_input': {'command': cmd}}),
-                              text=True, capture_output=True, env={**os.environ, 'HOME': str(tmp_path)})
+        return subprocess.run(
+            ["bash", str(guard)],
+            input=json.dumps({"tool_input": {"command": cmd}}),
+            text=True,
+            capture_output=True,
+            env={**os.environ, "HOME": str(tmp_path)},
+        )
+
     assert run().returncode == rc
     if rc == 0:
-        original = refs / 'original'
+        original = refs / "original"
         ref.rename(original)
         ref.symlink_to(original)
         assert run().returncode == 2
@@ -1677,10 +2037,13 @@ def test_guard_trim_approval_comment_boundary(tmp_path, guard, command, prefix, 
 def test_a_hook_child_left_running_or_stopped_is_killed_after_the_parity_run(tmp_path: Path) -> None:
 
     from importlib.machinery import SourceFileLoader
+
     parity = SourceFileLoader("hook_dispatch_parity", str(SOURCE / "hooks/hook-dispatch-parity.py")).load_module()
     marker = str(tmp_path / "leftover-marker")
-    command = (f"sh -c 'kill -STOP $$; sleep 300 # {marker}' </dev/null >/dev/null 2>&1 & "
-               f"sleep 300 {marker} </dev/null >/dev/null 2>&1 & exit 0")
+    command = (
+        f"sh -c 'kill -STOP $$; sleep 300 # {marker}' </dev/null >/dev/null 2>&1 & "
+        f"sleep 300 {marker} </dev/null >/dev/null 2>&1 & exit 0"
+    )
     result = parity.run_shell(command, b"{}", dict(os.environ), str(tmp_path), 30)
     assert result["code"] == 0 and not result["timed_out"]
     deadline = time.monotonic() + 5

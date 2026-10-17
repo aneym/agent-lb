@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import hashlib
@@ -116,7 +114,12 @@ def command(
 
 
 def attempt(
-    seat: dict[str, Any], task_class: str, cwd: Path, brief: str, out: Path, timeout: float,
+    seat: dict[str, Any],
+    task_class: str,
+    cwd: Path,
+    brief: str,
+    out: Path,
+    timeout: float,
     author_vendor: str | None = None,
 ) -> tuple[str, int, float, str]:
     started = time.monotonic()
@@ -141,11 +144,17 @@ def attempt(
         pool_miss = seat_pool and (code == 3 or code == 2 and not usage_error)
 
         outcome = (
-            "ok" if code == 0 else
-            "fail" if usage_error else
-            "wait" if seat_pool and code == 4 else
-            "limit" if pool_miss or LIMIT.search(text + "\n" + stderr) else
-            "infra" if code in {75, 124} else "fail"
+            "ok"
+            if code == 0
+            else "fail"
+            if usage_error
+            else "wait"
+            if seat_pool and code == 4
+            else "limit"
+            if pool_miss or LIMIT.search(text + "\n" + stderr)
+            else "infra"
+            if code in {75, 124}
+            else "fail"
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         code, outcome = (124 if isinstance(error, subprocess.TimeoutExpired) else 75), "infra"

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -19,8 +17,12 @@ from tests.integration.test_route_reservations import route, server  # noqa: F40
 
 REPO = Path(__file__).resolve().parents[2]
 SEAT = REPO / "clients" / "seat"
-CONCURRENCY = {"per_account": {"cursor": 1, "devin": 1, "openai": 3, "anthropic": 4}, "default": 2,
-               "ttl_s": 4, "heartbeat_s": 1}
+CONCURRENCY = {
+    "per_account": {"cursor": 1, "devin": 1, "openai": 3, "anthropic": 4},
+    "default": 2,
+    "ttl_s": 4,
+    "heartbeat_s": 1,
+}
 
 FAKE_CURSOR = """#!/usr/bin/env python3
 import json, os, sys, time
@@ -89,8 +91,14 @@ def env(tmp_path: Path, server: str) -> Iterator[dict[str, str]]:  # noqa: F811
     key = tmp_path / "a.key"
     key.write_text("key-a\n")
     key.chmod(0o600)
-    added = subprocess.run([sys.executable, str(SEAT), "add", "cursor-a", "--vendor", "cursor", "--api-key-file",
-                            str(key)], capture_output=True, text=True, timeout=60, env=base, check=False)
+    added = subprocess.run(
+        [sys.executable, str(SEAT), "add", "cursor-a", "--vendor", "cursor", "--api-key-file", str(key)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=base,
+        check=False,
+    )
     assert added.returncode == 0, added.stderr
     yield base
 
@@ -105,18 +113,30 @@ def env(tmp_path: Path, server: str) -> Iterator[dict[str, str]]:  # noqa: F811
                 holder.communicate()
 
 
-
 MODEL = "grok-latest-low"
 
 
 def seat_argv(env: dict[str, str], prompt: str, *extra: str, model: str = MODEL) -> list[str]:
-    return [sys.executable, str(SEAT), "run", "--vendor", "cursor", "--model", model, *extra,
-            "--cwd", str(Path(env["FAKE_GATE_DIR"]).parent), "--", prompt]
+    return [
+        sys.executable,
+        str(SEAT),
+        "run",
+        "--vendor",
+        "cursor",
+        "--model",
+        model,
+        *extra,
+        "--cwd",
+        str(Path(env["FAKE_GATE_DIR"]).parent),
+        "--",
+        prompt,
+    ]
 
 
 def run_seat(env: dict[str, str], prompt: str, *extra: str, model: str = MODEL) -> tuple[int, dict]:
-    result = subprocess.run(seat_argv(env, prompt, *extra, model=model), capture_output=True, text=True, timeout=120,
-                            env=env, check=False)
+    result = subprocess.run(
+        seat_argv(env, prompt, *extra, model=model), capture_output=True, text=True, timeout=120, env=env, check=False
+    )
     try:
         return result.returncode, json.loads(result.stdout)
     except json.JSONDecodeError:
@@ -124,8 +144,13 @@ def run_seat(env: dict[str, str], prompt: str, *extra: str, model: str = MODEL) 
 
 
 def start_seat(env: dict[str, str], prompt: str) -> subprocess.Popen:
-    process = subprocess.Popen(seat_argv(env, prompt, "--class", "mechanical"), stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, text=True, env=env)
+    process = subprocess.Popen(
+        seat_argv(env, prompt, "--class", "mechanical"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
     HOLDERS.append(process)
     deadline = time.monotonic() + 90
     while prompt not in invocations(env):
@@ -167,8 +192,6 @@ def test_a_second_seat_run_waits_without_launching_and_release_frees_the_slot(en
     assert (lease["seat"], lease["capacity_key"], lease["host"]) == ("cursor-seat", "cursor", "host-a"), lease
     assert lease["job"].startswith("seat/host-a/seat-"), lease
 
-
-
     models = invocations(env).count("models")
     rc, waited = run_seat(env, "second", "--class", "mechanical")
     assert rc == 4, waited
@@ -177,12 +200,10 @@ def test_a_second_seat_run_waits_without_launching_and_release_frees_the_slot(en
     assert waited["attempts"] == [] and waited["account"] is None, waited
     assert "second" not in invocations(env) and invocations(env).count("models") == models
 
-
     time.sleep(6)
     assert [row["reservation_id"] for row in mine(reservations(env)["live"])] == [lease["reservation_id"]]
     rc, still = run_seat(env, "third", "--class", "mechanical")
     assert rc == 4 and "third" not in invocations(env) and invocations(env).count("models") == models, still
-
 
     rc, plain = run_seat(env, "plain")
     assert rc == 0 and plain["ok"], plain
@@ -192,7 +213,6 @@ def test_a_second_seat_run_waits_without_launching_and_release_frees_the_slot(en
     assert dispatch[plain["run_id"]]["reservation"] is None and dispatch[plain["run_id"]]["why"] == "no --class"
     assert dispatch[pinned["run_id"]]["reservation"] is None and "--account" in dispatch[pinned["run_id"]]["why"]
     assert len(mine(reservations(env)["live"])) == 1
-
 
     open_gate(env, "hold1")
     out, err = holder.communicate(timeout=90)
@@ -210,10 +230,11 @@ def test_a_second_seat_run_waits_without_launching_and_release_frees_the_slot(en
 
 def test_a_python_route_runs_under_the_interpreter_not_by_exec(env: dict[str, str], tmp_path: Path) -> None:
 
-
     route = tmp_path / "route-noexec"
-    route.write_text(f"#!/usr/bin/env python3\nimport runpy, sys\nsys.argv[0] = {str(ROUTE)!r}\n"
-                     f"runpy.run_path({str(ROUTE)!r}, run_name='__main__')\n")
+    route.write_text(
+        f"#!/usr/bin/env python3\nimport runpy, sys\nsys.argv[0] = {str(ROUTE)!r}\n"
+        f"runpy.run_path({str(ROUTE)!r}, run_name='__main__')\n"
+    )
     route.chmod(0o644)
     rc, ran = run_seat({**env, "ROUTE_BIN": str(route)}, "noexec", "--class", "mechanical")
     assert rc == 0 and ran["ok"] and "noexec" in invocations(env), ran
@@ -293,7 +314,6 @@ def test_a_lost_lease_stops_the_vendor_cli(env: dict[str, str]) -> None:
     holder = start_seat(env, "hold4")
     [lease] = mine(reservations(env)["live"])
 
-
     rc, _ = route(env, "release", lease["reservation_id"], "--outcome", "failed")
     assert rc == 0
     out, err = holder.communicate(timeout=30)
@@ -315,9 +335,6 @@ def test_a_stop_waits_for_descendants_that_ignore_sigterm(env: dict[str, str], s
     child = int(child_file.read_text())
     [lease] = mine(reservations(env)["live"])
     try:
-
-
-
         started = time.monotonic()
         holder.send_signal(signal.SIGTERM)
         if stops == 2:
@@ -354,25 +371,22 @@ def test_verify_carries_the_author_vendor_and_runs_only_the_reserved_model(env: 
     assert (ended["seat"], ended["outcome"]) == ("cursor-seat", "ok"), ended
     assert launched_model(env, "verify1") == ended["model"] == reviewed["model"] == sonnet
 
-
-
-
     for cache in ("cold", "warm"):
         if cache == "cold":
             cold_cursor_cache(env)
         before = invocations(env)
-        rc, crossed = run_seat(env, f"verify3{cache}", "--class", "verify", "--author-vendor", "xai",
-                               model="grok-latest")
+        rc, crossed = run_seat(
+            env, f"verify3{cache}", "--class", "verify", "--author-vendor", "xai", model="grok-latest"
+        )
         assert rc == 2 and crossed["ok"] is False and crossed["error"].startswith("capacity: "), (cache, crossed)
         assert "grok-latest" in crossed["error"], (cache, crossed)
         assert invocations(env) == before and mine(reservations(env)["live"]) == [], cache
 
-    missing = subprocess.run(seat_argv(env, "verify2", "--class", "verify"), capture_output=True, text=True,
-                             timeout=60, env=env, check=False)
+    missing = subprocess.run(
+        seat_argv(env, "verify2", "--class", "verify"), capture_output=True, text=True, timeout=60, env=env, check=False
+    )
     assert missing.returncode == 2 and "--author-vendor" in missing.stderr, missing.stderr
     assert "verify2" not in invocations(env)
-
-
 
 
 DISCOVERY = """#!/usr/bin/env python3
@@ -390,8 +404,12 @@ print("claude-sonnet-5-5-high - Sonnet 5.5 High")
 
 def test_a_cold_model_cache_is_listed_only_under_the_hold(env: dict[str, str], tmp_path: Path) -> None:
     log = tmp_path / "discovery.log"
-    env = {**env, "DISCOVERY_LOG": str(log),
-           "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'discovery', DISCOVERY)}"}
+    env = {
+        **env,
+        "DISCOVERY_LOG": str(log),
+        "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'discovery', DISCOVERY)}",
+    }
+
     def listings() -> list[str]:
         return log.read_text().split() if log.exists() else []
 
@@ -400,7 +418,6 @@ def test_a_cold_model_cache_is_listed_only_under_the_hold(env: dict[str, str], t
 
     assert listings() and all(line != "live=0" for line in listings()), listings()
     assert launched_model(env, "hold5") == "grok-4.7-low"
-
 
     cold_cursor_cache(env)
     before = listings()
@@ -411,7 +428,6 @@ def test_a_cold_model_cache_is_listed_only_under_the_hold(env: dict[str, str], t
     open_gate(env, "hold5")
     out, err = holder.communicate(timeout=90)
     assert holder.returncode == 0, out + err
-
 
 
 SCRIPTED_ROUTE = """#!/bin/sh
@@ -449,14 +465,22 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 def scripted(tmp_path: Path) -> dict[str, str]:
     seats = tmp_path / "seats"
     seats.mkdir()
-    (seats / "accounts.json").write_text(json.dumps({"accounts": [{"id": "fixture", "vendor": "cursor",
-                                                                    "auth": "login"}]}))
+    (seats / "accounts.json").write_text(
+        json.dumps({"accounts": [{"id": "fixture", "vendor": "cursor", "auth": "login"}]})
+    )
     (tmp_path / "gates").mkdir()
     env = {k: v for k, v in os.environ.items() if not k.startswith(("ROUTE_", "SEAT_", "AGENT_LB_", "CURSOR_"))}
-    env.update(HOME=str(tmp_path), SEAT_HOME=str(seats), ROUTE_LEDGER=str(tmp_path / "ledger"), ROUTE_HOST="host-a",
-               ROUTE_BIN=str(_script(tmp_path / "route", SCRIPTED_ROUTE)), ROUTE_CALLS=str(tmp_path / "calls"),
-               SEAT_CURSOR_BIN=str(_script(tmp_path / "cursor-agent", FAKE_CURSOR)),
-               FAKE_INVOCATIONS=str(tmp_path / "invocations.log"), FAKE_GATE_DIR=str(tmp_path / "gates"))
+    env.update(
+        HOME=str(tmp_path),
+        SEAT_HOME=str(seats),
+        ROUTE_LEDGER=str(tmp_path / "ledger"),
+        ROUTE_HOST="host-a",
+        ROUTE_BIN=str(_script(tmp_path / "route", SCRIPTED_ROUTE)),
+        ROUTE_CALLS=str(tmp_path / "calls"),
+        SEAT_CURSOR_BIN=str(_script(tmp_path / "cursor-agent", FAKE_CURSOR)),
+        FAKE_INVOCATIONS=str(tmp_path / "invocations.log"),
+        FAKE_GATE_DIR=str(tmp_path / "gates"),
+    )
     return env
 
 
@@ -476,13 +500,17 @@ def test_a_signal_during_release_never_cuts_it_short(scripted: dict[str, str], s
 
 def test_a_signal_during_the_reserve_releases_and_launches_nothing(scripted: dict[str, str]) -> None:
     env = {**scripted, "SIGNAL_ON_RESERVE": "TERM"}
-    result = subprocess.run(seat_argv(env, "early1", "--class", "mechanical"), capture_output=True, text=True,
-                            timeout=60, env=env, check=False)
+    result = subprocess.run(
+        seat_argv(env, "early1", "--class", "mechanical"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+        check=False,
+    )
     assert result.returncode == 128 + signal.SIGTERM, result.stdout + result.stderr
     assert "released cancelled" in route_calls(env), route_calls(env)
     assert invocations(env) == []
-
-
 
 
 STOP_BEFORE_FIRST_ATTEMPT = """import os, signal, sys
@@ -529,12 +557,25 @@ def test_a_model_other_than_the_reserved_one_is_refused(scripted: dict[str, str]
 
 def test_a_signal_during_a_model_listing_stops_it_and_lists_no_other_account(scripted: dict[str, str]) -> None:
     accounts = Path(scripted["SEAT_HOME"]) / "accounts.json"
-    accounts.write_text(json.dumps({"accounts": [{"id": "fixture", "vendor": "cursor", "auth": "login"},
-                                                 {"id": "fixture-2", "vendor": "cursor", "auth": "login"}]}))
+    accounts.write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {"id": "fixture", "vendor": "cursor", "auth": "login"},
+                    {"id": "fixture-2", "vendor": "cursor", "auth": "login"},
+                ]
+            }
+        )
+    )
     env = {**scripted, "FAKE_MODELS_SLEEP": "15"}
     started = time.monotonic()
-    process = subprocess.Popen(seat_argv(env, "listing1", "--class", "mechanical"), stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, text=True, env=env)
+    process = subprocess.Popen(
+        seat_argv(env, "listing1", "--class", "mechanical"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
     try:
         deadline = time.monotonic() + 30
         while "models" not in invocations(env) and time.monotonic() < deadline:
@@ -544,7 +585,6 @@ def test_a_signal_during_a_model_listing_stops_it_and_lists_no_other_account(scr
     finally:
         if process.poll() is None:
             process.kill()
-
 
     assert process.returncode == 128 + signal.SIGTERM, out + err
     assert time.monotonic() - started < 15, "the model listing ran to the end after the stop"
@@ -560,25 +600,42 @@ def test_a_failed_first_release_is_retried(scripted: dict[str, str]) -> None:
     assert [line.split()[0] for line in calls].count("release") == 2 and "released ok" in calls, calls
 
 
-
-
-
 def test_a_forwarder_default_alias_runs_its_rung_at_the_ladder_effort(env: dict[str, str]) -> None:
     rc, ran = run_seat(env, "default1", "--class", "mechanical", model="grok-latest")
     assert rc == 0 and ran["ok"], ran
     assert launched_model(env, "default1") == ran["model"] == "grok-4.7-low"
 
     for task_class in ("mechanical", "explore"):
-        rc, held = route(env, "reserve", task_class, "--job", f"swe-{task_class}", "--prefer", "devin-seat",
-                         "--model", "swe-latest", "--reason", "devin-seat default")
+        rc, held = route(
+            env,
+            "reserve",
+            task_class,
+            "--job",
+            f"swe-{task_class}",
+            "--prefer",
+            "devin-seat",
+            "--model",
+            "swe-latest",
+            "--reason",
+            "devin-seat default",
+        )
         assert rc == 0 and (held["rung"], held["model"]) == ("swe2-medium", "swe-2-medium"), (task_class, held)
         assert route(env, "release", held["reservation_id"], "--outcome", "ok")[0] == 0
 
-
-    rc, refused = route(env, "reserve", "explore", "--job", "grok-explore", "--prefer", "cursor-seat",
-                        "--model", "grok-latest-low", "--reason", "scouting")
+    rc, refused = route(
+        env,
+        "reserve",
+        "explore",
+        "--job",
+        "grok-explore",
+        "--prefer",
+        "cursor-seat",
+        "--model",
+        "grok-latest-low",
+        "--reason",
+        "scouting",
+    )
     assert rc == 2 and refused["status"] == "refused" and "composer-latest" in refused["reason"], refused
-
 
 
 SLOW_DISCOVERY = """#!/usr/bin/env python3
@@ -593,15 +650,25 @@ print("composer-2.5 - Composer 2.5")
 
 def slow_discovery(env: dict[str, str], tmp_path: Path, seconds: float) -> dict[str, str]:
     cold_cursor_cache(env)
-    return {**env, "DISCOVERY_PID": str(tmp_path / "discovery.pid"), "ROUTE_TEST_LIST_SLEEP": str(seconds),
-            "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'slow-discovery', SLOW_DISCOVERY)}"}
+    return {
+        **env,
+        "DISCOVERY_PID": str(tmp_path / "discovery.pid"),
+        "ROUTE_TEST_LIST_SLEEP": str(seconds),
+        "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'slow-discovery', SLOW_DISCOVERY)}",
+    }
 
 
-def test_a_stop_during_the_model_listing_under_the_hold_ends_it_and_releases(env: dict[str, str],
-                                                                            tmp_path: Path) -> None:
+def test_a_stop_during_the_model_listing_under_the_hold_ends_it_and_releases(
+    env: dict[str, str], tmp_path: Path
+) -> None:
     env = slow_discovery(env, tmp_path, 8)
-    process = subprocess.Popen(seat_argv(env, "listed1", "--class", "mechanical"), stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, text=True, env=env)
+    process = subprocess.Popen(
+        seat_argv(env, "listed1", "--class", "mechanical"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
     HOLDERS.append(process)
     marker = tmp_path / "discovery.pid"
     deadline = time.monotonic() + 60
@@ -641,9 +708,9 @@ def test_the_reservation_stores_the_model_resolved_under_the_hold(env: dict[str,
     assert (ended["model"], ended["outcome"]) == ("grok-4.7-low", "ok"), ended
 
 
-def test_an_implement_rung_whose_only_reviewer_does_not_resolve_is_not_held(env: dict[str, str],
-                                                                            tmp_path: Path) -> None:
-
+def test_an_implement_rung_whose_only_reviewer_does_not_resolve_is_not_held(
+    env: dict[str, str], tmp_path: Path
+) -> None:
 
     path = Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json"
     document = json.loads(path.read_text())
@@ -652,21 +719,36 @@ def test_an_implement_rung_whose_only_reviewer_does_not_resolve_is_not_held(env:
             pool.update(status="exhausted", eligibleAccounts=0, aggregateRemainingPercent=0.0)
     path.write_text(json.dumps(document))
     env = slow_discovery(env, tmp_path, 0)
-    rc, refused = route(env, "reserve", "implement", "--job", "devin-unreviewed", "--prefer", "devin-seat",
-                        "--model", "swe-latest", "--reason", "devin implement")
+    rc, refused = route(
+        env,
+        "reserve",
+        "implement",
+        "--job",
+        "devin-unreviewed",
+        "--prefer",
+        "devin-seat",
+        "--model",
+        "swe-latest",
+        "--reason",
+        "devin implement",
+    )
     assert rc == 2 and refused["status"] == "refused" and "reviewer" in refused["reason"], refused
     assert [row for row in reservations(env)["live"] if row["job"] == "devin-unreviewed"] == []
 
 
 def test_a_signal_during_the_alias_resolution_returns_the_cancellation_envelope(scripted: dict[str, str]) -> None:
     env = {**scripted, "SIGNAL_ON_RESOLVE": "TERM"}
-    result = subprocess.run(seat_argv(env, "resolving1", "--class", "mechanical", model="composer-latest"),
-                            capture_output=True, text=True, timeout=60, env=env, check=False)
+    result = subprocess.run(
+        seat_argv(env, "resolving1", "--class", "mechanical", model="composer-latest"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+        check=False,
+    )
     assert result.returncode == 128 + signal.SIGTERM, result.stdout + result.stderr
     assert json.loads(result.stdout)["error"] == "cancelled by signal SIGTERM", result.stdout + result.stderr
     assert "released cancelled" in route_calls(env) and invocations(env) == []
-
-
 
 
 UNKILLABLE = """import os, sys
@@ -686,8 +768,13 @@ def test_a_stop_never_releases_while_a_process_survives_sigkill(scripted: dict[s
     launcher.write_text(UNKILLABLE)
     survivor = tmp_path / "survivor"
     env = {**scripted, "SURVIVOR": str(survivor)}
-    process = subprocess.Popen([sys.executable, str(launcher), *seat_argv(env, "hold6", "--class", "mechanical")[1:]],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    process = subprocess.Popen(
+        [sys.executable, str(launcher), *seat_argv(env, "hold6", "--class", "mechanical")[1:]],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
     HOLDERS.append(process)
     deadline = time.monotonic() + 30
     while "hold6" not in invocations(env) and time.monotonic() < deadline:
@@ -695,19 +782,20 @@ def test_a_stop_never_releases_while_a_process_survives_sigkill(scripted: dict[s
     survivor.write_text("D")
     process.send_signal(signal.SIGTERM)
     time.sleep(3)
-    assert process.poll() is None and not any(line.startswith("released") for line in route_calls(env)), \
+    assert process.poll() is None and not any(line.startswith("released") for line in route_calls(env)), (
         "the run released its capacity while a process of its group was alive"
+    )
     survivor.unlink()
     out, err = process.communicate(timeout=30)
     assert process.returncode == 128 + signal.SIGTERM, out + err
     assert "released cancelled" in route_calls(env), route_calls(env)
 
 
-
 class FailingReleaseLB:
     def __init__(self) -> None:
         import http.server
         import threading
+
         holds: dict[str, dict] = {}
         self.releases = 0
         outer = self
@@ -735,8 +823,12 @@ class FailingReleaseLB:
                 elif self.path.endswith("/heartbeat"):
                     self.reply(200, {**next(iter(holds.values())), "status": "reserved"})
                 else:
-                    row = holds.get(body["job"]) or {**body["candidates"][0], "reservation_id": "rsv-00000000000a",
-                                                       "job": body["job"], "expires_at": "2099-01-01T00:00:00Z"}
+                    row = holds.get(body["job"]) or {
+                        **body["candidates"][0],
+                        "reservation_id": "rsv-00000000000a",
+                        "job": body["job"],
+                        "expires_at": "2099-01-01T00:00:00Z",
+                    }
                     holds[body["job"]] = row
                     self.reply(200, {**row, "status": "reserved"})
 
@@ -745,16 +837,26 @@ class FailingReleaseLB:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
 
-def test_a_provisional_hold_that_cannot_be_released_is_never_reported_as_another_rung(env: dict[str, str],
-                                                                                     tmp_path: Path) -> None:
-
-
+def test_a_provisional_hold_that_cannot_be_released_is_never_reported_as_another_rung(
+    env: dict[str, str], tmp_path: Path
+) -> None:
 
     lb = FailingReleaseLB()
     try:
         env = {**slow_discovery(env, tmp_path, 0), "AGENT_LB_URL": lb.url}
-        rc, body = route(env, "reserve", "mechanical", "--job", "grok-concrete", "--prefer", "cursor-seat",
-                         "--model", "grok-4.7-low", "--reason", "concrete grok")
+        rc, body = route(
+            env,
+            "reserve",
+            "mechanical",
+            "--job",
+            "grok-concrete",
+            "--prefer",
+            "cursor-seat",
+            "--model",
+            "grok-4.7-low",
+            "--reason",
+            "concrete grok",
+        )
         assert rc != 0 and body["status"] != "reserved", body
         assert "composer" in body["reason"] and lb.releases >= 1, body
     finally:

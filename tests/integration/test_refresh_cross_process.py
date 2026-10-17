@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -27,8 +25,6 @@ pytestmark = [
 
 
 class _RotatingTokenEndpoint:
-
-
     def __init__(self) -> None:
         self.presented: list[str] = []
         self._spent: set[str] = set()
@@ -160,7 +156,6 @@ async def test_lost_refresh_lock_does_not_replay_spent_token(db_setup, monkeypat
         await asyncio.wait_for(worker(), 10)
     assert second.value.code == "exchange_uncertain"
     release.set()
-
 
     with pytest.raises(Exception):
         await asyncio.wait_for(first, 10)

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import importlib
@@ -34,9 +32,6 @@ _NATE_IP = "100.64.0.7"
 _STRANGER_IP = "100.64.0.8"
 _PUSH = "/api/federation/push"
 _HOUR_MS = 3_600_000
-
-
-
 
 
 def _push_auth() -> ModuleType:
@@ -180,9 +175,6 @@ async def _push(app_instance: Any, body: dict[str, Any], *, ip: str = _NATE_IP, 
         return await peer.post(_PUSH, json=body, headers=headers or {})
 
 
-
-
-
 @pytest.mark.asyncio
 async def test_listed_login_may_push_case_insensitively(
     async_client, app_instance, sources_path: Path, whois_calls
@@ -204,19 +196,15 @@ async def test_callers_the_receiver_cannot_place_are_refused(
     _write_sources(sources_path, [_nate_source()])
     before = await _snapshot_accounts()
 
-
     table["127.0.0.1"] = _NATE_LOGIN
     loopback = await async_client.post(_PUSH, json=_push_body(_account("x")))
     assert loopback.status_code == 403
 
-
     stranger = await _push(app_instance, _push_body(_account("x")), ip=_STRANGER_IP)
     assert stranger.status_code == 403
 
-
     unknown = await _push(app_instance, _push_body(_account("x")), ip="100.64.0.99")
     assert unknown.status_code == 403
-
 
     monkeypatch.setenv("AGENT_LB_FIREWALL_TRUST_PROXY_HEADERS", "true")
     monkeypatch.setenv("AGENT_LB_FIREWALL_TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
@@ -267,7 +255,6 @@ async def test_real_client_ip_behind_tailscale_serve_is_used(
     _write_sources(sources_path, [_nate_source()])
     forwarded = {"X-Forwarded-For": _NATE_IP}
 
-
     untrusted = await _push(app_instance, _push_body(_account("x")), ip="127.0.0.1", headers=forwarded)
     assert untrusted.status_code == 403
     assert calls == []
@@ -292,7 +279,6 @@ async def test_team_mode_and_proxy_keys_do_not_gate_the_push(
     _write_sources(sources_path, [_nate_source()])
 
     async with _peer(app_instance, _NATE_IP) as peer:
-
         gated = await peer.get("/api/accounts")
         assert gated.status_code in (401, 403), gated.text
         pushed = await peer.post(_PUSH, json=_push_body(_account("x")))
@@ -317,9 +303,6 @@ async def test_sources_file_edits_apply_without_restart(
     assert accepted.json()["source"] == "nate"
 
 
-
-
-
 @pytest.mark.asyncio
 async def test_first_push_binds_source_with_private_state_file(
     async_client, app_instance, sources_path: Path, state_path: Path, whois_calls
@@ -341,7 +324,6 @@ async def test_second_instance_cannot_take_over_bound_source(
     first = await _push(app_instance, _push_body(_account("x"), _account("y")))
     assert first.status_code == 200, first.text
     before = await _snapshot_accounts()
-
 
     takeover = await _push(app_instance, _push_body(_account("z"), instance_id="other-lb"))
 
@@ -367,9 +349,6 @@ async def test_push_cannot_claim_own_or_pull_peer_instance_id(
     assert as_pull_peer.status_code == 409
     assert await _snapshot_accounts() == before
     assert _push_receiver().load_binding(state_path) == {}
-
-
-
 
 
 @pytest.mark.asyncio
@@ -459,7 +438,6 @@ async def test_dropped_accounts_are_deactivated_scoped_to_that_owner_and_come_ba
     others = {"z", "o", "n"}
     others_before = {k: v for k, v in (await _snapshot_accounts()).items() if k in others}
 
-
     second = await _push(app_instance, _push_body(_account("x", token="pushed-access-x-2")))
     assert second.status_code == 200, second.text
     assert second.json()["accepted"] == ["x"]
@@ -473,14 +451,12 @@ async def test_dropped_accounts_are_deactivated_scoped_to_that_owner_and_come_ba
     assert y_row.owner_instance == _SENDER_INSTANCE_ID
     assert _decrypt(y_row.access_token_encrypted) != "pushed-access-y"
 
-
     third = await _push(app_instance, _push_body(_account("x"), _account("y", token="pushed-access-y-2")))
     assert third.status_code == 200, third.text
     assert sorted(third.json()["accepted"]) == ["x", "y"]
     y_row = await _get_account("y")
     assert y_row is not None and y_row.status == AccountStatus.ACTIVE
     assert _decrypt(y_row.access_token_encrypted) == "pushed-access-y-2"
-
 
     empty = await _push(app_instance, _push_body())
     assert empty.status_code == 200, empty.text
@@ -510,9 +486,6 @@ async def test_changes_invalidate_the_selection_cache(
     assert removed.status_code == 200, removed.text
     assert removed.json()["removed"] == ["x"]
     assert cache.generation > generation
-
-
-
 
 
 @pytest.mark.asyncio
@@ -604,9 +577,6 @@ async def test_mirror_export_is_unchanged_and_skips_pushed_rows(
     assert after.json() == before.json()
     assert [account["account_id"] for account in after.json()["accounts"]] == ["o"]
     assert "pushed-access-x" not in after.text
-
-
-
 
 
 @pytest.fixture

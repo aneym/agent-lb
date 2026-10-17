@@ -166,7 +166,6 @@ async def test_password_not_configured_requests_do_not_spend_login_budget(async_
 @pytest.mark.asyncio
 async def test_password_setup_rejects_overlong_password(async_client):
 
-
     long_password = "a" * 73
     response = await async_client.post(
         "/api/dashboard-auth/password/setup",
@@ -190,8 +189,6 @@ async def test_password_setup_accepts_72_byte_password(async_client):
 
 @pytest.mark.asyncio
 async def test_password_setup_counts_utf8_bytes_not_codepoints(async_client):
-
-
 
     long_emoji = "🦞" * 25
     response = await async_client.post(

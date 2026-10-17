@@ -26,8 +26,6 @@ HAIKU_ENV = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
 POLICY_SNAPSHOT = Path(".agent-lb/managed/coding-agents/policy-snapshot.json")
 
 
-
-
 SONNET_ENV = "ANTHROPIC_DEFAULT_SONNET_MODEL"
 SONNET_MODEL = "claude-sonnet-5-5"
 SONNET_ID = re.compile(r"claude-sonnet-\d+(?:-\d{1,2})?")
@@ -108,12 +106,14 @@ MANAGED_AGENTS = (
 )
 
 
-
-ADOPTED_KEEP = (Path(".claude/hooks/wide-scan-guard.sh"), Path(".claude/hooks/railway-vars-guard.sh"),
-                Path(".claude/hooks/agent-lb-bootout-guard.sh"), Path(".claude/hooks/dangerous-command-guard.sh"),
-                Path(".claude/hooks/link-cli-guard.sh"), Path(".claude/hooks/workflow-relay-guard.py"))
-
-
+ADOPTED_KEEP = (
+    Path(".claude/hooks/wide-scan-guard.sh"),
+    Path(".claude/hooks/railway-vars-guard.sh"),
+    Path(".claude/hooks/agent-lb-bootout-guard.sh"),
+    Path(".claude/hooks/dangerous-command-guard.sh"),
+    Path(".claude/hooks/link-cli-guard.sh"),
+    Path(".claude/hooks/workflow-relay-guard.py"),
+)
 
 
 RETIRED_AGENTS = ("astra", "implementer")
@@ -189,13 +189,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-box-sync", action="store_true", help="Skip syncing routing policy to factory boxes")
     parser.add_argument("--reason", help="Logged reason for forcing installation from a stale revision")
     parser.add_argument(
-        "--hook-dispatcher", choices=("on", "off"),
+        "--hook-dispatcher",
+        choices=("on", "off"),
         help="on: fold the PreToolUse, PostToolUse, UserPromptSubmit and Stop hooks into hooks/hook-dispatch.py "
         "after the parity fixture passes against this home's guards; off: restore the per-hook config verbatim. "
         "Absent: keep the current state (a folded config stays folded, over the guards it was checked on).",
     )
     parser.add_argument(
-        "--check-hook-paths", action="store_true",
+        "--check-hook-paths",
+        action="store_true",
         help="write nothing; exit 1 when a hook the live settings run (through the dispatcher registry when folded) "
         "names a release-scoped path, or a PreToolUse guard names a path that is missing",
     )
@@ -281,8 +283,6 @@ def is_owned_hook(command: Any) -> bool:
     return isinstance(command, str) and "ccdex-gpt-only.sh" in command
 
 
-
-
 SEAT_GUARD_HOOK = {
     "type": "command",
     "command": '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"',
@@ -344,8 +344,11 @@ def is_workflow_seat_guard_hook(command: Any) -> bool:
 
 DANGEROUS_GUARD_HOOK = {"type": "command", "command": '"$HOME/.claude/hooks/dangerous-command-guard.sh"', "timeout": 10}
 RAILWAY_GUARD_HOOK = {"type": "command", "command": 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"', "timeout": 10}
-KILL_SCOPE_GUARD_HOOK = {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/kill-scope-guard.py"',
-                        "timeout": 10}
+KILL_SCOPE_GUARD_HOOK = {
+    "type": "command",
+    "command": '/usr/bin/python3 "$HOME/.claude/hooks/kill-scope-guard.py"',
+    "timeout": 10,
+}
 
 SETTINGS_HOOKS = (
     ("PreToolUse", "Agent", SEAT_GUARD_HOOK, False),
@@ -355,12 +358,18 @@ SETTINGS_HOOKS = (
     ("PreToolUse", "Bash", KILL_SCOPE_GUARD_HOOK, True),
     ("SubagentStop", None, CLOSEOUT_HOOK, False),
     ("SubagentStop", None, FOCUS_STEAL_HOOK, False),
-    ("PostToolUse", "*", {"type": "command",
-        "command": '/usr/bin/python3 "$HOME/.claude/hooks/seat-budget.py"',
-        "timeout": 5}, False),
-    ("PostToolUse", "Workflow", {"type": "command",
-        "command": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-readback.py"',
-        "timeout": 5}, False),
+    (
+        "PostToolUse",
+        "*",
+        {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/seat-budget.py"', "timeout": 5},
+        False,
+    ),
+    (
+        "PostToolUse",
+        "Workflow",
+        {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-readback.py"', "timeout": 5},
+        False,
+    ),
     ("SessionStart", "compact|resume", FACTORY_CONTEXT_HOOK, False),
     ("PreCompact", None, COMPACT_CHECKPOINT_HOOK, False),
 )
@@ -414,27 +423,26 @@ def opaque_floor_commands(hooks: dict[str, Any], source: Path) -> list[str]:
     return found
 
 
-
-
-
-
-
-
-
-
-
-
 DISPATCH_EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DISPATCH_SCRIPT = "hooks/hook-dispatch.py"
 DISPATCH_REGISTRY = Path(".claude/hooks/dispatch/registry.json")
 DISPATCH_PARITY = Path(".claude/hooks/dispatch/parity-last.json")
 
 
-
 DISPATCH_INPROC = (
-    "rm-dynamic-deny", "desktop-guard", "stash-guard", "herdr-shell-host-guard.py", "rm-cd-rewrite.py",
-    "no-direct-merge.py", "box-offload-hook", "lane-bulletin-hook", "aside-regular-tabs.py",
-    "workflow-relay-guard.py", "routing-pulse.py", "herdr-tab-autoname.py", "idle-agents.py",
+    "rm-dynamic-deny",
+    "desktop-guard",
+    "stash-guard",
+    "herdr-shell-host-guard.py",
+    "rm-cd-rewrite.py",
+    "no-direct-merge.py",
+    "box-offload-hook",
+    "lane-bulletin-hook",
+    "aside-regular-tabs.py",
+    "workflow-relay-guard.py",
+    "routing-pulse.py",
+    "herdr-tab-autoname.py",
+    "idle-agents.py",
 )
 
 DISPATCH_SKIP_MATCHERS = ("AskUserQuestion",)
@@ -443,18 +451,24 @@ SIMPLE_MATCHER = re.compile(r"[A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*")
 DEFAULT_HOOK_TIMEOUT = 600
 
 
-
 NAME_LIST = re.compile(r"[a-zA-Z0-9_|, -]+")
-TOOL_ALIASES = {"Task": "Agent", "KillShell": "TaskStop", "KillBash": "TaskStop", "ListPeers": "ListAgents",
-                "Brief": "SendUserMessage", "ListMcpResources": "ListMcpResourcesTool",
-                "ReadMcpResource": "ReadMcpResourceTool", "ReadMcpResourceDir": "ReadMcpResourceDirTool"}
+TOOL_ALIASES = {
+    "Task": "Agent",
+    "KillShell": "TaskStop",
+    "KillBash": "TaskStop",
+    "ListPeers": "ListAgents",
+    "Brief": "SendUserMessage",
+    "ListMcpResources": "ListMcpResourcesTool",
+    "ReadMcpResource": "ReadMcpResourceTool",
+    "ReadMcpResourceDir": "ReadMcpResourceDirTool",
+}
 
 
-
-
-DISPATCH_DROPPED = {"55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": "global prettier --write",
-                    "70e4747d8e5cf5206a535899bcc19eb6e3acff6e2325fce6932d0e014c59acaa": "load-governor",
-                    "9185b387b7e583755f8534b4f1ef3cb3dbc08e860ba4270684920bd9bfd39e7e": "repeat-read-warn"}
+DISPATCH_DROPPED = {
+    "55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": "global prettier --write",
+    "70e4747d8e5cf5206a535899bcc19eb6e3acff6e2325fce6932d0e014c59acaa": "load-governor",
+    "9185b387b7e583755f8534b4f1ef3cb3dbc08e860ba4270684920bd9bfd39e7e": "repeat-read-warn",
+}
 
 
 def is_dispatch_hook(hook: Any) -> bool:
@@ -486,13 +500,26 @@ def foldable_groups(groups: list[Any], event: str) -> list[bool]:
         key = matcher_key(group) if isinstance(group, dict) else None
         hooks = group.get("hooks") if isinstance(group, dict) else None
         good = (
-            key is not None and key not in DISPATCH_SKIP_MATCHERS and isinstance(hooks, list) and bool(hooks)
+            key is not None
+            and key not in DISPATCH_SKIP_MATCHERS
+            and isinstance(hooks, list)
+            and bool(hooks)
             and set(group) <= {"matcher", "hooks"}
             and all(
-                isinstance(hook, dict) and hook.get("type") == "command" and set(hook) <= DISPATCH_HOOK_KEYS
-                and isinstance(hook.get("command"), str) and hook["command"].strip() and not is_dispatch_hook(hook)
-                and (hook.get("timeout") is None or (isinstance(hook["timeout"], (int, float))
-                                                     and not isinstance(hook["timeout"], bool) and hook["timeout"] > 0))
+                isinstance(hook, dict)
+                and hook.get("type") == "command"
+                and set(hook) <= DISPATCH_HOOK_KEYS
+                and isinstance(hook.get("command"), str)
+                and hook["command"].strip()
+                and not is_dispatch_hook(hook)
+                and (
+                    hook.get("timeout") is None
+                    or (
+                        isinstance(hook["timeout"], (int, float))
+                        and not isinstance(hook["timeout"], bool)
+                        and hook["timeout"] > 0
+                    )
+                )
                 and (hook.get("statusMessage") is None or isinstance(hook["statusMessage"], str))
                 for hook in hooks
             )
@@ -503,8 +530,11 @@ def foldable_groups(groups: list[Any], event: str) -> list[bool]:
 
 def commands_of(group: Any) -> set[str]:
     hooks = group.get("hooks") if isinstance(group, dict) else None
-    return {hook["command"] for hook in hooks if isinstance(hook, dict) and isinstance(hook.get("command"), str)} \
-        if isinstance(hooks, list) else set()
+    return (
+        {hook["command"] for hook in hooks if isinstance(hook, dict) and isinstance(hook.get("command"), str)}
+        if isinstance(hooks, list)
+        else set()
+    )
 
 
 def unfold_shared(groups: list[Any], eligible: list[bool]) -> list[bool]:
@@ -566,8 +596,7 @@ def keep_config_order(groups: list[Any], eligible: list[bool]) -> list[bool]:
                 first[key] = index
                 continue
             if any(
-                group_overlaps(groups[between], key)
-                and not (eligible[between] and matcher_key(groups[between]) == key)
+                group_overlaps(groups[between], key) and not (eligible[between] and matcher_key(groups[between]) == key)
                 for between in range(first[key] + 1, index)
             ):
                 eligible[index] = False
@@ -589,8 +618,11 @@ def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             left = []
             for hook in group["hooks"]:
                 command = hook.get("command") if isinstance(hook, dict) else None
-                name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode("utf-8")).hexdigest()) \
-                    if isinstance(command, str) else None
+                name = (
+                    DISPATCH_DROPPED.get(hashlib.sha256(command.encode("utf-8")).hexdigest())
+                    if isinstance(command, str)
+                    else None
+                )
                 if name:
                     dropped.append(f"{event} {group.get('matcher') or '*'}: {name}")
                 else:
@@ -614,15 +646,12 @@ def registry_problem(registry: Any) -> str | None:
     if registry.get("rev") and registry_rev(entries) != registry["rev"]:
         return f"entries do not hash to rev {registry['rev']}"
 
-
     for event in dict.fromkeys(list(entries) + list(per_hook) + list(dispatch)):
         keyed = entries.get(event)
         groups = per_hook.get(event)
         folded = dispatch.get(event)
         if not isinstance(keyed, dict) or not isinstance(groups, list) or not isinstance(folded, list):
             return f"{event}: entries, per_hook or dispatch is not the right shape"
-
-
 
         derived: dict[str, list[Any]] = {}
         for group in groups:
@@ -661,13 +690,11 @@ def registry_rev(entries: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(entries, sort_keys=True).encode("utf-8")).hexdigest()[:12]
 
 
-def dispatch_group(
-    event: str, key: str, matcher_field: Any, hooks: list[dict[str, Any]], rev: str
-) -> dict[str, Any]:
+def dispatch_group(event: str, key: str, matcher_field: Any, hooks: list[dict[str, Any]], rev: str) -> dict[str, Any]:
     timeout = sum(hook.get("timeout") or DEFAULT_HOOK_TIMEOUT for hook in hooks) + 5
     entry: dict[str, Any] = {
         "type": "command",
-        "command": f'python3 "$HOME/.claude/{DISPATCH_SCRIPT}" {event} \'{key}\' {rev}',
+        "command": f"python3 \"$HOME/.claude/{DISPATCH_SCRIPT}\" {event} '{key}' {rev}",
         "timeout": int(timeout) if float(timeout).is_integer() else timeout,
     }
     messages = list(dict.fromkeys(hook["statusMessage"] for hook in hooks if hook.get("statusMessage")))
@@ -762,13 +789,15 @@ def unfold_hooks(hooks: dict[str, Any], registry: dict[str, Any] | None) -> dict
         ):
             continue
 
-
-
         split: list[Any] = []
         for group in groups:
             members = group.get("hooks") if isinstance(group, dict) else None
-            if isinstance(members, list) and len(members) > 1 and any(is_dispatch_hook(hook) for hook in members) \
-                    and not all(is_dispatch_hook(hook) for hook in members):
+            if (
+                isinstance(members, list)
+                and len(members) > 1
+                and any(is_dispatch_hook(hook) for hook in members)
+                and not all(is_dispatch_hook(hook) for hook in members)
+            ):
                 split.append({**group, "hooks": [hook for hook in members if is_dispatch_hook(hook)]})
                 split.append({**group, "hooks": [hook for hook in members if not is_dispatch_hook(hook)]})
             else:
@@ -780,12 +809,13 @@ def unfold_hooks(hooks: dict[str, Any], registry: dict[str, Any] | None) -> dict
             unfolded[event] = json.loads(json.dumps(registry["per_hook"][event]))
             continue
 
-
-
         per_hook = registry.get("per_hook", {}).get(event, [])
         left = registry.get("dispatch", {}).get(event, [])
-        plain = [group for group in groups
-                 if not (isinstance(group, dict) and any(is_dispatch_hook(hook) for hook in group.get("hooks") or []))]
+        plain = [
+            group
+            for group in groups
+            if not (isinstance(group, dict) and any(is_dispatch_hook(hook) for hook in group.get("hooks") or []))
+        ]
         keys = set()
         for group in groups:
             if group in plain:
@@ -835,7 +865,8 @@ def folded_rev(settings: dict[str, Any]) -> str | None:
             "error: the folded settings entries name different dispatcher registry revs (%s); no one registry can "
             "restore them, so nothing was written. Restore settings.json from the newest checkpoint under "
             "~/.agent-lb/config-checkpoints/coding-agents/ and run this again."
-            % ", ".join(sorted(rev or "(none)" for rev in revs)))
+            % ", ".join(sorted(rev or "(none)" for rev in revs))
+        )
     return next(iter(revs), None)
 
 
@@ -856,8 +887,10 @@ def read_registry(home: Path, rev: str | None = None) -> dict[str, Any] | None:
             continue
         if registry_problem(registry) is None:
             return registry
-        print(f"WARNING hook dispatcher: {path} cannot restore the per-hook config ({registry_problem(registry)}); "
-              "trying the next copy")
+        print(
+            f"WARNING hook dispatcher: {path} cannot restore the per-hook config ({registry_problem(registry)}); "
+            "trying the next copy"
+        )
     return None
 
 
@@ -865,7 +898,9 @@ def is_folded(settings: dict[str, Any]) -> bool:
     hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
     return any(
         is_dispatch_hook(hook)
-        for event in DISPATCH_EVENTS for group in hooks.get(event) or [] if isinstance(group, dict)
+        for event in DISPATCH_EVENTS
+        for group in hooks.get(event) or []
+        if isinstance(group, dict)
         for hook in group.get("hooks") or []
     )
 
@@ -900,12 +935,13 @@ def dispatch_worth(source: Path, home: Path) -> Any:
     return worth
 
 
-
-
-
-
-DERIVED_PINS = ("wide-scan-guard.sh", "agent-lb-bootout-guard.sh", "railway-vars-guard.sh", "link-cli-guard.sh",
-                "dangerous-command-guard.sh")
+DERIVED_PINS = (
+    "wide-scan-guard.sh",
+    "agent-lb-bootout-guard.sh",
+    "railway-vars-guard.sh",
+    "link-cli-guard.sh",
+    "dangerous-command-guard.sh",
+)
 
 
 def script_pins(source: Path) -> dict[str, str]:
@@ -923,8 +959,11 @@ SCRIPT_WORD = re.compile(r'\s*(?:(?:/usr/bin/)?python3\s+)?("[^"]+"|[^\s"\'|;&<>
 
 def managed_hooks(home: Path, source: Path) -> dict[Path, Path]:
 
-    return {home / target: source / template for target, _owner, _marker, template in MANAGED_AGENTS
-            if template.parts[0] == "hooks" and template != Path(DISPATCH_SCRIPT)}
+    return {
+        home / target: source / template
+        for target, _owner, _marker, template in MANAGED_AGENTS
+        if template.parts[0] == "hooks" and template != Path(DISPATCH_SCRIPT)
+    }
 
 
 def pin_inproc(registry: dict[str, Any], home: Path, source: Path) -> dict[str, Any]:
@@ -939,7 +978,7 @@ def pin_inproc(registry: dict[str, Any], home: Path, source: Path) -> dict[str, 
                     continue
                 word = match.group(1).strip('"')
                 if word.startswith("$HOME/"):
-                    word = str(home) + word[len("$HOME"):]
+                    word = str(home) + word[len("$HOME") :]
                 elif word.startswith("~/"):
                     word = str(home) + word[1:]
                 path = Path(os.path.realpath(word))
@@ -955,13 +994,18 @@ def pin_inproc(registry: dict[str, Any], home: Path, source: Path) -> dict[str, 
 
 def run_parity(source: Path, home: Path, registry: dict[str, Any]) -> tuple[bool, str]:
 
-
-
     try:
         wake = subprocess.run(
-            [sys.executable, str(source / "hooks" / "seat-run-wake-parity.py"),
-             "--dispatcher", str(source / DISPATCH_SCRIPT)],
-            capture_output=True, text=True, timeout=60, check=False,
+            [
+                sys.executable,
+                str(source / "hooks" / "seat-run-wake-parity.py"),
+                "--dispatcher",
+                str(source / DISPATCH_SCRIPT),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return False, f"seat-run wake fixture did not run: {exc.__class__.__name__}"
@@ -974,14 +1018,31 @@ def run_parity(source: Path, home: Path, registry: dict[str, Any]) -> tuple[bool
         staged.write_text(json.dumps(registry, indent=2) + "\n")
         try:
             result = subprocess.run(
-                [sys.executable, str(source / "hooks" / "hook-dispatch-parity.py"), "--home", str(home),
-                 "--registry", str(staged), "--dispatcher", str(source / DISPATCH_SCRIPT), "--out", str(report),
-                 "--workdir", str(Path(tempfile.gettempdir()) / "hook-dispatch-parity"),
-                 *[arg for target, template in managed_hooks(home, source).items()
-                   for arg in ("--overlay", f"{target.relative_to(home)}={template}")],
-
-                 "--lock-held", "--no-process-count"],
-                capture_output=True, text=True, timeout=600, check=False,
+                [
+                    sys.executable,
+                    str(source / "hooks" / "hook-dispatch-parity.py"),
+                    "--home",
+                    str(home),
+                    "--registry",
+                    str(staged),
+                    "--dispatcher",
+                    str(source / DISPATCH_SCRIPT),
+                    "--out",
+                    str(report),
+                    "--workdir",
+                    str(Path(tempfile.gettempdir()) / "hook-dispatch-parity"),
+                    *[
+                        arg
+                        for target, template in managed_hooks(home, source).items()
+                        for arg in ("--overlay", f"{target.relative_to(home)}={template}")
+                    ],
+                    "--lock-held",
+                    "--no-process-count",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             return False, f"parity fixture did not run: {exc.__class__.__name__}"
@@ -999,7 +1060,10 @@ def resolve_sonnet(source: Path, home: Path) -> str:
     try:
         result = subprocess.run(
             [sys.executable, str(route), "resolve", "sonnet-latest"],
-            capture_output=True, text=True, timeout=60, check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
             env=os.environ | {"ROUTE_TABLE": str(source / "routing-table.json")},
         )
     except (OSError, subprocess.SubprocessError):
@@ -1016,7 +1080,10 @@ def resolve_sol(source: Path, home: Path) -> str:
     try:
         result = subprocess.run(
             [sys.executable, str(route), "resolve", "sol-latest"],
-            capture_output=True, text=True, timeout=60, check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
             env=os.environ | {"ROUTE_TABLE": str(source / "routing-table.json")},
         )
     except (OSError, subprocess.SubprocessError):
@@ -1025,12 +1092,26 @@ def resolve_sol(source: Path, home: Path) -> str:
     return model if SOL_ID.fullmatch(model) else SOL_MODEL
 
 
-RELAY_SEATS = frozenset((
-    "codex-sol", "codex-sol-local", "codex-verifier", "codex-test-runner",
-    "codex-test-runner-local", "gpt-implementer", "gpt-explorer", "sonnet-implementer",
-    "verifier", "cursor-seat", "devin-seat", "muse-seat", "muse-seat-local",
-    "computer-use", "computer-use-local", "host-relay",
-))
+RELAY_SEATS = frozenset(
+    (
+        "codex-sol",
+        "codex-sol-local",
+        "codex-verifier",
+        "codex-test-runner",
+        "codex-test-runner-local",
+        "gpt-implementer",
+        "gpt-explorer",
+        "sonnet-implementer",
+        "verifier",
+        "cursor-seat",
+        "devin-seat",
+        "muse-seat",
+        "muse-seat-local",
+        "computer-use",
+        "computer-use-local",
+        "host-relay",
+    )
+)
 
 
 def policy_snapshot(source: Path, home: Path) -> dict[str, Any]:
@@ -1040,7 +1121,10 @@ def policy_snapshot(source: Path, home: Path) -> dict[str, Any]:
     try:
         result = subprocess.run(
             [sys.executable, str(route), "policy", "snapshot", "--json"],
-            capture_output=True, text=True, timeout=60, check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
             env=os.environ | {"ROUTE_TABLE": str(source / "routing-table.json")},
         )
         snapshot = json.loads(result.stdout)
@@ -1099,11 +1183,18 @@ def check_policy(source: Path, home: Path, snapshot: dict[str, Any]) -> int:
                     problems.append(str(installed))
     try:
         settings = json.loads(read_text(home / ".claude/settings.json"))
-        background = snapshot_model(snapshot, snapshot["background_model"] if "background_model" in snapshot
-                                    else snapshot["standards"]["background_model"])
-        if (settings.get("effortLevel") != EFFORT_LEVEL or settings.get("model") != MODEL
-                or settings.get("env", {}).get(HAIKU_ENV) != background
-                or settings.get("env", {}).get(SONNET_ENV) != snapshot_model(snapshot, "sonnet-latest")):
+        background = snapshot_model(
+            snapshot,
+            snapshot["background_model"]
+            if "background_model" in snapshot
+            else snapshot["standards"]["background_model"],
+        )
+        if (
+            settings.get("effortLevel") != EFFORT_LEVEL
+            or settings.get("model") != MODEL
+            or settings.get("env", {}).get(HAIKU_ENV) != background
+            or settings.get("env", {}).get(SONNET_ENV) != snapshot_model(snapshot, "sonnet-latest")
+        ):
             problems.append(".claude/settings.json")
         if json.loads(read_text(home / POLICY_SNAPSHOT)) != snapshot:
             problems.append(str(POLICY_SNAPSHOT))
@@ -1119,7 +1210,7 @@ def reconcile_codex_config(text: str, model: str) -> str:
     section = ""
     lines = []
     assignment = re.compile(
-        r'^(\s*(model|extract_model|consolidation_model)\s*=\s*)([\"\'])(gpt-\d+(?:\.\d+)*-(?:sol|luna))(\3)(.*)$'
+        r"^(\s*(model|extract_model|consolidation_model)\s*=\s*)([\"\'])(gpt-\d+(?:\.\d+)*-(?:sol|luna))(\3)(.*)$"
     )
     for line in text.splitlines(keepends=True):
         if line.lstrip().startswith("["):
@@ -1142,33 +1233,48 @@ def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
                 if not isinstance(command, str):
                     continue
 
-
-
                 before = command
                 factory_bin = r'(?:\$HOME|/[^\s"\':;]*)/(?:(?:repos/)?factory|\.agent-rails/factory-runtime)/bin/'
-                command = re.sub(factory_bin + r'agent-shims(?=[\s"\':;/]|$)',
-                                 '$HOME/.local/share/desktop-guard/agent-shims', command)
-                command = re.sub(factory_bin + r'(?=[^\s"\':;/]+(?:$|[\s"\';]))', '$HOME/.local/bin/', command)
-                command = re.sub(factory_bin, '$HOME/.agent-rails/factory-runtime/bin/', command)
-                from_factory = command != before and '/.local/bin/' in command
-                command = re.sub(r'/[^\s"\':;]*/repos/personal/unblock/',
-                                 '$HOME/.local/share/unblock-headless/', command)
-                command = re.sub(r'/[^\s"\':;]*/repos/skill-stats/', '$HOME/.local/share/skill-stats/', command)
+                command = re.sub(
+                    factory_bin + r'agent-shims(?=[\s"\':;/]|$)',
+                    "$HOME/.local/share/desktop-guard/agent-shims",
+                    command,
+                )
+                command = re.sub(factory_bin + r'(?=[^\s"\':;/]+(?:$|[\s"\';]))', "$HOME/.local/bin/", command)
+                command = re.sub(factory_bin, "$HOME/.agent-rails/factory-runtime/bin/", command)
+                from_factory = command != before and "/.local/bin/" in command
+                command = re.sub(
+                    r'/[^\s"\':;]*/repos/personal/unblock/', "$HOME/.local/share/unblock-headless/", command
+                )
+                command = re.sub(r'/[^\s"\':;]*/repos/skill-stats/', "$HOME/.local/share/skill-stats/", command)
 
                 match = re.fullmatch(r'((?:"[^"\n]+"|[^\s]+)\s+)?"((?:\$HOME)?/[^"\n]+)"(.*)', command)
-                if match and (from_factory or any(path in command for path in (
-                        '/.agent-rails/factory-runtime/', '/.local/share/unblock-headless/',
-                        '/.local/share/skill-stats/'))) \
-                        and not dispatcher.floor_name(command) \
-                        and '# hook missing: fail open' not in command:
+                if (
+                    match
+                    and (
+                        from_factory
+                        or any(
+                            path in command
+                            for path in (
+                                "/.agent-rails/factory-runtime/",
+                                "/.local/share/unblock-headless/",
+                                "/.local/share/skill-stats/",
+                            )
+                        )
+                    )
+                    and not dispatcher.floor_name(command)
+                    and "# hook missing: fail open" not in command
+                ):
                     script = match[2]
-                    command = (f'if [ -r "{script}" ]; then {command}; else '
-                               f'printf \'%s\\n\' "hook warning: missing {script}; continuing" >&2; '
-                               'fi # hook missing: fail open')
+                    command = (
+                        f'if [ -r "{script}" ]; then {command}; else '
+                        f"printf '%s\\n' \"hook warning: missing {script}; continuing\" >&2; "
+                        "fi # hook missing: fail open"
+                    )
                 hook["command"] = command
 
 
-RELEASE_SCOPED = re.compile(r'factory-runtime|/factory/bin/|/repos/|/Volumes/')
+RELEASE_SCOPED = re.compile(r"factory-runtime|/factory/bin/|/repos/|/Volumes/")
 HOOK_PATH = re.compile(r'(?:\$HOME|~|/)[^\s"\';|&)<>]*')
 
 
@@ -1193,14 +1299,14 @@ def hook_path_problems(home: Path) -> list[str]:
                         continue
                     if RELEASE_SCOPED.search(word):
                         problems.append(f"{event}: release-scoped path {word} in: {command}")
-                    elif event == "PreToolUse" and not os.path.exists(
-                            re.sub(r'^(?:\$HOME|~)(?=/)', str(home), word)):
+                    elif event == "PreToolUse" and not os.path.exists(re.sub(r"^(?:\$HOME|~)(?=/)", str(home), word)):
                         problems.append(f"{event}: missing guard target {word} in: {command}")
     return problems
 
 
-def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: str = SONNET_MODEL,
-                       source: Path | None = None) -> dict[str, Any]:
+def reconcile_settings(
+    settings: dict[str, Any], uninstall: bool, sonnet_model: str = SONNET_MODEL, source: Path | None = None
+) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
     hooks = updated.get("hooks", {})
     if not uninstall and source is not None and isinstance(hooks, dict):
@@ -1218,8 +1324,14 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
         for event in dict.fromkeys(entry[0] for entry in SETTINGS_HOOKS):
             managed = [entry[2] for entry in SETTINGS_HOOKS if entry[0] == event]
             kept = [
-                {**group, "hooks": [hook for hook in group.get("hooks", [])
-                                   if not any(is_settings_hook(hook.get("command"), owned) for owned in managed)]}
+                {
+                    **group,
+                    "hooks": [
+                        hook
+                        for hook in group.get("hooks", [])
+                        if not any(is_settings_hook(hook.get("command"), owned) for owned in managed)
+                    ],
+                }
                 for group in (cleaned if event == "PreToolUse" else hooks.get(event, []))
             ]
             kept = [group for group in kept if group["hooks"]]
@@ -1272,8 +1384,10 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
             if matcher is not None:
                 group["matcher"] = matcher
             if hook is RAILWAY_GUARD_HOOK and source is None:
-                workflow_index = next((i for i, existing in enumerate(event_groups)
-                                       if existing.get("matcher") == "Workflow"), len(event_groups))
+                workflow_index = next(
+                    (i for i, existing in enumerate(event_groups) if existing.get("matcher") == "Workflow"),
+                    len(event_groups),
+                )
                 event_groups.insert(workflow_index, group)
             else:
                 event_groups.append(group)
@@ -1319,8 +1433,11 @@ def desired_routing_table(source_path: Path, live_path: Path) -> str:
         except json.JSONDecodeError as exc:
             raise SystemExit(f"error: invalid JSON in {live_path}: {exc}") from exc
         if isinstance(live, dict) and "overrides" in live:
-            table["overrides"] = [entry for entry in live["overrides"]
-                                  if isinstance(entry, dict) and entry.get("class") in table["classes"]]
+            table["overrides"] = [
+                entry
+                for entry in live["overrides"]
+                if isinstance(entry, dict) and entry.get("class") in table["classes"]
+            ]
     return json.dumps(table, indent=2) + "\n"
 
 
@@ -1351,14 +1468,23 @@ def policy_box_hosts(home: Path) -> list[str]:
     machines = load("machines.json", os.environ.get("FACTORY_MACHINES"))
     boxes = load("boxes.json", os.environ.get("FLEET_BOXES_FILE"))
     boxes = boxes.get("boxes", []) if isinstance(boxes, dict) else boxes
-    disabled = {row.get("name") for row in [*machines, *boxes]
-                if row.get("enabled") is False or row.get("kind") == "slot"}
+    disabled = {
+        row.get("name") for row in [*machines, *boxes] if row.get("enabled") is False or row.get("kind") == "slot"
+    }
     known = {name for row in machines for name in [row["name"], *row.get("aliases", [])]}
-    hosts = [row["name"] for row in machines
-             if row.get("job_host") is True and not str(row.get("os", "")).lower().startswith("macos")
-             and row["name"] not in disabled and row.get("ssh", row["name"]) not in disabled]
-    hosts.extend(row["name"] for row in boxes
-                 if row.get("kind") == "plain" and row.get("enabled") is True and row["name"] not in known)
+    hosts = [
+        row["name"]
+        for row in machines
+        if row.get("job_host") is True
+        and not str(row.get("os", "")).lower().startswith("macos")
+        and row["name"] not in disabled
+        and row.get("ssh", row["name"]) not in disabled
+    ]
+    hosts.extend(
+        row["name"]
+        for row in boxes
+        if row.get("kind") == "plain" and row.get("enabled") is True and row["name"] not in known
+    )
     return list(dict.fromkeys(hosts))
 
 
@@ -1366,8 +1492,10 @@ def sync_policy_boxes(home: Path) -> None:
     try:
         hosts = policy_box_hosts(home)
         table = home / ROUTING_TABLE
-        expected = {"policy_rev": json.loads(table.read_text())["policy_rev"],
-                    "table_sha256": hashlib.sha256(table.read_bytes()).hexdigest()}
+        expected = {
+            "policy_rev": json.loads(table.read_text())["policy_rev"],
+            "table_sha256": hashlib.sha256(table.read_bytes()).hexdigest(),
+        }
         files = [home / ".agent-lb/bin/route", home / ".agent-lb/bin/seat", table]
         if not all(path.is_file() for path in files):
             raise ValueError("installed route, seat or routing table is missing")
@@ -1378,30 +1506,44 @@ def sync_policy_boxes(home: Path) -> None:
     ssh_config = home / ".agent-rails/factory/ssh/hosts.conf"
     if ssh_config.is_file():
         ssh += ["-F", str(ssh_config)]
-    verify = ('ROUTE_TABLE="$HOME/.agent-lb/managed/coding-agents/routing-table.json" '
-              'python3 "$HOME/.agent-lb/bin/route" policy snapshot --json')
+    verify = (
+        'ROUTE_TABLE="$HOME/.agent-lb/managed/coding-agents/routing-table.json" '
+        'python3 "$HOME/.agent-lb/bin/route" policy snapshot --json'
+    )
     for host in hosts:
         try:
             if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", host):
                 raise ValueError("invalid box name")
-            subprocess.run([*ssh, host, 'mkdir -p "$HOME/.agent-lb/bin" '
-                            '"$HOME/.agent-lb/managed/coding-agents"'],
-                           capture_output=True, text=True, check=True, timeout=30)
-            for sources, destination in ((files[:2], ".agent-lb/bin/"),
-                                         (files[2:], ".agent-lb/managed/coding-agents/")):
-                subprocess.run(["rsync", "-az", "-e", shlex.join(ssh),
-                                *(str(path) for path in sources), f"{host}:{destination}"],
-                               capture_output=True, text=True, check=True, timeout=60)
-            result = subprocess.run([*ssh, host, verify], capture_output=True, text=True,
-                                    check=True, timeout=60)
+            subprocess.run(
+                [*ssh, host, 'mkdir -p "$HOME/.agent-lb/bin" "$HOME/.agent-lb/managed/coding-agents"'],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+            for sources, destination in (
+                (files[:2], ".agent-lb/bin/"),
+                (files[2:], ".agent-lb/managed/coding-agents/"),
+            ):
+                subprocess.run(
+                    ["rsync", "-az", "-e", shlex.join(ssh), *(str(path) for path in sources), f"{host}:{destination}"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=60,
+                )
+            result = subprocess.run([*ssh, host, verify], capture_output=True, text=True, check=True, timeout=60)
             actual = json.loads(result.stdout)
             if any(actual.get(key) != value for key, value in expected.items()):
                 raise ValueError("policy_rev or table_sha256 mismatch")
-            print(f"box policy synced {host}: policy_rev={expected['policy_rev']} "
-                  f"table_sha256={expected['table_sha256']}")
+            print(
+                f"box policy synced {host}: policy_rev={expected['policy_rev']} table_sha256={expected['table_sha256']}"
+            )
         except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
-            print(f"WARNING: box policy sync failed for {host} ({type(exc).__name__}); "
-                  "local install succeeded", file=sys.stderr)
+            print(
+                f"WARNING: box policy sync failed for {host} ({type(exc).__name__}); local install succeeded",
+                file=sys.stderr,
+            )
 
 
 def checkpoint_changes(home, changes, replace_policy_link=False, policy_link_target=""):
@@ -1432,11 +1574,9 @@ def checkpoint_changes(home, changes, replace_policy_link=False, policy_link_tar
         policy_dir = home / POLICY_DIR
         policy_dir.unlink()
 
-
         shutil.copytree(checkpoint / "policy-link-target", policy_dir, symlinks=True)
         print(f"replaced symlink {policy_dir} -> {policy_link_target} with an installed copy")
     print(f"checkpoint {checkpoint}")
-
 
 
 def autocompact_text(text, window):
@@ -1526,7 +1666,6 @@ def main() -> int:
                 if args.uninstall
                 else install_adapter(originals[claude_path], template, claude_path)
             ),
-
             codex_path: (
                 uninstall_adapter(originals[codex_path], codex_path)
                 if args.uninstall
@@ -1554,7 +1693,8 @@ def main() -> int:
             raise SystemExit(
                 "error: hook dispatcher not installed, nothing written: a floor guard must be registered as a direct "
                 "exec of its own script (`[python3|bash] <script> [args]`, S44), and the dispatcher refuses every call "
-                "these would guard: " + "; ".join(opaque))
+                "these would guard: " + "; ".join(opaque)
+            )
     new_registry: dict[str, Any] | None = None
     keep_fold = False
     if mode != "off" and isinstance(desired_settings.get("hooks"), dict):
@@ -1564,13 +1704,13 @@ def main() -> int:
         desired_settings = {**desired_settings, "hooks": kept_hooks}
         only = None
         if mode == "sticky" and old_registry is not None:
-
-
-
             only = {}
             for event, groups in old_registry["per_hook"].items():
-                folded_groups = json.loads(json.dumps(
-                    [group for group in groups if group not in old_registry.get("dispatch", {}).get(event, [])]))
+                folded_groups = json.loads(
+                    json.dumps(
+                        [group for group in groups if group not in old_registry.get("dispatch", {}).get(event, [])]
+                    )
+                )
                 rewrite_floor_commands({"PreToolUse": folded_groups} if event == "PreToolUse" else {}, source)
                 only[event] = folded_groups
         folded_hooks, candidate = fold_hooks(desired_settings["hooks"], only, dispatch_worth(source, args.home))
@@ -1578,9 +1718,13 @@ def main() -> int:
             candidate = pin_inproc(candidate, args.home, source)
             if mode == "sticky" and old_registry is not None:
                 candidate["parity"] = old_registry.get("parity")
-            unchanged = mode == "sticky" and old_registry is not None and all(
-                candidate.get(field) == old_registry.get(field)
-                for field in ("inproc_sha", "dispatcher_sha256", "script_sha")
+            unchanged = (
+                mode == "sticky"
+                and old_registry is not None
+                and all(
+                    candidate.get(field) == old_registry.get(field)
+                    for field in ("inproc_sha", "dispatcher_sha256", "script_sha")
+                )
             )
             if args.preview:
                 print(f"would fold hooks into the dispatcher ({'refold' if unchanged else 'after the parity fixture'})")
@@ -1590,26 +1734,28 @@ def main() -> int:
             else:
                 ok, summary = run_parity(source, args.home, candidate)
                 if not ok and mode == "sticky":
-
                     print(f"hook dispatcher: parity fixture failed ({summary}); running it once more")
                     ok, summary = run_parity(source, args.home, candidate)
                 if ok:
-                    candidate["parity"] = {"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                           "summary": summary}
+                    candidate["parity"] = {
+                        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "summary": summary,
+                    }
                     new_registry = candidate
                     print(f"hook dispatcher parity passed: {summary}")
                 elif mode == "on":
                     raise SystemExit(f"error: hook dispatcher not installed; parity fixture failed: {summary}")
                 elif folded_now and old_registry is not None:
-
-
-
                     keep_fold = True
-                    print(f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
-                          f"twice ({summary}); keeping the installed fold (rev {old_registry.get('rev')}) unchanged")
+                    print(
+                        f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
+                        f"twice ({summary}); keeping the installed fold (rev {old_registry.get('rev')}) unchanged"
+                    )
                 else:
-                    print(f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
-                          f"({summary}); restoring the per-hook config")
+                    print(
+                        f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
+                        f"({summary}); restoring the per-hook config"
+                    )
             if new_registry is not None:
                 desired_settings = {**desired_settings, "hooks": folded_hooks}
             elif keep_fold:
@@ -1643,8 +1789,8 @@ def main() -> int:
         workspace_bytes = workspace_path.read_bytes() if workspace_path.is_file() else b""
         rules_rev = hashlib.sha256(routing_bytes + workspace_bytes).hexdigest()[:12]
         header = (
-            f'{MODELS_MARKER} from config/coding-agents/ROUTING.md (rules_rev {rules_rev}). '
-            'Do not edit: the next install overwrites local edits. Change the rule in agent-lb, '
+            f"{MODELS_MARKER} from config/coding-agents/ROUTING.md (rules_rev {rules_rev}). "
+            "Do not edit: the next install overwrites local edits. Change the rule in agent-lb, "
             'or ask `factory ask "<question>" --json`. History: ~/.claude/ledgers/models-ledger.md. -->'
         )
         desired_models = header + "\n\n" + (full_text if core_text is None else core_text)
@@ -1664,14 +1810,14 @@ def main() -> int:
     if desired_settings != disk_settings:
         changes[settings_path] = desired_settings_text
     if not args.uninstall and registry_path.parent.is_dir():
-
-
         for path in registry_path.parent.glob("registry*.json"):
             legacy = json.loads(path.read_text())
-            if isinstance(legacy, dict) and legacy.get("rev") and isinstance(legacy.get("entries"), dict) \
-                    and registry_rev(legacy["entries"]) == legacy["rev"]:
-
-
+            if (
+                isinstance(legacy, dict)
+                and legacy.get("rev")
+                and isinstance(legacy.get("entries"), dict)
+                and registry_rev(legacy["entries"]) == legacy["rev"]
+            ):
                 continue
             before = json.dumps(legacy, sort_keys=True)
 
@@ -1702,17 +1848,19 @@ def main() -> int:
             if path.exists():
                 changes[path] = None
     if folded_now and old_registry is not None and folded_rev(disk_settings) is None:
-
-
-
         legacy_text = json.dumps(old_registry, indent=2, ensure_ascii=False) + "\n"
         if read_text(legacy_path) != legacy_text:
             changes[legacy_path] = legacy_text
     in_use = {f"registry.{rev}.json" for rev in (folded_rev(desired_settings), folded_rev(disk_settings)) if rev}
     if registry_path.parent.is_dir():
         for path in registry_path.parent.iterdir():
-            if REV_FILE.fullmatch(path.name) and path != rev_path and path not in changes and \
-                    path.name not in in_use and time.time() - path.stat().st_mtime > REV_KEEP_SECONDS:
+            if (
+                REV_FILE.fullmatch(path.name)
+                and path != rev_path
+                and path not in changes
+                and path.name not in in_use
+                and time.time() - path.stat().st_mtime > REV_KEEP_SECONDS
+            ):
                 changes[path] = None
     if not args.uninstall:
         codex_config = args.home / ".codex" / "config.toml"
@@ -1759,11 +1907,10 @@ def main() -> int:
                 preserved_agents.append(("unmanaged", agent_path))
         else:
             if keep_fold and template_relative_path in (Path(DISPATCH_SCRIPT), Path("hooks/hook-dispatch-parity.py")):
-
-
                 if agent_text != agent_template:
-                    print(f"hook dispatcher: keeping the installed {relative_path.name}; "
-                          "the new one failed the fixture")
+                    print(
+                        f"hook dispatcher: keeping the installed {relative_path.name}; the new one failed the fixture"
+                    )
                 continue
             if agent_text != agent_template:
                 changes[agent_path] = agent_template
@@ -1778,9 +1925,11 @@ def main() -> int:
         if read_text(args.home / POLICY_SNAPSHOT) != wanted_snapshot:
             changes[args.home / POLICY_SNAPSHOT] = wanted_snapshot
 
-        for name, template in (("route.sh", "jev-route.sh"),
-                               ("health-check.sh", "jev-health-check.sh"),
-                               ("jev-health.py", "jev-health.py")):
+        for name, template in (
+            ("route.sh", "jev-route.sh"),
+            ("health-check.sh", "jev-health-check.sh"),
+            ("jev-health.py", "jev-health.py"),
+        ):
             target = args.home / ".jev/hooks" / name
             wanted = (source / "hooks" / template).read_text()
             if read_text(target) != wanted or (target.suffix == ".sh" and target.stat().st_mode & 0o777 != 0o755):
@@ -1827,13 +1976,11 @@ def main() -> int:
             if read_text(seat_path) != seat_source.read_text():
                 changes[seat_path] = seat_source.read_text()
 
-
         decider_source = source.parent.parent / "clients" / "open-factory" / "open_factory" / "decider.json"
         if decider_source.is_file():
             decider_path = args.home / ROUTING_TABLE.with_name("decider.json")
             if read_text(decider_path) != decider_source.read_text():
                 changes[decider_path] = decider_source.read_text()
-
 
         replace_policy_link = policy_dir.is_symlink()
         if replace_policy_link:
@@ -1842,14 +1989,16 @@ def main() -> int:
             policy_sources = [Path(name) for name in POLICY_FILES]
             policy_sources += [path.relative_to(source) for path in sorted((source / "agents").glob("*.md"))]
 
-            policy_sources += [path.relative_to(source) for pattern in ("*.py", "*.sh")
-                               for path in sorted((source / "hooks").glob(pattern))]
+            policy_sources += [
+                path.relative_to(source)
+                for pattern in ("*.py", "*.sh")
+                for path in sorted((source / "hooks").glob(pattern))
+            ]
             policy_sources += [Path("hooks/local-seat-bin/desktop-guard-focus")]
             for relative in policy_sources:
                 wanted = (source / relative).read_text()
                 if relative.parent == Path("agents"):
                     wanted = seat_template(wanted, relative.stem, snapshot)
-
 
                 if replace_policy_link or read_text(policy_dir / relative) != wanted:
                     changes[policy_dir / relative] = wanted
@@ -1871,8 +2020,6 @@ def main() -> int:
         print("managed routing configuration already converged")
         return 0
 
-
-
     if read_text(settings_path) != settings_text:
         raise SystemExit(f"error: {settings_path} changed while this install ran; nothing written, run it again")
     checkpoint_changes(args.home, changes, replace_policy_link, policy_link_target)
@@ -1882,12 +2029,8 @@ def main() -> int:
     if analytics.is_dir() and (analytics / "dist/cli.js").is_file():
         for name in ("dist", "node_modules"):
             if (analytics / name).is_dir():
-                shutil.copytree(analytics / name, installed_analytics / name,
-                                dirs_exist_ok=True, symlinks=False)
+                shutil.copytree(analytics / name, installed_analytics / name, dirs_exist_ok=True, symlinks=False)
         shutil.copy2(analytics / "package.json", installed_analytics / "package.json")
-
-
-
 
     first_files = {args.home / ".claude" / DISPATCH_SCRIPT, legacy_path} | ({rev_path} if rev_path else set())
     latest_files = {registry_path, backup_path}
@@ -1921,16 +2064,21 @@ def main() -> int:
 def same_policy_tree(bundle: Path, checkout: Path) -> bool:
 
     def files(root: Path) -> dict[Path, bytes]:
-        return {path.relative_to(root): path.read_bytes() for path in sorted(root.rglob("*"))
-                if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"}
+        return {
+            path.relative_to(root): path.read_bytes()
+            for path in sorted(root.rglob("*"))
+            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+        }
+
     try:
         return checkout.is_dir() and files(bundle) == files(checkout)
     except OSError:
         return False
 
 
-def verify_install_revision(source: Path, force: bool = False, reason: str | None = None,
-                            home: Path | None = None) -> None:
+def verify_install_revision(
+    source: Path, force: bool = False, reason: str | None = None, home: Path | None = None
+) -> None:
 
     if home is not None and source.resolve() == (home.expanduser() / ".agents/policy/coding-agents").resolve():
         return
@@ -1942,8 +2090,10 @@ def verify_install_revision(source: Path, force: bool = False, reason: str | Non
         repo = Path(origin_repo)
         if not (repo / ".git").exists():
             raise SystemExit("error: installer needs a git worktree; rebase onto origin/main")
+
     def git(*words):
         return subprocess.run(["git", "-C", str(repo), *words], capture_output=True, text=True, timeout=60)
+
     fetched = git("fetch", "origin", "main")
     if fetched.returncode:
         raise SystemExit("error: could not fetch origin/main; refusing policy installation")
@@ -1985,11 +2135,15 @@ def locked_main() -> int:
                 except (ValueError, KeyError, TypeError):
                     stale = started = False
                 if stale and started:
-                    process = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
-                                             capture_output=True, text=True, timeout=10).stdout.strip()
+                    process = subprocess.run(
+                        ["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=10
+                    ).stdout.strip()
                     if "install-policy.py" in process and "python" in process and "claude" not in process.lower():
-                        print(f"WARNING: retiring stalled policy installer pid={pid}; "
-                              "no recorded progress for over 15 minutes", flush=True)
+                        print(
+                            f"WARNING: retiring stalled policy installer pid={pid}; "
+                            "no recorded progress for over 15 minutes",
+                            flush=True,
+                        )
                         os.kill(pid, signal.SIGTERM)
                         until = time.monotonic() + 30
                         while time.monotonic() < until:
@@ -2005,27 +2159,34 @@ def locked_main() -> int:
                     raise SystemExit(f"error: another install-policy run holds {lock_path}")
                 time.sleep(1)
         started_at = time.time()
+
         def progress():
             handle.seek(0)
             handle.truncate()
             json.dump({"pid": os.getpid(), "started_at": started_at, "progress_at": time.time()}, handle)
             handle.flush()
+
         progress()
+
         class ProgressStream:
             def __init__(self, stream):
                 self.stream = stream
+
             def write(self, text):
                 if text.strip():
                     progress()
                 return self.stream.write(text)
+
             def flush(self):
                 return self.stream.flush()
+
         stdout = sys.stdout
         sys.stdout = ProgressStream(stdout)
         try:
             result = main()
-            if result == 0 and not (args.check_hook_paths or args.preview or args.uninstall
-                                    or args.check or args.no_box_sync):
+            if result == 0 and not (
+                args.check_hook_paths or args.preview or args.uninstall or args.check or args.no_box_sync
+            ):
                 sync_policy_boxes(home)
             return result
         finally:

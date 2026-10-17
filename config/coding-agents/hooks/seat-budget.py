@@ -17,8 +17,7 @@ def main() -> None:
     budget = int(os.environ.get("SEAT_BUDGET_CALLS", "120"))
     if budget < 1:
         return
-    root = Path(os.environ.get("SEAT_BUDGET_STATE_DIR")
-                or "~/.agent-rails/factory/hooks/seat-budget").expanduser()
+    root = Path(os.environ.get("SEAT_BUDGET_STATE_DIR") or "~/.agent-rails/factory/hooks/seat-budget").expanduser()
     root.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha256(json.dumps([session, agent]).encode()).hexdigest()
     descriptor = os.open(root / (key + ".json"), os.O_RDWR | os.O_CREAT, 0o600)
@@ -31,8 +30,10 @@ def main() -> None:
         json.dump(count, stream)
         stream.truncate()
     if count >= budget and (count - budget) % 40 == 0:
-        text = (f"seat-budget: {count} tool calls in this seat; return your HANDOFF now "
-                "(done, unverified, next slice) and let the lead re-dispatch the rest.")
+        text = (
+            f"seat-budget: {count} tool calls in this seat; return your HANDOFF now "
+            "(done, unverified, next slice) and let the lead re-dispatch the rest."
+        )
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}))
 
 

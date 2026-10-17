@@ -1,4 +1,3 @@
-
 import json
 import subprocess
 import sys
@@ -22,21 +21,23 @@ def test_pick_skips_a_vendor_whose_reservation_refuses(tmp_path: Path, server: s
     env["ROUTE_LEDGER"] = str(ledger)
     rc, first = route(env, "pick", "implement")
     assert rc == 0 and first["seat"] == "devin-seat", first
-    rc, held = route(env, "reserve", "implement", "--job", "pick-held",
-                     "--prefer", "devin-seat", "--reason", "regression")
+    rc, held = route(
+        env, "reserve", "implement", "--job", "pick-held", "--prefer", "devin-seat", "--reason", "regression"
+    )
     assert rc == 0 and held["status"] == "reserved", held
     try:
-        rc, refused = route(env, "reserve", "implement", "--job", "pick-refused",
-                            "--prefer", "devin-seat", "--reason", "regression")
+        rc, refused = route(
+            env, "reserve", "implement", "--job", "pick-refused", "--prefer", "devin-seat", "--reason", "regression"
+        )
         assert rc == 75 and refused["reason"] == "all candidate capacity is reserved", refused
         rc, picked = route(env, "pick", "implement")
         assert rc == 0 and picked["seat"] == "gpt-implementer", picked
-        assert any(row["rung"] == "swe2-high" and "lease capacity reserved" in row["reason"]
-                   for row in picked["skipped"]), picked
+        assert any(
+            row["rung"] == "swe2-high" and "lease capacity reserved" in row["reason"] for row in picked["skipped"]
+        ), picked
         assert all(row["seat"] != "devin-seat" for row in picked["fallbacks"]), picked
         rows = [json.loads(line) for line in ledger.read_text().splitlines()]
-        assert any(row["event"] == "route_pick_lease_skip" and row["capacity_key"] == "devin"
-                   for row in rows), rows
+        assert any(row["event"] == "route_pick_lease_skip" and row["capacity_key"] == "devin" for row in rows), rows
     finally:
         route(env, "release", held["reservation_id"], "--outcome", "cancelled")
     rc, recovered = route(env, "pick", "implement")
@@ -56,13 +57,20 @@ def test_fixture_pick_ignores_live_holds(tmp_path: Path, server: str, snapshot: 
     env["ROUTE_LEDGER"] = str(ledger)
     if snapshot is not None:
         (Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools_reservations.json").write_text(json.dumps(snapshot))
-    rc, held = route(env, "reserve", "implement", "--job", "fixture-held",
-                     "--prefer", "devin-seat", "--reason", "fixture isolation")
+    rc, held = route(
+        env, "reserve", "implement", "--job", "fixture-held", "--prefer", "devin-seat", "--reason", "fixture isolation"
+    )
     assert rc == 0 and held["seat"] == "devin-seat", held
     ledger.unlink(missing_ok=True)
     try:
-        result = subprocess.run([sys.executable, str(SCRIPT), "pick", "implement", "--json"],
-                                env=env, capture_output=True, text=True, timeout=30, check=False)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "pick", "implement", "--json"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)["seat"] == "devin-seat"
         assert not ledger.exists()

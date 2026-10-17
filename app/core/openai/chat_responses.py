@@ -831,5 +831,4 @@ def _pending_stream_arguments(emitted: str, current: str) -> str | None:
         suffix = current[len(emitted) :]
         return suffix or None
 
-
     return None

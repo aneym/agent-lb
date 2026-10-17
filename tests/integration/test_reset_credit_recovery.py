@@ -230,7 +230,6 @@ async def test_daily_allowance_counts_only_applied_auto_redemptions(db_setup):
     async with SessionLocal() as session:
         journal = ResetCreditAttemptsRepository(session)
 
-
         assert await journal.count_applied_since(utcnow() - timedelta(days=1)) == 1
 
 
@@ -250,9 +249,7 @@ async def test_scheduler_stops_after_the_daily_allowance_is_spent(db_setup, monk
     monkeypatch.setattr(scheduler_module, "get_background_session", session_context)
     redeem = AsyncMock()
     monkeypatch.setattr(ResetCreditAutoRedeemScheduler, "_redeem_first_available", redeem)
-    scheduler = ResetCreditAutoRedeemScheduler(
-        interval_seconds=60, cooldown_seconds=900, enabled=True, max_per_day=2
-    )
+    scheduler = ResetCreditAutoRedeemScheduler(interval_seconds=60, cooldown_seconds=900, enabled=True, max_per_day=2)
     await scheduler._tick()
     redeem.assert_not_awaited()
 
@@ -274,8 +271,6 @@ async def test_scheduler_grants_the_relimit_reset_within_the_same_day(db_setup, 
     monkeypatch.setattr(scheduler_module, "refresh_standard_capacity", AsyncMock(return_value=False))
     redeem = AsyncMock()
     monkeypatch.setattr(ResetCreditAutoRedeemScheduler, "_redeem_first_available", redeem)
-    scheduler = ResetCreditAutoRedeemScheduler(
-        interval_seconds=60, cooldown_seconds=900, enabled=True, max_per_day=2
-    )
+    scheduler = ResetCreditAutoRedeemScheduler(interval_seconds=60, cooldown_seconds=900, enabled=True, max_per_day=2)
     await scheduler._tick()
     redeem.assert_awaited_once()

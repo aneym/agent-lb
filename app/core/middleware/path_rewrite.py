@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 from typing import Any
@@ -10,7 +8,6 @@ _CODEX_V1_PREFIX = "/backend-api/codex/v1/"
 _CODEX_V1_PREFIX_BYTES = _CODEX_V1_PREFIX.encode("ascii")
 _CODEX_CANONICAL_PREFIX = "/backend-api/codex/"
 _CODEX_CANONICAL_PREFIX_BYTES = _CODEX_CANONICAL_PREFIX.encode("ascii")
-
 
 
 _CODEX_IMAGE_ALIASES = {
@@ -33,8 +30,6 @@ def _canonicalize_raw_path(raw_path: bytes) -> bytes:
 
 
 class BackendApiCodexV1AliasMiddleware:
-
-
     def __init__(self, app: Any) -> None:
         self.app = app
 
@@ -46,8 +41,6 @@ class BackendApiCodexV1AliasMiddleware:
                 if scope.get("type") == "http":
                     rewritten = _CODEX_IMAGE_ALIASES.get(rewritten, rewritten)
                 if rewritten != path:
-
-
                     scope = dict(scope)
                     scope["path"] = rewritten
                     raw_path = scope.get("raw_path")
@@ -63,6 +56,5 @@ class BackendApiCodexV1AliasMiddleware:
 
 
 def add_backend_api_codex_v1_alias_middleware(app: FastAPI) -> None:
-
 
     app.add_middleware(BackendApiCodexV1AliasMiddleware)

@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -15,12 +13,19 @@ import pytest
 from tests.integration.test_reservation_release import FakeLB, reserve_argv
 from tests.integration.test_route_reservations import route, server  # noqa: F401  (module-scoped server fixture)
 from tests.integration.test_seat_run_reservation import (  # noqa: F401  (env is a fixture)
-    HOLDERS, _script, env, invocations, mine, reservations, seat_argv, slow_discovery)
+    HOLDERS,
+    _script,
+    env,
+    invocations,
+    mine,
+    reservations,
+    seat_argv,
+    slow_discovery,
+)
 
 pytestmark = pytest.mark.timeout(600)
 
 SEAT_STOP_GRACE_S = 10.0
-
 
 
 LAUNCHER = """import os, pathlib, runpy, signal, sys
@@ -34,7 +39,6 @@ elif mode == "pid-reused":
 sys.argv = sys.argv[1:]
 runpy.run_path(sys.argv[0], run_name="__main__")
 """
-
 
 
 STRAY = """import ctypes, os, signal, threading, time
@@ -81,8 +85,9 @@ print(json.dumps({"type": "result", "is_error": False, "result": "done", "sessio
 
 def stop_during_listing(argv: list[str], env: dict[str, str], marker: Path) -> tuple[int, dict, float]:
 
-    process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
-                               start_new_session=True)
+    process = subprocess.Popen(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=True
+    )
     HOLDERS.append(process)
     deadline = time.monotonic() + 60
     while not marker.exists():
@@ -117,8 +122,12 @@ def still_beating(beats: Path) -> bool:
 
 
 def stray_env(env: dict[str, str], tmp_path: Path) -> dict[str, str]:
-    return {**env, "STRAY_SCRIPT": str(tmp_path / "stray.py"), "STRAY_BEATS": str(tmp_path / "stray.beats"),
-            "STRAY_READY": str(tmp_path / "stray.ready")}
+    return {
+        **env,
+        "STRAY_SCRIPT": str(tmp_path / "stray.py"),
+        "STRAY_BEATS": str(tmp_path / "stray.beats"),
+        "STRAY_READY": str(tmp_path / "stray.ready"),
+    }
 
 
 def kill_stray(env: dict[str, str]) -> None:
@@ -132,19 +141,25 @@ def kill_stray(env: dict[str, str]) -> None:
 
 def test_without_proc_a_stop_releases_inside_the_grace(env: dict[str, str], tmp_path: Path) -> None:
     env = {**slow_discovery(env, tmp_path, 20), "ROUTE_TEST_EMULATE": "no-proc"}
-    rc, body, elapsed = stop_during_listing(launched(tmp_path, reserve_argv("no-proc")), env,
-                                            tmp_path / "discovery.pid")
+    rc, body, elapsed = stop_during_listing(
+        launched(tmp_path, reserve_argv("no-proc")), env, tmp_path / "discovery.pid"
+    )
     assert (rc, body["status"], held(env, "no-proc")) == (128 + signal.SIGTERM, "cancelled", False), body
     assert elapsed < SEAT_STOP_GRACE_S, (elapsed, body)
 
 
 def test_a_stop_never_signals_a_reused_pid(env: dict[str, str], tmp_path: Path) -> None:
     from tests.integration.test_reservation_release import STUBBORN_DISCOVERY
+
     outsider = subprocess.Popen(["sleep", "120"], start_new_session=True)
     child = tmp_path / "discovery.child"
-    env = {**slow_discovery(env, tmp_path, 0), "DISCOVERY_CHILD": str(child), "ROUTE_TEST_EMULATE": "pid-reused",
-           "OUTSIDER_PID": str(outsider.pid),
-           "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'stubborn', STUBBORN_DISCOVERY)}"}
+    env = {
+        **slow_discovery(env, tmp_path, 0),
+        "DISCOVERY_CHILD": str(child),
+        "ROUTE_TEST_EMULATE": "pid-reused",
+        "OUTSIDER_PID": str(outsider.pid),
+        "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'stubborn', STUBBORN_DISCOVERY)}",
+    }
     try:
         rc, body, elapsed = stop_during_listing(launched(tmp_path, reserve_argv("pid-reused")), env, child)
         assert outsider.poll() is None, "route SIGKILLed a pid outside its listing's process group"
@@ -163,8 +178,10 @@ def test_a_stop_never_signals_a_reused_pid(env: dict[str, str], tmp_path: Path) 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="a zombie leader with live threads is Linux /proc")
 def test_route_releases_only_once_a_zombie_leaders_threads_are_gone(env: dict[str, str], tmp_path: Path) -> None:
     _script(tmp_path / "stray.py", STRAY)
-    env = {**stray_env(slow_discovery(env, tmp_path, 0), tmp_path),
-           "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'stray-discovery', STRAY_DISCOVERY)}"}
+    env = {
+        **stray_env(slow_discovery(env, tmp_path, 0), tmp_path),
+        "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'stray-discovery', STRAY_DISCOVERY)}",
+    }
     try:
         rc, body, elapsed = stop_during_listing(reserve_argv("zombie-leader"), env, Path(env["STRAY_READY"]))
         released, beating = not held(env, "zombie-leader"), still_beating(Path(env["STRAY_BEATS"]))
@@ -180,8 +197,14 @@ def test_seat_releases_only_once_a_zombie_leaders_threads_are_gone(env: dict[str
     _script(tmp_path / "stray.py", STRAY)
     env = {**stray_env(env, tmp_path), "SEAT_CURSOR_BIN": str(_script(tmp_path / "stray-cursor", STRAY_CURSOR))}
     try:
-        result = subprocess.run(seat_argv(env, "zombie2", "--class", "mechanical"), capture_output=True, text=True,
-                                timeout=90, env=env, check=False)
+        result = subprocess.run(
+            seat_argv(env, "zombie2", "--class", "mechanical"),
+            capture_output=True,
+            text=True,
+            timeout=90,
+            env=env,
+            check=False,
+        )
         assert not still_beating(Path(env["STRAY_BEATS"])), "seat ended while the zombie leader's thread still ran"
         assert result.returncode == 0, result.stdout + result.stderr
         run = json.loads(result.stdout)
@@ -192,8 +215,6 @@ def test_seat_releases_only_once_a_zombie_leaders_threads_are_gone(env: dict[str
 
 
 class SlowLookupLB(FakeLB):
-
-
     def __init__(self) -> None:
         super().__init__()
         outer = self

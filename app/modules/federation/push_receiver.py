@@ -52,7 +52,10 @@ def _representable_expiry(expires_at_ms: int) -> bool:
 
 class FederationPushReceiver:
     def __init__(
-        self, repository: FederationRepository, *, settings: Settings | None = None,
+        self,
+        repository: FederationRepository,
+        *,
+        settings: Settings | None = None,
         encryptor: TokenEncryptor | None = None,
     ) -> None:
         self._repository = repository
@@ -86,18 +89,23 @@ class FederationPushReceiver:
             elif account.expires_at_ms is not None and (
                 account.expires_at_ms <= now_ms or not _representable_expiry(account.expires_at_ms)
             ):
-
-
                 reason = "expired_token"
             elif len(accepted) >= source.max_accounts:
                 reason = "over_limit"
             else:
                 changed = await self._repository.upsert_mirror_account(
-                    account_id=account.account_id, provider=account.provider, email=account.email,
-                    alias=account.alias, status=account.status, plan_type=account.plan_type,
-                    chatgpt_account_id=account.chatgpt_account_id, access_token=account.access_token,
-                    expires_at_ms=account.expires_at_ms, owner_instance_id=owner,
-                    local_instance_id=self._settings.local_instance_id, encryptor=self._encryptor,
+                    account_id=account.account_id,
+                    provider=account.provider,
+                    email=account.email,
+                    alias=account.alias,
+                    status=account.status,
+                    plan_type=account.plan_type,
+                    chatgpt_account_id=account.chatgpt_account_id,
+                    access_token=account.access_token,
+                    expires_at_ms=account.expires_at_ms,
+                    owner_instance_id=owner,
+                    local_instance_id=self._settings.local_instance_id,
+                    encryptor=self._encryptor,
                 )
                 if changed:
                     accepted.append(account.account_id)
@@ -105,13 +113,15 @@ class FederationPushReceiver:
                 reason = "conflict_owned_elsewhere"
             skipped.append(FederationPushSkip(account_id=account.account_id, reason=reason))
         removed = await self._repository.deactivate_mirrored_accounts_not_in(
-            owner_instance_id=owner, keep_ids={account.account_id for account in request.accounts},
+            owner_instance_id=owner,
+            keep_ids={account.account_id for account in request.accounts},
             encryptor=self._encryptor,
         )
         if accepted or removed:
             get_account_selection_cache().invalidate()
         usage = await self._repository.list_local_usage_rollups(
-            window_days=self._settings.federation_usage_window_days, account_ids=set(accepted),
+            window_days=self._settings.federation_usage_window_days,
+            account_ids=set(accepted),
         )
         return FederationPushResponse(
             source=source.name, accepted=accepted, skipped=skipped, removed=removed, usage=usage

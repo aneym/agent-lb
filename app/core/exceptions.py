@@ -4,8 +4,6 @@ from datetime import datetime, timezone
 
 
 class AppError(Exception):
-
-
     status_code: int = 500
     code: str = "internal_error"
     message: str = "Unexpected error"
@@ -15,9 +13,6 @@ class AppError(Exception):
         if code is not None:
             self.code = code
         super().__init__(self.message)
-
-
-
 
 
 class ProxyAuthError(AppError):
@@ -42,9 +37,6 @@ class ProxyUpstreamError(AppError):
     status_code = 503
     code = "upstream_error"
     error_type = "server_error"
-
-
-
 
 
 class TeamMemberSuspendedError(AppError):
@@ -79,15 +71,11 @@ class TeamMemberOverCapError(AppError):
     @property
     def headers(self) -> dict[str, str]:
 
-
         reset_at = self.reset_at if self.reset_at.tzinfo is not None else self.reset_at.replace(tzinfo=timezone.utc)
         return {
             "X-Team-Window": self.window,
             "X-Team-Reset": reset_at.isoformat().replace("+00:00", "Z"),
         }
-
-
-
 
 
 class DashboardAuthError(AppError):
@@ -96,8 +84,6 @@ class DashboardAuthError(AppError):
 
 
 class DashboardForbiddenError(DashboardAuthError):
-
-
     status_code = 403
     code = "forbidden"
 

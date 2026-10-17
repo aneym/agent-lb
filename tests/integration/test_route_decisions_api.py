@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -11,7 +9,6 @@ pytestmark = pytest.mark.integration
 
 @pytest.mark.asyncio
 async def test_route_decisions_pairing_filters_counts_and_redaction(async_client, monkeypatch, tmp_path):
-
 
     ledger = tmp_path / "dispatch.jsonl"
     monkeypatch.setenv("ROUTE_LEDGER", str(ledger))

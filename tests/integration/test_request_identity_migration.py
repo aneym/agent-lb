@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import os
@@ -31,7 +29,6 @@ def test_request_identity_migration_preserves_old_rows_and_round_trips(tmp_path,
             "agent_lb_identity_scratch_"
         ):
             pytest.fail("PostgreSQL identity migration tests require a disposable identity scratch database")
-
 
     run_upgrade(db_url, "head")
     command.downgrade(_build_alembic_config(db_url), _PARENT)

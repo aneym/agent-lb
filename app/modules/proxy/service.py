@@ -701,7 +701,6 @@ _DOWNSTREAM_WEBSOCKET_IDLE_CLOSE_REASON = "Idle downstream websocket timeout"
 _DOWNSTREAM_WEBSOCKET_RECEIVE_POLL_SECONDS = 1.0
 
 
-
 _HTTP_BRIDGE_STARTUP_KEEPALIVE_GRACE_SECONDS = 0.5
 _DEFAULT_PROXY_ADMISSION_WAIT_TIMEOUT_SECONDS = 10.0
 
@@ -720,15 +719,9 @@ def _proxy_admission_wait_timeout_seconds(settings: Any | None = None) -> float:
     return max(0.001, timeout)
 
 
-
-
-
-
 _PREWARM_RESPONSE_TIMEOUT_SECONDS = 2.0
 _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS = 5.0
 _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
-
-
 
 
 _STREAM_KEEPALIVE_MAX_COUNT = 6
@@ -794,9 +787,6 @@ _UPSTREAM_UNAVAILABLE_NON_TRANSIENT_MESSAGE_MARKERS = (
 )
 _UPSTREAM_CLOSE_CODES_SKIP_SAME_ACCOUNT_RETRY = frozenset({1011})
 _MAX_TRANSIENT_SAME_ACCOUNT_RETRIES = 3
-
-
-
 
 
 _COMPACT_MAX_ACCOUNT_ATTEMPTS = 4
@@ -905,20 +895,8 @@ class ProxyService(
         self._websocket_previous_response_account_index: dict[tuple[str, str | None, str | None], str] = {}
         self._websocket_continuity_index: dict[tuple[str, str | None], _WebSocketContinuityState] = {}
 
-
-
-
-
-
-
         self._http_bridge_account_cooldowns: dict[_HTTPBridgeSessionKey, _FilePinEntry] = {}
         self._background_cleanup_tasks: set[asyncio.Task[None]] = set()
-
-
-
-
-
-
 
         self._file_account_pins: dict[str, _FilePinEntry] = {}
         self._file_account_pin_lock = asyncio.Lock()
@@ -1384,10 +1362,6 @@ class ProxyService(
 
     @asynccontextmanager
     async def _accounts_refresh_scope(self) -> AsyncIterator[AccountsRepositoryPort]:
-
-
-
-
 
         async with self._repo_factory() as repos:
             yield repos.accounts
@@ -1932,17 +1906,6 @@ class ProxyService(
 
 
 def _is_account_neutral_error_code(code: str | None) -> bool:
-
-
-
-
-
-
-
-
-
-
-
 
     return is_local_overload_error_code(code) or code == "proxy_unavailable" or code == "bridge_first_event_timeout"
 

@@ -79,9 +79,6 @@ class RuntimeVersionService:
         try:
             latest_version = await self._fetch_latest_release_version()
         except _NoPublishedRelease:
-
-
-
             logger.info("No published agent-lb release on GitHub; update checks report current only")
             return _RuntimeVersionSnapshot(
                 current_version=self._current_version,

@@ -97,7 +97,6 @@ async def exchange_anthropic_authorization_code(
         "redirect_uri": redirect_uri or settings.anthropic_oauth_redirect_uri,
     }
 
-
     if state:
         payload["state"] = state
     payload_data = await _post_token_request(
@@ -188,7 +187,6 @@ async def _post_token_request(
     on_exchange_start: Callable[[], None] | None = None,
 ) -> AnthropicOAuthTokenPayload:
     settings = get_settings()
-
 
     encoded = json.dumps(dict(payload))
     timeout = aiohttp.ClientTimeout(total=timeout_seconds or settings.oauth_timeout_seconds)
@@ -313,8 +311,6 @@ def _metadata_from_payload(payload: AnthropicOAuthTokenPayload) -> AnthropicToke
     )
     email = _first_text(
         payload.email,
-
-
         _nested_text(metadata, ("account", "email_address")),
         _nested_text(metadata, ("account", "email")),
         _nested_text(metadata, ("user", "email_address")),

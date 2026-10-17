@@ -7,8 +7,6 @@ from app.core.identity import reset_request_identity, resolve_scope_identity, se
 
 
 class IdentityMiddleware:
-
-
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 

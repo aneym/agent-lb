@@ -52,8 +52,6 @@ class UsagePayload(BaseModel):
     credits: CreditsPayload | None = None
     additional_rate_limits: list[AdditionalRateLimitPayload] | None = None
 
-
-
     fable_scoped_weekly: UsageWindow | None = None
     reset_credits_available: int | None = None
 

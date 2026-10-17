@@ -41,18 +41,12 @@ _bearer = HTTPBearer(description="API key (e.g. sk-clb-…)", auto_error=False)
 API_KEY_TOKEN_PREFIX = "sk-clb-"
 
 
-
-
-
 def set_openai_error_format(request: Request) -> None:
     request.state.error_format = "openai"
 
 
 def set_dashboard_error_format(request: Request) -> None:
     request.state.error_format = "dashboard"
-
-
-
 
 
 def select_proxy_authorization(authorization: str | None, x_api_key: str | None) -> str | None:
@@ -90,9 +84,6 @@ async def validate_proxy_api_key_authorization(
     settings = await get_settings_cache().get()
     if not settings.api_key_auth_enabled:
         if request is None or is_local_request(request) or _is_proxy_unauthenticated_client_allowed(request):
-
-
-
             trusted_token = _extract_bearer_token(authorization)
             if trusted_token and trusted_token.startswith(API_KEY_TOKEN_PREFIX):
                 return await _validate_api_key_token(trusted_token)
@@ -120,7 +111,6 @@ async def _validate_api_key_token(token: str) -> ApiKeyData:
 
 async def _validated_api_key_token(token: str) -> ApiKeyData:
 
-
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     cache = get_api_key_cache()
     cached = cast(ApiKeyData | None, await cache.get(token_hash))
@@ -141,9 +131,6 @@ async def _validated_api_key_token(token: str) -> ApiKeyData:
             raise ProxyAuthError(str(exc)) from exc
 
 
-
-
-
 async def validate_usage_api_key(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
@@ -154,9 +141,6 @@ async def validate_usage_api_key(
         raise ProxyAuthError("Missing API key in Authorization header")
 
     return await _validate_api_key_token(token)
-
-
-
 
 
 async def validate_eval_api_access(request: HTTPConnection) -> None:
@@ -177,9 +161,6 @@ async def validate_eval_api_access(request: HTTPConnection) -> None:
 
 async def validate_dashboard_session(request: Request) -> None:
     settings = await get_settings_cache().get()
-
-
-
 
     if getattr(settings, "team_mode_enabled", False) and not _is_trusted_dashboard_client(request):
         raise DashboardForbiddenError(
@@ -228,13 +209,7 @@ def _is_trusted_dashboard_client(request: HTTPConnection) -> bool:
     return is_local_request(request) or _is_proxy_unauthenticated_client_allowed(request)
 
 
-
-
-
 _is_proxy_unauthenticated_client_allowed = is_unauthenticated_client_allowed
-
-
-
 
 
 async def validate_codex_usage_identity(request: Request) -> ApiKeyData | None:

@@ -215,8 +215,6 @@ class _RequestLogMixin:
     ) -> None:
         proxy = cast(_RequestLogServiceProtocol, self)
         try:
-
-
             identity = await attach_member(identity, api_key_member_id)
             async with proxy._repo_factory() as repos:
                 await repos.request_logs.add_log(

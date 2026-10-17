@@ -40,8 +40,6 @@ class DemandBin:
 
 @dataclass(frozen=True, slots=True)
 class DemandSlot:
-
-
     slot_epoch: int
     request_kind: str
     input_tokens: int

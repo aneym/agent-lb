@@ -471,10 +471,6 @@ class ResponsesRequest(BaseModel):
     @classmethod
     def _validate_input_type(cls, value: JsonValue) -> JsonValue:
 
-
-
-
-
         if isinstance(value, str):
             normalized = _normalize_input_text(value)
             return _sanitize_input_items(normalized)
@@ -556,7 +552,6 @@ class ResponsesCompactRequest(BaseModel):
     @field_validator("input")
     @classmethod
     def _validate_input_type(cls, value: JsonValue) -> JsonValue:
-
 
         if isinstance(value, str):
             normalized = _normalize_input_text(value)

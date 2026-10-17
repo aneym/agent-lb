@@ -1597,8 +1597,6 @@ async def test_v1_responses_http_bridge_codex_session_uses_extended_idle_ttl(asy
         max_sessions=8,
     )
 
-
-
     session.last_used_at = time.monotonic() - 300.0
     service._http_bridge_last_idle_prune_monotonic -= _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS + 1.0
     async with service._http_bridge_lock:
@@ -3930,7 +3928,6 @@ async def test_v1_responses_http_bridge_reuses_upstream_websocket_and_preserves_
     assert second.status_code == 200
     second_body = second.json()
 
-
     for _ in range(50):
         async with SessionLocal() as session:
             rows = (
@@ -6062,10 +6059,6 @@ async def test_v1_responses_http_bridge_does_not_evict_queued_session_when_pool_
         monkeypatch,
         enabled=True,
         max_sessions=1,
-
-
-
-
         admission_wait_timeout_seconds=30.0,
     )
     account_id = await _import_account(
@@ -9556,8 +9549,6 @@ async def test_prepare_http_bridge_request_preserves_existing_client_metadata(ap
 
 
 class _CompactionBridgeUpstreamWebSocket(_FakeBridgeUpstreamWebSocket):
-
-
     compaction_item = {
         "type": "compaction",
         "id": "cmp_bridge_1",
@@ -9707,7 +9698,6 @@ async def test_backend_responses_http_bridge_reinjects_compaction_items_into_com
     assert [item.get("type") for item in completed_output] == ["compaction"]
     assert completed_output[0]["encrypted_content"] == "opaque-account-bound-blob"
 
-
     upstream_payload = json.loads(fake_upstream.sent_text[0])
     assert {"type": "compaction_trigger"} in upstream_payload["input"]
 
@@ -9799,8 +9789,6 @@ async def test_backend_responses_http_bridge_leaves_nonempty_completed_output_un
 @pytest.mark.parametrize("rejection", ["upstream_403", "refresh_needs_reauth"])
 async def test_ccgpt_turn_moves_to_another_account_when_its_account_rejects_it(async_client, monkeypatch, rejection):
 
-
-
     _install_bridge_settings(monkeypatch, enabled=True)
     await _import_account(async_client, "acc_ccgpt_reject_a", "ccgpt-reject-a@example.com")
     await _import_account(async_client, "acc_ccgpt_reject_b", "ccgpt-reject-b@example.com")
@@ -9844,10 +9832,6 @@ async def test_ccgpt_turn_moves_to_another_account_when_its_account_rejects_it(a
 async def test_ccgpt_session_survives_its_account_needing_reauth_across_a_blue_green_swap(
     async_client, app_instance, monkeypatch
 ):
-
-
-
-
 
     from app.main import create_app
 

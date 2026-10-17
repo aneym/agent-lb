@@ -150,13 +150,8 @@ class _MergedAdditionalWindow:
     window_minutes: int | None
 
 
-
-
-
 _last_successful_refresh: dict[str, datetime] = {}
 _usage_refresh_auth_cooldowns: dict[str, float] = {}
-
-
 
 
 _usage_refresh_rate_limit_strikes: dict[str, int] = {}
@@ -284,12 +279,6 @@ class UsageUpdater:
             if not bypass_freshness and _latest_usage_is_fresh(latest, now=now, interval_seconds=interval):
                 continue
 
-
-
-
-
-
-
             if latest is None:
                 last_ok = _last_successful_refresh.get(account.id)
                 if not bypass_freshness and last_ok and (now - last_ok).total_seconds() < interval:
@@ -306,8 +295,6 @@ class UsageUpdater:
                         _last_successful_refresh[account.id] = additional_fresh_at
                         continue
 
-
-
             try:
                 result = await _USAGE_REFRESH_SINGLEFLIGHT.run(
                     account.id,
@@ -319,8 +306,6 @@ class UsageUpdater:
                 )
                 await self._sync_account_from_repo(account)
                 refreshed = refreshed or result.usage_written
-
-
 
                 if result.fetch_succeeded:
                     _last_successful_refresh[account.id] = now
@@ -503,10 +488,6 @@ class UsageUpdater:
             else:
                 reset_credit_cache.record_count(account.id, payload.reset_credits_available)
         elif account.provider == OPENAI_PROVIDER_NAME:
-
-
-
-
             reset_summary = payload.rate_limit_reset_credits
             if reset_summary is not None and reset_summary.available_count is not None:
                 reset_credit_cache.record_count(account.id, reset_summary.available_count)
@@ -584,7 +565,6 @@ class UsageUpdater:
                 self._additional_usage_repo is not None and payload.additional_rate_limits is not None
             ) or fable_scoped_written
             return AccountRefreshResult(usage_written=additional_synced)
-
 
         normalized_windows = usage_core.normalize_rate_limit_windows(
             rate_limit.primary_window,
@@ -1158,8 +1138,6 @@ def _reset_at(reset_at: int | None, reset_after_seconds: int | None, now_epoch: 
     return now_epoch + max(0, int(reset_after_seconds))
 
 
-
-
 _DEFAULT_EXHAUSTION_HORIZON_SECONDS = 3600
 
 
@@ -1182,9 +1160,6 @@ def _bounded_exhaustion_reset_at(
         else _DEFAULT_EXHAUSTION_HORIZON_SECONDS
     )
     return now_epoch + horizon
-
-
-
 
 
 _DEACTIVATING_USAGE_STATUS_CODES = {402, 404}

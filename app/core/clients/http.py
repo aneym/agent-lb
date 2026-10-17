@@ -82,8 +82,6 @@ async def _build_http_client() -> HttpClient:
         trust_env=True,
     )
     try:
-
-
         websocket_session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(ssl=_build_ssl_context()),
             timeout=aiohttp.ClientTimeout(total=None),
@@ -227,8 +225,6 @@ async def close_http_client() -> None:
             *_closing_http_clients,
         )
         for managed_client in clients:
-
-
             _request_client_close_locked(managed_client, force=True)
     if clients:
         await asyncio.gather(*(managed_client.closed.wait() for managed_client in clients))

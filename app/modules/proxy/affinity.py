@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -196,13 +194,10 @@ def _sticky_key_for_codex_control_request(
 
 def _owner_lookup_session_id_from_headers(headers: Mapping[str, str]) -> str | None:
 
-
     turn_state = _sticky_key_from_turn_state_header(headers)
     if turn_state is not None:
         return turn_state
     return _sticky_key_from_session_header(headers)
-
-
 
 
 _SYNTHESIZED_TURN_STATE_PATTERN = re.compile(r"^(?:http_)?turn_[0-9a-f]{32}$")
@@ -268,8 +263,6 @@ def _sticky_key_for_responses_request(
     sticky_threads_enabled: bool,
     api_key: ApiKeyData | None = None,
 ) -> _AffinityPolicy:
-
-
 
     cache_key, _ = _resolve_prompt_cache_key(
         payload,
