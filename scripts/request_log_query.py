@@ -159,7 +159,7 @@ def _table(rows: list[dict], summary: dict) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description='Per-request receipt from the agent-lb request log.'.splitlines()[0])
     parser.add_argument("--session", help="Claude Code / Codex session id (request_logs.session_id)")
     parser.add_argument("--key", help="API key name, id or key prefix (e.g. of-harbor)")
     parser.add_argument("--useragent", help="substring of the client user agent, e.g. 'codex_exec' or 'Ubuntu'")

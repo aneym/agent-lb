@@ -1,5 +1,4 @@
-"""Check: the dispatcher skips the installed no-chrome-guard on a plain command and still runs it on browser launches,
-and the real guard refuses those launches (so the prefilter is a superset on them)."""
+
 import importlib.util, json, os, subprocess, sys
 src = sys.argv[1]
 spec = importlib.util.spec_from_file_location("hd", src); hd = importlib.util.module_from_spec(spec)

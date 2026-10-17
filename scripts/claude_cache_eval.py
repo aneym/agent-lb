@@ -38,7 +38,7 @@ def redact(text: str) -> str:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description='End-to-end prompt-cache eval for Claude Code through agent-lb.'.splitlines()[0])
     parser.add_argument("--model", default="sonnet")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--arm", choices=("cli", "sdk"), default="cli")

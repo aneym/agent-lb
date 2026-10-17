@@ -873,7 +873,7 @@ def write_daily_report(payload, path, errors):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Read-only daily routing observations; proposals never change the ladder.')
     parser.add_argument("--since")
     parser.add_argument("--until")
     parser.add_argument("--out", type=Path)

@@ -124,19 +124,17 @@ plist: dict[str, Any] = {
     "WorkingDirectory": repo_dir,
     "RunAtLoad": True,
     "KeepAlive": True,
-    # launchd applies negative Nice to agents; prioritize the event loop under host load.
+
     "ProcessType": "Interactive",
     "Nice": existing.get("Nice") if type(existing.get("Nice")) is int else -10,
-    # lb-restart drains within ExitTimeOut; launchd SIGKILLs after it.
+
     "ExitTimeOut": existing.get("ExitTimeOut") if type(existing.get("ExitTimeOut")) is int else graceful_shutdown + 30,
     "StandardOutPath": f"{log_dir}/agent-lb.out.log",
     "StandardErrorPath": f"{log_dir}/agent-lb.err.log",
     "EnvironmentVariables": env,
 }
 
-# launchd defaults to 256 open files; the proxy holds hundreds of keep-alive
-# upstream sockets, so the default exhausts fds and turns into 500s on
-# /v1/messages ("Too many open files" / "unable to open database file").
+
 DEFAULT_FILE_LIMITS = {"SoftResourceLimits": 4096, "HardResourceLimits": 8192}
 
 for key, default_files in DEFAULT_FILE_LIMITS.items():
