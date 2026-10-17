@@ -3412,7 +3412,7 @@ def outcome_events_path() -> Path:
 
 
 def outcomes_path() -> Path:
-    return _env_path("ROUTE_OUTCOMES", Path.home() / ".claude" / "logs" / "outcomes.jsonl")
+    return _env_path("ROUTE_OUTCOMES", Path.home() / ".agent-lb/audits/routing/outcomes.jsonl")
 
 
 def merge_receipts_path() -> Path:
@@ -3718,7 +3718,13 @@ def log_value(row: dict[str, Any], *keys: str) -> Any:
 
 
 def summed_part(part: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
-    costs = [number_or_none(log_value(row, "cost_usd", "costUsd")) for row in rows]
+    costs = []
+    for row in rows:
+        cost = number_or_none(log_value(row, "cost_usd", "costUsd"))
+        tokens = number_or_none(row.get("tokens")) or sum(
+            number_or_none(log_value(row, *keys)) or 0
+            for keys in (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens")))
+        costs.append(None if cost == 0 and tokens > 0 else cost)
     if not rows or any(cost is None for cost in costs):
         return {"part": part, "source": "unknown", "usd": None}
     return {"part": part, "source": "request_logs", "usd": round(sum(costs), 6)}
@@ -3763,6 +3769,15 @@ class JobView:
         return sorted(found)
 
 
+def eval_seat_id(decision_id: str) -> str:
+    return "eval." + decision_id[len("dcn_"):].lower()
+
+
+def command_eval_seat(args: argparse.Namespace) -> int:
+    print(eval_seat_id(args.decision_id))
+    return EXIT_OK
+
+
 def job_own_parts(table: dict[str, Any], view: JobView, logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     fallback = view.fallback()
     seat = (fallback or {}).get("seat") or view.first.get("seat")
@@ -3776,7 +3791,8 @@ def job_own_parts(table: dict[str, Any], view: JobView, logs: list[dict[str, Any
     for decision in view.decisions:
         decision_id = decision.get("decision_id")
         sessions = set(view.session_ids(decision_id))
-        rows = [row for row in logs if log_value(row, "caller_seat", "callerSeat") == decision_id
+        rows = [row for row in logs
+                if log_value(row, "caller_seat", "callerSeat") in (decision_id, eval_seat_id(decision_id))
                 or (sessions and log_value(row, "session_id", "sessionId") in sessions)]
         wrapper_rows = [row for row in rows if has_wrapper
                         and str(log_value(row, "model") or "").startswith("claude-")]
@@ -3913,6 +3929,9 @@ def build_outcomes(table: dict[str, Any], events: list[dict[str, Any]], decision
             "wrapper_model": view.latest("wrapper_model") or first.get("wrapper_model"),
             "fallback": fallback,
             "status": status,
+            "outcome": status,
+            "ts": view.events[-1]["ts"] if view.events else first.get("ts"),
+            "eligible_arms": first.get("eligible_arms", []),
             "success_rule": rule,
             "repairs": len(view.kind("repair")),
             "escalations": len(view.kind("escalation")),
@@ -3920,6 +3939,7 @@ def build_outcomes(table: dict[str, Any], events: list[dict[str, Any]], decision
             "merge_shas": sorted({str(event["data"].get("merge_sha")) for event in view.kind("merge")}),
             "cost_usd": cost,
             "cost_known_usd": known,
+            "cost_known": cost is not None,
             "cost_parts": parts,
             "attribution_complete": cost is not None and all(
                 decision.get("decision_id") in settled for decision in view.decisions),
@@ -4662,10 +4682,6 @@ def print_implement_report(since: datetime, days: int) -> None:
         )
 
 
-def outcome_path() -> Path:
-    return _env_path("ROUTE_OUTCOMES", Path.home() / ".agent-lb/audits/routing/outcomes.jsonl")
-
-
 def learning_window(value: str) -> tuple[datetime, datetime]:
     match = re.fullmatch(r"([1-9][0-9]*)d", value)
     if not match:
@@ -4676,7 +4692,7 @@ def learning_window(value: str) -> tuple[datetime, datetime]:
 
 def learning_outcomes(since: datetime, until: datetime) -> list[dict[str, Any]]:
     try:
-        lines = outcome_path().read_text(encoding="utf-8").splitlines()
+        lines = outcomes_path().read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
         return []
     records = {}
@@ -4963,6 +4979,10 @@ def command_standings(args: argparse.Namespace) -> int:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="route", description="Route a task class to a live seat.")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    eval_seat = sub.add_parser("eval-seat", help="print the request-log seat for a decision")
+    eval_seat.add_argument("decision_id")
+    eval_seat.set_defaults(handler=command_eval_seat)
 
     pools = sub.add_parser("pools", help="pool headroom from the LB")
     pools.add_argument("--json", action="store_true")
