@@ -30,7 +30,7 @@ class AutocompactInstall(unittest.TestCase):
             settings.write_text(original)
             table_path = repo / 'config/coding-agents/routing-table.json'
             table = json.loads(table_path.read_text())
-            self.assertEqual(table['autocompact_window'], {'tab': 400000, 'lane': 300000, 'box': 300000})
+            self.assertEqual(table['autocompact_window'], {'tab': 300000, 'lane': 300000, 'box': 300000})
             window = 412000
             table['autocompact_window']['tab'] = window
             table_path.write_text(json.dumps(table))
