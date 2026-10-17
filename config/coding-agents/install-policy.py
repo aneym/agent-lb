@@ -375,6 +375,43 @@ LEGACY_HEADINGS = (
     "Coding-agent routing",
     "Orchestration — Fable architects, the fleet executes",
 )
+MODELS_FULL = Path(".claude/docs/models-full.md")
+CORE_LINE = re.compile(r"<!-- core:(begin|end) ([a-z0-9][a-z0-9-]*) -->")
+
+
+def split_core(text: str) -> tuple[str | None, str]:
+    blocks: list[list[str]] = []
+    full: list[str] = []
+    names: set[str] = set()
+    open_name: str | None = None
+    for number, line in enumerate(text.splitlines(keepends=True), 1):
+        stripped = line.rstrip("\r\n")
+        if "<!-- core:" not in stripped:
+            full.append(line)
+            if open_name is not None:
+                blocks[-1].append(line)
+            continue
+        match = CORE_LINE.fullmatch(stripped)
+        if not match:
+            raise ValueError(f"line {number}: malformed core marker {stripped!r}")
+        kind, name = match.groups()
+        if kind == "begin":
+            if open_name is not None:
+                raise ValueError(f"line {number}: core block {name!r} opens inside {open_name!r}")
+            if name in names:
+                raise ValueError(f"line {number}: core block {name!r} is not unique")
+            names.add(name)
+            open_name = name
+            blocks.append([])
+        else:
+            if open_name != name:
+                raise ValueError(f"line {number}: core:end {name!r} does not close {open_name!r}")
+            open_name = None
+    if open_name is not None:
+        raise ValueError(f"core block {open_name!r} is never closed")
+    if not blocks:
+        return None, "".join(full)
+    return "\n".join("".join(block).strip("\r\n") + "\n" for block in blocks), "".join(full)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1822,11 +1859,19 @@ def main() -> int:
     }
     models_path = args.home / ".claude/rules/models.md"
     models_text = models_path.read_bytes().decode("utf-8") if models_path.exists() else ""
+    full_path = args.home / MODELS_FULL
+    full_disk = full_path.read_bytes().decode("utf-8") if full_path.exists() else ""
     if args.uninstall:
         if models_text.startswith(MODELS_MARKER):
             changes[models_path] = None
+        if full_disk.startswith(MODELS_MARKER):
+            changes[full_path] = None
     else:
         routing_bytes = (source / "ROUTING.md").read_bytes()
+        try:
+            core_text, full_text = split_core(routing_bytes.decode("utf-8"))
+        except ValueError as exc:
+            raise SystemExit(f"error: ROUTING.md core markers: {exc}") from exc
         workspace_path = source / "WORKSPACE.md"
         workspace_bytes = workspace_path.read_bytes() if workspace_path.is_file() else b""
         rules_rev = hashlib.sha256(routing_bytes + workspace_bytes).hexdigest()[:12]
@@ -1835,7 +1880,12 @@ def main() -> int:
             'Do not edit: the next install overwrites local edits. Change the rule in agent-lb, '
             'or ask `factory ask "<question>" --json`. History: ~/.claude/ledgers/models-ledger.md. -->'
         )
-        desired_models = header + "\n\n" + routing_bytes.decode("utf-8")
+        desired_models = header + "\n\n" + (full_text if core_text is None else core_text)
+        desired_full = header + "\n\n" + full_text
+        if full_path.exists() and not full_disk.startswith(MODELS_MARKER):
+            print(f"SKIP {full_path}: hand-kept file, not overwritten")
+        elif desired_full != full_disk:
+            changes[full_path] = desired_full
         if models_path.exists() and not models_text.startswith(MODELS_MARKER):
             date = datetime.now(timezone.utc).strftime("%Y%m%d")
             backup = args.home / f".claude/ledgers/models-md-handkept-{date}.md"
