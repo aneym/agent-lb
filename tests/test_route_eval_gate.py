@@ -114,3 +114,45 @@ def test_explicit_promote_under_veto_needs_override(policy):
     assert report['entry']['override_evidence'] is True
     assert report['entry']['eval_gate']['veto'] is True
     assert json.loads(policy[0].read_text())['standards']['implement']['arm_id'] == 'muse'
+
+
+def test_eval_ingest_events_build_eval_rows(policy, tmp_path):
+    table = json.loads(policy[0].read_text())
+    table['standards']['verify'] = {'arm_id': 'sol', 'seat': 'codex-verifier', 'model': 'sol-latest'}
+    table['explore']['arms']['verify'] = [{'arm_id': 'muse', 'seat': 'muse-seat', 'model': 'muse-latest'}]
+    policy[0].write_text(json.dumps(table))
+    before = json.loads(run(policy[2], 'standings', '--json').stdout)
+    stamp = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    decision_id = 'dcn_01EVALT01MUSE'
+    job = 'eval:t01@1#1:muse'
+    (tmp_path / 'decisions.jsonl').write_text(json.dumps({
+        'v': 1, 'decision_id': decision_id, 'job_id': job, 'class': 'verify', 'arm': 'explicit',
+        'arm_id': 'muse', 'seat': 'codex-verifier', 'model': 'sol-latest', 'propensity': 1,
+        'policy_rev': 'routing-v2-test', 'ts': stamp,
+    }) + '\n')
+    tags = {'source': 'eval', 'task_version': 't01@1', 'validation_hash': 'sha256:abc',
+            'eligible_arms': ['sol', 'muse']}
+    events = [
+        {'v': 1, 'event_id': 'evt_' + '1' * 32, 'job_id': job, 'decision_id': decision_id, 'attempt': 1,
+         'kind': 'closeout', 'ts': stamp, **tags, 'data': {'ok': True, 'wall_s': 12}},
+        {'v': 1, 'event_id': 'evt_' + '2' * 32, 'job_id': job, 'decision_id': decision_id, 'attempt': 1,
+         'kind': 'verdict', 'ts': stamp, **tags, 'data': {'matches': False}},
+    ]
+    (tmp_path / 'events.jsonl').write_text(''.join(json.dumps(event) + '\n' for event in events))
+    (tmp_path / 'logs.jsonl').write_text(json.dumps({
+        'caller_seat': 'eval.01evalt01muse', 'model': 'sol', 'costUsd': .1, 'tokens': 100}) + '\n')
+    built = tmp_path / 'built.jsonl'
+    run({**policy[2], 'ROUTE_DECISIONS_LOG': str(tmp_path / 'decisions.jsonl'),
+         'OUTCOME_EVENTS': str(tmp_path / 'events.jsonl'), 'ROUTE_REQUEST_LOGS': str(tmp_path / 'logs.jsonl'),
+         'ROUTE_OUTCOME_REVERTS': str(tmp_path / 'reverts.jsonl'), 'ROUTE_OUTCOMES': str(built)},
+        'outcomes', 'build', '--write', '--json')
+    [row] = [json.loads(line) for line in built.read_text().splitlines()]
+    assert {key: row[key] for key in tags} == tags
+    assert (row['status'], row['attribution_complete']) == ('rejected', True)
+    with policy[1].open('a') as stream:
+        stream.write(built.read_text())
+    after = json.loads(run(policy[2], 'standings', '--json').stdout)
+    assert after['classes'] == before['classes']
+    evals = json.loads(run(policy[2], 'standings', '--source', 'eval', '--json').stdout)
+    arm = next(arm for arm in evals['classes']['verify']['arms'] if arm['arm_id'] == 'muse')
+    assert (arm['n'], arm['accepted']) == (1, 0)

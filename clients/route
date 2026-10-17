@@ -3762,6 +3762,13 @@ class JobView:
                 return value
         return None
 
+    def tagged(self, key: str) -> Any:
+        for event in reversed(self.kind("verdict", "closeout")):
+            value = event[key] if key in event else event["data"].get(key)
+            if value not in (None, "", []):
+                return value
+        return None
+
     def session_ids(self, decision_id: str | None = None) -> list[str]:
         found: set[str] = set()
         for event in self.kind("closeout", "infra"):
@@ -3914,7 +3921,7 @@ def build_outcomes(table: dict[str, Any], events: list[dict[str, Any]], decision
         infra = [reason for reason in infra if reason]
         settled = {event.get("decision_id") for event in view.kind("closeout", "infra")}
         first = view.first
-        rows.append({
+        row = {
             "v": 1,
             "job_id": job,
             "decision_ids": [str(decision["decision_id"]) for decision in view.decisions],
@@ -3947,7 +3954,14 @@ def build_outcomes(table: dict[str, Any], events: list[dict[str, Any]], decision
             "wall_s": round(sum(walls), 1) if walls else None,
             "session_ids": view.session_ids(),
             "evidence": [event["event_id"] for event in view.events],
-        })
+        }
+        if view.tagged("source") == "eval":
+            row["source"] = "eval"
+        for key in ("task_version", "validation_hash", "eligible_arms"):
+            value = view.tagged(key)
+            if value is not None:
+                row[key] = value
+        rows.append(row)
     return rows
 
 
