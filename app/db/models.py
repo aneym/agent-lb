@@ -138,7 +138,6 @@ class Account(Base):
     )
 
 
-
     owner_instance: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     api_key_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(
@@ -1009,8 +1008,6 @@ class QuotaPlannerSettings(Base):
     prewarm_lead_minutes: Mapped[int] = mapped_column(Integer, default=300, server_default=text("300"), nullable=False)
 
 
-
-
     seed_target_offset_minutes: Mapped[int] = mapped_column(
         Integer,
         default=120,
@@ -1371,8 +1368,6 @@ Index(
 )
 
 
-# Equality prefixes let SQLite resolve canonical and historical aliases without
-# ranking the complete additional quota history.
 for _quota_column, _quota_suffix in (
     (AdditionalUsageHistory.quota_key, "key"),
     (func.lower(AdditionalUsageHistory.limit_name), "limit"),
