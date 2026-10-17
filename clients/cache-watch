@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""cache-watch: alert on sustained prompt-cache failures across client groups.
 
-Runs every 10 minutes under launchd. Two consecutive ALERT observations write
-~/.agent-lb/CACHE_ALERT and post a macOS notification; a healthy observation
-removes the file. Falls back to agent-lb status when lb-cache is unavailable.
-"""
 
 from __future__ import annotations
 
@@ -72,7 +67,7 @@ def main() -> int:
             ALERT.write_text(line + "\n")
         elif obs["state"] == "ok" and ALERT.exists():
             ALERT.unlink()
-    except Exception:  # the watcher must never crash-loop launchd
+    except Exception:
         pass
     return 0
 

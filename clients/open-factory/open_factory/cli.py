@@ -1,4 +1,4 @@
-# ruff: noqa: E501  (long lines are prompt text the CLI writes verbatim)
+
 from __future__ import annotations
 
 import argparse

@@ -1,32 +1,5 @@
 #!/usr/bin/env python3
-# agent-lb-federation — operator CLI for the instance-federation account
-# checkout/checkin flows. Vendored, dependency-free (stdlib only), same style
-# family as clients/claude-lb-launch.
-#
-# It drives the taker-side, operator-triggered endpoints of the local
-# agent-lb instance:
-#   POST /api/federation/checkout/execute {account_id}
-#   POST /api/federation/checkin/execute  {account_id}
-# and reports per-account results. `status` reads the local federation health
-# endpoint, including mirror and usage-push state.
-#
-# Usage:
-#   clients/agent-lb-federation status
-#   clients/agent-lb-federation checkout <account-id> [<account-id>...]
-#   clients/agent-lb-federation checkin  <account-id> [<account-id>...]
-#   clients/agent-lb-federation reclaim  <account-id>
-#
-# Env:
-#   CLAUDE_LB_LOCAL_URL          local instance base URL (default http://127.0.0.1:2455)
-#   AGENT_LB_DASHBOARD_PASSWORD    optional dashboard password (never printed)
-#   AGENT_LB_FEDERATION_PEER_URL peer instance base URL, used for the peer /health
-#                                preflight (no local endpoint advertises it)
-#   CLAUDE_LB_FEDERATION_TIMEOUT per-request timeout seconds (default 10)
-#
-# Exit codes:
-#   0  success
-#   1  operational failure (preflight abort, per-account failure, local unhealthy)
-#   2  configuration/usage error (missing token or peer URL)
+
 
 from __future__ import annotations
 
@@ -67,7 +40,7 @@ def request_timeout() -> float:
 
 
 class HttpResult:
-    """Outcome of one HTTP call: transport-level success plus the parsed body."""
+
 
     def __init__(self, *, ok: bool, status: int | None, body: object, error: str | None) -> None:
         self.ok = ok
@@ -133,7 +106,7 @@ def _detail(body: object) -> str | None:
 
 
 def health_ok(base_url: str) -> tuple[bool, str]:
-    """Probe GET /health at base_url. Returns (ok, detail)."""
+
     result = _http("GET", f"{base_url}/health", token=None, payload=None)
     if result.ok:
         status = result.body.get("status") if isinstance(result.body, dict) else None
@@ -142,7 +115,7 @@ def health_ok(base_url: str) -> tuple[bool, str]:
 
 
 def preflight(local: str, peer: str) -> tuple[bool, list[str]]:
-    """Both local and peer /health must be reachable before any mutation."""
+
     notes: list[str] = []
     local_ok, local_detail = health_ok(local)
     notes.append(f"local  {local}  {'ok' if local_ok else 'FAIL: ' + local_detail}")

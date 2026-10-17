@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Show prompt-cache health by client and provider from agent-lb request receipts."""
+
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ from pathlib import Path
 DEFAULT_DB = "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb"
 ACK_FILE = Path.home() / ".agent-lb" / "cache-watch.ack.json"
 GROUPS = ("anthropic", "agent-sdk", "ccgpt-bridge", "codex-cli")
-# cache-watch pages on lb-cache ALERT. A new client group is thin by nature, so
-# agent-sdk is printed in the report and omitted from checks.
+
+
 REPORT_ONLY_GROUPS = frozenset({"agent-sdk"})
 ANTHROPIC_GROUPS = frozenset({"anthropic", "agent-sdk"})
 GROUP_SQL = (
@@ -28,7 +28,7 @@ GROUP_SQL = (
     "useragent ILIKE 'Claude Code/%') THEN 'ccgpt-bridge' "
     "ELSE 'codex-cli' END"
 )
-# launchd jobs (cache-watch) run with PATH=/usr/bin:/bin, which has no Homebrew psql.
+
 PSQL = shutil.which("psql") or next(
     (p for p in ("/opt/homebrew/bin/psql", "/usr/local/bin/psql") if os.access(p, os.X_OK)), "psql")
 
@@ -54,7 +54,7 @@ def query(sql: str) -> list[list[str]]:
         text=True, capture_output=True, timeout=90,
     )
     if result.returncode:
-        # Extract only server SQL errors; psql diagnostics can echo connection strings.
+
         errors = [line for line in result.stderr.splitlines() if line.startswith("ERROR:")]
         raise RuntimeError("database query failed (psql exit %s): %s" %
                            (result.returncode, errors[0] if errors else "connection or query error"))
@@ -201,8 +201,8 @@ def evaluate(metrics: dict, acknowledgements: list[dict], now: datetime) -> tupl
             specs = [("anthropic.read_ratio", m.get("read_ratio"), 0.90, 50, m.get("requests", 0), "low")]
         else:
             specs = []
-        # Anthropic baseline is ~2-3%: subagents and teammates share the parent session id, so each one's
-        # first call counts as a steady-turn write. Incidents measured 20-35% (2026-09-24/25).
+
+
         specs += [(f"{grp}.rewrite", m.get("rewrite_rate"), 0.10 if grp == "anthropic" else 0.20,
                    50 if grp == "anthropic" else 20, m.get("steady_turns", 0), "high"),
                   (f"{grp}.account_switch", m.get("switch_rate"), 0.10, 20,
@@ -214,8 +214,8 @@ def evaluate(metrics: dict, acknowledgements: list[dict], now: datetime) -> tupl
             is_warn = sample >= minimum and value is not None and (
                 value < warning_boundary if direction == "low" else value > warning_boundary)
             level = "ALERT" if is_alert else "WARN" if is_warn else "OK"
-            # Account switches are legitimate when quota or errors force them (Alex, 2026-09-28);
-            # any cache they cost already shows in rewrite and read_ratio, so they only ever WARN.
+
+
             if name.endswith(".account_switch") and level == "ALERT":
                 level = "WARN"
             ack = next((a for a in acknowledgements if a.get("check") == name and
@@ -349,8 +349,8 @@ def quota_report(receipts: list[dict], start: datetime, end: datetime) -> dict:
                     new_reset = (row.get('unified_headers') or {}).get(
                         f'anthropic-ratelimit-unified-{window}-reset')
                     crossed_reset = old_reset is not None and new_reset is not None and old_reset != new_reset
-                    # Legacy receipts have no reset evidence. Refuse intervals long enough
-                    # to cross an entire quota window even when utilization rose.
+
+
                     too_long = (ts - utc(prior['ts'])).total_seconds() >= (18000 if window == '5h' else 604800)
                     if ts >= start:
                         if value < before or crossed_reset or too_long:
@@ -368,7 +368,7 @@ def quota_report(receipts: list[dict], start: datetime, end: datetime) -> dict:
                             for r, weight in zip(pending, weights):
                                 if utc(r['ts']) < start:
                                     continue
-                                # Keep the existing caller tags together; absent tags stay unknown.
+
                                 caller = {k: r.get(k) for k in ('caller_user', 'caller_machine', 'caller_seat', 'room')}
                                 caller['session'] = r.get('client_session_id') or r.get('session_id') if not (
                                     caller['caller_seat'] or caller['room']) else None
@@ -419,7 +419,7 @@ def quota_display(data: dict) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Show prompt-cache health by client and provider from agent-lb request receipts.')
     parser.add_argument("--since", default="1h", help="1h, 24h, 7d or ISO timestamp (UTC by default)")
     parser.add_argument("--until", help="ISO timestamp, exclusive (UTC by default)")
     parser.add_argument("--json", action="store_true")

@@ -38,7 +38,7 @@ def prebuild(task: Path) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Build each task's image once and point its task.toml at it.".splitlines()[0])
     parser.add_argument("tasks", type=Path)
     parser.add_argument("-j", type=int, default=4, help="parallel builds")
     args = parser.parse_args()

@@ -1,23 +1,5 @@
 #!/usr/bin/python3
-"""Throttle agent-lb uploads while a game runs on the PC.
 
-Launchd polls the PC's tasklist once a minute, read over pc-wsl from the file
-the hidden pc-facts task writes (never `ssh pc`, which opens a console). Shadow mode
-(default) keeps the tasklist decision: a game takes the detector's hold, two
-idle polls release it, and failed polls keep protection. Enforce mode follows
-a fresh factory gaming signal, retaining the hold on unknown and falling back
-to tasklist when no valid signal is available. The detector's hold yields to
-a fresh gaming-adaptive hold, so a closed-loop cap can rise above this floor.
-Each signal poll logs a TSV comparison and atomically acknowledges the applied
-mode and throttle success.
-
-Factory signal, network ack, and game list default to ~/.agent-rails/factory/
-state/pc-game-signal.json, state/pc-game-ack/network.json, and
-~/factory/fleet/config/pc-games.json respectively, with GAMING_MODE_* overrides.
-The game list falls back to ~/.agent-lb/state/gaming-games.txt then defaults.
-Local state, shadow TSV, and transition logs live under GAMING_MODE_HOME (home
-by default). GAMING_MODE_SIGNAL_MODE accepts "enforce"; anything else is shadow.
-"""
 
 import csv
 import json
@@ -96,10 +78,10 @@ def save_state(state: dict) -> None:
 
 
 def running_images():
-    """Set of lowercased image names on the PC, or None when the poll failed."""
+
     try:
         result = subprocess.run(
-            # `tasklist /FO CSV /NH` as of under 2 minutes ago (factory fleet/pc/windows-tasks/pc-facts.ps1).
+
             [SSH, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc-wsl",
              'test -n "$(find pc-facts/tasklist.csv -mmin -2 2>/dev/null)" && cat pc-facts/tasklist.csv'],
             capture_output=True,
@@ -116,8 +98,8 @@ def running_images():
     try:
         for line in lines:
             row = next(csv.reader([line], strict=True))
-            # Reject truncated, table-format, and diagnostic output wholesale.
-            # Real tasklist also lists "System" and "System Idle Process", so check the PID, not ".exe".
+
+
             if len(row) != 5 or not row[0].strip() or not row[1].strip().isdigit():
                 return None
             images.add(row[0].strip().lower())
@@ -145,7 +127,7 @@ def set_throttle(on: bool, reason: str = "") -> bool:
 
 
 def throttle_enabled() -> bool:
-    """Whether this detector owns a hold, not whether another owner caps uploads."""
+
     path = Path(
         os.environ.get("AGENT_LB_THROTTLE_FILE") or HOME / ".agent-lb" / "state" / "upload-throttle.json"
     ).expanduser()
@@ -154,7 +136,7 @@ def throttle_enabled() -> bool:
             data = json.loads(candidate.read_text())
             if isinstance(data, dict):
                 if data.get("version") != 2:
-                    return False  # Legacy enabled protection is not detector-owned.
+                    return False
                 holds = data.get("holds")
                 if isinstance(holds, dict):
                     return "gaming-detector" in holds
@@ -164,7 +146,7 @@ def throttle_enabled() -> bool:
 
 
 def read_signal():
-    """Return a valid, fresh factory signal, or None for unavailable input."""
+
     try:
         signal = json.loads(SIGNAL.read_text())
         if not isinstance(signal, dict) or type(signal.get("generation")) is not int:

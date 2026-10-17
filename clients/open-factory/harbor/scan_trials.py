@@ -49,7 +49,7 @@ def main(argv: list[str]) -> int:
     as_json = "--json" in argv
     roots = [Path(arg) for arg in argv if arg != "--json"]
     if not roots:
-        print(__doc__.strip(), file=sys.stderr)
+        print("Flag Harbor trials whose agent tried to reach the task's upstream history.".strip(), file=sys.stderr)
         return 2
     results = [scan_trial(trial) for root in roots for trial in trial_dirs(root)]
     if as_json:

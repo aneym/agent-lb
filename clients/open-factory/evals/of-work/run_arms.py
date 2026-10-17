@@ -17,7 +17,7 @@ TASKS = Path.home() / ".agent-lb" / "of" / "dataset" / "v0" / "tasks"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description='Run of-work arms as concurrent Harbor jobs, one job dir per arm, then summarize.'.splitlines()[0])
     parser.add_argument("run")
     parser.add_argument("--arms", required=True)
     parser.add_argument("-k", type=int, default=1, help="attempts per task")
