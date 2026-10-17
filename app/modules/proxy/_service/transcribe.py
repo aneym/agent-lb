@@ -82,14 +82,6 @@ def _service_time() -> Any:
     return _service_global_or("time", time)
 
 
-def _service_push_transcribe_timeout_overrides(**kwargs: float) -> object:
-    return _service_global_or("push_transcribe_timeout_overrides", push_transcribe_timeout_overrides)(**kwargs)
-
-
-def _service_pop_transcribe_timeout_overrides(token: object) -> None:
-    _service_global_or("pop_transcribe_timeout_overrides", pop_transcribe_timeout_overrides)(cast(Any, token))
-
-
 def _call_with_supported_optional_kwargs(
     func: Callable[..., Awaitable[Any]],
     /,
@@ -227,7 +219,7 @@ class _TranscribeMixin:
                     route_endpoint_id = route.endpoint_id
                     route_fallback_used = False
                 route_trace = UpstreamProxyRouteTrace()
-                timeout_tokens = _service_push_transcribe_timeout_overrides(
+                timeout_tokens = push_transcribe_timeout_overrides(
                     connect_timeout_seconds=remaining_budget,
                     total_timeout_seconds=remaining_budget,
                 )
@@ -253,7 +245,7 @@ class _TranscribeMixin:
                         route_pool_id = route_trace.pool_id
                         route_endpoint_id = route_trace.endpoint_id
                         route_fallback_used = route_trace.fallback_used
-                    _service_pop_transcribe_timeout_overrides(timeout_tokens)
+                    pop_transcribe_timeout_overrides(timeout_tokens)
 
             async def _select_transcribe_failover(excluded_account_ids: set[str]) -> AccountSelection:
                 return await proxy._select_account_with_budget(

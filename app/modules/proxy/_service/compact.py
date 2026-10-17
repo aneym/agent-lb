@@ -139,23 +139,6 @@ def _service_core_compact_responses() -> _CompactResponses:
     return _service_global_or("core_compact_responses", core_compact_responses)
 
 
-def _service_push_compact_timeout_overrides(**kwargs: float) -> object:
-    service_module = sys.modules.get("app.modules.proxy.service")
-    if service_module is not None:
-        func = getattr(service_module, "push_compact_timeout_overrides", push_compact_timeout_overrides)
-        return cast(Callable[..., object], func)(**kwargs)
-    return push_compact_timeout_overrides(**kwargs)
-
-
-def _service_pop_compact_timeout_overrides(token: object) -> None:
-    service_module = sys.modules.get("app.modules.proxy.service")
-    if service_module is not None:
-        func = getattr(service_module, "pop_compact_timeout_overrides", pop_compact_timeout_overrides)
-        cast(Callable[[object], None], func)(token)
-        return
-    pop_compact_timeout_overrides(cast(Any, token))
-
-
 def _remaining_budget_seconds(deadline: float) -> float:
     return cast(Callable[[float], float], _service_global("_remaining_budget_seconds"))(deadline)
 
@@ -445,11 +428,11 @@ class _CompactMixin:
                     )
                     _raise_proxy_budget_exhausted()
                 if base_settings.upstream_compact_timeout_seconds is None:
-                    timeout_tokens = _service_push_compact_timeout_overrides(
+                    timeout_tokens = push_compact_timeout_overrides(
                         connect_timeout_seconds=remaining_budget,
                     )
                 else:
-                    timeout_tokens = _service_push_compact_timeout_overrides(
+                    timeout_tokens = push_compact_timeout_overrides(
                         connect_timeout_seconds=remaining_budget,
                         total_timeout_seconds=remaining_budget,
                     )
@@ -491,7 +474,7 @@ class _CompactMixin:
                     if create_lease is not None:
                         create_lease.release()
                     await proxy._load_balancer.release_account_lease(account_response_create_lease)
-                    _service_pop_compact_timeout_overrides(timeout_tokens)
+                    pop_compact_timeout_overrides(timeout_tokens)
 
             last_exc: ProxyResponseError | None = None
             excluded_account_ids: set[str] = set()

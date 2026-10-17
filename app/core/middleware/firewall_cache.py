@@ -71,9 +71,3 @@ def get_firewall_ip_cache() -> FirewallIPCache:
     if _firewall_ip_cache is None:
         _firewall_ip_cache = FirewallIPCache(ttl_seconds=_resolve_configured_ttl())
     return _firewall_ip_cache
-
-
-def reset_firewall_ip_cache_for_testing() -> None:
-
-    global _firewall_ip_cache
-    _firewall_ip_cache = None

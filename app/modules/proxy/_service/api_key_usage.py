@@ -42,21 +42,6 @@ def _service_api_keys_service() -> type[ApiKeysService]:
     return ApiKeysService
 
 
-def _api_key_reservation_heartbeat_seconds() -> float:
-    service_module = sys.modules.get("app.modules.proxy.service")
-    if service_module is not None:
-        value = getattr(
-            service_module,
-            "_API_KEY_RESERVATION_HEARTBEAT_SECONDS",
-            _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
-        )
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return _API_KEY_RESERVATION_HEARTBEAT_SECONDS
-    return _API_KEY_RESERVATION_HEARTBEAT_SECONDS
-
-
 class _ApiKeyUsageServiceProtocol(Protocol):
     _repo_factory: ProxyRepoFactory
     _background_cleanup_tasks: set[asyncio.Task[None]]
@@ -149,7 +134,7 @@ class _ApiKeyUsageMixin:
             return last_touch_at
 
         now = time.monotonic()
-        if now < last_touch_at + _api_key_reservation_heartbeat_seconds():
+        if now < last_touch_at + _API_KEY_RESERVATION_HEARTBEAT_SECONDS:
             return last_touch_at
 
         proxy = cast(_ApiKeyUsageServiceProtocol, self)
@@ -183,7 +168,7 @@ class _ApiKeyUsageMixin:
     ) -> None:
         while not stop_event.is_set():
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=_api_key_reservation_heartbeat_seconds())
+                await asyncio.wait_for(stop_event.wait(), timeout=_API_KEY_RESERVATION_HEARTBEAT_SECONDS)
                 return
             except TimeoutError:
                 touch_state.last_touch_at = await self._maybe_touch_api_key_reservation(
