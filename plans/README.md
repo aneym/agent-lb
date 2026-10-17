@@ -13,15 +13,15 @@ starting, honor its STOP conditions, and update your row when done.
 
 | Plan | Title | Priority | Effort | Risk | Depends on | Status |
 |------|-------|----------|--------|------|------------|--------|
-| 001 | Delete dead modules, proxy shims and one-off scripts | P1 | S | LOW | — | TODO |
-| 002 | Remove the upstream release, beta and Helm distribution machinery | P1 | M | MED | — | TODO |
-| 003 | Delete unit tests; keep kept-floor guards in `tests/floor/` | P1 | L | MED | 002 | TODO |
-| 004 | Remove test-only seams from production code | P2 | S | LOW | 003 | TODO |
-| 005 | One routing-table module inside `app/` (deepening) | P2 | S | MED | 003 | TODO |
-| 006 | Derive install-policy managed files from template names (deepening) | P2 | S | MED | 003 | TODO |
-| 007 | Remove the pre-Alembic migration bootstrap and revision remap | P3 | M | HIGH | 003 | TODO |
-| 008 | Delete the OpenSpec archive | P3 | S | LOW | — | TODO |
-| 009 | Sweep the remaining comments; install the pre-push comment hook | P2 | M | MED | 001-008 | TODO |
+| 001 | Delete dead modules, proxy shims and one-off scripts | P1 | S | LOW | — | DONE fe0c5b90 (guard + callers deleted too) |
+| 002 | Remove the upstream release, beta and Helm distribution machinery | P1 | M | MED | — | DONE 5cf3653f |
+| 003 | Delete unit tests; keep kept-floor guards in `tests/floor/` | P1 | L | MED | 002 | DONE 2b964bc5 |
+| 004 | Remove test-only seams from production code | P2 | S | LOW | 003 | DONE 0c8d536c |
+| 005 | One routing-table module inside `app/` (deepening) | P2 | S | MED | 003 | DONE 91c98efa |
+| 006 | Derive install-policy managed files from template names (deepening) | P2 | S | MED | 003 | DONE cd063ad9 |
+| 007 | Remove the pre-Alembic migration bootstrap and revision remap | P3 | M | HIGH | 003 | DONE 6c39e654 |
+| 008 | Delete the OpenSpec archive | P3 | S | LOW | — | DONE 3f60afbd |
+| 009 | Sweep the remaining comments; install the pre-push comment hook | P2 | M | MED | 001-008 | DONE efc6e1ff |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
