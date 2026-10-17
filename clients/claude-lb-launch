@@ -320,6 +320,8 @@ LEAF_CERT = TLS_DIR / "leaf.pem"
 LEAF_KEY = TLS_DIR / "leaf-key.pem"
 CERT_MARKER = TLS_DIR / ".v1"
 INTERCEPT_HOSTS = {"api.anthropic.com"}
+DIRECT_UPGRADE_HOST = "api.anthropic.com"
+DIRECT_UPGRADE_ADDRESS = (DIRECT_UPGRADE_HOST, 443)
 AGENT_LB_ANTHROPIC_PATHS = frozenset(
     {
         "/health",
@@ -570,6 +572,10 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error(503, "parent process exited")
                 return
 
+        if self._is_websocket_upgrade() and not _routes_to_agent_lb(self.path):
+            self._tunnel_upgrade()
+            return
+
         body = None
         if self.command not in {"GET", "HEAD"}:
             try:
@@ -689,6 +695,36 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                 response.close()
             return
 
+    def _is_websocket_upgrade(self) -> bool:
+        connection_tokens = {
+            token.strip().lower()
+            for value in self.headers.get_all("connection") or []
+            for token in value.split(",")
+        }
+        return "upgrade" in connection_tokens and (self.headers.get("upgrade") or "").strip().lower() == "websocket"
+
+    def _tunnel_upgrade(self) -> None:
+        self.close_connection = True
+        upstream = None
+        try:
+            raw = socket.create_connection(DIRECT_UPGRADE_ADDRESS, timeout=20)
+            upstream = _direct_upgrade_tls_context().wrap_socket(raw, server_hostname=DIRECT_UPGRADE_HOST)
+            request = f"{self.command} {self.path} HTTP/1.1\r\n" + "".join(
+                f"{key}: {value}\r\n" for key, value in self.headers.items()
+            )
+            upstream.sendall(request.encode("latin-1") + b"\r\n")
+            upstream.settimeout(None)
+        except (OSError, UnicodeEncodeError) as error:
+            if upstream is not None:
+                try:
+                    upstream.close()
+                except OSError:
+                    pass
+            self._send_shim_error(error)
+            return
+        self.wfile.flush()
+        _splice(self.connection, upstream)
+
     def _forward_direct(self, body: bytes | None, headers: dict[str, str]) -> None:
         """Forward a first-party auxiliary request without proxy recursion."""
         connection: http.client.HTTPSConnection | None = None
@@ -799,6 +835,10 @@ def _tunnel_bucket_from_env() -> _TunnelBucket | None:
     return _TunnelBucket(rate_mbps * 125_000.0)
 
 
+def _direct_upgrade_tls_context() -> ssl.SSLContext:
+    return ssl.create_default_context()
+
+
 def _splice(
     a: socket.socket,
     b: socket.socket,
@@ -824,6 +864,8 @@ def _splice(
                 dst = b if src is a else a
                 try:
                     data = src.recv(65536)
+                    while getattr(src, "pending", None) is not None and src.pending():
+                        data += src.recv(65536)
                 except OSError:
                     return a_to_b, b_to_a
                 if not data:
