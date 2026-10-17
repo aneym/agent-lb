@@ -383,6 +383,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--print", action="store_true", dest="preview")
     parser.add_argument("--uninstall", action="store_true")
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--autocompact-only", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-box-sync", action="store_true", help="Skip syncing routing policy to factory boxes")
     parser.add_argument("--reason", help="Logged reason for forcing installation from a stale revision")
@@ -1599,6 +1600,63 @@ def sync_policy_boxes(home: Path) -> None:
                   "local install succeeded", file=sys.stderr)
 
 
+def checkpoint_changes(home, changes, replace_policy_link=False, policy_link_target=""):
+    checkpoint_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    checkpoint = home / ".agent-lb" / "config-checkpoints" / "coding-agents" / checkpoint_name
+    checkpoint.mkdir(parents=True, exist_ok=False)
+    manifest: dict[str, str] = {}
+    for path in changes:
+        if path.exists():
+            relative = path.relative_to(home)
+            destination = checkpoint / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
+            manifest[str(relative)] = "copied"
+        else:
+            manifest[str(path.relative_to(home))] = "absent"
+    if replace_policy_link:
+        manifest[str(POLICY_DIR)] = f"symlink -> {policy_link_target}"
+
+        shutil.copytree(
+            home / POLICY_DIR,
+            checkpoint / "policy-link-target",
+            ignore=shutil.ignore_patterns("__pycache__"),
+            symlinks=True,
+        )
+    (checkpoint / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    if replace_policy_link:
+        policy_dir = home / POLICY_DIR
+        policy_dir.unlink()
+
+
+        shutil.copytree(checkpoint / "policy-link-target", policy_dir, symlinks=True)
+        print(f"replaced symlink {policy_dir} -> {policy_link_target} with an installed copy")
+    print(f"checkpoint {checkpoint}")
+
+
+
+def autocompact_text(text, window):
+    decoder = json.JSONDecoder()
+    index = text.index("{") + 1
+    while True:
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if text[index] == "}":
+            prefix = "," if json.loads(text) else ""
+            return text[:index].rstrip() + prefix + '\n  "autoCompactWindow": ' + str(window) + "\n" + text[index:]
+        key, index = decoder.raw_decode(text, index)
+        while text[index].isspace() or text[index] == ":":
+            index += 1
+        start = index
+        _, index = decoder.raw_decode(text, index)
+        if key == "autoCompactWindow":
+            return text[:start] + str(window) + text[index:]
+        while text[index].isspace():
+            index += 1
+        if text[index] == ",":
+            index += 1
+
+
 def main() -> int:
     args = parse_args()
     if args.check_hook_paths:
@@ -1625,6 +1683,24 @@ def main() -> int:
         raise SystemExit(f"error: invalid JSON in {settings_path}: {exc}") from exc
     if not isinstance(settings, dict):
         raise SystemExit(f"error: expected a JSON object in {settings_path}")
+
+    if args.autocompact_only:
+        if args.uninstall:
+            raise SystemExit("error: --autocompact-only cannot uninstall")
+        window = snapshot["autocompact_window"]["tab"]
+        if type(window) is not int or window <= 0:
+            raise SystemExit("error: invalid autocompact tab window")
+        desired = autocompact_text(settings_text or "{}\n", window)
+        if desired != settings_text:
+            if args.preview:
+                print(f"would set autoCompactWindow={window} in {settings_path}")
+            else:
+                if read_text(settings_path) != settings_text:
+                    raise SystemExit("error: settings changed during install")
+                checkpoint_changes(args.home, {settings_path: desired})
+                write_atomic(settings_path, desired)
+        print(f"autoCompactWindow={window}")
+        return 0
 
     disk_settings = settings
     registry_path = args.home / DISPATCH_REGISTRY
@@ -1657,6 +1733,8 @@ def main() -> int:
         raise SystemExit(f"error: {exc}") from exc
     sonnet_model = SONNET_MODEL if args.uninstall else snapshot_model(snapshot, "sonnet-latest")
     desired_settings = reconcile_settings(settings, args.uninstall, sonnet_model, source)
+    if not args.uninstall:
+        desired_settings["autoCompactWindow"] = snapshot["autocompact_window"]["tab"]
     if args.uninstall:
         if isinstance(desired_settings.get("env"), dict):
             desired_settings["env"].pop(HAIKU_ENV, None)
@@ -1980,38 +2058,7 @@ def main() -> int:
 
     if read_text(settings_path) != settings_text:
         raise SystemExit(f"error: {settings_path} changed while this install ran; nothing written, run it again")
-    checkpoint_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    checkpoint = args.home / ".agent-lb" / "config-checkpoints" / "coding-agents" / checkpoint_name
-    checkpoint.mkdir(parents=True, exist_ok=False)
-    manifest: dict[str, str] = {}
-    for path in changes:
-        if path.exists():
-            relative = path.relative_to(args.home)
-            destination = checkpoint / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, destination)
-            manifest[str(relative)] = "copied"
-        else:
-            manifest[str(path.relative_to(args.home))] = "absent"
-    if replace_policy_link:
-        manifest[str(POLICY_DIR)] = f"symlink -> {policy_link_target}"
-
-        shutil.copytree(
-            args.home / POLICY_DIR,
-            checkpoint / "policy-link-target",
-            ignore=shutil.ignore_patterns("__pycache__"),
-            symlinks=True,
-        )
-    (checkpoint / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    if replace_policy_link:
-        policy_dir = args.home / POLICY_DIR
-        policy_dir.unlink()
-
-
-        shutil.copytree(checkpoint / "policy-link-target", policy_dir, symlinks=True)
-        print(f"replaced symlink {policy_dir} -> {policy_link_target} with an installed copy")
-    print(f"checkpoint {checkpoint}")
-
+    checkpoint_changes(args.home, changes, replace_policy_link, policy_link_target)
 
     analytics = args.home / "repos/skill-stats"
     installed_analytics = args.home / ".local/share/skill-stats"

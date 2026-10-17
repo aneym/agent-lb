@@ -1,6 +1,7 @@
 {
   "version": 2,
-  "policy_rev": "2026-10-17.1",
+  "policy_rev": "2026-10-17.2",
+  "autocompact_window": {"tab": 400000, "lane": 300000, "box": 300000},
   "precedence": [
     "explicit",
     "constraints",

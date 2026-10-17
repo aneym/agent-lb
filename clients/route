@@ -3373,6 +3373,7 @@ def policy_snapshot(table: dict[str, Any]) -> dict[str, Any]:
     return {
         "resolved_models": snapshot_resolved_models(table, standards, seats, background),
         "policy_rev": table.get("policy_rev"),
+        "autocompact_window": table.get("autocompact_window"),
         "table_sha256": table_digest(),
         "precedence": table.get("precedence"),
         "standards": standards,
