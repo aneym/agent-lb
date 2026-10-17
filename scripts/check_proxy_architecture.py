@@ -49,15 +49,6 @@ REQUIRED_SERVICE_FACADE_NAMES = {
     "core_create_file",
     "core_finalize_file",
     "core_transcribe_audio",
-    "pop_compact_timeout_overrides",
-    "push_compact_timeout_overrides",
-    "pop_transcribe_timeout_overrides",
-    "push_transcribe_timeout_overrides",
-    "_API_KEY_RESERVATION_HEARTBEAT_SECONDS",
-    "_HARD_HTTP_BRIDGE_AFFINITY_KINDS",
-    "_REQUEST_TRANSPORT_WEBSOCKET",
-    "_WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS",
-    "_WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS",
 }
 
 ALLOWED_SERVICE_INTERNAL_IMPORTS = {

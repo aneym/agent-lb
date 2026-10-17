@@ -39,12 +39,8 @@ from app.core.clients.proxy import (  # noqa: F401  # noqa: F401
     _inline_input_image_urls,
     _ws_transport_payload_budget_bytes,
     filter_inbound_headers,
-    pop_compact_timeout_overrides,
     pop_stream_timeout_overrides,
-    pop_transcribe_timeout_overrides,
-    push_compact_timeout_overrides,
     push_stream_timeout_overrides,
-    push_transcribe_timeout_overrides,
 )
 from app.core.clients.proxy import codex_control_request as core_codex_control_request  # noqa: F401
 from app.core.clients.proxy import compact_responses as core_compact_responses  # noqa: F401
@@ -120,9 +116,6 @@ from app.modules.api_keys.service import (
     ApiKeysService as ApiKeysService,
 )
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
-from app.modules.proxy._service.api_key_usage import (
-    _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
-)
 from app.modules.proxy._service.api_key_usage import (
     _ApiKeyUsageMixin,
 )
@@ -529,10 +522,6 @@ from app.modules.proxy._service.streaming.helpers import (
     _upstream_turn_state_from_socket as _upstream_turn_state_from_socket,
 )
 from app.modules.proxy._service.support import (
-    _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
-    _REQUEST_TRANSPORT_WEBSOCKET,  # noqa: F401
-    _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS,  # noqa: F401
-    _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS,  # noqa: F401
     _ApiKeyReservationTouchState,  # noqa: F401
     _clear_websocket_request_error_overrides,  # noqa: F401
     _DownstreamWebSocketActivity,  # noqa: F401

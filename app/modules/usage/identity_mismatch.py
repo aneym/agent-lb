@@ -75,8 +75,3 @@ def get_identity_mismatch(account_id: str) -> dict[str, Any] | None:
         if entry is None or entry["count"] < ESCALATION_THRESHOLD:
             return None
         return dict(entry)
-
-
-def reset_for_tests() -> None:
-    with _lock:
-        _state.clear()
