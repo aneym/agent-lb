@@ -252,6 +252,7 @@ class RequestLog(Base):
     caller_user_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     caller_machine: Mapped[str | None] = mapped_column(String(48), nullable=True)
     caller_machine_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    stripped_tools: Mapped[str | None] = mapped_column(Text, nullable=True)
     caller_seat: Mapped[str | None] = mapped_column(String(64), nullable=True)
     room: Mapped[str | None] = mapped_column(String(128), nullable=True)
     unified_5h_utilization: Mapped[float | None] = mapped_column(Float, nullable=True)

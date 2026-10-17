@@ -14,6 +14,7 @@ from app.core.clients.usage import UsageFetchError, fetch_usage
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
+from app.core.eval_guard import eval_guard_state
 from app.core.exceptions import (
     DashboardAuthError,
     DashboardForbiddenError,
@@ -106,6 +107,14 @@ async def validate_proxy_api_key_authorization(
 
 
 async def _validate_api_key_token(token: str) -> ApiKeyData:
+    key = await _validated_api_key_token(token)
+    state = eval_guard_state.get()
+    if state is not None:
+        state.key_name = key.name
+    return key
+
+
+async def _validated_api_key_token(token: str) -> ApiKeyData:
 
 
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core.eval_guard import EvalGuardState, eval_guard_state
 from app.core.utils.client_session import (
     reset_caller_seat,
     reset_client_session_id,
@@ -24,6 +25,7 @@ class ClientSessionMiddleware:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
+        guard = eval_guard_state.set(EvalGuardState())
         token = set_client_session_id_from_scope(scope)
         dispatch = set_dispatch_id_from_scope(scope)
         seat = set_caller_seat_from_scope(scope)
@@ -31,6 +33,7 @@ class ClientSessionMiddleware:
         try:
             await self.app(scope, receive, send)
         finally:
+            eval_guard_state.reset(guard)
             reset_room(room)
             reset_caller_seat(seat)
             reset_dispatch_id(dispatch)

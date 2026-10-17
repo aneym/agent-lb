@@ -5,6 +5,7 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.eval_guard import is_eval_request
 from app.core.openai.contracts import OpenAIMessage
 from app.core.openai.message_coercion import coerce_messages
 from app.core.openai.requests import (
@@ -240,7 +241,7 @@ def _normalize_chat_tools(tools: list[JsonValue]) -> list[JsonValue]:
             continue
         if isinstance(tool_type, str):
             normalized_type = normalize_tool_type(tool_type)
-            if normalized_type == "web_search":
+            if normalized_type == "web_search" or (is_eval_request() and normalized_type.startswith("web_search")):
                 if normalized_type != tool_type:
                     tool = dict(tool)
                     tool["type"] = normalized_type

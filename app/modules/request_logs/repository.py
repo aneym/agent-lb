@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,6 +12,7 @@ from sqlalchemy import exc as sa_exc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.eval_guard import eval_guard_state
 from app.core.identity import RequestIdentity, identity_for_log
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
 from app.core.usage.types import (
@@ -419,7 +421,9 @@ class RequestLogsRepository:
             resolved_useragent_group = (
                 useragent_group if not isinstance(useragent_group, str) or useragent_group.strip() else None
             )
+            guard = eval_guard_state.get()
             log = RequestLog(
+                stripped_tools=json.dumps(guard.removed) if guard is not None and guard.removed else None,
                 account_id=account_id,
                 provider=provider,
                 api_key_id=api_key_id,

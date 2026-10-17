@@ -42,6 +42,7 @@ from app.core.clients.proxy import filter_inbound_headers
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
+from app.core.eval_guard import strip_eval_web_tools
 from app.core.identity import RequestIdentity, attach_member, get_request_identity
 from app.core.providers import (
     ANTHROPIC_PROVIDER_NAME,
@@ -623,6 +624,7 @@ class AnthropicProxyService:
                             body_payload, headers, inbound_headers, provider_name
                         )
 
+                        body_payload, _ = strip_eval_web_tools(body_payload, "anthropic")
                         nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
 
 

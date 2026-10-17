@@ -7,6 +7,7 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.eval_guard import is_eval_request, strip_eval_web_tools
 from app.core.types import JsonObject, JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
@@ -53,6 +54,8 @@ def _json_parts(value: JsonValue) -> list[JsonValue]:
 
 
 def normalize_tool_type(tool_type: str) -> str:
+    if is_eval_request() and tool_type.startswith("web_search"):
+        return tool_type
     return _TOOL_TYPE_ALIASES.get(tool_type, tool_type)
 
 
@@ -536,7 +539,7 @@ class ResponsesRequest(BaseModel):
 
     def to_payload(self) -> JsonObject:
         payload: MutableJsonObject = self.model_dump(mode="json", exclude_none=True)
-        return _strip_unsupported_fields(payload)
+        return strip_eval_web_tools(_strip_unsupported_fields(payload), "openai")[0]
 
 
 class ResponsesCompactRequest(BaseModel):
