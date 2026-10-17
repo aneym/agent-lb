@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import fnmatch
 import json
 import os
-from pathlib import Path
 import re
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 AGENT_MODEL = re.compile(r"^model:\s*(\S+)\s*$", re.MULTILINE)
 

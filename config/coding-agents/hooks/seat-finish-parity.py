@@ -2,9 +2,9 @@
 
 import importlib.util
 import os
-from pathlib import Path
 import subprocess
 import unittest
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("seat_finish", Path(__file__).with_name("seat-finish.py"))
 finish = importlib.util.module_from_spec(spec)

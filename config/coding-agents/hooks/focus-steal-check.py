@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 FOCUS_STEAL_RC = 6
 

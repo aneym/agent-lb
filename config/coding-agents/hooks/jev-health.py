@@ -4,10 +4,10 @@ import datetime
 import fcntl
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 HOME = Path.home() / ".jev"
 STATUS = HOME / "status.json"

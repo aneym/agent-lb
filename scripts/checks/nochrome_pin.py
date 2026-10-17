@@ -1,4 +1,8 @@
-import importlib.util, json, os, subprocess, sys
+import importlib.util
+import json
+import os
+import subprocess
+import sys
 
 src = sys.argv[1]
 spec = importlib.util.spec_from_file_location("hd", src)

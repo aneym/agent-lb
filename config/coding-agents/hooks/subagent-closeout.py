@@ -9,7 +9,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 LEDGER = Path(
     os.environ.get("ROUTE_LEDGER")
     or os.environ.get("DISPATCH_LEDGER")

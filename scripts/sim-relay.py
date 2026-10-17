@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 
 import argparse
-from datetime import datetime, timezone
 import json
-import os
 import math
-from pathlib import Path
+import os
 import re
 import socketserver
 import subprocess
 import sys
-import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
 
 PORT = 21429
 HOME = Path.home()
