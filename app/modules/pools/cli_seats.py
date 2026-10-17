@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import Field, ValidationError
 
+from app.core.routing_table import read_routing_table
 from app.modules.pools.schemas import POOL_STATUS_EXHAUSTED, POOL_STATUS_LOW, POOL_STATUS_OK, PoolSummary, PoolWindow
 from app.modules.shared.schemas import DashboardModel
 
@@ -587,18 +588,7 @@ def cursor_budget_pools(seats: SeatAccountsResponse, config: dict, *, now: datet
 
 
 def seat_pricing_config() -> dict:
-    managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
-    path = (
-        Path(os.environ["ROUTE_TABLE"]).expanduser()
-        if os.environ.get("ROUTE_TABLE")
-        else (
-            managed
-            if managed.is_file()
-            else Path(__file__).resolve().parents[3] / "config/coding-agents/routing-table.json"
-        )
-    )
-    document = _read_state(path) or {}
-    return document.get("cli_pools") or {}
+    return read_routing_table().get("cli_pools") or {}
 
 
 def seat_activity(accounts: list[SeatAccount], current: datetime, *, days: int = 7) -> SeatToday:

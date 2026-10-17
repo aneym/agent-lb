@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
+from app.core.routing_table import read_routing_table
 from app.core.utils.time import utcnow
 from app.db.models import AccountStatus
 from app.modules.accounts.schemas import AccountSummary
@@ -28,13 +26,8 @@ GLM_POOL_PROVIDER = "glm"
 KIMI_POOL_PROVIDER = "kimi"
 
 
-
-
 _OK_HEADROOM_PERCENT = 25.0
 _LOW_HEADROOM_PERCENT = 5.0
-
-
-
 
 
 _UNROUTABLE_STATUSES = frozenset(
@@ -63,7 +56,6 @@ def is_pool_usable(summary: AccountSummary) -> bool:
 
 
 def _secondary_remaining(summary: AccountSummary) -> float:
-
 
     remaining = summary.usage.secondary_remaining_percent if summary.usage else None
     return 100.0 if remaining is None else float(remaining)
@@ -266,7 +258,6 @@ def _weekly_pace(summary: AccountSummary, now: datetime) -> float:
 
     reset_at = summary.reset_at_secondary
     if reset_at is None:
-
         hours_left = _WEEKLY_CYCLE_HOURS
     else:
         if reset_at.tzinfo is None:
@@ -344,27 +335,12 @@ class PoolsService:
 
     async def get_pools(self) -> PoolsResponse:
 
-
         summaries = await self._accounts_service.list_accounts()
         response = build_pools(summaries)
 
         seats = read_seat_accounts()
         seat_pools = cli_seat_pools(seats)
-        managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
-        table = (
-            Path(os.environ["ROUTE_TABLE"]).expanduser()
-            if os.environ.get("ROUTE_TABLE")
-            else (
-                managed
-                if managed.is_file()
-                else Path(__file__).resolve().parents[3] / "config/coding-agents/routing-table.json"
-            )
-        )
-        try:
-            document = json.loads(table.read_text(encoding="utf-8"))
-            config = document.get("cli_pools", {}) if isinstance(document, dict) else {}
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            config = {}
+        config = read_routing_table().get("cli_pools", {})
         budget_pools = cursor_budget_pools(seats, config, now=response.generated_at) if isinstance(config, dict) else []
         cursor_config = config.get("cursor") if isinstance(config, dict) else None
         grouping = cursor_config.get("accounts") if isinstance(cursor_config, dict) else None

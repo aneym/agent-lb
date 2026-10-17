@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import asyncio
@@ -15,11 +13,12 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.core.routing_table import read_routing_table
+
 logger = logging.getLogger(__name__)
 
 UPSTREAM_BASE_URL = os.environ.get("MUSE_UPSTREAM_BASE_URL", "https://api.meta.ai/v1").rstrip("/")
 PROVIDER = "muse"
-
 
 
 ALLOWED: dict[str, set[str]] = {
@@ -28,8 +27,16 @@ ALLOWED: dict[str, set[str]] = {
 }
 
 _DROP_HEADERS = {
-    "host", "content-length", "connection", "keep-alive", "proxy-authenticate",
-    "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade",
+    "host",
+    "content-length",
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
 }
 _TAIL_BYTES = 128 * 1024
 
@@ -72,20 +79,11 @@ class MuseCredential:
 credential = MuseCredential()
 
 
-def _route_table_path() -> Path:
-    if os.environ.get("ROUTE_TABLE"):
-        return Path(os.environ["ROUTE_TABLE"]).expanduser()
-    managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
-    if managed.is_file():
-        return managed
-    return Path(__file__).resolve().parents[3] / "config/coding-agents/routing-table.json"
-
-
 def resolve_model(model: str) -> str:
     if model and model != "muse-latest":
         return model
     try:
-        alias = json.loads(_route_table_path().read_text())["aliases"]["muse-latest"]
+        alias = read_routing_table()["aliases"]["muse-latest"]
         pinned = alias.get("pinned")
         if isinstance(pinned, str) and pinned:
             return pinned
@@ -104,9 +102,9 @@ def parse_usage_from_sse_tail(tail: bytes) -> tuple[int | None, int | None]:
     output_tokens: int | None = None
     text = tail.decode("utf-8", "replace")
     stripped = text.strip()
-    lines = [stripped] if stripped.startswith("{") else [
-        line[5:] for line in text.splitlines() if line.startswith("data:")
-    ]
+    lines = (
+        [stripped] if stripped.startswith("{") else [line[5:] for line in text.splitlines() if line.startswith("data:")]
+    )
     for line in lines:
         try:
             event = json.loads(line)
@@ -178,19 +176,20 @@ async def forward(request: Request, path: str) -> StreamingResponse | JSONRespon
 
 
 def _error(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(
-        {"error": {"code": code, "message": message, "type": "agent_lb_muse"}}, status_code=status
-    )
+    return JSONResponse({"error": {"code": code, "message": message, "type": "agent_lb_muse"}}, status_code=status)
 
 
 @provider_router.get("/models", response_model=None)
 async def provider_models() -> JSONResponse:
     model = resolve_model("muse-latest")
     return JSONResponse(
-        {"object": "list", "data": [
-            {"id": "muse-latest", "object": "model", "owned_by": "meta", "resolves_to": model},
-            {"id": model, "object": "model", "owned_by": "meta"},
-        ]}
+        {
+            "object": "list",
+            "data": [
+                {"id": "muse-latest", "object": "model", "owned_by": "meta", "resolves_to": model},
+                {"id": model, "object": "model", "owned_by": "meta"},
+            ],
+        }
     )
 
 
@@ -206,7 +205,8 @@ async def provider_responses(request: Request) -> StreamingResponse | JSONRespon
     model = resolve_model(str(payload.get("model") or ""))
     if model.endswith("-contributor"):
         return _error(
-            400, "contributor_mode_refused",
+            400,
+            "contributor_mode_refused",
             "agent-lb runs Muse with contributor mode off; drop the -contributor suffix",
         )
     if not model.startswith("muse-"):
@@ -225,7 +225,8 @@ async def provider_responses(request: Request) -> StreamingResponse | JSONRespon
         )
         return _error(503, "muse_credential_unavailable", "no Muse login on this agent-lb host")
     headers = {
-        k: v for k, v in request.headers.items()
+        k: v
+        for k, v in request.headers.items()
         if k.lower() not in _DROP_HEADERS
         and k.lower() not in _CLIENT_AUTH_HEADERS
         and not k.lower().startswith("x-agent-lb-")
@@ -236,9 +237,7 @@ async def provider_responses(request: Request) -> StreamingResponse | JSONRespon
         fresh = await credential.get(refresh=True)
         return f"Bearer {fresh}" if fresh is not None and fresh != key else None
 
-    return await _relay(
-        request, "responses", headers, json.dumps(payload).encode(), model, "muse-provider", reauth
-    )
+    return await _relay(request, "responses", headers, json.dumps(payload).encode(), model, "muse-provider", reauth)
 
 
 def _session_id(request: Request) -> str | None:
@@ -287,9 +286,7 @@ async def _relay(
             status_code=502,
         )
 
-    response_headers = {
-        k: v for k, v in response.headers.items() if k.lower() not in _DROP_HEADERS
-    }
+    response_headers = {k: v for k, v in response.headers.items() if k.lower() not in _DROP_HEADERS}
 
     async def stream() -> AsyncIterator[bytes]:
         tail = bytearray()
