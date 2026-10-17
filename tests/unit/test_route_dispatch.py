@@ -112,7 +112,7 @@ def test_with_explore_off_every_class_takes_its_standard(tmp_path: Path) -> None
         assert (row["arm"], row["arm_id"], row["propensity"]) == ("default", "standard", 1.0), task_class
         assert (row["seat"], row["model_alias"], row["effort"]) == (
             standard["seat"], standard["model"], standard["effort"]), task_class
-        assert row["policy_rev"] == "2026-10-16.1"
+        assert row["policy_rev"] == "2026-10-17.1"
         assert_valid(row, "route-decision.v1.json")
     assert len(logged(env)) == len(table["standards"])
 
@@ -160,7 +160,7 @@ def test_policy_snapshot_names_one_model_and_effort_per_seat(tmp_path: Path) -> 
     result = route(env, CANONICAL_TABLE, "policy", "snapshot", "--json")
     assert result.returncode == 0, result.stderr
     snapshot = json.loads(result.stdout)
-    assert snapshot["policy_rev"] == "2026-10-16.1"
+    assert snapshot["policy_rev"] == "2026-10-17.1"
     assert snapshot["background_model"] == "claude-sonnet-5-5"
     assert snapshot["seats"]["planner"] == {"model": "opus-latest", "model_id": "claude-opus-5-5", "effort": "medium"}
     assert snapshot["seats"]["gpt-implementer"]["effort"] == "medium"

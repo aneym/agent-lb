@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "policy_rev": "2026-10-16.1",
+  "policy_rev": "2026-10-17.1",
   "precedence": [
     "explicit",
     "constraints",
@@ -221,6 +221,18 @@
           "gate": {
             "open": false,
             "until": "2026-10-30 Cursor probe"
+          }
+        },
+        {
+          "id": "pi-durable",
+          "seat": "pi-durable-seat",
+          "model": "sol-latest",
+          "effort": "medium",
+          "share": 0.05,
+          "pool": "openai-codex",
+          "gate": {
+            "open": false,
+            "until": "pi-durable e2e G3 + personal-evals arm pass"
           }
         }
       ],
@@ -770,6 +782,7 @@
     "cursor-seat": {"vendor": "cursor", "box": {"adapter": "cursor"}},
     "devin-seat": {"vendor": "devin", "box": {"adapter": "devin"}},
     "muse-seat": {"vendor": "muse", "box": null, "model": "muse-latest", "effort": "low"},
+    "pi-durable-seat": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "low"},
     "muse-seat-local": {"vendor": "muse", "box": null, "model": "muse-latest", "effort": "low"},
     "verifier": {"vendor": "anthropic", "box": null, "needs_test_run": false},
     "codex-verifier": {"vendor": "openai", "box": null, "needs_test_run": true},

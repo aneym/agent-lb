@@ -119,6 +119,12 @@ MANAGED_AGENTS = (
         Path("agents/muse-seat-local.md"),
     ),
     (
+        Path(".claude/agents/pi-durable-seat.md"),
+        Path(".agent-lb/managed/coding-agents/pi-durable-seat"),
+        "agent-lb:pi-durable-seat:v1\n",
+        Path("agents/pi-durable-seat.md"),
+    ),
+    (
         Path(".claude/agents/codex-verifier.md"),
         Path(".agent-lb/managed/coding-agents/codex-verifier"),
         "agent-lb:codex-verifier:v1\n",
