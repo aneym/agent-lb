@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.core.routing_table import routing_table_path
 from app.db.models import RoutingPolicyVersion
 from app.modules.routing_policy.repository import RoutingPolicyRepository
 from app.modules.routing_policy.schemas import PolicyCounts, PolicyDetail, PolicyDiff, PolicySummary
@@ -16,15 +17,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _live_paths() -> tuple[Path, Path]:
-    managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
-    table = (
-        Path(os.environ["ROUTE_TABLE"]).expanduser()
-        if os.environ.get("ROUTE_TABLE")
-        else (managed if managed.is_file() else _REPO_ROOT / "config/coding-agents/routing-table.json")
-    )
+    table = routing_table_path()
     if os.environ.get("OF_DECIDER_JSON"):
         return table, Path(os.environ["OF_DECIDER_JSON"]).expanduser()
-    managed_decider = managed.with_name("decider.json")
+    managed_decider = Path.home() / ".agent-lb/managed/coding-agents/decider.json"
     if _readable(managed_decider):
         return table, managed_decider
 

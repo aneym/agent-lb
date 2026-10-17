@@ -1,29 +1,20 @@
 from __future__ import annotations
 
 import json
-import os
 from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.core.routing_table import routing_table_path
 from app.modules.pools.schemas import PoolsResponse
 
 _CONFIG = Path(__file__).resolve().parents[3] / "config/coding-agents"
 
 
-def installed_table_path() -> Path:
-    managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
-    return (
-        Path(os.environ["ROUTE_TABLE"]).expanduser()
-        if os.environ.get("ROUTE_TABLE")
-        else (managed if managed.is_file() else _CONFIG / "routing-table.json")
-    )
-
-
 def load_plan_inputs() -> tuple[dict, list[dict]]:
-    table_path = installed_table_path()
+    table_path = routing_table_path()
     table = json.loads(table_path.read_text(encoding="utf-8"))
     costs_path = table_path.with_name("model-costs.json")
     costs = json.loads(
