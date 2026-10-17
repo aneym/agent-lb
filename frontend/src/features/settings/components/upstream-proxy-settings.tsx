@@ -212,7 +212,7 @@ export function UpstreamProxySettings({
                     disabled={busy}
                     onCheckedChange={(checked) => toggleEndpointSelection(endpoint.id, checked === true)}
                   />
-                  <span>{endpoint.name} · {endpoint.scheme}://{endpoint.host}:{endpoint.port}</span>
+                  <span>{endpoint.name} · {endpoint.scheme}:{"//"}{endpoint.host}:{endpoint.port}</span>
                 </label>
               ))}
             </div>
@@ -246,7 +246,7 @@ export function UpstreamProxySettings({
             {admin.endpoints.length === 0 ? <p className="text-xs text-muted-foreground">No proxy endpoints configured.</p> : null}
             {admin.endpoints.map((endpoint) => (
               <div key={endpoint.id} className="rounded-md bg-muted/50 px-2 py-1.5 text-xs">
-                <span className="font-medium">{endpoint.name}</span> · {endpoint.scheme}://{endpoint.username ? `${endpoint.username}@` : ""}{endpoint.host}:{endpoint.port}
+                <span className="font-medium">{endpoint.name}</span> · {endpoint.scheme}:{"//"}{endpoint.username ? `${endpoint.username}@` : ""}{endpoint.host}:{endpoint.port}
               </div>
             ))}
           </div>
