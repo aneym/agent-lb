@@ -56,18 +56,6 @@ Change directory: <!-- openspec/changes/<change>/ -->
 <!--
 How did you verify this works? Paste the commands you ran and the relevant outputs.
 Required: unit tests for new logic, integration tests for new endpoints.
-For release, package, Helm, Docker, PyPI/GHCR, or public metadata changes:
-include the candidate SHA/tag plus local and public artifact proof commands.
-If publication is approval-gated and not run from this PR, name the local
-artifact proof, live blocker snapshot, PR-head proof command, runtime proof
-command, pre-publish readiness command, and post-approval proof command that
-must pass, such as
-`./scripts/public-release-local-artifact-proof.sh <approved-release-tag>`,
-`./scripts/public-release-live-snapshot.sh <approved-release-tag>`,
-`./scripts/public-release-pr-head-proof.sh <pr-number>`,
-`./scripts/public-release-runtime-proof.sh <approved-release-tag>`,
-`./scripts/public-release-publish-readiness.sh <approved-release-tag>`, and
-`./scripts/public-release-postpublish-proof.sh <approved-release-tag>`.
 -->
 
 ```
@@ -93,9 +81,3 @@ or relevant log excerpt.
 - [ ] Ran `uv run pre-commit run local-ci --hook-stage manual --all-files` or the relevant `make <target>` subset locally.
 - [ ] If touching specs: `openspec validate --specs` passes and `/opsx:verify` is clean.
 - [ ] Dashboard/UI-visible changes include screenshots or a clear not-applicable reason.
-- [ ] Release/package/publication changes include candidate SHA/tag and PyPI/GHCR/Helm/release-asset proof, or explicitly say publication is approval-gated and name the local artifact proof, live blocker snapshot, PR-head proof, runtime proof, pre-publish readiness, plus post-approval proof commands.
-- [ ] Public client/onboarding changes keep `AGENTS.md`, `README.md`, `GETTING-STARTED.md`, `.agents/skills/get-started/SKILL.md`, `.agents/skills/skill-rules.json`, and `tests/unit/test_public_release_docs.py` in sync, or explain why a surface is not affected.
-- [ ] Public client, release-version, account-plan, or support-intake changes keep `.github/ISSUE_TEMPLATE/bug_report.yml`, `.github/ISSUE_TEMPLATE/account_quota.yml`, `.github/ISSUE_TEMPLATE/feature_request.yml`, `.github/DISCUSSION_TEMPLATE/q-and-a.yml`, and `tests/unit/test_public_release_docs.py` in sync, or explain why a surface is not affected.
-- [ ] Security/support-window changes keep `.github/SECURITY.md`, `README.md`, `deploy/helm/agent-lb/README.md`, and `tests/unit/test_public_release_docs.py` in sync, or explain why a surface is not affected.
-- [ ] Account admin, browser-profile, billing, subscription-ledger, pause/reactivate, removal, or verification guidance changes keep `AGENTS.md`, `README.md`, `GETTING-STARTED.md`, `.agents/skills/agent-lb-account-operator/SKILL.md`, `.agents/skills/agent-lb-account-operator/account-profiles.example.json`, `.agents/skills/skill-rules.json`, and `tests/unit/test_public_release_docs.py` in sync, or explain why a surface is not affected.
-- [ ] CHANGELOG is **not** edited by hand (release-please handles it).

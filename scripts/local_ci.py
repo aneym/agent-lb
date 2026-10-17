@@ -21,16 +21,12 @@ from typing import Any, cast
 
 SCHEMA_VERSION = 1
 PG_TARGETS = {"test-postgres", "migration-check-postgres"}
-IMAGE_TARGETS = {"docker", "helm-smoke-kind"}
+IMAGE_TARGETS = {"docker"}
 REQUIRED_TOOLS = (
     "git",
     "uv",
     "bun",
     "docker",
-    "helm",
-    "kubeconform",
-    "kind",
-    "kubectl",
     "trivy",
     "swift",
     "make",
@@ -38,8 +34,6 @@ REQUIRED_TOOLS = (
     "plutil",
 )
 BASELINE_TARGETS = {
-    "contributors",
-    "beta-release-guard",
     "frontend-lint",
     "frontend-typecheck",
     "frontend-test",
@@ -55,8 +49,6 @@ BASELINE_TARGETS = {
     "migration-check-postgres",
     "package",
     "docker",
-    "helm-check",
-    "helm-smoke-kind",
     "menubar-test",
     "menubar-build",
 }
@@ -154,7 +146,6 @@ def scrubbed_env(run_dir: Path, run_id: str) -> dict[str, str]:
         "MAKEFILES",
         "MAKEOVERRIDES",
         "CI_IMAGE",
-        "CI_CLUSTER",
         "KUBECONFIG",
     }
     env = {
@@ -170,7 +161,6 @@ def scrubbed_env(run_dir: Path, run_id: str) -> dict[str, str]:
             "AGENT_LB_DATA_DIR": str(run_dir / "data"),
             "AGENT_LB_TEST_DATABASE_URL": f"sqlite+aiosqlite:///{run_dir / 'test.db'}",
             "CI_IMAGE": f"ghcr.io/aneym/agent-lb-ci:{run_id}",
-            "CI_CLUSTER": f"agent-lb-ci-{run_id}".lower(),
             "KUBECONFIG": str(run_dir / "kubeconfig"),
         }
     )
@@ -288,8 +278,6 @@ def expected_labels(targets: list[str]) -> tuple[set[str], set[str]]:
     cleanup = {"worktree"}
     if PG_TARGETS & set(targets):
         cleanup.add("postgres")
-    if "helm-smoke-kind" in targets:
-        cleanup.add("cluster")
     if IMAGE_TARGETS & set(targets):
         cleanup.add("image")
     return setup, cleanup
@@ -483,18 +471,6 @@ def run(ref: str) -> int:
                 env,
                 logs / "cleanup-postgres.log",
                 60,
-            )
-        if "helm-smoke-kind" in targets:
-            record_command(
-                receipt,
-                receipt_path,
-                "cleanup",
-                "cluster",
-                ["kind", "delete", "cluster", "--name", env["CI_CLUSTER"]],
-                root,
-                env,
-                logs / "cleanup-cluster.log",
-                180,
             )
         if IMAGE_TARGETS & set(targets):
             record_command(

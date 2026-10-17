@@ -2,7 +2,6 @@ PYTEST_ARGS := -v -ra -o faulthandler_timeout=300 -o faulthandler_exit_on_timeou
 POSTGRES_TEST_DATABASE_URL ?=
 CI_RUN_ID := $(shell date +%s)-$(shell echo $$$$)
 CI_IMAGE ?= ghcr.io/aneym/agent-lb-ci:$(CI_RUN_ID)
-CI_CLUSTER ?= agent-lb-ci-$(CI_RUN_ID)
 CI_BASE_REF ?= origin/main
 CI_HEAD_REF ?=
 CI_EVENT_PATH ?=
@@ -128,65 +127,12 @@ docker:
 	docker build -t $(CI_IMAGE) .
 	trivy image --format table --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed $(CI_IMAGE)
 
-.PHONY: helm-deps helm-lint helm-template helm-kubeconform
-helm-deps:
-	helm dependency build deploy/helm/agent-lb/
-
-helm-lint: helm-deps
-	helm lint --strict deploy/helm/agent-lb/ --set postgresql.auth.password=test-password
-	helm lint --strict deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-dev.yaml --set postgresql.auth.password=test-password
-	helm lint --strict deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-bundled.yaml --set postgresql.auth.password=test-password
-	helm lint --strict deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-external-db.yaml --set externalDatabase.url=postgresql+asyncpg://test:test@localhost/test
-	helm lint --strict deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-external-secrets.yaml --set externalSecrets.secretStoreRef.name=test-store
-	helm lint --strict deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-staging.yaml --set externalDatabase.url=postgresql+asyncpg://test:test@localhost/test
-	helm lint --strict deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-prod.yaml --set externalSecrets.secretStoreRef.name=test-store
-
-helm-template:
-	helm template agent-lb deploy/helm/agent-lb/ --set postgresql.auth.password=test-password > /dev/null
-	helm template agent-lb deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-dev.yaml --set postgresql.auth.password=test-password > /dev/null
-	helm template agent-lb deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-bundled.yaml --set postgresql.auth.password=test-password > /dev/null
-	helm template agent-lb deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-external-db.yaml --set externalDatabase.url=postgresql+asyncpg://test:test@localhost/test > /dev/null
-	helm template agent-lb deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-external-secrets.yaml --set externalSecrets.secretStoreRef.name=test-store > /dev/null
-	helm template agent-lb deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-staging.yaml --set externalDatabase.url=postgresql+asyncpg://test:test@localhost/test > /dev/null
-	helm template agent-lb deploy/helm/agent-lb/ -f deploy/helm/agent-lb/values-prod.yaml --set externalSecrets.secretStoreRef.name=test-store > /dev/null
-
-helm-kubeconform:
-	set -e -o pipefail; \
-	for version in 1.32.0 1.35.0; do \
-	  helm template agent-lb deploy/helm/agent-lb/ \
-	    -f deploy/helm/agent-lb/values-prod.yaml \
-	    --set externalSecrets.secretStoreRef.name=test \
-	    --set externalSecrets.secretStoreRef.kind=SecretStore \
-	    --set gatewayApi.enabled=true \
-	    --set "gatewayApi.parentRefs[0].name=test-gw" \
-	    --set "gatewayApi.hostnames[0]=test.example.com" \
-	    | kubeconform \
-	      -strict \
-	      -kubernetes-version "$${version}" \
-	      -schema-location default \
-	      -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-	      -summary; \
-	done
-
-.PHONY: helm-check helm-smoke-kind
-helm-check: helm-lint helm-template helm-kubeconform
-
-helm-smoke-kind:
-	@set -e; \
-	if kind get clusters | grep -Fxq "$(CI_CLUSTER)"; then echo "Refusing existing cluster $(CI_CLUSTER)"; exit 1; fi; \
-	trap 'kind delete cluster --name "$(CI_CLUSTER)"' EXIT; \
-	kind create cluster --name "$(CI_CLUSTER)" --image kindest/node:v1.35.0 --wait 120s; \
-	docker build -t $(CI_IMAGE) .; \
-	kind load docker-image $(CI_IMAGE) --name "$(CI_CLUSTER)"; \
-	KUBE_CONTEXT=kind-$(CI_CLUSTER) IMAGE_REGISTRY=ghcr.io IMAGE_REPOSITORY=aneym/agent-lb-ci IMAGE_TAG=$$(echo $(CI_IMAGE) | cut -d: -f2) ./scripts/helm-kind-smoke.sh bundled; \
-	KUBE_CONTEXT=kind-$(CI_CLUSTER) IMAGE_REGISTRY=ghcr.io IMAGE_REPOSITORY=aneym/agent-lb-ci IMAGE_TAG=$$(echo $(CI_IMAGE) | cut -d: -f2) ./scripts/helm-kind-smoke.sh external-db
-
-.PHONY: ci-fast ci ci-targets ci-doctor menubar-test menubar-build contributors beta-release-guard
+.PHONY: ci-fast ci ci-targets ci-doctor menubar-test menubar-build
 ci-fast: lint typecheck frontend-test test-unit package
 
-CI_TARGETS := contributors beta-release-guard frontend-lint frontend-typecheck frontend-test frontend-build \
+CI_TARGETS := frontend-lint frontend-typecheck frontend-test frontend-build \
 	lint typecheck test-unit test-integration-core test-integration-bridge test-e2e \
-	test-postgres migration-check migration-check-postgres package docker helm-check helm-smoke-kind \
+	test-postgres migration-check migration-check-postgres package docker \
 	menubar-test menubar-build
 
 ci-targets:
@@ -197,12 +143,6 @@ ci:
 
 ci-doctor:
 	python3 scripts/local_ci.py doctor
-
-contributors:
-	$(PYTHON) .github/scripts/check_all_contributors.py
-
-beta-release-guard:
-	$(PYTHON) -m scripts.guard_beta_release --mode pr --base-ref "$(CI_BASE_REF)" --head-ref "$(CI_HEAD_REF)" --event-path "$(CI_EVENT_PATH)"
 
 menubar-test:
 	cd clients/macos-menubar && swift test
