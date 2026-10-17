@@ -65,7 +65,7 @@ def test_syncs_when_source_is_clean_origin_main(tmp_path: Path, checkout: Path) 
     assert "sync ok" in (tmp_path / "runtime" / "sync.log").read_text()
 
 
-@pytest.mark.parametrize("state", ["ahead", "branch", "dirty", "missing"])
+@pytest.mark.parametrize("state", ["ahead", "behind", "branch", "dirty", "missing"])
 def test_refuses_loudly_when_source_is_not_origin_main(tmp_path: Path, checkout: Path, state: str) -> None:
     assert run_sync(tmp_path, checkout).returncode == 0
     (checkout / "marker.txt").write_text("v2\n")
@@ -76,6 +76,15 @@ def test_refuses_loudly_when_source_is_not_origin_main(tmp_path: Path, checkout:
         git(checkout, "checkout", "-q", "-b", "topic")
         git(checkout, "commit", "-q", "-am", "v2")
         git(checkout, "push", "-q", "origin", "topic")
+    elif state == "behind":
+        other = tmp_path / "other"
+        git(tmp_path, "clone", "-q", str(tmp_path / "origin.git"), str(other))
+        git(other, "config", "user.email", "t@example.invalid")
+        git(other, "config", "user.name", "t")
+        (other / "marker.txt").write_text("v3\n")
+        git(other, "commit", "-q", "-am", "v3")
+        git(other, "push", "-q", "origin", "main")
+        git(checkout, "checkout", "-q", "--", "marker.txt")
     elif state == "missing":
         src = tmp_path / "nowhere"
 

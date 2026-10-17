@@ -19,6 +19,8 @@ if ! perl -e 'alarm 5; exit((-f $ARGV[0]) ? 0 : 1)' "$SRC/pyproject.toml" 2>/dev
   refuse "$SRC unreachable; runtime left as is"
 fi
 
+perl -e 'alarm 60; exec @ARGV' git -C "$SRC" fetch --quiet origin main >/dev/null 2>&1 \
+  || refuse "could not fetch origin main into $SRC; its origin/main may be stale"
 branch=$(git -C "$SRC" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")
 head=$(git -C "$SRC" rev-parse --verify --quiet HEAD 2>/dev/null || echo "")
 main=$(git -C "$SRC" rev-parse --verify --quiet refs/remotes/origin/main 2>/dev/null || echo "")
