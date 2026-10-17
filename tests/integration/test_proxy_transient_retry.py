@@ -28,11 +28,6 @@ async def _force_usage_weighted_routing(async_client) -> None:
     assert response.status_code == 200
 
 
-
-
-
-
-
 def _encode_jwt(payload: dict) -> str:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     body = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
@@ -132,11 +127,6 @@ def _extract_events(lines: list[str]) -> list[dict]:
                 continue
             events.append(json.loads(data))
     return events
-
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -292,11 +282,6 @@ async def test_stream_server_error_succeeds_on_third_try(async_client, monkeypat
     assert len(set(seen_account_ids)) == 1
 
 
-
-
-
-
-
 @pytest.mark.asyncio
 async def test_stream_http_500_retries_same_account_then_succeeds(async_client, monkeypatch):
 
@@ -428,11 +413,6 @@ async def test_stream_http_502_unknown_code_fails_over_to_second_account(async_c
     completed = [e for e in events if e.get("type") == "response.completed"]
     assert len(completed) == 1
     assert seen_account_ids[:2] == ["acc_h502_a", "acc_h502_b"]
-
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -718,7 +698,7 @@ async def test_v1_responses_non_streaming_500_preserves_http_status(async_client
             openai_error("server_error", "An error occurred while processing your request."),
             failure_phase="status",
         )
-        yield ""  # make it a generator  # pragma: no cover
+        yield ""
 
     monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
 
@@ -729,11 +709,6 @@ async def test_v1_responses_non_streaming_500_preserves_http_status(async_client
     assert response.json()["error"]["code"] == "server_error"
 
     assert call_count == 3
-
-
-
-
-
 
 
 @pytest.mark.asyncio
