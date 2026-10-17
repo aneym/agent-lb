@@ -1,51 +1,5 @@
 #!/usr/bin/env python3
-# claude-lb-launch — launch Claude Code through agent-lb with sticky-session
-# routing and a quota banner. Vendored, dependency-free (stdlib only).
-#
-# It claims a sticky account route from the load balancer, prints a one-line
-# remaining-quota banner, then routes Claude Code through a local HTTPS proxy
-# (HTTPS_PROXY): it MITMs api.anthropic.com -> the LB (injecting
-# `x-claude-session-id`) and blind-tunnels every other host. Keeping Claude on
-# the real api.anthropic.com with its keychain login is what lets Remote Control
-# (/rc) stay enabled while still pooling accounts. The proxy streams SSE
-# responses and dies with its parent.
-#
-# Usage:
-#   clients/claude-lb-launch [claude args...]
-#
-# Env:
-#   CLAUDE_LB_LOCAL_URL   local LB base URL, probed first (default http://127.0.0.1:2455)
-#   CLAUDE_LB_LOCAL_PREFER=0  skip the local candidate; probe only CLAUDE_LB_BASE_URL
-#                             (restores pre-federation single-URL behavior)
-#   CLAUDE_LB_PREFER_REMOTE=1 probe CLAUDE_LB_BASE_URL first, then local as a fallback
-#   CLAUDE_LB_BASE_URL   remote/fallback LB base URL (default http://127.0.0.1:2455)
-#   CLAUDE_LB_DISABLE=1  bypass the LB entirely; exec plain `claude`
-#   CLAUDE_LB_SESSION_ID stable session id (default cc-<pid>-<epoch>; headless
-#                        -p/--print runs default to a stable cwd-derived id)
-#   CLAUDE_LB_DRY_RUN=1  print the final command instead of exec'ing it
-#   CLAUDE_LB_LAUNCHD_LABEL  local launchd job label (default com.aneyman.agent-lb)
-#   CLAUDE_LB_STARTUP_GRACE_SECONDS  wait for a loaded local LB to become ready
-#                                    after connection refusal (default 90; 0 disables)
-#   CLAUDE_LB_LOCAL_READY_TIMEOUT    interactive readiness probe budget for the local
-#                                    LB (default 1.0s); CLAUDE_LB_REMOTE_READY_TIMEOUT
-#                                    for the remote one (default 3.0s). A probe that
-#                                    connects but times out means the LB is up but
-#                                    busy: the session routes through it anyway and the
-#                                    per-request shim retries absorb the stall.
-#   CLAUDE_LB_STRICT_READY=1  treat a busy (timed-out) LB as unavailable at startup,
-#                             restoring the pre-2026-09 retry-then-fallback behavior
-#   CC_EFFORT_LEVEL      passed through as --effort
-#   CC_PERMISSION_MODE   passed through as --permission-mode
-#   NO_COLOR             disable the colored banner
-#   CLAUDE_LB_WAIT_FOR_LIMIT      auto (default) waits for advertised limit
-#                                 resets before launching; never disables
-#   CLAUDE_LB_WAIT_MAX_SECONDS    cap on total waiting (default 21600 = 6h)
-#   CLAUDE_LB_AUTO_RESUME         1 (default) auto-resumes headless (-p) runs
-#                                 interrupted by account limits; 0 disables
-#   CLAUDE_LB_SHIM_START_TIMEOUT  seconds to wait for the proxy to start (default 90)
-#   CLAUDE_LB_ALLOW_FALLBACK=1    opt in to plain Claude if proxy startup fails
-#   CLAUDE_LB_STALL_TIMEOUT       headless LB inactivity budget in seconds (default 300;
-#                                 <=0 or non-finite disables supervision)
+
 
 from __future__ import annotations
 
@@ -105,7 +59,7 @@ def tag_headers(environ: Mapping[str, str]) -> dict[str, str]:
 
 
 def resolve_lane_tags(argv: list[str]) -> str:
-    """Apply installed herdr rollout policy without holding up a launch."""
+
     if os.environ.get("AGENT_LB_INTENT"):
         return "explicit intent"
     if headless_invocation(argv) or any(arg.startswith("--print=") for arg in argv):
@@ -165,8 +119,7 @@ def resolve_lane_tags(argv: list[str]) -> str:
         except Exception:
             result.append(("", "", "policy or registry unreadable"))
 
-    # Reads can stall on a mounted home directory. Only the caller applies tags,
-    # so a timed-out daemon reader cannot tag this launch later.
+
     reader = threading.Thread(target=read_tags, daemon=True)
     reader.start()
     reader.join(0.045)
@@ -231,9 +184,8 @@ def default_remote_url() -> str:
 AGENT_LB_BASE_URL = (os.environ.get("CLAUDE_LB_BASE_URL") or default_remote_url()).rstrip("/")
 CCGPT_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
 CCGPT_MODEL = "sol-latest"
-# agent-lb resolves GPT names against its served model list (any gpt-* slug or a
-# family alias such as sol-latest, optionally -low/-medium/-high/-xhigh) and
-# refuses unserved ones, so this gate only has to keep Claude names out.
+
+
 CCGPT_MODEL_NAME = re.compile(r"^(?:gpt-[\w.-]+|[a-z]+-latest(?:-(?:low|medium|high|xhigh))?)$")
 DEFAULT_CLAUDE_MODEL = "opus[1m]"
 DEFAULT_CLAUDE_EFFORT = "high"
@@ -253,65 +205,23 @@ SHIM_START_TIMEOUT_DEFAULT = 90.0
 STALL_TIMEOUT_DEFAULT = 300.0
 STALL_STARTUP_GRACE = 30.0
 WORK_PROCESS_POLL_SECONDS = 30.0
-# The retry budget (~2 minutes with these defaults) must outlast a full
-# watchdog-driven LB recovery: an unloaded launchd job is re-bootstrapped
-# within ~65s (2 x 30s ticks + startup), so a session mid-request rides the
-# outage out instead of surfacing a 502 broken pipe to the agent.
+
+
 SHIM_CONNECT_RETRIES_DEFAULT = 32
 SHIM_CONNECT_BACKOFF_DEFAULT = 0.5
 SHIM_CONNECT_BACKOFF_CAP_DEFAULT = 4.0
-# Claude Desktop's embedded client opens CONNECT tunnels it never closes;
-# without a read timeout each abandoned connection parks a handler thread and
-# its fd forever, and the long-lived shared desktop shim exhausts launchd's
-# 256-fd soft cap within hours (observed 2026-07-21: 245 leaked loopback fds
-# in <5h -> EMFILE 502s). Established blind tunnels are exempt: _splice()
-# uses select() and keeps idle tunnels (e.g. the Remote Control websocket)
-# open indefinitely; only a socket op wedged this long is torn down.
+
+
 SHIM_CLIENT_IDLE_TIMEOUT_SECONDS = 600
-# Blind CONNECT tunnels relay at line rate by default, so one bulk download by
-# a tunneled client (e.g. a 400MB GitHub fetch observed 2026-08-22) saturates
-# the uplink's airtime and starves the latency-sensitive Anthropic streams the
-# MITM path carries. Shape the aggregate blind-tunnel relay rate per proxy
-# process — combined up+down, because both the ISP uplink (~50 Mbps, of which
-# worst-case API request bodies want ~27) and half-duplex Wi-Fi airtime are
-# scarce; the intercepted api.anthropic.com path is never shaped. Megabits/s;
-# CLAUDE_LB_TUNNEL_RATE_MBPS overrides, <=0 (or non-finite) disables shaping.
-# 40 sized for the wired-to-extender link (301 Mbps down / 43 Mbps up measured
-# 2026-08-22): downlink has 7x headroom, and the budget stays under the
-# measured uplink so a tunneled upload flood cannot saturate it (the budget
-# is combined up+down and cannot tell directions apart).
+
+
 SHIM_TUNNEL_RATE_MBPS_DEFAULT = 40.0
-# Tunnels that relayed at least this much get a closing summary on stderr so
-# heavy flows are attributable without packet capture (the shared desktop shim
-# logs to ~/.agent-lb/claude-desktop-proxy.err.log; per-session shims discard).
+
+
 SHIM_TUNNEL_LOG_MIN_BYTES = 8 * 1024 * 1024
-# Upstream connects slower than this (a lost SYN costs >=1s) are logged too.
+
 SHIM_TUNNEL_SLOW_CONNECT_SECONDS = 3.0
 
-
-# ---------------------------------------------------------------------------
-# Local intercepting proxy (keeps Remote Control *and* LB routing at once).
-# ---------------------------------------------------------------------------
-# Claude Code only keeps Remote Control (/rc) enabled when (a) its API endpoint
-# is the real api.anthropic.com (its `sCn` first-party check) and (b) the
-# *active* login is a full-scope interactive `claude auth login` token carrying
-# `user:profile` (its `vx` check). A custom ANTHROPIC_BASE_URL fails (a); the
-# unix-socket / CLAUDE_CODE_OAUTH_TOKEN path forces an inference-only token and
-# fails (b). So neither of those can route through the LB without killing /rc.
-#
-# Instead we leave Claude pointed at api.anthropic.com with its keychain login,
-# and interpose a local HTTPS proxy. Claude's undici global dispatcher
-# (EnvHttpProxyAgent, installed whenever HTTPS_PROXY is set) CONNECT-tunnels
-# every request through us. We MITM api.anthropic.com — terminating TLS with a
-# locally-minted leaf cert Claude trusts via NODE_EXTRA_CA_CERTS — and forward
-# those requests to the LB (which injects the pooled account's auth). Every
-# other host (the RC bridge wss://bridge.claudeusercontent.com, telemetry, OAuth
-# refresh) is blind-tunnelled untouched, keeping its real end-to-end TLS. Claude
-# merges the extra CA with the bundled + system roots (its `H9`/getCACertificates
-# path), so trusting our CA never weakens validation of any other host.
-#
-# The MITM CA is scoped to this process tree only (NODE_EXTRA_CA_CERTS in the
-# child env) and is never added to the system trust store.
 
 TLS_DIR = Path.home() / ".agent-lb" / "tls"
 CA_CERT = TLS_DIR / "ca.pem"
@@ -332,14 +242,7 @@ AGENT_LB_ANTHROPIC_PATHS = frozenset(
 
 
 def _routes_to_agent_lb(path: str) -> bool:
-    """Return whether an api.anthropic.com request belongs to agent-lb.
 
-    The TLS interception is host-wide because CONNECT happens before the
-    client sends an HTTP path. Once decrypted, only the Messages API and the
-    installer's health probe belong to agent-lb. Unknown same-host paths are
-    first-party Anthropic traffic and default to direct egress so new Claude
-    auxiliary APIs do not get swallowed by the local service.
-    """
     parsed = urllib.parse.urlsplit(path)
     if parsed.scheme or parsed.netloc:
         return False
@@ -360,11 +263,7 @@ def _run_openssl(args: list[str]) -> None:
 
 
 def ensure_mitm_certs() -> None:
-    """Mint (once) a local CA + api.anthropic.com leaf cert under ~/.agent-lb/tls.
 
-    Idempotent: reuses cached certs when present. Shells out to the system
-    `openssl` (stdlib can't create x509 certs). Keys are 0600; the dir is 0700.
-    """
     if CERT_MARKER.exists() and CA_CERT.exists() and CA_KEY.exists() and LEAF_CERT.exists() and LEAF_KEY.exists():
         return
     if shutil.which("openssl") is None:
@@ -471,7 +370,7 @@ def ensure_mitm_certs() -> None:
 
 
 class _LbActivity:
-    """Progress for LB requests, excluding time spent in tools."""
+
 
     def __init__(self, path: Path, *, only_if_exists: bool = False) -> None:
         self.path = path
@@ -523,16 +422,7 @@ class _LbActivity:
 
 
 class _LbApiHandler(http.server.BaseHTTPRequestHandler):
-    """Serves the MITM'd api.anthropic.com stream, forwarding to the LB.
 
-    Instantiated by hand over an already-TLS-wrapped socket; its config
-    (upstream_base_url / session_id / parent_pid / shared) comes from the
-    `server` object.
-    Mirrors the old shim's forward/stream behaviour: strips hop-by-hop + host
-    headers, stamps a launcher-scoped `x-claude-session-id` (while shared mode
-    preserves the caller's identity headers), delimits every response by
-    connection close, and streams SSE line-by-line.
-    """
 
     protocol_version = "HTTP/1.1"
     timeout = SHIM_CLIENT_IDLE_TIMEOUT_SECONDS
@@ -656,10 +546,8 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         self, request: urllib.request.Request, shared: bool, parent_pid: int | None,
         activity: _LbActivity | None,
     ) -> None:
-        # Absorb an LB restart or watchdog-driven revival: a refused/reset/
-        # broken-pipe connect never produced a response, so retry with bounded
-        # backoff before surfacing an error. Real HTTP responses (429/503 with
-        # Retry-After) pass straight through.
+
+
         connect_retries = max(0, _env_int("CLAUDE_LB_SHIM_CONNECT_RETRIES", SHIM_CONNECT_RETRIES_DEFAULT))
         backoff = max(0.05, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF", SHIM_CONNECT_BACKOFF_DEFAULT))
         backoff_cap = max(backoff, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF_CAP", SHIM_CONNECT_BACKOFF_CAP_DEFAULT))
@@ -685,10 +573,8 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                 return
             if activity is not None:
                 activity.progress()
-            # Copy outside the retry try-block: a client hangup mid-stream is a
-            # ConnectionError too, and retrying it would re-send an already
-            # processed upstream request. Close the upstream response promptly
-            # instead of leaving its socket to the garbage collector.
+
+
             try:
                 self._copy_response(response, activity)
             finally:
@@ -726,7 +612,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         _splice(self.connection, upstream)
 
     def _forward_direct(self, body: bytes | None, headers: dict[str, str]) -> None:
-        """Forward a first-party auxiliary request without proxy recursion."""
+
         connection: http.client.HTTPSConnection | None = None
         try:
             connection = http.client.HTTPSConnection(
@@ -785,26 +671,14 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
 
 
 class _TunnelBucket:
-    """Aggregate rate limiter shared by every blind tunnel in a proxy process.
 
-    Only blind CONNECT relays draw from it; the MITMed api.anthropic.com path
-    never passes through. Earliest-departure-time pacing: each chunk books its
-    transmission slot under the lock and sleeps until that slot, so admission
-    is FIFO by arrival — a tunnel delivering small chunks cannot starve one
-    delivering 64KB chunks the way an all-or-nothing token debit can, and no
-    chunk size can exceed the budget into an unsatisfiable wait.
-    """
 
-    # Writes this small (RC websocket frames, OAuth exchanges) skip the sleep
-    # while the booked backlog stays under one burst window. They still debit
-    # the schedule, so a stream chunked small to dodge shaping steals at most
-    # one burst window of budget before it throttles like everything else.
     SMALL_WRITE_BYTES = 8192
 
     def __init__(self, rate_bytes_per_second: float, burst_bytes: float | None = None) -> None:
         self.rate = rate_bytes_per_second
-        # Burst is one second of budget, floored at two relay chunks so a tiny
-        # configured rate cannot stall a single 64KB recv() indefinitely.
+
+
         capacity = max(rate_bytes_per_second, 131072.0) if burst_bytes is None else burst_bytes
         self.burst_seconds = capacity / rate_bytes_per_second if rate_bytes_per_second > 0 else 0.0
         self.next_free = time.monotonic() - self.burst_seconds
@@ -828,8 +702,8 @@ class _TunnelBucket:
 
 def _tunnel_bucket_from_env() -> _TunnelBucket | None:
     rate_mbps = _env_float("CLAUDE_LB_TUNNEL_RATE_MBPS", SHIM_TUNNEL_RATE_MBPS_DEFAULT)
-    # NaN passes a plain <=0 gate and would poison every sleep computation,
-    # killing each tunnel on its first chunk machine-wide.
+
+
     if not math.isfinite(rate_mbps) or rate_mbps <= 0:
         return None
     return _TunnelBucket(rate_mbps * 125_000.0)
@@ -844,12 +718,7 @@ def _splice(
     b: socket.socket,
     bucket: "_TunnelBucket | None" = None,
 ) -> tuple[int, int]:
-    """Bidirectionally pump bytes between two sockets until either side closes.
 
-    Used for blind CONNECT tunnels (non-intercepted hosts, incl. the long-lived
-    Remote Control websocket). The select timeout is only an idle tick — idle
-    connections are kept open, never torn down. Returns (bytes a->b, bytes b->a).
-    """
     ends = (a, b)
     a_to_b = 0
     b_to_a = 0
@@ -890,7 +759,7 @@ def _splice(
 
 
 class _ProxyHandler(http.server.BaseHTTPRequestHandler):
-    """Front HTTPS proxy: MITMs INTERCEPT_HOSTS, blind-tunnels everything else."""
+
 
     protocol_version = "HTTP/1.1"
     timeout = SHIM_CLIENT_IDLE_TIMEOUT_SECONDS
@@ -899,15 +768,15 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         return
 
     def do_CONNECT(self) -> None:
-        # Validate the entire authority before deriving any loggable target:
-        # splitting on ':' can mistake userinfo for a harmless host prefix.
+
+
         target = re.fullmatch(
             r"([A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)(?::([0-9]{1,5}))?",
             self.path,
         )
         port = int(target.group(2) or 443) if target else 0
-        # Everything is handled inline; never let the base handler reuse the
-        # raw socket after we hijack it for TLS or a tunnel.
+
+
         self.close_connection = True
         if target is None or not 1 <= port <= 65535:
             try:
@@ -923,14 +792,14 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             self._tunnel(host, port)
 
     def _mitm(self) -> None:
-        # The client (undici) waits for this 200 before sending its ClientHello,
-        # so nothing is buffered on self.rfile yet.
+
+
         try:
             self.connection.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         except OSError:
             return
-        # Dup the fd so the TLS socket owns an independent handle; the base
-        # handler's finish() can then close self.connection without racing us.
+
+
         try:
             raw = socket.socket(
                 self.connection.family,
@@ -939,10 +808,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             )
         except OSError:
             return
-        # The handler timeout put the shared open file description in
-        # non-blocking mode, and socket(fileno=...) adopts the fd's actual
-        # blocking state — without an explicit timeout the TLS handshake
-        # would fail (and could otherwise hang forever on a silent client).
+
+
         raw.settimeout(SHIM_CLIENT_IDLE_TIMEOUT_SECONDS)
         try:
             tls = self.server.tls_context.wrap_socket(raw, server_side=True)
@@ -953,8 +820,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 pass
             return
         try:
-            # Drives setup()->handle()->finish() synchronously over the TLS
-            # socket, forwarding to the LB. Config is read from self.server.
+
+
             _LbApiHandler(tls, ("127.0.0.1", 0), self.server)
         except OSError:
             pass
@@ -971,9 +838,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 raise OSError("invalid CONNECT target")
             upstream = socket.create_connection((host, port), timeout=20)
         except OSError as error:
-            # Stamped so a client-visible stall can be matched to the upstream
-            # connect that caused it (2026-10-08: Studio packet loss read as a
-            # proxy fault for want of this line).
+
+
             try:
                 self.connection.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             except OSError:
@@ -1029,7 +895,7 @@ def _drain_tunnel_logs() -> None:
 
 
 def _queue_tunnel_log(line: str) -> None:
-    """A stalled/broken sink can only occupy one daemon and a bounded queue, never a tunnel."""
+
     global _tunnel_log_worker, _tunnel_log_window, _tunnel_log_count, _tunnel_log_suppressed
     if not _tunnel_log_lock.acquire(blocking=False):
         return
@@ -1068,16 +934,16 @@ def _log_tunnel_connect(host: str, port: int, elapsed: float, outcome: str) -> N
 
 
 class _ThreadingProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    """Threaded HTTPS proxy on an ephemeral loopback port."""
+
 
     daemon_threads = True
     allow_reuse_address = True
-    # Buffer tunnel bursts while accept is slow; the default 5 overflowed and macOS refused connections.
+
     request_queue_size = 1024
 
     def handle_error(self, request: object, client_address: object) -> None:
-        # Proxy teardown races (a client hanging up mid-tunnel) raise benign
-        # socket errors; suppress the default traceback dump to stderr.
+
+
         return
 
 
@@ -1102,7 +968,7 @@ def client_activity_path(client_session_id: str) -> Path | None:
 
 
 def _raise_fd_soft_limit(target: int = 10240) -> None:
-    """Raise this process's soft limit only, preserving an operator's hard cap."""
+
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         if hard != resource.RLIM_INFINITY:
@@ -1187,9 +1053,7 @@ SHIM_READY_FILE_DEAD_GRACE_SECONDS = 10
 
 
 def _prune_stale_shim_files(shim_dir: Path, *, now: float | None = None) -> int:
-    """Remove old per-session ready files, or dead ones after a short grace period.
-    Leave shared and unrelated files alone; skip entries that cannot be inspected.
-    """
+
     current_time = time.time() if now is None else now
     old_cutoff = current_time - SHIM_READY_FILE_MAX_AGE_SECONDS
     dead_cutoff = current_time - SHIM_READY_FILE_DEAD_GRACE_SECONDS
@@ -1224,8 +1088,8 @@ def _prune_stale_shim_files(shim_dir: Path, *, now: float | None = None) -> int:
 
 def start_lb_proxy(session_id: str) -> str:
     parent_pid = os.getpid()
-    # Sticky routing may share a session across concurrent headless launchers;
-    # each ephemeral proxy's readiness and cleanup belong to its own parent.
+
+
     ready = proxy_ready_path(f"{session_id}.{parent_pid}")
     _prune_stale_shim_files(ready.parent)
     for path in (ready, activity_path(session_id, parent_pid)):
@@ -1295,7 +1159,7 @@ def run_opus_doctor(nightly: bool = False) -> int:
 
 
 def schedule_opus_doctor() -> None:
-    """Repair definitions every launch, then request a gated detached probe."""
+
     if (
         os.environ.get("CLAUDE_LB_DOCTOR_SKIP") == "1"
         or os.environ.get("CLAUDE_LB_DISABLE") == "1"
@@ -1341,7 +1205,7 @@ def schedule_opus_doctor() -> None:
 
 
 def bypass_anthropic_proxy() -> None:
-    """Keep plain-Claude fallback out of a configured shared desktop proxy."""
+
     for name in ("NO_PROXY", "no_proxy"):
         exclusions = [entry.strip() for entry in os.environ.get(name, "").split(",") if entry.strip()]
         if not any(entry.lower() == "api.anthropic.com" for entry in exclusions):
@@ -1384,15 +1248,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _is_retryable_shim_connect_error(error: BaseException) -> bool:
-    """True for connection-level failures that mean the request never reached a
-    live LB (e.g. connection refused/reset while the service restarts).
 
-    These are safe to retry because no response was produced and the upstream
-    did not process the request. A real HTTP response (HTTPError) is never
-    retried — its status, including 429/503 with Retry-After, is passed straight
-    through to the agent. Read timeouts are excluded too, since the request may
-    already be in flight and re-sending could double-process it.
-    """
     if isinstance(error, urllib.error.HTTPError):
         return False
     reason = getattr(error, "reason", None)
@@ -1414,10 +1270,7 @@ def _is_unreachable_health_error(error: BaseException) -> bool:
 
 
 def _is_timeout_error(error: BaseException) -> bool:
-    """True when the endpoint accepted the connection but produced no response in
-    time: the LB process is alive but its event loop is stalled (or the front
-    proxy is holding the connection through a restart). Distinct from
-    unreachable, which means nothing is listening."""
+
     if isinstance(error, urllib.error.HTTPError):
         return False
     reason = getattr(error, "reason", error)
@@ -1427,22 +1280,7 @@ def _is_timeout_error(error: BaseException) -> bool:
 
 
 def _probe_interactive_ready(base_url: str, *, timeout: float, retries: int, gap: float) -> tuple[str, str]:
-    """Bounded readiness probe for interactive startup.
 
-    Returns (state, error) with state one of:
-      ready        /health/ready answered 200
-      busy         the endpoint accepted the connection but did not answer within
-                   `timeout` — the LB is up but stalled; safe to route through
-      unreachable  nothing listening (refused / host or net unreachable)
-      down         answered with an error (e.g. 503 while booting) `retries` times
-
-    Only the `down` state pays for retries: a 503 comes back in milliseconds and
-    clears within a second or two of boot. A timeout is never retried, because
-    each retry against a stalled loop just burns the whole budget again
-    (observed 2026-09-16: 3 x 3s probes + gaps = 11s of dead startup while the
-    LB was alive and serving), and an unreachable endpoint fails instantly, so
-    the caller's launchd grace / next-candidate logic takes over at once.
-    """
     last_error = "no response"
     for attempt in range(max(1, retries)):
         try:
@@ -1460,12 +1298,7 @@ def _probe_interactive_ready(base_url: str, *, timeout: float, retries: int, gap
 
 
 def _probe_health_at(base_url: str, *, retries: int, timeout: float, gap: float) -> tuple[bool, str, bool]:
-    """Probe /health/ready at base_url, retrying briefly so a transient LB restart or
-    tailscale blip does not force the whole session onto plain-claude fallback.
 
-    The healthy path returns on the first probe (tens of ms); only failures pay
-    the retry/backoff cost.
-    """
     last_error = "no response"
     last_error_unreachable = False
     for attempt in range(retries):
@@ -1526,12 +1359,8 @@ def _wait_for_local_startup(base_url: str, *, probe_timeout: float) -> bool:
 
 
 def _lb_candidates() -> list[tuple[str, str]]:
-    """Ordered (label, url) candidates: local first, then remote, deduplicated.
 
-    CLAUDE_LB_LOCAL_PREFER=0 drops the local candidate entirely, restoring the
-    pre-federation single-URL behavior driven solely by CLAUDE_LB_BASE_URL.
-    """
-    # Empty-string env values count as unset (an empty base URL crashes urllib).
+
     local_url = (os.environ.get("CLAUDE_LB_LOCAL_URL") or LOCAL_LB_URL).rstrip("/")
     remote_url = (os.environ.get("CLAUDE_LB_BASE_URL") or default_remote_url()).rstrip("/")
     prefer_local = os.environ.get("CLAUDE_LB_LOCAL_PREFER") != "0" and not remote_only_mac()
@@ -1770,7 +1599,7 @@ def _epoch_from_iso(value: str) -> int | None:
 
 
 def retry_at_from_error_body(body: str) -> int | None:
-    """Extract the LB's advertised limit-reset epoch from an error envelope."""
+
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
@@ -1821,24 +1650,13 @@ def wait_until_reset(retry_at: int, reason: str) -> None:
         time.sleep(min(remaining, 30.0))
 
 
-# Claim placeholder returned when the LB accepted the connection but could not
-# answer the claim in time. The session id still rides every proxied request,
-# so the LB performs the identical sticky selection on the first message; only
-# the pre-flight banner detail and eager reset-waiting are deferred, and
-# run_headless_with_resume() still waits out a limit that surfaces mid-run.
 DEFERRED_CLAIM: dict = {"deferred": True}
 
 
 def claim_session_route(
     session_id: str, model: str, quota_key: str, base_url: str, *, timeout: float | None = None
 ) -> tuple[dict | None, str, int | None]:
-    """Claim a sticky route at base_url. Returns (claim, error_message, retry_at_epoch).
 
-    A claim that times out (LB alive but stalled) is retried once with double
-    the budget, then reported as DEFERRED_CLAIM rather than as a failure, so a
-    stalled loop never silently pushes a headless run onto plain claude and
-    the local account.
-    """
     budget = timeout if timeout is not None else _env_float("CLAUDE_LB_CLAIM_TIMEOUT", 5.0)
     for attempt in range(2):
         try:
@@ -1869,12 +1687,7 @@ def _claim_at_endpoint(
     deadline: float,
     request_timeout: float | None = None,
 ) -> tuple[dict | None, str]:
-    """Claim a route at base_url, waiting out advertised limit resets in place
-    (same account pool) up to deadline. Returns (claim, "") on success, or
-    (None, error_message) once retryable waiting is exhausted or the failure
-    isn't retryable — the caller decides whether to fall through to the next
-    candidate endpoint.
-    """
+
     while True:
         claim, error_message, retry_at = claim_session_route(
             session_id,
@@ -1901,9 +1714,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     quota_key, quota_label = anthropic_quota_key(model, effort)
     model_label = model.replace("claude-", "")
 
-    # A successful route claim proves both endpoint reachability and account
-    # availability. Claim each candidate directly so startup does not pay for a
-    # redundant health round trip first.
+
     timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
     local_timeout = min(2.0, timeout)
     deadline = time.time() + wait_max_seconds()
@@ -1954,8 +1765,8 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     selected_account_id = str(claim.get("accountId") or "")
 
     try:
-        # Banner enrichment only — the route is already claimed. Keep this off the
-        # startup critical path: cap the wait and fall back to the claim-based banner.
+
+
         payload = lb_json("/api/accounts", timeout=_env_float("CLAUDE_LB_BANNER_TIMEOUT", 1.5))
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         account_label = claim.get("alias") or claim.get("email") or selected_account_id[:8]
@@ -2003,23 +1814,11 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
 
 
 def prepare_interactive_endpoint() -> bool:
-    """Select a ready endpoint without blocking Claude's UI on account selection.
 
-    The proxy request carries the session id, so the server performs the same
-    sticky account selection when the user sends their first message. Eager
-    claiming remains in place for headless runs, where reset waiting and an
-    immediately actionable failure are part of the command contract.
-    """
     global AGENT_LB_BASE_URL
     failures: list[str] = []
-    # The probe budget is the most an interactive launch waits on the LB. The
-    # healthy path answers in tens of ms. An LB that is up but stalled (event
-    # loop lag under heavy streaming load, observed 0.7-7s on 2026-09-16; the
-    # front proxy holding connections through a restart) times out and is
-    # routed through anyway: the session id carries the sticky selection to the
-    # first message, and the shim's per-request connect retries (~2 min budget)
-    # outlast a watchdog-driven LB recovery. Waiting longer here only delayed
-    # the prompt; falling back to plain claude was the outcome to avoid.
+
+
     local_timeout = _env_float("CLAUDE_LB_LOCAL_READY_TIMEOUT", 1.0)
     remote_timeout = _env_float("CLAUDE_LB_REMOTE_READY_TIMEOUT", 3.0)
     strict = os.environ.get("CLAUDE_LB_STRICT_READY") == "1"
@@ -2053,7 +1852,7 @@ def prepare_interactive_endpoint() -> bool:
 
 
 def prepare_ccgpt_endpoint() -> bool:
-    """Select a compatible LB endpoint without claiming an Anthropic account."""
+
     global AGENT_LB_BASE_URL
     failures: list[str] = []
     timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
@@ -2197,13 +1996,13 @@ def build_command(argv: list[str]) -> list[str]:
             command.extend(["--model", DEFAULT_CLAUDE_MODEL])
         effort_arg = arg_value(argv, "--effort")
         effort_env = (os.environ.get("CC_EFFORT_LEVEL") or "").strip()
-        # none/off are quota-routing sentinels for anthropic_top (no thinking).
-        # Claude Code only accepts low|medium|high|xhigh|max — strip sentinels.
+
+
         if effort_arg is None:
             if effort_env.lower() not in {"", "none", "off"}:
                 command.extend(["--effort", effort_env])
             elif effort_env.lower() in {"none", "off"}:
-                pass  # omit --effort → non-thinking / top-model quota
+                pass
             else:
                 command.extend(["--effort", DEFAULT_CLAUDE_EFFORT])
         elif effort_arg.lower() in {"none", "off"}:
@@ -2231,14 +2030,7 @@ def headless_invocation(argv: list[str]) -> bool:
 
 
 def derive_session_id(argv: list[str]) -> str:
-    """Session id for LB sticky routing.
 
-    An explicit CLAUDE_LB_SESSION_ID always wins. Headless (`-p`/`--print`) runs
-    without one derive a stable id from the working directory so a loop of
-    `claude -p` turns keeps one sticky account and its warm prompt cache instead
-    of scattering a fresh `cc-<pid>-<epoch>` route each turn. Interactive runs
-    keep the per-process id.
-    """
     explicit = os.environ.get("CLAUDE_LB_SESSION_ID")
     if explicit:
         return explicit
@@ -2288,11 +2080,11 @@ def _stop_child(child: subprocess.Popen[bytes], *, interrupt: bool = False) -> N
 
 
 def _transcript_mtime(session_dir: Path, session_id: str) -> float | None:
-    """Newest session write, including nested agent and tool transcripts."""
+
     latest = None
     paths = [session_dir / f"{session_id}.jsonl"]
     subtree = session_dir / session_id
-    # A session may have many subagents; bound each poll even if the tree grows.
+
     remaining = 10000
     for root, dirs, files in os.walk(subtree, onerror=lambda error: None):
         paths.extend(Path(root) / name for name in files[:remaining])
@@ -2313,7 +2105,7 @@ def _transcript_mtime(session_dir: Path, session_id: str) -> float | None:
 
 
 def _parse_elapsed(text: str) -> int:
-    """Parse ps etime ([[dd-]hh:]mm:ss) into seconds."""
+
     match = re.fullmatch(r"(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)", text)
     if match is None:
         raise ValueError("invalid ps etime")
@@ -2322,7 +2114,7 @@ def _parse_elapsed(text: str) -> int:
 
 
 def _shell_command_process(args: str) -> bool:
-    """Recognize a command shell (including login shells prefixed with '-')."""
+
     words = args.split()
     if not words:
         return False
@@ -2344,7 +2136,7 @@ def _shell_command_process(args: str) -> bool:
 
 
 def _work_process_alive(child_pid: int) -> bool:
-    """Count command shells or late-starting descendants; failed inspection is life."""
+
     try:
         output = subprocess.run(
             ["ps", "-axo", "pid=,ppid=,etime=,args="], capture_output=True, text=True, timeout=5,
@@ -2356,7 +2148,7 @@ def _work_process_alive(child_pid: int) -> bool:
             pid, ppid, age, *args = line.split(maxsplit=3)
             processes[int(pid)] = (int(ppid), _parse_elapsed(age), args[0] if args else "")
         if child_pid not in processes:
-            return True  # Child disappeared between wait and ps.
+            return True
         parent_age = processes[child_pid][1]
         children = {}
         for pid, (ppid, age, args) in processes.items():
@@ -2492,7 +2284,7 @@ def run_headless_with_resume(
     model: str,
     quota_key: str,
 ) -> int:
-    """Run headless Claude; on limit-confirmed failure, wait for reset and resume."""
+
     command, claude_session_id = claude_session_args(argv, command)
     deadline = time.time() + wait_max_seconds()
     current = command
@@ -2502,8 +2294,8 @@ def run_headless_with_resume(
         returncode = run_supervised(current, activity, stall_timeout, session_id=claude_session_id)
         if returncode in (0, EXIT_TEMPFAIL) or claude_session_id is None:
             return returncode
-        # Only retry when the LB confirms the failure is account exhaustion
-        # with a known reset; any other failure propagates immediately.
+
+
         claim, _, retry_at = claim_session_route(session_id, model, quota_key, AGENT_LB_BASE_URL)
         if claim is not None or not should_wait_for_reset(retry_at, deadline):
             return returncode
@@ -2539,9 +2331,8 @@ def main() -> None:
         run_lb_proxy(sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5])
         return
     if len(sys.argv) >= 2 and sys.argv[1] == "--desktop-proxy":
-        # Shared machine-wide proxy (run under launchd) for clients that can't
-        # go through this launcher — the Claude desktop app wires to it via the
-        # settings.json env block. Foreground, fixed port, no parent watchdog.
+
+
         listen_port = int(
             sys.argv[2] if len(sys.argv) >= 3 else os.environ.get("CLAUDE_LB_DESKTOP_PROXY_PORT", "2458")
         )
@@ -2595,39 +2386,29 @@ def main() -> None:
         if endpoint_ready:
             try:
                 proxy_url = start_lb_proxy(session_id)
-                # Keep Claude pointed at the real api.anthropic.com with its
-                # keychain login (both are required for Remote Control), and route
-                # its traffic through a local intercepting proxy instead. Claude's
-                # undici global dispatcher CONNECT-tunnels every request through
-                # HTTPS_PROXY; our proxy MITMs api.anthropic.com -> the LB (which
-                # injects the pooled account's auth) and blind-tunnels everything
-                # else (the RC bridge, telemetry, OAuth refresh) untouched.
+
+
                 os.environ["HTTPS_PROXY"] = proxy_url
                 os.environ["https_proxy"] = proxy_url
-                # Descendants (shells, hermes, any httpx tool) inherit HTTPS_PROXY
-                # and would route loopback API calls through the MITM, which 501s
-                # non-Anthropic POSTs. Loopback must always connect direct.
+
+
                 for name in ("NO_PROXY", "no_proxy"):
                     exclusions = [entry.strip() for entry in os.environ.get(name, "").split(",") if entry.strip()]
                     for host in ("127.0.0.1", "localhost"):
                         if not any(entry.lower() == host for entry in exclusions):
                             exclusions.append(host)
                     os.environ[name] = ",".join(exclusions)
-                # Trust the MITM leaf — scoped to this process only, never added to
-                # the system trust store. Claude merges this with the bundled +
-                # system roots, so every other host keeps validating normally.
+
+
                 os.environ["NODE_EXTRA_CA_CERTS"] = str(CA_CERT)
-                # Must NOT be set: a custom base URL fails RC's first-party check
-                # (sCn); a unix socket or CLAUDE_CODE_OAUTH_TOKEN forces an
-                # inference-only token and fails RC's full-scope check (vx). Clear
-                # any leftovers from an earlier launcher version.
+
+
                 os.environ.pop("ANTHROPIC_BASE_URL", None)
                 os.environ.pop("ANTHROPIC_UNIX_SOCKET", None)
                 os.environ.pop("_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL", None)
                 os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
-                # The LB injects the pooled account's auth; Claude's keychain OAuth
-                # stays the active login (what RC needs). A local auth/api token
-                # would flip Claude Code to API billing, so clear them.
+
+
                 os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
                 os.environ.pop("ANTHROPIC_API_KEY", None)
                 routed = True
@@ -2661,7 +2442,7 @@ def main() -> None:
     if not routed:
         bypass_anthropic_proxy()
 
-    # The shim has captured these tags; nested launchers must choose their own intent.
+
     os.environ.pop("AGENT_LB_INTENT", None)
     os.environ.pop("AGENT_LB_LANE", None)
     command = build_command(argv)

@@ -1,57 +1,5 @@
 #!/usr/bin/env python3
-# route — pick the live seat for a task class, and keep the routing state honest.
-#
-# Contract C4 of docs/router-program.md. Stdlib only, same style family as
-# clients/opus-runtime-doctor.
-#
-# Commands:
-#   route pools  [--json]                        pool headroom (C1, or an accounts approximation)
-#   route pick   <class> [--author-vendor V]     first routable chain entry for a class
-#   route menu   [--class C] [--json]            every seat runnable now per class, excluded seats
-#                                                with reasons, pool headroom, pace and reset times
-#   route doctor [--write]                       probe seats and pools; write routing-state.json
-#   route report [--days N]                      dispatch ledger joined with LB session cost
-#   route record --class C --seat S --model M ...  log one implement outcome (tokens, time, audit)
-#   route resolve <alias> [<alias> ...]          newest served model for the first resolvable family alias
-#   route seat <name> [--class C] [--rules COMMIT] [--json]   one seat at a pinned rules commit
-#   route seats [--rules COMMIT] [--json]   seats, chains, audit and escalation at a pinned rules commit
-#   route models [--json]                        every family alias with what it resolves to now
-#   route workflow-args                          JSON for Workflow scripts: per class, the agent() options
-#                                                (agentType, model, effort) and brief line of the live pick
-#
-#   route reserve <class> --job ID [--prefer SEAT [--model M]]  lease provider capacity; exit 75 means wait
-#   route heartbeat <id> [--ttl S]              renew a live reservation
-#   route release <id> --outcome ok|failed|cancelled  end a reservation
-#   route reservations [--json]                 list live and recent reservations
-#
-# Env:
-#   ROUTE_HOST         reservation owner host (default socket hostname)
-#   AGENT_LB_URL       LB base URL (default: AGENT_LB_URL in ~/.config/agent-lb/client.env, which a
-#                      factory box's lb-proxy install writes, else http://127.0.0.1:2455)
-#   ROUTE_TABLE        routing table path (default ~/.agent-lb/managed/coding-agents/routing-table.json,
-#                      falling back to config/coding-agents/routing-table.json beside this script)
-#   ROUTE_STATE        routing state path (default ~/.claude/routing-state.json)
-#   ROUTE_ALERT        alert path (default ~/.claude/routing-ALERT)
-#   ROUTE_LEDGER       dispatch ledger path (default ~/.claude/logs/dispatch.jsonl)
-#   ROUTE_POOL_HISTORY pool samples (default ~/.claude/route-pool-history.jsonl)
-#   ROUTE_CURSOR_CMD   cursor probe command (default "cursor-agent status")
-#   ROUTE_CODEX_CMD    codex probe command (default "node <codex-companion.mjs> status")
-#   ROUTE_MODELS_CACHE last good LB model list (default ~/.cache/agent-lb/route-models.json)
-#   ROUTE_CURSOR_MODELS_CMD  Cursor model list command (default "cursor-agent --list-models"),
-#                      cached beside the LB list for a day
-#   ROUTE_DEVIN_CMD    devin probe command (default "devin auth status")
-#   ROUTE_DEVIN_MODELS_CMD  Devin model list command (default "devin models list"), cached a day
-#   ROUTE_FIXTURE_DIR  TEST ONLY — serve HTTP reads from files in this directory instead of the
-#                      network. A request to /api/pools reads api_pools.json; a missing file is a
-#                      404. Pick snapshots use fixtures; reservation commands use the network.
-#                      Never set this outside tests.
-#
-# Exit codes:
-#   0  success
-#   1  degraded (doctor: a probe failed) or operational failure
-#   2  nothing routable / usage error
-#   3  setup error / unknown latest alias
-#   75 reservation: provider capacity full; wait and retry
+
 
 from __future__ import annotations
 
@@ -99,30 +47,22 @@ DEVIN_TIMEOUT_SECONDS = 15.0
 CODEX_TIMEOUT_SECONDS = 15.0
 READ_TIMEOUT_SECONDS = 5.0
 
-# The 1-token probe is a secondary signal behind real session traffic, so it gets a short
-# leash: over this, it is dropped for the rest of the run and pool status decides instead.
+
 PROBE_BUDGET_SECONDS = 2.0
 SESSION_WINDOW_MINUTES = 30
 MESSAGE_HEAD_CHARS = 160
 
-# A routing state older than this is not evidence about anything; `pick` ignores it entirely
-# rather than routing around seats that were down two hours ago.
+
 STATE_MAX_AGE_SECONDS = 7200
 
-# cursor-seat forwards to cursor-agent whatever model id it carries, so its health is the
-# forwarder's health and not the health of the model's home vendor.
+
 SEAT_PROBE = {"cursor-seat": "cursor-agent", "devin-seat": "devin", "muse-seat-local": "muse"}
 
-# A vendor CLI probe (`devin auth status`) can time out once under load while the seat works. One failure keeps a
-# CLI seat routable; it is held only after this many consecutive doctor runs fail, and only for CLI_SEAT_HOLD_SECONDS
-# (shorter than the 30 min doctor interval). A passing probe clears the count and the hold (2026-10-09).
+
 CLI_SEAT_HOLD_AFTER_FAILURES = 2
 CLI_SEAT_HOLD_SECONDS = 600
 
 ANALYTICS_SESSION_CAP = 20
-
-
-# --- paths and configuration -------------------------------------------------
 
 
 def base_url() -> str:
@@ -131,7 +71,7 @@ def base_url() -> str:
 
 
 def _client_env_url() -> str | None:
-    # A factory box has no LB on 2455; its lb-proxy install writes the box proxy URL here (2026-10-06).
+
     try:
         text = (Path.home() / ".config" / "agent-lb" / "client.env").read_text(encoding="utf-8")
     except (OSError, UnicodeError):
@@ -202,11 +142,7 @@ def load_table(*, apply_default: bool = True) -> dict[str, Any]:
 
 
 def apply_implement_default(table: dict[str, Any]) -> dict[str, Any]:
-    """Move the `implement_default` seat to the head of the implement and mechanical chains.
 
-    It is the one-line revert switch for the default implementer (2026-09-28): sonnet-implementer, or
-    gpt-implementer to put Sol back in front. A seat missing from a chain leaves that chain as written.
-    """
     seat = table.get("implement_default")
     classes = table.get("classes")
     if not isinstance(seat, str) or not isinstance(classes, dict):
@@ -241,8 +177,6 @@ def atomic_write(path: Path, text: str) -> None:
         except FileNotFoundError:
             pass
 
-
-# --- versioned seat rules ----------------------------------------------------
 
 SEAT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 COMMIT_NAME = re.compile(r"^[0-9a-f]{7,64}$")
@@ -481,11 +415,8 @@ def rules_status() -> dict[str, Any]:
     return state
 
 
-# --- HTTP --------------------------------------------------------------------
-
-
 class HttpResult:
-    """One HTTP call: transport success, the status, and the decoded body."""
+
 
     def __init__(self, *, ok: bool, status: int | None, body: Any, error: str | None) -> None:
         self.ok = ok
@@ -565,14 +496,8 @@ def http_post(path: str, payload: dict[str, Any], *, timeout: float) -> HttpResu
     return _request("POST", path, payload=payload, timeout=timeout)
 
 
-# --- pools -------------------------------------------------------------------
-
-
 def pool_exhausted(pool_doc: Any) -> bool:
-    """A pool is out when no account is eligible; a headroom label alone never empties it (2026-09-28).
 
-    The eligible count decides when /api/pools reports it; the status label only when it does not.
-    """
     if not isinstance(pool_doc, dict):
         return False
     eligible = pool_doc.get("eligibleAccounts")
@@ -597,11 +522,11 @@ def _window(usage: Any, key: str, missing: float) -> float:
 
 
 def _remaining(account: dict[str, Any]) -> float:
-    """What the account can serve now: the lower of its 5-hour and weekly windows."""
+
     if account.get("status") != "active":
         return 0.0
     usage = account.get("usage")
-    # No 5-hour window reported is an unmetered provider, not a spent one.
+
     return min(_window(usage, "secondaryRemainingPercent", 0.0), _window(usage, "primaryRemainingPercent", 100.0))
 
 
@@ -610,7 +535,7 @@ WEEKLY_CYCLE_HOURS = 168.0
 
 
 def _account_weekly_pace(account: dict[str, Any]) -> float:
-    """Weekly remaining minus the share of the cycle ahead of this account's own reset."""
+
     remaining = _window(account.get("usage"), "secondaryRemainingPercent", 100.0)
     reset_at = _parse_ts(account.get("resetAtSecondary"))
     hours_left = WEEKLY_CYCLE_HOURS
@@ -634,7 +559,7 @@ def _pool_ids(account: dict[str, Any]) -> list[str]:
 
 
 def pools_from_accounts(body: Any) -> dict[str, Any]:
-    """Approximate C1 from /api/accounts while /api/pools is not deployed yet."""
+
     accounts = body.get("accounts") if isinstance(body, dict) else body
     if not isinstance(accounts, list):
         accounts = []
@@ -647,7 +572,7 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
 
     pools = []
     for pool_id, members in sorted(grouped.items()):
-        # Limited accounts stay in the aggregate at zero, as /api/pools counts them.
+
         routable = [account for account in members if account.get("status") in _ROUTABLE_STATUSES]
         usable = [account for account in routable if _remaining(account) > 0.0]
         headroom = max((_remaining(account) for account in usable), default=0.0)
@@ -694,7 +619,7 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
 
 
 def add_pool_refills(document: dict[str, Any], body: Any) -> None:
-    """Attach weekly reset cohorts from the same account windows used by status."""
+
     accounts = body.get("accounts") if isinstance(body, dict) else body
     if not isinstance(accounts, list):
         return
@@ -802,7 +727,7 @@ def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS,
 
 
 def fetch_stand_ins(timeout: float = 2.0) -> dict:
-    """Older or unavailable services do not prevent a pick."""
+
     empty = {"active": [], "recent": []}
     try:
         response = http_get("/api/pools/stand-ins", timeout=timeout)
@@ -848,15 +773,8 @@ def pools_by_id(document: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
 
 
 def pool_pace(pool: dict[str, Any], cycle_hours: float) -> float | None:
-    """ROUTING.md rule 1: remaining% minus the share of the cycle still ahead of the reset.
 
-    Positive means the pool has more left than time left (spend it), negative means it is
-    being spent faster than the cycle allows.
-    """
-    # Only the per-account weekly pace (each account against its own reset) is
-    # trusted: a pool-level mean remaining paired with one reset lets an early
-    # reset lift a pool that is behind, and the aggregate is capped by the
-    # five-hour window. An LB without the field gets the /api/accounts figure.
+
     pace = pool.get("weeklyPacePercent")
     if isinstance(pace, (int, float)) and not isinstance(pace, bool):
         return float(pace)
@@ -985,7 +903,7 @@ def pace_state(pool: dict, history: list[dict], policy: dict, now: datetime) -> 
 
 
 def accounts_pace(pool_id: str) -> float | None:
-    """Per-account weekly pace for one pool, computed from /api/accounts."""
+
     result = http_get("/api/accounts", timeout=3.0)
     if not result.ok or result.body is None:
         return None
@@ -996,7 +914,7 @@ def accounts_pace(pool_id: str) -> float | None:
 
 
 def _percent(value: Any) -> str:
-    """C1 allows a null percent when a pool has no usable account; print it as such."""
+
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return "-"
     return f"{float(value):.1f}%"
@@ -1092,16 +1010,6 @@ def command_plan(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-# --- model aliases -----------------------------------------------------------
-#
-# Seats name a family alias (opus-latest, sol-latest, ...) instead of a version so a new
-# release is picked up with no edits. OpenAI families resolve against the LB's own model
-# list; Claude families resolve against the upstream Anthropic list the LB serves at
-# /api/models/anthropic (cached a day here), then the alias's `pinned` id, then Claude Code's
-# harness alias (`opus`, `sonnet`) as the last resort (2026-09-28). Anything matching the
-# table's `retired` patterns never resolves and is flagged by verify-routing and the seat
-# guard.
-
 MODELS_CACHE_MAX_AGE_SECONDS = 86400
 LOW_BAND_MAX_ELIGIBLE = 2
 DEFAULT_RETIRED = ("claude-fable-*", "fable", "claude-planner", "gpt-*-astra", "gpt-*-astra-*", "gpt-5.6*", "gpt-5.5*")
@@ -1122,7 +1030,7 @@ DEFAULT_BLOCKED = ("claude-planner", "gpt-5.4*", "gpt-5-*", "gpt-5")
 
 
 def blocked_patterns(table: dict[str, Any]) -> tuple[str, ...]:
-    """Models no longer served upstream: refused even when named explicitly (2026-10-05)."""
+
     configured = table.get("blocked")
     if isinstance(configured, list) and all(isinstance(item, str) for item in configured):
         return tuple(configured)
@@ -1130,7 +1038,7 @@ def blocked_patterns(table: dict[str, Any]) -> tuple[str, ...]:
 
 
 def readmitted_patterns(table: dict[str, Any], alias: str) -> tuple[str, ...]:
-    """Retired patterns the table's `readmitted` map lets this alias resolve to (2026-10-05)."""
+
     readmitted = table.get("readmitted") if isinstance(table.get("readmitted"), dict) else {}
     found: list[str] = []
     for entry in readmitted.values():
@@ -1154,7 +1062,7 @@ def _model_ids(body: Any) -> list[str]:
 
 
 def served_models() -> tuple[list[str], str]:
-    """The LB's model list, falling back to the last good copy (at most a day old)."""
+
     for path in ("/api/models", "/v1/models"):
         result = http_get(path, timeout=3.0)
         ids = _model_ids(result.body) if result.ok else []
@@ -1183,7 +1091,7 @@ _ANTHROPIC_MODELS: tuple[list[str], str] | None = None
 
 
 def anthropic_models() -> tuple[list[str], str]:
-    """Upstream Anthropic model ids from the LB, falling back to the last good copy (at most a day old)."""
+
     global _ANTHROPIC_MODELS
     if _ANTHROPIC_MODELS is not None:
         return _ANTHROPIC_MODELS
@@ -1205,7 +1113,7 @@ def anthropic_models() -> tuple[list[str], str]:
     except (OSError, json.JSONDecodeError):
         return _ANTHROPIC_MODELS
     stamp = _parse_ts(cached.get("ts")) if isinstance(cached, dict) else None
-    if stamp is not None and stamp.tzinfo is None:  # a hand-edited or foreign stamp: not ours, so not trusted
+    if stamp is not None and stamp.tzinfo is None:
         stamp = None
     listed = cached.get("models") if isinstance(cached, dict) else None
     if stamp is not None and isinstance(listed, list) and (
@@ -1215,10 +1123,7 @@ def anthropic_models() -> tuple[list[str], str]:
 
 
 def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tuple[str | None, str]:
-    """The newest non-retired `claude-<family>-<major>[-<minor>]` upstream lists, else `pinned`, else the harness alias.
 
-    Dated snapshots (claude-sonnet-4-20250514) never match: a minor version has at most two digits.
-    """
     family = spec.get("family")
     if isinstance(family, str) and family:
         pattern = re.compile(rf"^claude-{re.escape(family)}-(\d+)(?:-(\d{{1,2}}))?$")
@@ -1231,7 +1136,7 @@ def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tup
         if candidates:
             return max(candidates)[1], f"newest listed {family} ({source})"
         if listed and spec.get("fallback"):
-            # The upstream list answered without this family: it is gone, so the fallback alias serves.
+
             return None, f"no listed {family} ({source})"
     pinned = spec.get("pinned")
     if isinstance(pinned, str) and pinned and not is_retired(pinned, retired):
@@ -1243,8 +1148,8 @@ def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tup
 
 
 _CURSOR_MODELS: list[str] | None = None
-# `route reserve` may not start a vendor CLI before it holds capacity (A4d): while this is set, a vendor model list
-# with no fresh cache is not fetched; the vendor is recorded here and its rungs resolve once the hold is taken.
+
+
 _DEFER_DISCOVERY = False
 _DEFERRED_DISCOVERY: set[str] = set()
 
@@ -1254,7 +1159,7 @@ def model_list_pending(vendor: str) -> str:
 
 
 def allow_discovery() -> None:
-    """End deferral and forget lists memoized while it was on, so the next lookup fetches them."""
+
     global _DEFER_DISCOVERY, _CURSOR_MODELS, _DEVIN_MODELS
     _DEFER_DISCOVERY = False
     if "cursor" in _DEFERRED_DISCOVERY:
@@ -1265,7 +1170,7 @@ def allow_discovery() -> None:
 
 
 def cursor_models() -> list[str]:
-    """Cursor's model ids, memoized per process and cached for a day."""
+
     global _CURSOR_MODELS
     if _CURSOR_MODELS is None:
         _CURSOR_MODELS = fetch_cursor_models()
@@ -1318,8 +1223,6 @@ def fetch_cursor_models() -> list[str]:
     return ids
 
 
-# A stop of `route reserve` ends a model listing in at most this long; the release then has the rest of
-# STOP_BUDGET_SECONDS, which stays inside seat's 10 s stop grace (seat SIGKILLs route's group after it).
 LISTING_TERM_GRACE_SECONDS = 1.0
 LISTING_DRAIN_SECONDS = 3.0
 STOP_BUDGET_SECONDS = 8.0
@@ -1327,9 +1230,7 @@ _UNDRAINED: list[str] = []
 
 
 def run_listing(command: list[str], timeout: float) -> str:
-    """A model listing's stdout, or "" when it fails or runs past `timeout`. The listing runs in its own process
-    group, which is ended as a group (end_group) on a timeout or when a stop interrupts it, so a descendant the
-    listing leaves behind is ended too and no other process can be signalled."""
+
     try:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL, text=True, start_new_session=True)
@@ -1349,7 +1250,7 @@ def run_listing(command: list[str], timeout: float) -> str:
 
 
 def _signal_group(pgid: int, signum: int) -> bool:
-    """killpg; False once the group is gone (ESRCH)."""
+
     try:
         os.killpg(pgid, signum)
     except ProcessLookupError:
@@ -1360,11 +1261,7 @@ def _signal_group(pgid: int, signum: int) -> bool:
 
 
 def end_group(process: subprocess.Popen, within: float) -> bool:
-    """End the process group `process` leads: SIGTERM the group, wait on the leader for a short grace, then SIGKILL
-    the group until killpg(pgid, 0) answers ESRCH. Only killpg is used, never a pid read from a process table, so a
-    pid reused by an unrelated process cannot be signalled: the group id stays allocated while any member is left,
-    and the loop stops at the first ESRCH. True once the group is gone within `within` seconds; False when a member
-    (a zombie no one reaps, or one in uninterruptible I/O) is still there at the deadline."""
+
     pgid = process.pid
     deadline = time.monotonic() + within
     _signal_group(pgid, signal.SIGTERM)
@@ -1389,7 +1286,7 @@ _DEVIN_MODELS: list[str] | None = None
 
 
 def devin_models() -> list[str]:
-    """Devin's model ids, memoized per process and cached for a day."""
+
     global _DEVIN_MODELS
     if _DEVIN_MODELS is None:
         _DEVIN_MODELS = fetch_devin_models()
@@ -1413,7 +1310,7 @@ def fetch_devin_models() -> list[str]:
         return []
     command = shlex.split(os.environ.get("ROUTE_DEVIN_MODELS_CMD") or "devin models list")
     output = run_listing(command, timeout=10)
-    # Model rows are indented `<id>  <display name>  [...]`; family headers and aliases are not.
+
     ids = [line.split()[0] for line in output.splitlines() if line.startswith("  ") and line.split()]
     ids = [value for value in ids if re.fullmatch(r"[a-z0-9][\w.\-]*", value)]
     cache_model_list(cache, ids)
@@ -1425,7 +1322,7 @@ def _version_key(version: str) -> tuple[int, ...]:
 
 
 def family_alias(table: dict[str, Any], name: str) -> str:
-    """Keep explicit vendor variants; otherwise resolve an effort suffix via its base alias."""
+
     aliases = table.get("aliases") or {}
     if name in aliases:
         return name
@@ -1437,7 +1334,7 @@ def family_alias(table: dict[str, Any], name: str) -> str:
 
 def resolve_alias(table: dict[str, Any], name: str, served: list[str],
                   seat: str | None = None) -> tuple[str | None, str]:
-    """resolve_one, then the alias's `fallback` alias when it yields nothing (fable-latest -> opus-latest)."""
+
     name = family_alias(table, name)
     model, reason = resolve_one(table, name, served, seat)
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
@@ -1451,10 +1348,7 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str],
 
 def resolve_one(table: dict[str, Any], name: str, served: list[str],
                 seat: str | None = None) -> tuple[str | None, str]:
-    """(model, reason). A name that is not an alias is returned unchanged unless retired.
 
-    A routed seat (`seat` given) reaches a readmitted alias only when it is the seat the
-    `readmitted` map names; a direct `route resolve`/`route models` call has no seat."""
     retired = retired_patterns(table)
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
     spec = aliases.get(name)
@@ -1465,7 +1359,7 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
             return None, f"{name} is readmitted for {', '.join(owners)} only"
         exempt = readmitted_patterns(table, name)
         retired = tuple(pattern for pattern in retired if pattern not in exempt)
-    # Blocked models are gone upstream: no alias resolves to one and no readmit exempts it.
+
     blocked = blocked_patterns(table)
     retired = (*retired, *(pattern for pattern in blocked if pattern not in retired))
     if not isinstance(spec, dict):
@@ -1476,8 +1370,8 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
         if is_retired(name, retired):
             return None, f"{name} is retired"
         if "*" in name or "?" in name:
-            # A wildcard is not a model a seat can be sent; it needs a family alias
-            # with a served-model source before it can route.
+
+
             return None, f"{name} is a wildcard, not a served model"
         return name, "not an alias"
     if spec.get("vendor") == "anthropic" or (spec.get("harness") and not spec.get("family")):
@@ -1493,7 +1387,7 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
             return None, f"{pinned} is retired or blocked"
         return pinned, f"pinned {family}; account eligibility is checked at dispatch"
     if spec.get("vendor") == "cursor":
-        # Cursor families: `<family>-<version>-<variant>`, optionally `cursor-` prefixed.
+
         variant = spec.get("variant")
         suffix = "-" + re.escape(variant) if variant else ""
         version = r"\d+(?:-\d{1,2})?" if family.startswith("claude-") else r"\d+(?:\.\d+)*"
@@ -1504,7 +1398,7 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
                 return None, model_list_pending("cursor")
             return None, "Cursor model list unavailable (cursor-agent --list-models)"
     elif spec.get("vendor") == "devin":
-        # Devin families: `<family>-<major>-<variant>` (swe-2-high).
+
         variant = spec.get("variant") or "high"
         pattern = re.compile(rf"^{re.escape(family)}-(\d+)-{re.escape(variant)}$")
         served = devin_models()
@@ -1529,7 +1423,7 @@ def _now_iso() -> str:
 
 
 def append_ledger(record: dict[str, Any]) -> None:
-    """Append one event to the routing ledger (dispatch.jsonl); never fail the caller."""
+
     try:
         path = ledger_path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1540,7 +1434,7 @@ def append_ledger(record: dict[str, Any]) -> None:
 
 
 def record_explicit_model(model: str, source: str) -> None:
-    """Log an explicitly requested off-ladder model to the routing ledger."""
+
     append_ledger({"event": "explicit_model", "model": model, "source": source})
 
 
@@ -1552,8 +1446,8 @@ def command_resolve(args: argparse.Namespace) -> int:
     for name in args.aliases:
         model, reason = resolve_alias(table, name, served)
         if not model and reason == f"{name} is retired":
-            # A retired id named outright is an explicit request (Alex, 2026-10-05): it resolves and
-            # the ledger records it; a blocked id, gone upstream, never reaches here.
+
+
             model = name
             record_explicit_model(name, "route resolve")
         if model:
@@ -1562,8 +1456,8 @@ def command_resolve(args: argparse.Namespace) -> int:
                 pools, _ = fetch_pools()
                 pool_id = pool_for_model(table, name)
                 pool = pools_by_id(pools).get(pool_id, {})
-                # Status is a headroom band, not a quota failure. Only the live
-                # eligibility signal counts; never degrade on fallback estimates.
+
+
                 eligible = pool.get("eligibleAccounts")
                 accounts = http_get("/api/accounts")
                 body = accounts.body if accounts.json_ok else None
@@ -1612,9 +1506,6 @@ def command_models(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-# --- pick --------------------------------------------------------------------
-
-
 def pool_for_model(table: dict[str, Any], model: str) -> str | None:
     pools = table.get("pools")
     if not isinstance(pools, dict):
@@ -1655,7 +1546,7 @@ def state_age_seconds(state: dict[str, Any]) -> float | None:
 
 
 def seat_is_up(seats: Any, seat: str) -> bool:
-    """A seat with no recorded state is treated as up; only a recorded failure takes it out."""
+
     if not isinstance(seats, dict):
         return True
     record = seats.get(seat)
@@ -1691,7 +1582,7 @@ def apply_overrides(chain: list[dict[str, Any]], overrides: Any, class_name: str
 
 
 class ServedModels:
-    """The LB's served model list, fetched once and only when an alias needs it."""
+
 
     def __init__(self) -> None:
         self._models: list[str] | None = None
@@ -1747,11 +1638,7 @@ def class_candidates(
     served: ServedModels,
     leases: dict | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
-    """(routable, skipped, paced) for one class chain: the eligibility rule pick and menu share.
 
-    A cross_vendor class with no author vendor keeps every vendor; pick refuses that case
-    before calling here, menu lists it with the flag so the caller applies it.
-    """
     chain = spec.get("chain") if isinstance(spec.get("chain"), list) else []
     entries = [entry for entry in chain if isinstance(entry, dict)]
     ordered = apply_overrides(entries, table.get("overrides"), class_name)
@@ -1794,8 +1681,8 @@ def class_candidates(
             continue
         min_pace = entry.get("min_pace")
         if isinstance(min_pace, (int, float)) and not isinstance(min_pace, bool):
-            # Pace-gated entries (Opus on implement) only take work while their pool can
-            # afford it; with no pool data they are skipped rather than assumed healthy.
+
+
             pace = pool_pace(pool_doc, cycle_hours) if pool_doc else None
             if pace is None and pool_doc and pool:
                 pace = accounts_pace(pool)
@@ -1804,7 +1691,7 @@ def class_candidates(
                 continue
             eligible = pool_doc.get("eligibleAccounts")
             if isinstance(eligible, int) and eligible <= LOW_BAND_MAX_ELIGIBLE:
-                # ROUTING.md rule 1: a low (2) or critical (1) pool serves judgment only.
+
                 band = "critical" if eligible <= 1 else "low"
                 skip(seat, alias, f"pool {pool} {band}: {eligible} eligible account(s)")
                 continue
@@ -1812,7 +1699,7 @@ def class_candidates(
                 skip(seat, alias, f"pool {pool} behind pace: {pace:+.1f} < {min_pace:+g}")
                 continue
             paced.append(f"{seat} admitted: pool {pool} pace {pace:+.1f} >= {min_pace:+g}")
-        # Canonical Codex stand-ins retain their own admission rule, independent of review.
+
         codex_pool = pools.get("openai-codex", {})
         codex_eligible = codex_pool.get("eligibleAccounts")
         if (spec.get("codex_empty_fallback") and vendor == "anthropic"
@@ -1824,7 +1711,7 @@ def class_candidates(
             continue
 
         def resolve_auditor() -> tuple[dict[str, Any] | None, str | None]:
-            # (auditor, gap): gap names why the declared auditor cannot serve this entry.
+
             auditor = None
             audit_spec = spec.get("audit")
             if isinstance(audit_spec, dict) and isinstance(audit_spec.get("by_author_vendor"), dict):
@@ -1980,8 +1867,7 @@ def rung_pool(table: dict, entry: dict, pools: dict) -> str | None:
 
 
 def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | None, str]:
-    """(model, why). While `route reserve` defers discovery, a rung whose vendor list is not cached yet comes back
-    as its alias with a `pending: ` why; the reserve resolves it once it holds capacity."""
+
     alias = entry["model"]
     models = served.get() if family_alias(table, alias) in table.get("aliases", {}) else []
     model, why = resolve_alias(table, alias, models, entry.get("seat") or "")
@@ -2001,10 +1887,7 @@ EFFORT_SUFFIX = re.compile(r"-(?:low|medium|high|xhigh|max)$")
 
 
 def same_model(wanted: str, *names: str | None) -> bool:
-    """Whether a caller's model names one of `names` (a rung's alias or resolved id): exactly, or as the same family
-    alias or model id at another effort. The ladder sets the effort per class, so `grok-latest` runs the mechanical
-    rung's grok-latest-low and `swe-latest` its swe-latest-medium; another family (Grok for a Sonnet rung) never
-    matches (2026-10-06, a4d-4)."""
+
     base = EFFORT_SUFFIX.sub("", wanted)
     return any(name and (wanted == name or base == EFFORT_SUFFIX.sub("", name)) for name in names)
 
@@ -2013,11 +1896,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
                 history: list[dict], now: datetime, author: str | None = None,
                 skip_ids: list[str] | None = None, prefer: str | None = None, model: str | None = None,
                 leases: dict | None = None) -> dict:
-    """Walk the ladder; the first open rung is the default. A caller's `prefer` (rung id or
-    seat) waives the table's policy holds on that rung (gate, when, reserve, stand-in), never
-    a physical or floor one (unresolvable, pool exhausted, seat down, same maker, no reviewer).
-    A caller's `model` picks, among the preferred rungs, the one that runs it (by alias or
-    resolved id, at any effort: see same_model; a rung whose model is pending discovery stays a candidate)."""
+
     wanted = model
     author = "cognition" if author == "devin" else author
     entries = apply_overrides(ladder_entries(table, class_name, author) or [],
@@ -2082,7 +1961,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
             reason = f"same maker {author}"
         audit = None
         audit_gap = None
-        # Explore is read-only and no decision rides on it, so it needs no auditor (2026-10-06).
+
         if reason is None and class_name in ("implement", "mechanical"):
             review = ladder_walk(table, "verify", pools, seats, served, history, now, entry["maker"], leases=leases)
             audit = review["chosen"]
@@ -2091,7 +1970,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
             critical = pool_exhausted(primary) or (
                 isinstance(eligible, int) and not isinstance(eligible, bool) and eligible <= 1)
             if audit is None and entry["maker"] != "anthropic" and critical:
-                # auditor_via remains the availability adapter, independent of ladder ordering.
+
                 legacy = table["classes"].get(class_name, {}).get("audit", {})
                 candidate = {**entry, "vendor": {"xai": "cursor", "cognition": "devin"}.get(
                     entry["maker"], entry["maker"])}
@@ -2139,8 +2018,8 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
     chosen = next(iter(opened or soft), None)
     if chosen is not None and not opened:
         chosen = {**chosen, "reason": chosen["reason"] + "; no other rung open"}
-    # The default is what the table alone would pick: a walk with no preference, since a
-    # waived rung also changes later rungs' conditions (a stand-in opens only when all else is shut).
+
+
     default = chosen if prefer is None else ladder_walk(
         table, class_name, pools, seats, served, history, now, author, skip_ids, leases=leases)["chosen"]
     refused = None
@@ -2155,7 +2034,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
                            f"it runs {', '.join(runs)}")
         chosen = next(iter(preferred), None)
         if chosen is not None and chosen["same_vendor"] and default is not None and not default["same_vendor"]:
-            # Cross-vendor review is a kept floor: same-maker review only when no other maker is open.
+
             refused = f"same maker {author} while {default['rung']} can review"
             chosen = None
         if chosen is not None:
@@ -2237,9 +2116,7 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
 
 
 def record_caller_choice(args: argparse.Namespace, result: dict) -> None:
-    """Honor and log a caller's --prefer/--effort: the table is the default, a named choice
-    with a reason is allowed (Alex, 2026-10-05: allow models "if we request or we want t
-    escalate things")."""
+
     prefer, effort = args.prefer, args.effort
     if not prefer and not effort:
         return
@@ -2279,7 +2156,7 @@ def pick_leases() -> dict | None:
 
 def lease_unavailable(table: dict, row: dict, pools: dict, leases: dict | None) -> str | None:
     if leases is None:
-        return None  # Unknown is advisory; the atomic reserve remains the launch gate.
+        return None
     policy = (table.get("policy") or {}).get("concurrency") or {}
     key, capacity = reservation_capacity(row, pools, policy)
     stamp = _now_iso()
@@ -2305,7 +2182,7 @@ def _reservation_request(method: str, path: str, payload: dict | None = None,
 
 
 class ReserveStopped(Exception):
-    """SIGTERM or SIGINT while `route reserve` runs: whatever this job holds is released `cancelled`."""
+
 
     def __init__(self, signum: int) -> None:
         super().__init__(signum)
@@ -2315,16 +2192,12 @@ class ReserveStopped(Exception):
 
 def _stop_reserve(signum: int, _frame: Any) -> None:
     for each in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(each, signal.SIG_IGN)  # the release below must not be cut short by a second signal
+        signal.signal(each, signal.SIG_IGN)
     raise ReserveStopped(signum)
 
 
 def release_job_hold(job: str, until: float) -> str | None:
-    """Release whatever this job holds. Looked up by job, since a stop can land after agent-lb took the hold and
-    before route read its id. A failed lookup or release is retried, and the listing read again to confirm, until
-    the monotonic deadline `until`; every request's timeout is cut to the time left, so the answer comes before seat's
-    stop grace ends. Returns None once the job holds nothing, else why a hold may still be live (agent-lb's lease TTL
-    then ends it)."""
+
     why = "not attempted"
     while True:
         left = until - time.monotonic()
@@ -2358,7 +2231,7 @@ def command_reserve(args: argparse.Namespace) -> int:
         setup_error("missing_ladder", f"class {args.task_class!r} has no ladder", args.json)
     if args.task_class == "verify" and not args.author_vendor:
         setup_error("unknown_author", "verify requires --author-vendor <maker>", args.json)
-    # A stop (seat stops route's process group, model listing included) releases this job's hold, never leaves it.
+
     previous = {each: signal.signal(each, _stop_reserve) for each in (signal.SIGTERM, signal.SIGINT)}
     try:
         code, result = reserve_walk(args, table)
@@ -2366,8 +2239,8 @@ def command_reserve(args: argparse.Namespace) -> int:
         reason = f"cancelled by signal {signal.Signals(stop.signum).name}"
         status = "cancelled"
         if _UNDRAINED:
-            # A listing descendant outlived SIGKILL (a zombie no one reaps, or uninterruptible I/O). Its group was
-            # signalled as a group only; the hold goes back anyway and agent-lb's lease TTL is the backstop.
+
+
             reason = f"{reason}; {'; '.join(_UNDRAINED)}, released anyway"
             print(f"route: {'; '.join(_UNDRAINED)}; releasing the hold anyway", file=sys.stderr)
         left = release_job_hold(args.job, until=stop.at + STOP_BUDGET_SECONDS)
@@ -2388,9 +2261,7 @@ def command_reserve(args: argparse.Namespace) -> int:
 
 
 def settle_pending(table: dict, row: dict, wanted: str | None) -> tuple[dict | None, str | None]:
-    """Under the hold, list the models a deferred rung and its reviewer wait on. Returns the resolved worker and
-    reviewer models, or why the hold must go: a worker that resolves to another model than the caller's, or a worker
-    that does not resolve. Reviewer discovery is advisory."""
+
     allow_discovery()
     resolved: dict = {}
     try:
@@ -2429,9 +2300,8 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
         document = state["pools"]
     pools = pools_by_id(document)
     policy = (table.get("policy") or {}).get("concurrency") or {}
-    # No vendor CLI starts before capacity is held (A4d): a cold vendor model list is fetched only once the hold is
-    # taken, and a rung that then fails to resolve (or whose reviewer does not), or resolves to another model than the
-    # caller's, is released and the walk goes on.
+
+
     global _DEFER_DISCOVERY
     _DEFER_DISCOVERY = True
     skip = list(args.skip)
@@ -2471,8 +2341,8 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
         resolved, released = settle_pending(table, row, args.model)
         lost = False
         if resolved is not None:
-            # Renew the hold the listing ran under and store the model that will run: a lease that expired while
-            # models were listed is gone, and the reservation names what runs, not the alias.
+
+
             beat, body = _reservation_request("POST", f"/{result['reservation_id']}/heartbeat",
                                               {"model": resolved.get("model", result.get("model"))})
             if beat == EXIT_OK and body.get("status") == "reserved":
@@ -2480,14 +2350,14 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
                 result["expires_at"] = body.get("expires_at", result.get("expires_at"))
                 return code, result
             lost = beat == EXIT_UNROUTABLE
-            # A heartbeat that timed out or failed says nothing about the hold, which may still be live: it is
-            # released like any hold route gives up.
+
+
             released = (f"{row['rung']} hold was lost while its models were listed" if lost else
                         f"{row['rung']} hold could not be renewed after its models were listed: "
                         f"{body.get('message') or body.get('status')}")
         if not lost:
-            # agent-lb hands a job its live hold back, so a hold that stays live would come back as the next rung's:
-            # one retry, then stop rather than report another rung's model.
+
+
             for _attempt in range(2):
                 _freed, body = _reservation_request("POST", f"/{result['reservation_id']}/release",
                                                     {"outcome": "failed"})
@@ -2653,7 +2523,7 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
 
 
 def _five_hour_windows(accounts_body: Any) -> dict[str, dict[str, Any]]:
-    """Per pool: the best 5-hour headroom among active accounts and the earliest 5-hour reset."""
+
     accounts = accounts_body.get("accounts") if isinstance(accounts_body, dict) else accounts_body
     windows: dict[str, dict[str, Any]] = {}
     for account in accounts if isinstance(accounts, list) else []:
@@ -2685,10 +2555,7 @@ MENU_POOL_FIELDS = (
 
 
 def build_menu(class_names: list[str] | None = None) -> dict[str, Any]:
-    """Every seat the host can run now, per class, with the pool facts a decider needs.
 
-    Seats that cannot run are listed under `excluded` with the reason, never on the menu.
-    """
     table = load_table()
     classes = table.get("classes") if isinstance(table.get("classes"), dict) else {}
     state = read_state()
@@ -2815,29 +2682,13 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
         _print_stand_in(record)
 
 
-# --- workflow args -----------------------------------------------------------
-# Claude Code Workflow scripts have no shell, so a script cannot call `route
-# pick`. `route workflow-args` runs the picks once in the launching turn and
-# prints, per class, the agent() options that reach the picked seat and model;
-# the caller passes the JSON as the Workflow `args`. How each seat kind takes a
-# model and effort (measured 2026-10-05, ROUTING.md "Workflows"):
-# - Bridge seats run in Claude Code on GPT through the ccgpt bridge. The bridge
-#   locks reasoning effort from the model name suffix (`sol-latest-medium`) and
-#   ignores the request's own effort, so the effort rides in opts.model.
-# - Brief seats are thin forwarders whose CLI model is named in the brief
-#   (`Seat model: <id>`, the pick's resolved id, which `seat` accepts); their
-#   own Claude wrapper stays at low effort. codex-sol takes only its effort
-#   from the brief (`Effort: <effort>`).
-# - Fixed forwarders pin their CLI model and effort in the seat definition.
-# - Every other seat is a Claude seat: opts.model and opts.effort override the
-#   definition's frontmatter.
 WORKFLOW_BRIDGE_SEATS = frozenset({"gpt-implementer", "gpt-explorer", "sol-consult"})
 WORKFLOW_BRIEF_SEATS = frozenset({"cursor-seat", "devin-seat", "muse-seat", "muse-seat-local"})
 WORKFLOW_EFFORT_BRIEF_SEATS = frozenset({"codex-sol"})
 WORKFLOW_FIXED_FORWARDERS = frozenset({"codex-verifier", "codex-test-runner", "computer-use"})
 WORKFLOW_AUTHOR_VENDORS = ("anthropic", "openai", "xai", "cursor", "cognition", "devin", "glm", "kimi")
 CCGPT_EFFORTS = ("low", "medium", "high", "xhigh")
-# Claude Code's own cap on concurrent agent() calls in one workflow.
+
 WORKFLOW_AGENT_CAP = 16
 WORKFLOW_OPUS_STAGES = ("plan", "review", "judge", "synthesis", "orchestrator")
 
@@ -2879,7 +2730,7 @@ def seat_opts(seat: str, model: str | None, alias: str | None, effort: str | Non
 
 
 def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any]) -> dict[str, Any]:
-    """Turn one pick entry into the agent() options and brief line that reach it."""
+
     seat = entry["seat"]
     model = entry.get("model")
     alias = entry.get("alias") or model
@@ -4059,9 +3910,6 @@ def command_outcomes(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-# --- doctor ------------------------------------------------------------------
-
-
 def _probe(name: str, started: float, *, ok: bool, error: str | None, **detail: Any) -> dict[str, Any]:
     record = {"name": name, "ok": ok, "latency_ms": int((time.monotonic() - started) * 1000), "error": error}
     record.update(detail)
@@ -4073,9 +3921,8 @@ LB_HEALTH_RETRY_SECONDS = 5.0
 
 
 def probe_lb_health() -> dict[str, Any]:
-    # A single miss must not mark every Claude seat down until the next
-    # 30-minute doctor run: on 2026-09-25 one probe landed inside a routine
-    # LB restart and `route pick` refused all Claude seats for 16 minutes.
+
+
     started = time.monotonic()
     for attempt in range(LB_HEALTH_ATTEMPTS):
         result = http_get("/api/health", timeout=4.0)
@@ -4129,7 +3976,7 @@ def probe_command(name: str, command: list[str], timeout: float) -> dict[str, An
 
 
 def _message_head(body: Any) -> str | None:
-    """The LB's own error text, collapsed and truncated. It carries no credential."""
+
     if not isinstance(body, dict):
         return None
     error = body.get("error")
@@ -4140,14 +3987,7 @@ def _message_head(body: Any) -> str | None:
 
 
 def recent_model_traffic(*, window: int = SESSION_WINDOW_MINUTES) -> dict[str, dict[str, Any]]:
-    """Ground truth per model: did real traffic get through in the window?
 
-    Real sessions beat a synthetic probe. The probe takes a fresh selection decision, which
-    a per-model cooldown can refuse while established traffic keeps flowing; a 429 there says
-    nothing about whether the seat works. `errors` is a session-level count and cannot be
-    attributed to one model, so a session that logged more requests for the model than it
-    logged errors still proves the model answers — recorded with a weaker evidence tag.
-    """
     result = http_get(f"/api/sessions?windowMinutes={window}&limit=200", timeout=4.0)
     traffic: dict[str, dict[str, Any]] = {}
     if not result.json_ok or not isinstance(result.body, dict):
@@ -4181,7 +4021,7 @@ def recent_model_traffic(*, window: int = SESSION_WINDOW_MINUTES) -> dict[str, d
 def _pool_verdict(
     model: str, table: dict[str, Any], pools: dict[str, Any], *, note: str, latency_ms: int | None
 ) -> dict[str, Any]:
-    """No probe signal worth trusting: fall back to whether the model's pool has capacity."""
+
     pool = pool_for_model(table, model)
     status = pools.get(pool, {}).get("status") if pool else None
     ok = status != "exhausted"
@@ -4205,7 +4045,7 @@ def probe_model(
     pools: dict[str, Any],
     allow_probe: bool = True,
 ) -> dict[str, Any]:
-    """Decide whether a Claude seat is up. Down means broken, never merely busy."""
+
     name = f"model:{model}"
     recent = traffic.get(model)
     if recent is not None:
@@ -4271,7 +4111,7 @@ def probe_model(
 
 
 def probed_models(table: dict[str, Any]) -> list[str]:
-    """Distinct non-Fable Claude models in the table, in first-seen order."""
+
     seen: list[str] = []
     classes = table.get("classes")
     if not isinstance(classes, dict):
@@ -4338,8 +4178,7 @@ def seat_states(table: dict[str, Any], probes: dict[str, dict[str, Any]], models
 
 
 def apply_cli_seat_holds(seats: dict[str, Any], previous: dict[str, Any]) -> None:
-    """Count consecutive CLI-probe failures per CLI seat across doctor runs; hold a seat only from the
-    CLI_SEAT_HOLD_AFTER_FAILURES-th, until a short deadline. A stale previous state counts from zero."""
+
     age = state_age_seconds(previous)
     fresh = age is not None and age <= STATE_MAX_AGE_SECONDS
     prior_seats = previous.get("seats") if fresh and isinstance(previous.get("seats"), dict) else {}
@@ -4436,9 +4275,6 @@ def command_doctor(args: argparse.Namespace) -> int:
     return EXIT_DEGRADED if degraded else EXIT_OK
 
 
-# --- ledger, report, learn ---------------------------------------------------
-
-
 def _parse_ts(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -4478,7 +4314,7 @@ RowKey = tuple[str, str, str]
 
 
 def aggregate(dispatches: list[dict[str, Any]], closeouts: list[dict[str, Any]]) -> dict[RowKey, dict[str, Any]]:
-    """Join closeouts to dispatches by (session_id, name), oldest unmatched dispatch first."""
+
     pending: dict[tuple[Any, Any], list[dict[str, Any]]] = {}
     rows: dict[RowKey, dict[str, Any]] = {}
 
@@ -4523,8 +4359,8 @@ def aggregate(dispatches: list[dict[str, Any]], closeouts: list[dict[str, Any]])
         if origin is not None:
             merged.setdefault("task_class", origin.get("task_class"))
             merged.setdefault("subagent_type", origin.get("subagent_type"))
-        # Group a closeout under the model its dispatch asked for, like the dispatch
-        # row itself; since 2026-09-22 the closeout's own `model` is what answered.
+
+
         requested = merged.get("dispatch_model") or (origin or {}).get("model")
         if requested or "dispatch_model" in merged:
             merged["model"] = requested
@@ -4608,7 +4444,7 @@ AUDIT_VERDICTS = ("pass", "fix-needed")
 
 
 def command_record(args: argparse.Namespace) -> int:
-    """Append one implement outcome so seats can be compared on quality, tokens and time."""
+
     record = {
         "ts": now_iso(),
         "event": IMPLEMENT_EVENT,
@@ -4662,8 +4498,8 @@ def print_implement_report(since: datetime, days: int) -> None:
     if not results:
         print("No implement_result rows yet (`route record` writes them).")
         return
-    # One row per task per seat/model: repeated records for a task are its rework
-    # attempts, so they add tokens and time but not tasks; the last verdict stands.
+
+
     tasks: dict[tuple[str, str, str], dict[str, Any]] = {}
     for record in results:
         key = (str(record.get("seat")), str(record.get("model")), str(record.get("task")))
@@ -5069,9 +4905,6 @@ def command_standings(args: argparse.Namespace) -> int:
         atomic_write(Path(args.mdx).expanduser(), learning_text(report))
     print(json.dumps(report, indent=2) if args.json else learning_text(report))
     return EXIT_OK
-
-
-# --- entry point -------------------------------------------------------------
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

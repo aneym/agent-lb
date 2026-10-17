@@ -1,43 +1,6 @@
 #!/usr/bin/env python3
-# seat — run the CLI-only seats (Cursor, Devin) on registered accounts.
-#
-# Cursor and Devin traffic cannot pass through the LB: each CLI talks to its own
-# backend on its own subscription. agent-lb still owns the accounts: this CLI keeps
-# the registry, probes each account's auth, picks an account per dispatch, fails over
-# on a limit or auth error, and writes receipts to the dispatch ledger. The LB reads
-# the state file this CLI writes and serves it as the `cursor` and `devin` pools of
-# /api/pools and as /api/pools/seat-accounts. Stdlib only, same family as `route`.
-#
-# Commands:
-#   seat accounts [--json]                       registry, auth, cooldowns, observed usage
-#   seat add <id> --vendor cursor|devin [--api-key-file F | --api-key-prompt] [--data-dir D]
-#   seat probe [--vendor V] [--json]             auth status per account, written to state
-#   seat lease --vendor V --for ID --ttl S --out DIR [--json]
-#   seat release LEASE [--log FILE] [--outcome OUTCOME] [--json]
-#   seat run --vendor V --model M [--account A] [--class C [--author-vendor V]] [--cwd D] [--mode ask|write]
-#            [--timeout S] (--prompt-file F | -- <prompt>)
-#            With --class (and no --account) the run first holds a `route reserve` lease, renews it while the
-#            vendor CLI runs and releases it on exit; no capacity exits 4 and launches nothing (A4d). A signal
-#            or a lost lease stops the CLI's process group; the release then runs to the end.
-#
-# Account auth (never printed, never written anywhere but the key file):
-#   cursor  auth=login    the CLI's own login (`cursor-agent login`, macOS keychain). One per Mac:
-#                         a second login replaces the first, so extra accounts use api-key.
-#           auth=api-key  a Cursor user API key read from a 0600 key file into CURSOR_API_KEY,
-#                         with its own CURSOR_CONFIG_DIR and AGENT_CLI_CREDENTIAL_STORE=memory.
-#                         Without the memory store the CLI saves the key's tokens to the keychain
-#                         and replaces the login account (cursor-agent 2026.09.23).
-#   devin   auth=data-dir credentials.toml under XDG_DATA_HOME (default ~/.local/share).
-#                         Log an extra account in with
-#                         `XDG_DATA_HOME=<dir> devin auth login --force-manual-token-flow`.
-#
-# Env:
-#   SEAT_HOME     registry, state and keys (default ~/.agent-lb/seats)
-#   ROUTE_LEDGER  dispatch ledger (default ~/.claude/logs/dispatch.jsonl)
-#   ROUTE_BIN     route CLI used to resolve family aliases (default ~/.agent-lb/bin/route)
-#   SEAT_CURSOR_BIN / SEAT_DEVIN_BIN  CLI binaries (default cursor-agent / devin on PATH)
-#
-# 2026-10-01: a box's run also uses unexpired lease bundles under <seat_home>/leases/.
+
+
 from __future__ import annotations
 
 import argparse
@@ -105,11 +68,10 @@ ERROR_CHARS = 400
 FOR_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z")
 T = TypeVar("T")
 
-# Devin bills every model except SWE-2 per token; the seat never spends past the subscription.
+
 DEVIN_FREE_MODEL = re.compile(r"^swe-\d+-(?:high|medium|max)$")
 
-# Matched against stderr and the CLI's error text. A limit cools the account down and
-# the run fails over; an auth failure marks it for re-login and fails over.
+
 LIMIT_RE = re.compile(
     r"rate.?limit|usage limit|quota|too many requests|\b429\b|limit (?:reached|exceeded)|"
     r"out of (?:credits|usage|requests)|exceeded your|resource.?exhausted|upgrade your plan",
@@ -167,9 +129,7 @@ def parse_ts(value: Any) -> datetime | None:
 
 
 def route_command(*args: str) -> list[str]:
-    """The route CLI argv. A Python route runs under this interpreter rather than by its own path: on Studio a
-    stuck syspolicyd held every script exec at launch for over an hour while interpreter runs started at once
-    (2026-10-06), and seat waited on route the whole time."""
+
     route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
     try:
         with open(route, "rb") as handle:
@@ -308,8 +268,8 @@ def update_state(apply: Callable[[list[dict[str, Any]], dict[str, Any]], T]) -> 
 
 
 def save_state(state: dict[str, Any], registry: list[dict[str, Any]]) -> None:
-    # The LB reads vendor and enablement from the state alone, so every registered
-    # account is mirrored here and unregistered ones are dropped.
+
+
     known = {account["id"]: account for account in registry}
     accounts = state["accounts"]
     for account_id in list(accounts):
@@ -351,7 +311,6 @@ def devin_data_dir(account: dict[str, Any]) -> Path:
     if account.get("auth") == "lease":
         return Path(account["lease_dir"]) / "data"
     return expand(account.get("data_dir")) or Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-
 
 
 class QuotaError(Exception):
@@ -600,7 +559,7 @@ def local_proxy_vars(env: dict[str, str]) -> list[str]:
 
 
 def account_env(account: dict[str, Any]) -> dict[str, str]:
-    """The environment that points the vendor CLI at this account and no other."""
+
     env = dict(os.environ)
     vendor, auth = account.get("vendor"), account.get("auth")
     for key in local_proxy_vars(env):
@@ -620,7 +579,7 @@ def account_env(account: dict[str, Any]) -> dict[str, str]:
         env.pop("CURSOR_API_KEY", None)
         env.pop("AGENT_CLI_CREDENTIAL_STORE", None)
     elif vendor == "muse":
-        # Preserve account login without inspecting or copying its credential store.
+
         env.pop("META_API_KEY", None)
         env["MUSE_NO_AUTO_UPDATE"] = "1"
     elif vendor == "devin" and auth == "lease":
@@ -646,9 +605,6 @@ def devin_trusted(account: dict[str, Any], cwd: Path) -> bool:
     return False
 
 
-# --- probe -----------------------------------------------------------------------
-
-
 def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     vendor = account.get("vendor")
     if vendor == "muse":
@@ -656,8 +612,8 @@ def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     elif vendor == "devin":
         command = [cli_bin("devin"), "auth", "status"]
     elif account.get("auth") == "api-key":
-        # `status` and `about` report the keychain login even when CURSOR_API_KEY is set;
-        # listing models is the cheapest call that authenticates with the key itself.
+
+
         command = [cli_bin("cursor"), "models"]
     else:
         command = [cli_bin("cursor"), "about"]
@@ -676,7 +632,7 @@ def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
         return {"auth_ok": False, "auth_error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}, None
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", completed.stdout + "\n" + completed.stderr)
     if vendor == "muse":
-        # Installation is not an auth proof. Actual dispatch reports auth errors.
+
         ok = completed.returncode == 0 and muse_version_ok(text)
         identity = {"version": text.strip(), "auth_source": "existing-login-unverified"}
     elif vendor == "cursor" and account.get("auth") == "api-key":
@@ -743,9 +699,6 @@ def command_probe(args: argparse.Namespace) -> int:
             verdict = "ok" if probe["auth_ok"] else f"FAILED ({probe.get('auth_error')})"
             print(f"{account_id:<24} {verdict}")
     return EXIT_OK if all(probe["auth_ok"] for probe in results.values()) else EXIT_FAILED
-
-
-# --- accounts and usage ----------------------------------------------------------
 
 
 def usage_since(record: dict[str, Any], since: datetime) -> dict[str, Any]:
@@ -1070,19 +1023,13 @@ def release_usage(model: str | None, path: str | None) -> dict[str, Any]:
         return empty
 
 
-# --- run -------------------------------------------------------------------------
-
-
 def resolve_model(vendor: str, model: str, control: RunControl | None = None) -> str:
-    """Family aliases go through `route resolve`: an alias never reaches a retired model, a retired id named
-    outright resolves as an explicit request and is logged, and a blocked id is refused. Route may list the
-    vendor's models to resolve an alias, so under a RunControl it runs stoppable, in its own process group; a stop
-    returns the name unresolved, for the caller's stop check."""
+
     try:
         completed = run_stoppable(route_command("resolve", model), control, input=None, timeout=90)
     except (OSError, subprocess.TimeoutExpired) as error:
         if control is not None and control.stop_reason():
-            return model  # the caller checks the stop first and ends with its envelope
+            return model
         fail(f"route resolve {model} failed: {error}")
     if control is not None and control.stop_reason():
         return model
@@ -1098,8 +1045,7 @@ _CURSOR_MODELS: dict[str, tuple[str, ...]] = {}
 
 
 def cursor_models(account: dict[str, Any], control: RunControl | None = None) -> tuple[str, ...]:
-    """Discover served ids once per account; unavailable lists do not block dispatch. Under a RunControl the
-    listing is a vendor CLI like the run itself: a stop ends its process group."""
+
     account_id = account["id"]
     if account_id in _CURSOR_MODELS:
         return _CURSOR_MODELS[account_id]
@@ -1125,8 +1071,7 @@ def cursor_models(account: dict[str, Any], control: RunControl | None = None) ->
 
 def check_cursor_model(model: str, candidates: list[dict[str, Any]],
                        control: RunControl | None = None) -> list[dict[str, Any]]:
-    """The accounts that serve `model`. A stop during the listings returns the candidates unchecked and lists no
-    further account; the caller then ends the run on the stop, never on a half-listed refusal."""
+
     lists = []
     for account in candidates:
         if control and control.stop_reason():
@@ -1176,8 +1121,8 @@ def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_
                 "--effort", effort, "--approval-mode", "never", "--contributor-mode", "off",
                 "--no-foreign-personal-context", *([] if mode == "ask" else ["--disable-sandbox"]),
                 "--prompt-file", str(prompt_file)]
-    # Devin's `auto` rejects every shell call in print mode, `ls` included, so a read-only
-    # task cannot finish; `smart` runs what Devin's own safety model judges safe.
+
+
     permission = "smart" if mode == "ask" else "dangerous"
     return [
         cli_bin("devin"),
@@ -1301,7 +1246,7 @@ def parse_outcome(vendor: str, completed: subprocess.CompletedProcess[str], expo
 def order_accounts(
     registry: list[dict[str, Any]], state: dict[str, Any], vendor: str, model: str | None = None
 ) -> list[dict[str, Any]]:
-    """Healthy accounts of the vendor, least used in the last five hours first."""
+
     window = now() - timedelta(hours=5)
     ready = []
     for account in registry:
@@ -1671,10 +1616,7 @@ def command_release(args: argparse.Namespace) -> int:
 
 def reserve_capacity(task_class: str, vendor: str, job: str, author_vendor: str | None,
                      model: str, control: RunControl) -> tuple[int, dict[str, Any]]:
-    """A4d: hold a `route reserve` lease for this run's seat, on the rung that runs the caller's model. Returns
-    EXIT_OK and the lease, EXIT_CAPACITY_WAIT on a wait, EXIT_NO_ACCOUNT on a refusal, and EXIT_FAILED when route or
-    agent-lb cannot answer (fail closed). Route lists no vendor models before the hold is taken, and lists them under
-    it; route runs stoppable, so a stop ends that listing and route releases what the job holds."""
+
     argv = route_command("reserve", task_class, *(["--author-vendor", author_vendor] if author_vendor else []),
                          "--job", job, "--prefer", SEAT_FOR_VENDOR[vendor], "--model", model,
                          "--reason", "seat run", "--json")
@@ -1702,9 +1644,7 @@ def reserve_capacity(task_class: str, vendor: str, job: str, author_vendor: str 
 
 
 class RunControl:
-    """What stops a reserved run. The signal handlers only record (a count and the first time) and never raise, so
-    nothing cuts the reserve, the run or the release short; the main loop polls stop_reason() and stops the vendor's
-    process group itself. The heartbeat thread marks the lease lost when route says it is gone."""
+
 
     def __init__(self) -> None:
         self.signals: list[int] = []
@@ -1733,10 +1673,7 @@ class RunControl:
 
 def run_stoppable(command: list[str], control: RunControl | None, *, input: str | None, timeout: float,
                   echo: Any = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-    """subprocess.run, except that under a RunControl the command runs in its own process group, which is sent
-    SIGTERM once the run must stop and SIGKILL on a second signal or after STOP_GRACE_SECONDS. It returns only once
-    the whole group is gone: a descendant that outlives the leader is stopped the same way, so capacity is never
-    released while a process of the run still works."""
+
     if control is None and echo is None:
         return subprocess.run(command, input=input, capture_output=True, text=True, timeout=timeout, check=False,
                               **kwargs)
@@ -1919,8 +1856,7 @@ class MuseTail:
 
 
 def group_alive(pgid: int) -> bool:
-    """Whether the process group still exists: killpg(pgid, 0) answers ESRCH once it is gone. No process table is
-    read. A zombie no one reaps keeps the group, so GroupStop.drain bounds the wait instead of judging members."""
+
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
@@ -1931,9 +1867,7 @@ def group_alive(pgid: int) -> bool:
 
 
 class GroupStop:
-    """Escalation for one vendor process group: SIGTERM when the run must stop (or, once the leader has exited,
-    when anything is left in its group), SIGKILL on a second stop signal or STOP_GRACE_SECONDS later, SIGKILL at
-    once past the run's timeout."""
+
 
     def __init__(self, pgid: int, control: RunControl, deadline: float) -> None:
         self.pgid = pgid
@@ -1967,11 +1901,7 @@ class GroupStop:
             self.killed_at = clock
 
     def drain(self) -> None:
-        """The leader is reaped; end what is left of its group: SIGTERM, SIGKILL STOP_GRACE_SECONDS later, then wait
-        up to KILL_DRAIN_SECONDS for killpg to answer ESRCH. A group still there after that holds only processes
-        SIGKILL cannot end yet (a zombie no one reaps, a thread group whose leader is a zombie while its threads
-        die, uninterruptible I/O): seat says so and the lease is released anyway, with agent-lb's lease TTL as the
-        backstop, rather than holding the run open forever."""
+
         while group_alive(self.pgid):
             self.step(leader_done=True)
             if self.killed_at is not None and time.monotonic() - self.killed_at > KILL_DRAIN_SECONDS:
@@ -1984,8 +1914,7 @@ class GroupStop:
 
 
 class CapacityLease:
-    """Renews a reservation every heartbeat_s while the vendor CLI runs, marks the run's control when route says the
-    lease is gone, and releases it once."""
+
 
     def __init__(self, reservation: dict[str, Any], control: RunControl) -> None:
         self.reservation_id = reservation["reservation_id"]
@@ -2004,7 +1933,7 @@ class CapacityLease:
                 print(f"seat: route heartbeat {self.reservation_id} failed: {error}", file=sys.stderr)
                 continue
             if completed.returncode == EXIT_NO_ACCOUNT:
-                # The lease expired or was ended elsewhere, so another run may hold the slot: stop this one.
+
                 self.control.lost = f"capacity: reservation {self.reservation_id} was lost; the vendor CLI was stopped"
                 print(f"seat: reservation {self.reservation_id} is gone; stopping the vendor CLI", file=sys.stderr)
                 return
@@ -2015,9 +1944,7 @@ class CapacityLease:
         self.thread.start()
 
     def release(self, outcome: str) -> None:
-        """Stops the heartbeat, then releases with stop signals blocked and route in its own session, so neither
-        SIGTERM nor a terminal Ctrl-C can cut the release short. One retry, both inside RELEASE_BUDGET_SECONDS, so a
-        stopped seat answers within the stop grace its own caller gives it; a lease route calls gone is done."""
+
         until = time.monotonic() + RELEASE_BUDGET_SECONDS
         self.stopped.set()
         if self.thread.is_alive():
@@ -2047,7 +1974,7 @@ class CapacityLease:
 
 
 def run_envelope(args: argparse.Namespace, model: str | None, run_id: str, error: str, **extra: Any) -> None:
-    """The envelope of a run that ended before any attempt."""
+
     print(json.dumps({"ok": False, "vendor": args.vendor, "account": None, "model": model, "run_id": run_id,
                       "vendor_session_id": None, "wall_s": 0, "tokens_in": None, "tokens_out": None,
                       "attempts": [], "error": error, **extra, "result": None}, indent=2))
@@ -2055,7 +1982,7 @@ def run_envelope(args: argparse.Namespace, model: str | None, run_id: str, error
 
 def ready_candidates(args: argparse.Namespace, registry: list[dict[str, Any]], state: dict[str, Any], model: str,
                      run_id: str) -> tuple[list[dict[str, Any]] | None, int]:
-    """The accounts this run may try for `model`, or None and the exit code once it has said why there are none."""
+
     if args.account:
         candidates = [a for a in registry if a["id"] == args.account and a.get("vendor") == args.vendor]
         if not candidates:
@@ -2094,7 +2021,7 @@ def finish_text() -> str:
 
 
 def final_prompt(prompt: str, task_class: str | None = None) -> str:
-    """Use the same finish contract for previews and every vendor's real prompt."""
+
     if task_class == "verify" or "END HANDOFF" in prompt.splitlines():
         return prompt
     finish = finish_text()
@@ -2133,19 +2060,19 @@ def command_run(args: argparse.Namespace) -> int:
             candidates = check_cursor_model(model, candidates)
         why = "no --class" if not args.task_class else "--account pins one account; a lease is its own admission"
         return run_on_accounts(args, prompt, cwd, model, candidates, run_id, None, why, None)
-    # Nothing that could start a vendor CLI runs before the reservation is held: not `route resolve` (which may list
-    # the vendor's models), not `cursor-agent models`. Only a check that some account is ready at all comes first.
+
+
     if not order_accounts(registry, state, args.vendor):
         fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
-    # The recording handlers go in first so a signal during the reserve is acted on inside the try/finally below,
-    # never by dying with a lease.
+
+
     control = RunControl()
     control.install()
     host = os.environ.get("ROUTE_HOST") or socket.gethostname()
     code, reservation = reserve_capacity(args.task_class, args.vendor, f"seat/{host}/{run_id}", args.author_vendor,
                                          args.model, control)
     if code == EXIT_OK and control.stop_reason():
-        # Stopped as route returned the hold: route released nothing, so release it here.
+
         CapacityLease(reservation, control).release("cancelled")
         code = EXIT_FAILED
     if code != EXIT_OK:
@@ -2160,7 +2087,7 @@ def command_run(args: argparse.Namespace) -> int:
         lease.start()
         code = run_reserved(args, prompt, cwd, registry, state, run_id, reservation, control)
     except SystemExit as stop:
-        # A refusal raised under the hold (fail()) still releases below and still yields to a signal's exit code.
+
         code = stop.code if isinstance(stop.code, int) else EXIT_FAILED
     finally:
         outcome = "cancelled" if control.signals else "ok" if code == EXIT_OK and not control.lost else "failed"
@@ -2175,17 +2102,14 @@ EFFORT_SUFFIX = re.compile(r"-(?:low|medium|high|xhigh|max)$")
 
 
 def same_model(wanted: str, *names: str | None) -> bool:
-    """route's same_model: the same name, or the same family alias or model id at another effort, which the class's
-    ladder sets (grok-latest runs the mechanical rung's grok-4.7-low)."""
+
     base = EFFORT_SUFFIX.sub("", wanted)
     return any(name and (wanted == name or base == EFFORT_SUFFIX.sub("", name)) for name in names)
 
 
 def run_reserved(args: argparse.Namespace, prompt: str, cwd: Path, registry: list[dict[str, Any]],
                  state: dict[str, Any], run_id: str, reservation: dict[str, Any], control: RunControl) -> int:
-    """The part of a reserved run that happens under the hold. The model that runs is the reserved one: the caller's
-    --model must name it (as its id or rung alias, or as an alias route resolves to it, at any effort), or the run is
-    refused."""
+
     reserved = reservation.get("model")
     if not isinstance(reserved, str) or not reserved:
         run_envelope(args, args.model, run_id, "capacity: the reservation names no model")
@@ -2302,7 +2226,7 @@ def run_on_accounts(
                     outcome = {"ok": False, "error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}
                 wall = round(time.monotonic() - started, 1)
                 if control and (stopped := control.stop_reason()):
-                    # A signal or a lost lease stopped the CLI: not the account's fault, and nothing else runs.
+
                     outcome, kind = {"ok": False, "error": stopped}, "stopped"
                     attempts.append({"account": account["id"], "outcome": "cancelled" if control.signals
                                      else "reservation_lost", "wall_s": wall})
@@ -2371,7 +2295,7 @@ def run_on_accounts(
                         time.sleep(random.uniform(lo, hi))
                         continue
                 else:
-                    # A task failure is not the account's fault; another account would repeat it.
+
                     break
 
                 break
@@ -2398,7 +2322,7 @@ def run_on_accounts(
         **base,
         "ts": iso(now()),
         "event": "closeout",
-        # The account that answered, or the last one tried when none did.
+
         "account": attempts[-1]["account"] if attempts else None,
         "attempts": attempts,
         "vendor_session_id": outcome.get("session_id"),

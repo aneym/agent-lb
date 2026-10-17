@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Launch Muse Code through agent-lb.
 
-Muse already speaks the Responses wire and takes ``--base-url``, so unlike
-Claude Code no MITM proxy is needed: this points Muse at the agent-lb
-passthrough (``/muse-api`` on the local LB), which forwards the client's own
-Meta token to api.meta.ai and records the call under provider ``muse``.
-
-Usage:
-  clients/muse-lb-launch [muse args...]
-
-Env:
-  MUSE_LB_BASE_URL   agent-lb muse-api base (default http://127.0.0.1:2455/muse-api)
-  MUSE_LB_DISABLE=1  bypass the LB entirely; exec plain `muse`
-  MUSE_LB_DRY_RUN=1  print the final command instead of exec'ing it
-  MUSE_MODEL         model override (default: `route resolve muse-latest`)
-"""
 
 from __future__ import annotations
 
@@ -76,7 +61,7 @@ def main(argv: list[str]) -> None:
         "session-message", "mcp", "auth", "login", "logout", "init",
     }
     if argv and argv[0] in subcommands:
-        # muse wants the command first, its flags after it.
+
         command = [muse, argv[0], *flags, *argv[1:]]
     else:
         command = [muse, *flags, *argv]

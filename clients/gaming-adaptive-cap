@@ -1,17 +1,5 @@
 #!/usr/bin/python3
-"""Raise the upload cap while the PC's ping stays near its baseline.
 
-Launchd runs this once every 30s. While some other hold yields to
-gaming-adaptive, the cap starts at 0.2 MB/s for two minutes, then steps up
-0.1 MB/s every two minutes up to 1.0 MB/s while internet and game ping p95 stay
-within baseline + 15 ms and loss stays 0. Any breach drops it to 0.2 MB/s for
-10 minutes. Stale samples, or the game ending, release the hold so the floor
-holds apply again.
-
-GAMING_ADAPTIVE_MODE=enforce writes the hold; anything else (the default) only
-logs. GAMING_ADAPTIVE_NOW is an ISO UTC clock for tests. Samples come from
-GAMING_ADAPTIVE_SAMPLES_CMD (ssh to the PC HUD by default).
-"""
 
 import csv
 import json
@@ -34,16 +22,14 @@ STALE_SECONDS = 90
 SAMPLES_TIMEOUT_SECONDS = 25
 OWNER = "gaming-adaptive"
 
-# iso_utc,router_avg,router_max,router_loss,mesh_avg,mesh_max,mesh_loss,
-# inet_avg,inet_max,inet_loss,game_avg,game_max,game_loss,down_mbps,up_mbps,wifi_signal
+
 INET_AVG = 7
 INET_LOSS = 9
 GAME_AVG = 10
 GAME_LOSS = 12
 MIN_COLUMNS = 13
 
-# Read over pc-wsl, never `ssh pc`: a Windows-side command opens a console over Alex's game (2026-10-08). The hidden
-# pc-facts task (factory fleet/pc/windows-tasks) copies the PingHud tail there every 15 s; a missing or stale file fails.
+
 DEFAULT_SAMPLES_CMD = (
     "ssh -o BatchMode=yes -o ConnectTimeout=5 pc-wsl "
     "'test -n \"$(find pc-facts/pinghud-samples.csv -mmin -2 2>/dev/null)\" && cat pc-facts/pinghud-samples.csv'"
@@ -269,7 +255,7 @@ def percentile_95(values):
     if not values:
         return None
     ordered = sorted(values)
-    # Nearest rank: ceil(0.95 * n), computed in integers so it does not drift.
+
     rank = (95 * len(ordered) + 99) // 100
     if rank < 1:
         rank = 1
@@ -361,7 +347,7 @@ def run_baseline(state, now, window):
     ), percentile_95(
         [row["game_avg"] for row in prior if row.get("game_avg") is not None]
     ) if not exclude else None, exclude):
-        # A breach before the baseline is committed starts the two minutes over.
+
         restarted = restart_baseline(now, list(window))
         return restarted, "breach", breach_reason(current, None, None), current
     if not prior and current["loss"] > 0:

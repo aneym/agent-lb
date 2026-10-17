@@ -22,7 +22,7 @@ MAX_CONCURRENT = 4
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description='Terminal-Bench-Science on a fixed seeded subset, through our seats and agent-lb.'.splitlines()[0])
     parser.add_argument("--arm", required=True)
     parser.add_argument("--tasks", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)

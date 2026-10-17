@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and safely normalize Claude agent definition frontmatter.
 
-Runtime integrations may load this extensionless module with ``SourceFileLoader``
-and call ``inspect_file(path, models=...)``, ``repair_file(path, models=...)``,
-or ``run_check(cwd=..., user_root=..., repair=...)``.  All APIs are offline and
-return JSON-serializable dictionaries.
-"""
 
 from __future__ import annotations
 
@@ -92,7 +86,7 @@ def _scalar(text: str) -> str:
         if len(value) < 2 or not value.endswith("'"):
             raise FrontmatterError("invalid single-quoted scalar")
         return value[1:-1].replace("''", "'")
-    # A comment begins only after whitespace, which keeps names containing '#'.
+
     value = re.split(r"[ \t]+#", value, maxsplit=1)[0].rstrip()
     if any(token in value for token in ("{", "}")):
         raise FrontmatterError("unsupported YAML scalar")
@@ -140,9 +134,8 @@ def _split_flow_list(text: str) -> list[str]:
 def _parse_value(key: str, head: str, continuation: list[str]) -> Any:
     stripped = head.strip()
     if key not in {"name", "description", "model", "tools"}:
-        # Other metadata is intentionally opaque, but require it to remain an
-        # indented YAML-shaped block so repair never swallows a malformed
-        # top-level line into an unrelated value.
+
+
         for line in continuation:
             if line.strip() and not line[0].isspace():
                 raise FrontmatterError(f"invalid indentation below {key}")
@@ -266,7 +259,7 @@ def _validate(data: bytes, models: set[str]) -> tuple[list[dict[str, str]], tupl
 
 
 def inspect_file(path: str | Path, models: set[str] | None = None) -> dict[str, Any]:
-    """Inspect one definition without modifying it."""
+
     source = Path(path)
     try:
         data = source.read_bytes()
@@ -329,7 +322,7 @@ def _backup_and_replace(path: Path, data: bytes) -> str:
 
 
 def repair_file(path: str | Path, models: set[str] | None = None) -> dict[str, Any]:
-    """Repair only known-safe model/tools forms, after creating a backup."""
+
     source = Path(path)
     try:
         original = source.read_bytes()
@@ -346,8 +339,8 @@ def repair_file(path: str | Path, models: set[str] | None = None) -> dict[str, A
     replacements = _replacement_lines(fields, spans, newline)
     if not replacements:
         return result
-    # Insertions use the original delimiter index.  Do them before replacing
-    # variable-height spans so the inserted lines move with the delimiter.
+
+
     missing = [key for key in ("model", "tools") if key in replacements and key not in spans]
     for key in missing:
         lines.insert(closing, replacements[key][0])
@@ -450,7 +443,7 @@ def run_check(
     state_dir: str | Path | None = None,
     use_cache: bool = True,
 ) -> dict[str, Any]:
-    """Inspect both definition roots and optionally repair known-safe issues."""
+
     working = Path(cwd or Path.cwd()).resolve()
     home = Path(user_root or Path.home()).resolve()
     models, catalog_hash = _catalog(models_file)
@@ -523,7 +516,7 @@ def _print_table(result: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Validate and safely normalize Claude agent definition frontmatter.')
     parser.add_argument("--repair", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--json", action="store_true")

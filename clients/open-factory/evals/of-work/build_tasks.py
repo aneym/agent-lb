@@ -186,7 +186,7 @@ def build(candidate: dict, out: Path) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description='Build Harbor task dirs for of-work from a frozen candidate file.'.splitlines()[0])
     parser.add_argument("candidates", type=Path)
     parser.add_argument("out", type=Path)
     args = parser.parse_args()
