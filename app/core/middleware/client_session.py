@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from starlette.requests import HTTPConnection
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.core.eval_guard import EvalGuardState, eval_guard_state
+from app.core.auth.dependencies import validate_eval_api_access
+from app.core.eval_guard import EvalGuardState, eval_guard_state, is_eval_proxy_path
+from app.core.exceptions import DashboardForbiddenError, ProxyAuthError
 from app.core.utils.client_session import (
     reset_caller_seat,
     reset_client_session_id,
@@ -31,6 +35,17 @@ class ClientSessionMiddleware:
         seat = set_caller_seat_from_scope(scope)
         room = set_room_from_scope(scope)
         try:
+            if not is_eval_proxy_path(scope["path"]):
+                try:
+                    await validate_eval_api_access(HTTPConnection(scope))
+                except (DashboardForbiddenError, ProxyAuthError) as exc:
+                    if scope["type"] == "websocket":
+                        await send({"type": "websocket.close", "code": 1008})
+                    else:
+                        await JSONResponse(
+                            {"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status_code
+                        )(scope, receive, send)
+                    return
             await self.app(scope, receive, send)
         finally:
             eval_guard_state.reset(guard)

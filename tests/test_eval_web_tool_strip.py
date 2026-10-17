@@ -177,3 +177,51 @@ async def test_eval_web_tools_at_upstream(
     finally:
         await runner.cleanup()
         get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client_host", ["127.0.0.1", "172.17.0.2"])
+@pytest.mark.parametrize("key_name,seat", [("of-harbor", None), (None, "eval.guard"), (None, "eval." + "x" * 80)])
+@pytest.mark.parametrize("path", ["/api/request-logs", "/", "/admin", "/internal/drain/status", "/v1/usage"])
+async def test_eval_cannot_read_local_apis(async_client, app_instance, client_host, key_name, seat, path):
+    from httpx import ASGITransport, AsyncClient
+
+    headers = {}
+    if key_name:
+        created = await async_client.post("/api/api-keys/", json={"name": key_name, "limits": []})
+        assert created.status_code == 200, created.text
+        headers["authorization"] = f"Bearer {created.json()['key']}"
+    if seat:
+        headers["x-agent-lb-seat"] = seat
+    async with AsyncClient(
+        transport=ASGITransport(app=app_instance, client=(client_host, 12345)), base_url="http://localhost"
+    ) as client:
+        response = await client.get(path, headers=headers)
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "eval_proxy_only"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client_host,expected", [("127.0.0.1", 200), ("172.17.0.2", 401)])
+async def test_admin_access_uses_real_client_address(async_client, app_instance, client_host, expected):
+    from httpx import ASGITransport, AsyncClient
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app_instance, client=(client_host, 12345)), base_url="http://localhost"
+    ) as client:
+        response = await client.get("/api/request-logs")
+    assert response.status_code == expected, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header_name", ["authorization", "x-api-key"])
+async def test_eval_key_allows_models_and_health(async_client, header_name):
+    created = await async_client.post("/api/api-keys/", json={"name": "of-harbor", "limits": []})
+    assert created.status_code == 200, created.text
+    key = created.json()["key"]
+    headers = {header_name: f"Bearer {key}" if header_name == "authorization" else key}
+    denied = await async_client.get("/api/request-logs", headers=headers)
+    assert denied.status_code == 403, denied.text
+    for path in ("/v1/models", "/health", "/health/live"):
+        response = await async_client.get(path, headers=headers)
+        assert response.status_code == 200, response.text

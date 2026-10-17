@@ -56,3 +56,28 @@ def strip_eval_web_tools(body: JsonObject, provider: str) -> tuple[dict[str, Jso
             if tool_type not in state.removed:
                 state.removed.append(tool_type)
     return result, removed
+
+
+def is_eval_proxy_path(path: str) -> bool:
+    path = path.rstrip("/")
+    return path in {
+        "/v1/messages",
+        "/v1/messages/count_tokens",
+        "/v1/ccgpt/messages",
+        "/v1/ccgpt/messages/count_tokens",
+        "/v1/responses",
+        "/v1/responses/compact",
+        "/v1/chat/completions",
+        "/v1/models",
+        "/v1/audio/transcriptions",
+        "/v1/images/generations",
+        "/v1/images/edits",
+        "/v1/images/variations",
+        "/backend-api/transcribe",
+        "/backend-api/files",
+        "/backend-api/wham/agent-identities/jwks",
+        "/health",
+        "/health/live",
+        "/health/ready",
+        "/health/startup",
+    } or path.startswith(("/backend-api/codex/", "/backend-api/files/"))

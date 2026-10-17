@@ -14,7 +14,7 @@ from app.core.clients.usage import UsageFetchError, fetch_usage
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
-from app.core.eval_guard import eval_guard_state
+from app.core.eval_guard import eval_guard_state, is_eval_request
 from app.core.exceptions import (
     DashboardAuthError,
     DashboardForbiddenError,
@@ -153,6 +153,20 @@ async def validate_usage_api_key(
 
 
 
+
+
+async def validate_eval_api_access(request: HTTPConnection) -> None:
+    seat = request.headers.get("x-agent-lb-seat", "").strip().lower()
+    if seat.startswith("eval."):
+        raise DashboardForbiddenError("Eval traffic may only access model proxy routes", code="eval_proxy_only")
+    authorization = select_member_key_authorization(
+        request.headers.get("authorization"), request.headers.get("x-api-key")
+    )
+    token = _extract_bearer_token(authorization)
+    if token:
+        await _validate_api_key_token(token)
+    if is_eval_request():
+        raise DashboardForbiddenError("Eval traffic may only access model proxy routes", code="eval_proxy_only")
 
 
 async def validate_dashboard_session(request: Request) -> None:
