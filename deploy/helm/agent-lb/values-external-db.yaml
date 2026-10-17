@@ -1,8 +1,0 @@
-
-postgresql:
-  enabled: false
-
-migration:
-  enabled: true
-  schemaGate:
-    enabled: true

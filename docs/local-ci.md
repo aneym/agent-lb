@@ -11,7 +11,7 @@ python3 scripts/local_ci.py run <PR|sha|main>
 This is a full suite, not a changed-file selector. It includes frontend lint,
 types, and tests; Python lint/types; SQLite unit, integration, and end-to-end
 tests; disposable PostgreSQL parity and migration checks; package validation;
-Docker vulnerability gating; Helm/kind validation; and native Swift tests and
+Docker vulnerability gating; and native Swift tests and
 release build. Missing or failed tools make the run red; they are never skipped.
 
 The runner writes a new same-machine receipt per attempt under
@@ -40,9 +40,9 @@ uv run python -c "from app.main import create_app; assert create_app() is not No
 
 ## Local tools and evidence
 
-Install Python 3.13 (through uv), Bun, Xcode/Swift, Docker, Helm, kind,
-kubectl, kubeconform and Trivy. `doctor` reports which are missing. Studio's
-verified standalone Helm/kind/kubeconform/Trivy binaries can live under
+Install Python 3.13 (through uv), Bun, Xcode/Swift, Docker,
+and Trivy. `doctor` reports which are missing. Studio's
+verified standalone Trivy binaries can live under
 `~/agent-lb-ci/tools`; the runner adds that directory to its PATH.
 
 `make ci REF=HEAD` and the manual pre-commit `local-ci` hook run committed
@@ -55,6 +55,5 @@ merged SHA. A red baseline is a red receipt: do not re-label it green because
 the failing files were unchanged. SQLite, PostgreSQL, native macOS fixture,
 Windows-native, and live-provider evidence are separate claims.
 
-GitHub remains the source/PR/release host. Release, publication, attribution
-labels and stale-issue automation are not local CI and are not removed. No
+GitHub remains the source/PR/release host. No
 local CI command publishes a package, changes branch protection or merges a PR.
