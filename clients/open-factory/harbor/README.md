@@ -27,7 +27,7 @@ harbor run -p <task-or-dataset> -a agents:PrebakedCodex -m gpt-6-luna
 ```
 
 - **Egress pinned to agent-lb.** On a task with `network_mode = "allowlist"`, the agent phase starts by
-  narrowing the egress sidecar's allowlist to agent-lb's `host:port`. See [Egress](#egress-no-way-to-the-public-repo).
+  narrowing the egress sidecar's allowlist to agent-lb's host and its TCP egress to agent-lb's port. See [Egress](#egress-no-way-to-the-public-repo).
   Set `OF_HARBOR_REQUIRE_ALLOWLIST=1` to fail any trial whose task still has open egress.
 - **No web tools.** Claude Code runs with `--disallowedTools WebSearch,WebFetch`, and Codex runs with
   `web_search=disabled`. Their server-side search would otherwise reach the internet around the allowlist.
@@ -119,8 +119,18 @@ except DNS to the configured resolver.
 
 Harbor's `allowed_hosts` accepts hostnames only, not ports. `host.docker.internal` alone would expose
 every service listening on the host: dozens of ports on the Studio, including the Aside browser daemon on
-1455. The sidecar itself accepts `host:port`, so `pin_egress_to_agent_lb` in `agents.py` runs
-`network-policy allow host.docker.internal:2455` in the sidecar when the agent phase starts.
+1455. When the agent phase starts, `pin_egress_to_agent_lb` in `agents.py` runs `egress_pin_command()` in
+the sidecar: `network-policy allow <agent-lb host>`, then an nftables chain `of_agent_lb_port` in the
+sidecar's `gost_egress` table that resets any non-local TCP connection whose destination port is not
+agent-lb's port (or 53).
+
+Do not put `host:port` in the gost allowlist. gost matches the sniffed TLS SNI, which carries no port, so
+`studio.tailf266ac.ts.net:2455` blocks every HTTPS request to agent-lb. That was the 2026-10-17 Codex
+hang: the agent looped on "Reconnecting... waiting for network" until Harbor's verifier phase restored
+the task allowlist. It only looked like it worked on plain HTTP, where the Host header carries the port.
+Harbor's verifier phase re-applies the task policy, which flushes the port chain, so the pin covers the
+agent phase only. `probe-egress-pin.sh` on an evaluation host checks all of this against the real
+sidecar image.
 
 The proof is the `egress-probe` task in `~/.agent-lb/of/harbor-smoke/` (2026-09-25):
 

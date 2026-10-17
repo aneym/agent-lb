@@ -17,6 +17,9 @@ DEFAULT_AGENT_LB_URL = "http://host.docker.internal:2455"
 DEFAULT_KEY_FILE = "~/.agent-lb/of/of-harbor.key"
 
 EGRESS_SIDECAR_SERVICE = "harbor-docker-egress-control-sidecar"
+EGRESS_TABLE = "gost_egress"
+PORT_PIN_CHAIN = "of_agent_lb_port"
+GOST_MARK = 114514
 
 
 PLACEHOLDER_KEY = "agent-lb-local"
@@ -41,10 +44,28 @@ def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
 
 
-def agent_lb_endpoint() -> str:
+def agent_lb_host_port() -> tuple[str, int]:
     parts = urlsplit(agent_lb_url())
-    port = parts.port or (443 if parts.scheme == "https" else 80)
-    return f"{parts.hostname}:{port}"
+    if not parts.hostname:
+        raise RuntimeError(f"OF_AGENT_LB_URL has no host: {agent_lb_url()!r}")
+    return parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)
+
+
+def egress_pin_command() -> str:
+    host, port = agent_lb_host_port()
+    chain = f"inet {EGRESS_TABLE} {PORT_PIN_CHAIN}"
+    rule = (
+        f"meta l4proto tcp fib daddr type != local meta mark != {GOST_MARK} "
+        f"tcp dport != {{ 53, {port} }} reject with tcp reset"
+    )
+    return " && ".join(
+        [
+            f"network-policy allow {shlex.quote(host)}",
+            f"nft add chain {chain} {shlex.quote('{ type filter hook output priority -150; policy accept; }')}",
+            f"nft flush chain {chain}",
+            f"nft add rule {chain} {shlex.quote(rule)}",
+        ]
+    )
 
 
 async def pin_egress_to_agent_lb(environment: BaseEnvironment) -> None:
@@ -57,7 +78,7 @@ async def pin_egress_to_agent_lb(environment: BaseEnvironment) -> None:
             )
         return
     result = await environment.service_exec(
-        f"network-policy allow {shlex.quote(agent_lb_endpoint())}",
+        egress_pin_command(),
         service=EGRESS_SIDECAR_SERVICE,
         timeout_sec=60,
     )
