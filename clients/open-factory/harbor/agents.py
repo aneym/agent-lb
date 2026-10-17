@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import os
 import shlex
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.agents.installed.codex import Codex
+from harbor.agents.installed.base import BaseInstalledAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.models.task.config import NetworkMode
@@ -139,3 +141,46 @@ class PrebakedCodex(Codex):
     async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
         await pin_egress_to_agent_lb(environment)
         await super().run(instruction, environment, context)
+
+
+class PrebakedPiDurable(BaseInstalledAgent):
+    def __init__(self, *args: Any, reasoning_effort: str = "medium", extra_env: dict[str, str] | None = None, **kwargs: Any):
+        defaults = {"AGENT_LB_URL": agent_lb_url(), "AGENT_LB_API_KEY": agent_lb_key()}
+        self.reasoning_effort = reasoning_effort
+        super().__init__(*args, extra_env=_with_defaults(extra_env, defaults), version="1.3.0", **kwargs)
+
+    @staticmethod
+    def name() -> str:
+        return "pi-durable"
+
+    async def install(self, environment: BaseEnvironment) -> None:
+        check = "test -f /opt/pi-durable/pd-run.ts && /opt/pi-durable/bin/node -e 'const [major, minor] = process.versions.node.split(\".\").map(Number); if (major < 22 || (major === 22 && minor < 6)) process.exit(1); console.log(process.version)'"
+        result = await environment.exec(command=check)
+        if result.return_code != 0:
+            bundle = Path(os.environ.get("OF_PI_DURABLE_BUNDLE", "~/eval-scratch/pi-durable-1.3.0.tgz")).expanduser()
+            if not bundle.is_file():
+                raise RuntimeError(f"pi-durable runner missing and cache bundle not found: {bundle}; run build-images.sh pi-durable")
+            await environment.upload_file(bundle, "/installed-agent/pi-durable.tgz")
+            result = await environment.exec(command="tar -xzf /installed-agent/pi-durable.tgz -C /opt && " + check, user="root")
+            if result.return_code != 0:
+                raise RuntimeError("pi-durable bundle installation failed; runner or bundled Node is unavailable")
+
+    async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
+        await pin_egress_to_agent_lb(environment)
+        if not self.model_name:
+            raise RuntimeError("pi-durable requires a concrete model")
+        seat = self._extra_env.get("AGENT_LB_SEAT", "")
+        if not seat.startswith("eval."):
+            raise RuntimeError("pi-durable requires an eval.* AGENT_LB_SEAT")
+        log_dir = str(self.environment_logs_dir)
+        args = ["/opt/pi-durable/bin/node", "--experimental-strip-types", "/opt/pi-durable/pd-run.ts",
+                "--provider", "lb-responses", "--model", self.model_name,
+                "--effort", self.reasoning_effort, "--cwd", "/app",
+                "--db", log_dir + "/pd.sqlite", "--pd-dir", log_dir + "/pd.sqlite.d",
+                "--request-id", seat, "--last", log_dir + "/last.txt", "--prompt-file", "-"]
+        command = ("mkdir -p " + shlex.quote(log_dir) + " && printf %s " + shlex.quote(instruction)
+                   + " | " + shlex.join(args) + " > " + shlex.quote(log_dir + "/stdout.log")
+                   + " 2> " + shlex.quote(log_dir + "/stderr.log"))
+        result = await environment.exec(command=command, cwd="/app", env=self._extra_env)
+        if result.return_code != 0:
+            raise RuntimeError(f"pi-durable exited {result.return_code}; see agent/stderr.log")
