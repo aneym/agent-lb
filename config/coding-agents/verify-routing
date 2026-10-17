@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Check coding-agent routing against this policy directory.
 
-The source is the directory this script lives in (the repo's
-config/coding-agents or its ~/.agents/policy mirror). Source-only mode checks
-this directory without consulting the installed home or a live LB; full mode
-also checks the installation, launchers and live model resolution.
-"""
 
 from __future__ import annotations
 
@@ -29,7 +23,7 @@ CANONICAL = HOME / ".agents" / "policy" / "coding-agents"
 MARKER_START = "<!-- agent-lb:coding-agent-routing:start -->"
 MARKER_END = "<!-- agent-lb:coding-agent-routing:end -->"
 FORBIDDEN = ("fable", "claude-planner", "astra")
-# A model id in a pin context: `--model X`, `model: X`, `model=X`, "model `X`".
+
 MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 GPT_ID = re.compile(r"^gpt-(\d+(?:\.\d+)*)-([a-z]+)$")
 MANAGED = (
@@ -87,7 +81,7 @@ def unpinned(text: str) -> str:
 
 
 def readmitted(seat: str) -> tuple:
-    """Retired patterns, and its alias with any effort suffix, the table's `readmitted` map grants this seat (2026-10-05)."""
+
     if seat == "fable-orchestrator":
         return ("claude-fable-*", "fable-latest*")
     try:
@@ -109,7 +103,7 @@ def frontmatter_model(text: str) -> str | None:
 
 settings = {}
 if not SOURCE_ONLY:
-    # Policy mirror and CLAUDE.md block.
+
     for name in ("ROUTING.md", "claude-adapter.md", "routing-table.json"):
         check(read(CANONICAL / name) == read(SOURCE / name) != "", f"{CANONICAL / name} matches {SOURCE / name}")
 
@@ -144,7 +138,7 @@ if not SOURCE_ONLY:
     )
     check(guard_registered, "seat guard is registered as the Agent PreToolUse hook")
 
-    # Managed seat definitions and the hook.
+
     for name, installed, source in MANAGED:
         check(read(SOURCE / source) != "" and unpinned(read(HOME / installed)) == unpinned(read(SOURCE / source)),
               f"{installed} matches {source} apart from snapshot-resolved model and effort")
@@ -155,7 +149,7 @@ if not SOURCE_ONLY:
         installed = (HOME / ".claude" / "agents" / f"{retired_seat}.md").exists()
         check(not installed, f"the retired {retired_seat} seat is not installed")
 
-    # No subagent type runs on Fable or Astra, managed or not, except a seat the table readmits.
+
     for path in sorted((HOME / ".claude" / "agents").glob("*.md")):
         model = frontmatter_model(read(path)) or ""
         allowed = any(fnmatch.fnmatchcase(model.lower(), pattern) for pattern in readmitted(path.stem))
@@ -168,7 +162,7 @@ check(
     "codex-verifier forwards to the newest Sol at dispatch-selected effort",
 )
 
-# Routing table: installed copy equals source except learned overrides in full mode.
+
 try:
     source_table = json.loads(read(SOURCE / "routing-table.json") or "{}")
 except json.JSONDecodeError:
@@ -187,7 +181,7 @@ classes = source_table.get("classes", {})
 chain_models = [entry.get("model", "") for spec in classes.values() for entry in spec.get("chain", [])]
 check(bool(chain_models) and not any(forbidden(m) for m in chain_models), "no routing-table class runs on Fable")
 check(not any(forbidden(key) for key in source_table.get("pools", {})), "no routing-table pool maps a Fable model")
-# Every seat the table names (chains and the seats map) has an installed definition.
+
 if not SOURCE_ONLY:
     chain_seats = sorted({entry.get("seat", "") for spec in classes.values() for entry in spec.get("chain", [])}
         | set(source_table.get("seats", {})))
@@ -220,13 +214,11 @@ for name in ("implement", "mechanical"):
         f"{name} names its on-request cross-vendor auditors (Sonnet / newest Sol); review is optional pre-launch",
     )
 
-# Factory invariants are source checks in both modes.
+
 def factory(rule: str, valid: bool, detail: str) -> None:
     check(valid, f"factory:{rule} {detail}")
 
 
-# implement_default (2026-09-28) is the revert switch: route moves its seat to the head of both chains, and the
-# other default implementer stays in each chain as the fallback.
 DEFAULT_HEADS = {
     "sonnet-implementer": {"seat": "sonnet-implementer", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
     "gpt-implementer": {"seat": "gpt-implementer", "model": "sol-latest", "vendor": "openai", "effort": "medium"},
@@ -279,7 +271,7 @@ factory(
     classes.get("verify", {}).get("cross_vendor") is True
     and any(entry.get("seat") == "codex-verifier" and entry.get("effort") == "high"
         for entry in classes.get("verify", {}).get("chain", []))
-    # Pre-launch (2026-10-08): review runs only when a lead asks for one by name; the merge tool reads the slice check.
+
     and review.get("timing") == "on_request"
     and review.get("money_path") == {"lenses": 1, "timing": "on_request"}
     and all(review.get(key) is True for key in ("fresh_per_unit", "cross_vendor"))
@@ -366,7 +358,7 @@ factory(
     f"source defines every chain, auditor and second-opinion seat; missing {missing}",
 )
 
-# Validate the seat map against every dispatch path and each source definition.
+
 seat_map = source_table.get("seats")
 problems: list[str] = []
 if not isinstance(seat_map, dict) or not seat_map:
@@ -465,11 +457,7 @@ if valid_escalation:
         and isinstance(escalation["evidence"], str) and bool(escalation["evidence"].strip()))
 factory("escalation", valid_escalation, "implement escalates to an audited chain seat at a fix round of 1 or more")
 
-# Names of people and machines stay out of this public file too: each operator lists their own private literals
-# (people, machines, hosts), one per line, in the file named by AGENT_LB_PRIVATE_LITERALS. Unset means only the
-# generic patterns run; set but unreadable or empty is a failed check, not a silent pass. The generic home and
-# volume patterns need a name after the prefix: a bare /Users/ or /Volumes/ (a path-shape pattern such as
-# install-policy.py's release-scoped check) names nobody and no machine (2026-10-11).
+
 private_literals: list[str] = []
 literals_error = ""
 literals_path = os.environ.get("AGENT_LB_PRIVATE_LITERALS")
@@ -501,7 +489,7 @@ private_lines = [
 ]
 factory("public-text", not private_lines, f"public policy has no private literals; found {private_lines}")
 
-# Retired and older-than-newest model ids, anywhere a seat could be pinned.
+
 retired = tuple(source_table.get("retired") or ())
 aliases = source_table.get("aliases") or {}
 older_allowed = source_table.get("older_allowed") if isinstance(source_table.get("older_allowed"), dict) else {}
@@ -568,7 +556,7 @@ if not SOURCE_ONLY:
 
 
 if not SOURCE_ONLY:
-    # A newly served GPT release must never silently acquire a zero-dollar price.
+
     pricing_root = SOURCE.parent.parent
     if not (pricing_root / "app/core/usage/pricing.py").is_file():
         pricing_root = Path(__file__).resolve().parent
@@ -581,8 +569,8 @@ if not SOURCE_ONLY:
     else:
         sys.path.insert(0, str(pricing_root))
         try:
-            # Read the static catalogue without loading service-only dependencies in
-            # the policy CLI's system Python.
+
+
             catalogue = ast.parse((pricing_root / "app/core/usage/pricing.py").read_text())
             priced = set()
             price_aliases = {}
@@ -630,13 +618,13 @@ if not SOURCE_ONLY:
 
 def stale_reason(model, exempt=()):
     bare = model.strip("`'\"").lower().split("[", 1)[0]
-    # Retirement first: a wildcard pin such as gpt-5.6* is as retired as the ids it covers.
+
     if any(fnmatch.fnmatchcase(bare, pattern) or fnmatch.fnmatchcase(pattern, bare)
            for pattern in retired if pattern not in exempt):
         return "retired"
     if ("*" in bare or "?" in bare) and bare.startswith(("gpt-", "claude-")):
-        # A version glob can overlap a retired generation without matching its pattern
-        # (gpt-5.*-sol vs gpt-5.6*); name the family alias instead.
+
+
         return "wildcard version pin; use a family alias"
     if bare in aliases or bare in ("opus", "sonnet", "haiku", "inherit") or "*" in bare:
         return None
@@ -686,7 +674,7 @@ check(
     + (": " + "; ".join(stale) if stale else ""),
 )
 
-# Seat guard behaviour: warn, never deny, on a pinned retired model or a Fable-defined type.
+
 hook = SOURCE / "hooks" / "seat-guard.py"
 with tempfile.TemporaryDirectory() as scratch:
     agents_dir = Path(scratch) / "agents"
@@ -714,16 +702,16 @@ with tempfile.TemporaryDirectory() as scratch:
             timeout=30,
         )
         if result.returncode == 0 and not result.stdout.strip():
-            return None  # admitted with nothing to report
+            return None
         try:
             return json.loads(result.stdout)["hookSpecificOutput"].get("permissionDecision")
         except (json.JSONDecodeError, KeyError):
             return "error"
 
-    # Alex, 2026-10-05: a model off the ladder runs when asked for; a silent default or a blocked model does not.
+
     check(decision({"subagent_type": "opus-seat", "model": "fable"}) is None,
           "seat guard admits model=fable when the dispatch names it (logged)")
-    # Alex, 2026-10-08 09:18 ET (guard trim): a blocked or retired pin is logged and warned, never denied.
+
     check(decision({"subagent_type": "opus-seat", "model": "claude-planner"}) != "deny",
           "seat guard warns, never denies, a blocked model named on the dispatch")
     check(decision({"subagent_type": "legacy-fable"}) != "deny",
@@ -735,7 +723,7 @@ with tempfile.TemporaryDirectory() as scratch:
           "seat guard admits Astra on the readmitted astra-consult seat")
 
 if not SOURCE_ONLY:
-    # The installed router returns a live, non-retired seat for every class.
+
     route_bin = HOME / ".agent-lb" / "bin" / "route"
     if route_bin.is_file():
         for task_class, spec in classes.items():
@@ -758,7 +746,7 @@ if not SOURCE_ONLY:
     else:
         check(False, f"route CLI exists at {route_bin}")
 
-    # Launchers: cc drives on Opus 5.5.
+
     cc_text = read((HOME / ".local" / "bin" / "cc").resolve())
     check('with_name("opus")' in cc_text, "~/.local/bin/cc execs the opus client")
     check(

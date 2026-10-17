@@ -9,7 +9,7 @@ import tempfile
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Integration fixture: exercise the real dispatcher subprocess and JSON boundary.')
     parser.add_argument('--dispatcher', type=Path, default=Path(__file__).with_name('hook-dispatch.py'))
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='seat-run-wake-parity-') as directory:
