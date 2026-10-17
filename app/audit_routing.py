@@ -3,6 +3,7 @@ from __future__ import annotations
 import glob
 import html
 import json
+import os
 import re
 from bisect import bisect_right
 from collections import defaultdict
@@ -356,6 +357,32 @@ def movements(current, previous):
     return moved
 
 
+def decision_join(decisions, executions, since, until):
+    start, end = since.timestamp(), until.timestamp()
+    executed = {value for value in executions if isinstance(value, str) and value}
+    real, synthetic = {}, 0
+    for row in decisions:
+        decision = row.get("decision_id")
+        try:
+            at = instant(row.get("ts")).timestamp()
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if not isinstance(decision, str) or not start <= at < end:
+            continue
+        if row.get("synthetic") is True:
+            synthetic += 1
+            continue
+        real[decision] = row.get("job_id")
+    joined = sum(decision in executed for decision in real)
+    return dict(
+        decisions=len(real),
+        synthetic_excluded=synthetic,
+        jobs=len({job for job in real.values() if job}),
+        joined=joined,
+        join_rate=joined / len(real) if real else None,
+    )
+
+
 def report_for(args, since, until):
     notes = []
     rows, snapshots, _, _, _ = tokens.load_receipts(args, since, until, notes)
@@ -387,9 +414,15 @@ def report_for(args, since, until):
             records.append((path.stem, json.loads(path.read_text())))
         except (OSError, ValueError):
             notes.append("Unreadable workflow record skipped.")
+    logs = Path.home() / ".claude/logs"
+    decisions_log = os.environ.get("ROUTE_DECISIONS_LOG") or logs / "route-decisions.jsonl"
+    executions = [row.get("dispatch_id") for row in rows]
+    ledger = os.environ.get("ROUTE_LEDGER") or logs / "dispatch.jsonl"
+    executions += [row.get("decision_id") for row in read_jsonl(ledger)]
     return dict(
         window=dict(since=since.isoformat(), until=until.isoformat()),
         rows=grouped,
+        decisions=decision_join(read_jsonl(decisions_log), executions, since, until),
         fold=fold_units(records, points, since, until) + merge_units(since, until),
         quota=quota,
         notes=notes
@@ -404,6 +437,13 @@ def report_for(args, since, until):
 
 def text_report(report):
     lines = [f"Window: {report['window']['since']} to {report['window']['until']}"]
+    joins = report.get("decisions")
+    if joins:
+        rate = "n/a" if joins["join_rate"] is None else f"{joins['join_rate']:.1%}"
+        lines.append(
+            f"Decisions joined to executions: {joins['joined']}/{joins['decisions']} ({rate}) over "
+            f"{joins['jobs']} jobs; {joins['synthetic_excluded']} synthetic excluded"
+        )
     for pool in sorted({r["pool"] for r in report["rows"]}):
         lines += [
             f"\nPOOL {pool}",

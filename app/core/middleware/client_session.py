@@ -8,10 +8,12 @@ from app.core.auth.dependencies import validate_eval_api_access
 from app.core.eval_guard import EvalGuardState, eval_guard_state, is_eval_proxy_path
 from app.core.exceptions import DashboardForbiddenError, ProxyAuthError
 from app.core.utils.client_session import (
+    reset_attribution,
     reset_caller_seat,
     reset_client_session_id,
     reset_dispatch_id,
     reset_room,
+    set_attribution_from_scope,
     set_caller_seat_from_scope,
     set_client_session_id_from_scope,
     set_dispatch_id_from_scope,
@@ -32,6 +34,7 @@ class ClientSessionMiddleware:
         dispatch = set_dispatch_id_from_scope(scope)
         seat = set_caller_seat_from_scope(scope)
         room = set_room_from_scope(scope)
+        attribution = set_attribution_from_scope(scope)
         try:
             if not is_eval_proxy_path(scope["path"]):
                 try:
@@ -47,6 +50,7 @@ class ClientSessionMiddleware:
             await self.app(scope, receive, send)
         finally:
             eval_guard_state.reset(guard)
+            reset_attribution(attribution)
             reset_room(room)
             reset_caller_seat(seat)
             reset_dispatch_id(dispatch)

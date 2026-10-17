@@ -90,6 +90,8 @@ IGNORE_INBOUND_HEADERS = {
     "x-agent-lb-lane",
     "x-agent-lb-seat",
     "x-agent-lb-room",
+    "x-agent-lb-job",
+    "x-agent-lb-dispatch",
 }
 
 _ERROR_TYPE_CODE_MAP = {

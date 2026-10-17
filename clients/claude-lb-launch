@@ -31,14 +31,20 @@ from datetime import datetime
 from pathlib import Path
 
 
-def dispatch_id(value: str) -> str:
+def dispatch_document(value: str) -> dict:
     if not value.lstrip().startswith("{"):
-        return value
+        return {}
     try:
         document = json.loads(value)
     except json.JSONDecodeError:
-        return ""
-    decision = document.get("decision_id") if isinstance(document, dict) else None
+        return {}
+    return document if isinstance(document, dict) else {}
+
+
+def dispatch_id(value: str) -> str:
+    if not value.lstrip().startswith("{"):
+        return value
+    decision = dispatch_document(value).get("decision_id")
     return decision if isinstance(decision, str) else ""
 
 
@@ -52,9 +58,18 @@ def tag_headers(environ: Mapping[str, str]) -> dict[str, str]:
         )
         if environ.get(name)
     }
-    decision = dispatch_id(environ.get("AGENT_LB_DISPATCH") or "")
+    raw_dispatch = environ.get("AGENT_LB_DISPATCH") or ""
+    decision = dispatch_id(raw_dispatch)
     if decision:
         tags["x-agent-lb-dispatch"] = decision
+    document = dispatch_document(raw_dispatch)
+    job = environ.get("AGENT_LB_JOB") or document.get("job_id")
+    if isinstance(job, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9@._:/-]{0,63}", job):
+        tags["x-agent-lb-job"] = job
+    if "x-agent-lb-lane" not in tags:
+        lane = document.get("lane") or Path(environ.get("LANE_DIR") or "").name
+        if isinstance(lane, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9@._:/-]{0,127}", lane):
+            tags["x-agent-lb-lane"] = lane
     return tags
 
 

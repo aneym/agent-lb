@@ -60,6 +60,8 @@ def query(args: argparse.Namespace) -> list[dict]:
     if args.session:
         sid = _literal(args.session)
         where.append(f"(r.session_id = {sid} or {client_session} = {sid})")
+    if args.seat:
+        where.append(f"r.caller_seat = {_literal(args.seat)}")
     if args.useragent:
         where.append(f"r.useragent ilike {_literal('%' + args.useragent + '%')}")
     if args.key:
@@ -75,7 +77,7 @@ def query(args: argparse.Namespace) -> list[dict]:
     sql = f"""
         select r.id, r.requested_at, r.session_id, {client_session} as client_session_id,
                r.request_kind, r.provider, r.model, r.status,
-               r.useragent_group, r.transport,
+               r.useragent_group, r.transport, r.caller_seat,
                r.api_key_id, k.name as key_name,
                r.account_id, a.plan_type,
                coalesce(nullif(a.alias, ''), r.provider || ':' || left(r.account_id, 8)) as account,
@@ -162,14 +164,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Per-request receipt from the agent-lb request log.".splitlines()[0])
     parser.add_argument("--session", help="Claude Code / Codex session id (request_logs.session_id)")
     parser.add_argument("--key", help="API key name, id or key prefix (e.g. of-harbor)")
+    parser.add_argument("--seat", help="caller seat recorded on the receipt (request_logs.caller_seat)")
     parser.add_argument("--useragent", help="substring of the client user agent, e.g. 'codex_exec' or 'Ubuntu'")
     parser.add_argument("--since", help="ISO time, UTC if no offset (default: 24h ago unless --session)")
     parser.add_argument("--until", help="ISO time, exclusive")
     parser.add_argument("--limit", type=int, default=5000)
     parser.add_argument("--json", action="store_true", help="print {requests, summary} as JSON")
     args = parser.parse_args()
-    if not (args.session or args.key or args.useragent):
-        parser.error("give --session, --key and/or --useragent")
+    if not (args.session or args.key or args.useragent or args.seat):
+        parser.error("give --session, --key, --seat and/or --useragent")
     rows = query(args)
     summary = summarise(rows)
     if args.json:

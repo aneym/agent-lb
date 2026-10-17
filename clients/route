@@ -2936,6 +2936,15 @@ def read_decisions() -> list[dict[str, Any]]:
     return rows
 
 
+SYNTHETIC_PREFIXES = ("test", "probe", "synthetic", "smoke", "eval-")
+
+
+def synthetic_decision(job_id: Any, caller: Any) -> bool:
+    if os.environ.get("ROUTE_SYNTHETIC") == "1" or os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    return any(isinstance(value, str) and value.lower().startswith(SYNTHETIC_PREFIXES) for value in (job_id, caller))
+
+
 def append_decision(row: dict[str, Any]) -> None:
     path = decisions_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -3178,6 +3187,8 @@ def command_dispatch(args: argparse.Namespace) -> int:
         "table_sha256": table_digest(),
         "policy_rev": str(table.get("policy_rev") or "unversioned"),
     }
+    if synthetic_decision(job_id, args.caller):
+        row["synthetic"] = True
     if not args.dry_run:
         append_decision(row)
     if args.json:

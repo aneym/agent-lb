@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from contextvars import ContextVar, Token
 
 from starlette.types import Scope
@@ -98,3 +99,48 @@ def set_room_from_scope(scope: Scope) -> Token[str | None]:
 
 def reset_room(token: Token[str | None]) -> None:
     _ROOM.reset(token)
+
+
+_LANE_HEADER = b"x-agent-lb-lane"
+_LANE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:/-]{0,127}\Z")
+_JOB_HEADER = b"x-agent-lb-job"
+_JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:/-]{0,63}\Z")
+_LANE: ContextVar[str | None] = ContextVar("lane", default=None)
+_JOB: ContextVar[str | None] = ContextVar("job", default=None)
+_SESSION_ATTRIBUTION: OrderedDict[str, tuple[str | None, str | None]] = OrderedDict()
+_SESSION_ATTRIBUTION_LIMIT = 4096
+
+
+def get_lane() -> str | None:
+    return _LANE.get()
+
+
+def get_job_id() -> str | None:
+    return _JOB.get()
+
+
+def set_attribution_from_scope(scope: Scope) -> tuple[Token[str | None], Token[str | None]]:
+    headers = dict(scope.get("headers") or ())
+    lane = _header_value(headers, _LANE_HEADER, _LANE_RE)
+    job = _header_value(headers, _JOB_HEADER, _JOB_RE)
+    session = get_client_session_id()
+    if session:
+        if lane or job:
+            remembered = _SESSION_ATTRIBUTION.pop(session, (None, None))
+            _SESSION_ATTRIBUTION[session] = (lane or remembered[0], job or remembered[1])
+            while len(_SESSION_ATTRIBUTION) > _SESSION_ATTRIBUTION_LIMIT:
+                _SESSION_ATTRIBUTION.popitem(last=False)
+        else:
+            lane, job = _SESSION_ATTRIBUTION.get(session, (None, None))
+    return _LANE.set(lane), _JOB.set(job)
+
+
+def reset_attribution(tokens: tuple[Token[str | None], Token[str | None]]) -> None:
+    _LANE.reset(tokens[0])
+    _JOB.reset(tokens[1])
+
+
+def _header_value(headers: dict[bytes, bytes], name: bytes, pattern: re.Pattern[str]) -> str | None:
+    raw = headers.get(name)
+    value = raw.decode("latin-1").strip() if raw else ""
+    return value if pattern.fullmatch(value) else None

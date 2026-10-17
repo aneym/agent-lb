@@ -461,6 +461,24 @@ def session_agents(path, since, until):
     return list(agents.values())
 
 
+def lane_source(row, meta):
+    if row.get("sid", "").startswith("unattributed-quota:"):
+        return None
+    if isinstance(row.get("lane"), str) and row["lane"].strip():
+        return "receipt"
+    prompt = meta.get("prompt", "")
+    for source, found in (
+        ("pane", meta.get("pane_title")),
+        ("lane_path", re.search(r"lanes/([^/\s]+)/", prompt)),
+        ("brief", re.search(r"([\w-]+-brief)\.md", prompt, re.I)),
+        ("transcript", meta.get("lane_hint") if meta.get("lane_hint") != "unknown" else None),
+        ("title", meta.get("title")),
+    ):
+        if found:
+            return source
+    return None
+
+
 def classify(row, meta, rules):
     if row.get("sid", "").startswith("unattributed-quota:"):
         return "unattributed-quota", "unattributed-quota", "empty-interval"
@@ -475,8 +493,10 @@ def classify(row, meta, rules):
     prompt = meta.get("prompt", "")
     lane_match = re.search(r"lanes/([^/\s]+)/", prompt)
     brief = re.search(r"([\w-]+-brief)\.md", prompt, re.I)
+    receipt_lane = row.get("lane").strip() if isinstance(row.get("lane"), str) else ""
     lane = (
-        meta.get("pane_title")
+        receipt_lane
+        or meta.get("pane_title")
         or (lane_match[1] if lane_match else "")
         or (brief[1] if brief else "")
         or (meta.get("lane_hint") if meta.get("lane_hint") != "unknown" else "")
@@ -512,11 +532,8 @@ def classify(row, meta, rules):
     purpose = "ad-hoc" if meta.get("entrypoint") == "cli" else "headless-other" if headless else "unknown"
     if purpose == "unknown":
         client = safe_label(row.get("useragent_group"), "other")
-        return (
-            "unlinked",
-            f"{client} (no rollout)" if row.get("provider") == "openai" else f"{client} (no transcript)",
-            "unlinked",
-        )
+        fallback = f"{client} (no rollout)" if row.get("provider") == "openai" else f"{client} (no transcript)"
+        return "unlinked", safe_label(receipt_lane) if receipt_lane else fallback, "unlinked"
     return purpose, safe_label(lane), "entrypoint"
 
 
@@ -569,7 +586,7 @@ WITH base AS (
  SELECT id, account_id, provider, model, reasoning_effort, useragent_group, source, request_kind,
  service_tier, input_tokens, output_tokens, cached_input_tokens, cache_creation_tokens, cache_read_tokens,
  reasoning_tokens, cost_usd, status, error_code, upstream_status_code, requested_at, request_id,
- caller_seat,
+ caller_seat, ATTRIBUTION_COLUMNS,
  coalesce(nullif(client_session_id,''),nullif(session_id,''),'receipt:' || id::text) AS sid
  FROM request_logs WHERE deleted_at IS NULL AND requested_at >= %s AND requested_at < %s
 )
@@ -981,6 +998,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
                         entry["quota_points"] += value["quota_points"]
                     cache_receipts.add(indexed[nearest][0])
     financial_rows = {}
+    lane_usd = Counter()
     for row in rows:
         sid = row["sid"]
         purpose, lane, rule = classify(row, metas.get(sid, {}), rules)
@@ -990,6 +1008,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
         if provenance != "log":
             usd *= count
             split = {k: v * count for k, v in split.items()}
+        lane_usd[lane_source(row, metas.get(sid, {})) or "none"] += usd
         value = {
             "requests": count,
             "tokens": sum(tokens[k] for k in CLASSES if k != "reasoning") * count,
@@ -1149,7 +1168,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
         flags = waste_flags(row | {"first": first, "preexisting": sid in preexisting, "looping": looping})
         if not flags and coordinator:
             flags = ["coordinator"]
-        if not flags and purpose in ("unknown", "unlinked"):
+        if not flags and lane_source(row, metas.get(sid, {})) is None:
             flags = ["unattributed"]
         for flag in flags:
             add_waste(flag, value, sid, lane, agent["seat"], agent["key"])
@@ -1160,6 +1179,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
 
     for waste in wastes.values():
         waste["share"] = waste["usd"] / totals["usd"] if totals["usd"] else 0
+        waste["pct"] = 100 * waste["usd"] / totals["usd"] if totals["usd"] else None
         waste["top"] = sorted(
             (
                 {"session": sid[:12], "lane": lane, "seat": seat, "agent": key, **v}
@@ -1191,10 +1211,24 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
         "tree": finish_tree(tree),
         "sessions": sorted(sessions.values(), key=lambda v: v["usd"], reverse=True)[:top],
         "waste": wastes,
+        "attribution": attribution(lane_usd),
         "waste_total_usd": sum(wastes[k]["usd"] for k in detectors if k != "first_write"),
         "cache_premium_by_day": dict(sorted(daily.items())),
         "priced_by": dict(priced),
         "account_shares": account_shares,
+    }
+
+
+def attribution(lane_usd):
+    total = sum(lane_usd.values())
+    missing = lane_usd.get("none", 0.0)
+    return {
+        "usd": total,
+        "lane_usd": total - missing,
+        "unattributed_usd": missing,
+        "unattributed_pct": 100 * missing / total if total else None,
+        "coverage": (total - missing) / total if total else None,
+        "by_source": {source: usd for source, usd in sorted(lane_usd.items())},
     }
 
 
@@ -1263,6 +1297,12 @@ def text_report(report):
         f"{report['totals'].get('account_weeks', 0):.3f} account-weeks; "
         f"secondary list price: ${report['totals']['usd']:,.2f}",
         f"Pricing: {report['priced_by']}",
+        "Lane coverage: "
+        + (
+            "n/a (no priced spend)"
+            if report["attribution"]["coverage"] is None
+            else f"{report['attribution']['coverage']:.1%}; no lane ${report['attribution']['unattributed_usd']:,.2f}"
+        ),
     ]
     for dim, values in report["by"].items():
         lines += [f"\n{dim.upper():<40} {'POINTS':>10} {'ACCT-WEEKS':>16} {'USD':>12}"]
@@ -1355,7 +1395,19 @@ def load_receipts(args, since, until, notes):
                 ((since - timedelta(days=14)).replace(tzinfo=None), until.replace(tzinfo=None)),
             )
             snapshots = cursor.fetchall()
-            cursor.execute(QUERY, (since.replace(tzinfo=None), until.replace(tzinfo=None)))
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='request_logs'")
+            present = {r["column_name"] for r in cursor.fetchall()}
+            columns = ", ".join(
+                [
+                    *(name if name in present else f"NULL AS {name}" for name in ("lane", "job_id")),
+                    "coalesce(dispatch_id, unified_headers->>'x-agent-lb-dispatch') AS dispatch_id"
+                    if "dispatch_id" in present
+                    else "unified_headers->>'x-agent-lb-dispatch' AS dispatch_id",
+                ]
+            )
+            cursor.execute(
+                QUERY.replace("ATTRIBUTION_COLUMNS", columns), (since.replace(tzinfo=None), until.replace(tzinfo=None))
+            )
             rows = cursor.fetchall()
             cursor.execute(
                 """SELECT DISTINCT coalesce(nullif(client_session_id,''),nullif(session_id,'')) AS sid
