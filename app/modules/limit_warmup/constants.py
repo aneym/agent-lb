@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+import re
+from datetime import time as dt_time
+
+from app.modules.limit_warmup.repository import (
+    ANTHROPIC_CONTINUOUS_WINDOW,
+    OPENAI_CONTINUOUS_WINDOW,
+)
+
+LIMIT_WARMUP_SOURCE = "limit_warmup"
+
+
+LIMIT_WARMUP_REQUEST_KIND = "warmup"
+
+
+LIMIT_WARMUP_HEADER = "x-agent-lb-limit-warmup"
+
+
+_DEFAULT_WARMUP_INSTRUCTIONS = "Reply with OK only."
+
+
+_DEFAULT_ANTHROPIC_WARMUP_MODEL = "claude-haiku-4-5"
+
+
+_DEFAULT_PRIMARY_WINDOW_MINUTES = 300
+
+
+_SEED_WINDOW = "primary"
+
+
+_DEFAULT_WORKING_HOURS_START = dt_time(9, 0)
+
+
+_DEFAULT_WORKING_HOURS_END = dt_time(18, 0)
+
+
+_TERMINAL_ERROR_EVENTS = {"response.failed", "response.incomplete", "error"}
+
+
+_QUOTA_ERROR_CODES = {"insufficient_quota", "quota_exceeded", "rate_limit_exceeded", "usage_limit_reached"}
+
+
+_MAX_CONCURRENT_WARMUP_SENDS = 4
+
+
+_ANTHROPIC_CONTINUOUS_WINDOW = ANTHROPIC_CONTINUOUS_WINDOW
+
+
+_OPENAI_CONTINUOUS_WINDOW = OPENAI_CONTINUOUS_WINDOW
+
+
+_OPENAI_TELEMETRY_MAX_AGE_SECONDS = 600
+
+
+_OPENAI_UNSTARTED_LEAD_SLACK_SECONDS = 300
+
+
+_OPENAI_PRIME_BUCKET_SECONDS = 3600
+
+
+_OPENAI_PRIME_SPACING_SECONDS = 1800
+
+
+_OPENAI_FAILURE_BRAKE_SECONDS = 6 * 3600
+
+
+_OPENAI_LOG_ERROR_CODE = re.compile(r"[a-z0-9_.:-]{1,64}", re.IGNORECASE)
+
+
+_ANTHROPIC_PRIMER_PROMPT = "OK"
+
+
+_ANTHROPIC_RESET_GRACE_SECONDS = 3
+
+
+_ANTHROPIC_TELEMETRY_MAX_AGE_SECONDS = 600
+
+
+_ANTHROPIC_PRIME_SPACING_SLACK = 900

@@ -2,29 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 import uuid
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from datetime import time as dt_time
-from typing import AsyncContextManager, Awaitable, Callable, Protocol
+from datetime import datetime
+from typing import AsyncContextManager, Awaitable, Callable
 
-from app.core import usage as usage_core
 from app.core.auth.refresh import RefreshError
 from app.core.clients.proxy import UpstreamProxyRouteTrace, override_stream_timeouts, stream_responses
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
-from app.core.identity import RequestIdentity, internal_identity
-from app.core.openai.model_registry import get_model_registry
 from app.core.openai.models import OpenAIError, ResponseUsage
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import ResponsesRequest
-from app.core.plan_types import account_plan_matches_allowed
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
-from app.core.usage.pricing import get_pricing_for_model
-from app.core.utils.time import to_utc_naive, utcnow
+from app.core.utils.time import utcnow
 from app.db.models import (
     Account,
     AccountLimitWarmup,
@@ -35,155 +27,44 @@ from app.db.models import (
 )
 from app.modules.accounts.auth_manager import AuthManager, is_locally_owned
 from app.modules.accounts.repository import AccountsRepository
-from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.limit_warmup.anthropic_primer import send_anthropic_primer
-from app.modules.limit_warmup.repository import (
-    _MAX_CONTINUOUS_RETRIES,
-    ANTHROPIC_CONTINUOUS_WINDOW,
-    OPENAI_CONTINUOUS_WINDOW,
+from app.modules.limit_warmup.constants import (
+    _ANTHROPIC_CONTINUOUS_WINDOW,
+    _DEFAULT_WARMUP_INSTRUCTIONS,
+    _MAX_CONCURRENT_WARMUP_SENDS,
+    _OPENAI_CONTINUOUS_WINDOW,
+    _SEED_WINDOW,
+    _TERMINAL_ERROR_EVENTS,
+    LIMIT_WARMUP_HEADER,
 )
-from app.modules.quota_planner.logic import PlannerSettings, _parse_hhmm, _to_planner_tz
-from app.modules.usage.mappers import usage_history_to_window_row
+from app.modules.limit_warmup.contracts import (
+    LimitWarmupAttemptsRepository,
+    LimitWarmupRequestLogRepository,
+    LimitWarmupSender,
+    LimitWarmupSendOutcome,
+    LimitWarmupSendResult,
+)
+from app.modules.limit_warmup.policy import (
+    _account_is_safe_candidate,
+    _anthropic_prime_key,
+    _as_utc,
+    _build_candidate,
+    _in_cooldown,
+    _openai_prime_key,
+    _opened_by_prime,
+    _primary_window_is_cold,
+    _primary_window_minutes,
+    _seed_reset_at,
+    _selected_windows,
+    _within_hold_window,
+    _within_seed_window,
+)
+from app.modules.quota_planner.logic import PlannerSettings
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.modules.limit_warmup.service")
 
-LIMIT_WARMUP_SOURCE = "limit_warmup"
-LIMIT_WARMUP_REQUEST_KIND = "warmup"
-LIMIT_WARMUP_HEADER = "x-agent-lb-limit-warmup"
-_DEFAULT_WARMUP_INSTRUCTIONS = "Reply with OK only."
-_DEFAULT_ANTHROPIC_WARMUP_MODEL = "claude-haiku-4-5"
-_DEFAULT_PRIMARY_WINDOW_MINUTES = 300
-_SEED_WINDOW = "primary"
-_DEFAULT_WORKING_HOURS_START = dt_time(9, 0)
-_DEFAULT_WORKING_HOURS_END = dt_time(18, 0)
-_TERMINAL_ERROR_EVENTS = {"response.failed", "response.incomplete", "error"}
-_QUOTA_ERROR_CODES = {"insufficient_quota", "quota_exceeded", "rate_limit_exceeded", "usage_limit_reached"}
-_MAX_CONCURRENT_WARMUP_SENDS = 4
-_ANTHROPIC_CONTINUOUS_WINDOW = ANTHROPIC_CONTINUOUS_WINDOW
-_OPENAI_CONTINUOUS_WINDOW = OPENAI_CONTINUOUS_WINDOW
-_OPENAI_TELEMETRY_MAX_AGE_SECONDS = 600
-_OPENAI_UNSTARTED_LEAD_SLACK_SECONDS = 300
-_OPENAI_PRIME_BUCKET_SECONDS = 3600
-_OPENAI_PRIME_SPACING_SECONDS = 1800
-_OPENAI_FAILURE_BRAKE_SECONDS = 6 * 3600
-_OPENAI_LOG_ERROR_CODE = re.compile(r"[a-z0-9_.:-]{1,64}", re.IGNORECASE)
-_ANTHROPIC_PRIMER_PROMPT = "OK"
-_ANTHROPIC_RESET_GRACE_SECONDS = 3
-
-_ANTHROPIC_TELEMETRY_MAX_AGE_SECONDS = 600
-
-
-_ANTHROPIC_PRIME_SPACING_SLACK = 900
-
-
-@dataclass(frozen=True, slots=True)
-class LimitWarmupSendResult:
-    request_id: str
-    success: bool
-    latency_ms: int
-    usage: ResponseUsage | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cached_input_tokens: int | None = None
-    error_code: str | None = None
-    error_message: str | None = None
-    upstream_proxy_route_mode: str | None = None
-    upstream_proxy_pool_id: str | None = None
-    upstream_proxy_endpoint_id: str | None = None
-    upstream_proxy_fallback_used: bool | None = None
-    upstream_proxy_fail_closed_reason: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class LimitWarmupSendOutcome:
-    attempt: AccountLimitWarmup
-    account: Account
-    model: str
-    result: LimitWarmupSendResult | None
-    error_message: str | None = None
-
-
-class LimitWarmupSender(Protocol):
-    async def send(self, account: Account, *, model: str, prompt: str) -> LimitWarmupSendResult: ...
-
-
-class LimitWarmupAttemptsRepository(Protocol):
-    async def latest_by_account(self, account_ids: list[str]) -> dict[str, AccountLimitWarmup]: ...
-
-    async def claim_continuous_attempt(
-        self,
-        *,
-        account_id: str,
-        reset_at: int,
-        model: str,
-        now: datetime,
-        window: str = _ANTHROPIC_CONTINUOUS_WINDOW,
-    ) -> AccountLimitWarmup | None: ...
-
-    async def try_create_attempt(
-        self,
-        *,
-        account_id: str,
-        window: str,
-        reset_at: int,
-        model: str,
-        attempted_at,
-        status: str = "pending",
-    ) -> AccountLimitWarmup | None: ...
-
-    async def complete_attempt(
-        self,
-        attempt_id: int,
-        *,
-        status: str,
-        completed_at,
-        error_code: str | None = None,
-        error_message: str | None = None,
-    ) -> AccountLimitWarmup | None: ...
-
-
-class LimitWarmupRequestLogRepository(Protocol):
-    async def add_log(
-        self,
-        account_id: str | None,
-        request_id: str,
-        model: str,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        latency_ms: int | None,
-        status: str,
-        error_code: str | None,
-        latency_first_token_ms: int | None = None,
-        error_message: str | None = None,
-        requested_at: datetime | None = None,
-        cached_input_tokens: int | None = None,
-        reasoning_tokens: int | None = None,
-        reasoning_effort: str | None = None,
-        service_tier: str | None = None,
-        requested_service_tier: str | None = None,
-        actual_service_tier: str | None = None,
-        transport: str | None = None,
-        api_key_id: str | None = None,
-        session_id: str | None = None,
-        plan_type: str | None = None,
-        source: str | None = None,
-        useragent: str | None = None,
-        useragent_group: str | None = None,
-        failure_phase: str | None = None,
-        failure_detail: str | None = None,
-        failure_exception_type: str | None = None,
-        upstream_status_code: int | None = None,
-        upstream_error_code: str | None = None,
-        bridge_stage: str | None = None,
-        request_kind: str = "normal",
-        upstream_proxy_route_mode: str | None = None,
-        upstream_proxy_pool_id: str | None = None,
-        upstream_proxy_endpoint_id: str | None = None,
-        upstream_proxy_fallback_used: bool | None = None,
-        upstream_proxy_fail_closed_reason: str | None = None,
-        *,
-        identity: RequestIdentity | None = None,
-    ) -> object: ...
+from app.modules.limit_warmup.completion import WarmupCompletion
+from app.modules.limit_warmup.dispatch import WarmupDispatch
 
 
 class StreamingLimitWarmupSender:
@@ -400,9 +281,11 @@ class LimitWarmupService:
         confirm_anthropic_prime: Callable[[str, int], Awaitable[bool]] | None = None,
     ) -> None:
         self._warmup_repo = warmup_repo
-        self._request_logs_repo = request_logs_repo
         self._sender = sender
-        self._confirm_anthropic_prime = confirm_anthropic_prime
+        self._dispatch = WarmupDispatch(warmup_repo)
+        self._completion = WarmupCompletion(
+            warmup_repo, request_logs_repo, confirm_anthropic_prime=confirm_anthropic_prime
+        )
 
     async def run_after_usage_refresh(
         self,
@@ -469,7 +352,7 @@ class LimitWarmupService:
                     current,
                 )
                 if prime_key is not None:
-                    enqueued = await self._enqueue_warmup_send(
+                    enqueued = await self._dispatch._enqueue_warmup_send(
                         account=account,
                         window=_ANTHROPIC_CONTINUOUS_WINDOW,
                         reset_at=prime_key,
@@ -490,7 +373,7 @@ class LimitWarmupService:
                     after_primary.get(account.id), after_secondary.get(account.id), latest_attempt, current
                 )
                 if prime_key is not None:
-                    enqueued = await self._enqueue_warmup_send(
+                    enqueued = await self._dispatch._enqueue_warmup_send(
                         account=account,
                         window=_OPENAI_CONTINUOUS_WINDOW,
                         reset_at=prime_key,
@@ -514,7 +397,7 @@ class LimitWarmupService:
 
             if planner_settings is not None and _within_seed_window(current, planner_settings, window_minutes):
                 if _primary_window_is_cold(account, after_primary.get(account.id), current):
-                    enqueued = await self._enqueue_warmup_send(
+                    enqueued = await self._dispatch._enqueue_warmup_send(
                         account=account,
                         window=_SEED_WINDOW,
                         reset_at=_seed_reset_at(current, planner_settings),
@@ -544,7 +427,7 @@ class LimitWarmupService:
                 if candidate is None:
                     continue
 
-                enqueued = await self._enqueue_warmup_send(
+                enqueued = await self._dispatch._enqueue_warmup_send(
                     account=account,
                     window=window,
                     reset_at=candidate.reset_at,
@@ -558,650 +441,7 @@ class LimitWarmupService:
                 send_task, attempt = enqueued
                 send_tasks[send_task] = attempt
 
-        pending_send_tasks = set(send_tasks)
-        try:
-            while pending_send_tasks:
-                completed_send_tasks, pending_send_tasks = await asyncio.wait(
-                    pending_send_tasks,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                completion_error: BaseException | None = None
-                for send_task in completed_send_tasks:
-                    outcome = await send_task
-                    try:
-                        completed = await self._complete_warmup(outcome)
-                    except Exception as exc:
-                        completion_error = completion_error or exc
-                        await self._mark_aborted_warmup(
-                            outcome.attempt,
-                            error_code="warmup_completion_failed",
-                            error_message="Limit warm-up completion failed",
-                        )
-                        continue
-                    latest_attempts[outcome.account.id] = completed or outcome.attempt
-                if completion_error is not None:
-                    raise completion_error
-        finally:
-            if pending_send_tasks:
-                for send_task in pending_send_tasks:
-                    send_task.cancel()
-                drained_results = await asyncio.gather(*pending_send_tasks, return_exceptions=True)
-                for send_task, drained_result in zip(pending_send_tasks, drained_results, strict=True):
-                    if isinstance(drained_result, LimitWarmupSendOutcome):
-                        try:
-                            completed = await self._complete_warmup(drained_result)
-                        except Exception:
-                            await self._mark_aborted_warmup(
-                                drained_result.attempt,
-                                error_code="warmup_completion_failed",
-                                error_message="Limit warm-up completion failed",
-                            )
-                            continue
-                        latest_attempts[drained_result.account.id] = completed or drained_result.attempt
-                        continue
-                    await self._mark_aborted_warmup(
-                        send_tasks[send_task],
-                        error_code=(
-                            "warmup_cancelled"
-                            if isinstance(drained_result, asyncio.CancelledError)
-                            else "warmup_send_failed"
-                        ),
-                        error_message=(
-                            "Limit warm-up cancelled after another warm-up completion failed"
-                            if isinstance(drained_result, asyncio.CancelledError)
-                            else (_truncate(str(drained_result)) or "Limit warm-up send failed")
-                        ),
-                    )
-
-    async def _enqueue_warmup_send(
-        self,
-        *,
-        account: Account,
-        window: str,
-        reset_at: int,
-        settings: DashboardSettings,
-        sender: LimitWarmupSender,
-        semaphore: asyncio.Semaphore,
-        latest_attempts: dict[str, AccountLimitWarmup],
-        now: datetime | None = None,
-    ) -> tuple[asyncio.Task[LimitWarmupSendOutcome], AccountLimitWarmup] | None:
-        continuous = window in {_ANTHROPIC_CONTINUOUS_WINDOW, _OPENAI_CONTINUOUS_WINDOW}
-        model = (
-            _DEFAULT_ANTHROPIC_WARMUP_MODEL
-            if window == _ANTHROPIC_CONTINUOUS_WINDOW
-            else self._resolve_model(settings.limit_warmup_model, account)
-        )
-        if model is None:
-            skipped = await self._warmup_repo.try_create_attempt(
-                account_id=account.id,
-                window=window,
-                reset_at=reset_at,
-                model="auto",
-                attempted_at=utcnow(),
-            )
-            if skipped is not None:
-                completed = await self._warmup_repo.complete_attempt(
-                    skipped.id,
-                    status="skipped",
-                    completed_at=utcnow(),
-                    error_code="model_unavailable",
-                    error_message="No eligible priced text model was available for warm-up",
-                )
-                latest_attempts[account.id] = completed or skipped
-            return None
-
-        if continuous:
-            attempt = await self._warmup_repo.claim_continuous_attempt(
-                account_id=account.id,
-                reset_at=reset_at,
-                model=model,
-                now=to_utc_naive(now) if now is not None else utcnow(),
-                window=window,
-            )
-        else:
-            attempt = await self._warmup_repo.try_create_attempt(
-                account_id=account.id, window=window, reset_at=reset_at, model=model, attempted_at=utcnow()
-            )
-        if attempt is None:
-            return None
-
-        if window == _ANTHROPIC_CONTINUOUS_WINDOW:
-            logger.info("Anthropic primer attempt account_id=%s reset_at=%s", account.id, reset_at)
-        elif window == _OPENAI_CONTINUOUS_WINDOW:
-            logger.info("OpenAI primer attempt account_id=%s bucket=%s", account.id, reset_at)
-
-        send_task = asyncio.create_task(
-            self._send_warmup(
-                attempt,
-                account=account,
-                model=model,
-                prompt=(
-                    _ANTHROPIC_PRIMER_PROMPT if window == _ANTHROPIC_CONTINUOUS_WINDOW else settings.limit_warmup_prompt
-                ),
-                sender=sender,
-                semaphore=semaphore,
-            ),
-            name=f"limit-warmup:{attempt.id}",
-        )
-        return send_task, attempt
-
-    def _resolve_model(self, configured_model: str, account: Account) -> str | None:
-        normalized = configured_model.strip()
-        if account.provider == ANTHROPIC_PROVIDER_NAME:
-            if normalized and normalized.lower() != "auto" and "claude" in normalized.lower():
-                return normalized
-            return _DEFAULT_ANTHROPIC_WARMUP_MODEL
-        if normalized and normalized.lower() != "auto":
-            return normalized
-
-        candidates: list[tuple[float, str]] = []
-        for model in get_model_registry().get_models_with_fallback().values():
-            if not model.supported_in_api:
-                continue
-            if model.input_modalities and "text" not in {modality.lower() for modality in model.input_modalities}:
-                continue
-            if model.available_in_plans and not account_plan_matches_allowed(
-                account.plan_type, model.available_in_plans
-            ):
-                continue
-            resolved_price = get_pricing_for_model(model.slug)
-            if resolved_price is None:
-                continue
-            _, price = resolved_price
-            candidates.append((price.input_per_1m + price.output_per_1m, model.slug))
-        if not candidates:
-            return None
-        return min(candidates, key=lambda item: (item[0], item[1]))[1]
-
-    async def _send_warmup(
-        self,
-        attempt: AccountLimitWarmup,
-        *,
-        account: Account,
-        model: str,
-        prompt: str,
-        sender: LimitWarmupSender,
-        semaphore: asyncio.Semaphore,
-    ) -> LimitWarmupSendOutcome:
-        try:
-            async with semaphore:
-                result = await sender.send(account, model=model, prompt=prompt)
-        except Exception as exc:
-            if attempt.window in {_ANTHROPIC_CONTINUOUS_WINDOW, _OPENAI_CONTINUOUS_WINDOW}:
-                provider = "Anthropic" if attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW else "OpenAI"
-                logger.warning(
-                    "%s primer send exception account_id=%s error_type=%s", provider, account.id, type(exc).__name__
-                )
-            else:
-                logger.warning(
-                    "Limit warm-up send failed account_id=%s window=%s", account.id, attempt.window, exc_info=True
-                )
-            return LimitWarmupSendOutcome(
-                attempt=attempt,
-                account=account,
-                model=model,
-                result=None,
-                error_message=(
-                    type(exc).__name__
-                    if attempt.window in {_ANTHROPIC_CONTINUOUS_WINDOW, _OPENAI_CONTINUOUS_WINDOW}
-                    else str(exc)
-                ),
-            )
-
-        return LimitWarmupSendOutcome(attempt=attempt, account=account, model=model, result=result)
-
-    async def _complete_warmup(self, outcome: LimitWarmupSendOutcome) -> AccountLimitWarmup | None:
-        if outcome.attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW:
-            return await self._complete_continuous_anthropic(outcome)
-        if outcome.attempt.window == _OPENAI_CONTINUOUS_WINDOW:
-            return await self._complete_continuous_openai(outcome)
-        if outcome.result is None:
-            return await self._warmup_repo.complete_attempt(
-                outcome.attempt.id,
-                status="failed",
-                completed_at=utcnow(),
-                error_code="warmup_send_failed",
-                error_message=_truncate(outcome.error_message),
-            )
-
-        result = outcome.result
-        await self._record_request_log(
-            account=outcome.account,
-            model=outcome.model,
-            result=result,
-        )
-        status = "succeeded" if result.success else "failed"
-        error_code = result.error_code
-        if error_code in _QUOTA_ERROR_CODES:
-            error_code = "quota_still_exhausted"
-        return await self._warmup_repo.complete_attempt(
-            outcome.attempt.id,
-            status=status,
-            completed_at=utcnow(),
-            error_code=error_code,
-            error_message=_truncate(result.error_message),
-        )
-
-    async def _complete_continuous_anthropic(self, outcome: LimitWarmupSendOutcome) -> AccountLimitWarmup | None:
-        result = outcome.result
-        if result is None:
-            logger.warning(
-                "Anthropic primer result account_id=%s reset_at=%s status=failed error_code=warmup_send_failed",
-                outcome.account.id,
-                outcome.attempt.reset_at,
-            )
-            return await self._warmup_repo.complete_attempt(
-                outcome.attempt.id,
-                status="failed",
-                completed_at=utcnow(),
-                error_code="warmup_send_failed",
-                error_message=_truncate(outcome.error_message),
-            )
-
-        status = "sent_unconfirmed" if result.success else "failed"
-        completed = await self._warmup_repo.complete_attempt(
-            outcome.attempt.id,
-            status=status,
-            completed_at=utcnow(),
-            error_code=None if result.success else result.error_code,
-            error_message=None if result.success else _truncate(result.error_message),
-        )
-        try:
-            await self._record_request_log(account=outcome.account, model=outcome.model, result=result)
-        except Exception as exc:
-            logger.warning(
-                "Anthropic primer request log failed account_id=%s error_type=%s",
-                outcome.account.id,
-                type(exc).__name__,
-            )
-        if result.success and self._confirm_anthropic_prime is not None:
-            try:
-                sent_at = int(_as_utc(outcome.attempt.attempted_at).timestamp())
-                if await self._confirm_anthropic_prime(outcome.account.id, sent_at):
-                    confirmed_row = await self._warmup_repo.complete_attempt(
-                        outcome.attempt.id,
-                        status="succeeded",
-                        completed_at=utcnow(),
-                    )
-                    completed = confirmed_row or completed
-                    status = "succeeded"
-            except Exception as exc:
-                logger.warning(
-                    "Anthropic primer confirmation failed account_id=%s reset_at=%s error_type=%s",
-                    outcome.account.id,
-                    outcome.attempt.reset_at,
-                    type(exc).__name__,
-                )
-        logger.log(
-            logging.INFO if result.success else logging.WARNING,
-            "Anthropic primer result account_id=%s reset_at=%s status=%s error_code=%s",
-            outcome.account.id,
-            outcome.attempt.reset_at,
-            status,
-            result.error_code,
-        )
-        return completed
-
-    async def _complete_continuous_openai(self, outcome: LimitWarmupSendOutcome) -> AccountLimitWarmup | None:
-        result = outcome.result
-        if result is None:
-            logger.warning(
-                "OpenAI primer result account_id=%s bucket=%s status=failed error_code=warmup_send_failed",
-                outcome.account.id,
-                outcome.attempt.reset_at,
-            )
-            return await self._warmup_repo.complete_attempt(
-                outcome.attempt.id,
-                status="failed",
-                completed_at=utcnow(),
-                error_code="warmup_send_failed",
-                error_message=_truncate(outcome.error_message),
-            )
-
-        status = "succeeded" if result.success else "failed"
-        error_code = "quota_still_exhausted" if result.error_code in _QUOTA_ERROR_CODES else result.error_code
-        completed = await self._warmup_repo.complete_attempt(
-            outcome.attempt.id,
-            status=status,
-            completed_at=utcnow(),
-            error_code=error_code,
-            error_message=_truncate(result.error_message),
-        )
-        try:
-            await self._record_request_log(account=outcome.account, model=outcome.model, result=result)
-        except Exception as exc:
-            logger.warning(
-                "OpenAI primer request log failed account_id=%s error_type=%s",
-                outcome.account.id,
-                type(exc).__name__,
-            )
-        logger.log(
-            logging.INFO if result.success else logging.WARNING,
-            "OpenAI primer result account_id=%s bucket=%s status=%s error_code=%s",
-            outcome.account.id,
-            outcome.attempt.reset_at,
-            status,
-            _safe_openai_log_error_code(result.error_code),
-        )
-        return completed
-
-    async def _mark_aborted_warmup(
-        self,
-        attempt: AccountLimitWarmup,
-        *,
-        error_code: str,
-        error_message: str,
-    ) -> None:
-        try:
-            await self._warmup_repo.complete_attempt(
-                attempt.id,
-                status="failed",
-                completed_at=utcnow(),
-                error_code=error_code,
-                error_message=error_message,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to mark aborted limit warm-up attempt_id=%s error_code=%s",
-                attempt.id,
-                error_code,
-                exc_info=True,
-            )
-
-    async def _record_request_log(
-        self,
-        *,
-        account: Account,
-        model: str,
-        result: LimitWarmupSendResult,
-    ) -> None:
-        usage = result.usage
-        input_tokens = (
-            result.input_tokens
-            if result.input_tokens is not None
-            else (usage.input_tokens if usage is not None else None)
-        )
-        output_tokens = (
-            result.output_tokens
-            if result.output_tokens is not None
-            else (usage.output_tokens if usage is not None else None)
-        )
-        cached_input_tokens = (
-            result.cached_input_tokens
-            if result.cached_input_tokens is not None
-            else (
-                usage.input_tokens_details.cached_tokens
-                if usage is not None and usage.input_tokens_details is not None
-                else None
-            )
-        )
-        reasoning_tokens = (
-            usage.output_tokens_details.reasoning_tokens
-            if usage is not None and usage.output_tokens_details is not None
-            else None
-        )
-        await self._request_logs_repo.add_log(
-            identity=internal_identity(),
-            account_id=account.id,
-            request_id=result.request_id,
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cached_input_tokens=cached_input_tokens,
-            reasoning_tokens=reasoning_tokens,
-            latency_ms=result.latency_ms,
-            status="success" if result.success else "error",
-            error_code=result.error_code,
-            error_message=_truncate(result.error_message),
-            transport="http",
-            plan_type=account.plan_type,
-            source=LIMIT_WARMUP_SOURCE,
-            request_kind=LIMIT_WARMUP_REQUEST_KIND,
-            upstream_proxy_route_mode=result.upstream_proxy_route_mode,
-            upstream_proxy_pool_id=result.upstream_proxy_pool_id,
-            upstream_proxy_endpoint_id=result.upstream_proxy_endpoint_id,
-            upstream_proxy_fallback_used=result.upstream_proxy_fallback_used,
-            upstream_proxy_fail_closed_reason=result.upstream_proxy_fail_closed_reason,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _WarmupCandidate:
-    reset_at: int
-
-
-def _selected_windows(value: str) -> tuple[str, ...]:
-    normalized = value.strip().lower()
-    if normalized == "both":
-        return ("primary", "secondary")
-    if normalized in {"primary", "secondary"}:
-        return (normalized,)
-    return ()
-
-
-def _account_is_safe_candidate(account: Account) -> bool:
-    return account.status == AccountStatus.ACTIVE and is_subscription_usable(account)
-
-
-def _in_cooldown(attempt: AccountLimitWarmup | None, *, cooldown_seconds: int) -> bool:
-    if attempt is None:
-        return False
-    return utcnow() - attempt.attempted_at < timedelta(seconds=cooldown_seconds)
-
-
-def _anthropic_prime_key(
-    primary: UsageHistory | None,
-    weekly: UsageHistory | None,
-    standard: AdditionalUsageHistory | None,
-    latest_attempt: AccountLimitWarmup | None,
-    now: datetime,
-) -> int | None:
-
-    if primary is None or weekly is None:
-        return None
-    now_epoch = _as_utc(now).timestamp()
-    primary_recorded = _as_utc(primary.recorded_at).timestamp()
-    if now_epoch - primary_recorded > _ANTHROPIC_TELEMETRY_MAX_AGE_SECONDS:
-        return None
-    if now_epoch - _as_utc(weekly.recorded_at).timestamp() > _ANTHROPIC_TELEMETRY_MAX_AGE_SECONDS:
-        return None
-    if primary.used_percent != 0 or weekly.used_percent >= 100:
-        return None
-    if primary.reset_at is not None and primary_recorded < primary.reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
-        return None
-    if standard is not None and standard.used_percent >= 100:
-        if standard.reset_at is None or standard.reset_at > now_epoch:
-            return None
-    window_seconds = (primary.window_minutes or _DEFAULT_PRIMARY_WINDOW_MINUTES) * 60
-    if (
-        latest_attempt is not None
-        and latest_attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW
-        and latest_attempt.status != "failed"
-    ):
-        since_prime = now_epoch - _as_utc(latest_attempt.attempted_at).timestamp()
-        if since_prime < window_seconds - _ANTHROPIC_PRIME_SPACING_SLACK:
-            return None
-    return int(now_epoch // window_seconds) * window_seconds
-
-
-def _safe_openai_log_error_code(code: str | None) -> str:
-    return code if isinstance(code, str) and _OPENAI_LOG_ERROR_CODE.fullmatch(code) else "unrecognized"
-
-
-def _openai_prime_key(
-    primary: UsageHistory | None,
-    secondary: UsageHistory | None,
-    latest_attempt: AccountLimitWarmup | None,
-    now: datetime,
-) -> int | None:
-
-    now_epoch = _as_utc(now).timestamp()
-    fresh = [
-        sample
-        for sample in (primary, secondary)
-        if sample is not None
-        and 0 <= now_epoch - _as_utc(sample.recorded_at).timestamp() <= _OPENAI_TELEMETRY_MAX_AGE_SECONDS
-    ]
-    if not fresh or any(sample.used_percent >= 100 for sample in fresh):
-        return None
-    if not any(
-        sample.used_percent == 0
-        and sample.reset_at is not None
-        and sample.window_minutes
-        and sample.reset_at - _as_utc(sample.recorded_at).timestamp()
-        >= sample.window_minutes * 60 - _OPENAI_UNSTARTED_LEAD_SLACK_SECONDS
-        for sample in fresh
-    ):
-        return None
-    if latest_attempt is not None:
-        since_attempt = now_epoch - _as_utc(latest_attempt.attempted_at).timestamp()
-        if latest_attempt.status != "failed" and since_attempt < _OPENAI_PRIME_SPACING_SECONDS:
-            return None
-        if (
-            latest_attempt.window == _OPENAI_CONTINUOUS_WINDOW
-            and latest_attempt.status == "failed"
-            and latest_attempt.retry_count >= _MAX_CONTINUOUS_RETRIES
-            and since_attempt < _OPENAI_FAILURE_BRAKE_SECONDS
-        ):
-            return None
-    return int(now_epoch // _OPENAI_PRIME_BUCKET_SECONDS) * _OPENAI_PRIME_BUCKET_SECONDS
-
-
-def _opened_by_prime(attempt: AccountLimitWarmup, reset_at: int) -> bool:
-    sent_at = _as_utc(attempt.attempted_at).timestamp()
-    return sent_at + 4 * 3600 <= reset_at <= sent_at + 6 * 3600
-
-
-def _as_utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
-
-
-def _primary_window_minutes(account: Account, primary_entry: UsageHistory | None) -> int:
-
-    explicit = getattr(account, "window_minutes_primary", None)
-    if isinstance(explicit, int) and explicit > 0:
-        return explicit
-    if primary_entry is not None and primary_entry.window_minutes:
-        return int(primary_entry.window_minutes)
-    return _DEFAULT_PRIMARY_WINDOW_MINUTES
-
-
-def _primary_window_is_cold(
-    account: Account,
-    primary_entry: UsageHistory | None,
-    current: datetime,
-) -> bool:
-
-    reset_at = primary_entry.reset_at if primary_entry is not None else None
-    if reset_at is None:
-        reset_at = getattr(account, "reset_at", None)
-    if reset_at is None:
-        return True
-    return float(reset_at) <= current.timestamp()
-
-
-def _planner_day_bounds(
-    current: datetime,
-    planner: PlannerSettings,
-    window_minutes: int,
-) -> tuple[datetime, datetime, datetime, datetime, datetime]:
-
-    local_now = _to_planner_tz(current, planner.timezone)
-    work_start = datetime.combine(
-        local_now.date(),
-        _parse_hhmm(planner.working_hours_start, _DEFAULT_WORKING_HOURS_START),
-        tzinfo=local_now.tzinfo,
-    )
-    work_end = datetime.combine(
-        local_now.date(),
-        _parse_hhmm(planner.working_hours_end, _DEFAULT_WORKING_HOURS_END),
-        tzinfo=local_now.tzinfo,
-    )
-    target_reset = work_start + timedelta(minutes=max(0, planner.seed_target_offset_minutes))
-    seed_start = target_reset - timedelta(minutes=max(0, window_minutes))
-    return local_now, seed_start, work_start, work_end, target_reset
-
-
-def _within_seed_window(current: datetime, planner: PlannerSettings, window_minutes: int) -> bool:
-
-    local_now, seed_start, work_start, _, _ = _planner_day_bounds(current, planner, window_minutes)
-    return seed_start <= local_now < work_start
-
-
-def _within_hold_window(current: datetime, planner: PlannerSettings, window_minutes: int) -> bool:
-
-    local_now, seed_start, _, work_end, _ = _planner_day_bounds(current, planner, window_minutes)
-    return seed_start <= local_now <= work_end
-
-
-def _seed_reset_at(current: datetime, planner: PlannerSettings) -> int:
-
-    _, _, _, _, target_reset = _planner_day_bounds(current, planner, _DEFAULT_PRIMARY_WINDOW_MINUTES)
-    return int(target_reset.timestamp())
-
-
-def _build_candidate(
-    *,
-    account: Account,
-    window: str,
-    before_primary: dict[str, UsageHistory],
-    before_secondary: dict[str, UsageHistory],
-    after_primary: dict[str, UsageHistory],
-    after_secondary: dict[str, UsageHistory],
-    min_available_percent: float,
-) -> _WarmupCandidate | None:
-    before = _effective_usage_entry(
-        account.id,
-        window=window,
-        primary=before_primary,
-        secondary=before_secondary,
-    )
-    after = _effective_usage_entry(
-        account.id,
-        window=window,
-        primary=after_primary,
-        secondary=after_secondary,
-    )
-    if before is None or after is None:
-        return None
-    if before.reset_at is None or after.reset_at is None:
-        return None
-    if before.used_percent < 100.0:
-        return None
-    if after.used_percent >= 100.0:
-        return None
-    available_percent = 100.0 - after.used_percent
-    if min_available_percent < 100.0 and available_percent < min_available_percent:
-        return None
-    if after.reset_at <= before.reset_at:
-        return None
-    return _WarmupCandidate(reset_at=after.reset_at)
-
-
-def _effective_usage_entry(
-    account_id: str,
-    *,
-    window: str,
-    primary: dict[str, UsageHistory],
-    secondary: dict[str, UsageHistory],
-) -> UsageHistory | None:
-    if window == "primary":
-        primary_entry = primary.get(account_id)
-        if primary_entry is None or usage_core.is_weekly_window_minutes(primary_entry.window_minutes):
-            return None
-        return primary_entry
-
-    primary_entry = primary.get(account_id)
-    secondary_entry = secondary.get(account_id)
-    if primary_entry is not None and usage_core.is_weekly_window_minutes(primary_entry.window_minutes):
-        if secondary_entry is None:
-            return primary_entry
-        if usage_core.should_use_weekly_primary(
-            usage_history_to_window_row(primary_entry),
-            usage_history_to_window_row(secondary_entry),
-        ):
-            return primary_entry
-    return secondary_entry
+        await self._completion.drain(send_tasks, latest_attempts)
 
 
 def _event_error(*errors: OpenAIError | None) -> OpenAIError:
@@ -1213,11 +453,3 @@ def _event_error(*errors: OpenAIError | None) -> OpenAIError:
 
 def _elapsed_ms(started: float) -> int:
     return max(0, int((time.monotonic() - started) * 1000))
-
-
-def _truncate(value: str | None, limit: int = 1000) -> str | None:
-    if value is None:
-        return None
-    if len(value) <= limit:
-        return value
-    return value[: limit - 1] + "..."
