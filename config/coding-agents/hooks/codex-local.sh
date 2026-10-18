@@ -63,6 +63,10 @@ if [[ -n $prompt_file ]]; then
     fi
   done
   set -- "${args[@]}"
+  account_owner=$(python3 "$(dirname "$0")/codex-local-account.py" --prompt-file "$prompt_file")
+  if [[ -n $account_owner ]]; then
+    export AGENT_TEST_ACCOUNT_OWNER=$account_owner
+  fi
 fi
 
 focus_dir=$(mktemp -d "${TMPDIR:-/tmp}/codex-local-focus.XXXXXX")
