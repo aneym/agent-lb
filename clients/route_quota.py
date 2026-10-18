@@ -83,6 +83,17 @@ def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
         latest = max(stamps) if stamps else None
         age = (now - latest).total_seconds() if latest else math.inf
         mode = state.get("mode", "anthropic")
+        if eligible is not None and eligible < min_eligible:
+            state["eligible_recovery_pending"] = True
+        eligible_ready = not state.get("eligible_recovery_pending", False)
+        if not eligible_ready:
+            restored = _parse_ts(state.get("eligible_restored_at"))
+            if eligible is None or eligible < min_eligible:
+                restored = None
+            elif not restored or not restored.tzinfo or restored > now:
+                restored = now
+            state["eligible_restored_at"] = restored.isoformat() if restored else None
+            eligible_ready = restored is not None and (now - restored).total_seconds() >= 900
         cause = None
         if mode == "anthropic":
             if 0 <= age <= 600:
@@ -97,8 +108,10 @@ def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
                 mode = "codex-swap"
         elif (remaining is not None and remaining > reserve + 0.10
               and eligible is not None and eligible >= min_eligible
-              and headroom is not None and headroom > reserve + 0.10 and age > 900):
+              and headroom is not None and headroom > reserve + 0.10 and age > 900
+              and eligible_ready):
             mode = "anthropic"
+            state.update(eligible_recovery_pending=False, eligible_restored_at=None)
             cause = "Anthropic remaining and headroom above reserve + 10 points; eligible accounts restored; no limit error for 15 minutes"
         if cause:
             state.update(last_flip_at=now.isoformat(), last_flip_cause=cause)

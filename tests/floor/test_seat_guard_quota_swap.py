@@ -15,14 +15,15 @@ HOOK = ROOT / "config/coding-agents/hooks/seat-guard.py"
 
 def run_hook(
     tmp_path, seat, model="opus", route_body='print(\'{"mode":"codex-swap"}\')',
-    prompt="Review the change.", lean_body=None,
+    prompt="Review the change.", lean_body=None, missing_target=None,
 ):
     home = tmp_path / "home"
     home.mkdir()
     agents = home / ".claude" / "agents"
     agents.mkdir(parents=True)
     for target in ("gpt-implementer-local", "codex-sol-local", "codex-verifier-local"):
-        (agents / f"{target}.md").write_text("---\nmodel: sol-latest\n---\n")
+        if target != missing_target:
+            (agents / f"{target}.md").write_text("---\nmodel: sol-latest\n---\n")
     lean = tmp_path / "lean-studio"
     if lean_body:
         lean.write_text(f"#!{sys.executable}\nimport sys\n{lean_body}\n")
@@ -140,6 +141,19 @@ def test_quota_swap_preserves_local_execution(tmp_path, seat, target):
     else:
         assert "updatedInput" not in output
         assert record["subagent_type"] == seat
+
+
+@pytest.mark.parametrize("seat", ["verifier-local"])
+def test_missing_local_target_preserves_original_seat(tmp_path, seat):
+    done, output, original, record = run_hook(
+        tmp_path, seat, missing_target="codex-verifier-local",
+        route_body="raise RuntimeError('missing target must bypass quota lookup')",
+    )
+    assert "updatedInput" not in output
+    assert output.get("permissionDecision") != "deny"
+    assert record["subagent_type"] == original["subagent_type"] == seat
+    assert "quota_mode" not in record
+    assert "quota mode unavailable" not in done.stderr
 
 
 @pytest.mark.parametrize("body", ['print("[" * 100000 + "]" * 100000)', 'print("null")'])

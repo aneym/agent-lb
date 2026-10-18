@@ -10,8 +10,18 @@ import pytest
 from tests.integration.route_support import SCRIPT, setup, table_copy
 
 
-def route(env, *args):
-    result = subprocess.run([sys.executable, str(SCRIPT), *args, "--json"], env=env,
+def route(env, *args, now=None):
+    command = [sys.executable, str(SCRIPT)]
+    if now is not None:
+        command = [sys.executable, "-c", (
+            "import sys, runpy; from datetime import datetime; "
+            "sys.path.insert(0, sys.argv[1]); import route_quota; "
+            "stamp = datetime.fromisoformat(sys.argv[2]); "
+            "route_quota.datetime = type('Clock', (datetime,), "
+            "{'now': classmethod(lambda cls, tz=None: stamp)}); "
+            "sys.argv = sys.argv[3:]; runpy.run_path(sys.argv[0], run_name='__main__')"
+        ), str(SCRIPT.parent), now.isoformat(), str(SCRIPT)]
+    result = subprocess.run([*command, *args, "--json"], env=env,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr + result.stdout
     return json.loads(result.stdout)
@@ -212,11 +222,46 @@ def test_reserve_conditions_swap_authority_classes_and_hold_until_recovery(tmp_p
     env = environment(tmp_path)
     path = Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json"
     document = json.loads(path.read_text())
-    for value, expected in ((low, "gpt-6.1-sol"), (hold, "gpt-6.1-sol"), (recovered, "claude-opus-5-5")):
+    start = datetime(2026, 10, 18, tzinfo=timezone.utc)
+    steps = [(0, low, "gpt-6.1-sol"), (1, hold, "gpt-6.1-sol"),
+             (2, recovered, "gpt-6.1-sol" if field == "eligibleAccounts" else "claude-opus-5-5")]
+    if field == "eligibleAccounts":
+        steps += [(17, recovered, "claude-opus-5-5")]
+    for minute, value, expected in steps:
         document["pools"][1][field] = value
         path.write_text(json.dumps(document))
-        assert route(env, "resolve", "verdict")["model"] == expected
-        assert route(env, "dispatch", "verdict", "--job", f"reserve-{value}")["model"] == expected
+        now = start + timedelta(minutes=minute)
+        assert route(env, "resolve", "verdict", now=now)["model"] == expected
+        assert route(env, "dispatch", "verdict", "--job", f"reserve-{minute}", now=now)["model"] == expected
+
+
+@pytest.mark.parametrize("dips", [False, True])
+def test_eligible_accounts_need_fifteen_continuous_minutes(tmp_path, dips):
+    env = environment(tmp_path)
+    path = Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json"
+    document = json.loads(path.read_text())
+    start = datetime(2026, 10, 18, tzinfo=timezone.utc)
+    steps = [(0, 1), (1, 2)]
+    if dips:
+        steps += [(10, 1), (11, 2), (20, 1), (21, 2)]
+    restored = steps[-1][0]
+    steps += [(restored + 14, 2), (restored + 15, 2)]
+    for minute, eligible in steps:
+        document["pools"][1]["eligibleAccounts"] = eligible
+        path.write_text(json.dumps(document))
+        now = start + timedelta(minutes=minute)
+        if minute == restored + 15:
+            for field in ("aggregateRemainingPercent", "headroomPercent"):
+                saved = document["pools"][1][field]
+                document["pools"][1][field] = 50
+                path.write_text(json.dumps(document))
+                assert route(env, "quota-mode", now=now)["mode"] == "codex-swap"
+                document["pools"][1][field] = saved
+            path.write_text(json.dumps(document))
+        state = route(env, "quota-mode", now=now)
+        assert state["mode"] == ("anthropic" if minute == restored + 15 else "codex-swap")
+    events = [json.loads(line) for line in Path(env["ROUTE_LEDGER"]).read_text().splitlines()]
+    assert [event["direction"] for event in events] == ["codex-swap", "anthropic"]
 
 
 @pytest.mark.parametrize("value", ["broken", None, [], True, "NaN", "Infinity"])
