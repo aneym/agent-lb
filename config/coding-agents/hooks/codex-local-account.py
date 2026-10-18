@@ -3,12 +3,14 @@
 import argparse
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-OWNER_FLAG = re.compile(r"agent-test-account\b[^\n;`]*?--(lane|agent)(?:\s+|=)([A-Za-z0-9][A-Za-z0-9._-]*)")
+ACCOUNT_COMMAND = re.compile(r"\bagent-test-account\b([^\n;`]*)(?:$|[\n;`])")
+OWNER_FLAG = re.compile(r"--(lane|agent)(?:\s+|=)([A-Za-z0-9][A-Za-z0-9._-]*)")
 OWNER_ENV = re.compile(r"AGENT_TEST_ACCOUNT_OWNER=(lane|agent):([A-Za-z0-9][A-Za-z0-9._-]*)")
 RECRUITER = re.compile(r"agent-test-account\b[^\n;`]*--host(?:\s+|=)recruiter\b")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -23,25 +25,34 @@ def roots():
 def owner(brief, env, cwd):
     if "agent-test-account" not in brief:
         return None, "brief names no agent-test-account run"
-    found = set(OWNER_FLAG.findall(brief)) | set(OWNER_ENV.findall(brief))
+    commands = [OWNER_FLAG.findall(command) for command in ACCOUNT_COMMAND.findall(brief)]
+    found = set(OWNER_ENV.findall(brief))
+    for flags in commands:
+        if len(flags) > 1:
+            return None, "brief command names more than one account owner"
+        found.update(flags)
     if len(found) > 1:
-        return None, "brief names more than one account owner: " + ", ".join(sorted(k + ":" + n for k, n in found))
-    if found:
-        return next(iter(found)), None
-    selected = env.get("AGENT_TEST_ACCOUNT_OWNER", "")
-    kind, _, name = selected.partition(":")
-    if kind in ("lane", "agent") and NAME.fullmatch(name):
-        return (kind, name), None
+        return None, "brief names more than one account owner"
+    selected = None
     if env.get("LANE_DIR"):
-        return ("lane", Path(env["LANE_DIR"]).expanduser().name), None
-    for kind, root in roots():
-        try:
-            parts = Path(cwd).resolve().relative_to(root.resolve()).parts
-        except ValueError:
-            continue
-        if parts:
-            return (kind, parts[0]), None
-    return None, "no owner: name --lane/--agent in the brief, export LANE_DIR, or launch from a lane or agent directory"
+        name = Path(env["LANE_DIR"]).expanduser().name
+        if not NAME.fullmatch(name):
+            return None, "invalid launching lane owner"
+        selected = ("lane", name)
+    else:
+        for kind, root in roots():
+            try:
+                parts = Path(cwd).resolve().relative_to(root.resolve()).parts
+            except ValueError:
+                continue
+            if parts:
+                selected = (kind, parts[0])
+                break
+    if not selected:
+        return None, "no launching owner: export LANE_DIR or launch from a lane or agent directory"
+    if found and found != {selected}:
+        return None, "brief account owner differs from launching owner"
+    return selected, None
 
 
 def host_env(kind, name, env):
@@ -85,6 +96,7 @@ def prepare(brief, env, cwd):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt-file", type=Path)
+    parser.add_argument("--shell-env", action="store_true")
     args = parser.parse_args()
     brief = args.prompt_file.read_text() if args.prompt_file else ""
     prepared, reason = prepare(brief, dict(os.environ), os.getcwd())
@@ -95,7 +107,15 @@ def main():
             f"inside the seat run agent-test-account --{kind} {name}",
             file=sys.stderr,
         )
-        print(prepared)
+        if args.shell_env:
+            print("export AGENT_TEST_ACCOUNT_OWNER=" + shlex.quote(prepared))
+            if kind == "lane":
+                lane = host_env(kind, name, dict(os.environ))["LANE_DIR"]
+                print("export LANE_DIR=" + shlex.quote(str(Path(lane).expanduser().resolve())))
+            else:
+                print("unset LANE_DIR")
+        else:
+            print(prepared)
     elif "agent-test-account" in brief:
         print("codex-local: test account not prepared: " + reason, file=sys.stderr)
     return 0
