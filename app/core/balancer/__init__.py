@@ -1,24 +1,8 @@
-from app.core.balancer.logic import (
-    HEALTH_TIER_DRAINING,
-    HEALTH_TIER_HEALTHY,
-    HEALTH_TIER_PROBING,
+from app.core.balancer.failures import (
     PERMANENT_FAILURE_CODES,
     QUOTA_EXCEEDED_COOLDOWN_SECONDS,
     REAUTH_REQUIRED_FAILURE_CODES,
-    ROUTING_POLICY_BURN_FIRST,
-    ROUTING_POLICY_PRESERVE,
-    TRAFFIC_CLASS_FOREGROUND,
-    TRAFFIC_CLASS_OPPORTUNISTIC,
-    AccountState,
-    ExcludedAccount,
     FailoverAction,
-    ResetPreferenceWindow,
-    RoutingCost,
-    RoutingCostsByAccount,
-    RoutingStrategy,
-    SelectionResult,
-    TrafficClass,
-    UsageWeightedOrder,
     account_status_for_permanent_failure,
     canonical_permanent_failure_code,
     evaluate_health_tier,
@@ -27,7 +11,25 @@ from app.core.balancer.logic import (
     handle_quota_exceeded,
     handle_rate_limit,
     permanent_failure_reason,
-    select_account,
+)
+from app.core.balancer.logic import select_account
+from app.core.balancer.state import (
+    HEALTH_TIER_DRAINING,
+    HEALTH_TIER_HEALTHY,
+    HEALTH_TIER_PROBING,
+    ROUTING_POLICY_BURN_FIRST,
+    ROUTING_POLICY_PRESERVE,
+    TRAFFIC_CLASS_FOREGROUND,
+    TRAFFIC_CLASS_OPPORTUNISTIC,
+    AccountState,
+    ExcludedAccount,
+    ResetPreferenceWindow,
+    RoutingCost,
+    RoutingCostsByAccount,
+    RoutingStrategy,
+    SelectionResult,
+    TrafficClass,
+    UsageWeightedOrder,
 )
 
 __all__ = [
