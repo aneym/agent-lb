@@ -181,3 +181,14 @@ def test_explicit_alias_degrades_only_on_live_exhaustion(tmp_path, eligible, sta
     if degraded:
         events = [json.loads(line) for line in Path(env["ROUTE_LEDGER"]).read_text().splitlines()]
         assert events[-1]["event"] == "model_degraded"
+
+
+@pytest.mark.parametrize("document", [None, [], {}, {"pools": None}, {"pools": {}},
+                                     {"pools": [None, 1, {}, {"id": []}]}])
+def test_malformed_pool_data_keeps_existing_swap(tmp_path, document):
+    env = environment(tmp_path)
+    pool(env, 12)
+    assert route(env, "quota-mode")["mode"] == "codex-swap"
+    (Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json").write_text(json.dumps(document))
+    state = route(env, "quota-mode")
+    assert state["mode"] == "codex-swap" and state["remaining_fraction"] is None

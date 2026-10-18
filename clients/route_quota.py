@@ -28,8 +28,10 @@ def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
     policy = (table.get("policy") or {}).get("reserve") or {}
     reserve = float(policy.get("headroom_min_percent", 15)) / 100
     document, _ = fetch_pools()
-    pool = next((pool for pool in document.get("pools", [])
-                 if pool.get("id") == policy.get("pool", "anthropic-general")), {})
+    entries = document.get("pools") if isinstance(document, dict) else None
+    pools = {pool["id"]: pool for pool in entries
+             if isinstance(pool, dict) and isinstance(pool.get("id"), str)} if isinstance(entries, list) else {}
+    pool = pools.get(policy.get("pool", "anthropic-general"), {})
     percent = pool.get("aggregateRemainingPercent")
     remaining = (float(percent) / 100 if isinstance(percent, (int, float))
                  and not isinstance(percent, bool) and math.isfinite(percent) else None)
