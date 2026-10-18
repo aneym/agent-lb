@@ -149,3 +149,35 @@ def test_unknown_quota_does_not_recover_swap(tmp_path):
     pool(env, None)
     state = route(env, "quota-mode")
     assert state["mode"] == "codex-swap" and state["remaining_fraction"] is None
+
+
+@pytest.mark.parametrize("alias", ["sonnet-latest", "opus-latest"])
+def test_explicit_alias_keeps_anthropic_during_quota_swap(tmp_path, alias):
+    env = environment(tmp_path)
+    pool(env, 12)
+    assert route(env, "quota-mode")["mode"] == "codex-swap"
+    assert route(env, "resolve", alias)["model"].startswith("claude-")
+    assert route(env, "resolve", "review")["model"] == "gpt-6.1-sol"
+
+
+@pytest.mark.parametrize("eligible,status,source,degraded", [
+    (0, "rate_limited", "live", True),
+    (0, "quota_exceeded", "live", True),
+    (1, "rate_limited", "live", False),
+    (0, "active", "live", False),
+    (0, "quota_exceeded", "accounts_fallback", False),
+])
+def test_explicit_alias_degrades_only_on_live_exhaustion(tmp_path, eligible, status, source, degraded):
+    env = environment(tmp_path)
+    fixtures = Path(env["ROUTE_FIXTURE_DIR"])
+    path = fixtures / "api_pools.json"
+    document = json.loads(path.read_text())
+    document["pools"][1].update(eligibleAccounts=eligible, accounts=1, source=source)
+    path.write_text(json.dumps(document))
+    (fixtures / "api_accounts.json").write_text(json.dumps({"accounts": [
+        {"provider": "anthropic", "status": status}]}))
+    result = route(env, "resolve", "sonnet-latest")
+    assert (result["model"] == "gpt-6.1-sol") is degraded
+    if degraded:
+        events = [json.loads(line) for line in Path(env["ROUTE_LEDGER"]).read_text().splitlines()]
+        assert events[-1]["event"] == "model_degraded"

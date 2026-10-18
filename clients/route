@@ -32,7 +32,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from route_quota import load_quota_policy, quota_swap_state, swapped_standard
+from route_quota import degrade_alias, load_quota_policy, quota_swap_state, swapped_standard
 from route_storage import _parse_ts, atomic_write
 
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
@@ -1461,13 +1461,8 @@ def command_resolve(args: argparse.Namespace) -> int:
         if model:
             result = {"alias": name, "model": model, "reason": reason}
             if name in ("opus-latest", "sonnet-latest"):
-                state = quota_swap_state(table, fetch_pools, api_request_logs, append_ledger)
-                if state["mode"] == "codex-swap":
-                    replacement, _ = resolve_alias(table, "sol-latest", served)
-                    if replacement:
-                        result.update(model=replacement, degraded_from=name,
-                                      resolved_alias="sol-latest", quota_mode=state["mode"],
-                                      reason=state["last_flip_cause"])
+                degrade_alias(result, table, served, fetch_pools, pool_for_model,
+                              http_get, resolve_alias, append_ledger)
             print(json.dumps(result, sort_keys=True) if args.json else result["model"])
             return EXIT_OK
         if reason == f"unknown alias {name}":

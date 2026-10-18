@@ -122,7 +122,8 @@ def test_install_renders_core_within_budget_and_is_idempotent(tmp_path: Path, po
     source = tmp_path / "policy-repo" / "config/coding-agents"
     shutil.copytree(SOURCE, source)
     (source.parent.parent / "clients").mkdir()
-    shutil.copy2(ROOT / "clients/route", source.parent.parent / "clients/route")
+    for name in ("route", "route_quota.py", "route_storage.py"):
+        shutil.copy2(ROOT / "clients" / name, source.parent.parent / "clients" / name)
     policy_checkout(tmp_path / "policy-repo")
     home = tmp_path / "home"
     settings = home / ".claude/settings.json"
@@ -151,6 +152,13 @@ def test_install_renders_core_within_budget_and_is_idempotent(tmp_path: Path, po
         return {str(path.relative_to(home)): path.read_bytes() for path in home.rglob("*") if path.is_file()}
 
     install()
+    result = subprocess.run(
+        [sys.executable, str(home / ".agent-lb/bin/route"), "policy", "snapshot", "--json"],
+        env=env | {"ROUTE_TABLE": str(home / ".agent-lb/managed/coding-agents/routing-table.json")},
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["policy_rev"]
     models = home / ".claude/rules/models.md"
     full = home / ".claude/docs/models-full.md"
     policy = home / ".agents/policy/coding-agents/ROUTING.md"

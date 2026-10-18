@@ -93,3 +93,34 @@ def swapped_standard(table: dict[str, Any], class_name: str, standard: dict[str,
         return standard
     override = (table.get("quota_swap") or {}).get(class_name)
     return {**standard, **override} if isinstance(override, dict) else standard
+
+
+def alias_exhausted(pool: dict[str, Any], body: Any) -> bool:
+    rows = body.get("accounts") if isinstance(body, dict) else body
+    relevant = [row for row in rows if isinstance(row, dict)
+                and row.get("provider") == "anthropic"
+                and row.get("status") in ("active", "rate_limited", "quota_exceeded")
+                ] if isinstance(rows, list) else []
+    eligible = pool.get("eligibleAccounts")
+    return (bool(relevant)
+            and all(row.get("status") in ("rate_limited", "quota_exceeded") for row in relevant)
+            and isinstance(eligible, int) and not isinstance(eligible, bool)
+            and eligible == 0 and pool.get("accounts", 0) > 0
+            and pool.get("source") != "accounts_fallback")
+
+
+def degrade_alias(result: dict[str, Any], table: dict[str, Any], served: Any,
+                  fetch_pools: Callable, pool_for_model: Callable, http_get: Callable,
+                  resolve_alias: Callable, append_ledger: Callable) -> None:
+    name = result["alias"]
+    pools, _ = fetch_pools()
+    pool_id = pool_for_model(table, name)
+    pool = next((row for row in pools.get("pools", []) if row.get("id") == pool_id), {})
+    accounts = http_get("/api/accounts")
+    if not alias_exhausted(pool, accounts.body if accounts.json_ok else None):
+        return
+    replacement, _ = resolve_alias(table, "sol-latest", served)
+    if replacement:
+        result.update(model=replacement, degraded_from=name, resolved_alias="sol-latest",
+                      pool=pool_id, reason="no eligible Anthropic accounts")
+        append_ledger({"event": "model_degraded", "source": "route resolve", **result})

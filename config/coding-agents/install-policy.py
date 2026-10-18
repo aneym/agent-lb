@@ -131,6 +131,7 @@ POLICY_FILES = (
     "install-policy.py",
     "verify-routing",
     "routing-table.json",
+    "quota-swap.json",
     "codex-seat-home.py",
     "codex-AGENTS.md",
     "codex/port-kill.rules",
@@ -1496,9 +1497,10 @@ def sync_policy_boxes(home: Path) -> None:
             "policy_rev": json.loads(table.read_text())["policy_rev"],
             "table_sha256": hashlib.sha256(table.read_bytes()).hexdigest(),
         }
-        files = [home / ".agent-lb/bin/route", home / ".agent-lb/bin/seat", table]
+        files = [home / ".agent-lb/bin" / name for name in ("route", "seat", "route_quota.py", "route_storage.py")]
+        files += [table, table.with_name("quota-swap.json")]
         if not all(path.is_file() for path in files):
-            raise ValueError("installed route, seat or routing table is missing")
+            raise ValueError("routing files missing")
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         print(f"WARNING: box policy sync unavailable ({type(exc).__name__})", file=sys.stderr)
         return
@@ -1522,8 +1524,8 @@ def sync_policy_boxes(home: Path) -> None:
                 timeout=30,
             )
             for sources, destination in (
-                (files[:2], ".agent-lb/bin/"),
-                (files[2:], ".agent-lb/managed/coding-agents/"),
+                (files[:4], ".agent-lb/bin/"),
+                (files[4:], ".agent-lb/managed/coding-agents/"),
             ):
                 subprocess.run(
                     ["rsync", "-az", "-e", shlex.join(ssh), *(str(path) for path in sources), f"{host}:{destination}"],
@@ -1961,21 +1963,18 @@ def main() -> int:
             changes[args.home / owner_path] = owner_marker
         policy_dir = args.home / POLICY_DIR
 
-        route_source = source.parent.parent / "clients" / "route"
-        if route_source.is_file():
-            route_path = args.home / ".agent-lb" / "bin" / "route"
-            if read_text(route_path) != route_source.read_text():
-                changes[route_path] = route_source.read_text()
-            route_owner = args.home / ".agent-lb" / "managed" / "coding-agents" / "route-cli"
-            if read_text(route_owner) != "agent-lb:route-cli:v1\n":
-                changes[route_owner] = "agent-lb:route-cli:v1\n"
-
-        seat_source = source.parent.parent / "clients" / "seat"
-        if seat_source.is_file():
-            seat_path = args.home / ".agent-lb" / "bin" / "seat"
-            if read_text(seat_path) != seat_source.read_text():
-                changes[seat_path] = seat_source.read_text()
-
+        for name in ("route", "seat", "route_quota.py", "route_storage.py"):
+            client = source.parents[1] / "clients" / name
+            target = args.home / ".agent-lb/bin" / name
+            if client.is_file() and read_text(target) != client.read_text():
+                changes[target] = client.read_text()
+        route_owner = args.home / ROUTING_TABLE.with_name("route-cli")
+        if read_text(route_owner) != "agent-lb:route-cli:v1\n":
+            changes[route_owner] = "agent-lb:route-cli:v1\n"
+        target = args.home / ROUTING_TABLE.with_name("quota-swap.json")
+        wanted = (source / "quota-swap.json").read_text()
+        if read_text(target) != wanted:
+            changes[target] = wanted
         decider_source = source.parent.parent / "clients" / "open-factory" / "open_factory" / "decider.json"
         if decider_source.is_file():
             decider_path = args.home / ROUTING_TABLE.with_name("decider.json")

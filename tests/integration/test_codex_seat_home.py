@@ -71,7 +71,8 @@ def test_dry_installed_writer_and_launcher_patch(tmp_path: Path, policy_checkout
     source = tmp_path / "policy-repo" / "config/coding-agents"
     shutil.copytree(ROOT / "config/coding-agents", source)
     (source.parents[1] / "clients").mkdir()
-    shutil.copy2(ROOT / "clients/route", source.parents[1] / "clients/route")
+    for name in ("route", "route_quota.py", "route_storage.py"):
+        shutil.copy2(ROOT / "clients" / name, source.parents[1] / "clients" / name)
     policy_checkout(tmp_path / "policy-repo")
     home = tmp_path / "home"
     lab = home / ".agent-rails/workflows/codex-lab-home.py"
