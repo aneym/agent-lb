@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -18,7 +17,7 @@ from app.core.exceptions import (
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import ApiKey, TeamMember, TeamMemberStatus
 from app.modules.api_keys.service import ApiKeyData
-from app.modules.proxy.request_policy import resolve_model_alias, strip_model_alias_suffix
+from app.modules.team.member_policy import GATE_OK, cap_for, compute_gate, model_is_allowed, status_value
 from app.modules.team.pool_share import PoolWindow, pool_share_windows, reset_pool_share_cache
 from app.modules.team.repository import (
     TeamRepository,
@@ -31,14 +30,8 @@ from app.modules.team.windows import TEAM_WINDOWS, window_end, window_start
 logger = logging.getLogger(__name__)
 
 _AGGREGATE_CACHE_TTL_SECONDS = 5.0
-_NEAR_CAP_RATIO = 0.8
 
 MEMBER_CONTACT_LINE = "Text Alex if you have any questions."
-
-GATE_OK = "ok"
-GATE_NEAR_CAP = "near_cap"
-GATE_OVER_CAP = "over_cap"
-GATE_SUSPENDED = "suspended"
 
 
 class TeamMemberNotFoundError(ValueError):
@@ -208,35 +201,6 @@ def deserialize_allowed_models(raw: str | None) -> list[str] | None:
     return [str(item) for item in parsed]
 
 
-_MODEL_CONTEXT_SUFFIX = re.compile(r"(?:\[[^\]]*\]|-1m)$")
-
-
-def _model_match_keys(model: str) -> set[str]:
-
-    normalized = model.strip().lower()
-    if not normalized:
-        return set()
-    keys = {normalized, _MODEL_CONTEXT_SUFFIX.sub("", normalized)}
-    for key in tuple(keys):
-        alias = resolve_model_alias(key)
-        if alias:
-            keys.add(alias.strip().lower())
-        keys.add(strip_model_alias_suffix(key))
-    keys.discard("")
-    return keys
-
-
-def _model_is_allowed(model: str, allowed_models: list[str]) -> bool:
-    allowed: set[str] = set()
-    for entry in allowed_models:
-        allowed |= _model_match_keys(entry)
-    return bool(_model_match_keys(model) & allowed)
-
-
-def _cap_for(member: TeamMember, window: str, kind: str) -> float | int | None:
-    return getattr(member, f"{kind}_cap_{window}" + ("_usd" if kind == "cost" else ""), None)
-
-
 class TeamService:
     def __init__(self, repository: TeamRepository) -> None:
         self._repository = repository
@@ -263,19 +227,19 @@ class TeamService:
         if member is None:
             return
 
-        if _status_value(member.status) == TeamMemberStatus.SUSPENDED.value:
+        if status_value(member.status) == TeamMemberStatus.SUSPENDED.value:
             raise TeamMemberSuspendedError(f"Your Agent LB access is switched off for now. {MEMBER_CONTACT_LINE}")
 
         allowed_models = deserialize_allowed_models(member.allowed_models)
-        if allowed_models and model is not None and not _model_is_allowed(model, allowed_models):
+        if allowed_models and model is not None and not model_is_allowed(model, allowed_models):
             raise TeamModelNotAllowedError(
                 f"The model '{model}' isn't turned on for you. Pick another model and try again. {MEMBER_CONTACT_LINE}"
             )
 
         now = utcnow()
         for window in TEAM_WINDOWS:
-            cost_cap = _cap_for(member, window, "cost")
-            token_cap = _cap_for(member, window, "token")
+            cost_cap = cap_for(member, window, "cost")
+            token_cap = cap_for(member, window, "token")
             if cost_cap is None and token_cap is None:
                 continue
 
@@ -446,7 +410,7 @@ class TeamService:
         return TeamMemberSelfStatus(
             id=member.id,
             name=member.name,
-            status=_status_value(member.status),
+            status=status_value(member.status),
             gate=compute_gate(member, usage, pool_windows),
             pool_share_percent=_optional_float(member.pool_share_percent),
             pool_windows=pool_windows,
@@ -454,8 +418,8 @@ class TeamService:
             windows=[
                 TeamMemberWindowStatus(
                     window=window,
-                    cost_cap_usd=_optional_float(_cap_for(member, window, "cost")),
-                    token_cap=_optional_int(_cap_for(member, window, "token")),
+                    cost_cap_usd=_optional_float(cap_for(member, window, "cost")),
+                    token_cap=_optional_int(cap_for(member, window, "token")),
                     cost_usd=usage[window].cost_usd,
                     tokens=usage[window].tokens,
                     window_start=window_start(window, now),
@@ -470,12 +434,6 @@ class TeamService:
         if member is None:
             raise TeamMemberNotFoundError(f"Team member not found: {member_id}")
         return member
-
-
-def _status_value(status: object) -> str:
-    if isinstance(status, TeamMemberStatus):
-        return status.value
-    return str(status)
 
 
 def _normalize_status(status: str | None) -> str:
@@ -524,7 +482,7 @@ def _to_member_data(
     keys: list[ApiKey],
     pool_windows: list[PoolWindow] | None = None,
 ) -> TeamMemberData:
-    status = _status_value(member.status)
+    status = status_value(member.status)
     return TeamMemberData(
         id=member.id,
         name=member.name,
@@ -556,39 +514,6 @@ def _to_member_data(
             for key in keys
         ],
     )
-
-
-def compute_gate(
-    member: TeamMember, usage: dict[str, TeamUsageTotals], pool_windows: list[PoolWindow] | None = None
-) -> str:
-    if _status_value(member.status) == TeamMemberStatus.SUSPENDED.value:
-        return GATE_SUSPENDED
-
-    near = False
-    for window in TEAM_WINDOWS:
-        totals = usage.get(window)
-        if totals is None:
-            continue
-        cost_cap = _cap_for(member, window, "cost")
-        token_cap = _cap_for(member, window, "token")
-        if cost_cap is not None and float(cost_cap) > 0:
-            ratio = totals.cost_usd / float(cost_cap)
-            if ratio >= 1.0:
-                return GATE_OVER_CAP
-            if ratio >= _NEAR_CAP_RATIO:
-                near = True
-        if token_cap is not None and int(token_cap) > 0:
-            ratio = totals.tokens / int(token_cap)
-            if ratio >= 1.0:
-                return GATE_OVER_CAP
-            if ratio >= _NEAR_CAP_RATIO:
-                near = True
-    for pool_window in pool_windows or []:
-        if pool_window.used_percent >= pool_window.limit_percent:
-            return GATE_OVER_CAP
-        if pool_window.used_percent >= _NEAR_CAP_RATIO * pool_window.limit_percent:
-            near = True
-    return GATE_NEAR_CAP if near else GATE_OK
 
 
 def _optional_float(value: object) -> float | None:
