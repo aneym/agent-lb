@@ -70,14 +70,8 @@ MANAGED_SEATS = (
     "sonnet-implementer",
     "effort-xhigh",
     "host-relay",
-    "gpt-implementer-local",
-    "gpt-explorer-local",
-    "sonnet-implementer-local",
-    "verifier-local",
-    "opus-seat-local",
-    "codex-sol-local",
-    "codex-test-runner-local",
-    "computer-use-local",
+    "gpt-implementer-local", "gpt-explorer-local", "sonnet-implementer-local", "verifier-local",
+    "opus-seat-local", "codex-sol-local", "codex-verifier-local", "codex-test-runner-local", "computer-use-local",
 )
 MANAGED_HOOKS = (
     "subagent-closeout.py",

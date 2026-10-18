@@ -81,7 +81,7 @@ def emit_warning(reason: str, extra: str = "", updated: dict | None = None) -> N
 def quota_swap_seat(subagent: str) -> str | None:
     target = None
     if subagent in {"verifier", "verifier-local", "plan-reviewer", "security-reviewer"} or fnmatch.fnmatchcase(
-        subagent, "lab-*-verifier"
+        subagent.removesuffix("-local"), "lab-*-verifier"
     ):
         target = "codex-verifier"
     elif subagent.startswith("sonnet-implementer"):

@@ -26,7 +26,18 @@ def load_quota_policy(table: dict[str, Any], table_path: Path) -> dict[str, Any]
 def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
                      api_request_logs: Callable, append_ledger: Callable) -> dict[str, Any]:
     policy = (table.get("policy") or {}).get("reserve") or {}
-    reserve = float(policy.get("headroom_min_percent", 15)) / 100
+    try:
+        threshold = policy.get("headroom_min_percent", 15)
+        reserve = float(threshold) / 100
+        if isinstance(threshold, bool) or not math.isfinite(reserve):
+            raise ValueError("non-finite or boolean threshold")
+    except (TypeError, ValueError):
+        reserve = .15
+        append_ledger({"event": "route_quota_policy_invalid", "field": "headroom_min_percent",
+                       "fallback": 15})
+    min_eligible = policy.get("min_eligible", 2)
+    if not isinstance(min_eligible, (int, float)) or isinstance(min_eligible, bool):
+        min_eligible = 2
     document, _ = fetch_pools()
     entries = document.get("pools") if isinstance(document, dict) else None
     pools = {pool["id"]: pool for pool in entries
@@ -35,6 +46,10 @@ def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
     percent = pool.get("aggregateRemainingPercent")
     remaining = (float(percent) / 100 if isinstance(percent, (int, float))
                  and not isinstance(percent, bool) and math.isfinite(percent) else None)
+    eligible = pool.get("eligibleAccounts")
+    headroom = pool.get("headroomPercent")
+    eligible = eligible if isinstance(eligible, (int, float)) and not isinstance(eligible, bool) and math.isfinite(eligible) else None
+    headroom = headroom / 100 if isinstance(headroom, (int, float)) and not isinstance(headroom, bool) and math.isfinite(headroom) else None
     now = datetime.now(timezone.utc)
     errors = api_request_logs(now - timedelta(minutes=15))
     stamps = []
@@ -60,6 +75,8 @@ def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
             state = json.loads(path.read_text())
         except (OSError, ValueError):
             state = {}
+        if not isinstance(state, dict):
+            state = {}
         previous_error = _parse_ts(state.get("last_limit_error_at"))
         if previous_error and previous_error.tzinfo:
             stamps.append(previous_error)
@@ -72,11 +89,17 @@ def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
                 cause = "Anthropic usage-limit error within 10 minutes"
             elif remaining is not None and remaining < reserve:
                 cause = "Anthropic remaining below reserve"
+            elif eligible is not None and eligible < min_eligible:
+                cause = "Anthropic eligible accounts below reserve"
+            elif headroom is not None and headroom < reserve:
+                cause = "Anthropic headroom below reserve"
             if cause:
                 mode = "codex-swap"
-        elif remaining is not None and remaining > reserve + 0.10 and age > 900:
+        elif (remaining is not None and remaining > reserve + 0.10
+              and eligible is not None and eligible >= min_eligible
+              and headroom is not None and headroom > reserve + 0.10 and age > 900):
             mode = "anthropic"
-            cause = "Anthropic remaining above reserve + 10 points; no limit error for 15 minutes"
+            cause = "Anthropic remaining and headroom above reserve + 10 points; eligible accounts restored; no limit error for 15 minutes"
         if cause:
             state.update(last_flip_at=now.isoformat(), last_flip_cause=cause)
             append_ledger({"event": "route_quota_mode_flip", "direction": mode,

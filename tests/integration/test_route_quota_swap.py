@@ -192,3 +192,42 @@ def test_malformed_pool_data_keeps_existing_swap(tmp_path, document):
     (Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json").write_text(json.dumps(document))
     state = route(env, "quota-mode")
     assert state["mode"] == "codex-swap" and state["remaining_fraction"] is None
+
+
+@pytest.mark.parametrize("state", [[], None, "anthropic", 1, True])
+def test_non_object_mode_state_recovers_for_dispatch_and_resolve(tmp_path, state):
+    env = environment(tmp_path)
+    path = Path(env["ROUTE_QUOTA_MODE_STATE"])
+    for command in (("dispatch", "verdict", "--job", "state-recovery"), ("resolve", "verdict")):
+        path.write_text(json.dumps(state))
+        assert route(env, *command)["model"].startswith("claude-")
+        assert json.loads(path.read_text())["mode"] == "anthropic"
+
+
+@pytest.mark.parametrize("field,low,hold,recovered", [
+    ("eligibleAccounts", 1, 1, 2),
+    ("headroomPercent", 39, 50, 51),
+])
+def test_reserve_conditions_swap_authority_classes_and_hold_until_recovery(tmp_path, field, low, hold, recovered):
+    env = environment(tmp_path)
+    path = Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json"
+    document = json.loads(path.read_text())
+    for value, expected in ((low, "gpt-6.1-sol"), (hold, "gpt-6.1-sol"), (recovered, "claude-opus-5-5")):
+        document["pools"][1][field] = value
+        path.write_text(json.dumps(document))
+        assert route(env, "resolve", "verdict")["model"] == expected
+        assert route(env, "dispatch", "verdict", "--job", f"reserve-{value}")["model"] == expected
+
+
+@pytest.mark.parametrize("value", ["broken", None, [], True, "NaN", "Infinity"])
+def test_malformed_reserve_policy_uses_default_and_logs(tmp_path, value):
+    env = environment(tmp_path)
+    path = Path(env["ROUTE_TABLE"])
+    document = json.loads(path.read_text())
+    document["policy"]["reserve"]["headroom_min_percent"] = value
+    path.write_text(json.dumps(document))
+    pool(env, 14)
+    state = route(env, "quota-mode")
+    assert state["mode"] == "codex-swap" and state["reserve_fraction"] == .15
+    events = [json.loads(line) for line in Path(env["ROUTE_LEDGER"]).read_text().splitlines()]
+    assert any(event["event"] == "route_quota_policy_invalid" for event in events)

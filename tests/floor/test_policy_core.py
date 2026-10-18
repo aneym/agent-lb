@@ -152,6 +152,7 @@ def test_install_renders_core_within_budget_and_is_idempotent(tmp_path: Path, po
         return {str(path.relative_to(home)): path.read_bytes() for path in home.rglob("*") if path.is_file()}
 
     install()
+    assert (home / ".claude/agents/codex-verifier-local.md").read_bytes() == (SOURCE / "agents/codex-verifier-local.md").read_bytes()
     result = subprocess.run(
         [sys.executable, str(home / ".agent-lb/bin/route"), "policy", "snapshot", "--json"],
         env=env | {"ROUTE_TABLE": str(home / ".agent-lb/managed/coding-agents/routing-table.json")},

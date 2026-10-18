@@ -21,7 +21,7 @@ def run_hook(
     home.mkdir()
     agents = home / ".claude" / "agents"
     agents.mkdir(parents=True)
-    for target in ("gpt-implementer-local", "codex-sol-local"):
+    for target in ("gpt-implementer-local", "codex-sol-local", "codex-verifier-local"):
         (agents / f"{target}.md").write_text("---\nmodel: sol-latest\n---\n")
     lean = tmp_path / "lean-studio"
     if lean_body:
@@ -128,7 +128,8 @@ def test_quota_mode_fail_open_and_anthropic_noop(tmp_path, body):
     [
         ("sonnet-implementer-local", "gpt-implementer-local"),
         ("opus-seat-local", "codex-sol-local"),
-        ("verifier-local", None),
+        ("verifier-local", "codex-verifier-local"),
+        ("lab-python-verifier-local", "codex-verifier-local"),
     ],
 )
 def test_quota_swap_preserves_local_execution(tmp_path, seat, target):
