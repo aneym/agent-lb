@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import calendar
 import fnmatch
 import json
 import logging
@@ -10,11 +9,23 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import Field, ValidationError
+from pydantic import ValidationError
 
 from app.core.routing_table import read_routing_table
-from app.modules.pools.schemas import POOL_STATUS_EXHAUSTED, POOL_STATUS_LOW, POOL_STATUS_OK, PoolSummary, PoolWindow
-from app.modules.shared.schemas import DashboardModel
+from app.modules.pools.schemas import POOL_STATUS_EXHAUSTED, POOL_STATUS_OK, PoolSummary
+from app.modules.pools.seat_budget import cursor_budget_pools
+from app.modules.pools.seat_quota import parse_seat_timestamp, pool_quota_source, pool_quota_windows
+from app.modules.pools.seat_schemas import (
+    SeatAccount,
+    SeatAccountsResponse,
+    SeatAccountUsage,
+    SeatModelUsage,
+    SeatQuota,
+    SeatQuotaWindow,
+    SeatRun,
+    SeatToday,
+    SeatTodayModel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,120 +37,9 @@ POOL_SOURCE_SEAT_STATE_STALE = "seat_state_stale"
 _STALE_AFTER = timedelta(hours=12)
 
 
-class SeatAccountUsage(DashboardModel):
-    runs: int = 0
-    ok: int = 0
-    wall_s: float = 0.0
-    tokens_in: int = 0
-    tokens_out: int = 0
-
-
-class SeatModelUsage(DashboardModel):
-    runs: int = 0
-    tokens_in: int = 0
-    tokens_out: int = 0
-    cache_read: int = 0
-    ok: int | None = Field(default=None, exclude=True)
-    tokens_known: bool = Field(default=False, exclude=True)
-
-
-class SeatQuotaWindow(DashboardModel):
-    id: str
-    kind: str
-    label: str
-    duration_mins: int | None = None
-    used_percent: float | None = None
-    remaining_percent: float | None = None
-    resets_at: datetime | None = None
-    source: str
-
-
-class SeatQuota(DashboardModel):
-    source: str = "unavailable"
-    observed_at: datetime | None = None
-    stale: bool = False
-    unavailable_reason: str | None = "not_collected"
-    primary_window_id: str | None = None
-    windows: list[SeatQuotaWindow] = Field(default_factory=list)
-
-
-class SeatTodayModel(DashboardModel):
-    model: str
-    runs: int = 0
-    tokens_in: int | None = None
-    tokens_out: int | None = None
-
-
-class SeatToday(DashboardModel):
-    runs: int = 0
-    ok: int = 0
-    ok_known: bool = True
-    tokens_in: int | None = None
-    tokens_out: int | None = None
-    tokens_known: bool = False
-    value_usd: float | None = None
-    value_source: str | None = None
-    models: list[SeatTodayModel] = Field(default_factory=list)
-
-
-class SeatRun(DashboardModel):
-    ok: bool | None = None
-    wall_s: float | None = None
-    ts: datetime
-    model: str | None = None
-    tokens_in: int | None = None
-    tokens_out: int | None = None
-    cache_read: int | None = None
-
-
-class SeatAccount(DashboardModel):
-    email: str | None = None
-    plan_label: str | None = None
-    status: str = "active"
-    status_reset_at: datetime | None = None
-    quota: SeatQuota = Field(default_factory=SeatQuota)
-    today: SeatToday = Field(default_factory=SeatToday)
-    id: str
-    vendor: str
-    auth: str | None = None
-    enabled: bool = True
-    auth_ok: bool | None = None
-    auth_checked_at: datetime | None = None
-    tier: str | None = None
-    plan: str | None = None
-    cycle_day: int | None = None
-    daily: dict[str, dict[str, SeatModelUsage]] = Field(default_factory=dict)
-    recent_runs: list[SeatRun] = Field(default_factory=list)
-    cooldown_until: datetime | None = None
-    cooldowns: dict[str, datetime] = Field(default_factory=dict)
-    limits: dict[str, dict[str, Any]] = Field(default_factory=dict, exclude=True)
-    last_error_kind: str | None = None
-    last_error_at: datetime | None = None
-    last_run_at: datetime | None = None
-    ready: bool = False
-    last_day: SeatAccountUsage = Field(default_factory=SeatAccountUsage)
-
-
-class SeatAccountsResponse(DashboardModel):
-    quota_refreshed_at: datetime | None = None
-    state_updated_at: datetime | None = None
-    source: str
-    accounts: list[SeatAccount] = Field(default_factory=list)
-
-
 def seat_state_path() -> Path:
     configured = os.environ.get("AGENT_LB_SEAT_STATE")
     return Path(configured).expanduser() if configured else Path.home() / ".agent-lb" / "seats" / "state.json"
-
-
-def _ts(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
 
 def _read_state(path: Path) -> dict[str, Any] | None:
@@ -151,7 +51,7 @@ def _read_state(path: Path) -> dict[str, Any] | None:
 
 
 def _usage(record: dict[str, Any], since: datetime) -> SeatAccountUsage:
-    runs = [run for run in record.get("runs") or [] if isinstance(run, dict) and (_ts(run.get("ts")) or since) > since]
+    runs = [run for run in record.get("runs") or [] if isinstance(run, dict) and (parse_seat_timestamp(run.get("ts")) or since) > since]
     return SeatAccountUsage(
         runs=len(runs),
         ok=sum(1 for run in runs if run.get("ok") is True),
@@ -166,7 +66,7 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
     state = _read_state(path or seat_state_path())
     if state is None:
         return SeatAccountsResponse(source="missing")
-    updated = _ts(state.get("updated_at"))
+    updated = parse_seat_timestamp(state.get("updated_at"))
     stale = updated is None or current - updated > _STALE_AFTER
     accounts: list[SeatAccount] = []
     records = state.get("accounts") if isinstance(state.get("accounts"), dict) else {}
@@ -201,7 +101,7 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
                     )
                     for run in record.get("runs") or []
                     if isinstance(run, dict)
-                    and (stamp := _ts(run.get("ts"))) is not None
+                    and (stamp := parse_seat_timestamp(run.get("ts"))) is not None
                     and current - timedelta(hours=24) < stamp <= current
                 ],
                 last_day=_usage(record, current - timedelta(hours=24)),
@@ -210,7 +110,7 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
             logger.warning("Ignoring malformed seat usage for %s", account_id)
             usage = SeatAccount(id=str(account_id), vendor=record["vendor"])
         try:
-            cooldown = _ts(record.get("cooldown_until"))
+            cooldown = parse_seat_timestamp(record.get("cooldown_until"))
             if cooldown is not None and cooldown <= current:
                 cooldown = None
             enabled = record.get("enabled") is not False
@@ -233,7 +133,7 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
                     today=seat_activity([usage], current, days=1),
                     enabled=enabled,
                     auth_ok=record.get("auth_ok"),
-                    auth_checked_at=_ts(record.get("auth_checked_at")),
+                    auth_checked_at=parse_seat_timestamp(record.get("auth_checked_at")),
                     tier=record.get("tier_override") or identity.get("tier"),
                     plan=record.get("plan"),
                     cycle_day=record.get("cycle_day"),
@@ -243,12 +143,12 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
                     cooldowns={
                         pool: stamp
                         for pool, value in (record.get("cooldowns") or {}).items()
-                        if (stamp := _ts(value)) is not None and stamp > current
+                        if (stamp := parse_seat_timestamp(value)) is not None and stamp > current
                     },
                     limits=record.get("limits") or {},
                     last_error_kind=error.get("kind"),
-                    last_error_at=_ts(error.get("ts")),
-                    last_run_at=_ts(record.get("last_run_at")),
+                    last_error_at=parse_seat_timestamp(error.get("ts")),
+                    last_run_at=parse_seat_timestamp(record.get("last_run_at")),
                     ready=enabled and record.get("auth_ok") is not False and cooldown is None,
                     last_day=usage.last_day,
                 )
@@ -317,7 +217,7 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
         account.status_reset_at = min(resets) if resets and account.status == "rate_limited" else None
         account.ready = account.ready and account.status != "rate_limited"
     return SeatAccountsResponse(
-        quota_refreshed_at=_ts(state.get("quota_refreshed_at")),
+        quota_refreshed_at=parse_seat_timestamp(state.get("quota_refreshed_at")),
         state_updated_at=updated,
         source=POOL_SOURCE_SEAT_STATE_STALE if stale else POOL_SOURCE_SEAT_STATE,
         accounts=accounts,
@@ -386,202 +286,6 @@ def cli_seat_pools(seats: SeatAccountsResponse) -> list[PoolSummary]:
                     if vendor == "muse"
                     else sum(account.last_day.tokens_in + account.last_day.tokens_out for account in members)
                 ),
-            )
-        )
-    return pools
-
-
-def _monthly_cycle(now: datetime, day: int) -> tuple[datetime, datetime]:
-    day = max(1, min(31, day))
-
-    def boundary(offset: int) -> datetime:
-        month_index = now.year * 12 + now.month - 1 + offset
-        year, month = divmod(month_index, 12)
-        month += 1
-        return datetime(year, month, min(day, calendar.monthrange(year, month)[1]), tzinfo=timezone.utc)
-
-    start = boundary(0)
-    return (boundary(-1), start) if start > now else (start, boundary(1))
-
-
-def cursor_budget_pools(seats: SeatAccountsResponse, config: dict, *, now: datetime) -> list[PoolSummary]:
-    cursor = config.get("cursor")
-    if not isinstance(cursor, dict):
-        return []
-    members = [account for account in seats.accounts if account.vendor == "cursor"]
-    if not members:
-        return []
-    raw_pools = cursor.get("pools")
-    definitions = [
-        pool
-        for pool in (raw_pools if isinstance(raw_pools, list) else [])
-        if isinstance(pool, dict)
-        and isinstance(pool.get("id"), str)
-        and pool["id"]
-        and isinstance(pool.get("models"), list)
-        and pool["models"]
-        and all(isinstance(pattern, str) for pattern in pool["models"])
-        and isinstance(pool.get("budget_usd_by_tier", {}), dict)
-        and all(type(value) in (int, float) and value >= 0 for value in pool.get("budget_usd_by_tier", {}).values())
-    ]
-    raw_prices = cursor.get("prices_usd_per_mtok")
-    prices = [
-        entry
-        for entry in (raw_prices if isinstance(raw_prices, list) else [])
-        if isinstance(entry, list)
-        and len(entry) == 2
-        and isinstance(entry[0], str)
-        and isinstance(entry[1], list)
-        and len(entry[1]) == 3
-        and all(type(rate) in (int, float) and rate >= 0 for rate in entry[1])
-    ]
-    cycle_day = cursor.get("cycle_day_default", 1)
-    if type(cycle_day) is not int or not 1 <= cycle_day <= 31:
-        cycle_day = 1
-    fast_multiplier = cursor.get("fast_multiplier", 1)
-    if type(fast_multiplier) not in (int, float) or fast_multiplier < 0:
-        fast_multiplier = 1
-    current = now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now.astimezone(timezone.utc)
-
-    def membership(model: str) -> int | None:
-        return next(
-            (
-                index
-                for index, pool in enumerate(definitions)
-                if any(fnmatch.fnmatchcase(model, pattern) for pattern in pool["models"])
-            ),
-            None,
-        )
-
-    def cost(model: str, usage: SeatModelUsage | SeatRun) -> float:
-        for pattern, rates in prices:
-            if fnmatch.fnmatchcase(model, pattern):
-                multiplier = fast_multiplier if model.endswith("-fast") and not pattern.endswith("-fast") else 1
-                return (
-                    multiplier
-                    * (
-                        (usage.tokens_in or 0) * rates[0]
-                        + (usage.cache_read or 0) * rates[1]
-                        + (usage.tokens_out or 0) * rates[2]
-                    )
-                    / 1_000_000
-                )
-        return 0.0
-
-    plans: dict[tuple[str, str], list[SeatAccount]] = {}
-    for account in members:
-        key = ("plan", account.plan) if account.plan else ("account", account.id)
-        plans.setdefault(key, []).append(account)
-    pools: list[PoolSummary] = []
-    for index, definition in enumerate(definitions):
-        ready = sum(
-            account.enabled
-            and account.auth_ok is not False
-            and account.cooldown_until is None
-            and not any(
-                definition["id"] in peer.cooldowns
-                for peer in (plans[("plan", account.plan)] if account.plan else [account])
-            )
-            for account in members
-        )
-        vendor_limit = False
-        spent = budgeted_spent = burn = budget = 0.0
-        unbudgeted = observed_runs = observed_tokens = 0
-        cycles: list[tuple[datetime, datetime]] = []
-        for plan_members in plans.values():
-            budgets = definition.get("budget_usd_by_tier", {})
-            account_budget = next((budgets[a.tier] for a in plan_members if a.tier in budgets), None)
-            start, reset = _monthly_cycle(current, next((a.cycle_day for a in plan_members if a.cycle_day), cycle_day))
-            cycles.append((start, reset))
-            plan_spent = plan_burn = 0.0
-            for account in plan_members:
-                plan_spent += sum(
-                    cost(model, usage)
-                    for day, models in account.daily.items()
-                    if start.date().isoformat() <= day <= current.date().isoformat()
-                    for model, usage in models.items()
-                    if membership(model) == index
-                )
-                recent = [
-                    run
-                    for run in account.recent_runs
-                    if run.model
-                    and membership(run.model) == index
-                    and current - timedelta(hours=24) < run.ts <= current
-                ]
-                observed_runs += len(recent)
-                observed_tokens += sum((run.tokens_in or 0) + (run.tokens_out or 0) for run in recent)
-                plan_burn += sum(cost(run.model, run) for run in recent if run.model)
-                limit = account.limits.get(definition["id"], {})
-                at, until = _ts(limit.get("at")), _ts(limit.get("until"))
-                if account_budget is not None:
-                    vendor_limit |= bool(
-                        limit.get("source") == "vendor" and at and until and start <= at <= current < until
-                    )
-            spent += plan_spent
-            if account_budget is None:
-                unbudgeted += len(plan_members)
-            else:
-                budget += account_budget
-                budgeted_spent += plan_spent
-                burn += plan_burn
-        percent_used = (
-            100.0 if vendor_limit else (min(100.0, round(100 * budgeted_spent / budget, 1)) if budget > 0 else None)
-        )
-        percent_source = "vendor" if vendor_limit else ("estimate" if budget > 0 else None)
-        remaining = (
-            0.0 if vendor_limit else (max(0.0, 100 * (budget - budgeted_spent) / budget) if budget > 0 else None)
-        )
-        measured_windows = pool_quota_windows(members, definition["id"])
-        vendor_windows = [
-            window
-            for window in measured_windows
-            if window.source in ("vendor", "vendor_observed")
-            and (window.resets_at is None or window.resets_at > current)
-        ]
-        if vendor_windows:
-            remaining = min(window.remaining_percent for window in vendor_windows)
-            percent_used = max(window.used_percent for window in vendor_windows)
-            percent_source = "vendor"
-            vendor_limit = remaining <= 0
-        if remaining == 0 or vendor_limit:
-            ready = 0
-        start, reset = min(cycles, key=lambda cycle: cycle[1])
-        resets = [window.resets_at for window in vendor_windows if window.resets_at]
-        if resets:
-            reset = min(resets)
-        time_remaining = 100 * (reset - current).total_seconds() / (reset - start).total_seconds()
-        status = (
-            POOL_STATUS_EXHAUSTED
-            if not ready or remaining == 0
-            else (POOL_STATUS_LOW if remaining is not None and remaining <= 15 else POOL_STATUS_OK)
-        )
-        pools.append(
-            PoolSummary(
-                id=definition["id"],
-                windows=measured_windows,
-                quota_source=pool_quota_source(members),
-                provider="cursor",
-                kind="cli_seat_budget",
-                accounts=len(members),
-                eligible_accounts=ready,
-                headroom_percent=(remaining if remaining is not None else 100.0) if ready else 0.0,
-                aggregate_remaining_percent=remaining,
-                status=status,
-                source=seats.source,
-                window_label="month",
-                percent_used=percent_used,
-                percent_source=percent_source,
-                spent_usd=round(spent, 2),
-                budget_usd=budget if budget > 0 else None,
-                monthly_remaining_percent=remaining,
-                monthly_pace_percent=remaining - time_remaining if remaining is not None else None,
-                burn24h_percent=100 * burn / budget if budget > 0 else None,
-                cycle_reset_at=reset,
-                reset_at=reset if status == POOL_STATUS_EXHAUSTED else None,
-                unbudgeted_accounts=unbudgeted,
-                observed_runs=observed_runs,
-                observed_tokens=observed_tokens,
             )
         )
     return pools
@@ -659,45 +363,3 @@ def seat_activity(accounts: list[SeatAccount], current: datetime, *, days: int =
         value_source="estimate" if priced and runs else None,
         models=list(models.values()),
     )
-
-
-def pool_quota_source(accounts: list[SeatAccount]) -> str:
-    sources = {account.quota.source for account in accounts if account.quota.windows}
-    return "mixed" if len(sources) > 1 else next(iter(sources), "unavailable")
-
-
-def pool_quota_windows(accounts: list[SeatAccount], window_id: str | None = None) -> list[PoolWindow]:
-    grouped: dict[str, list[SeatQuotaWindow]] = {}
-    seen: dict[tuple[str, str], SeatQuotaWindow] = {}
-    for account in accounts:
-        for window in account.quota.windows:
-            key = (account.plan or account.id, window.id)
-            if window_id is not None and window.id != window_id:
-                continue
-            previous = seen.get(key)
-            priority = {"estimate": 0, "vendor_observed": 1, "vendor": 2}
-            if previous is None or priority.get(window.source, 0) > priority.get(previous.source, 0):
-                seen[key] = window
-    for (_, key), window in seen.items():
-        grouped.setdefault(key, []).append(window)
-    result = []
-    for key, windows in grouped.items():
-        measured = [window for window in windows if window.used_percent is not None]
-        if not measured:
-            continue
-        resets = [window.resets_at for window in measured if window.resets_at]
-        result.append(
-            PoolWindow(
-                id=key,
-                kind=measured[0].kind,
-                label=measured[0].label,
-                used_percent=sum(window.used_percent for window in measured) / len(measured),
-                remaining_percent=sum(window.remaining_percent or 0 for window in measured) / len(measured),
-                resets_at=min(resets) if resets else None,
-                measured_accounts=sum(
-                    any(w.id == key and w.used_percent is not None for w in a.quota.windows) for a in accounts
-                ),
-                source=(measured[0].source if len({window.source for window in measured}) == 1 else "mixed"),
-            )
-        )
-    return result
