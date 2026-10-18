@@ -42,13 +42,13 @@ Worktree `/path/to/repos/agent-lb-worktrees/team-mode`, branch `feat/team-mode`,
 | `npx --yes @fission-ai/openspec@latest validate --specs` | Exit 0, 37 passed |
 | `git diff --check` | Exit 0 |
 
-Full-suite failures concern legacy reset-credit migrations, existing index drift, stale load-balancer mocks, account mapper fixtures, model/provider/quota catalog expectations, cache invalidation, bridge prune timing, installer fixtures, and OpenSpec hygiene. The current change's tasks were unchecked during the full run and are now checked with this evidence; other OpenSpec hygiene failures remain. See evidence/backend-full-summary.txt.
+Full-suite failures concern legacy reset-credit migrations, existing index drift, stale load-balancer mocks, account mapper fixtures, model/provider/quota catalog expectations, cache invalidation, bridge prune timing, installer fixtures, and OpenSpec hygiene. The current change's tasks were unchecked during the full run and are now checked with this evidence; other OpenSpec hygiene failures remain.
 
 The main checkout's separate focused attempt exited 4 during import because unrelated account-schema work lacks `AccountCreditsWindow`. Those files were not copied to runtime or repaired here. The feature worktree tests and live service are distinct evidence.
 
 ## Browser and runtime proof
 
-Aside exercised the isolated backend through the real dashboard: create member, invalid cap validation, saved caps, key issuance, key count, and onboarding dialog. Aside also opened the deployed HTTPS Team page and confirmed Jacob's row. Screenshots are in evidence/.
+Aside exercised the isolated backend through the real dashboard: create member, invalid cap validation, saved caps, key issuance, key count, and onboarding dialog. Aside also opened the deployed HTTPS Team page and confirmed Jacob's row.
 
 Aside did not support viewport resizing. A local Playwright fallback used the installed Chrome binary to capture a 390px phone viewport and verify horizontal table scrolling reaches the member actions. No new browser download was installed.
 
