@@ -30,6 +30,11 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from route_quota import load_quota_policy, quota_swap_state, swapped_standard
+from route_storage import _parse_ts, atomic_write
+
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
 DEFAULT_CODEX_COMPANION = "~/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs"
 
@@ -138,6 +143,7 @@ def load_table(*, apply_default: bool = True) -> dict[str, Any]:
         fail(f"routing table at {path} is unreadable: {error}")
     if not isinstance(value, dict):
         fail(f"routing table at {path} is not an object")
+    value = load_quota_policy(value, path)
     return apply_implement_default(value) if apply_default else value
 
 
@@ -159,23 +165,6 @@ def apply_implement_default(table: dict[str, Any]) -> dict[str, Any]:
 def fail(message: str) -> Any:
     print(f"route: {message}", file=sys.stderr)
     raise SystemExit(EXIT_UNROUTABLE)
-
-
-def atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
 
 
 SEAT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -1438,12 +1427,31 @@ def record_explicit_model(model: str, source: str) -> None:
     append_ledger({"event": "explicit_model", "model": model, "source": source})
 
 
+def command_quota_mode(args: argparse.Namespace) -> int:
+    state = quota_swap_state(load_table(), fetch_pools, api_request_logs, append_ledger)
+    print(json.dumps(state, sort_keys=True) if args.json else
+          f"{state['mode']} remaining={state['remaining_fraction']} "
+          f"last_flip={state['last_flip_at']} cause={state['last_flip_cause']}")
+    return EXIT_OK
+
+
 def command_resolve(args: argparse.Namespace) -> int:
     table = load_table()
     served, source = served_models()
     reasons = []
     unknown = []
     for name in args.aliases:
+        if name in (table.get("standards") or {}):
+            standard = swapped_standard(table, name, dispatch_standard(table, name, None),
+                                        quota_swap_state(table, fetch_pools, api_request_logs, append_ledger))
+            model, reason = resolve_alias(table, standard["model"], served, standard["seat"])
+            if model:
+                result = {"alias": name, "model": model, "resolved_alias": standard["model"],
+                          "seat": standard["seat"], "effort": standard.get("effort"), "reason": reason}
+                print(json.dumps(result, sort_keys=True) if args.json else model)
+                return EXIT_OK
+            reasons.append(reason)
+            continue
         model, reason = resolve_alias(table, name, served)
         if not model and reason == f"{name} is retired":
 
@@ -1453,29 +1461,13 @@ def command_resolve(args: argparse.Namespace) -> int:
         if model:
             result = {"alias": name, "model": model, "reason": reason}
             if name in ("opus-latest", "sonnet-latest"):
-                pools, _ = fetch_pools()
-                pool_id = pool_for_model(table, name)
-                pool = pools_by_id(pools).get(pool_id, {})
-
-
-                eligible = pool.get("eligibleAccounts")
-                accounts = http_get("/api/accounts")
-                body = accounts.body if accounts.json_ok else None
-                rows = body.get("accounts") if isinstance(body, dict) else body
-                relevant = [row for row in rows if isinstance(row, dict)
-                            and row.get("provider") == "anthropic"
-                            and row.get("status") in _ROUTABLE_STATUSES] if isinstance(rows, list) else []
-                quota_failed = bool(relevant) and all(
-                    row.get("status") in ("rate_limited", "quota_exceeded") for row in relevant)
-                if (quota_failed and isinstance(eligible, int) and not isinstance(eligible, bool)
-                        and eligible == 0 and pool.get("accounts", 0) > 0
-                        and pool.get("source") != "accounts_fallback"):
+                state = quota_swap_state(table, fetch_pools, api_request_logs, append_ledger)
+                if state["mode"] == "codex-swap":
                     replacement, _ = resolve_alias(table, "sol-latest", served)
                     if replacement:
                         result.update(model=replacement, degraded_from=name,
-                                      resolved_alias="sol-latest", pool=pool_id,
-                                      reason="no eligible Anthropic accounts")
-                        append_ledger({"event": "model_degraded", "source": "route resolve", **result})
+                                      resolved_alias="sol-latest", quota_mode=state["mode"],
+                                      reason=state["last_flip_cause"])
             print(json.dumps(result, sort_keys=True) if args.json else result["model"])
             return EXIT_OK
         if reason == f"unknown alias {name}":
@@ -3075,6 +3067,11 @@ def command_dispatch(args: argparse.Namespace) -> int:
     prior = [row for row in history if row.get("job_id") == job_id]
     attempt = max((row.get("attempt") or 1 for row in prior), default=0) + 1
     standard = dispatch_standard(table, class_name, args.author_vendor)
+    mode_state = quota_swap_state(table, fetch_pools, api_request_logs, append_ledger)
+    if not prior and not any(value is not None for value in (args.seat, args.model, args.effort)):
+        standard = swapped_standard(table, class_name, standard, mode_state)
+        if mode_state["mode"] == "codex-swap" and class_name == "review" and args.author_vendor:
+            standard["seat"] = "codex-verifier"
     ctx = DispatchContext(table, class_name, args.author_vendor)
     explore = table.get("explore") or {}
     eligible: list[str] = []
@@ -3088,11 +3085,6 @@ def command_dispatch(args: argparse.Namespace) -> int:
         choice = {"arm": "explicit", "arm_id": "explicit", "seat": seat, "model_alias": model_alias,
                   "effort": effort, "pool": None, "propensity": 1.0, "reason": "explicit flags"}
     else:
-        why = ctx.reserve_why() if (standard.get("authority") in OPUS_AUTHORITY
-                                    and alias_vendor(table, standard.get("model")) == "anthropic") else None
-        if why:
-            return dispatch_wait(f"{class_name} has {standard['authority']} authority and stays on Opus; "
-                                 f"anthropic reserve: {why}", class_name, job_id, args.json)
         if prior:
             first = prior[0]
             arms = {arm.get("id"): arm for arm in (explore.get("arms") or {}).get(class_name) or []}
@@ -3114,6 +3106,8 @@ def command_dispatch(args: argparse.Namespace) -> int:
             candidates = []
             for arm in (explore.get("arms") or {}).get(class_name) or []:
                 if not isinstance(arm, dict):
+                    continue
+                if mode_state["mode"] == "codex-swap" and class_name in (table.get("quota_swap") or {}):
                     continue
                 if arm_block(ctx, arm) or arm_cap_block(ctx, arm, today):
                     continue
@@ -4286,15 +4280,6 @@ def command_doctor(args: argparse.Namespace) -> int:
     return EXIT_DEGRADED if degraded else EXIT_OK
 
 
-def _parse_ts(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
 def read_ledger(since: datetime) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     dispatches: list[dict[str, Any]] = []
     closeouts: list[dict[str, Any]] = []
@@ -4921,6 +4906,10 @@ def command_standings(args: argparse.Namespace) -> int:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="route", description="Route a task class to a live seat.")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    quota_status = sub.add_parser("quota-mode", help="show Anthropic quota swap mode")
+    quota_status.add_argument("--json", action="store_true")
+    quota_status.set_defaults(handler=command_quota_mode)
 
     eval_seat = sub.add_parser("eval-seat", help="print the request-log seat for a decision")
     eval_seat.add_argument("decision_id")
