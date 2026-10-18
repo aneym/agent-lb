@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.agent-lb.sim-relay</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@HOME@/.bun/bin/bun</string>
+		<string>@HOME@/.local/bin/ext-run.js</string>
+		<string>@HOME@/.local/share/uv/python/cpython-3.14.5-macos-aarch64-none/bin/python3.14</string>
+		<string>@HOME@/.local/bin/sim-relay</string>
+		<string>serve</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>@HOME@/.agent-rails/sim-relay.err.log</string>
+	<key>StandardOutPath</key>
+	<string>@HOME@/.agent-rails/sim-relay.log</string>
+</dict>
+</plist>
