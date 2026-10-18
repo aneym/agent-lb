@@ -53,7 +53,7 @@ print(json.dumps({'id':'event-1', 'stream':{'kind':'session','id':'00000000-0000
             [
                 sys.executable,
                 "-c",
-                "import runpy,sys; sys.platform='darwin'; "
+                "import runpy,sys,urllib.request,zoneinfo; sys.platform='darwin'; "
                 "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
                 str(REPO / "clients/seat"),
                 *args,
@@ -190,7 +190,7 @@ time.sleep(120)
             [
                 sys.executable,
                 "-c",
-                "import runpy,sys; sys.platform='darwin'; "
+                "import runpy,sys,urllib.request,zoneinfo; sys.platform='darwin'; "
                 "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
                 str(REPO / "clients/seat"),
                 *args,

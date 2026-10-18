@@ -196,7 +196,9 @@ def test_write_task_in_worktree_adds_git_dirs_to_configured_roots(world, configu
 @pytest.mark.parametrize("where", ["main", "plain"], ids=["normal-checkout", "not-a-repo"])
 def test_write_task_outside_a_worktree_keeps_configured_roots_only(world, where):
     world["configure"]([str(world["cache"])])
-    started = world["task"](world[where], "--write")["thread/start"]
+    started = world["task"](world[where], "--write", *(["--allow-repo-write"] if where == "main" else []))[
+        "thread/start"
+    ]
     assert started["writableRoots"] == [str(world["cache"])]
 
 

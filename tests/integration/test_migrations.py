@@ -19,9 +19,8 @@ from app.db.migrate import (
     run_startup_migrations,
     run_upgrade,
 )
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountStatus, Base
 from app.db.session import SessionLocal
-from app.modules.accounts.repository import AccountsRepository
 
 try:
     from app.db.migrate import check_migration_policy as _check_migration_policy
@@ -55,11 +54,36 @@ def _make_account(account_id: str, email: str, plan_type: str) -> Account:
 
 @pytest.mark.asyncio
 async def test_run_startup_migrations_preserves_unknown_plan_types(db_setup):
-    async with SessionLocal() as session:
-        repo = AccountsRepository(session)
-        await repo.upsert(_make_account("acc_one", "one@example.com", "education"))
-        await repo.upsert(_make_account("acc_two", "two@example.com", "PRO"))
-        await repo.upsert(_make_account("acc_three", "three@example.com", ""))
+    engine = create_async_engine(_DATABASE_URL)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.drop_all)
+        await to_thread.run_sync(lambda: run_upgrade(_DATABASE_URL, "20260213_000000_base_schema"))
+        async with engine.begin() as connection:
+            for account in (
+                _make_account("acc_one", "one@example.com", "education"),
+                _make_account("acc_two", "two@example.com", "PRO"),
+                _make_account("acc_three", "three@example.com", ""),
+            ):
+                await connection.execute(
+                    text(
+                        "INSERT INTO accounts (id, email, plan_type, access_token_encrypted, "
+                        "refresh_token_encrypted, id_token_encrypted, last_refresh, status) "
+                        "VALUES (:id, :email, :plan_type, :access, :refresh, :id_token, :last_refresh, :status)"
+                    ),
+                    dict(
+                        id=account.id,
+                        email=account.email,
+                        plan_type=account.plan_type,
+                        access=account.access_token_encrypted,
+                        refresh=account.refresh_token_encrypted,
+                        id_token=account.id_token_encrypted,
+                        last_refresh=account.last_refresh,
+                        status="active",
+                    ),
+                )
+    finally:
+        await engine.dispose()
 
     result = await run_startup_migrations(_DATABASE_URL)
     assert result.current_revision == _HEAD_REVISION
@@ -515,6 +539,12 @@ async def test_federation_usage_daily_migration_up_and_down(tmp_path):
 async def test_federation_bigint_migration_preserves_rollups(db_setup):
     parent = "20261014_050000_add_additional_latest_indexes"
     config = _build_alembic_config(_DATABASE_URL)
+    engine = create_async_engine(_DATABASE_URL)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.drop_all)
+    finally:
+        await engine.dispose()
     await run_startup_migrations(_DATABASE_URL)
     await to_thread.run_sync(lambda: command.downgrade(config, parent))
     counters = ("requests", "input_tokens", "output_tokens", "cache_read_tokens", "session_count")
