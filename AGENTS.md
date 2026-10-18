@@ -12,6 +12,8 @@ New machine setup: `GETTING-STARTED.md`. Account work: the
 
 ## Rules
 
+Files stay under 20,000 bytes (filecap). Over the cap, split by responsibility; see filecap's error message.
+
 1. Work lands on `main` (this fork has no feature-branch flow). Leave the main
    checkout on `main`; use a worktree when it has someone else's edits.
 2. Validated changes ship without asking: commit, `git push origin main`,
