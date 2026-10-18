@@ -59,9 +59,10 @@ DEFAULT_MODELS = frozenset(
         "gpt-6.1-sol-xhigh",
         "gpt-6-luna",
         "gpt-6.1-luna",
+        "gpt-6-astra",
     }
 )
-_FAMILY_ALIAS = re.compile(r"(?:opus|sonnet|haiku|sol|luna|terra|grok|swe)-latest(?:-(?:low|medium|high|xhigh|max))?")
+_FAMILY_ALIAS = re.compile(r"(?:opus|sonnet|haiku|sol|luna|terra|astra|grok|swe)-latest(?:-(?:low|medium|high|xhigh|max))?")
 _KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]*(.*))?$")
 _BLOCK = re.compile(r"^[>|][+-]?(?:[1-9])?(?:[ \t]+#.*)?$")
 
