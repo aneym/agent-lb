@@ -39,8 +39,7 @@ fi
 AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch verify --author-vendor anthropic --caller codex-verifier-local "${job_args[@]}" --json) || exit $?
 export AGENT_LB_DISPATCH
 dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
-vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-verifier --)
-${vs[@]+"${vs[@]}"} bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$("$HOME/.agent-lb/bin/route" resolve sol-latest)" --effort "$dispatch_effort" --prompt-file "$f"
+bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$("$HOME/.agent-lb/bin/route" resolve sol-latest)" --effort "$dispatch_effort" --prompt-file "$f"
 ```
 
 Use a fresh unique contract file, never inline or a reused filename. Reuse the
