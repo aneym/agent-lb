@@ -1,0 +1,393 @@
+.lb .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font: 500 13px/1 var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease-out,
+    border-color 0.15s ease-out;
+}
+.lb .btn:hover {
+  background: var(--hover);
+  border-color: color-mix(in oklch, var(--line) 60%, var(--ink));
+}
+.lb .btn.primary {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.lb .btn.primary:hover {
+  background: color-mix(in oklch, var(--ink) 88%, var(--bg));
+}
+.lb .btn.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+}
+.lb .btn.ghost:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+.lb .btn.sm {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 12.5px;
+  border-radius: 6px;
+}
+.lb .btn.icon {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+.lb .btn.sm.icon {
+  width: 26px;
+}
+.lb .btn[disabled] {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.lb .btn:focus-visible,
+.lb .nav a:focus-visible,
+.lb .seg button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.lb .seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--fill);
+  gap: 2px;
+}
+.lb .seg button {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  font: 500 12.5px/1 var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lb .seg button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow:
+    0 1px 2px oklch(0 0 0/0.08),
+    0 0 0 1px var(--line);
+}
+.lb .seg button .n {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  margin-left: 5px;
+  color: var(--ink-2);
+}
+.lb .field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--ink-2);
+  font-size: 13px;
+  min-width: 0;
+}
+.lb .field input {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--ink);
+  outline: 0;
+  width: 100%;
+  min-width: 0;
+}
+.lb .select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lb .select .k {
+  color: var(--ink-2);
+}
+.lb .toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.lb .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.lb .kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--ink-2);
+}
+.lb .toggle {
+  width: 30px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--track);
+  position: relative;
+  flex: none;
+  display: inline-block;
+}
+.lb .toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 2px oklch(0 0 0/0.2);
+  transition: transform 0.15s ease-out;
+}
+.lb .toggle.on {
+  background: var(--ink);
+}
+.lb .toggle.on::after {
+  transform: translateX(12px);
+  background: var(--bg);
+}
+.lb .st {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.lb .st.b {
+  font-weight: 600;
+}
+.lb .st.d {
+  color: var(--ink-2);
+}
+.lb .meter {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.lb .meter .mt {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  min-width: 0;
+}
+.lb .meter .v {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.lb .meter .v.warn {
+  font-weight: 600;
+}
+.lb .meter .lbl {
+  color: var(--ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 52px;
+}
+.lb .meter .r {
+  margin-left: auto;
+}
+.lb .meter.na .v {
+  margin-left: 0;
+}
+.lb .row .meter .lbl {
+  display: none;
+}
+.lb .bar {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--track);
+}
+.lb .bar > i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: var(--ink);
+}
+.lb .bar > b {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 10px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--ink);
+  box-shadow: 0 0 0 2px var(--card);
+}
+.lb .meter.na .bar {
+  background: repeating-linear-gradient(90deg, var(--track) 0 4px, transparent 4px 8px);
+}
+.lb .rows {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.lb .row {
+  display: grid;
+  grid-template-columns: var(--cols);
+  gap: 12px 20px;
+  align-items: center;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line-2);
+  min-width: 0;
+}
+.lb .row > * {
+  min-width: 0;
+}
+.lb .row:first-child {
+  border-top: 0;
+}
+.lb .row.hd {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-weight: 500;
+  background: color-mix(in oklch, var(--fill) 45%, var(--card));
+}
+.lb .row.link {
+  cursor: pointer;
+  transition: background 0.12s ease-out;
+}
+.lb .row.link:hover {
+  background: var(--hover);
+}
+.lb .row.sel {
+  background: var(--fill);
+}
+.lb .row.dim .who,
+.lb .row.dim .meter {
+  opacity: 0.5;
+}
+.lb .r {
+  text-align: right;
+}
+.lb .who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.lb .who .t {
+  display: grid;
+  min-width: 0;
+}
+.lb .who .n {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lb .who .s {
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lb .grp {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in oklch, var(--fill) 45%, var(--card));
+}
+.lb .grp:first-child {
+  border-top: 0;
+}
+.lb .grp .gn {
+  font-weight: 600;
+}
+.lb .grp .gs {
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.lb .grp .ga {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.lb .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.lb .chip .seat {
+  color: var(--ink-2);
+}
+.lb .chip.x {
+  border-style: dashed;
+  color: var(--ink-2);
+}
+.lb .chip.x .logo {
+  opacity: 0.45;
+}
+.lb .chip.x .nm {
+  text-decoration: line-through;
+  text-decoration-color: var(--ink-2);
+}
+.lb .chip.pick {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.lb .chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.lb .chain .sep {
+  color: var(--ink-2);
+}
