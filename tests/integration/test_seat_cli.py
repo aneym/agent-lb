@@ -165,4 +165,6 @@ print(json.dumps({"type": "result", "is_error": False, "result": "done"}))
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)["ok"] is True
     assert prompt not in json.loads(argv_file.read_text())
-    assert stdin_file.read_text(encoding="utf-8") == prompt
+    stdin = stdin_file.read_text(encoding="utf-8")
+    assert stdin.startswith(prompt)
+    assert (REPO / "config/coding-agents/FINISH.md").read_text(encoding="utf-8") in stdin
