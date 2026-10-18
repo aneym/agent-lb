@@ -57,59 +57,46 @@ SOL_MODEL = re.compile(r"(?:^|[-/_])(?:sol|luna|gpt)(?:$|[-_.\d])", re.IGNORECAS
 MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 
 
-def emit_advisory(advisory: str, extra: str = "") -> None:
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "additionalContext": (
-                        "seat-guard advisory: " + advisory + ". "
-                        "Capacity is status, not admission control. Check "
-                        "`route pools` or `agent-lb status --provider anthropic --json`."
-                        + ("\n" + extra if extra else "")
-                    ),
-                }
-            }
-        )
+def emit_context(text: str, extra: str = "", updated: dict | None = None) -> None:
+    output = {"hookEventName": "PreToolUse", "additionalContext": text + ("\n" + extra if extra else "")}
+    if updated is not None:
+        output.update(permissionDecision="allow", updatedInput=updated)
+    print(json.dumps({"hookSpecificOutput": output}))
+
+
+def emit_advisory(advisory: str, extra: str = "", updated: dict | None = None) -> None:
+    emit_context(
+        "seat-guard advisory: " + advisory + ". Capacity is status, not admission control. Check "
+        "`route pools` or `agent-lb status --provider anthropic --json`.", extra, updated,
     )
 
 
-def emit_warning(reason: str, extra: str = "") -> None:
-
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "additionalContext": (
-                        "seat-guard (warn only, not blocked): " + reason + "; logged in the routing ledger. "
-                        "Default work names a family alias (`route pick <class>`)." + ("\n" + extra if extra else "")
-                    ),
-                }
-            }
-        )
+def emit_warning(reason: str, extra: str = "", updated: dict | None = None) -> None:
+    emit_context(
+        "seat-guard (warn only, not blocked): " + reason + "; logged in the routing ledger. "
+        "Default work names a family alias (`route pick <class>`).", extra, updated,
     )
-
-
-def emit_context(text: str, extra: str = "") -> None:
-    text += "\n" + extra if extra else ""
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": text}}))
 
 
 def quota_swap_seat(subagent: str) -> str | None:
+    target = None
     if subagent in {"verifier", "verifier-local", "plan-reviewer", "security-reviewer"} or fnmatch.fnmatchcase(
         subagent, "lab-*-verifier"
     ):
-        return "codex-verifier"
-    if subagent.startswith("sonnet-implementer"):
-        return "gpt-implementer"
-    if subagent.startswith("opus-seat"):
-        return "codex-sol"
-    return None
+        target = "codex-verifier"
+    elif subagent.startswith("sonnet-implementer"):
+        target = "gpt-implementer"
+    elif subagent.startswith("opus-seat"):
+        target = "codex-sol"
+    if target and subagent.endswith("-local"):
+        target += "-local"
+        agents = Path(os.environ.get("SEAT_GUARD_AGENTS_DIR") or Path.home() / ".claude" / "agents")
+        if not (agents / f"{target}.md").is_file():
+            return None
+    return target
 
 
-def quota_mode() -> tuple[str | None, str | None]:
+def quota_mode() -> tuple[str, str | None]:
     try:
         done = subprocess.run(["route", "quota-mode", "--json"], capture_output=True, text=True, timeout=2)
         if done.returncode != 0:
@@ -118,10 +105,10 @@ def quota_mode() -> tuple[str | None, str | None]:
         if mode not in {"anthropic", "codex-swap"}:
             raise ValueError("unknown quota mode")
         return mode, None
-    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
+    except Exception as error:
         reason = f"quota mode unavailable ({type(error).__name__}); dispatch unchanged (fail open)"
         print("seat-guard: " + reason, file=sys.stderr)
-        return None, reason
+        return "anthropic", reason
 
 
 def is_brief(prompt: str) -> bool:
@@ -369,34 +356,25 @@ def main() -> None:
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "cwd": payload.get("cwd"),
     }
+    updated = None
+    swap_message = ""
     replacement = quota_swap_seat(subagent)
     if replacement:
         mode, error = quota_mode()
+        record["quota_mode"] = mode
         if error:
             record["quota_mode_error"] = error
         if mode == "codex-swap":
             updated = dict(tool_input, subagent_type=replacement)
             if "opus" in model or "sonnet" in model:
                 updated.pop("model", None)
-            record.update(quota_mode=mode, original_subagent_type=subagent, subagent_type=replacement)
+            record.update(original_subagent_type=subagent, subagent_type=replacement)
             record["model"] = updated.get("model")
-            if not append(record, ledger):
-                print("seat-guard: could not record quota swap telemetry", file=sys.stderr)
-            message = f"seat-guard: {subagent} -> {replacement} (codex-swap)"
-            print(message, file=sys.stderr)
-            print(
-                json.dumps(
-                    {
-                        "hookSpecificOutput": {
-                            "hookEventName": "PreToolUse",
-                            "permissionDecision": "allow",
-                            "updatedInput": updated,
-                            "additionalContext": message,
-                        }
-                    }
-                )
-            )
-            return
+            swap_message = f"seat-guard: {subagent} -> {replacement} (codex-swap)"
+            tool_input = updated
+            subagent = replacement
+            model = (tool_input.get("model") or "").strip().lower()
+        print(swap_message or f"seat-guard: mode={mode}; no rewrite", file=sys.stderr)
     open_ended = not re.search(r"^(?:One check:|check:)", prompt, re.IGNORECASE | re.MULTILINE) and re.search(
         r"fix (every|all|each) (gap|issue|bug|problem)s?|end to end and fix|until (it|everything) (works|passes)",
         prompt,
@@ -408,7 +386,7 @@ def main() -> None:
         if open_ended
         else ""
     )
-    advisories: list[str] = []
+    advisories: list[str] = [swap_message] if swap_message else []
     if (
         subagent in SUBMIT_SEATS
         and WORKTREE_BRIEF.search(prompt)
@@ -453,16 +431,16 @@ def main() -> None:
                 + ", ".join(repr(pin) for pin in blocked_pins)
                 + ", no longer served upstream; prose is not enforced, the seat may fail on it"
             )
-    if warn_reason:
-        record["warned"] = warn_reason
-        append(record, ledger)
-        emit_warning(warn_reason + ("; " + NEEDS_MISSING if record.get("needs_missing") else ""), budget_advisory)
-        return
     lean = lean_studio_refusal(subagent, prompt)
     if lean:
         record["lean_studio_refused"] = True
         append(record, ledger)
         emit_lean_refusal(lean)
+        return
+    if warn_reason:
+        record["warned"] = warn_reason
+        append(record, ledger)
+        emit_warning(warn_reason + ("; " + "; ".join(advisories) if advisories else ""), budget_advisory, updated)
         return
     is_fork = subagent == "fork"
     if is_fork:
@@ -483,18 +461,18 @@ def main() -> None:
     if brief_on_sol:
         record["brief_on_sol"] = True
     if not append(record, ledger):
-        emit_advisory("could not record routing telemetry; dispatch was not blocked", budget_advisory)
+        emit_advisory("could not record routing telemetry; dispatch was not blocked", budget_advisory, updated)
     elif brief_on_sol:
         emit_context(
             "seat-guard warning: scope, spec, contract and design briefs default to opus-latest "
             "(models.md 2026-10-14); this Sol dispatch still runs."
             + (" Capacity: " + "; ".join(advisories) + "." if advisories else ""),
-            budget_advisory,
+            budget_advisory, updated,
         )
     elif advisories:
-        emit_advisory("; ".join(advisories), budget_advisory)
+        emit_advisory("; ".join(advisories), budget_advisory, updated)
     elif budget_advisory:
-        emit_context(budget_advisory)
+        emit_context(budget_advisory, updated=updated)
 
 
 if __name__ == "__main__":
