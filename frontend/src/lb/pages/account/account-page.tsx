@@ -9,7 +9,6 @@ import { useOauth } from "@/features/accounts/hooks/use-oauth";
 import { OauthDialog } from "@/features/accounts/components/oauth-dialog";
 import { AuthExportDialog } from "@/features/accounts/components/auth-export-dialog";
 import type { AccountSummary } from "@/features/accounts/schemas";
-import { useStickySessions } from "../../api";
 import { accountLabel, clock, compact, money, relative } from "../../format";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { PausePopover } from "../../kit/pause-popover";
@@ -19,10 +18,11 @@ import {
   AccountState,
   Crumbs,
   EmptyState,
-  LimitMeter,
   ModelChip,
   RowMenu,
 } from "../../kit/primitives";
+import { Limits } from "./account-limits";
+import { Routing } from "./account-routing";
 import "./account.css";
 
 const Receipt = z.object({
@@ -59,106 +59,6 @@ const groupOf = (a: AccountSummary) =>
       ? "ChatGPT · Codex"
       : a.provider?.toUpperCase() || "Other";
 const usageLink = (id: string) => `/usage?account=${encodeURIComponent(id)}`;
-
-function Limits({ account }: { account: AccountSummary }) {
-  const [now] = useState(() => Date.now());
-  const reset = account.resetAtSecondary;
-  const expected = reset
-    ? Math.max(
-        0,
-        Math.min(
-          100,
-          ((new Date(reset).getTime() - now) /
-            ((account.windowMinutesSecondary || 10080) * 60000)) *
-            100,
-        ),
-      )
-    : undefined;
-  const quotas = account.additionalQuotas || [];
-  const maxUsed = Math.ceil(
-    Math.max(
-      0,
-      ...quotas.flatMap((q) => [
-        q.primaryWindow?.usedPercent || 0,
-        q.secondaryWindow?.usedPercent || 0,
-      ]),
-    ),
-  );
-  return (
-    <section className="card">
-      <h2>Limits</h2>
-      <div className="lrows">
-        {account.windowMinutesSecondary && (
-          <div className="lrow">
-            <span className="k">
-              {account.windowMinutesSecondary === 10080
-                ? "Week"
-                : account.windowMinutesSecondary === 43200
-                  ? "Month"
-                  : "Long window"}
-            </span>
-            <div>
-              <LimitMeter
-                remaining={account.usage?.secondaryRemainingPercent}
-                resetAt={reset}
-                paceTick={expected}
-              />
-              {expected != null && account.usage?.secondaryRemainingPercent != null && (
-                <span className="lnote">
-                  {Math.abs(Math.round(account.usage.secondaryRemainingPercent - expected))}%{" "}
-                  {account.usage.secondaryRemainingPercent < expected
-                    ? "short of pace"
-                    : "to spare"}
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-        {account.provider !== "openai" && account.windowMinutesPrimary === 300 && (
-          <div className="lrow">
-            <span className="k">5-hour</span>
-            <LimitMeter
-              remaining={account.usage?.primaryRemainingPercent}
-              resetAt={account.resetAtPrimary}
-              unit="5h"
-            />
-          </div>
-        )}
-        {account.provider === "openai" && (
-          <p className="lnote">Weekly limit only. ChatGPT has no 5-hour window.</p>
-        )}
-        {quotas.length > 0 && (
-          <details className="more">
-            <summary>
-              {quotas.length} model limits, all under {Math.max(1, maxUsed)}% used
-            </summary>
-            <div className="lrows account-extra">
-              {quotas.map((q) => (
-                <div className="lrow" key={q.quotaKey || q.limitName}>
-                  <span className="k">{q.displayLabel || q.limitName}</span>
-                  <LimitMeter
-                    remaining={
-                      q.secondaryWindow
-                        ? 100 - q.secondaryWindow.usedPercent
-                        : q.primaryWindow
-                          ? 100 - q.primaryWindow.usedPercent
-                          : null
-                    }
-                    resetAt={
-                      q.secondaryWindow?.resetAt
-                        ? new Date(q.secondaryWindow.resetAt * 1000).toISOString()
-                        : null
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-          </details>
-        )}
-      </div>
-    </section>
-  );
-}
 
 function LastSevenDays({ accountId }: { accountId: string }) {
   const [since] = useState(() => new Date(Date.now() - 7 * 86400000).toISOString());
@@ -305,74 +205,6 @@ function RecentRequests({ accountId }: { accountId: string }) {
           </p>
         )}
       </div>
-    </section>
-  );
-}
-
-function Routing({
-  account,
-  mutations,
-}: {
-  account: AccountSummary;
-  mutations: ReturnType<typeof useAccounts>;
-}) {
-  const sessions = useStickySessions().data;
-  const stickyCount = sessions?.entries.filter((entry) => entry.key === account.accountId).length;
-  return (
-    <section className="card account-routing">
-      <h2>Routing</h2>
-      <div className="account-setting">
-        <span>Policy</span>
-        <div className="seg">
-          {(
-            [
-              { name: "Prefer", value: "burn_first" },
-              { name: "Normal", value: "normal" },
-              { name: "Avoid", value: "preserve" },
-            ] as const
-          ).map(({ name, value }) => (
-            <button
-              key={value}
-              aria-pressed={(account.routingPolicy || "normal") === value}
-              disabled={mutations.routingPolicyMutation.isPending}
-              onClick={() =>
-                mutations.routingPolicyMutation.mutate({
-                  accountId: account.accountId,
-                  routingPolicy: value,
-                })
-              }
-            >
-              {name}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="account-setting">
-        <span>Warm-up</span>
-        <span className="account-warmup">
-          <button
-            type="button"
-            role="switch"
-            aria-label="Warm-up 10 min before reset"
-            aria-checked={account.limitWarmupEnabled}
-            className={`toggle ${account.limitWarmupEnabled ? "on" : ""}`}
-            disabled={mutations.limitWarmupMutation.isPending}
-            onClick={() =>
-              mutations.limitWarmupMutation.mutate({
-                accountId: account.accountId,
-                enabled: !account.limitWarmupEnabled,
-              })
-            }
-          />
-          10 min before reset
-        </span>
-      </div>
-      {stickyCount ? (
-        <div className="account-setting">
-          <span>Sticky sessions</span>
-          <span>{stickyCount} pinned</span>
-        </div>
-      ) : null}
     </section>
   );
 }
