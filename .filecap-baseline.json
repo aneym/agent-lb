@@ -1,7 +1,5 @@
 {
   ".agents/conventions/agents-long-form.md": 20217,
-  ".agents/skills/vercel-composition-patterns/AGENTS.md": 22627,
-  ".agents/skills/vercel-react-best-practices/AGENTS.md": 81716,
   "CHANGELOG.md": 82458,
   "DECISIONS.md": 28128,
   "README.md": 31508,
@@ -84,7 +82,6 @@
   "frontend/src/lb/pages/usage/usage-page.tsx": 30603,
   "openspec/changes/add-lb-sandbox/specs/lb-sandbox/spec.md": 23541,
   "openspec/changes/macos-menubar-app/design.md": 50603,
-  "openspec/changes/macos-menubar-app/menubar-glass.json": 23225,
   "openspec/changes/require-beta-candidate-validation/specs/release-management/spec.md": 24474,
   "openspec/changes/require-beta-candidate-validation/tasks.md": 56086,
   "openspec/specs/api-keys/spec.md": 43675,

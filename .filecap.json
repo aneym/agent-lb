@@ -1,5 +1,17 @@
 {
   "max_bytes": 20000,
-  "exclude": [],
-  "exceptions": {}
+  "exclude": [
+    ".agents/skills/vercel-composition-patterns/AGENTS.md",
+    ".agents/skills/vercel-react-best-practices/AGENTS.md"
+  ],
+  "exceptions": {
+    ".agents/skills/vercel-composition-patterns/AGENTS.md": {
+      "reason": "Vendored Vercel composition-patterns skill reference, compiled from the adjacent upstream rules; not agent-lb-authored source. Records the reason for the matching narrow exclusion.",
+      "expires": "2027-10-18"
+    },
+    ".agents/skills/vercel-react-best-practices/AGENTS.md": {
+      "reason": "Vendored Vercel React best-practices skill reference, compiled from the adjacent upstream rules; not agent-lb-authored source. Records the reason for the matching narrow exclusion.",
+      "expires": "2027-10-18"
+    }
+  }
 }
