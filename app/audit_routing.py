@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import glob
 import html
 import json
 import os
-import re
 from bisect import bisect_right
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from statistics import median
 
-from app import audit_tokens as tokens
+from app.audit_allocation import allocate, empty, merge
+from app.audit_pricing import anthropic_price, input_cost, price_row, token_classes
+from app.audit_quota import quota_allocation
+from app.audit_routing_units import fold_units, instant, merge_units, read_jsonl
+from app.audit_tokens import load_receipts, window
+from app.audit_transcripts import event_time, metadata, safe_label, session_agents, session_index
 
 
 def add_parser(commands):
@@ -35,147 +37,6 @@ def harness(row):
     if client in ("codex_exec", "codex-tui", "codex", "codex_cli_rs"):
         return "codex-cli"
     return "other"
-
-
-def instant(value):
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value / 1000, UTC)
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
-
-
-def fold_units(records, agent_points, since, until):
-    groups = {}
-    for workflow, record in records:
-        if record.get("workflowName") not in ("fold-pipeline", "fold-pipeline-v2"):
-            continue
-        result = record.get("result") or {}
-        if isinstance(result, str):
-            result = json.loads(result)
-        if not isinstance(result, dict):
-            continue
-        agents = [a for a in record.get("workflowProgress", []) if a.get("type") == "workflow_agent"]
-        for piece in result.get("pieces", []):
-            matched = []
-            for agent in agents:
-                prefix, separator, fragment = (agent.get("label") or "").partition(":")
-                if separator and fragment and piece.get("title", "").startswith(fragment):
-                    matched.append((re.sub(r"-r\d+$", "", prefix), agent))
-            impl = next((a for phase, a in matched if phase == "impl"), None)
-            starts = [instant(a["startedAt"]) for _, a in matched if a.get("startedAt")]
-            ends = [
-                instant(a["startedAt"]) + timedelta(milliseconds=a.get("durationMs") or 0)
-                for _, a in matched
-                if a.get("startedAt")
-            ]
-            completed = max(ends) if ends else instant(record["timestamp"])
-            if impl is None or not since <= completed < until:
-                continue
-            key = (tokens.safe_label(impl.get("agentType")), tokens.safe_label(impl.get("model")))
-            row = groups.setdefault(
-                key,
-                dict(
-                    seat=key[0],
-                    model=key[1],
-                    pieces=0,
-                    accepted=0,
-                    status_counts={},
-                    fix_rounds=0,
-                    review_rounds=0,
-                    wall_minutes=0.0,
-                    quota_points_by_pool={},
-                ),
-            )
-            row["pieces"] += 1
-            status = str(piece.get("status", "")).lower()
-            row["accepted"] += status in ("pass", "override")
-            row["status_counts"][status] = row["status_counts"].get(status, 0) + 1
-            row["fix_rounds"] += piece.get("fix_rounds", sum(phase == "fix" for phase, _ in matched))
-            row["review_rounds"] += sum(phase in ("verify", "verify-codex", "lens-risk") for phase, _ in matched)
-            row["wall_minutes"] += (completed - min(starts)).total_seconds() / 60 if starts else 0
-            for _, agent in matched:
-                label = tokens.safe_label(agent.get("label"))
-                points = agent_points.get(f"workflow:{workflow}:{label}", {})
-                for pool, amount in points.items():
-                    row["quota_points_by_pool"][pool] = row["quota_points_by_pool"].get(pool, 0) + amount
-    return finish_units(groups)
-
-
-STUDIO_MERGE_STATES = "/Volumes/StudioExt/repos/*/.git/studio-merge"
-
-
-def read_jsonl(path):
-    try:
-        with open(path) as stream:
-            for line in stream:
-                try:
-                    item = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(item, dict):
-                    yield item
-    except OSError:
-        return
-
-
-def merge_units(since, until, states=None):
-    start, end = since.timestamp(), until.timestamp()
-    groups = {}
-    for state in sorted({str(Path(found).resolve()) for found in glob.glob(states or STUDIO_MERGE_STATES)}):
-        repo = Path(state).parent.parent.name
-        vendors = {
-            item["branch"]: item.get("author_vendor")
-            for item in read_jsonl(Path(state) / "receipts.jsonl")
-            if item.get("branch") and item.get("author_vendor")
-        }
-        attempts = defaultdict(list)
-        for item in read_jsonl(Path(state) / "log.jsonl"):
-            at, branch = item.get("at"), item.get("branch")
-            if isinstance(at, (int, float)) and branch and start <= at < end:
-                attempts[branch].append((at, item.get("ok") is True, item.get("code")))
-        for branch, tries in attempts.items():
-            tries.sort(key=lambda attempt: attempt[0])
-            merged = next((i for i, attempt in enumerate(tries) if attempt[1]), None)
-            key = (f"studio_merge:{repo}", tokens.safe_label(vendors.get(branch)))
-            row = groups.setdefault(
-                key,
-                dict(
-                    seat=key[0],
-                    model=key[1],
-                    pieces=0,
-                    accepted=0,
-                    status_counts={},
-                    fix_rounds=0,
-                    review_rounds=0,
-                    wall_minutes=0.0,
-                    quota_points_by_pool={},
-                ),
-            )
-            row["pieces"] += 1
-            status = "pass" if merged is not None else "refused"
-            row["accepted"] += merged is not None
-            row["status_counts"][status] = row["status_counts"].get(status, 0) + 1
-            refusals = tries[:merged] if merged is not None else tries
-            row["fix_rounds"] += sum(1 for attempt in refusals if not attempt[1])
-            if merged is not None:
-                row["wall_minutes"] += (tries[merged][0] - tries[0][0]) / 60
-    return finish_units(groups)
-
-
-def finish_units(groups):
-    for row in groups.values():
-        accepted = row["accepted"]
-        row["accept_rate"] = accepted / row["pieces"]
-        seat_pieces = row["pieces"] - sum(
-            row["status_counts"].get(status, 0) for status in ("infra_blocked", "pipeline_error")
-        )
-        row["seat_accept_rate"] = accepted / seat_pieces if seat_pieces else None
-        row["provisional"] = row["pieces"] < 10
-        row["wall_minutes_per_accepted_piece"] = row["wall_minutes"] / accepted if accepted else None
-        row["points_per_accepted_piece"] = {
-            pool: amount / accepted if accepted else None for pool, amount in row["quota_points_by_pool"].items()
-        }
-    return sorted(groups.values(), key=lambda r: (r["seat"], r["model"]))
 
 
 def weighted_median(parts):
@@ -212,18 +73,18 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
             for event in agent.get("events", []):
                 by_model[event.get("model")].append(event)
             for model, events in by_model.items():
-                first_event = min(events, key=tokens.event_time)
+                first_event = min(events, key=event_time)
                 start = sum(
                     first_event.get(k) or 0 for k in ("input_tokens", "cache_read_tokens", "cache_creation_tokens")
                 )
                 model_agents.setdefault((sid, model), []).append(agent | {"events": events, "start_tokens": start})
     for (_, model), shared in model_agents.items():
-        anthropic = tokens.anthropic_price(model or "")
+        anthropic = anthropic_price(model or "")
 
         def cost(event):
             if anthropic:
-                return tokens.input_cost(event)
-            return sum(v for k, v in tokens.price_row(event | {"provider": "openai"})[2].items() if k != "output")
+                return input_cost(event)
+            return sum(v for k, v in price_row(event | {"provider": "openai"})[2].items() if k != "output")
 
         if len(shared) == 1:
             shared[0]["weight"] = 1.0 if any(cost(event) > 0 for event in shared[0]["events"]) else 0.0
@@ -232,7 +93,7 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
             agent["weight"] = sum(cost(event) for event in agent["events"])
     buckets = {}
     for row in rows:
-        classes = tokens.token_classes(row)
+        classes = token_classes(row)
         count = row.get("requests", 1)
         bucket_key = (
             row["sid"],
@@ -245,7 +106,7 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
         if bucket is None:
             bucket = buckets[bucket_key] = dict(
                 row=row,
-                value=tokens.empty(),
+                value=empty(),
                 outputs=[],
                 start=sum(classes[k] for k in ("fresh_input", "cache_read", "cache_write")),
             )
@@ -259,14 +120,12 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
         bucket["outputs"].append(classes["output"])
     for bucket in buckets.values():
         row = bucket["row"]
-        for agent, part in tokens.allocate(bucket["value"], model_agents.get((row["sid"], row.get("model")), [])):
+        for agent, part in allocate(bucket["value"], model_agents.get((row["sid"], row.get("model")), [])):
             seat = agent["seat"]
             if seat == "lead" and row["provider"] == "openai":
                 seat = (
                     "codex:"
-                    + tokens.safe_label(
-                        metas.get(row["sid"], {}).get("originator") or row.get("useragent_group")
-                    ).split()[0]
+                    + safe_label(metas.get(row["sid"], {}).get("originator") or row.get("useragent_group")).split()[0]
                 )
             key = (
                 row["provider"],
@@ -276,10 +135,10 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
                 harness(row),
             )
             summary = groups.setdefault(
-                key, dict(pool=key[0], seat=seat, model=key[2], effort=key[3], harness=key[4], **tokens.empty())
+                key, dict(pool=key[0], seat=seat, model=key[2], effort=key[3], harness=key[4], **empty())
             )
-            tokens.merge(summary, part)
-            clients[key].add(tokens.safe_label(row.get("useragent_group")))
+            merge(summary, part)
+            clients[key].add(safe_label(row.get("useragent_group")))
             identity = (row["sid"], agent["key"])
             if part["requests"] <= 0:
                 continue
@@ -293,7 +152,7 @@ def routing_rows(rows, agents_by_session, metas, quota=None):
     for item in (quota or {}).get("unattributed", []):
         key = (item["provider"], "unattributed", "unknown", "unknown", "other")
         summary = groups.setdefault(
-            key, dict(pool=key[0], seat=key[1], model=key[2], effort=key[3], harness=key[4], **tokens.empty())
+            key, dict(pool=key[0], seat=key[1], model=key[2], effort=key[3], harness=key[4], **empty())
         )
         field = "quota_points" if item["window"] == "weekly" else "quota_5h_points"
         summary[field] += item["points"]
@@ -385,11 +244,11 @@ def decision_join(decisions, executions, since, until):
 
 def report_for(args, since, until):
     notes = []
-    rows, snapshots, _, _, _ = tokens.load_receipts(args, since, until, notes)
-    allocation, quota = tokens.quota_allocation(rows, snapshots, since, until)
+    rows, snapshots, _, _, _ = load_receipts(args, since, until, notes)
+    allocation, quota = quota_allocation(rows, snapshots, since, until)
     for row, points in zip(rows, allocation, strict=True):
         row.update(quota_points=points["weekly"], quota_5h_points=points["5h"])
-    index = tokens.session_index()
+    index = session_index()
     sessions = {row["sid"] for row in rows}
     with ThreadPoolExecutor(max_workers=8) as pool:
         loaded = dict(
@@ -397,8 +256,8 @@ def report_for(args, since, until):
                 sessions,
                 pool.map(
                     lambda sid: (
-                        tokens.metadata(index.get(sid)),
-                        tokens.session_agents(index.get(sid), since, until),
+                        metadata(index.get(sid)),
+                        session_agents(index.get(sid), since, until),
                     ),
                     sessions,
                 ),
@@ -483,7 +342,7 @@ def text_report(report):
 
 def run(args):
     try:
-        since, until = tokens.window(args)
+        since, until = window(args)
         report = report_for(args, since, until)
         if args.compare_previous:
             report["previous"] = report_for(args, since - (until - since), since)
