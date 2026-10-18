@@ -15,12 +15,10 @@ import {
   AccountSubscriptionCheckResponseSchema,
   AccountSubscriptionUpdateRequestSchema,
   AccountSubscriptionUpdateResponseSchema,
-  AccountTrendsResponseSchema,
   AccountProbeRequestSchema,
   AccountProbeResponseSchema,
   AccountResetCreditConsumeRequestSchema,
   AccountResetCreditConsumeResponseSchema,
-  AccountResetCreditsResponseSchema,
   ManualOauthCallbackRequestSchema,
   ManualOauthCallbackResponseSchema,
   OauthCompleteRequestSchema,
@@ -28,7 +26,6 @@ import {
   OauthStartRequestSchema,
   OauthStartResponseSchema,
   OauthStatusResponseSchema,
-  RuntimeConnectAddressResponseSchema,
 } from "@/features/accounts/schemas";
 import type { AccountRoutingPolicy } from "@/features/accounts/schemas";
 
@@ -120,13 +117,6 @@ export function checkAccountSubscription(accountId: string) {
   );
 }
 
-export function getAccountTrends(accountId: string) {
-  return get(
-    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/trends`,
-    AccountTrendsResponseSchema,
-  );
-}
-
 export function probeAccount(accountId: string, payload?: unknown) {
   const validated =
     payload === undefined
@@ -136,13 +126,6 @@ export function probeAccount(accountId: string, payload?: unknown) {
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/probe`,
     AccountProbeResponseSchema,
     validated ? { body: validated } : undefined,
-  );
-}
-
-export function listAccountResetCredits(accountId: string) {
-  return get(
-    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/rate-limit-reset-credits`,
-    AccountResetCreditsResponseSchema,
   );
 }
 
@@ -207,12 +190,5 @@ export function submitManualOauthCallback(payload: unknown) {
     {
       body: validated,
     },
-  );
-}
-
-export function getRuntimeConnectAddress() {
-  return get(
-    "/api/settings/runtime/connect-address",
-    RuntimeConnectAddressResponseSchema,
   );
 }

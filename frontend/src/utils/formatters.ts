@@ -1,7 +1,6 @@
 import { RESET_ERROR_LABEL } from "@/utils/constants";
 import { getTimeFormatPreference, type TimeFormatPreference } from "@/hooks/use-time-format";
 
-const numberFormatter = new Intl.NumberFormat("en-US");
 const compactFormatter = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 2,
@@ -31,22 +30,6 @@ const timeFormatterMap: Record<TimeFormatPreference, Intl.DateTimeFormat> = {
     hourCycle: "h23",
   }),
 };
-const chartDateTimeFormatterMap: Record<TimeFormatPreference, Intl.DateTimeFormat> = {
-  "12h": new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h12",
-  }),
-  "24h": new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }),
-};
 
 export type FormattedDateTime = {
   time: string;
@@ -55,10 +38,6 @@ export type FormattedDateTime = {
 
 function getTimeFormatter(): Intl.DateTimeFormat {
   return timeFormatterMap[getTimeFormatPreference()];
-}
-
-function getChartDateTimeFormatter(): Intl.DateTimeFormat {
-  return chartDateTimeFormatterMap[getTimeFormatPreference()];
 }
 
 type TokenState = {
@@ -101,11 +80,6 @@ export function parseDate(iso: string | null | undefined): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function formatNumber(value: unknown): string {
-  const numeric = toNumber(value);
-  return numeric === null ? "--" : numberFormatter.format(numeric);
-}
-
 export function formatCompactNumber(value: unknown): string {
   const numeric = toNumber(value);
   return numeric === null ? "--" : compactFormatter.format(numeric);
@@ -116,30 +90,12 @@ export function formatCurrency(value: unknown): string {
   return numeric === null ? "--" : currencyFormatter.format(numeric);
 }
 
-export function formatPercent(value: unknown): string {
-  const numeric = toNumber(value);
-  if (numeric === null) {
-    return "0%";
-  }
-  return `${Math.round(numeric)}%`;
-}
-
 export function formatPercentNullable(value: unknown): string {
   const numeric = toNumber(value);
   if (numeric === null) {
     return "--";
   }
   return `${Math.round(numeric)}%`;
-}
-
-export function formatPercentValue(value: unknown): number {
-  const numeric = toNumber(value);
-  return numeric === null ? 0 : Math.round(numeric);
-}
-
-export function formatRate(value: unknown): string {
-  const numeric = toNumber(value);
-  return numeric === null ? "--" : `${(numeric * 100).toFixed(1)}%`;
 }
 
 export function formatWindowMinutes(value: unknown): string {
@@ -185,16 +141,6 @@ export function formatTokensWithCached(totalTokens: unknown, cachedInputTokens: 
   return `${formatCompactNumber(total)} (${formatCompactNumber(cached)} Cached)`;
 }
 
-export function formatCachedTokensMeta(totalTokens: unknown, cachedInputTokens: unknown): string {
-  const total = toNumber(totalTokens);
-  const cached = toNumber(cachedInputTokens);
-  if (total === null || total <= 0 || cached === null || cached <= 0) {
-    return "Cached: --";
-  }
-  const percent = Math.min(100, Math.max(0, (cached / total) * 100));
-  return `Cached: ${formatCompactNumber(cached)} (${Math.round(percent)}%)`;
-}
-
 export function formatModelLabel(
   model: string | null | undefined,
   reasoningEffort: string | null | undefined,
@@ -224,11 +170,6 @@ export function formatTimeLong(iso: string | null | undefined): FormattedDateTim
 export function formatDateTimeInline(iso: string | null | undefined): string {
   const formatted = formatTimeLong(iso);
   return formatted.time === "--" ? "--" : `${formatted.time} ${formatted.date}`;
-}
-
-export function formatChartDateTime(iso: string | null | undefined): string {
-  const date = parseDate(iso);
-  return date ? getChartDateTimeFormatter().format(date) : "--";
 }
 
 export function formatRelative(ms: number): string {
@@ -283,32 +224,6 @@ export function formatQuotaResetLabel(resetAt: string | null | undefined): strin
     return "now";
   }
   return formatResetRelative(diffMs);
-}
-
-export function formatQuotaResetMeta(
-  resetAtSecondary: string | null | undefined,
-  windowMinutesSecondary: unknown,
-): string {
-  const labelSecondary = formatQuotaResetLabel(resetAtSecondary);
-  const windowSecondary = formatWindowLabel("secondary", windowMinutesSecondary);
-  if (labelSecondary === RESET_ERROR_LABEL) {
-    return "Quota reset unavailable";
-  }
-  return `Quota reset (${windowSecondary}) · ${labelSecondary}`;
-}
-
-export function truncateText(value: unknown, maxLen = 80): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
-  const text = String(value);
-  if (text.length <= maxLen) {
-    return text;
-  }
-  if (maxLen <= 3) {
-    return text.slice(0, maxLen);
-  }
-  return `${text.slice(0, maxLen - 1)}\u2026`;
 }
 
 export function formatAccessTokenLabel(auth: AccountAuthStatus | null | undefined): string {

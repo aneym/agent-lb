@@ -6,7 +6,6 @@ import {
   consumeAccountResetCredit,
   deleteAccount,
   exportAccountAuth,
-  getAccountTrends,
   importAccount,
   listAccounts,
   pauseAccount,
@@ -229,17 +228,6 @@ export function useAccountMutations() {
     subscriptionCheckMutation,
     updateMutation,
   };
-}
-
-export function useAccountTrends(accountId: string | null) {
-  return useQuery({
-    queryKey: ["accounts", "trends", accountId],
-    queryFn: () => getAccountTrends(accountId!),
-    enabled: !!accountId,
-    staleTime: 5 * 60_000,
-    refetchInterval: 5 * 60_000,
-    refetchIntervalInBackground: false,
-  });
 }
 
 export function useAccounts() {
