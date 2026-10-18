@@ -97,6 +97,33 @@ def emit_context(text: str, extra: str = "") -> None:
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": text}}))
 
 
+def quota_swap_seat(subagent: str) -> str | None:
+    if subagent in {"verifier", "verifier-local", "plan-reviewer", "security-reviewer"} or fnmatch.fnmatchcase(
+        subagent, "lab-*-verifier"
+    ):
+        return "codex-verifier"
+    if subagent.startswith("sonnet-implementer"):
+        return "gpt-implementer"
+    if subagent.startswith("opus-seat"):
+        return "codex-sol"
+    return None
+
+
+def quota_mode() -> tuple[str | None, str | None]:
+    try:
+        done = subprocess.run(["route", "quota-mode", "--json"], capture_output=True, text=True, timeout=2)
+        if done.returncode != 0:
+            raise ValueError(f"route exited {done.returncode}")
+        mode = json.loads(done.stdout)["mode"]
+        if mode not in {"anthropic", "codex-swap"}:
+            raise ValueError("unknown quota mode")
+        return mode, None
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
+        reason = f"quota mode unavailable ({type(error).__name__}); dispatch unchanged (fail open)"
+        print("seat-guard: " + reason, file=sys.stderr)
+        return None, reason
+
+
 def is_brief(prompt: str) -> bool:
     tag = CLASS_TAG.match(prompt)
     if tag:
@@ -342,6 +369,34 @@ def main() -> None:
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "cwd": payload.get("cwd"),
     }
+    replacement = quota_swap_seat(subagent)
+    if replacement:
+        mode, error = quota_mode()
+        if error:
+            record["quota_mode_error"] = error
+        if mode == "codex-swap":
+            updated = dict(tool_input, subagent_type=replacement)
+            if "opus" in model or "sonnet" in model:
+                updated.pop("model", None)
+            record.update(quota_mode=mode, original_subagent_type=subagent, subagent_type=replacement)
+            record["model"] = updated.get("model")
+            if not append(record, ledger):
+                print("seat-guard: could not record quota swap telemetry", file=sys.stderr)
+            message = f"seat-guard: {subagent} -> {replacement} (codex-swap)"
+            print(message, file=sys.stderr)
+            print(
+                json.dumps(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "allow",
+                            "updatedInput": updated,
+                            "additionalContext": message,
+                        }
+                    }
+                )
+            )
+            return
     open_ended = not re.search(r"^(?:One check:|check:)", prompt, re.IGNORECASE | re.MULTILINE) and re.search(
         r"fix (every|all|each) (gap|issue|bug|problem)s?|end to end and fix|until (it|everything) (works|passes)",
         prompt,
