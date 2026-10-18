@@ -79,7 +79,7 @@ def prepare(brief, env, cwd):
     option = ["--host", "recruiter"] if RECRUITER.search(brief) else ["--link"]
     try:
         result = subprocess.run(
-            [helper, "--" + kind, name, *option, "--json"],
+            [helper, "--" + kind, name, *option, "--prepared-ttl-seconds", "7200", "--json"],
             env=host_env(kind, name, env),
             cwd=cwd,
             capture_output=True,
@@ -103,7 +103,7 @@ def main():
     if prepared:
         kind, name = prepared.split(":", 1)
         print(
-            f"codex-local: host prepared test account {prepared} for five minutes; "
+            f"codex-local: host prepared test account {prepared} for two hours; "
             f"inside the seat run agent-test-account --{kind} {name}",
             file=sys.stderr,
         )

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import os
+import json
+from datetime import datetime, timedelta, timezone
 import shutil
 import subprocess
 import sys
@@ -100,7 +102,22 @@ else:
     def test_lane_dir_precedes_inherited_owner(self):
         result = self.prepare("agent-test-account", LANE_DIR=str(self.lane), AGENT_TEST_ACCOUNT_OWNER="lane:other")
         self.assertEqual(result.stdout.strip(), "lane:own", result.stderr)
-        self.assertTrue((self.lane / ".test-env/prepared-account.json").is_file())
+        packet = self.lane / ".test-env/prepared-account.json"
+        row = json.loads(packet.read_text())
+        remaining = (datetime.fromisoformat(row["prepared_until"]) - datetime.now(timezone.utc)).total_seconds()
+        self.assertGreater(remaining, 7100)
+        self.assertLessEqual(remaining, 7200)
+        row["prepared_until"] = (datetime.fromisoformat(row["prepared_until"]) - timedelta(minutes=10)).isoformat()
+        packet.write_text(json.dumps(row))
+        calls = self.log.read_text()
+        consumed = subprocess.run(
+            [str(self.tools / "agent-test-account"), "--lane", "own"],
+            cwd=self.lane, env=dict(self.env, CODEX_SANDBOX="seatbelt"),
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(consumed.returncode, 0, consumed.stderr)
+        self.assertEqual(consumed.stdout.strip(), "test-account: acct_parity")
+        self.assertEqual(self.log.read_text(), calls)
 
     def test_multiple_owner_flags_in_one_command_are_refused(self):
         for flags in ("--lane own --lane other", "--lane own --agent own", "--lane own --lane own"):
