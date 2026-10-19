@@ -3,11 +3,9 @@ id: operator-tools
 product: agent-lb
 owner: weekend-finish
 status: live
-covers: [cli:agent-lb, cli:agent-lb-db, cli:agent-lb-startup]
-paths: ["app/cli.py", "app/audit_*.py", "app/latency_cli.py", "app/db/migrate.py", "app/startup_benchmark.py", "features/agent-lb/*.md"]
+covers: ["cli:agent-lb", "cli:agent-lb-db", "cli:agent-lb-startup"]
+paths: ["app/cli.py", "app/audit_*.py", "app/latency_cli.py", "app/db/migrate.py", "app/startup_benchmark.py", "features/agent-lb/operator-tools.md"]
 proofs: []
-unmapped:
-  - {"path": "app/cli.py", "date": "2026-10-18", "reason": "installed console-script names are declared in pyproject.toml"}
 ---
 # Operator tools
 
