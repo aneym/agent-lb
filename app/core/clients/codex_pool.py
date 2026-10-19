@@ -132,7 +132,7 @@ class CodexPool:
             client.busy = False
             self._schedule(client)
         while self.tasks:
-            await asyncio.gather(*self.tasks)
+            await asyncio.gather(*self.tasks, return_exceptions=True)
 
 
 _pool: CodexPool | None = None

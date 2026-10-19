@@ -122,7 +122,7 @@ def test_install_renders_core_within_budget_and_is_idempotent(tmp_path: Path, po
     source = tmp_path / "policy-repo" / "config/coding-agents"
     shutil.copytree(SOURCE, source)
     (source.parent.parent / "clients").mkdir()
-    for name in ("route", "route_quota.py", "route_storage.py"):
+    for name in ("route", "route_quota.py", "route_storage.py", "route_cache.py"):
         shutil.copy2(ROOT / "clients" / name, source.parent.parent / "clients" / name)
     policy_checkout(tmp_path / "policy-repo")
     home = tmp_path / "home"
