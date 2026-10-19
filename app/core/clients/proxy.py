@@ -1527,10 +1527,10 @@ async def _stream_responses_via_websocket(
         _remaining_total_timeout(effective_total_timeout, request_started_at, time.monotonic())
         or effective_connect_timeout,
     )
-    websocket_context: Any | None = None
+    ws_context: Any | None = None
     active_codex_client: CodexClient | None = None
     if route is not None:
-        active_codex_client = codex_client or await acquire_codex_client(account_id, route)
+        active_codex_client = codex_client or await acquire_codex_client(account_id, route, pooled=False)
         try:
             opener = getattr(active_codex_client, "open_ws_with_route_metadata", None)
             if callable(opener):
@@ -1542,29 +1542,26 @@ async def _stream_responses_via_websocket(
                     max_message_size=max_event_bytes,
                 )
                 websocket = result.websocket
-                websocket_context = result.context
+                ws_context = result.context
                 if route_trace is not None:
                     route_trace.record(route=result.route, fallback_used=result.fallback_used)
             else:
-                websocket_context = await active_codex_client.ws_connect(
+                ws_context = await active_codex_client.ws_connect(
                     websocket_url,
                     route=route,
                     headers=headers,
                     timeout=connect_timeout_seconds,
                     max_message_size=max_event_bytes,
                 )
-                websocket = (
-                    await websocket_context.__aenter__()
-                    if hasattr(websocket_context, "__aenter__")
-                    else websocket_context
-                )
+                websocket = await ws_context.__aenter__() if hasattr(ws_context, "__aenter__") else ws_context
                 if route_trace is not None:
                     route_trace.record(route=route, fallback_used=False)
-                if not hasattr(websocket_context, "__aenter__"):
-                    websocket_context = None
-        except Exception as exc:
-            await _record_lifecycle_failure(exc)
+                if not hasattr(ws_context, "__aenter__"):
+                    ws_context = None
+        except BaseException as exc:
             await release_codex_client(active_codex_client)
+            if isinstance(exc, Exception):
+                await _record_lifecycle_failure(exc)
             raise
     else:
         refused = 0
@@ -1687,8 +1684,8 @@ async def _stream_responses_via_websocket(
         raise
     finally:
         try:
-            if websocket_context is not None:
-                await websocket_context.__aexit__(None, None, None)
+            if ws_context is not None:
+                await ws_context.__aexit__(None, None, None)
             elif websocket_cm is not None:
                 await websocket_cm.__aexit__(None, None, None)
             else:
@@ -2379,7 +2376,7 @@ async def _stream_responses_with_session(
                         break
                 return
             finally:
-                await release_codex_client(active_codex_client)
+                await release_codex_client(active_codex_client, seen_terminal)
 
         async with _service_circuit_breaker_context(
             client_session.post(
