@@ -12,12 +12,8 @@ from app.db.models import (
     AccountStatus,
 )
 from app.db.session import SessionLocal
-from app.modules.accounts.repository import (
-    AccountIdentityConflictError,
-    AccountsRepository,
-    _slot_lock_key,
-    _slot_lock_keys,
-)
+from app.modules.accounts.identity_repository import AccountIdentityConflictError, _slot_lock_keys
+from app.modules.accounts.repository import AccountsRepository, _slot_lock_key
 from app.modules.request_logs.repository import RequestLogsRepository
 from tests.integration.repository_account_support import _make_account
 

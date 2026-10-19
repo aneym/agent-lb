@@ -10,7 +10,7 @@ from aiohttp import web
 
 from app.core.clients.oauth import OAuthError
 from app.core.providers import get_provider
-from app.modules.accounts.repository import AccountIdentityConflictError
+from app.modules.accounts.identity_repository import AccountIdentityConflictError
 from app.modules.oauth.schemas import ManualCallbackResponse
 from app.modules.oauth.state import OAuthCallbackServer
 

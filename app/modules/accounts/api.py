@@ -12,8 +12,7 @@ from app.core.config.settings import get_settings
 from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
 from app.dependencies import AccountsContext, get_accounts_context
 from app.modules.accounts.auth_manager import _cross_process_refresh_lock
-from app.modules.accounts.availability_api import availability_router as availability_router
-from app.modules.accounts.repository import AccountIdentityConflictError
+from app.modules.accounts.identity_repository import AccountIdentityConflictError
 from app.modules.accounts.schemas import (
     AccountAliasRequest,
     AccountAliasResponse,

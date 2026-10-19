@@ -51,6 +51,7 @@ from app.db.session import SessionLocal, close_db, init_background_db, init_db
 from app.modules.account_schedule import api as account_schedule_api
 from app.modules.account_schedule.scheduler import build_account_resume_scheduler
 from app.modules.accounts import api as accounts_api
+from app.modules.accounts.availability_api import availability_router
 from app.modules.accounts.cache_warmer import build_accounts_cache_warmer
 from app.modules.accounts.pulse import build_account_pulse_scheduler
 from app.modules.accounts.reset_credit_scheduler import build_reset_credit_auto_redeem_scheduler
@@ -454,21 +455,24 @@ def create_app() -> FastAPI:
     add_app_version_middleware(app)
     add_exception_handlers(app)
 
-    app.include_router(proxy_api.router)
-    app.include_router(proxy_api.internal_router)
-    app.include_router(proxy_api.ws_router)
-    app.include_router(proxy_api.wham_router)
-    app.include_router(proxy_api.frame_db_router)
-    app.include_router(proxy_api.v1_router)
-    app.include_router(proxy_api.v1_ws_router)
-    app.include_router(proxy_api.transcribe_router)
-    app.include_router(proxy_api.files_router)
-    app.include_router(proxy_api.usage_router)
+    for router in (
+        proxy_api.router,
+        proxy_api.internal_router,
+        proxy_api.ws_router,
+        proxy_api.wham_router,
+        proxy_api.frame_db_router,
+        proxy_api.v1_router,
+        proxy_api.v1_ws_router,
+        proxy_api.transcribe_router,
+        proxy_api.files_router,
+        proxy_api.usage_router,
+    ):
+        app.include_router(router)
     app.include_router(meta_api.router)
     app.include_router(meta_api.provider_router)
     app.include_router(audit_api.router)
     app.include_router(accounts_api.router)
-    app.include_router(accounts_api.availability_router)
+    app.include_router(availability_router)
     app.include_router(account_schedule_api.router)
     app.include_router(dashboard_api.router)
     app.include_router(usage_api.router)

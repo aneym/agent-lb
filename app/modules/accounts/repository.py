@@ -17,9 +17,7 @@ from app.db.models import (
     StickySession,
     UsageHistory,
 )
-from app.modules.accounts.identity_repository import AccountIdentityConflictError as AccountIdentityConflictError
-from app.modules.accounts.identity_repository import AccountIdentityRepository
-from app.modules.accounts.identity_repository import _slot_lock_keys as _slot_lock_keys
+from app.modules.accounts.identity_repository import AccountIdentityRepository, _slot_lock_keys
 from app.modules.accounts.state_repository import AccountStateRepository
 from app.modules.accounts.usage_repository import AccountUsageRepository
 
@@ -34,7 +32,6 @@ class AutoResetResult:
     prior_reason: str | None
 
 
-_SETTINGS_ROW_ID = 1
 _UNSET = object()
 
 

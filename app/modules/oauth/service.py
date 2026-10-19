@@ -25,7 +25,8 @@ from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, ProviderLookupError, get_provider
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.db.session import get_background_session
-from app.modules.accounts.repository import AccountIdentityConflictError, AccountsRepository
+from app.modules.accounts.identity_repository import AccountIdentityConflictError
+from app.modules.accounts.repository import AccountsRepository
 from app.modules.oauth.callbacks import (
     _ACCOUNT_IDENTITY_CONFLICT_MESSAGE,
     OAuthCallbackHandlers,
