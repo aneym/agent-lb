@@ -31,7 +31,9 @@ Validate with `feature-map check`.
 `.agents/skills/verify-agent-lb/SKILL.md`: launch, doctor, drive, evidence, cleanup.
 
 ## Topics
-Onboarding, account operations and billing/cache safety: `.agents/conventions/agents-long-form.md`.
+Onboarding and account operations: `.agents/conventions/agents-long-form.md`.
+Billing marker and system-block safety: `.agents/conventions/agents-long-form.md`.
+Restart and deploy (lb-restart only, never launchctl kickstart/bootout): `.agents/conventions/agents-long-form.md`.
 Money-path, incident fixes and rule changes: `.agents/conventions/factory-rules.md` (record rule changes in `DECISIONS.md`).
 File-size cap: `CODING_STANDARDS.md`; keep authored files under 20,000 bytes.
 Repo-specific coding standards: `CODING_STANDARDS.md`.
