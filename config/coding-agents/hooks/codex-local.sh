@@ -24,6 +24,38 @@ for ((i=0; i<${#args[@]}; i++)); do
     prompt_file=${args[i]#--prompt-file=}
   fi
 done
+main_checkout() {
+  local dirs
+  dirs=$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$1" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || return 1
+  [[ $(sed -n 1p <<<"$dirs") == "$(sed -n 2p <<<"$dirs")" ]]
+}
+write=0
+for arg in "$@"; do
+  case "$arg" in
+    --write) write=1 ;;
+    --allow-repo-write) write=0; break ;;
+  esac
+done
+if [[ $write == 1 ]] && main_checkout "$PWD"; then
+  if [[ -n $prompt_file ]]; then
+    prompt_file=$(cd "$(dirname "$prompt_file")" && pwd)/$(basename "$prompt_file")
+    for ((i=0; i<${#args[@]}; i++)); do
+      if [[ ${args[i]} == --prompt-file ]]; then
+        args[i+1]=$prompt_file
+      elif [[ ${args[i]} == --prompt-file=* ]]; then
+        args[i]="--prompt-file=$prompt_file"
+      fi
+    done
+    set -- "${args[@]}"
+  fi
+  checkout=$PWD
+  if [[ -n ${LANE_DIR:-} && -d $LANE_DIR ]] && ! main_checkout "$LANE_DIR"; then
+    cd "$LANE_DIR"
+  else
+    cd "$(mktemp -d "${TMPDIR:-/tmp}/codex-local-cwd.XXXXXX")"
+  fi
+  printf 'codex-local: %s is a shared git checkout; --write runs from %s and the checkout stays read-only\n' "$checkout" "$PWD" >&2
+fi
 if [[ $dry_run == 1 ]]; then
   if [[ -n $prompt_file ]]; then
     python3 "$(dirname "$0")/seat-finish.py" --prompt-file "$prompt_file"
@@ -33,6 +65,7 @@ if [[ $dry_run == 1 ]]; then
 fi
 if [[ $dry_run == 1 ]]; then
   printf 'host=studio background=false\n'
+  printf 'cwd=%s\n' "$PWD"
   printf 'BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only node codex-companion.mjs'
   printf ' %q' "$@"
   printf '\n'
