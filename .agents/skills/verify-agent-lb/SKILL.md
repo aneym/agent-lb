@@ -73,17 +73,29 @@ KIT=/Volumes/StudioExt/repos/agent-plugin-kit
 "$KIT/bin/feature-map" run --repo . --feature agent-lb/request-logs --proof inspect-failed-request --env sandbox
 ```
 
-Expected current result: exit 3, blocked. Capture each command's return code;
-do not chain these commands with `&&`, suppress failures, or mark a blocked
-run as verified. The runner may block before invoking the driver because its
-identity lifecycle or side-effect isolation is unavailable. Studio delegates
-journeys rather than driving them locally. Do not bypass that routing.
+Expected proof-host result: exit 3, blocked. Capture each command's return
+code; do not chain these commands with `&&`, suppress failures, or mark a
+blocked run as verified. The runner blocks before invoking the driver because
+its identity lifecycle and side-effect isolation are unavailable. Studio
+delegates journeys rather than driving them locally. Do not bypass that routing.
+
+Studio delegation at `f9972aa29a7d5965d23093a355fa171fe1712007` recorded
+`fail`, not `blocked`: `feature-map` was absent from the proof host's PATH.
+A delegation failure is not evidence that a journey ran. Ship the landed
+agent-plugin-kit checkout alongside this repo with `seat-run --box forge
+--ship /Volumes/StudioExt/repos/agent-plugin-kit --ship "$PWD"` and invoke
+`python3 /Volumes/StudioExt/repos/agent-plugin-kit/bin/feature-map run` on
+that configured proof host, with the same feature, proof, SHA and environment
+arguments above. This preserves the journey kind and declared side effects.
+A blocked attempt can still report `record retained in spool; Studio
+acknowledgement unavailable`; verify its immutable record and synchronize it
+before claiming durable evidence. Never relabel the earlier failing records.
 
 ## Evidence
 
 ```sh
 KIT=/Volumes/StudioExt/repos/agent-plugin-kit
-"$KIT/bin/feature-map" runs --repo . --latest --json
+"$KIT/bin/feature-map" runs --repo . --latest --json | python3 -c 'import json,sys; records=json.load(sys.stdin)["records"]; assert len(records)>=3; print(str(len(records))+" journey records")'
 "$KIT/bin/feature-map" runs --repo . --sha "$(git rev-parse HEAD)" --history --json
 ```
 
