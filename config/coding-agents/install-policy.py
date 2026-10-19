@@ -1497,13 +1497,10 @@ def sync_policy_boxes(home: Path) -> None:
             ):
                 subprocess.run(
                     ["rsync", "-az", "-e", shlex.join(ssh), *(str(path) for path in sources), f"{host}:{destination}"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    timeout=60,
+                    capture_output=True, text=True, check=True, timeout=60,
                 )
             mcp = subprocess.run(
-                [*ssh, host, "python3 -"],
+                [*ssh, host, "timeout 55 python3 -"],
                 input=Path(__file__).with_name("harness_mcp.py").read_text(),
                 capture_output=True, text=True, check=True, timeout=60,
             )
