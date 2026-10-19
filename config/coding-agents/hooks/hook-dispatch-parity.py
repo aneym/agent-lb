@@ -20,7 +20,6 @@ DESCRIPTION = (
     "Parity fixture for hook-dispatch.py: the per-hook config and the dispatcher give Claude Code the same answers."
 )
 
-EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DEFAULT_TIMEOUT = 600.0
 PATH_REF = re.compile(r'(?:\$HOME|~)/([^\s"\'$`\\;&|<>(){}]+)')
 CONFIG_COPIES = (".agent-lb/managed/coding-agents/routing-table.json", ".claude/agents", ".claude/load-governor.json")
@@ -124,10 +123,7 @@ def run_shell(command, payload, env, cwd, timeout):
         out, err = proc.communicate(payload, timeout=timeout)
         timed_out = False
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
+        reap_group(proc.pid)
         out, err = proc.communicate()
         timed_out = True
     reap_group(proc.pid)
@@ -239,6 +235,7 @@ FLOOR_NAMES = (
     "kill-guard",
     "agent-lb-bootout-guard.sh",
     "dangerous-command-guard.sh",
+    "host-credential-guard.py",
 )
 FLOOR_INLINE = "BLOCKED: Dangerous command"
 FLOOR_MESSAGE = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard [^\n]*(?:\n.*)?$", re.S)
@@ -312,10 +309,7 @@ def run_direct(argv, name, payload, env, cwd, timeout):
         out, err = proc.communicate(payload, timeout=timeout)
         timed_out = False
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
+        reap_group(proc.pid)
         out, err = proc.communicate()
         timed_out = True
     reap_group(proc.pid)
@@ -339,15 +333,11 @@ def run_direct(argv, name, payload, env, cwd, timeout):
 
 def floor_failed(raw):
 
-    if raw.get("opaque"):
-        return True
-    if raw["timed_out"]:
+    if raw.get("opaque") or raw["timed_out"]:
         return True
     if raw["code"] == 2:
         return False
-    if raw["code"] != 0:
-        return True
-    if not raw.get("receipt"):
+    if raw["code"] != 0 or not raw.get("receipt"):
         return True
     text = raw["out"].strip()
     if not text:
@@ -578,6 +568,8 @@ def builtin_cases():
             bash("git stash push -m parity", cwd_rel="work/repo"), name="deny-stash-guard", expect=deny, setup="stash"
         ),
         dict(bash("git stash list", cwd_rel="work/repo"), name="allow-stash-list", expect="allow", setup="stash"),
+        dict(bash("cat ~/.agent-rails/rails-host/host.credential"), name="deny-host-credential", expect=deny),
+        dict(bash("ls ~/.agent-rails/rails-host"), name="allow-host-credential-ls", expect="allow"),
         dict(
             event="PreToolUse",
             tool="Bash",

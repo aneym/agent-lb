@@ -90,6 +90,7 @@ MANAGED_HOOKS = (
     "workflow-relay-guard.py",
     "plutil-guard.sh",
     "kill-scope-guard.py",
+    "host-credential-guard.py",
     "hook-dispatch.py",
     "hook-dispatch-parity.py",
 )
@@ -326,23 +327,16 @@ COMPACT_CHECKPOINT_HOOK = {
 }
 
 
-def is_closeout_hook(command: Any) -> bool:
-    return isinstance(command, str) and "hooks/subagent-closeout.py" in command
-
-
-def is_seat_guard_hook(command: Any) -> bool:
-    return isinstance(command, str) and "hooks/seat-guard.py" in command
-
-
-def is_workflow_seat_guard_hook(command: Any) -> bool:
-    return isinstance(command, str) and "hooks/workflow-seat-guard.py" in command
-
-
 DANGEROUS_GUARD_HOOK = {"type": "command", "command": '"$HOME/.claude/hooks/dangerous-command-guard.sh"', "timeout": 10}
 RAILWAY_GUARD_HOOK = {"type": "command", "command": 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"', "timeout": 10}
 KILL_SCOPE_GUARD_HOOK = {
     "type": "command",
     "command": '/usr/bin/python3 "$HOME/.claude/hooks/kill-scope-guard.py"',
+    "timeout": 10,
+}
+HOST_CREDENTIAL_HOOK = {
+    "type": "command",
+    "command": '/usr/bin/python3 "$HOME/.claude/hooks/host-credential-guard.py"',
     "timeout": 10,
 }
 
@@ -352,6 +346,8 @@ SETTINGS_HOOKS = (
     ("PreToolUse", "Bash", RAILWAY_GUARD_HOOK, False),
     ("PreToolUse", "Bash", DANGEROUS_GUARD_HOOK, True),
     ("PreToolUse", "Bash", KILL_SCOPE_GUARD_HOOK, True),
+    ("PreToolUse", "Bash", HOST_CREDENTIAL_HOOK, True),
+    ("PreToolUse", "Read", HOST_CREDENTIAL_HOOK, True),
     ("SubagentStop", None, CLOSEOUT_HOOK, False),
     ("SubagentStop", None, FOCUS_STEAL_HOOK, False),
     (
@@ -429,6 +425,7 @@ DISPATCH_INPROC = (
     "rm-dynamic-deny",
     "desktop-guard",
     "stash-guard",
+    "host-credential-guard.py",
     "herdr-shell-host-guard.py",
     "rm-cd-rewrite.py",
     "no-direct-merge.py",
@@ -1046,26 +1043,6 @@ def run_parity(source: Path, home: Path, registry: dict[str, Any]) -> tuple[bool
     if result.returncode != 0:
         return False, f"{summary or result.stderr.strip()[-400:]} (exit {result.returncode}; report {report})"
     return True, f"{summary} (report {report})"
-
-
-def resolve_sonnet(source: Path, home: Path) -> str:
-
-    route = source.parent.parent / "clients" / "route"
-    if not route.is_file():
-        route = home / ".agent-lb" / "bin" / "route"
-    try:
-        result = subprocess.run(
-            [sys.executable, str(route), "resolve", "sonnet-latest"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-            env=os.environ | {"ROUTE_TABLE": str(source / "routing-table.json")},
-        )
-    except (OSError, subprocess.SubprocessError):
-        return SONNET_MODEL
-    model = result.stdout.strip() if result.returncode == 0 else ""
-    return model if SONNET_ID.fullmatch(model) else SONNET_MODEL
 
 
 def resolve_sol(source: Path, home: Path) -> str:

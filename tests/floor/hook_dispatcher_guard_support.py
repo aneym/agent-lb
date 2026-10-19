@@ -38,6 +38,11 @@ FLOOR_LEAVES = {
         ".agent-rails/factory-runtime/bin/stash-guard",
         "py",
     ),
+    "host-credential-guard.py": (
+        '/usr/bin/python3 "$HOME/.claude/hooks/host-credential-guard.py"',
+        ".claude/hooks/host-credential-guard.py",
+        "py",
+    ),
     "link-cli-guard.sh": ('"$HOME/.claude/hooks/link-cli-guard.sh"', ".claude/hooks/link-cli-guard.sh", "sh"),
     "railway-vars-guard.sh": (
         '"$HOME/.claude/hooks/railway-vars-guard.sh"',
@@ -124,7 +129,7 @@ FAIL_STUBS = {
 
 REACHES_PREFILTERS = "echo railway link-cli launchctl; rm -rf /tmp/never-run"
 
-INPROC = ["rm-dynamic-deny", "stash-guard", "workflow-relay-guard.py"]
+INPROC = ["rm-dynamic-deny", "stash-guard", "host-credential-guard.py", "workflow-relay-guard.py"]
 
 
 def failing_guard_home(tmp_path: Path, command: str, rel: str | None, kind: str, mode: str) -> tuple[Path, dict]:

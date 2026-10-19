@@ -32,6 +32,7 @@ FLOOR_SCRIPTS = (
     "agent-lb-bootout-guard.sh",
     "dangerous-command-guard.sh",
     "no-chrome-guard.sh",
+    "host-credential-guard.py",
 )
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
 FLOOR_TEXT = "BLOCKED: Dangerous command"
@@ -632,8 +633,9 @@ def plan_hook(hook, inproc_names, script_pins=None):
     plan.devnull = bool(match.group("devnull"))
     plan.fallback_true = bool(match.group("true"))
     plan.fallback_text = match.group("fb")
+    script = expand_word(match.group("script"))
+    name = os.path.basename(os.path.realpath(script))
     if match.group("interp") is None:
-        name = os.path.basename(os.path.realpath(expand_word(match.group("script"))))
         pinned = SCRIPT_PREFILTERS.get(name)
         if pinned is not None:
             sensitive = env_sensitive()
@@ -648,13 +650,12 @@ def plan_hook(hook, inproc_names, script_pins=None):
                 plan.reason = "pinned script, but %s is set" % sensitive
             elif missing:
                 plan.reason = "pinned script, but %s is not on PATH" % ", ".join(missing)
-            elif sha256_file(os.path.realpath(expand_word(match.group("script")))) in hashes:
+            elif sha256_file(os.path.realpath(script)) in hashes:
                 plan.kind, plan.prefilter, plan.reason = "filtered", pinned[1], "pinned script"
             else:
                 plan.reason = "script changed since its prefilter was reviewed"
             return plan
-    script = expand_word(match.group("script"))
-    if os.path.basename(os.path.realpath(script)) not in inproc_names:
+    if name not in inproc_names:
         plan.reason = "not on the in-process list"
         return plan
     if not os.path.isfile(script):
@@ -676,7 +677,7 @@ def plan_hook(hook, inproc_names, script_pins=None):
     except (OSError, UnicodeDecodeError):
         plan.reason = "unreadable"
         return plan
-    pinned = inproc_names.get(os.path.basename(os.path.realpath(script))) if isinstance(inproc_names, dict) else None
+    pinned = inproc_names.get(name) if isinstance(inproc_names, dict) else None
     if pinned and hashlib.sha256(data).hexdigest() != pinned:
         plan.reason = "changed since the parity fixture passed on it"
         return plan

@@ -43,7 +43,7 @@ def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
         {
             "matcher": "Bash",
             "hooks": [
-                {"type": "command", "command": f"{DISPATCH} PreToolUse 'Bash' {registry['rev']}", "timeout": 1235}
+                {"type": "command", "command": f"{DISPATCH} PreToolUse 'Bash' {registry['rev']}", "timeout": 1245}
             ],
         }
     ]
