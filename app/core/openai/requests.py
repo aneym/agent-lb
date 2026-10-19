@@ -4,19 +4,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.core.eval_guard import is_eval_request, strip_eval_web_tools
 from app.core.openai.request_input import (
-    InputImageFileReference as InputImageFileReference,
-)
-from app.core.openai.request_input import (
     _json_list_or_none,
     _json_mapping_or_none,
     _normalize_input_text,
     _sanitize_input_items,
-)
-from app.core.openai.request_input import (
-    extract_input_file_ids as extract_input_file_ids,
-)
-from app.core.openai.request_input import (
-    extract_input_image_file_references as extract_input_image_file_references,
 )
 from app.core.types import JsonObject, JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping

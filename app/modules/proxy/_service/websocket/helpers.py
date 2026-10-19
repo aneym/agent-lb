@@ -14,7 +14,7 @@ from app.core.clients.files import create_file as core_create_file  # noqa: F401
 from app.core.clients.files import finalize_file as core_finalize_file  # noqa: F401
 from app.core.clients.http import lease_http_session as lease_http_session  # noqa: F401
 from app.core.clients.proxy import CodexControlResponse as CodexControlResponse
-from app.core.clients.proxy import (  # noqa: F401  # noqa: F401
+from app.core.clients.proxy import (  # noqa: F401
     ImageFetchSession,
     ProxyResponseError,
     UpstreamProxyRouteTrace,
@@ -48,18 +48,12 @@ from app.core.errors import (
 from app.core.exceptions import AppError
 from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import parse_sse_event
-from app.core.openai.requests import (
-    ResponsesRequest,
-    extract_input_file_ids,
-    extract_input_image_file_references,
-)
+from app.core.openai.request_input import extract_input_file_ids, extract_input_image_file_references
+from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.core.utils.time import utcnow as utcnow
-from app.db.models import (
-    AccountStatus,  # noqa: F401
-)
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )

@@ -10,12 +10,8 @@ from app.core.clients.files import create_file as core_create_file
 from app.core.clients.files import finalize_file as core_finalize_file
 from app.core.clients.proxy import ProxyResponseError
 from app.core.errors import openai_error
-from app.core.openai.requests import (
-    ResponsesCompactRequest,
-    ResponsesRequest,
-    extract_input_file_ids,
-    extract_input_image_file_references,
-)
+from app.core.openai.request_input import extract_input_file_ids, extract_input_image_file_references
+from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
 from app.core.types import JsonValue
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy._service.support import (
