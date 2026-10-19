@@ -45,7 +45,7 @@ from app.core.errors import (
     response_failed_event,
 )
 from app.core.identity import get_request_identity
-from app.core.openai.parsing import parse_sse_event
+from app.core.openai.parsing import parse_sse_event_payload
 from app.core.openai.requests import (
     ResponsesRequest,
 )
@@ -636,7 +636,7 @@ class _StreamingMixin(_StreamingRetryMixin):
             await proxy._load_balancer.release_account_lease(account_response_create_lease)
             account_response_create_lease = None
             first_payload = parse_sse_data_json(first)
-            event = parse_sse_event(first)
+            event = parse_sse_event_payload(first_payload)
             event_type = _event_type_from_payload(event, first_payload)
             if event_type not in {"response.completed", "response.failed", "response.incomplete", "error"}:
                 api_key_reservation_touch_state.last_touch_at = await proxy._maybe_touch_api_key_reservation(
@@ -766,17 +766,17 @@ class _StreamingMixin(_StreamingRetryMixin):
                 raise terminal_stream_error
 
             async for line in iterator:
-                event_payload = parse_sse_data_json(line)
-                event = parse_sse_event(line)
-                event_type = _event_type_from_payload(event, event_payload)
-                if event_type == "error" and (event is None or event.error is None) and isinstance(event_payload, dict):
-                    message_value = event_payload.get("message")
+                ev_payload = parse_sse_data_json(line)
+                event = parse_sse_event_payload(ev_payload)
+                event_type = _event_type_from_payload(event, ev_payload)
+                if event_type == "error" and (event is None or event.error is None) and isinstance(ev_payload, dict):
+                    message_value = ev_payload.get("message")
                     message = (
                         message_value.strip()
                         if isinstance(message_value, str) and message_value.strip()
                         else "Upstream error"
                     )
-                    line, event, event_payload, event_type = _facade()._build_rewritten_stream_response_failed_event(
+                    line, event, ev_payload, event_type = _facade()._build_rewritten_stream_response_failed_event(
                         response_id=response_id,
                         error_code="upstream_error",
                         error_message=message,
@@ -789,16 +789,16 @@ class _StreamingMixin(_StreamingRetryMixin):
                         request_id=request_id,
                         surface="stream",
                     )
-                event_service_tier = _facade()._service_tier_from_event_payload(event_payload)
+                event_service_tier = _facade()._service_tier_from_event_payload(ev_payload)
                 if event_service_tier is not None:
                     actual_service_tier = event_service_tier
                     service_tier = event_service_tier
-                line, event_payload, event, event_type = rewrite_parallel_tool_call_sse_line(line, event_payload)
+                line, ev_payload, event, event_type = rewrite_parallel_tool_call_sse_line(line, ev_payload)
                 if event_type in _facade()._TEXT_DELTA_EVENT_TYPES:
                     saw_text_delta = True
                 if _facade()._should_suppress_text_done_event(
                     event_type=event_type,
-                    payload=event_payload,
+                    payload=ev_payload,
                     suppress_text_done_events=suppress_text_done_events,
                     saw_text_delta=saw_text_delta,
                 ):
@@ -821,7 +821,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                         if (
                             event_type == "error"
                             and raw_error_code == "error"
-                            and _websocket_event_error_code(event_type, event_payload) is None
+                            and _websocket_event_error_code(event_type, ev_payload) is None
                         ):
                             raw_error_code = "upstream_error"
                         rewritten_error = _facade()._rewrite_previous_response_stream_error(
@@ -848,7 +848,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                             (
                                 line,
                                 event,
-                                event_payload,
+                                ev_payload,
                                 event_type,
                             ) = _facade()._build_rewritten_stream_response_failed_event(
                                 response_id=response_id,
@@ -880,7 +880,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                         (
                             line,
                             event,
-                            event_payload,
+                            ev_payload,
                             event_type,
                         ) = _facade()._build_rewritten_stream_response_failed_event(
                             response_id=response_id,
@@ -895,15 +895,15 @@ class _StreamingMixin(_StreamingRetryMixin):
                 if latency_first_token_ms is None and is_first_output_event(event_type):
                     latency_first_token_ms = int((time.monotonic() - request_started_at) * 1000)
                 if mark_duplicate_tool_call_downstream_event(
-                    event_payload,
+                    ev_payload,
                     seen_tool_call_keys=tool_call_dedupe.seen_tool_call_keys,
-                    response_id=tool_call_response_id_from_payload(event_payload) or request_id,
+                    response_id=tool_call_response_id_from_payload(ev_payload) or request_id,
                     scope_side_effects_by_response_id=False,
                 ):
                     suppressed_duplicate_tool_call = True
                     continue
-                if event_payload is not None:
-                    line = format_sse_event(event_payload)
+                if ev_payload is not None:
+                    line = format_sse_event(ev_payload)
                 settlement.downstream_visible = True
                 if event_type in _facade()._TEXT_DELTA_EVENT_TYPES:
                     settlement.downstream_text_visible = True
