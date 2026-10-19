@@ -26,7 +26,7 @@
   "clients/claude-lb-launch": 86517,
   "clients/lb-cache": 23818,
   "clients/opus-runtime-doctor": 25865,
-  "clients/route": 230869,
+  "clients/route": 228954,
   "clients/seat": 106221,
   "config/coding-agents/ROUTING.md": 32129,
   "config/coding-agents/hooks/hook-dispatch-parity.py": 67637,
