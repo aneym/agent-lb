@@ -24,6 +24,7 @@ MODEL = "opus"
 EFFORT_LEVEL = "medium"
 HAIKU_ENV = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
 POLICY_SNAPSHOT = Path(".agent-lb/managed/coding-agents/policy-snapshot.json")
+ROUTE_FILES = ("route", "seat", "route_quota.py", "route_storage.py", "route_cache.py")
 
 
 SONNET_ENV = "ANTHROPIC_DEFAULT_SONNET_MODEL"
@@ -1491,9 +1492,9 @@ def sync_policy_boxes(home: Path) -> None:
             "policy_rev": json.loads(table.read_text())["policy_rev"],
             "table_sha256": hashlib.sha256(table.read_bytes()).hexdigest(),
         }
-        files = [home / ".agent-lb/bin" / name for name in ("route", "seat", "route_quota.py", "route_storage.py")]
-        files += [table, table.with_name("quota-swap.json")]
-        if not all(path.is_file() for path in files):
+        bins = [home / ".agent-lb/bin" / name for name in ROUTE_FILES]
+        tables = [table, table.with_name("quota-swap.json")]
+        if not all(path.is_file() for path in bins + tables):
             raise ValueError("routing files missing")
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         print(f"WARNING: box policy sync unavailable ({type(exc).__name__})", file=sys.stderr)
@@ -1518,8 +1519,8 @@ def sync_policy_boxes(home: Path) -> None:
                 timeout=30,
             )
             for sources, destination in (
-                (files[:4], ".agent-lb/bin/"),
-                (files[4:], ".agent-lb/managed/coding-agents/"),
+                (bins, ".agent-lb/bin/"),
+                (tables, ".agent-lb/managed/coding-agents/"),
             ):
                 subprocess.run(
                     ["rsync", "-az", "-e", shlex.join(ssh), *(str(path) for path in sources), f"{host}:{destination}"],
@@ -1957,7 +1958,7 @@ def main() -> int:
             changes[args.home / owner_path] = owner_marker
         policy_dir = args.home / POLICY_DIR
 
-        for name in ("route", "seat", "route_quota.py", "route_storage.py"):
+        for name in ROUTE_FILES:
             client = source.parents[1] / "clients" / name
             target = args.home / ".agent-lb/bin" / name
             if client.is_file() and read_text(target) != client.read_text():

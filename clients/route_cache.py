@@ -101,6 +101,23 @@ MODEL_CACHE_HITS: set[str] = set()
 FORCE_MODELS = False
 
 
+def _prune(cache_dir: Path) -> None:
+    marker = cache_dir / ".route-get-pruned"
+    now = time.time()
+    try:
+        if now - marker.stat().st_mtime < 60:
+            return
+    except FileNotFoundError:
+        pass
+    marker.touch()
+    for path in cache_dir.glob("route-get-*.json"):
+        try:
+            if path.is_file() and path.stat().st_mtime < now - 600:
+                path.unlink()
+        except OSError:
+            pass
+
+
 def request(
     method: str,
     path: str,
@@ -142,6 +159,7 @@ def request(
                 cache,
                 json.dumps({"url": url + path, "saved_at": time.time(), "status": result.status, "body": result.body}),
             )
+            _prune(cache_dir)
         except OSError:
             pass
     return result
