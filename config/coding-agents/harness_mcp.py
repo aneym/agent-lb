@@ -176,8 +176,10 @@ def ensure_harness_mcp(host_home, run):
     for harness, (_, path) in paths.items():
         if not installed[harness]:
             continue
-        if path.is_symlink() or not path.resolve().is_relative_to(home):
-            raise ValueError(f"MCP config must be a regular file inside host home: {harness}")
+        path = path.resolve()
+        if not path.is_relative_to(home.resolve()) or (path.exists() and not path.is_file()):
+            result[harness] = "refused:outside-home"
+            continue
         before = path.read_text() if path.exists() else ""
         if harness == "claude":
             current = read_servers(path)
