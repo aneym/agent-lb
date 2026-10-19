@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  printf '%s\n' 'usage: ./check [--staged]' >&2
+}
+
+mode=all
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --staged) mode=staged ;;
+    *) usage; exit 2 ;;
+  esac
+  shift
+done
+
+run_step() {
+  name=$1
+  shift
+  start=$(date +%s)
+  set +e
+  "$@"
+  result=$?
+  set -e
+  elapsed=$(($(date +%s) - start))
+  printf '%s: %s s\n' "$name" "$elapsed"
+  return "$result"
+}
+
+run_step 'make lint' make lint
+run_step 'make test-floor' make test-floor
+if [ "$mode" = staged ]; then
+  run_step 'filecap check --staged' filecap check --staged
+else
+  run_step 'filecap check' filecap check
+fi
