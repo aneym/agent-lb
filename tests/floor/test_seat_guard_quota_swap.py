@@ -128,7 +128,7 @@ def test_quota_mode_fail_open_and_anthropic_noop(tmp_path, body):
     ("seat", "target"),
     [
         ("sonnet-implementer-local", "gpt-implementer-local"),
-        ("opus-seat-local", "codex-sol-local"),
+        ("opus-seat-local", None),
         ("verifier-local", "codex-verifier-local"),
         ("lab-python-verifier-local", "codex-verifier-local"),
     ],

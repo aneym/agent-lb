@@ -86,7 +86,7 @@ def quota_swap_seat(subagent: str) -> str | None:
         target = "codex-verifier"
     elif subagent.startswith("sonnet-implementer"):
         target = "gpt-implementer"
-    elif subagent.startswith("opus-seat"):
+    elif subagent in {"opus-seat", "opus-seat-full"}:
         target = "codex-sol"
     if target and subagent.endswith("-local"):
         target += "-local"
