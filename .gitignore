@@ -63,3 +63,5 @@ excalidraw.log
 .agents/scheduled_tasks.lock
 
 /openspec/changes/macos-menubar-app/menubar-glass.json
+
+features/.gen/

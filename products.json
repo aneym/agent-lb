@@ -1,0 +1,13 @@
+{
+  "products": [
+    {
+      "id": "agent-lb",
+      "title": "agent-lb API and operator tools",
+      "owner": "weekend-finish",
+      "paths": ["app/modules/", "app/cli.py", "app/audit_*.py", "app/latency_cli.py", "app/db/migrate.py", "app/startup_benchmark.py", "features/"],
+      "release": "agent-lb",
+      "features": "features/agent-lb",
+      "inventory": "python3 -c \"import json; print(json.dumps({\\\"route\\\": [\\\"/health\\\", \\\"/api/accounts\\\", \\\"/api/api-keys\\\", \\\"/api/audit-logs\\\", \\\"/api/conversation-archive/files\\\", \\\"/api/dashboard/overview\\\", \\\"/api/dashboard-auth/session\\\", \\\"/api/federation/checkin\\\", \\\"/api/firewall/ips\\\", \\\"/api/oauth/start\\\", \\\"/api/pools\\\", \\\"/backend-api/codex/responses\\\", \\\"/v1/chat/completions\\\", \\\"/api/usage/public\\\", \\\"/api/quota-planner/forecast\\\", \\\"/api/receipts/summary\\\", \\\"/api/reports\\\", \\\"/api/request-logs\\\", \\\"/api/routing-policy/versions\\\", \\\"/api/menu\\\", \\\"/api/runtime/version\\\", \\\"/api/sessions\\\", \\\"/api/settings\\\", \\\"/api/sticky-sessions\\\", \\\"/api/team/members\\\", \\\"/api/usage/instances\\\", \\\"/api/accounts/resume-at\\\", \\\"/api/accounts/availability\\\", \\\"/api/account-resume-schedules\\\"], \\\"cli\\\": [\\\"agent-lb\\\", \\\"agent-lb-db\\\", \\\"agent-lb-startup\\\"]}))\""
+    }
+  ]
+}

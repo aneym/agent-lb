@@ -38,3 +38,4 @@ if [ "$mode" = staged ]; then
 else
   run_step 'filecap check' filecap check --rev HEAD
 fi
+run_step 'feature-map check' /Volumes/StudioExt/repos/agent-plugin-kit/bin/feature-map check --repo .
