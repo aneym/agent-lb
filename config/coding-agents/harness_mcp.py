@@ -103,8 +103,9 @@ def ensure_harness_mcp(host_home, run):
         elif harness == "cursor":
             entries = json.loads(re.sub(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}", r"${\1}", json.dumps(entries)))
         fallbacks.append(entries)
-    for pattern in ("**/*.json", "**/*.toml"):
-        fallbacks.extend(read_servers(path) for path in sorted(Path(__file__).parent.glob(pattern)))
+    bundled = Path(__file__).resolve().parent if Path(__file__).is_file() else None
+    for pattern in ("**/*.json", "**/*.toml") if bundled else ():
+        fallbacks.extend(read_servers(path) for path in sorted(bundled.glob(pattern)))
     for name in ("agent", "unblock", "exa"):
         for entries in [*plugin_sources, *(fallbacks if name != "agent" else [])]:
             if name not in servers and name in entries:
@@ -142,6 +143,10 @@ def ensure_harness_mcp(host_home, run):
                     alternative = home / ".agent-rails/tools/agent-plugin-kit/bin/agent-kit-mcp"
                     if alternative.is_file():
                         wanted["command"] = str(alternative)
+                if name == "unblock" and wanted["args"] and not Path(wanted["args"][0]).exists():
+                    alternative = home / "repos/personal/unblock/bin/unblock.js"
+                    if alternative.is_file():
+                        wanted["args"][0] = str(alternative)
                 command = wanted["command"]
                 unavailable = not shutil.which(command, path=search_path)
                 unavailable |= any(value.startswith(str(home) + "/") and not Path(value).exists()
