@@ -33,7 +33,7 @@
   "config/coding-agents/hooks/hook-dispatch.py": 56671,
   "config/coding-agents/hooks/subagent-closeout.py": 26431,
   "config/coding-agents/hooks/wide-scan-guard.sh": 23431,
-  "config/coding-agents/install-policy.py": 91288,
+  "config/coding-agents/install-policy.py": 90545,
   "config/coding-agents/routing-table.json": 42273,
   "config/coding-agents/verify-routing": 37369,
   "openspec/changes/add-lb-sandbox/specs/lb-sandbox/spec.md": 23541,

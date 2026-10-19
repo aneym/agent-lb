@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from harness_mcp import ensure_harness_mcp
+
 START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
 CODEX_START = "<!-- agent-lb:codex-agents:start -->"
@@ -125,6 +127,7 @@ POLICY_FILES = (
     "ROUTING.md",
     "claude-adapter.md",
     "install-policy.py",
+    "harness_mcp.py",
     "verify-routing",
     "routing-table.json",
     "quota-swap.json",
@@ -1356,14 +1359,7 @@ def reconcile_settings(
             group = {"hooks": [dict(hook)]}
             if matcher is not None:
                 group["matcher"] = matcher
-            if hook is RAILWAY_GUARD_HOOK and source is None:
-                workflow_index = next(
-                    (i for i, existing in enumerate(event_groups) if existing.get("matcher") == "Workflow"),
-                    len(event_groups),
-                )
-                event_groups.insert(workflow_index, group)
-            else:
-                event_groups.append(group)
+            event_groups.append(group)
     if not uninstall and source is not None:
         internal_hook_commands(updated.get("hooks", {}), source)
     dedupe_hooks(updated.get("hooks"))
@@ -1506,6 +1502,12 @@ def sync_policy_boxes(home: Path) -> None:
                     check=True,
                     timeout=60,
                 )
+            mcp = subprocess.run(
+                [*ssh, host, "python3 -"],
+                input=Path(__file__).with_name("harness_mcp.py").read_text(),
+                capture_output=True, text=True, check=True, timeout=60,
+            )
+            print(f"box MCP {host}: {mcp.stdout.strip()}")
             result = subprocess.run([*ssh, host, verify], capture_output=True, text=True, check=True, timeout=60)
             actual = json.loads(result.stdout)
             if any(actual.get(key) != value for key, value in expected.items()):
@@ -1587,8 +1589,6 @@ def main() -> int:
     snapshot = None if args.uninstall else policy_snapshot(source, args.home)
     if args.check:
         return check_policy(source, args.home, snapshot)
-    if not (args.preview or args.uninstall):
-        verify_install_revision(source, args.force, args.reason, args.home)
     claude_path = args.home / ".claude" / "CLAUDE.md"
     codex_path = args.home / ".codex" / "AGENTS.md"
     template = (source / "claude-adapter.md").read_text()
@@ -1985,6 +1985,8 @@ def main() -> int:
         if not changes:
             print("managed routing configuration already converged")
         return 0
+    if not args.uninstall:
+        print("local MCP: " + json.dumps(ensure_harness_mcp(args.home, subprocess.run), sort_keys=True))
     if not changes:
         for reason, path in preserved_agents:
             print(f"preserved {reason} {path}")
