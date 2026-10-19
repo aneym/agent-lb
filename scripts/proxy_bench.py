@@ -4,13 +4,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import cProfile
-import gzip
 import json
 import math
 import os
-import re
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -23,8 +22,11 @@ import aiohttp
 from aiohttp import http_parser, web, web_protocol
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts.bench_upstream import Fake, Upstream
+
 METRICS = ("ttfb_ms", "first_event_ms", "last_event_ms", "total_ms", "event_delivery_ms")
-TEXT = "We measure each event carefully as the local server streams a steady sequence of small text updates. "
 
 
 def arguments():
@@ -34,6 +36,7 @@ def arguments():
     parser.add_argument("--events", type=int, default=200)
     parser.add_argument("--gap-ms", type=float, default=2)
     parser.add_argument("--out", type=Path, default=Path("proxy-bench.json"))
+    parser.add_argument("--usage-out", type=Path)
     parser.add_argument("--profile", type=Path)
     parser.add_argument("--serve", type=int, help="child")
     args = parser.parse_args()
@@ -112,120 +115,6 @@ def serve(args):
             prof.dump_stats(str(args.profile))
 
 
-class Upstream(web.Server):
-    def __init__(self, handler):
-        super().__init__(handler)
-        self.tcp = 0
-
-    def connection_made(self, handler, transport):
-        self.tcp += 1
-        super().connection_made(handler, transport)
-
-
-class Fake:
-    def __init__(self, args):
-        self.opts = args
-        self.sent_at = {}
-        self.requests = []
-
-    async def handle(self, request):
-        raw = await request.read()
-        if request.headers.get("Content-Encoding") == "gzip" and raw.startswith(b"\x1f\x8b"):
-            raw = gzip.decompress(raw)
-        if not raw:
-            return web.json_response({"error": f"unexpected {request.method} {request.path}"}, status=404)
-        body = json.loads(raw)
-        match = re.search(r"bench-[a-z]+-[0-9]+", json.dumps(body))
-        if match is None:
-            return web.json_response({"error": "bad request"}, status=400)
-        key = match.group()
-        self.requests.append({"key": key, "path": request.path})
-        anthropic = request.path.endswith("/messages")
-        response = web.StreamResponse(headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"})
-        await response.prepare(request)
-        sent = []
-        self.sent_at[key] = sent
-
-        async def emit(event):
-            payload = f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode()
-            stamp = time.perf_counter()
-            await response.write(payload)
-            if event["type"] in ("content_block_delta", "response.output_text.delta"):
-                sent.append(stamp)
-
-        model = body["model"]
-        usage = {"input_tokens": 20, "output_tokens": self.opts.events * 20}
-        message = {
-            "id": "msg_bench",
-            "type": "message",
-            "role": "assistant",
-            "model": model,
-            "content": [],
-            "stop_reason": None,
-            "stop_seq": None,
-            "usage": {"input_tokens": 20, "output_tokens": 0},
-        }
-        result = {
-            "id": "resp_bench",
-            "object": "response",
-            "created_at": 1,
-            "status": "in_progress",
-            "model": model,
-            "output": [],
-        }
-        if anthropic:
-            await emit({"type": "message_start", "message": message})
-            await emit({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
-        else:
-            await emit({"type": "response.created", "sequence_number": 0, "response": result})
-        for index in range(self.opts.events):
-            await asyncio.sleep(self.opts.gap_ms / 1000)
-            if anthropic:
-                event = {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": TEXT}}
-            else:
-                event = {
-                    "type": "response.output_text.delta",
-                    "sequence_number": index + 1,
-                    "item_id": "msg_bench",
-                    "output_index": 0,
-                    "content_index": 0,
-                    "delta": TEXT,
-                }
-            await emit(event)
-        if anthropic:
-            await emit({"type": "content_block_stop", "index": 0})
-            await emit(
-                {
-                    "type": "message_delta",
-                    "delta": {"stop_reason": "end_turn", "stop_seq": None},
-                    "usage": {"output_tokens": usage["output_tokens"]},
-                }
-            )
-            await emit({"type": "message_stop"})
-        else:
-            result.update(
-                status="completed",
-                output=[
-                    {
-                        "id": "msg_bench",
-                        "type": "message",
-                        "role": "assistant",
-                        "status": "completed",
-                        "content": [{"type": "output_text", "text": TEXT * self.opts.events, "annotations": []}],
-                    }
-                ],
-                usage={
-                    **usage,
-                    "total_tokens": sum(usage.values()),
-                    "input_tokens_details": {"cached_tokens": 0},
-                    "output_tokens_details": {"reasoning_tokens": 0},
-                },
-            )
-            await emit({"type": "response.completed", "sequence_number": self.opts.events + 1, "response": result})
-        await response.write_eof()
-        return response
-
-
 def stats(values):
     ordered = sorted(values)
     if not ordered:
@@ -253,7 +142,7 @@ async def drive(session, base, path, kind, key, args, fake):
     deltas = []
     types = []
     buffer = b""
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "x-request-id": key}
     async with session.post(
         base + path, data=json.dumps(body), headers=headers, skip_auto_headers={"Content-Type"}
     ) as response:
@@ -398,6 +287,7 @@ async def bench(args, data, stack, async_stack):
             "paths": {},
         }
         seq = 0
+        logged_keys = []
         for kind, path, direct_path in (
             ("anthropic", "/v1/messages", "/v1/messages"),
             ("codex", "/v1/responses", "/codex/responses"),
@@ -412,6 +302,9 @@ async def bench(args, data, stack, async_stack):
                 for _ in range(args.runs):
                     seq += 1
                     keys.append(f"bench-request-{seq}")
+
+                if mode == "via_lb":
+                    logged_keys.extend(keys)
 
                 async def one(key):
                     async with semaphore:
@@ -454,6 +347,19 @@ async def bench(args, data, stack, async_stack):
         await asyncio.to_thread(child.wait, 30)
         if child.returncode not in (0, -signal.SIGTERM):
             raise RuntimeError(f"server exited {child.returncode}")
+        if args.usage_out:
+            with sqlite3.connect(data / "store.db") as database:
+                database.row_factory = sqlite3.Row
+                rows = database.execute(
+                    "SELECT request_id, input_tokens, output_tokens, cached_input_tokens, "
+                    "cache_creation_tokens, cache_creation_tier, cache_read_tokens, reasoning_tokens, "
+                    "cost_usd, status, model FROM request_logs ORDER BY request_id"
+                ).fetchall()
+            if sorted(row["request_id"] for row in rows) != sorted(logged_keys):
+                raise RuntimeError("request_logs must contain exactly one row per proxied request")
+            args.usage_out.parent.mkdir(parents=True, exist_ok=True)
+            args.usage_out.write_text(json.dumps([dict(row) for row in rows], indent=2) + "\n")
+            print(f"Usage rows: {len(rows)}; JSON: {args.usage_out.resolve()}")
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(summary, indent=2) + "\n")
         print("path route: TTFB, first SSE, last SSE, total, event delivery (ms median/p90)")
