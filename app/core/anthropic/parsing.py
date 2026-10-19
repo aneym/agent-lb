@@ -15,7 +15,7 @@ from app.core.anthropic.models import (
     AnthropicUsage,
     merge_usage_values,
 )
-from app.core.utils.sse import parse_sse_data_json
+from app.core.utils.sse import extract_sse_data, parse_sse_data_json
 
 _EVENT_ADAPTER = TypeAdapter(AnthropicEvent)
 
@@ -42,6 +42,7 @@ def usage_from_events(events: Iterable[AnthropicEvent]) -> AnthropicUsage | None
 
 _EVENT_NAME_RE = re.compile(r"^event:[ \t]*([^\n]*?)[ \t]*$", re.MULTILINE)
 _SKIPPED_EVENTS = frozenset(("content_block_start", "content_block_delta", "content_block_stop", "ping"))
+_PAYLOAD_TYPE_RE = re.compile(r'^\{\s*"type"\s*:\s*"([^"\\]*)"')
 _FIRST_OUTPUT_EVENT_RE = re.compile(r"^event:[ \t]*content_block_(?:start|delta)[ \t]*$", re.MULTILINE)
 
 
@@ -53,10 +54,8 @@ def collect_usage_from_chunk(
 
     error_event: AnthropicErrorEvent | None = None
     saw_output = False
-    text = chunk.decode("utf-8", errors="replace")
-    if text_buffer.endswith("\r") and text.startswith("\n"):
-        text_buffer = text_buffer[:-1]
-    normalized = text_buffer + text.replace("\r\n", "\n")
+    text_buffer += chunk.decode("utf-8", errors="replace")
+    normalized = text_buffer.replace("\r\n", "\n")
     while "\n\n" in normalized:
         block, normalized = normalized.split("\n\n", 1)
 
@@ -64,7 +63,10 @@ def collect_usage_from_chunk(
             saw_output = True
         names = _EVENT_NAME_RE.findall(block)
         if len(names) == 1 and names[0] in _SKIPPED_EVENTS:
-            continue
+            payload = extract_sse_data(block)
+            payload_type = _PAYLOAD_TYPE_RE.match(payload) if payload is not None else None
+            if payload_type is not None and payload_type[1] == names[0]:
+                continue
         event = parse_sse_event(block)
         if isinstance(event, AnthropicContentBlockStartEvent | AnthropicContentBlockDeltaEvent):
             saw_output = True
