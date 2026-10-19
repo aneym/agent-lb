@@ -116,50 +116,62 @@ def ensure_harness_mcp(host_home, run):
     for name in ("agent", "unblock", "exa"):
         if name not in servers:
             continue
-        entry = servers[name]
-        if not isinstance(entry, dict):
-            raise ValueError(f"invalid MCP source entry: {name}")
-        transport = entry.get("type", "stdio" if "command" in entry else "http")
-        if transport not in ("stdio", "http"):
-            raise ValueError(f"unsupported MCP transport: {name}")
-        wanted = {key: entry[key] for key in ("command", "args", "env") if key in entry} if transport == "stdio" else {
-            key: entry[key] for key in ("url", "headers") if key in entry
-        }
-        def local_path(value):
-            value = re.sub(r"^(?:/Users/[^/]+|/home/[^/]+)(?=/)", "$HOME", value)
-            return value.replace("${HOME}", str(home)).replace("$HOME", str(home))
+        try:
+            entry = servers[name]
+            if not isinstance(entry, dict):
+                raise ValueError(f"invalid MCP source entry: {name}")
+            if name == "unblock" and any(
+                not isinstance(value, str) or not reference.fullmatch(value)
+                for key in ("env", "headers") for value in entry.get(key, {}).values()
+            ):
+                entry = CANONICAL_SERVERS[name]
+            transport = entry.get("type", "stdio" if "command" in entry else "http")
+            if transport not in ("stdio", "http"):
+                raise ValueError(f"unsupported MCP transport: {name}")
+            wanted = {key: entry[key] for key in ("command", "args", "env") if key in entry} if transport == "stdio" else {
+                key: entry[key] for key in ("url", "headers") if key in entry
+            }
+            def local_path(value):
+                value = re.sub(r"^(?:/Users/[^/]+|/home/[^/]+)(?=/)", "$HOME", value)
+                return value.replace("${HOME}", str(home)).replace("$HOME", str(home))
 
-        if transport == "stdio":
-            wanted["command"] = local_path(wanted["command"])
-            wanted["args"] = [local_path(value) for value in wanted.get("args", [])]
-            if name == "agent" and not Path(wanted["command"]).is_file():
-                alternative = home / ".agent-rails/tools/agent-plugin-kit/bin/agent-kit-mcp"
-                if alternative.is_file():
-                    wanted["command"] = str(alternative)
-            command = wanted["command"]
-            unavailable = not shutil.which(command, path=search_path)
-            unavailable |= any(value.startswith(str(home) + "/") and not Path(value).exists()
-                               for value in wanted["args"])
-            if unavailable:
-                result["_" + name] = "absent:" + name
-                continue
-        endpoint = wanted.get("command") if transport == "stdio" else wanted.get("url")
-        if not isinstance(endpoint, str) or not endpoint:
-            raise ValueError(f"missing MCP endpoint: {name}")
-        if transport == "http":
-            url = urlsplit(endpoint)
-            if url.username or url.password or url.query or url.fragment:
-                raise ValueError(f"MCP URL must not contain credentials or query values: {name}")
-        if any(not isinstance(value, str) or not reference.fullmatch(value)
-               for key in ("env", "headers") for value in wanted.get(key, {}).values()):
-            raise ValueError(f"MCP credentials must be environment references: {name}")
-        if not isinstance(wanted.get("args", []), list) or any(not isinstance(value, str) for value in wanted.get("args", [])):
-            raise ValueError(f"invalid MCP arguments: {name}")
-        args = wanted.get("args", [])
-        if any(re.search(r"(?i)(?:token|api[_-]?key|password|secret)[=:]", value) and not reference.search(value)
-               for value in [endpoint, *args]):
-            raise ValueError(f"inline MCP credential refused: {name}")
-        desired[name] = wanted
+            if transport == "stdio":
+                wanted["command"] = local_path(wanted["command"])
+                wanted["args"] = [local_path(value) for value in wanted.get("args", [])]
+                if name == "agent" and not Path(wanted["command"]).is_file():
+                    alternative = home / ".agent-rails/tools/agent-plugin-kit/bin/agent-kit-mcp"
+                    if alternative.is_file():
+                        wanted["command"] = str(alternative)
+                command = wanted["command"]
+                unavailable = not shutil.which(command, path=search_path)
+                unavailable |= any(value.startswith(str(home) + "/") and not Path(value).exists()
+                                   for value in wanted["args"])
+                if unavailable:
+                    result["_" + name] = "absent:" + name
+                    result.setdefault("_unresolved", []).append(name)
+                    continue
+            endpoint = wanted.get("command") if transport == "stdio" else wanted.get("url")
+            if not isinstance(endpoint, str) or not endpoint:
+                raise ValueError(f"missing MCP endpoint: {name}")
+            if transport == "http":
+                url = urlsplit(endpoint)
+                if url.username or url.password or url.query or url.fragment:
+                    raise ValueError(f"MCP URL must not contain credentials or query values: {name}")
+            if any(not isinstance(value, str) or not reference.fullmatch(value)
+                   for key in ("env", "headers") for value in wanted.get(key, {}).values()):
+                raise ValueError(f"MCP credentials must be environment references: {name}")
+            if not isinstance(wanted.get("args", []), list) or any(not isinstance(value, str) for value in wanted.get("args", [])):
+                raise ValueError(f"invalid MCP arguments: {name}")
+            args = wanted.get("args", [])
+            if any(re.search(r"(?i)(?:token|api[_-]?key|password|secret)[=:]", value) and not reference.search(value)
+                   for value in [endpoint, *args]):
+                raise ValueError(f"inline MCP credential refused: {name}")
+            if installed["codex"] and any(reference.fullmatch(value)[1] != key
+                                          for key, value in wanted.get("env", {}).items()):
+                raise ValueError(f"Codex env aliases unsupported: {name}")
+            desired[name] = wanted
+        except (ValueError, KeyError, TypeError, AttributeError):
+            result.setdefault("_unresolved", []).append(name)
     changes = []
     for harness, (_, path) in paths.items():
         if not installed[harness]:
@@ -193,8 +205,6 @@ def ensure_harness_mcp(host_home, run):
             for name, entry in desired.items():
                 item = {key: value for key, value in entry.items() if key in ("command", "args", "url")}
                 if "env" in entry:
-                    if any(reference.fullmatch(value)[1] != key for key, value in entry["env"].items()):
-                        raise ValueError(f"Codex env aliases unsupported: {name}")
                     item["env_vars"] = list(entry["env"])
                 if "headers" in entry:
                     item["env_http_headers"] = {key: reference.fullmatch(value)[1] for key, value in entry["headers"].items()}
