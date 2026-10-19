@@ -58,11 +58,11 @@ ALLOWED_SERVICE_INTERNAL_IMPORTS = {
 
 ALLOWED_SERVICE_IMPORT_DOMAINS_BY_DOMAIN = {
     "api_key_usage": {"support"},
-    "codex_control": {"support"},
+    "codex_control": {"codex_control_context", "support"},
     "compact": {"support"},
-    "file_ops": {"support"},
+    "file_ops": {"file_transfer", "support"},
     "http_bridge": {"api_key_usage", "compact", "http_bridge", "observability", "support", "warmup"},
-    "response_create": {"support"},
+    "response_create": {"response_create_diagnostics", "support"},
     "streaming": {
         "api_key_usage",
         "compact",
