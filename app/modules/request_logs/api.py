@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.utils.time import utcnow
@@ -58,6 +58,26 @@ def _parse_model_option(value: str) -> ServiceRequestLogModelOption | None:
     return ServiceRequestLogModelOption(model=model, reasoning_effort=effort or None)
 
 
+def _parse_timestamp(value: str | None, parameter: str) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        try:
+            seconds = float(value)
+        except ValueError:
+            parsed = datetime.fromisoformat(value)
+        else:
+            parsed = datetime.fromtimestamp(seconds, tz=timezone.utc)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError, OSError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {parameter}: expected an ISO 8601 timestamp or epoch seconds",
+        ) from exc
+
+
 @router.get("", response_model=RequestLogsResponse)
 async def list_request_logs(
     limit: int = Query(50, ge=1, le=1000),
@@ -70,8 +90,8 @@ async def list_request_logs(
     model: list[str] | None = Query(default=None),
     reasoning_effort: list[str] | None = Query(default=None, alias="reasoningEffort"),
     model_option: list[str] | None = Query(default=None, alias="modelOption"),
-    since: datetime | None = Query(default=None),
-    until: datetime | None = Query(default=None),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
     context: RequestLogsContext = Depends(get_request_logs_context),
 ) -> RequestLogsResponse:
     parsed_options: list[ServiceRequestLogModelOption] | None = None
@@ -82,8 +102,8 @@ async def list_request_logs(
         limit=limit,
         offset=offset,
         search=search,
-        since=since,
-        until=until,
+        since=_parse_timestamp(since, "since"),
+        until=_parse_timestamp(until, "until"),
         account_ids=account_id,
         api_key_ids=api_key_id,
         model_options=parsed_options,
@@ -107,8 +127,8 @@ async def list_request_log_filter_options(
     model: list[str] | None = Query(default=None),
     reasoning_effort: list[str] | None = Query(default=None, alias="reasoningEffort"),
     model_option: list[str] | None = Query(default=None, alias="modelOption"),
-    since: datetime | None = Query(default=None),
-    until: datetime | None = Query(default=None),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
     context: RequestLogsContext = Depends(get_request_logs_context),
 ) -> RequestLogFilterOptionsResponse:
     _ = status
@@ -117,8 +137,8 @@ async def list_request_log_filter_options(
         parsed = [_parse_model_option(value) for value in model_option]
         parsed_options = [value for value in parsed if value is not None] or None
     options = await context.service.list_filter_options(
-        since=since,
-        until=until,
+        since=_parse_timestamp(since, "since"),
+        until=_parse_timestamp(until, "until"),
         account_ids=account_id,
         api_key_ids=api_key_id,
         model_options=parsed_options,

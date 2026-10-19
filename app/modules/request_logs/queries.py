@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import String, and_, cast, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.utils.time import to_utc_naive
 from app.db.models import Account, ApiKey, RequestLog
 
 
@@ -184,9 +185,9 @@ class RequestLogQueries:
         if exclude_soft_deleted:
             conditions.append(RequestLog.deleted_at.is_(None))
         if since is not None:
-            conditions.append(RequestLog.requested_at >= since)
+            conditions.append(RequestLog.requested_at >= to_utc_naive(since))
         if until is not None:
-            conditions.append(RequestLog.requested_at <= until)
+            conditions.append(RequestLog.requested_at <= to_utc_naive(until))
         if account_ids:
             conditions.append(RequestLog.account_id.in_(account_ids))
         if api_key_ids:
