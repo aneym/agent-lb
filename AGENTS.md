@@ -42,3 +42,5 @@ Repo-specific coding standards: `CODING_STANDARDS.md`.
 The serving machine runs the launchd service on `http://127.0.0.1:2455`; see `scripts/install-service.sh`.
 Worktree setup: `sh scripts/worktree-setup.sh`; use `.venv/bin/python` or `uv run --no-sync`, not `uv sync`.
 New machine setup: `GETTING-STARTED.md`; account operations: `.agents/skills/agent-lb-account-operator/SKILL.md`.
+
+No unit tests (Alex, 2026-10-19). Prove behavior through the running app, HTTP, a CLI subprocess, MCP transport or a real install. Keep kept-floor guards (outbound approval, spend caps, destructive-data approval, secret redaction, Alex’s credentials) and never thin them. Delete unit tests you touch.
