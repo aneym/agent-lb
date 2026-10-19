@@ -22,15 +22,12 @@ from yarl import URL
 from app.core import upload_admission
 from app.core.anthropic.identity import ensure_claude_code_identity_body
 from app.core.anthropic.models import (
-    AnthropicContentBlockDeltaEvent,
-    AnthropicContentBlockStartEvent,
     AnthropicErrorEvent,
     AnthropicMessageRequest,
     AnthropicUsage,
     cache_creation_1h_tokens,
-    merge_usage_values,
 )
-from app.core.anthropic.parsing import parse_sse_event
+from app.core.anthropic.parsing import collect_usage_from_chunk as _collect_usage_from_chunk
 from app.core.anthropic.quota_headers import capture_unified_headers
 from app.core.anthropic.quota_headers import parse_unified_utilization as _parse_unified_utilization
 from app.core.anthropic.quota_keys import model_quota_key
@@ -2624,40 +2621,6 @@ def _merge_anthropic_beta_header(headers: dict[str, str], required_betas: list[s
         seen.add(normalized)
     if merged:
         headers[beta_key] = ", ".join(merged)
-
-
-_FIRST_OUTPUT_EVENT_RE = re.compile(r"^event:[ \t]*content_block_(?:start|delta)[ \t]*$", re.MULTILINE)
-
-
-def _collect_usage_from_chunk(
-    text_buffer: str,
-    chunk: bytes,
-    usage: AnthropicUsage | None,
-) -> tuple[str, AnthropicUsage | None, AnthropicErrorEvent | None, bool]:
-
-    error_event: AnthropicErrorEvent | None = None
-    saw_output = False
-    text_buffer += chunk.decode("utf-8", errors="replace")
-    normalized = text_buffer.replace("\r\n", "\n")
-    while "\n\n" in normalized:
-        block, normalized = normalized.split("\n\n", 1)
-
-        if _FIRST_OUTPUT_EVENT_RE.search(block):
-            saw_output = True
-        event = parse_sse_event(block)
-        if isinstance(event, AnthropicContentBlockStartEvent | AnthropicContentBlockDeltaEvent):
-            saw_output = True
-        if event is None:
-            continue
-        if isinstance(event, AnthropicErrorEvent):
-            error_event = event
-            continue
-        event_usage = getattr(event, "usage", None)
-        message = getattr(event, "message", None)
-        if event_usage is None and message is not None:
-            event_usage = message.usage
-        usage = merge_usage_values(usage, event_usage)
-    return normalized, usage, error_event, saw_output
 
 
 def _usage_from_json_body(raw: bytes) -> AnthropicUsage | None:
