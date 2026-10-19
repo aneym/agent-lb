@@ -87,9 +87,15 @@ def test_unparsable_non_floor_warns_and_allows(tmp_path):
     assert "WARNING:" in result.stderr
 
 
-def test_installer_revision_refuses_stale_and_passes_descendant(tmp_path):
+def test_installer_revision_refuses_stale_and_passes_descendant(tmp_path, monkeypatch):
 
     import runpy
+
+    for key in tuple(os.environ):
+        if key.startswith("GIT_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
     installer = GUARD.parent.parent / "install-policy.py"
     verify = runpy.run_path(str(installer))["verify_install_revision"]
@@ -97,7 +103,7 @@ def test_installer_revision_refuses_stale_and_passes_descendant(tmp_path):
     repo = tmp_path / "work"
 
     def git(*args, cwd=None):
-        return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+        return subprocess.run(["git", "-C", str(cwd or tmp_path), *args], check=True, capture_output=True, text=True)
 
     git("init", "--bare", str(remote))
     git("clone", str(remote), str(repo))
