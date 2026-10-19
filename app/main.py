@@ -22,6 +22,7 @@ from starlette.staticfiles import StaticFiles
 from app.core import upload_throttle
 from app.core.auth.guardian import build_auth_guardian_scheduler
 from app.core.bootstrap import ensure_auto_bootstrap_token, log_bootstrap_token
+from app.core.clients.codex_pool import close_codex_pool
 from app.core.clients.http import close_http_client, init_http_client
 from app.core.config.settings import _bridge_advertise_hostname_is_replica_specific, get_settings
 from app.core.config.settings_cache import get_settings_cache
@@ -341,12 +342,12 @@ async def lifespan(app: FastAPI):
             try:
                 await proxy_service.mark_http_bridge_draining()
             except Exception:
-                logger.warning("Failed to mark HTTP bridge durable sessions draining during shutdown", exc_info=True)
+                logger.warning("HTTP bridge drain failed", exc_info=True)
         if proxy_service is not None and hasattr(proxy_service, "close_all_http_bridge_sessions"):
             try:
                 await proxy_service.close_all_http_bridge_sessions()
             except Exception:
-                logger.warning("Failed to close HTTP bridge sessions during shutdown", exc_info=True)
+                logger.warning("HTTP bridge close failed", exc_info=True)
 
         if heartbeat_task is not None:
             heartbeat_task.cancel()
@@ -391,15 +392,16 @@ async def lifespan(app: FastAPI):
         await seat_quota_scheduler.stop()
         await usage_scheduler.stop()
         try:
+            await close_codex_pool()
             await close_http_client()
         finally:
             try:
                 if metrics_server_task is not None:
                     await asyncio.wait_for(metrics_server_task, timeout=5)
             except TimeoutError:
-                logger.warning("Timed out waiting for metrics server shutdown")
+                logger.warning("Metrics shutdown timed out")
             except Exception:
-                logger.exception("Metrics server stopped with an error")
+                logger.exception("Metrics server failed")
             finally:
                 await node_cache.stop()
                 shutdown_state.reset()

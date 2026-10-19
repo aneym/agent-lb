@@ -43,9 +43,9 @@ from app.core.clients.codex import (
     CodexClient,
     CodexTransportError,
     codex_transport_error_message,
-    create_codex_session,
     require_route_or_direct_egress_opt_in,
 )
+from app.core.clients.codex_pool import acquire_codex_client, release_codex_client
 from app.core.clients.http import acquire_http_client, lease_http_session
 from app.core.config.settings import Settings, get_settings
 from app.core.conversation_archive import archive_json, archive_text
@@ -1527,12 +1527,10 @@ async def _stream_responses_via_websocket(
         _remaining_total_timeout(effective_total_timeout, request_started_at, time.monotonic())
         or effective_connect_timeout,
     )
-    owns_codex_client = False
     websocket_context: Any | None = None
     active_codex_client: CodexClient | None = None
     if route is not None:
-        owns_codex_client = codex_client is None
-        active_codex_client = codex_client or CodexClient(create_codex_session())
+        active_codex_client = codex_client or await acquire_codex_client(account_id, route)
         try:
             opener = getattr(active_codex_client, "open_ws_with_route_metadata", None)
             if callable(opener):
@@ -1566,8 +1564,7 @@ async def _stream_responses_via_websocket(
                     websocket_context = None
         except Exception as exc:
             await _record_lifecycle_failure(exc)
-            if owns_codex_client:
-                await active_codex_client.close()
+            await release_codex_client(active_codex_client)
             raise
     else:
         refused = 0
@@ -1697,8 +1694,7 @@ async def _stream_responses_via_websocket(
             else:
                 await _close_unmanaged_websocket(websocket)
         finally:
-            if owns_codex_client and active_codex_client is not None:
-                await active_codex_client.close()
+            await release_codex_client(active_codex_client)
             await _release_bound_half_open_probe(websocket)
 
 
@@ -2302,8 +2298,7 @@ async def _stream_responses_with_session(
 
         body_kwargs = _json_body_kwargs(payload_dict, gzipped_payload, current_headers)
         if route is not None:
-            owns_codex_client = codex_client is None
-            active_codex_client = codex_client or CodexClient(create_codex_session())
+            active_codex_client = codex_client or await acquire_codex_client(account_id, route)
             try:
                 request_kwargs: dict[str, Any] = {
                     **body_kwargs,
@@ -2384,8 +2379,7 @@ async def _stream_responses_with_session(
                         break
                 return
             finally:
-                if owns_codex_client:
-                    await active_codex_client.close()
+                await release_codex_client(active_codex_client)
 
         async with _service_circuit_breaker_context(
             client_session.post(
@@ -2991,8 +2985,7 @@ class _CompactCommandTransport:
         body_kwargs = _json_body_kwargs(payload_dict, gzipped_payload, upstream_headers)
         try:
             if self.route is not None:
-                owns_codex_client = self.codex_client is None
-                active_codex_client = self.codex_client or CodexClient(create_codex_session())
+                active_codex_client = self.codex_client or await acquire_codex_client(self.account_id, self.route)
                 request_kwargs: dict[str, Any] = dict(body_kwargs)
                 if compact_timeout_seconds is not None:
                     request_kwargs["timeout"] = compact_timeout_seconds
@@ -3008,8 +3001,7 @@ class _CompactCommandTransport:
                         if self.route_trace is not None:
                             self.route_trace.record(route=self.route, fallback_used=False)
                 finally:
-                    if owns_codex_client:
-                        await active_codex_client.close()
+                    await release_codex_client(active_codex_client)
                 status_code = _codex_response_status(resp)
                 if status_code >= 400:
                     error_payload = await _codex_error_payload_from_response(resp)
@@ -3403,8 +3395,7 @@ async def thread_goal_request(
         else:
             request_kwargs["json"] = payload_dict
         if route is not None:
-            owns_codex_client = codex_client is None
-            active_codex_client = codex_client or CodexClient(create_codex_session())
+            active_codex_client = codex_client or await acquire_codex_client(account_id, route)
             try:
                 request_with_metadata = getattr(active_codex_client, "request_with_route_metadata", None)
                 if callable(request_with_metadata):
@@ -3417,10 +3408,7 @@ async def thread_goal_request(
                     if route_trace is not None:
                         route_trace.record(route=route, fallback_used=False)
             finally:
-                if owns_codex_client:
-                    close = getattr(active_codex_client, "close", None)
-                    if callable(close):
-                        await close()
+                await release_codex_client(active_codex_client)
             status_code = _codex_response_status(response)
             if status_code >= 400:
                 error_payload = await _codex_error_payload_from_response(response)
@@ -3616,8 +3604,7 @@ async def codex_control_request(
     )
     try:
         if route is not None:
-            owns_codex_client = codex_client is None
-            active_codex_client = codex_client or CodexClient(create_codex_session())
+            active_codex_client = codex_client or await acquire_codex_client(account_id, route)
             try:
                 request_kwargs = {
                     "route": route,
@@ -3637,10 +3624,7 @@ async def codex_control_request(
                     if route_trace is not None:
                         route_trace.record(route=route, fallback_used=False)
             finally:
-                if owns_codex_client:
-                    close = getattr(active_codex_client, "close", None)
-                    if callable(close):
-                        await close()
+                await release_codex_client(active_codex_client)
             status_code = _codex_response_status(response)
             body = await _codex_response_body(response)
             if status_code >= 400:
@@ -3851,8 +3835,7 @@ async def _transcribe_audio_with_session(
     )
     try:
         if route is not None:
-            owns_codex_client = codex_client is None
-            active_codex_client = codex_client or CodexClient(create_codex_session())
+            active_codex_client = codex_client or await acquire_codex_client(account_id, route)
             data_fields: dict[str, str] = {}
             if prompt is not None:
                 data_fields["prompt"] = prompt
@@ -3892,8 +3875,7 @@ async def _transcribe_audio_with_session(
                     openai_error("upstream_unavailable", error_message),
                 ) from exc
             finally:
-                if owns_codex_client:
-                    await active_codex_client.close()
+                await release_codex_client(active_codex_client)
             status_code = _codex_response_status(response)
             if status_code >= 400:
                 error_payload = await _codex_error_payload_from_response(response)
