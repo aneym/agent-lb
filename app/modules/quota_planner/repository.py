@@ -16,7 +16,8 @@ from app.db.models import (
     RequestLog,
 )
 from app.db.session import analytics_work_mem, sqlite_writer_section
-from app.modules.quota_planner.logic import PlannerSettings, encode_working_days, parse_working_days
+from app.modules.quota_planner.calendar import encode_working_days, parse_working_days
+from app.modules.quota_planner.logic import PlannerSettings
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 _SETTINGS_ID = 1

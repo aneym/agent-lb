@@ -32,7 +32,8 @@ from app.modules.limit_warmup.constants import (
 from app.modules.limit_warmup.repository import (
     _MAX_CONTINUOUS_RETRIES,
 )
-from app.modules.quota_planner.logic import PlannerSettings, _parse_hhmm, _to_planner_tz
+from app.modules.quota_planner.calendar import _parse_hhmm, _to_planner_tz
+from app.modules.quota_planner.logic import PlannerSettings
 from app.modules.usage.mappers import usage_history_to_window_row
 
 
