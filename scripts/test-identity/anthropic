@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+import argparse
+import json
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--json", action="store_true")
+parser.add_argument("--release")
+args = parser.parse_args()
+value = {'status': 'unavailable', 'service': 'anthropic', 'identity_ref': None, 'env': {}, 'cleanup_cmd': None, 'backend': 'seed', 'reason': 'No disposable Anthropic test account with an enforced proof spend cap and outbound containment is available. Operator subscription credentials are forbidden.'}
+if args.release:
+    value["release"] = args.release
+print(json.dumps(value))
+raise SystemExit(3)

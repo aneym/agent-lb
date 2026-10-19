@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+import argparse
+import json
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--json", action="store_true")
+parser.add_argument("--release")
+args = parser.parse_args()
+value = {'status': 'unavailable', 'service': 'agent-lb', 'identity_ref': None, 'env': {}, 'cleanup_cmd': None, 'backend': 'seed', 'reason': 'No isolated seeded agent-lb instance with outbound-denied provider transport and fixture-only accounts/logs is available. The serving database and dashboard sessions are not test identities.'}
+if args.release:
+    value["release"] = args.release
+print(json.dumps(value))
+raise SystemExit(3)

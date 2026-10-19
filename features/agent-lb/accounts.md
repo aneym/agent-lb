@@ -5,7 +5,8 @@ owner: weekend-finish
 status: live
 covers: ["route:/api/accounts/import", "route:/api/accounts/import/api-key"]
 paths: ["app/modules/accounts/api.py", "app/modules/accounts/availability_api.py", "features/agent-lb/accounts.md"]
-proofs: []
+proofs:
+  - {"id": "pause-resume-account", "kind": "journey", "cmd": "python3 scripts/test-identity/journeys.py pause-resume-account", "timeout_s": 60, "side_effects": ["network", "writes-test-data"], "floor": false}
 unmapped:
   - {"path": "app/modules/accounts/api.py", "date": "2026-10-18", "reason": "dynamic route template /api/accounts/{account_id} is unclassifiable"}
   - {"path": "app/modules/accounts/api.py", "date": "2026-10-18", "reason": "dynamic route template /api/accounts/{account_id}/alias is unclassifiable"}
