@@ -45,18 +45,36 @@ class Fake:
         sent = []
         self.sent_at[key] = sent
 
+        request_index = int(key.rsplit("-", 1)[1])
+        crlf = anthropic and request_index % 2 == 0
+        split = anthropic and request_index % 3 == 0
+
         async def emit(event):
             payload = f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode()
+            if crlf:
+                payload = payload.replace(b"\n", b"\r\n")
             stamp = time.perf_counter()
-            await response.write(payload)
+            if split:
+                boundary = payload.index(b"\r\n") + 1 if crlf else len(payload) // 2
+                await response.write(payload[:boundary])
+                await asyncio.sleep(0.001)
+                await response.write(payload[boundary:])
+            else:
+                await response.write(payload)
             if event["type"] in ("content_block_delta", "response.output_text.delta"):
                 sent.append(stamp)
 
         model = body["model"]
-        request_index = int(key.rsplit("-", 1)[1])
         usage = {"input_tokens": 100 + request_index * 7, "output_tokens": self.opts.events * 20 + request_index * 11}
         cached = request_index * 3
         reasoning = request_index * 2
+        if anthropic:
+            usage = {
+                "input_tokens": 20 + request_index,
+                "output_tokens": self.opts.events * 20 + request_index,
+                "cache_read_input_tokens": request_index * 3,
+                "cache_creation_input_tokens": request_index * 2,
+            }
         message = {
             "id": "msg_bench",
             "type": "message",
@@ -65,12 +83,7 @@ class Fake:
             "content": [],
             "stop_reason": None,
             "stop_seq": None,
-            "usage": {
-                "input_tokens": usage["input_tokens"],
-                "output_tokens": 0,
-                "cache_read_input_tokens": cached,
-                "cache_creation_input_tokens": request_index,
-            },
+            "usage": {**usage, "output_tokens": 0},
         }
         result = {
             "id": key,
@@ -108,7 +121,10 @@ class Fake:
                     "usage": {"output_tokens": usage["output_tokens"]},
                 }
             )
-            await emit({"type": "message_stop"})
+            if request_index == self.opts.runs + 1:
+                await emit({"type": "error", "error": {"type": "overloaded_error", "message": "bench error"}})
+            else:
+                await emit({"type": "message_stop"})
         else:
             result.update(
                 status="completed",

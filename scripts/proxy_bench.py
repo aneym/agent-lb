@@ -152,6 +152,8 @@ async def drive(session, base, path, kind, key, args, fake):
             now = time.perf_counter()
             if byte_at is None:
                 byte_at = now
+            if buffer.endswith(b"\r") and chunk.startswith(b"\n"):
+                buffer = buffer[:-1]
             buffer += chunk.replace(b"\r\n", b"\n")
             while b"\n\n" in buffer:
                 block, buffer = buffer.split(b"\n\n", 1)
@@ -166,6 +168,8 @@ async def drive(session, base, path, kind, key, args, fake):
                     deltas.append(now)
         ended = time.perf_counter()
     terminal = "message_stop" if kind == "anthropic" else "response.completed"
+    if kind == "anthropic" and int(key.rsplit("-", 1)[1]) == args.runs + 1:
+        terminal = "error"
     if len(deltas) != args.events or terminal not in types or len(fake.sent_at.get(key, [])) != args.events:
         raise RuntimeError(f"incomplete {kind}: {len(deltas)} deltas; terminal={terminal in types}")
     assert byte_at is not None
@@ -351,7 +355,7 @@ async def bench(args, data, stack, async_stack):
             with sqlite3.connect(data / "store.db") as database:
                 database.row_factory = sqlite3.Row
                 rows = database.execute(
-                    "SELECT request_id, input_tokens, output_tokens, cached_input_tokens, "
+                    "SELECT request_id, provider, input_tokens, output_tokens, cached_input_tokens, "
                     "cache_creation_tokens, cache_creation_tier, cache_read_tokens, reasoning_tokens, "
                     "cost_usd, status, model FROM request_logs ORDER BY request_id"
                 ).fetchall()
