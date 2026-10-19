@@ -23,6 +23,21 @@ from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.utils.request_id import ensure_request_id, get_request_id
 from app.db.models import Account
 from app.modules.api_keys.service import ApiKeyData
+from app.modules.proxy._service.codex_control_context import (
+    _CodexControlServiceProtocol,
+    _prefer_earlier_reset_window,
+    _proxy_response_failed_account,
+    _raise_proxy_budget_exhausted,
+    _raise_proxy_unavailable,
+    _refresh_error_failed_account,
+    _remaining_budget_seconds,
+    _request_log_failure_metadata,
+    _routing_strategy,
+    _service_core_codex_control_request,
+    _service_get_settings,
+    _service_get_settings_cache,
+    _service_time,
+)
 from app.modules.proxy._service.support import _request_log_useragent_fields, _RequestLogFailureMetadata
 from app.modules.proxy.affinity import _sticky_key_for_codex_control_request
 from app.modules.proxy.helpers import _header_account_id, _normalize_error_code, _parse_openai_error
@@ -34,53 +49,6 @@ T = TypeVar("T")
 
 _FAILED_ACCOUNT_ATTR = "_agent_lb_failed_account"
 _REQUEST_TRANSPORT_HTTP = "http"
-
-
-from app.modules.proxy._service.codex_control_context import (
-    _CodexControlServiceProtocol as _CodexControlServiceProtocol,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _prefer_earlier_reset_window as _prefer_earlier_reset_window,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _proxy_response_failed_account as _proxy_response_failed_account,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _raise_proxy_budget_exhausted as _raise_proxy_budget_exhausted,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _raise_proxy_unavailable as _raise_proxy_unavailable,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _refresh_error_failed_account as _refresh_error_failed_account,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _remaining_budget_seconds as _remaining_budget_seconds,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _request_log_failure_metadata as _request_log_failure_metadata,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _routing_strategy as _routing_strategy,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _service_core_codex_control_request as _service_core_codex_control_request,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _service_get_settings as _service_get_settings,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _service_get_settings_cache as _service_get_settings_cache,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _service_global as _service_global,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _service_global_or as _service_global_or,
-)
-from app.modules.proxy._service.codex_control_context import (
-    _service_time as _service_time,
-)
 
 
 class _CodexControlMixin:

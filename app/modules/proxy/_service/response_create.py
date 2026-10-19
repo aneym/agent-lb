@@ -17,58 +17,11 @@ from app.core.errors import OpenAIErrorEnvelope, openai_error
 from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_mapping
-from app.modules.proxy._service.support import (
-    _WebSocketRequestState,
-)
-from app.modules.proxy._service.support import (
-    strip_encrypted_reasoning_from_request_text as strip_encrypted_reasoning_from_request_text,
-)
-from app.modules.proxy._service.support import (
-    strip_encrypted_reasoning_input_items as strip_encrypted_reasoning_input_items,
-)
+from app.modules.proxy._service.response_create_diagnostics import _service_global_or, _write_response_create_dump
+from app.modules.proxy._service.support import _WebSocketRequestState
 
 logger = logging.getLogger("app.modules.proxy.service")
 T = TypeVar("T")
-
-from app.modules.proxy._service.response_create_diagnostics import (
-    _OVERSIZED_RESPONSE_CREATE_DUMP_DIR as _OVERSIZED_RESPONSE_CREATE_DUMP_DIR,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _OVERSIZED_RESPONSE_CREATE_LARGEST_ITEMS as _OVERSIZED_RESPONSE_CREATE_LARGEST_ITEMS,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _json_size_bytes as _json_size_bytes,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _maybe_dump_oversized_response_create_request as _maybe_dump_oversized_response_create_request,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _oversized_response_create_dump_dir as _oversized_response_create_dump_dir,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _oversized_response_create_largest_items as _oversized_response_create_largest_items,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _safe_dump_slug as _safe_dump_slug,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _service_global_or as _service_global_or,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _service_module as _service_module,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _should_dump_oversized_response_create as _should_dump_oversized_response_create,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _summarize_response_create_input as _summarize_response_create_input,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _summarize_response_create_payload as _summarize_response_create_payload,
-)
-from app.modules.proxy._service.response_create_diagnostics import (
-    _write_response_create_dump as _write_response_create_dump,
-)
 
 _UPSTREAM_RESPONSE_CREATE_MAX_BYTES = get_settings().upstream_response_create_max_bytes
 _UPSTREAM_RESPONSE_CREATE_WARN_BYTES = int(_UPSTREAM_RESPONSE_CREATE_MAX_BYTES * 0.8)

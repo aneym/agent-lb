@@ -351,12 +351,6 @@ from app.modules.proxy._service.request_log import (
     _RequestLogMixin,
 )
 from app.modules.proxy._service.response_create import (
-    _OVERSIZED_RESPONSE_CREATE_DUMP_DIR as _OVERSIZED_RESPONSE_CREATE_DUMP_DIR,
-)
-from app.modules.proxy._service.response_create import (
-    _OVERSIZED_RESPONSE_CREATE_LARGEST_ITEMS as _OVERSIZED_RESPONSE_CREATE_LARGEST_ITEMS,
-)
-from app.modules.proxy._service.response_create import (
     _RESPONSE_CREATE_HISTORY_OMISSION_NOTICE as _RESPONSE_CREATE_HISTORY_OMISSION_NOTICE,
 )
 from app.modules.proxy._service.response_create import (
@@ -396,19 +390,10 @@ from app.modules.proxy._service.response_create import (
     _is_inline_image_reference as _is_inline_image_reference,
 )
 from app.modules.proxy._service.response_create import (
-    _json_size_bytes as _json_size_bytes,
-)
-from app.modules.proxy._service.response_create import (
     _json_value_contains_input_image_part as _json_value_contains_input_image_part,
 )
 from app.modules.proxy._service.response_create import (
-    _maybe_dump_oversized_response_create_request as _maybe_dump_oversized_response_create_request,
-)
-from app.modules.proxy._service.response_create import (
     _missing_function_call_outputs_for_previous_response as _missing_function_call_outputs_for_previous_response,
-)
-from app.modules.proxy._service.response_create import (
-    _oversized_response_create_dump_dir as _oversized_response_create_dump_dir,
 )
 from app.modules.proxy._service.response_create import (
     _response_create_client_metadata as _response_create_client_metadata,
@@ -444,12 +429,6 @@ from app.modules.proxy._service.response_create import (
     _responses_request_uses_image_generation as _responses_request_uses_image_generation,
 )
 from app.modules.proxy._service.response_create import (
-    _safe_dump_slug as _safe_dump_slug,
-)
-from app.modules.proxy._service.response_create import (
-    _should_dump_oversized_response_create as _should_dump_oversized_response_create,
-)
-from app.modules.proxy._service.response_create import (
     _should_slim_historical_tool_output as _should_slim_historical_tool_output,
 )
 from app.modules.proxy._service.response_create import (
@@ -465,15 +444,21 @@ from app.modules.proxy._service.response_create import (
     _slim_response_create_payload_for_upstream as _slim_response_create_payload_for_upstream,
 )
 from app.modules.proxy._service.response_create import (
-    _summarize_response_create_input as _summarize_response_create_input,
-)
-from app.modules.proxy._service.response_create import (
-    _summarize_response_create_payload as _summarize_response_create_payload,
-)
-from app.modules.proxy._service.response_create import (
     _synthetic_interrupted_function_call_output as _synthetic_interrupted_function_call_output,
 )
-from app.modules.proxy._service.response_create import (
+from app.modules.proxy._service.response_create_diagnostics import (
+    _OVERSIZED_RESPONSE_CREATE_DUMP_DIR as _OVERSIZED_RESPONSE_CREATE_DUMP_DIR,
+)
+from app.modules.proxy._service.response_create_diagnostics import (
+    _OVERSIZED_RESPONSE_CREATE_LARGEST_ITEMS as _OVERSIZED_RESPONSE_CREATE_LARGEST_ITEMS,
+)
+from app.modules.proxy._service.response_create_diagnostics import (
+    _maybe_dump_oversized_response_create_request as _maybe_dump_oversized_response_create_request,
+)
+from app.modules.proxy._service.response_create_diagnostics import (
+    _should_dump_oversized_response_create as _should_dump_oversized_response_create,
+)
+from app.modules.proxy._service.response_create_diagnostics import (
     _write_response_create_dump as _write_response_create_dump,
 )
 from app.modules.proxy._service.streaming import (
