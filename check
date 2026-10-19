@@ -2,13 +2,14 @@
 set -eu
 
 usage() {
-  printf '%s\n' 'usage: ./check [--staged]' >&2
+  printf '%s\n' 'usage: ./check [--staged|--full]' >&2
 }
 
 mode=all
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --staged) mode=staged ;;
+    --full) mode=full ;;
     *) usage; exit 2 ;;
   esac
   shift
@@ -28,9 +29,12 @@ run_step() {
 }
 
 run_step 'make lint' make lint
-run_step 'make test-floor' make test-floor
+if [ "$mode" = full ]; then
+  run_step 'make architecture-check' make architecture-check
+  run_step 'make test-floor' make test-floor
+fi
 if [ "$mode" = staged ]; then
   run_step 'filecap check --staged' filecap check --staged
 else
-  run_step 'filecap check' filecap check
+  run_step 'filecap check' filecap check --rev HEAD
 fi

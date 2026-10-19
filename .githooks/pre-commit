@@ -1,4 +1,3 @@
 #!/bin/sh
 set -eu
-filecap check --staged
 ./check --staged
