@@ -460,15 +460,6 @@ class SessionsRepository:
             return func.to_timestamp(value)
         return func.datetime(value, "unixepoch")
 
-    async def _aggregates_for_session_ids(
-        self,
-        session_ids: list[str],
-    ) -> tuple[list[SessionAggregateRow], int]:
-        if not session_ids:
-            return [], 0
-        row = await self._single_aggregate_statement(session_ids[0])
-        return ([row] if row is not None else []), int(row is not None)
-
     async def _single_aggregate_statement(
         self,
         session_id: str,
