@@ -283,7 +283,7 @@ factory(
 bands = source_table.get("policy", {}).get("stage_effort", {}).get("bands", {})
 forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat", "muse-seat", "muse-seat-local",
               "sonnet-implementer", "verifier", "gpt-implementer", "gpt-explorer",
-              "codex-sol-local", "codex-test-runner-local", "computer-use-local"}
+              "codex-sol-local", "codex-test-runner-local", "codex-verifier-local", "computer-use-local"}
 VENDORS = ("anthropic", "openai", "cursor", "devin", "glm", "kimi", "muse")
 BOX_ADAPTERS = {"codex": "openai", "claude-code": "anthropic", "cursor": "cursor", "devin": "devin"}
 EFFORTS = ("low", "medium", "high", "xhigh")
@@ -549,7 +549,6 @@ if not SOURCE_ONLY:
     except Exception:
         resolution = {}
         check(False, "route models resolves the family aliases")
-    newest_by_family = {}
     for alias, spec in aliases.items():
         if spec.get("family") and resolution.get(alias):
             newest_by_family[spec["family"]] = resolution[alias]

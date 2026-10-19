@@ -797,6 +797,7 @@
     "gpt-explorer-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "low"},
     "codex-sol-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "high"},
     "codex-test-runner-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "medium"},
+    "codex-verifier-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "high"},
     "computer-use-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "high"},
     "opus-seat-local": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "medium"},
     "sonnet-implementer-local": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "high"},
@@ -965,7 +966,6 @@
   "notes": [
     "2026-09-29 (Alex): every GPT seat runs sol-latest (GPT-6.1 Sol today); Luna has no seat. The alias floats to the newest served Sol, so a release needs no edit.",
     "Codex seats take --model <id> plus a separate --effort; the effort suffix is not a model name.",
-    "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus plans and verifies; Sol implements (2026-09-28, E12: sonnet-implementer stands in when Codex is empty); the other vendor audits (classes.*.audit).",
     "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB."
   ],
   "aliases": {
