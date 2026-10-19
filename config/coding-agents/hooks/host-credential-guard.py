@@ -45,7 +45,7 @@ def touches(word, base, home, paths, folders):
     if NAME in word or any(c in word for c in "*?[") and any(fnmatch.fnmatchcase(p, full) for p in paths | folders):
         return True
     if "$" in word or "`" in word or CODE & set(word):
-        return "rails-host" in full or "host.cred" in word
+        return ".agent-rails/rails-host" in full or "host.cred" in word
     return bool({full, os.path.realpath(full)} & (paths | folders))
 
 
