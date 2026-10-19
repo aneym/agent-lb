@@ -14,7 +14,9 @@ import {
   type PolicyTable,
   type PolicyVersion,
 } from "../../api/policy";
-import { EmptyState, ModelChip, SidePanel } from "../../kit/primitives";
+import { EmptyState, SidePanel } from "../../kit/primitives";
+import { Difference } from "./policy-difference";
+import { isRecord, record, entries, text } from "./policy-values";
 import "./policy.css";
 
 const approvalMessage = "No replay runner exists yet; activate through install-policy.";
@@ -41,44 +43,6 @@ function versionSource(version: PolicyVersion, blur: boolean) {
 function VersionBadge({ state }: { state: PolicyVersion["state"] }) {
   return <span className={`policy-badge ${state}`}>{state[0].toUpperCase() + state.slice(1)}</span>;
 }
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function record(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? value : {};
-}
-function entries(value: unknown) {
-  return Object.entries(record(value));
-}
-function text(value: unknown) {
-  if (value === undefined) return "not set";
-  if (typeof value === "string") return value;
-  return JSON.stringify(value);
-}
-function pathLabel(path: string) {
-  const parts = path.split("/").filter(Boolean);
-  const classIndex = parts.findIndex((part) => part === "classes");
-  if (classIndex >= 0 && parts[classIndex + 2] === "chain") {
-    return { title: parts[classIndex + 1], detail: "options in order" };
-  }
-  const last = parts.at(-1) || path;
-  return {
-    title: last.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " "),
-    detail: parts.slice(0, -1).join(" · "),
-  };
-}
-function chain(value: unknown): { model: string; seat?: string }[] | null {
-  if (
-    !Array.isArray(value) ||
-    !value.every((item) => isRecord(item) && typeof item.model === "string")
-  ) {
-    return null;
-  }
-  return value.map((item) => ({
-    model: item.model as string,
-    seat: typeof item.seat === "string" ? item.seat : undefined,
-  }));
-}
 function groupDifferences(detail: PolicyDetail, active?: PolicyDetail) {
   const changes = new Map<string, PolicyDetail["diff"][number]>();
   for (const change of detail.diff) {
@@ -96,43 +60,6 @@ function groupDifferences(detail: PolicyDetail, active?: PolicyDetail) {
     }
   }
   return [...changes.values()];
-}
-function Difference({ change }: { change: PolicyDetail["diff"][number] }) {
-  const label = pathLabel(change.path);
-  const before = chain(change.before);
-  const after = chain(change.after);
-  return (
-    <div className="row">
-      <div>
-        <span className="strong">{label.title}</span>
-        {label.detail && <div className="muted policy-small">{label.detail}</div>}
-      </div>
-      <div className="policy-change">
-        {([change.before, change.after] as unknown[]).map((value, index) => {
-          const options = index === 0 ? before : after;
-          return (
-            <div className={`policy-change-line ${index === 0 ? "old" : ""}`} key={index}>
-              <span className="policy-sign" aria-label={index === 0 ? "Before" : "After"}>
-                {index === 0 ? "−" : "+"}
-              </span>
-              {options ? (
-                <div className="policy-chain">
-                  {options.map((option, i) => (
-                    <span className="policy-chain-item" key={`${option.model}-${i}`}>
-                      {i > 0 && <span className="muted">›</span>}
-                      <ModelChip model={option.model} seat={option.seat} />
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <span className="mono policy-value">{text(value)}</span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
 }
 function sectionValue(detail: PolicyDetail, section: SectionKey) {
   const table = detail.routingTable;
