@@ -18,12 +18,12 @@ from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, QuotaPlannerDecision
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
-from app.modules.api_keys.service import (
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import (
     ApiKeyInvalidError,
     ApiKeyNotFoundError,
     ApiKeyRateLimitExceededError,
     ApiKeyRequestUsageBudget,
-    ApiKeysService,
     ApiKeyUnpricedModelError,
 )
 from app.modules.request_logs.repository import RequestLogsRepository

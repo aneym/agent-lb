@@ -58,10 +58,7 @@ from app.db.models import (
     Account,
     AccountStatus,  # noqa: F401
 )
-from app.modules.api_keys.service import (
-    ApiKeyData,
-    ApiKeyUsageReservationData,
-)
+from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )

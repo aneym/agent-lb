@@ -12,12 +12,12 @@ import anyio
 from app.core.exceptions import ProxyAuthError, ProxyModelNotAllowed, ProxyRateLimitError
 from app.core.openai.models import CompactResponsePayload
 from app.core.utils.request_id import get_request_id
-from app.modules.api_keys.service import (
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import (
     ApiKeyData,
     ApiKeyInvalidError,
     ApiKeyRateLimitExceededError,
     ApiKeyRequestUsageBudget,
-    ApiKeysService,
     ApiKeyUnpricedModelError,
     ApiKeyUsageReservationData,
 )

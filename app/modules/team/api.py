@@ -9,7 +9,7 @@ from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
 from app.dependencies import TeamContext, get_team_context
 from app.modules.api_keys.api import _to_response as _api_key_to_response
 from app.modules.api_keys.schemas import ApiKeyCreateResponse
-from app.modules.api_keys.service import ApiKeyCreateData, ApiKeyValidationError, MemberKeyScopeRequiredError
+from app.modules.api_keys.service_data import ApiKeyCreateData, ApiKeyValidationError, MemberKeyScopeRequiredError
 from app.modules.team.schemas import (
     TeamMemberCreateRequest,
     TeamMemberKeyCreateRequest,

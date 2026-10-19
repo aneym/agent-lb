@@ -73,11 +73,8 @@ from app.db.models import (
     AccountStatus,  # noqa: F401
     StickySessionKind,
 )
-from app.modules.api_keys.service import (
-    ApiKeyData,
-    ApiKeyInvalidError,
-    ApiKeysService,
-)
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyData, ApiKeyInvalidError
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )
@@ -507,7 +504,7 @@ class _WebSocketMixin:
         account_lease: AccountLease | None = None
         upstream_turn_state: str | None = _sticky_key_from_turn_state_header(headers)
         downstream_activity = _DownstreamWebSocketActivity()
-        replay_request_state: _WebSocketRequestState | None = None
+        replay_state: _WebSocketRequestState | None = None
 
         async def release_current_account_lease() -> None:
             nonlocal account_lease
@@ -521,8 +518,8 @@ class _WebSocketMixin:
                         await upstream_reader
                     except asyncio.CancelledError:
                         pass
-                    if replay_request_state is None and upstream_control is not None:
-                        replay_request_state = upstream_control.replay_request_state
+                    if replay_state is None and upstream_control is not None:
+                        replay_state = upstream_control.replay_request_state
                     upstream_reader = None
                     upstream_control = None
                     if upstream is not None:
@@ -540,10 +537,9 @@ class _WebSocketMixin:
                 request_state_registered = False
                 request_affinity = _AffinityPolicy()
                 payload: dict[str, JsonValue] | None = None
-
-                if replay_request_state is not None:
-                    request_state = replay_request_state
-                    replay_request_state = None
+                if replay_state is not None:
+                    request_state = replay_state
+                    replay_state = None
                     request_affinity = request_state.affinity_policy
                     text_data = request_state.request_text
                     if text_data is None:
@@ -742,8 +738,8 @@ class _WebSocketMixin:
                         await upstream_reader
                     except asyncio.CancelledError:
                         pass
-                    if replay_request_state is None and upstream_control is not None:
-                        replay_request_state = upstream_control.replay_request_state
+                    if replay_state is None and upstream_control is not None:
+                        replay_state = upstream_control.replay_request_state
                     upstream_reader = None
                     upstream_control = None
                     if upstream is not None:
@@ -762,8 +758,8 @@ class _WebSocketMixin:
                     and upstream_reader is not None
                 ):
                     await upstream_reader
-                    if replay_request_state is None:
-                        replay_request_state = upstream_control.replay_request_state
+                    if replay_state is None:
+                        replay_state = upstream_control.replay_request_state
                     upstream_reader = None
                     upstream_control = None
                     if upstream is not None:
@@ -1031,7 +1027,7 @@ class _WebSocketMixin:
                             "Transparent websocket replay after upstream send failure request_id=%s",
                             replay_candidate.request_log_id or replay_candidate.request_id,
                         )
-                        replay_request_state = replay_candidate
+                        replay_state = replay_candidate
                         if upstream_reader is not None:
                             await _facade()._await_cancelled_task(
                                 upstream_reader, label="proxy websocket upstream reader"
@@ -1087,10 +1083,10 @@ class _WebSocketMixin:
                 except Exception:
                     _facade().logger.debug("Failed to close upstream websocket", exc_info=True)
             await release_current_account_lease()
-            if replay_request_state is not None:
-                await proxy._release_websocket_request_state_reservation(replay_request_state)
-                replay_request_state.api_key_reservation = None
-                await _release_websocket_response_create_gate(replay_request_state, response_create_gate)
+            if replay_state is not None:
+                await proxy._release_websocket_request_state_reservation(replay_state)
+                replay_state.api_key_reservation = None
+                await _release_websocket_response_create_gate(replay_state, response_create_gate)
             client_disconnected = downstream_activity.disconnected
             await proxy._fail_pending_websocket_requests(
                 account=None if client_disconnected else account,
@@ -2453,16 +2449,16 @@ class _WebSocketMixin:
                             )
                         break
                     continue
-                replay_request_state = await _pop_replayable_precreated_websocket_request_state(
+                replay_state = await _pop_replayable_precreated_websocket_request_state(
                     pending_requests,
                     pending_lock=pending_lock,
                 )
-                if replay_request_state is not None:
+                if replay_state is not None:
                     upstream_control.reconnect_requested = True
-                    upstream_control.replay_request_state = replay_request_state
+                    upstream_control.replay_request_state = replay_state
                     _facade().logger.info(
                         "Transparent websocket replay after upstream close request_id=%s close_code=%s",
-                        replay_request_state.request_log_id or replay_request_state.request_id,
+                        replay_state.request_log_id or replay_state.request_id,
                         message.close_code,
                     )
                     try:

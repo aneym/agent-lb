@@ -104,16 +104,12 @@ from app.modules.accounts.auth_manager import (
     AuthManager,
     is_locally_owned,
 )
-from app.modules.api_keys.service import (
+from app.modules.api_keys.service_data import (
     API_KEY_USAGE_RESERVATION_DEFAULT_INPUT_TOKENS,
     API_KEY_USAGE_RESERVATION_DEFAULT_OUTPUT_TOKENS,
     API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET,
     ApiKeyData,
     ApiKeyRequestUsageBudget,
-    ApiKeyUsageReservationData,  # noqa: F401
-)
-from app.modules.api_keys.service import (
-    ApiKeysService as ApiKeysService,
 )
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.api_key_usage import (

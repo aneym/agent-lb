@@ -22,7 +22,7 @@ from app.core.errors import openai_error
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.utils.request_id import ensure_request_id, get_request_id
 from app.db.models import Account
-from app.modules.api_keys.service import ApiKeyData
+from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy._service.codex_control_context import (
     _CodexControlServiceProtocol,
     _prefer_earlier_reset_window,

@@ -19,7 +19,7 @@ from app.modules.api_keys.schemas import (
     ApiKeyUsageSummaryResponse,
     LimitRuleResponse,
 )
-from app.modules.api_keys.service import (
+from app.modules.api_keys.service_data import (
     ApiKeyCreateData,
     ApiKeyData,
     ApiKeyNotFoundError,

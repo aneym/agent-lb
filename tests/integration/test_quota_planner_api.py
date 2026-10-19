@@ -11,7 +11,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, QuotaPlannerDecision, QuotaWindowObservation, RequestLog, UsageHistory
 from app.db.session import SessionLocal
-from app.modules.api_keys.service import ApiKeyInvalidError, ApiKeyNotFoundError, ApiKeyRateLimitExceededError
+from app.modules.api_keys.service_data import ApiKeyInvalidError, ApiKeyNotFoundError, ApiKeyRateLimitExceededError
 from app.modules.quota_planner.logic import PlannerSettings
 from app.modules.quota_planner.repository import QuotaPlannerRepository
 from app.modules.quota_planner.warmup import QuotaWarmupService, WarmupUsage
@@ -456,8 +456,8 @@ async def test_quota_planner_warmup_effect_without_usage_row_is_not_observed(mon
         )
         session.add(account)
 
-        async def refresh_without_usage_row(self, accounts, latest_before_by_account):
-            del self, accounts, latest_before_by_account
+        async def refresh_without_usage_row(self, accounts, prior_by_account):
+            del self, accounts, prior_by_account
 
         monkeypatch.setattr("app.modules.quota_planner.warmup.UsageUpdater.refresh_accounts", refresh_without_usage_row)
 
@@ -505,8 +505,8 @@ async def test_quota_planner_warmup_effect_with_only_stale_usage_is_not_observed
         )
         await session.commit()
 
-        async def refresh_without_new_usage_row(self, accounts, latest_before_by_account):
-            del self, accounts, latest_before_by_account
+        async def refresh_without_new_usage_row(self, accounts, prior_by_account):
+            del self, accounts, prior_by_account
 
         monkeypatch.setattr(
             "app.modules.quota_planner.warmup.UsageUpdater.refresh_accounts",

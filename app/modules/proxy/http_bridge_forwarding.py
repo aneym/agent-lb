@@ -20,7 +20,7 @@ from app.core.openai.requests import ResponsesRequest
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import format_sse_event
-from app.modules.api_keys.service import ApiKeyUsageReservationData
+from app.modules.api_keys.service_data import ApiKeyUsageReservationData
 
 HTTP_BRIDGE_INTERNAL_FORWARD_PATH = "/internal/bridge/responses"
 HTTP_BRIDGE_FORWARDED_HEADER = "x-codex-bridge-forwarded"

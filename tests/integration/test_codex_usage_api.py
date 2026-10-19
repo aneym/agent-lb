@@ -11,7 +11,8 @@ from app.db.models import Account, AccountStatus, ApiKeyLimit, LimitType, LimitW
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
-from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService, LimitRuleInput
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyCreateData, LimitRuleInput
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 
 pytestmark = pytest.mark.integration
@@ -65,11 +66,11 @@ def stub_codex_usage_caller_validation(monkeypatch):
 @pytest.mark.asyncio
 async def test_codex_usage_aggregates_windows(async_client, db_setup):
     async with SessionLocal() as session:
-        accounts_repo = AccountsRepository(session)
+        accounts = AccountsRepository(session)
         usage_repo = UsageRepository(session)
 
-        await accounts_repo.upsert(_make_account("acc_a", "a@example.com", chatgpt_account_id="workspace_acc_a"))
-        await accounts_repo.upsert(_make_account("acc_b", "b@example.com", chatgpt_account_id="workspace_acc_b"))
+        await accounts.upsert(_make_account("acc_a", "a@example.com", chatgpt_account_id="workspace_acc_a"))
+        await accounts.upsert(_make_account("acc_b", "b@example.com", chatgpt_account_id="workspace_acc_b"))
 
         await usage_repo.add_entry(
             "acc_a",
@@ -142,10 +143,10 @@ async def test_codex_usage_aggregates_windows(async_client, db_setup):
 @pytest.mark.asyncio
 async def test_codex_usage_uses_monthly_only_rows_for_credits(async_client, db_setup):
     async with SessionLocal() as session:
-        accounts_repo = AccountsRepository(session)
+        accounts = AccountsRepository(session)
         usage_repo = UsageRepository(session)
 
-        await accounts_repo.upsert(
+        await accounts.upsert(
             _make_account("acc_monthly", "monthly@example.com", chatgpt_account_id="workspace_acc_monthly")
         )
 
@@ -186,10 +187,10 @@ async def test_codex_usage_uses_monthly_only_rows_for_credits(async_client, db_s
 @pytest.mark.asyncio
 async def test_codex_usage_monthly_free_exhaustion_does_not_block_paid_capacity(async_client, db_setup):
     async with SessionLocal() as session:
-        accounts_repo = AccountsRepository(session)
+        accounts = AccountsRepository(session)
         usage_repo = UsageRepository(session)
 
-        await accounts_repo.upsert(
+        await accounts.upsert(
             _make_account(
                 "acc_free_monthly_full",
                 "free-full@example.com",
@@ -197,7 +198,7 @@ async def test_codex_usage_monthly_free_exhaustion_does_not_block_paid_capacity(
                 plan_type="free",
             )
         )
-        await accounts_repo.upsert(
+        await accounts.upsert(
             _make_account(
                 "acc_paid_available",
                 "paid-available@example.com",
@@ -247,11 +248,11 @@ async def test_codex_usage_monthly_free_exhaustion_does_not_block_paid_capacity(
 @pytest.mark.asyncio
 async def test_codex_usage_header_ignored(async_client, db_setup):
     async with SessionLocal() as session:
-        accounts_repo = AccountsRepository(session)
+        accounts = AccountsRepository(session)
         usage_repo = UsageRepository(session)
 
-        await accounts_repo.upsert(_make_account("acc_a", "a@example.com", chatgpt_account_id="workspace_acc_a"))
-        await accounts_repo.upsert(_make_account("acc_b", "b@example.com", chatgpt_account_id="workspace_acc_b"))
+        await accounts.upsert(_make_account("acc_a", "a@example.com", chatgpt_account_id="workspace_acc_a"))
+        await accounts.upsert(_make_account("acc_b", "b@example.com", chatgpt_account_id="workspace_acc_b"))
 
         await usage_repo.add_entry(
             "acc_a",
@@ -285,12 +286,10 @@ async def test_codex_usage_header_ignored(async_client, db_setup):
 async def test_codex_usage_prefers_newer_weekly_primary_over_stale_secondary(async_client, db_setup):
     now = utcnow()
     async with SessionLocal() as session:
-        accounts_repo = AccountsRepository(session)
+        accounts = AccountsRepository(session)
         usage_repo = UsageRepository(session)
 
-        await accounts_repo.upsert(
-            _make_account("acc_weekly", "weekly@example.com", chatgpt_account_id="workspace_weekly")
-        )
+        await accounts.upsert(_make_account("acc_weekly", "weekly@example.com", chatgpt_account_id="workspace_weekly"))
 
         await usage_repo.add_entry(
             "acc_weekly",
@@ -327,11 +326,11 @@ async def test_codex_usage_prefers_newer_weekly_primary_over_stale_secondary(asy
 @pytest.mark.asyncio
 async def test_codex_usage_additional_limit_reached_when_secondary_exhausted(async_client, db_setup):
     async with SessionLocal() as session:
-        accounts_repo = AccountsRepository(session)
+        accounts = AccountsRepository(session)
         usage_repo = UsageRepository(session)
         additional_repo = AdditionalUsageRepository(session)
 
-        await accounts_repo.upsert(
+        await accounts.upsert(
             _make_account(
                 "acc_additional_secondary",
                 "additional-secondary@example.com",
@@ -383,11 +382,11 @@ async def test_codex_usage_additional_limit_reached_when_secondary_exhausted(asy
 @pytest.mark.asyncio
 async def test_codex_usage_additional_limit_supports_secondary_only(async_client, db_setup):
     async with SessionLocal() as session:
-        accounts_repo = AccountsRepository(session)
+        accounts = AccountsRepository(session)
         usage_repo = UsageRepository(session)
         additional_repo = AdditionalUsageRepository(session)
 
-        await accounts_repo.upsert(
+        await accounts.upsert(
             _make_account(
                 "acc_additional_secondary_only",
                 "additional-secondary-only@example.com",

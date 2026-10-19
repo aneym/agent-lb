@@ -111,7 +111,8 @@ from app.dependencies import (
     get_proxy_websocket_context,
 )
 from app.modules.api_keys.repository import ApiKeysRepository
-from app.modules.api_keys.service import (
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import (
     API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET,
     TRAFFIC_CLASS_OPPORTUNISTIC,
     ApiKeyData,
@@ -119,7 +120,6 @@ from app.modules.api_keys.service import (
     ApiKeyRateLimitExceededError,
     ApiKeyRequestUsageBudget,
     ApiKeySelfLimitData,
-    ApiKeysService,
     ApiKeyUnpricedModelError,
     ApiKeyUsageReservationData,
 )
@@ -3843,12 +3843,12 @@ def _compact_request_service_tier(payload: ResponsesCompactRequest) -> str | Non
 async def _collect_responses_payload(stream: AsyncIterator[str]) -> OpenAIResponseResult:
     output_items: dict[int, dict[str, JsonValue]] = {}
     terminal_result: OpenAIResponseResult | None = None
-    contract_violation_kind: str | None = None
+    contract_error_kind: str | None = None
     async for line in stream:
         payload = _parse_sse_payload(line)
         if not payload:
             if _looks_like_sse_data_block(line):
-                contract_violation_kind = contract_violation_kind or "invalid_json"
+                contract_error_kind = contract_error_kind or "invalid_json"
             continue
         event_type = payload.get("type")
         _collect_output_item_event(payload, output_items)
@@ -3879,7 +3879,7 @@ async def _collect_responses_payload(stream: AsyncIterator[str]) -> OpenAIRespon
             if is_json_mapping(response):
                 normalized_response, violation_kind = _normalize_public_response_mapping(response, output_items)
                 if violation_kind is not None:
-                    contract_violation_kind = contract_violation_kind or violation_kind
+                    contract_error_kind = contract_error_kind or violation_kind
                 if normalized_response is not None:
                     parsed = parse_response_payload(normalized_response)
                 else:
@@ -3887,7 +3887,7 @@ async def _collect_responses_payload(stream: AsyncIterator[str]) -> OpenAIRespon
                 if parsed is not None:
                     terminal_result = parsed
                     continue
-            error_kind = contract_violation_kind or "invalid_json"
+            error_kind = contract_error_kind or "invalid_json"
             terminal_result = _public_contract_error_envelope(
                 error_kind,
                 _public_contract_error_message(error_kind),
@@ -3895,7 +3895,7 @@ async def _collect_responses_payload(stream: AsyncIterator[str]) -> OpenAIRespon
 
     if terminal_result is not None:
         return terminal_result
-    error_kind = contract_violation_kind or "upstream_stream_truncated"
+    error_kind = contract_error_kind or "upstream_stream_truncated"
     return _public_contract_error_envelope(
         error_kind,
         _public_contract_error_message(error_kind),
@@ -3940,7 +3940,7 @@ async def _normalize_public_responses_stream(
 
     terminal_seen = False
     done_seen = False
-    contract_violation_kind: str | None = None
+    contract_error_kind: str | None = None
     seen_text_delta_keys: set[tuple[str | None, int | None]] = set()
 
     output_items: dict[int, dict[str, JsonValue]] = {}
@@ -3982,7 +3982,7 @@ async def _normalize_public_responses_stream(
         payload = _parse_sse_payload(event_block)
         if payload is None:
             if _looks_like_sse_data_block(event_block):
-                contract_violation_kind = contract_violation_kind or "invalid_json"
+                contract_error_kind = contract_error_kind or "invalid_json"
             continue
         raw_event_type = payload.get("type")
         if (
@@ -4007,7 +4007,7 @@ async def _normalize_public_responses_stream(
             enforce_openai_sdk_contract=enforce_openai_sdk_contract,
         )
         if violation_kind is not None:
-            contract_violation_kind = contract_violation_kind or violation_kind
+            contract_error_kind = contract_error_kind or violation_kind
         if normalized_payload is None:
             continue
         event_type = normalized_payload.get("type")
@@ -4030,7 +4030,7 @@ async def _normalize_public_responses_stream(
                     yield formatted_payload
             elif _should_buffer_public_pre_created_event(event_type):
                 if len(pre_created_buffer) >= _PUBLIC_RESPONSES_PRE_CREATED_BUFFER_LIMIT:
-                    error_kind = contract_violation_kind or "upstream_stream_truncated"
+                    error_kind = contract_error_kind or "upstream_stream_truncated"
                     for formatted_payload in _public_response_failed_event_blocks(error_kind, include_created=True):
                         yield formatted_payload
                     return
@@ -4044,7 +4044,7 @@ async def _normalize_public_responses_stream(
                     ):
                         yield formatted_payload
                     return
-                error_kind = contract_violation_kind or "upstream_stream_truncated"
+                error_kind = contract_error_kind or "upstream_stream_truncated"
                 for formatted_payload in _public_response_failed_event_blocks(error_kind, include_created=True):
                     yield formatted_payload
                 return
@@ -4060,7 +4060,7 @@ async def _normalize_public_responses_stream(
         if not done_seen and not enforce_openai_sdk_contract:
             yield "data: [DONE]\n\n"
         return
-    error_kind = contract_violation_kind or "upstream_stream_truncated"
+    error_kind = contract_error_kind or "upstream_stream_truncated"
     include_created = enforce_openai_sdk_contract and not created_emitted
     for formatted_payload in _public_response_failed_event_blocks(error_kind, include_created=include_created):
         yield formatted_payload

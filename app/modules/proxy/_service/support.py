@@ -18,11 +18,7 @@ from app.core.openai.models import OpenAIEvent
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 from app.db.models import Account
-from app.modules.api_keys.service import (
-    ApiKeyData,
-    ApiKeyRequestUsageBudget,
-    ApiKeyUsageReservationData,
-)
+from app.modules.api_keys.service_data import ApiKeyData, ApiKeyRequestUsageBudget, ApiKeyUsageReservationData
 from app.modules.proxy.affinity import _AffinityPolicy
 from app.modules.proxy.load_balancer import AccountLease
 from app.modules.proxy.work_admission import AdmissionLease

@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from app.core.anthropic.models import AnthropicMessageRequest
-from app.modules.api_keys.service import ApiKeyUsageReservationData
+from app.modules.api_keys.service_data import ApiKeyUsageReservationData
 from app.modules.proxy import anthropic_service as anthropic_service_module
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy.anthropic_service import AnthropicCountTokensResult, AnthropicProxyError, AnthropicProxyStream

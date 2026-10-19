@@ -16,7 +16,7 @@ from app.core.openai.strict_schema import (
 from app.core.openai.v1_requests import V1ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
-from app.modules.api_keys.service import ApiKeyData
+from app.modules.api_keys.service_data import ApiKeyData
 
 logger = logging.getLogger(__name__)
 

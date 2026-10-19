@@ -14,7 +14,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySession, StickySessionKind
 from app.db.session import SessionLocal
-from app.modules.api_keys.service import ApiKeyData
+from app.modules.api_keys.service_data import ApiKeyData
 
 ANTHROPIC_SSE_BYTES = (
     b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_123","type":"message",'

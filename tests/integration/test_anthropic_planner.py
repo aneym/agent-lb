@@ -9,7 +9,7 @@ import app.modules.proxy.anthropic_service as anthropic_proxy_module
 import app.modules.proxy.api as proxy_api_module
 from app.db.models import RequestLog
 from app.db.session import SessionLocal
-from app.modules.api_keys.service import ApiKeyUsageReservationData
+from app.modules.api_keys.service_data import ApiKeyUsageReservationData
 from tests.integration.anthropic_proxy_support import (
     ANTHROPIC_SSE_BYTES,
     _FakeResponse,

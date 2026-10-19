@@ -24,7 +24,8 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal
 from app.dependencies import _proxy_repo_context
-from app.modules.api_keys.service import ApiKeysService, ApiKeyUsageReservationData
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyUsageReservationData
 from app.modules.proxy.anthropic_service import AnthropicProxyService
 
 pytestmark = pytest.mark.integration

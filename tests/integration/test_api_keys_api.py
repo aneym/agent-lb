@@ -9,7 +9,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select, update
 
-import app.modules.api_keys.repository as api_keys_repository_module
+import app.modules.api_keys.repository as key_repository
 import app.modules.proxy.load_balancer as load_balancer_module
 import app.modules.proxy.service as proxy_module
 from app.core.auth import generate_unique_account_id
@@ -29,7 +29,8 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
-from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService, LimitRuleInput
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyCreateData, LimitRuleInput
 
 pytestmark = pytest.mark.integration
 
@@ -2222,7 +2223,7 @@ async def test_reset_expired_limits_background_fallback_advances_windows(async_c
 
 @pytest.mark.asyncio
 async def test_reset_expired_limits_background_fallback_processes_batches(async_client, monkeypatch):
-    monkeypatch.setattr(api_keys_repository_module, "_EXPIRED_LIMIT_RESET_BATCH_SIZE", 2)
+    monkeypatch.setattr(key_repository, "_EXPIRED_LIMIT_RESET_BATCH_SIZE", 2)
 
     created = await async_client.post(
         "/api/api-keys/",
@@ -2318,7 +2319,7 @@ async def test_release_stale_usage_reservations_restores_reserved_usage(async_cl
         await session.commit()
 
     async with SessionLocal() as session:
-        monkeypatch.setattr(api_keys_repository_module, "sqlite_writer_section", fake_sqlite_writer_section)
+        monkeypatch.setattr(key_repository, "sqlite_writer_section", fake_sqlite_writer_section)
         repo = ApiKeysRepository(session)
         released_count = await repo.release_stale_usage_reservations(cutoff=now - timedelta(hours=6), batch_size=1)
         assert released_count == 3
@@ -2360,7 +2361,7 @@ async def test_release_stale_usage_reservations_uses_sqlite_writer_section(async
         entered = True
         yield
 
-    monkeypatch.setattr(api_keys_repository_module, "sqlite_writer_section", fake_sqlite_writer_section)
+    monkeypatch.setattr(key_repository, "sqlite_writer_section", fake_sqlite_writer_section)
 
     async with SessionLocal() as session:
         repo = ApiKeysRepository(session)

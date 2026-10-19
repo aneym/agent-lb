@@ -12,7 +12,7 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
-from app.modules.api_keys.service import LimitRuleInput
+from app.modules.api_keys.service_data import LimitRuleInput
 from tests.integration.usage_api_helpers import _create_api_key as _create_api_key
 from tests.integration.usage_api_helpers import _seed_upstream_usage as _seed_upstream_usage
 from tests.integration.usage_api_helpers import _seed_upstream_usage_partial as _seed_upstream_usage_partial

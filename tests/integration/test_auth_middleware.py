@@ -15,7 +15,8 @@ from app.db.models import Account, AccountStatus, ApiKeyLimit, DashboardSettings
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
-from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyCreateData
 from app.modules.dashboard_auth.service import DASHBOARD_SESSION_COOKIE, get_dashboard_session_store
 
 pytestmark = pytest.mark.integration

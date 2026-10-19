@@ -57,10 +57,7 @@ from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.db.models import (
     StickySessionKind,
 )
-from app.modules.api_keys.service import (
-    ApiKeyData,
-    ApiKeyUsageReservationData,
-)
+from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )

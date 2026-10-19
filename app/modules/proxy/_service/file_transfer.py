@@ -24,7 +24,7 @@ from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError
 from app.core.utils.request_id import ensure_request_id, get_request_id
 from app.db.models import Account
-from app.modules.api_keys.service import ApiKeyData
+from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy._service.support import (
     _FilePinEntry,
     _request_log_useragent_fields,

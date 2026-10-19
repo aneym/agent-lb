@@ -20,7 +20,7 @@ from app.core.utils.request_id import ensure_request_id
 from app.core.utils.retry import backoff_seconds
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.db.models import StickySessionKind
-from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
+from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy._service.observability import (
     _maybe_log_proxy_request_shape,
     _record_continuity_fail_closed,
@@ -319,7 +319,7 @@ class _StreamingRetryMixin:
                         yield format_sse_event(event)
                         return
                     account = selection.account
-                    current_account_lease = selection.lease
+                    current_lease = selection.lease
                     if selection.lease is not None:
                         account_leases.append(selection.lease)
                     if (
@@ -778,8 +778,8 @@ class _StreamingRetryMixin:
                                             account_id=account.id,
                                         )
                                     )
-                                    await _release_tracked_stream_lease(current_account_lease)
-                                    current_account_lease = None
+                                    await _release_tracked_stream_lease(current_lease)
+                                    current_lease = None
                                     excluded_account_ids.add(account.id)
                                     require_security_work_authorized = True
                                     last_security_work_retry_error = _RetryableStreamError(
@@ -790,8 +790,8 @@ class _StreamingRetryMixin:
                                     break
                                 if code == "account_response_create_cap":
                                     last_transient_exc = tex
-                                    await _release_tracked_stream_lease(current_account_lease)
-                                    current_account_lease = None
+                                    await _release_tracked_stream_lease(current_lease)
+                                    current_lease = None
                                     excluded_account_ids.add(account.id)
                                     break
                                 if _facade()._is_account_neutral_error_code(code):
@@ -821,8 +821,8 @@ class _StreamingRetryMixin:
                                 )
                                 if action == "failover_next":
                                     last_transient_exc = tex
-                                    await _release_tracked_stream_lease(current_account_lease)
-                                    current_account_lease = None
+                                    await _release_tracked_stream_lease(current_lease)
+                                    current_lease = None
                                     excluded_account_ids.add(account.id)
                                     break
                                 raise
@@ -866,8 +866,8 @@ class _StreamingRetryMixin:
 
                             if isinstance(tex, ProxyResponseError):
                                 last_transient_exc = tex
-                            await _release_tracked_stream_lease(current_account_lease)
-                            current_account_lease = None
+                            await _release_tracked_stream_lease(current_lease)
+                            current_lease = None
                             excluded_account_ids.add(account.id)
                             break
                         finally:
@@ -909,8 +909,8 @@ class _StreamingRetryMixin:
                                     error_code or "upstream_error",
                                 )
                                 await proxy._load_balancer.record_errors(account, transient_retries - 1)
-                                await _release_tracked_stream_lease(current_account_lease)
-                                current_account_lease = None
+                                await _release_tracked_stream_lease(current_lease)
+                                current_lease = None
                                 excluded_account_ids.add(account.id)
                                 break
                             protocol_only_buffer_committed = True
@@ -962,8 +962,8 @@ class _StreamingRetryMixin:
                                 account_id=account.id,
                             )
                         )
-                        await _release_tracked_stream_lease(current_account_lease)
-                        current_account_lease = None
+                        await _release_tracked_stream_lease(current_lease)
+                        current_lease = None
                         excluded_account_ids.add(account.id)
                         require_security_work_authorized = True
                         last_security_work_retry_error = exc
@@ -971,8 +971,8 @@ class _StreamingRetryMixin:
                     await proxy._handle_stream_error(account, exc.error, exc.code)
                     last_retryable_stream_error = exc
                     if exc.exclude_account:
-                        await _release_tracked_stream_lease(current_account_lease)
-                        current_account_lease = None
+                        await _release_tracked_stream_lease(current_lease)
+                        current_lease = None
                         excluded_account_ids.add(account.id)
                     continue
                 except _TerminalStreamError as exc:
@@ -1163,8 +1163,8 @@ class _StreamingRetryMixin:
                             )
                             if error_code == "account_response_create_cap":
                                 last_transient_exc = retry_exc
-                                await _release_tracked_stream_lease(current_account_lease)
-                                current_account_lease = None
+                                await _release_tracked_stream_lease(current_lease)
+                                current_lease = None
                                 excluded_account_ids.add(account.id)
                                 continue
                             if _facade()._is_account_neutral_error_code(error_code):
@@ -1197,8 +1197,8 @@ class _StreamingRetryMixin:
                             )
                             if action == "failover_next":
                                 last_transient_exc = retry_exc
-                                await _release_tracked_stream_lease(current_account_lease)
-                                current_account_lease = None
+                                await _release_tracked_stream_lease(current_lease)
+                                current_lease = None
                                 excluded_account_ids.add(account.id)
                                 continue
                             if propagate_http_errors:
@@ -1257,8 +1257,8 @@ class _StreamingRetryMixin:
                                     account_id=account.id,
                                 )
                             )
-                            await _release_tracked_stream_lease(current_account_lease)
-                            current_account_lease = None
+                            await _release_tracked_stream_lease(current_lease)
+                            current_lease = None
                             excluded_account_ids.add(account.id)
                             require_security_work_authorized = True
                             continue

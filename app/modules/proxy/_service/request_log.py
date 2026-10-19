@@ -8,7 +8,7 @@ from typing import Protocol, cast
 import anyio
 
 from app.core.identity import RequestIdentity, attach_member, get_request_identity
-from app.modules.api_keys.service import ApiKeyData
+from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 
 logger = logging.getLogger("app.modules.proxy.service")

@@ -11,7 +11,7 @@ from uuid import uuid4
 from app.core.config.settings import get_settings
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
 from app.db.models import StickySessionKind
-from app.modules.api_keys.service import ApiKeyData
+from app.modules.api_keys.service_data import ApiKeyData
 
 
 @dataclass(frozen=True, slots=True)

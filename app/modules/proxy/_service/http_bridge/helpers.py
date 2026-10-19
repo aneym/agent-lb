@@ -63,9 +63,7 @@ from app.db.models import (
     HttpBridgeSessionState,
     StickySessionKind,
 )
-from app.modules.api_keys.service import (
-    ApiKeyData,
-)
+from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )

@@ -6,10 +6,7 @@ from typing import TypeAlias
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
 from app.core.types import JsonObject, JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
-from app.modules.api_keys.service import (
-    API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET,
-    ApiKeyRequestUsageBudget,
-)
+from app.modules.api_keys.service_data import API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET, ApiKeyRequestUsageBudget
 
 ApiKeyUsageEstimableRequest: TypeAlias = ResponsesRequest | ResponsesCompactRequest
 

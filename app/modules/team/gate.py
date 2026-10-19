@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.db.session import get_background_session
-from app.modules.api_keys.service import ApiKeyData
+from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.team.repository import TeamRepository
 from app.modules.team.service import TeamMemberSelfStatus, TeamService
 

@@ -31,7 +31,8 @@ from app.core.utils.time import utcnow
 from app.db.session import get_background_session
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
-from app.modules.api_keys.service import ApiKeyData, ApiKeyInvalidError, ApiKeysService
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyData, ApiKeyInvalidError
 from app.modules.dashboard_auth.service import DASHBOARD_SESSION_COOKIE, get_dashboard_session_store
 
 logger = logging.getLogger(__name__)

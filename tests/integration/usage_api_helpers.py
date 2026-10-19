@@ -14,7 +14,8 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
-from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService, LimitRuleInput
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyCreateData, LimitRuleInput
 from app.modules.team.service import reset_team_usage_cache
 
 

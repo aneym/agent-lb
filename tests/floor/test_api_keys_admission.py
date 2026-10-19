@@ -9,15 +9,13 @@ from sqlalchemy.exc import OperationalError
 
 from app.core.utils.time import utcnow
 from app.db.models import ApiKey, LimitType
-from app.modules.api_keys.repository import (
-    UsageReservationItemData,
-)
-from app.modules.api_keys.service import (
+from app.modules.api_keys.repository_data import UsageReservationItemData
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import (
     ApiKeyCreateData,
     ApiKeyInvalidError,
     ApiKeyRateLimitExceededError,
     ApiKeyRequestUsageBudget,
-    ApiKeysService,
     LimitRuleInput,
 )
 from tests.floor.api_keys_service_support import (
@@ -383,7 +381,7 @@ async def test_enforce_limits_retries_sqlite_busy_reservation_commit(monkeypatch
 
     repo = _BusyRepo()
     service = ApiKeysService(repo)
-    monkeypatch.setattr("app.modules.api_keys.service.asyncio.sleep", _async_noop)
+    monkeypatch.setattr("app.modules.api_keys.reservation_service.asyncio.sleep", _async_noop)
     created = await service.create_key(ApiKeyCreateData(name="busy-retry-key", allowed_models=None, expires_at=None))
     initial_commit_count = repo.commit_count
 
@@ -420,7 +418,7 @@ async def test_enforce_limits_retries_sqlite_busy_during_lazy_reset_rolls_back(m
 
     repo = _BusyRepo()
     service = ApiKeysService(repo)
-    monkeypatch.setattr("app.modules.api_keys.service.asyncio.sleep", _async_noop)
+    monkeypatch.setattr("app.modules.api_keys.reservation_service.asyncio.sleep", _async_noop)
     created = await service.create_key(
         ApiKeyCreateData(
             name="busy-lazy-reset-retry-key",

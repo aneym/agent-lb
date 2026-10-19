@@ -9,7 +9,8 @@ from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, ApiKey
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
-from app.modules.api_keys.repository import ApiKeyAccountCost, ApiKeysRepository
+from app.modules.api_keys.repository import ApiKeysRepository
+from app.modules.api_keys.repository_data import ApiKeyAccountCost
 from app.modules.request_logs.repository import RequestLogsRepository
 
 pytestmark = pytest.mark.integration

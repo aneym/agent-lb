@@ -17,7 +17,7 @@ from app.core.openai.requests import (
     extract_input_image_file_references,
 )
 from app.core.types import JsonValue
-from app.modules.api_keys.service import ApiKeyData
+from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy._service.support import (
     _FilePinEntry,
 )

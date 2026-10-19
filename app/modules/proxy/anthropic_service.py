@@ -63,7 +63,8 @@ from app.modules.accounts.credits import (
 )
 from app.modules.accounts.service import AccountsService
 from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
-from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_cache import get_account_selection_cache
@@ -1740,7 +1741,7 @@ class AnthropicProxyService:
                     preferred_ids.add(account_id)
             preferred_fable_account_ids = frozenset(preferred_ids)
 
-        eligible_account_ids: list[str] = []
+        eligible_ids: list[str] = []
         blocked_reset_by_account_id: dict[str, int] = {}
         blocked_count = 0
         request_quota_blocked_account_ids: set[str] = set()
@@ -1792,14 +1793,14 @@ class AnthropicProxyService:
                 if tripwire_cooldown[1] is not None:
                     blocked_reset_by_account_id[account_id] = int(tripwire_cooldown[1])
                 continue
-            eligible_account_ids.append(account_id)
+            eligible_ids.append(account_id)
 
-        if fable_request and eligible_account_ids:
+        if fable_request and eligible_ids:
             preferred_standard_account_ids = [
-                account_id for account_id in eligible_account_ids if account_id in preferred_fable_account_ids
+                account_id for account_id in eligible_ids if account_id in preferred_fable_account_ids
             ]
             if preferred_standard_account_ids:
-                eligible_account_ids = preferred_standard_account_ids
+                eligible_ids = preferred_standard_account_ids
             else:
                 logger.warning(
                     "All subscription-covered Anthropic accounts are soft Fable fallbacks "
@@ -1812,7 +1813,7 @@ class AnthropicProxyService:
             account_id in primary_exhaustion for account_id in model_scope_account_ids
         )
         paid_fallback_account_ids: frozenset[str] = frozenset()
-        if not eligible_account_ids and pool_primary_exhausted and settings.anthropic_route_to_extra_usage:
+        if not eligible_ids and pool_primary_exhausted and settings.anthropic_route_to_extra_usage:
             paid_candidates = [
                 account_id
                 for account_id in model_scope_account_ids
@@ -1826,15 +1827,15 @@ class AnthropicProxyService:
                 ]
                 if preferred_paid_candidates:
                     paid_candidates = preferred_paid_candidates
-            eligible_account_ids = paid_candidates
+            eligible_ids = paid_candidates
             paid_fallback_account_ids = frozenset(paid_candidates)
-            blocked_count -= len(eligible_account_ids)
-            for account_id in eligible_account_ids:
+            blocked_count -= len(eligible_ids)
+            for account_id in eligible_ids:
                 blocked_reset_by_account_id.pop(account_id, None)
 
         burn_first_account_ids: frozenset[str] = frozenset()
 
-        if fable_routing and settings.anthropic_fable_burn_first_enabled and not fable_request and eligible_account_ids:
+        if fable_routing and settings.anthropic_fable_burn_first_enabled and not fable_request and eligible_ids:
 
             def _is_over_fable_threshold(account_id: str) -> bool:
                 scoped_percent = _fresh_scoped_percent(account_id)
@@ -1843,17 +1844,17 @@ class AnthropicProxyService:
                 return _weekly_used(account_id) >= threshold
 
             burn_first_account_ids = frozenset(
-                account_id for account_id in eligible_account_ids if _is_over_fable_threshold(account_id)
+                account_id for account_id in eligible_ids if _is_over_fable_threshold(account_id)
             )
 
-        cooling_account_ids = request_quota_blocked_account_ids - set(eligible_account_ids)
+        cooling_account_ids = request_quota_blocked_account_ids - set(eligible_ids)
         cooldown_resets = [
             blocked_reset_by_account_id[account_id]
             for account_id in cooling_account_ids
             if account_id in blocked_reset_by_account_id
         ]
         return _AnthropicQuotaEligibility(
-            account_ids=eligible_account_ids,
+            account_ids=eligible_ids,
             blocked_count=blocked_count,
             next_reset_at=min(blocked_reset_by_account_id.values()) if blocked_reset_by_account_id else None,
             cooldown_blocked_count=len(cooling_account_ids),

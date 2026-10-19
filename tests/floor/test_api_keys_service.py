@@ -5,12 +5,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy.exc import OperationalError
 
-from app.modules.api_keys.service import (
-    ApiKeyCreateData,
-    ApiKeysService,
-    ApiKeyUpdateData,
-    _is_sqlite_database_locked,
-)
+from app.modules.api_keys.reservation_pricing import _is_sqlite_database_locked
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyCreateData, ApiKeyUpdateData
 from tests.floor.api_keys_service_support import (
     _FakeApiKeysRepository,
 )

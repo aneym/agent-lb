@@ -6,11 +6,8 @@ import pytest
 
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
-from app.modules.api_keys.service import (
-    ApiKeyCreateData,
-    ApiKeysService,
-    ApiKeyUpdateData,
-)
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyCreateData, ApiKeyUpdateData
 from tests.floor.api_keys_service_support import (
     _FakeApiKeysRepository,
     _FakeUsageRepository,

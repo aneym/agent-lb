@@ -14,12 +14,8 @@ from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, LimitType
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
-from app.modules.api_keys.service import (
-    ApiKeyCreateData,
-    ApiKeyRequestUsageBudget,
-    ApiKeysService,
-    LimitRuleInput,
-)
+from app.modules.api_keys.service import ApiKeysService
+from app.modules.api_keys.service_data import ApiKeyCreateData, ApiKeyRequestUsageBudget, LimitRuleInput
 
 pytestmark = pytest.mark.integration
 

@@ -22,7 +22,7 @@ from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 from app.db.models import Account
-from app.modules.api_keys.service import ApiKeyData
+from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy._service.support import _RequestLogFailureMetadata
 from app.modules.proxy.affinity import _AffinityPolicy
 from app.modules.proxy.load_balancer import AccountSelection
