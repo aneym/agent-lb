@@ -27,15 +27,6 @@ from app.modules.usage.sqlite_history import (
     _bulk_history_since_sqlite,
     _latest_by_account_sqlite,
 )
-from app.modules.usage.sqlite_history import (
-    _bulk_history_fingerprint_sqlite as _bulk_history_fingerprint_sqlite,
-)
-from app.modules.usage.sqlite_history import (
-    _clear_bulk_history_since_sqlite_cache as _clear_bulk_history_since_sqlite_cache,
-)
-from app.modules.usage.sqlite_history import (
-    _fingerprint_grouped_history as _fingerprint_grouped_history,
-)
 
 BULK_HISTORY_MAX_ROWS_PER_ACCOUNT = 720
 

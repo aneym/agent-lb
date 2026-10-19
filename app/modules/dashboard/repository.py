@@ -18,7 +18,8 @@ from app.modules.accounts.repository import AccountsRepository
 from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.settings.repository import SettingsRepository
-from app.modules.usage.repository import AdditionalUsageRepository, UsageHistorySnapshot, UsageRepository
+from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
+from app.modules.usage.sqlite_history import UsageHistorySnapshot
 
 
 class DashboardRepository:

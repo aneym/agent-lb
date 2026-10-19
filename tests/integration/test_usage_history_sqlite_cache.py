@@ -5,7 +5,7 @@ from datetime import datetime
 
 import pytest
 
-from app.modules.usage.repository import (
+from app.modules.usage.sqlite_history import (
     UsageHistorySnapshot,
     _bulk_history_fingerprint_sqlite,
     _bulk_history_since_sqlite,
