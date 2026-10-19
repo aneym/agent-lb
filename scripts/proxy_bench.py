@@ -35,10 +35,10 @@ def arguments():
     parser.add_argument("--gap-ms", type=float, default=2)
     parser.add_argument("--out", type=Path, default=Path("proxy-bench.json"))
     parser.add_argument("--profile", type=Path)
-    parser.add_argument("--serve", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--serve", type=int, help="child")
     args = parser.parse_args()
     if min(args.runs, args.concurrency, args.events) < 1 or args.gap_ms < 0:
-        parser.error("positive counts; nonnegative gap")
+        parser.error("positive counts; gap>=0")
     return args
 
 
@@ -72,13 +72,13 @@ async def seed():
         session.add(
             ProxyEndpoint(
                 id="bench-endpoint",
-                name="benchmark",
+                name="bench",
                 scheme="http",
                 host="127.0.0.1",
                 port=int(os.environ["PROXY_BENCH_UPSTREAM_PORT"]),
             )
         )
-        session.add(ProxyPool(id="bench-pool", name="benchmark"))
+        session.add(ProxyPool(id="bench-pool", name="bench"))
         await session.flush()
         session.add(ProxyPoolMember(pool_id="bench-pool", endpoint_id="bench-endpoint"))
         session.add(AccountProxyBinding(account_id="bench-openai", pool_id="bench-pool"))
@@ -88,27 +88,28 @@ async def seed():
 
 def serve(args):
     sys.path.insert(0, str(ROOT))
-    allowed_port = int(os.environ["PROXY_BENCH_UPSTREAM_PORT"])
+    fake_port = int(os.environ["PROXY_BENCH_UPSTREAM_PORT"])
 
     def guard(event, values):
         if event == "socket.connect":
             address = values[1]
-            if isinstance(address, tuple) and address[:2] != ("127.0.0.1", allowed_port):
+            if isinstance(address, tuple) and address[:2] != ("127.0.0.1", fake_port):
                 raise RuntimeError("egress blocked")
 
     sys.addaudithook(guard)
     asyncio.run(seed())
     import uvicorn
 
-    profiler = cProfile.Profile(timer=time.process_time) if args.profile else None
-    if profiler:
-        signal.signal(signal.SIGUSR1, lambda *_: profiler.enable())
+    prof = cProfile.Profile(timer=time.process_time) if args.profile else None
+    if prof:
+        signal.signal(signal.SIGUSR1, lambda *_: prof.enable())
+        signal.signal(signal.SIGWINCH, lambda *_: prof.dump_stats(str(args.profile)))
     try:
         uvicorn.run("app.main:app", host="127.0.0.1", port=args.serve, log_level="error", access_log=False)
     finally:
-        if profiler:
-            profiler.disable()
-            profiler.dump_stats(str(args.profile))
+        if prof:
+            prof.disable()
+            prof.dump_stats(str(args.profile))
 
 
 class Upstream(web.Server):
@@ -123,8 +124,8 @@ class Upstream(web.Server):
 
 class Fake:
     def __init__(self, args):
-        self.args = args
-        self.emissions = {}
+        self.opts = args
+        self.sent_at = {}
         self.requests = []
 
     async def handle(self, request):
@@ -136,14 +137,14 @@ class Fake:
         body = json.loads(raw)
         match = re.search(r"bench-[a-z]+-[0-9]+", json.dumps(body))
         if match is None:
-            return web.json_response({"error": "unexpected request"}, status=400)
+            return web.json_response({"error": "bad request"}, status=400)
         key = match.group()
         self.requests.append({"key": key, "path": request.path})
         anthropic = request.path.endswith("/messages")
         response = web.StreamResponse(headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"})
         await response.prepare(request)
         sent = []
-        self.emissions[key] = sent
+        self.sent_at[key] = sent
 
         async def emit(event):
             payload = f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode()
@@ -153,7 +154,7 @@ class Fake:
                 sent.append(stamp)
 
         model = body["model"]
-        usage = {"input_tokens": 20, "output_tokens": self.args.events * 20}
+        usage = {"input_tokens": 20, "output_tokens": self.opts.events * 20}
         message = {
             "id": "msg_bench",
             "type": "message",
@@ -177,8 +178,8 @@ class Fake:
             await emit({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
         else:
             await emit({"type": "response.created", "sequence_number": 0, "response": result})
-        for index in range(self.args.events):
-            await asyncio.sleep(self.args.gap_ms / 1000)
+        for index in range(self.opts.events):
+            await asyncio.sleep(self.opts.gap_ms / 1000)
             if anthropic:
                 event = {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": TEXT}}
             else:
@@ -210,7 +211,7 @@ class Fake:
                         "type": "message",
                         "role": "assistant",
                         "status": "completed",
-                        "content": [{"type": "output_text", "text": TEXT * self.args.events, "annotations": []}],
+                        "content": [{"type": "output_text", "text": TEXT * self.opts.events, "annotations": []}],
                     }
                 ],
                 usage={
@@ -220,12 +221,12 @@ class Fake:
                     "output_tokens_details": {"reasoning_tokens": 0},
                 },
             )
-            await emit({"type": "response.completed", "sequence_number": self.args.events + 1, "response": result})
+            await emit({"type": "response.completed", "sequence_number": self.opts.events + 1, "response": result})
         await response.write_eof()
         return response
 
 
-def distribution(values):
+def stats(values):
     ordered = sorted(values)
     if not ordered:
         raise RuntimeError("empty sample")
@@ -247,8 +248,8 @@ async def drive(session, base, path, kind, key, args, fake):
     else:
         body.update(input=[{"role": "user", "content": [{"type": "input_text", "text": key}]}], store=False)
     started = time.perf_counter()
-    first_byte = None
-    arrivals = []
+    byte_at = None
+    arrived = []
     deltas = []
     types = []
     buffer = b""
@@ -260,8 +261,8 @@ async def drive(session, base, path, kind, key, args, fake):
             raise RuntimeError(f"{kind} {path}: HTTP {response.status}: {(await response.text())[:1000]}")
         async for chunk in response.content.iter_any():
             now = time.perf_counter()
-            if first_byte is None:
-                first_byte = now
+            if byte_at is None:
+                byte_at = now
             buffer += chunk.replace(b"\r\n", b"\n")
             while b"\n\n" in buffer:
                 block, buffer = buffer.split(b"\n\n", 1)
@@ -271,24 +272,24 @@ async def drive(session, base, path, kind, key, args, fake):
                 event = json.loads(data)
                 event_type = event.get("type", "")
                 types.append(event_type)
-                arrivals.append(now)
+                arrived.append(now)
                 if event_type in ("content_block_delta", "response.output_text.delta"):
                     deltas.append(now)
         ended = time.perf_counter()
     terminal = "message_stop" if kind == "anthropic" else "response.completed"
-    if len(deltas) != args.events or terminal not in types or len(fake.emissions.get(key, [])) != args.events:
+    if len(deltas) != args.events or terminal not in types or len(fake.sent_at.get(key, [])) != args.events:
         raise RuntimeError(f"incomplete {kind}: {len(deltas)} deltas; terminal={terminal in types}")
-    assert first_byte is not None
-    delivery = [(arrived - sent) * 1000 for arrived, sent in zip(deltas, fake.emissions[key], strict=True)]
+    assert byte_at is not None
+    delivery = [(arrived - sent) * 1000 for arrived, sent in zip(deltas, fake.sent_at[key], strict=True)]
     return {
-        "ttfb_ms": (first_byte - started) * 1000,
-        "first_event_ms": (arrivals[0] - started) * 1000,
-        "last_event_ms": (arrivals[-1] - started) * 1000,
+        "ttfb_ms": (byte_at - started) * 1000,
+        "first_event_ms": (arrived[0] - started) * 1000,
+        "last_event_ms": (arrived[-1] - started) * 1000,
         "total_ms": (ended - started) * 1000,
-        "event_delivery_ms": distribution(delivery)["median"],
+        "event_delivery_ms": stats(delivery)["median"],
         "delivery_ms": delivery,
-        "events": len(arrivals),
-        "delta_events": len(deltas),
+        "events": len(arrived),
+        "deltas": len(deltas),
     }
 
 
@@ -342,7 +343,7 @@ def cpu_seconds(pid):
     return sum(part * 60**index for index, part in enumerate(reversed(parts)))
 
 
-async def benchmark(args, data, stack, async_stack):
+async def bench(args, data, stack, async_stack):
     http_parser.SINGLETON_HEADERS = http_parser.SINGLETON_HEADERS - {"content-type"}
     web_protocol.HttpRequestParser = http_parser.HttpRequestParserPy
     fake = Fake(args)
@@ -352,12 +353,12 @@ async def benchmark(args, data, stack, async_stack):
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     assert site._server is not None
-    upstream_url = f"http://127.0.0.1:{cast(asyncio.Server, site._server).sockets[0].getsockname()[1]}"
+    fake_url = f"http://127.0.0.1:{cast(asyncio.Server, site._server).sockets[0].getsockname()[1]}"
     child = None
     try:
-        with socket.socket() as reservation:
-            reservation.bind(("127.0.0.1", 0))
-            port = reservation.getsockname()[1]
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
         if port == 2455:
             raise RuntimeError("live port refused")
         command = [sys.executable, str(Path(__file__).resolve()), "--serve", str(port)]
@@ -366,7 +367,7 @@ async def benchmark(args, data, stack, async_stack):
             args.profile.parent.mkdir(parents=True, exist_ok=True)
             command += ["--profile", str(args.profile)]
         log = stack.enter_context((data / "server.log").open("w+"))
-        child = subprocess.Popen(command, cwd=data, env=environment(data, upstream_url), stdout=log, stderr=log)
+        child = subprocess.Popen(command, cwd=data, env=environment(data, fake_url), stdout=log, stderr=log)
         process = child.pid
         proxy_url = f"http://127.0.0.1:{port}"
         session = await async_stack.enter_async_context(
@@ -390,10 +391,10 @@ async def benchmark(args, data, stack, async_stack):
         summary = {
             "runs": args.runs,
             "concurrency": args.concurrency,
-            "delta_events_per_request": args.events,
+            "deltas_per_request": args.events,
             "gap_ms": args.gap_ms,
             "profile": str(args.profile) if args.profile else None,
-            "method": "Delivery=delta arrival minus pre-write; added=paired via-direct. CPU=ps (10ms), startup excluded. Profile=CPU, shares overlap. TTFB=body; cold first; archive off; duplicate Content-Type accepted.",
+            "method": "Delivery=arrival minus write; added=via-direct. CPU=ps/10ms, no startup. Profile=CPU/overlapping shares. TTFB=body; archive off; duplicate Content-Type accepted.",
             "paths": {},
         }
         seq = 0
@@ -403,7 +404,7 @@ async def benchmark(args, data, stack, async_stack):
         ):
             batches: dict[str, Any] = {}
             for mode, base, endpoint in (
-                ("direct", upstream_url, direct_path),
+                ("direct", fake_url, direct_path),
                 ("via_lb", proxy_url, path),
             ):
                 semaphore = asyncio.Semaphore(args.concurrency)
@@ -416,17 +417,15 @@ async def benchmark(args, data, stack, async_stack):
                     async with semaphore:
                         return await drive(session, base, endpoint, kind, key, args, fake)
 
-                connections = upstream.tcp
+                tcp = upstream.tcp
                 cpu = cpu_seconds(process)
                 samples = await asyncio.gather(*(one(key) for key in keys))
                 used_cpu = cpu_seconds(process) - cpu
-                tcp = upstream.tcp - connections
-                metrics: dict[str, Any] = {name: distribution([sample[name] for sample in samples]) for name in METRICS}
-                metrics["all_delivery_ms"] = distribution(
-                    [value for sample in samples for value in sample["delivery_ms"]]
-                )
+                tcp = upstream.tcp - tcp
+                metrics: dict[str, Any] = {name: stats([sample[name] for sample in samples]) for name in METRICS}
+                metrics["all_delivery_ms"] = stats([value for sample in samples for value in sample["delivery_ms"]])
                 metrics.update(
-                    connections=tcp,
+                    tcp=tcp,
                     tcp_per_request=tcp / args.runs,
                     cpu_seconds=used_cpu,
                     cpu_seconds_per_request=used_cpu / args.runs,
@@ -436,7 +435,7 @@ async def benchmark(args, data, stack, async_stack):
                 )
                 batches[mode] = metrics
             batches["proxy_added"] = {
-                name: distribution(
+                name: stats(
                     [
                         via[name] - direct[name]
                         for via, direct in zip(batches["via_lb"]["samples"], batches["direct"]["samples"], strict=True)
@@ -445,7 +444,12 @@ async def benchmark(args, data, stack, async_stack):
                 for name in METRICS
             }
             summary["paths"][kind] = batches
-        summary["upstream_requests"] = fake.requests
+        summary["requests"] = fake.requests
+        if args.profile:
+            child.send_signal(signal.SIGWINCH)
+            async with asyncio.timeout(10):
+                while not args.profile.exists():
+                    await asyncio.sleep(0.05)
         child.send_signal(signal.SIGTERM)
         await asyncio.to_thread(child.wait, 30)
         if child.returncode not in (0, -signal.SIGTERM):
@@ -478,7 +482,7 @@ async def benchmark(args, data, stack, async_stack):
 async def run(args):
     with tempfile.TemporaryDirectory(prefix="proxy-bench-") as temporary, ExitStack() as stack:
         async with AsyncExitStack() as async_stack:
-            await benchmark(args, Path(temporary), stack, async_stack)
+            await bench(args, Path(temporary), stack, async_stack)
 
 
 if __name__ == "__main__":
