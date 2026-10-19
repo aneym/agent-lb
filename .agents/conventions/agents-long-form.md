@@ -3,7 +3,7 @@
 Updated 2026-09-26. `AGENTS.md` holds the short rules every session loads (owner,
 2026-09-25: short, loose instruction files; detail lives in pages agents read when
 needed). This page is the full text it was cut from, plus the factory rules at the end.
-If they disagree, AGENTS.md wins; fix this page.
+This file provides detailed operational rules referenced by AGENTS.md. For conflicts, follow the applicable safety constraint and update both pages.
 
 ---
 

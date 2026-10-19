@@ -31,7 +31,10 @@ Validate with `feature-map check`.
 `.agents/skills/verify-agent-lb/SKILL.md`: launch, doctor, drive, evidence, cleanup.
 
 ## Topics
-Onboarding and account operations: `.agents/conventions/agents-long-form.md`.
+Onboarding, account operations and billing/cache safety: `.agents/conventions/agents-long-form.md`.
+Money-path, incident fixes and rule changes: `.agents/conventions/factory-rules.md` (record rule changes in `DECISIONS.md`).
+File-size cap: `CODING_STANDARDS.md`; keep authored files under 20,000 bytes.
+Repo-specific coding standards: `CODING_STANDARDS.md`.
 
 ## Repo facts
 The serving machine runs the launchd service on `http://127.0.0.1:2455`; see `scripts/install-service.sh`.
