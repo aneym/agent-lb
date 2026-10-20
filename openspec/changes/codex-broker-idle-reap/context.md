@@ -17,14 +17,14 @@ explicit post-update step, not an automatically executed hook.
 From the agent-lb checkout:
 
 ```sh
-scripts/apply-codex-plugin-cc-patch.sh
+the retired broker patch installer
 ```
 
 The default target is `$HOME/.agent-lb/plugins/codex-plugin-cc`. To apply to a
 test installation:
 
 ```sh
-CODEX_PLUGIN_CC_DIR=/path/to/plugin scripts/apply-codex-plugin-cc-patch.sh
+CODEX_PLUGIN_CC_DIR=/path/to/plugin the retired broker patch installer
 ```
 
 It first checks the entire patch, applies without `--reject` or `--3way`,
@@ -88,7 +88,7 @@ node tests/integration/codex_broker_idle_reap.mjs --standin-only
 # invalid timer validation. Does NOT exercise broker runtime shutdown.
 node tests/integration/codex_broker_idle_reap.mjs --delivery-only
 
-sh -n scripts/apply-codex-plugin-cc-patch.sh
+sh -n the retired broker patch installer
 ```
 
 The integration test archives the installed plugin's committed HEAD into a

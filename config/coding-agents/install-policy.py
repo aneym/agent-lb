@@ -26,7 +26,16 @@ MODEL = "opus"
 EFFORT_LEVEL = "medium"
 HAIKU_ENV = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
 POLICY_SNAPSHOT = Path(".agent-lb/managed/coding-agents/policy-snapshot.json")
-ROUTE_FILES = ("route", "seat", "route_quota.py", "route_storage.py", "route_cache.py", "route_grok.py")
+ROUTE_FILES = (
+    "route",
+    "seat",
+    "route_quota.py",
+    "route_storage.py",
+    "route_cache.py",
+    "route_grok.py",
+    "codex-seat",
+    "codex_seat_profiles.py",
+)
 
 
 SONNET_ENV = "ANTHROPIC_DEFAULT_SONNET_MODEL"
@@ -1405,7 +1414,11 @@ def sync_policy_boxes(home: Path) -> None:
             "policy_rev": json.loads(table.read_text())["policy_rev"],
             "table_sha256": hashlib.sha256(table.read_bytes()).hexdigest(),
         }
-        bins = [home / ".agent-lb/bin" / name for name in ROUTE_FILES]
+        bins = [
+            home / ".agent-lb/bin" / name
+            for name in ROUTE_FILES
+            if name not in ("codex-seat", "codex_seat_profiles.py")
+        ]
         tables = [table, table.with_name("quota-swap.json")]
         if not all(path.is_file() for path in bins + tables):
             raise ValueError("routing files missing")
@@ -1956,6 +1969,10 @@ def main() -> int:
         return 0
     if not args.uninstall:
         print("local MCP: " + json.dumps(ensure_harness_mcp(args.home, subprocess.run), sort_keys=True))
+        launcher = args.home / ".local/bin/codex-seat"
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        if not launcher.exists() and not launcher.is_symlink():
+            launcher.symlink_to(args.home / ".agent-lb/bin/codex-seat")
     if not changes:
         for reason, path in preserved_agents:
             print(f"preserved {reason} {path}")
@@ -1995,7 +2012,7 @@ def main() -> int:
             print(f"removed {path}")
         else:
             write_atomic(path, content)
-            if path.suffix in (".py", ".sh") or path.name in ("verify-routing", "route", "seat"):
+            if path.suffix in (".py", ".sh") or path.name in ("verify-routing", "route", "seat", "codex-seat"):
                 os.chmod(path, path.stat().st_mode | 0o111)
             print(f"updated {path}")
     for reason, path in preserved_agents:

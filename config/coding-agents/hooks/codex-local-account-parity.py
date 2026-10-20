@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
-import os
 import json
-from datetime import datetime, timedelta, timezone
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HOOKS = Path(__file__).resolve().parent
@@ -112,8 +112,11 @@ else:
         calls = self.log.read_text()
         consumed = subprocess.run(
             [str(self.tools / "agent-test-account"), "--lane", "own"],
-            cwd=self.lane, env=dict(self.env, CODEX_SANDBOX="seatbelt"),
-            capture_output=True, text=True, timeout=30,
+            cwd=self.lane,
+            env=dict(self.env, CODEX_SANDBOX="seatbelt"),
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         self.assertEqual(consumed.returncode, 0, consumed.stderr)
         self.assertEqual(consumed.stdout.strip(), "test-account: acct_parity")
@@ -134,7 +137,7 @@ else:
 
     def launch(self, kind):
         self.script(
-            "node",
+            "codex",
             """import os, subprocess, sys, time
 if '--dry-run' in sys.argv:
     sys.exit(0)
@@ -144,9 +147,11 @@ if os.environ['CHECK_KIND'] == 'lane' and env.get('LANE_DIR') != os.getcwd():
     sys.exit(3)
 result = subprocess.run(['agent-test-account', '--' + os.environ['CHECK_KIND'], 'own'],
                         env=env, capture_output=True, text=True)
-sys.stdout.write(result.stdout)
 sys.stderr.write(result.stderr)
 time.sleep(10)
+if result.returncode == 0:
+    from pathlib import Path
+    Path(sys.argv[sys.argv.index('-o') + 1]).write_text(result.stdout)
 sys.exit(result.returncode)
 """,
         )
@@ -159,9 +164,19 @@ print(json.dumps(dict(front='parity', cursor=[0, 0], rows=[])))
         (self.home / ".local/bin/desktop-guard-focus").symlink_to(focus)
         self.brief.write_text("Run agent-test-account --" + kind + " own\n")
         return subprocess.run(
-            ["bash", str(HOOKS / "codex-local.sh"), "task", "--prompt-file", str(self.brief)],
+            [
+                sys.executable,
+                str(HOOKS.parents[2] / "clients/codex-seat"),
+                "run",
+                "--seat",
+                "codex-sol-local",
+                "--name",
+                "account-parity",
+                "--prompt-file",
+                str(self.brief),
+            ],
             cwd=self.lane if kind == "lane" else self.agent,
-            env=dict(self.env, CHECK_KIND=kind),
+            env=dict(self.env, CHECK_KIND=kind, ROUTE_TABLE=str(HOOKS.parent / "routing-table.json")),
             capture_output=True,
             text=True,
             timeout=90,

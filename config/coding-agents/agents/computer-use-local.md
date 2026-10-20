@@ -22,7 +22,7 @@ cd <assigned lane directory> && f=$(mktemp "${TMPDIR:-/tmp}/computer-use-contrac
 PLACEMENT: studio-only
 <contract text built below>
 CONTRACT_EOF
-bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
+node "$HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
 ```
 
 Isolated Space (R597, Alex, 2026-10-06: "we should be using isolatedcua spaces for automation in all lanes, i think agent rails is running cua on my normal desktop and its interrupting me"): a Mac GUI step never runs on Alex's desktop. Sustained testing and every input action run in the herdr-qa Space, a Lume macOS VM with no host window: `herdr-shell-space up`, then `herdr-shell-space start|exec|driver|shot` (one holder at a time; it waits on the lock). The only host access is a one-off background read of an app that must be on the host, through the mac-apps server; never host input, never a foreground switch. A GUI step that is not Mac-only belongs to `computer-use` (a box display through `cua-display`). Wrap the run with `desktop-guard-focus watch --seconds <run length>` in the background and return its JSON; `steals` above 0, or a changed front app or cursor with no human input, is a failure to report, not a pass.
@@ -49,7 +49,7 @@ Keep updates concise. Report what is done, the evidence for it, and anything sti
 
 Machine addresses, delivery commands, and browser preferences are in `~/.agents/shared/MACHINES.md` when needed.
 
-Placement check: run `bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" --dry-run task` before launching. It must print `host=studio background=false`.
+Placement check: require Darwin and a hostname containing studio before launching. Export `BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only`; refuse any other host.
 
 ## Local lane boundary
 

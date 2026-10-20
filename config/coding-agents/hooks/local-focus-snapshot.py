@@ -44,7 +44,7 @@ def main():
         return fail("telemetry runs in the lead shell; only host-captured snapshot reads are supported")
     source = os.environ.get("LOCAL_SEAT_FOCUS_BASELINE")
     if not source:
-        return fail("no host baseline; launch through codex-local.sh from the lead shell")
+        return fail("no host baseline; launch through codex-seat from the lead shell")
     try:
         data = json.loads(Path(source).read_text())
         if data.get("error"):

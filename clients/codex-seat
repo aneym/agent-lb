@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import codex_seat_profiles as profiles
+
+
+def table_path():
+    managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
+    repo = Path(__file__).resolve().parent.parent / "config/coding-agents/routing-table.json"
+    configured = (os.environ.get("ROUTE_TABLE") or "").strip()
+    return Path(configured).expanduser() if configured else managed if managed.is_file() else repo
+
+
+def seat_config(seat):
+    base = seat.removesuffix("-local")
+    table = json.loads(table_path().read_text())
+    try:
+        return table["codex_seats"][base]
+    except KeyError:
+        raise ValueError(f"unknown Codex seat: {seat}") from None
+
+
+def tool(name):
+    found = shutil.which(name)
+    fallback = Path.home() / ".agent-lb/bin" / name
+    if found:
+        return found
+    if fallback.is_file():
+        return str(fallback)
+    raise ValueError(f"required command unavailable: {name}")
+
+
+def policy_file(relative):
+    candidates = [
+        Path.home() / ".agents/policy/coding-agents" / relative,
+        Path.home() / ".agent-lb/managed/coding-agents" / relative,
+        Path(__file__).resolve().parent.parent / "config/coding-agents" / relative,
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    raise ValueError(f"required policy helper unavailable: {relative}")
+
+
+def new_job(name):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}", name):
+        raise ValueError("name must be 1-120 letters, digits, dots, underscores or hyphens")
+    root = Path.home() / ".agent-lb/seat-jobs"
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return Path(tempfile.mkdtemp(prefix=f"{name}-{stamp}-", dir=root))
+
+
+def codex_argv(args, profile, cwd, job, env):
+    return [
+        tool("codex"), "exec", "-m", args.model,
+        "-c", f"model_reasoning_effort={args.effort}",
+        *profiles.codex_flags(profile, cwd, env),
+        "--skip-git-repo-check", "-C", str(cwd), "-o", str(job / "last.md"), "-",
+    ]
+
+
+def worktree_state(cwd):
+    def git(*args, **kwargs):
+        return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True,
+                              text=True, timeout=120, check=True, **kwargs)
+
+    head = git("rev-parse", "--verify", "HEAD").stdout.strip()
+    index = git("rev-parse", "--path-format=absolute", "--git-path", "index").stdout.strip()
+    with tempfile.TemporaryDirectory(prefix="codex-seat-index.") as directory:
+        copy = Path(directory) / "index"
+        if Path(index).is_file():
+            shutil.copyfile(index, copy)
+        env = dict(os.environ, GIT_INDEX_FILE=str(copy))
+        git("add", "-A", ".", env=env)
+        tree = git("write-tree", env=env).stdout.strip()
+    return hashlib.sha256(f"{head}\0{tree}".encode()).hexdigest()
+
+
+def execute(args, cwd, job=None, env=None):
+    config = seat_config(args.seat)
+    if not profiles.is_studio():
+        return 75
+    profile = profiles.select(config["mode"], "local", args.profile)
+    job = job or new_job(args.seat)
+    env = dict(os.environ if env is None else env)
+    scratch = job / "scratch"
+    scratch.mkdir(exist_ok=True)
+    env.update(AGENT_LB_SEAT=args.seat, CODEX_HOME=str(job / "home"), CODEX_SEAT_SCRATCH=str(scratch))
+    subprocess.run(
+        [sys.executable, str(policy_file("codex-seat-home.py")), env["CODEX_HOME"]],
+        cwd=cwd, env=env, stdout=subprocess.DEVNULL, check=True,
+    )
+    before = worktree_state(cwd) if config.get("owes_diff") else None
+    argv = codex_argv(args, profile, cwd, job, env)
+    started = time.monotonic()
+    focus = policy_file("hooks/focus-steal-check.py")
+    since = None
+    if focus:
+        since = subprocess.run([sys.executable, str(focus), "now"], cwd=cwd, env=env,
+                               capture_output=True, text=True, check=True).stdout.strip()
+    with args.prompt_file.open("rb") as prompt, (job / "codex.log").open("wb") as log:
+        result = subprocess.run(argv, cwd=cwd, env=env, stdin=prompt, stderr=log)
+    rc = result.returncode if result.returncode >= 0 else 128 - result.returncode
+    last = job / "last.md"
+    message = last.read_text() if last.is_file() else ""
+    if message:
+        print(message, end="" if message.endswith("\n") else "\n")
+    else:
+        print(f"codex-seat: no last message; stderr: {job / 'codex.log'}", file=sys.stderr)
+    if focus:
+        stolen = subprocess.run([sys.executable, str(focus), "--since", since, "codex-seat"],
+                                cwd=cwd, env=env).returncode
+        if stolen == 6:
+            return 6
+        if time.monotonic() - started < 10 and not message:
+            return rc or 1
+    if not rc and before is not None and before == worktree_state(cwd):
+        print("EMPTY: seat owes a diff but worktree fingerprint is unchanged", file=sys.stderr)
+        return 65
+    return rc
+
+
+def local_environment(prompt, cwd, job):
+    env = dict(os.environ, BOX_EXEC_HOST="studio", SEAT_BOX="studio", PLACEMENT="studio-only")
+    account = subprocess.run(
+        [sys.executable, str(policy_file("hooks/codex-local-account.py")),
+         "--prompt-file", str(prompt), "--shell-env"],
+        cwd=cwd, env=env, capture_output=True, text=True, check=True,
+    )
+    if account.stderr:
+        print(account.stderr, end="", file=sys.stderr)
+    for line in account.stdout.splitlines():
+        words = shlex.split(line)
+        if len(words) == 2 and words[0] == "export":
+            key, value = words[1].split("=", 1)
+            if key not in ("AGENT_TEST_ACCOUNT_OWNER", "LANE_DIR"):
+                raise ValueError("unexpected account environment key")
+            env[key] = value
+        elif words == ["unset", "LANE_DIR"]:
+            env.pop("LANE_DIR", None)
+        else:
+            raise ValueError("unexpected account environment output")
+    focus_dir = job / "focus"
+    focus_dir.mkdir()
+    env["LOCAL_SEAT_FOCUS_BASELINE"] = str(focus_dir / "baseline.json")
+    helper = policy_file("hooks/local-focus-snapshot.py")
+    env["LOCAL_SEAT_FOCUS_HELPER"] = str(helper)
+    subprocess.run([sys.executable, str(helper), env["LOCAL_SEAT_FOCUS_BASELINE"]],
+                   cwd=cwd, env=env, check=True)
+    target = focus_dir / "desktop-guard-focus"
+    shutil.copyfile(policy_file("hooks/local-seat-bin/desktop-guard-focus"), target)
+    target.chmod(0o755)
+    env["PATH"] = str(focus_dir) + os.pathsep + env.get("PATH", "")
+    print(f"codex-seat: host baseline {env['LOCAL_SEAT_FOCUS_BASELINE']} (non-live; lead compares after run)",
+          file=sys.stderr)
+    return env
+
+
+def run(args):
+    config = seat_config(args.seat)
+    place = "local" if args.seat.endswith("-local") else args.place
+    if place == "local" and not profiles.is_studio():
+        print("codex-seat: local seats require Studio", file=sys.stderr)
+        return 75
+    profile = profiles.select(config["mode"], "local" if place == "local" else "box", args.profile)
+    args.model = subprocess.run([tool("route"), "resolve", config["alias"]],
+                                capture_output=True, text=True, check=True).stdout.strip()
+    if not args.model or "\n" in args.model:
+        raise ValueError("route resolve did not return one model")
+    args.effort = args.effort or config["effort"]
+    cwd = args.cwd.expanduser().resolve()
+    original = args.prompt_file.expanduser().resolve()
+    job = new_job(args.name)
+    finish = subprocess.run([sys.executable, str(policy_file("hooks/seat-finish.py")),
+                             "--prompt-file", str(original)], cwd=cwd,
+                            capture_output=True, text=True, check=True).stdout
+    args.prompt_file = job / "prompt.md"
+    args.prompt_file.write_text(original.read_text() + "\n\n" + finish)
+    args.profile = profile
+    if place == "local":
+        env = dict(os.environ, CODEX_SEAT_SCRATCH=str(job / "scratch"))
+        argv = codex_argv(args, profile, cwd, job, env)
+    else:
+        argv = [tool("seat-run"), "--bg", "--name", args.name, "--box", place,
+                "--timeout", str(args.timeout)]
+        if profile == "read-only":
+            argv.append("--read-only")
+        argv += ["--", "seat-exec", "--seat", args.seat.removesuffix("-local"),
+                 "--effort", args.effort]
+        if profile == "box-write" and not config.get("owes_diff"):
+            argv.append("--write")
+        argv += ["--prompt-file", str(args.prompt_file)]
+    if args.dry_run:
+        print(json.dumps(dict(seat=args.seat, place=place, profile=profile, model=args.model,
+                              effort=args.effort, cwd=str(cwd), argv=argv)))
+        return 0
+    if place == "local":
+        return execute(args, cwd, job, local_environment(original, cwd, job))
+    return subprocess.run(argv, cwd=cwd).returncode
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+    launch = sub.add_parser("run")
+    launch.add_argument("--seat", required=True)
+    launch.add_argument("--name", required=True)
+    launch.add_argument("--prompt-file", type=Path, required=True)
+    launch.add_argument("--place", default="auto")
+    launch.add_argument("--cwd", type=Path, default=Path.cwd())
+    launch.add_argument("--effort", choices=("low", "medium", "high", "xhigh"))
+    launch.add_argument("--profile", choices=profiles.PROFILES)
+    launch.add_argument("--timeout", type=int, default=3600)
+    launch.add_argument("--dry-run", action="store_true")
+    wait = sub.add_parser("wait")
+    wait.add_argument("name")
+    wait.add_argument("--max", type=int, default=240)
+    args = parser.parse_args()
+    try:
+        if args.command == "wait":
+            if not 1 <= args.max <= 270:
+                raise ValueError("wait --max must be between 1 and 270 seconds")
+            return subprocess.run([tool("seat-run"), "--wait", args.name, "--max", str(args.max)]).returncode
+        if args.command == "run":
+            if args.timeout < 1:
+                raise ValueError("timeout must be positive")
+            return run(args)
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        print(f"codex-seat: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

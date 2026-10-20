@@ -13,7 +13,7 @@ The tree walk covers descendants in any group, but not a process forked after th
 Residual risk: between the ps re-read that revalidates a process and the kill() call that signals it, the process can exit and its pid or group id can be reused, so the signal could reach an unrelated process. macOS has no pidfd, so POSIX kill cannot bind a signal to a verified process identity and no further revalidation closes the gap. After revalidation the window is microseconds, and pkill and launchd accept the same gap. We accept it, because leaving brokers unreaped has leaked about 38 GB of memory.
 
 ## Migration Plan
-Run scripts/apply-codex-plugin-cc-patch.sh after every plugin update/reinstall. No automatic integration exists. Reverse the patch only with an explicit checked git apply --reverse against the installed plugin.
+Run the retired broker patch installer after every plugin update/reinstall. No automatic integration exists. Reverse the patch only with an explicit checked git apply --reverse against the installed plugin.
 
 ## Open Questions
 Live application and main merge may be blocked by sandbox write permissions. Full existing user MCP-fleet testing is excluded because it could read credentials or access external systems; test with isolated Codex configuration.
