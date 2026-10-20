@@ -13,6 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from seat_guard_advisory import first_snapshot_advisory, snapshot_advisory  # type: ignore[missing-import]
 from seat_hands import hands_target, hands_warning, local_warning, preserve_seat, steer_input  # type: ignore[missing-import]
 
 FORWARDER_SEATS = {
@@ -41,8 +42,6 @@ NEEDS_MISSING = (
     "contract for a retry"
 )
 ANTHROPIC_MODEL_MARKERS = ("opus", "sonnet", "fable", "haiku", "claude")
-SNAPSHOT_MAX_AGE_SECONDS = 600
-SNAPSHOT_MAX_FUTURE_SECONDS = 60
 CLASS_TAG = re.compile(r"^\s*\[class:([a-z0-9_-]+)\]", re.IGNORECASE)
 AGENT_MODEL = re.compile(r"^model:\s*(\S+)\s*$", re.MULTILINE)
 DEFAULT_RETIRED = ("claude-fable-*", "fable", "claude-planner", "gpt-*-astra", "gpt-*-astra-*", "gpt-5.6*", "gpt-5.5*")
@@ -73,14 +72,18 @@ def emit_context(text: str, extra: str = "", updated: dict | None = None) -> Non
 def emit_advisory(advisory: str, extra: str = "", updated: dict | None = None) -> None:
     emit_context(
         "seat-guard advisory: " + advisory + ". Capacity is status, not admission control. Check "
-        "`route pools` or `agent-lb status --provider anthropic --json`.", extra, updated,
+        "`route pools` or `agent-lb status --provider anthropic --json`.",
+        extra,
+        updated,
     )
 
 
 def emit_warning(reason: str, extra: str = "", updated: dict | None = None) -> None:
     emit_context(
         "seat-guard (warn only, not blocked): " + reason + "; logged in the routing ledger. "
-        "Default work names a family alias (`route pick <class>`).", extra, updated,
+        "Default work names a family alias (`route pick <class>`).",
+        extra,
+        updated,
     )
 
 
@@ -88,9 +91,7 @@ def quota_swap_seat(subagent: str, prompt: str = "") -> str | None:
     if preserve_seat(subagent, prompt) or hands_warning(subagent, prompt):
         return None
     target = None
-    if subagent in {"security-reviewer"} or fnmatch.fnmatchcase(
-        subagent.removesuffix("-local"), "lab-*-verifier"
-    ):
+    if subagent in {"security-reviewer"} or fnmatch.fnmatchcase(subagent.removesuffix("-local"), "lab-*-verifier"):
         target = "codex-verifier"
     elif subagent.startswith("sonnet-implementer"):
         target = "gpt-implementer"
@@ -251,56 +252,6 @@ def is_anthropic_model(model: str) -> bool:
     return any(marker in model for marker in ANTHROPIC_MODEL_MARKERS)
 
 
-def snapshot_advisory(snapshot_path: Path) -> str | None:
-    try:
-        snapshot = json.loads(snapshot_path.read_text())
-    except FileNotFoundError:
-        return "missing snapshot"
-    except (OSError, json.JSONDecodeError):
-        return "unparseable snapshot"
-    try:
-        if not isinstance(snapshot, dict):
-            raise ValueError("snapshot is not an object")
-        polled_at = str(snapshot["polled_at"])
-        observed_at = datetime.fromisoformat(polled_at[:-1] + "+00:00" if polled_at.endswith("Z") else polled_at)
-        if observed_at.tzinfo is None:
-            raise ValueError("polled_at is not timezone-aware")
-        age_seconds = (datetime.now(timezone.utc) - observed_at.astimezone(timezone.utc)).total_seconds()
-        if age_seconds < -SNAPSHOT_MAX_FUTURE_SECONDS:
-            return "snapshot dated in the future"
-        if age_seconds > SNAPSHOT_MAX_AGE_SECONDS:
-            return "stale snapshot"
-        if snapshot["reachable"] is not True:
-            return "snapshot reports unreachable"
-        if snapshot["providers"]["anthropic"]["usable_count"] < 2:
-            return "anthropic usable_count < 2"
-    except Exception:
-        return "internal error reading snapshot"
-    return None
-
-
-def first_snapshot_advisory(session_id: str, snapshot_path: Path) -> bool:
-    if not session_id:
-        return True
-    try:
-        try:
-            mtime = snapshot_path.stat().st_mtime_ns
-        except FileNotFoundError:
-            mtime = None
-        key = hashlib.sha256(json.dumps([session_id, str(snapshot_path), mtime]).encode()).hexdigest()
-        state = Path(os.environ.get("SEAT_GUARD_STATE_DIR") or Path.home() / ".claude" / "state" / "seat-guard")
-        state.mkdir(parents=True, exist_ok=True)
-        with (state / key).open("x"):
-            pass
-    except FileExistsError:
-        return False
-    except OSError:
-        return False
-    return True
-
-
-
-
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
@@ -355,8 +306,13 @@ def main() -> None:
         )
         if subagent != "fork":
             updated = steer_input(tool_input, target, prompt, is_anthropic_model(model))
-            record.update(original_subagent_type=subagent or "general-purpose", subagent_type=target,
-                          steered="hands", steer_reason=reason, model=updated.get("model"))
+            record.update(
+                original_subagent_type=subagent or "general-purpose",
+                subagent_type=target,
+                steered="hands",
+                steer_reason=reason,
+                model=updated.get("model"),
+            )
             tool_input = updated
             subagent = target
             model = (updated.get("model") or "").strip().lower()
@@ -415,8 +371,10 @@ def main() -> None:
             "for it; name the model on the dispatch or in the brief to request it"
         )
     hands_class = record["task_class"]
-    if not warn_reason and hands_class not in (None, "implement", "mechanical") and (
-        subagent == "grok-implementer" or HANDS_MODEL.search(model)
+    if (
+        not warn_reason
+        and hands_class not in (None, "implement", "mechanical")
+        and (subagent == "grok-implementer" or HANDS_MODEL.search(model))
     ):
         warn_reason = f"Grok and Composer never review: {hands_class} is not implement or mechanical; route refuses it"
     explicit = [{"model": model, "source": "dispatch"}] if model and forbidden_model(model, retired) else []
@@ -474,7 +432,8 @@ def main() -> None:
             "seat-guard warning: scope, spec, contract and design briefs default to opus-latest "
             "(models.md 2026-10-14); this Sol dispatch still runs."
             + (" Capacity: " + "; ".join(advisories) + "." if advisories else ""),
-            budget_advisory, updated,
+            budget_advisory,
+            updated,
         )
     elif advisories:
         emit_advisory("; ".join(advisories), budget_advisory, updated)

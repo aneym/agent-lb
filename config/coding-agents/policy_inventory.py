@@ -41,6 +41,7 @@ MANAGED_HOOKS = (
     "parity_presentation.py",
     "subagent-closeout.py",
     "seat-guard.py",
+    "seat_guard_advisory.py",
     "seat_hands.py",
     "workflow-seat-guard.py",
     "workflow-readback.py",
