@@ -15,50 +15,6 @@
 
 set -euo pipefail
 FLOOR="floor: keeps the orchestrators up (agent-lb carries every agent session)"
-APPROVAL="Approved restarts pass with a trailing '# alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-<topic>-2026-<date>.md' (a first-hand Alex quote with a time)."
-approved() {
-  python3 - "$CMD" <<'PY'
-import os, re, sys
-cmd = sys.argv[1]
-quote = None
-comment = None
-escaped = False
-for i, c in enumerate(cmd):
-    if escaped:
-        escaped = False
-        continue
-    if c == "\\" and quote != "'":
-        escaped = True
-    elif quote:
-        if c == quote:
-            quote = None
-    elif c in "\"'":
-        quote = c
-    elif c == "#" and i and cmd[i-1].isspace():
-        end = cmd.find("\n", i)
-        end = len(cmd) if end < 0 else end
-        if cmd[i:end].startswith("# alex-approval:") and not cmd[end:].strip():
-            before = cmd[:i].rsplit("\n", 1)[-1]
-            if before.strip():
-                comment = cmd[i:end]
-        break
-m = re.fullmatch(r"#\s*alex-approval:\s*(\S+)\s*", comment or "")
-if not m:
-    sys.exit(1)
-home = os.path.expanduser("~")
-path = re.sub(r"^(?:~|\$HOME|\$\{HOME\})/", home + "/", m[1])
-refs = home + "/.agent-rails/lanes/orchestrator-refs/"
-name = path[len(refs):]
-if (not path.startswith(refs) or ".." in path or "/" in name
-        or not re.fullmatch(r"alex-.+-2026-.+\.md", name) or os.path.islink(path)):
-    sys.exit(1)
-try:
-    with open(path) as f:
-        sys.exit(0 if re.search(r"\b\d{1,2}:\d{2}\b", f.read()) else 1)
-except OSError:
-    sys.exit(1)
-PY
-}
 allow() {
   if [ -n "${HOOK_FLOOR_RECEIPT:-}" ]; then printf 'floor-ok %s\n' agent-lb-bootout-guard.sh; fi
   exit 0
@@ -254,7 +210,8 @@ PY
 }
 JQ=/opt/homebrew/bin/jq
 [ -x "$JQ" ] || JQ=jq
-if ! CMD=$("$JQ" -n -r 'input | .tool_input.command // empty' 2>/dev/null); then
+INPUT=$(cat)
+if ! CMD=$(printf '%s' "$INPUT" | "$JQ" -r '.tool_input.command // empty' 2>/dev/null); then
   echo "BLOCKED ($FLOOR): agent-lb-bootout-guard could not read the hook input (jq missing or failed), so the call is refused." >&2
   exit 2
 fi
@@ -278,16 +235,27 @@ if [ "$MATCH" -eq 0 ]; then
     exit 2
   fi
   [ "$RUNS" -eq 0 ] || allow
-  if [ ! -f "$HOME/.agent-lb/raw-restart.ok" ] && ! approved; then
-    {
-      echo "BLOCKED ($FLOOR): raw launchctl restart of agent-lb. Use the blue/green restart instead:"
-      echo "  ~/.agent-lb/bin/lb-restart --reason \"<what>\" [--from <worktree> --files <paths>]"
-      echo "  ~/.agent-lb/bin/lb-restart --reason \"<what>\" --check   # boot+health-check only"
-      echo "Add --reload-plist after editing the launchd plist."
-      echo "Only if lb-restart itself is broken: touch ~/.agent-lb/raw-restart.ok, then remove it."
-      echo "$APPROVAL"
-    } >&2
-    exit 2
-  fi
+  HOOK_INPUT="$INPUT" python3 - <<'REWRITE_PY'
+import json, os, shlex, sys
+path = os.path.expanduser("~/.agent-lb/bin/lb-restart")
+if not os.path.isfile(path) or not os.access(path, os.X_OK):
+    print("BLOCKED (floor: shared live sessions): blue/green restart is unavailable; raw launchctl restart was not run.", file=sys.stderr)
+    sys.exit(2)
+data = json.loads(os.environ["HOOK_INPUT"])
+tool = data.get("tool_input") or {}
+command = tool.get("command", "")
+try:
+    words = shlex.split(command)
+except ValueError:
+    words = []
+if (not words or os.path.basename(words[0]) != "launchctl"
+        or any(c in command for c in ";&|()<>`$\\\n\r")
+        or len(words) < 3 or words[1] not in {"kickstart", "bootout", "stop", "kill", "unload", "remove"}):
+    print("BLOCKED (floor: shared live sessions): cannot safely rewrite this compound restart; use ~/.agent-lb/bin/lb-restart --reason <reason> explicitly.", file=sys.stderr)
+    sys.exit(2)
+updated = dict(tool, command=shlex.quote(path) + " --reason " + shlex.quote("guard: replace raw launchctl restart with blue/green restart"))
+print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": updated,
+    "additionalContext": "agent-lb-bootout-guard: replacing raw launchctl restart with lb-restart blue/green; unrelated commands are never discarded."}}))
+REWRITE_PY
 fi
 allow

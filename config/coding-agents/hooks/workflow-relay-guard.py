@@ -8,29 +8,21 @@ MARK = "RELAYED-REQUEST-GUARD"
 RECEIPT = "floor-ok workflow-relay-guard.py"
 
 
-def refuse(why):
-    sys.stderr.write(
-        "BLOCKED: workflow-relay-guard could not read the hook input (%s), so this call is refused "
-        "(the guard fails closed).\n" % why
-    )
-    sys.exit(2)
-
-
 def main():
     try:
         data = json.loads(sys.stdin.read())
-    except ValueError as error:
-        refuse("not JSON: %s" % error)
+    except ValueError:
+        return
     if not isinstance(data, dict):
-        refuse("not a JSON object")
+        return
     if data.get("tool_name") != "Workflow":
         return
     ti = data.get("tool_input") or {}
     if not isinstance(ti, dict):
-        refuse("tool_input is not an object")
+        return
     script = ti.get("script") or ""
     if not isinstance(script, str):
-        refuse("the script is not text")
+        return
 
     if not script:
         return

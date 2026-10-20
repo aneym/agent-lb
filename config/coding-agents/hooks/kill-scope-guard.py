@@ -234,7 +234,20 @@ def kills(text, depth=0):
             if not argv:
                 continue
             name = os.path.basename(argv[0])
-            if name in ("pkill", "killall"):
+            if name == "kill":
+                args = argv[1:]
+                if args and args[0] in ("-l", "-L"):
+                    continue
+                if args and args[0] in ("-s", "-n"):
+                    args = args[2:]
+                elif args and re.fullmatch(r"-(?:\d+|(?:SIG)?[A-Z][A-Z0-9]+)", args[0]):
+                    args = args[1:]
+                if args and args[0] == "--":
+                    args = args[1:]
+                if not args or any(not a.isdigit() or int(a) <= 1 for a in args):
+                    raise Doubt
+                out.append({"pids": [int(a) for a in args], "pattern": None, "parents": None, "tool": "kill"})
+            elif name in ("pkill", "killall"):
                 out.append(selector(argv))
             elif name == "pgrep" and n + 1 < len(argvs):
                 nxt = argvs[n + 1]
@@ -254,11 +267,9 @@ def kills(text, depth=0):
 
 
 def process_table():
-    fake = os.environ.get("KILL_GUARD_PS")
-    if fake:
-        with open(fake) as handle:
-            return {int(row["pid"]): (int(row["ppid"]), row["command"]) for row in json.load(handle)}
-    out = subprocess.run(["/bin/ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, timeout=10)
+    out = subprocess.run(
+        ["/bin/ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, timeout=3, check=True
+    )
     table = {}
     for line in out.stdout.splitlines():
         parts = line.split(None, 2)
@@ -315,23 +326,7 @@ def main():
     except ValueError:
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
-    if "port-free" not in command and any(p.search(command) for p in PORT_KILL):
-        print(
-            json.dumps(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "additionalContext": (
-                            "kill-scope-guard (warn only, not blocked): lsof -t lists every client of a port, not just its "
-                            "listener (2026-10-16 this SIGKILLed the VPN daemon); free a port with `port-free <port>`, which kills "
-                            "only a listener you started."
-                        ),
-                    }
-                }
-            )
-        )
-        return 0
-    if not re.search(r"\b(pkill|killall|pgrep)\b", command):
+    if not re.search(r"\b(kill|pkill|killall|pgrep)\b", command):
         return 0
     try:
         selections = kills(command)
@@ -341,55 +336,88 @@ def main():
         return 0
     if (
         selections is None
-        or any(s["pattern"] is None and s["parents"] is None for s in selections)
+        or any("pids" not in s and s["pattern"] is None and s["parents"] is None for s in selections)
         or any(s["pattern"] and re.search(r"[$`]", s["pattern"]) for s in selections)
     ):
         print(
-            json.dumps(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "additionalContext": (
-                            "kill-scope-guard (warn only, not blocked): this kill's pattern cannot be read before it runs; make sure "
-                            "it matches only this session's processes (kill <pid>, or pkill -P $$)."
-                        ),
-                    }
-                }
-            )
+            "BLOCKED (floor: live sessions and Alex's desktop): cannot resolve kill targets; use an owned literal pid.",
+            file=sys.stderr,
         )
-        return 0
-    table = process_table()
-    start = int(os.environ.get("KILL_GUARD_SELF") or os.getppid())
+        return 2
+    try:
+        table = process_table()
+    except (OSError, subprocess.SubprocessError):
+        print("BLOCKED (floor: live sessions and Alex's desktop): process discovery failed.", file=sys.stderr)
+        return 2
+    start = os.getppid()
     own = descendants(table, session_root(table, start))
     session = str(payload.get("session_id") or "")
     foreign = []
+    warned = False
+    live = set()
+    for pid, (_, argv) in table.items():
+        words = argv.split()
+        exe = os.path.basename(words[0]) if words else ""
+        if exe in {"claude", "codex"} or re.search(
+            r"@anthropic-ai/claude-code|(?:seat-exec|seat-run|herdr-server|agent-lb)(?:\s|/|$)", argv
+        ):
+            live.update(descendants(table, pid))
     for sel in selections:
         if sel["parents"] is not None:
             parents = [p for p in re.split(r"[ ,]", sel["parents"]) if p]
             if all(p in ("$$", "$PPID") or (p.isdigit() and int(p) in own) for p in parents):
                 continue
-            foreign.append((sel, ["parent " + ",".join(parents)]))
-            continue
-        try:
-            hit = matches(sel, table)
-        except re.error:
+            if not all(p.isdigit() for p in parents):
+                print("BLOCKED (floor: live sessions): unresolved parent selector.", file=sys.stderr)
+                return 2
+            hit = [pid for pid, (ppid, _) in table.items() if str(ppid) in parents]
+        elif "pids" in sel:
+            hit = sel["pids"]
+        else:
+            try:
+                hit = matches(sel, table)
+            except re.error:
+                print("BLOCKED (floor: live sessions): invalid kill pattern.", file=sys.stderr)
+                return 2
+        others = []
+        for pid in hit:
+            if pid not in table:
+                continue
+            ppid, argv = table[pid]
+            executable = os.path.basename(argv.split()[0]) if argv.split() else ""
+            gui = (
+                executable not in {"Python", "python", "python3", "node"}
+                and bool(re.search(r"\.app/Contents/(?:MacOS|Frameworks/[^ ]*\.app/Contents/MacOS)/", argv))
+                or os.path.basename(argv.split()[0]) in {"Finder", "Dock", "WindowServer", "loginwindow"}
+            )
+            shared = bool(
+                re.search(
+                    r"(?:^|[/\s])(?:agent[-_]lb(?:[./\s]|$)|herdr(?:-server)?(?:[./\s]|$)|unblock(?:[./\s]|$)|postgres(?:\s|$)|mysqld(?:\s|$)|redis-server(?:\s|$))",
+                    argv,
+                    re.I,
+                )
+            )
+            marked = len(session) >= 8 and bool(
+                re.search(r"(?:--session[-_]id(?:=|\s+)|session_id=)" + re.escape(session) + r"(?:\s|$)", argv)
+            )
+            if gui or shared or (pid not in own and not marked and (pid in live or ppid == 1)):
+                others.append(pid)
+            elif pid not in own and not marked:
+                warned = True
+        if others:
+            foreign.append((sel, others))
+    if not foreign:
+        if warned:
             print(
                 json.dumps(
                     {
                         "hookSpecificOutput": {
                             "hookEventName": "PreToolUse",
-                            "additionalContext": (
-                                "kill-scope-guard (warn only, not blocked): the kill pattern is not a regex this guard can read."
-                            ),
+                            "additionalContext": "kill-scope-guard (warn only): target is outside this session; no live-session, shared-daemon or desktop floor matched.",
                         }
                     }
                 )
             )
-            return 0
-        others = [pid for pid in hit if pid not in own and not (len(session) >= 8 and session in table[pid][1])]
-        if others:
-            foreign.append((sel, others))
-    if not foreign:
         return 0
     sel, others = foreign[0]
     sample = "; ".join("%s %s" % (p, table[p][1][:60]) for p in others[:3] if isinstance(p, int))

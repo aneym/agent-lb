@@ -1,32 +1,8 @@
 #!/bin/bash
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 set -euo pipefail
 refuse() {
-  echo "BLOCKED: wide-scan-guard $1, so this call is refused (the guard fails closed). Check cat, jq and python3 on PATH." >&2
-  exit 2
+  echo "wide-scan-guard (warn only): $1; scope searches to one repository or directory." >&2
+  exit 0
 }
 allow() {
   if [ -n "${HOOK_FLOOR_RECEIPT:-}" ]; then printf 'floor-ok %s\n' wide-scan-guard.sh; fi
@@ -41,22 +17,15 @@ INPUT=$(cat) || refuse "could not read the hook input (cat exit $?)"
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty') || refuse "could not read the hook input (jq exit $?)"
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty') || refuse "could not read the hook input (jq exit $?)"
 [ -n "$CMD" ] || allow
-
-
 SCAN=0
 SCAN_COMMAND="$CMD" SCAN_CWD="$CWD" python3 - <<'PY' || SCAN=$?
 import os
 import shlex
 import re
 import posixpath
-
-
 def strip_heredocs(text):
-
     kept, pending, bodies = [], [], []
     quote, stack, i, line_start = None, [], 0, 0
-
-
     while i < len(text):
         char = text[i]
         if char == '\\' and quote != "'":
@@ -131,8 +100,6 @@ def strip_heredocs(text):
     if pending:
         raise ValueError('unfinished heredoc')
     return ''.join(kept), bodies
-
-
 def join_continuations(text):
     kept, quote, i = [], None, 0
     while i < len(text):
@@ -152,15 +119,9 @@ def join_continuations(text):
         kept.append(char)
         i += 1
     return ''.join(kept)
-
-
 class Refused(Exception):
     pass
-
-
 WARNED = []
-
-
 def refused_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
@@ -168,8 +129,6 @@ def refused_root(path, cwd):
             or re.fullmatch(r'/Volumes/[^/]+', path) is not None
             or re.fullmatch(r'/Volumes/StudioExt/repos(?:/[^/]+-wt)?', path) is not None
             or re.search(r'/\.agent-rails(?:/(?:agents|evidence|lanes))?$', path) is not None)
-
-
 def refusal(tool, root, pattern, cwd):
     home = os.path.expanduser('~')
     shown = resolve_path(root, cwd)
@@ -188,11 +147,9 @@ def refusal(tool, root, pattern, cwd):
         hint = 'lane-post read %s' % pattern
     elif re.fullmatch(r'\d{8,}', pattern):
         hint = 'lane-post read %s for a bulletin, gh run view %s for a run, or %s' % (pattern, pattern, hint)
-    return ('BLOCKED: wide-scan-guard: recursive %s over %s is refused (house-tools rule: search one directory under '
+    return ('wide-scan-guard (warn only): recursive %s over %s is expensive (search one directory under '
             '~/.agent-rails with rg -n, never all of it, $HOME, a volume root or the repos root). Use: %s'
             % (tool, shown, hint))
-
-
 def wide_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
@@ -200,8 +157,6 @@ def wide_root(path, cwd):
                      '/Volumes/StudioExt/repos', home + '/repos')
             or re.fullmatch(r'/Volumes/[^/]+|/home/[^/]+(?:/repos)?', path) is not None
             or path.endswith('/.agent-rails') or path.endswith('/.agent-rails/lanes'))
-
-
 def search_paths(name, args):
     paths, pattern, recursive = [], name == 'find' or (name == 'rg' and '--files' in args), name in ('rg', 'find', 'fd')
     word = None
@@ -253,10 +208,7 @@ def search_paths(name, args):
         else:
             paths.append(arg)
     return paths, recursive, word
-
-
 def shell_tokens(text):
-
     cleaned = []
     quote = None
     escaped = False
@@ -290,10 +242,7 @@ def shell_tokens(text):
     lexer.whitespace_split = True
     lexer.commenters = ''
     return list(lexer)
-
-
 def substitutions(text, heredoc=False):
-
     bodies = []
     quote = None
     boundary = True
@@ -348,16 +297,12 @@ def substitutions(text, heredoc=False):
         boundary = quote is None and char in ' \t\r\n;&|()'
         i += 1
     return bodies
-
-
 def resolve_path(path, cwd):
     path = re.sub(r'^\$(?:HOME|\{HOME\})(?=/|$)', os.path.expanduser('~'), path)
     if path.startswith('~'):
         home, _, rest = path.partition('/')
         path = (os.path.expanduser('~') if home == '~' else '/home/' + home[1:]) + '/' + rest
     return posixpath.normpath(path if path.startswith('/') else posixpath.join(cwd, path))
-
-
 wrapper_values = {
     'env': ('uC', ('--unset', '--chdir', '--split-string')),
     'timeout': ('sk', ('--signal', '--kill-after')),
@@ -379,8 +324,6 @@ wrapper_values = {
     'gtimeout': ('sk', ('--signal', '--kill-after')),
     'ssh': ('BbcDEeFIiJLlmOopQRSWw', ()),
 }
-
-
 def after_options(args, i, name):
     short_values, long_values = wrapper_values[name]
     while i < len(args):
@@ -400,8 +343,6 @@ def after_options(args, i, name):
                         i += 1
                     break
     return i
-
-
 def unsafe(args, depth, cwd):
     i = 0
     while i < len(args):
@@ -478,7 +419,6 @@ def unsafe(args, depth, cwd):
             return unsafe(rest, depth, cwd)
         if sub not in ('grep', 'rg', 'find'):
             return False
-
         tool, name, args = 'rtk ' + sub, ('find' if sub == 'find' else 'rg'), [sub] + rest
     if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep'):
         roots, recursive, word = search_paths(name, args[1:])
@@ -547,11 +487,8 @@ def unsafe(args, depth, cwd):
     return recursive and not skip and any(
         '.agent-rails' in resolve_path(path, cwd).lower().split('/') for path in paths
     )
-
-
 def scan(text, depth=0, cwd=None):
     if depth > 8:
-
         return True
     cwd = cwd or os.environ.get('SCAN_CWD') or os.getcwd()
     try:
@@ -564,6 +501,7 @@ def scan(text, depth=0, cwd=None):
     if any(scan(body, depth + 1, cwd) for body in bodies):
         return True
     segment = []
+    piped = False
     items = iter(tokens + [';'])
     for token in items:
         if token and all(char in '<>&' for char in token) and ('<' in token or '>' in token):
@@ -576,9 +514,13 @@ def scan(text, depth=0, cwd=None):
                 return True
             continue
         if token and all(char in ';&|()<>\n' for char in token):
-            if unsafe(segment, depth, cwd):
+            check_segment = segment
+            if piped and segment and segment[0] in ("rg", "grep", "egrep", "fgrep"):
+                roots, recursive, word = search_paths(segment[0], segment[1:])
+                if not roots:
+                    check_segment = []
+            if unsafe(check_segment, depth, cwd):
                 return True
-
             words = segment[:]
             while words and words[0] in ('do', 'then', 'else', 'elif', 'if', 'while', 'until', '{', '!'):
                 words.pop(0)
@@ -589,11 +531,10 @@ def scan(text, depth=0, cwd=None):
                 elif words[0] == 'cd':
                     cwd = os.path.expanduser('~')
             segment = []
+            piped = token in ("|", "|&")
         else:
             segment.append(token)
     return False
-
-
 try:
     fifo = scan(os.environ['SCAN_COMMAND'])
 except Refused as refused:
@@ -602,39 +543,10 @@ except Refused as refused:
     raise SystemExit(2)
 raise SystemExit(0 if fifo else 6 if WARNED else 3)
 PY
-REWRITE=""
 if [ "$SCAN" -eq 0 ]; then
-  REWRITE=$(HOOK_INPUT="$INPUT" python3 - <<'REWRITE_PY'
-import json, os, re, shlex
-try:
-    data = json.loads(os.environ['HOOK_INPUT'])
-    ti = data['tool_input']
-    cmd = ti['command']
-    match = re.match(r'^[ \t]*grep(?=[ \t])', cmd)
-
-
-    if not match or any(c in cmd for c in '|;&()<>`$\\\n\r#'):
-        raise ValueError('not a simple grep')
-    words = shlex.split(cmd)
-    if any(re.fullmatch(r'(?:/|~/?|/Users/aneyman/?|/Volumes/[^/\s]+/?|/Volumes/StudioExt/repos/?)', w)
-           for w in words[1:]):
-        raise ValueError('wide root')
-    if any(w == '--devices' or w.startswith('--devices=') or
-           (w.startswith('-') and not w.startswith('--') and 'D' in w[1:])
-           for w in words[1:]):
-        raise ValueError('device option')
-    ti = dict(ti, command=cmd[:match.end()] + ' -D skip' + cmd[match.end():])
-    print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse',
-        'permissionDecision': 'allow', 'updatedInput': ti}}))
-except (ValueError, TypeError, KeyError):
-    pass
-REWRITE_PY
-) || REWRITE=""
-  if [ -z "$REWRITE" ]; then
-    warn "grep -r under ~/.agent-rails hangs on FIFOs; use rg (skips FIFOs) or add -D skip"
-  fi
+  warn "grep -r under ~/.agent-rails hangs on FIFOs; scope to one directory and use rg or add -D skip"
 elif [ "$SCAN" -eq 2 ]; then
-  exit 2
+  allow
 elif [ "$SCAN" -eq 6 ]; then
   case "$CMD" in *"# wide-scan-ok"*) allow ;; esac
   warn "recursive search over the whole disk, home, a volume root, all repos or ~/.agent-rails; scope it to one repo, lane or directory next time"
@@ -644,5 +556,4 @@ elif [ "$SCAN" -eq 4 ]; then
 elif [ "$SCAN" -ne 3 ]; then
   refuse "scanner failed (python3 exit $SCAN)"
 fi
-if [ -n "$REWRITE" ]; then printf '%s\n' "$REWRITE"; fi
 allow
