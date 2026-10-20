@@ -45,20 +45,27 @@ def inspect(state_path, dry_run):
     if dry_run:
         return
     lane_post = shutil.which("lane-post")
+    saved = dict(current)
     with state_path.with_suffix(".log").open("a") as log:
-        for message in fresh.values():
-            log.write(f"{datetime.now(timezone.utc).isoformat()} {message}\n")
-            log.flush()
+        for key, message in fresh.items():
+            posted = True
             if lane_post:
-                subprocess.run(
-                    [lane_post, "post", "--to", "factory", "--from", "agent-lb-health", "--kind", "info", message],
-                    check=True,
-                    timeout=30,
-                )
+                try:
+                    result = subprocess.run(
+                        [lane_post, "post", "--to", "factory", "--from", "agent-lb-health", "--kind", "info", message],
+                        timeout=30,
+                    )
+                    posted = result.returncode == 0
+                except (OSError, subprocess.TimeoutExpired):
+                    posted = False
+            if not posted:
+                saved.pop(key)
+            log.write(f"{datetime.now(timezone.utc).isoformat()} {'posted' if posted else 'retry'} {message}\n")
+            log.flush()
     fd, temporary = tempfile.mkstemp(dir=state_path.parent, prefix=".account-health-")
     try:
         with os.fdopen(fd, "w") as stream:
-            json.dump(current, stream, sort_keys=True)
+            json.dump(saved, stream, sort_keys=True)
             stream.write("\n")
         os.replace(temporary, state_path)
     finally:
