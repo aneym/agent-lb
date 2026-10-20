@@ -11,6 +11,7 @@ from app.modules.accounts.schemas import AccountSummary
 from app.modules.accounts.service import AccountsService
 from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS, normalize_subscription_status
 from app.modules.pools.cli_seats import cli_seat_pools, cursor_budget_pools, read_seat_accounts
+from app.modules.pools.grok_bot import grok_bot_pool
 from app.modules.pools.schemas import (
     POOL_SOURCE_SCOPED_MARKER,
     POOL_SOURCE_WEEKLY_HEURISTIC,
@@ -353,7 +354,8 @@ class PoolsService:
             plan = entry.get("plan") if isinstance(entry, dict) else None
             plan = plan if isinstance(plan, str) and plan else None
             plans.add(account.plan or plan or account.id)
-        all_pools = [*response.pools, *seat_pools, *budget_pools]
+        grok_bot = grok_bot_pool(now=response.generated_at)
+        all_pools = [*response.pools, *seat_pools, *budget_pools, *([grok_bot] if grok_bot else [])]
         all_pools = [
             pool.model_copy(update={"plan_count": len(plans)}) if pool.provider == "cursor" else pool
             for pool in all_pools
