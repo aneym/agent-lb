@@ -15,8 +15,17 @@ for arg in "$@"; do
 done
 [[ ${1:-} == task ]] || { echo 'usage: codex-local.sh [--dry-run] task [companion options]' >&2; exit 2; }
 
+review=0
+args=()
+for arg in "$@"; do
+  if [[ $arg == --review ]]; then
+    review=1
+  else
+    args+=("$arg")
+  fi
+done
+set -- "${args[@]}"
 prompt_file=""
-args=("$@")
 for ((i=0; i<${#args[@]}; i++)); do
   if [[ ${args[i]} == --prompt-file ]]; then
     prompt_file=${args[i+1]:-}
@@ -24,6 +33,22 @@ for ((i=0; i<${#args[@]}; i++)); do
     prompt_file=${args[i]#--prompt-file=}
   fi
 done
+account_args=()
+if [[ $review == 1 ]]; then
+  for arg in "$@"; do
+    case "$arg" in
+      --resume|--resume-last|--write|--allow-repo-write) echo 'codex-local: review requires a fresh read-only session' >&2; exit 2 ;;
+    esac
+  done
+  if [[ -z $prompt_file ]]; then
+    echo 'codex-local: review requires an explicit non-empty --prompt-file brief' >&2
+    exit 2
+  fi
+  account_args=(--require-owner)
+  python3 "$(dirname "$0")/codex-local-account.py" --prompt-file "$prompt_file" --require-owner --validate-only
+  args+=(--fresh)
+  set -- "${args[@]}"
+fi
 main_checkout() {
   local dirs
   dirs=$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$1" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || return 1
@@ -93,7 +118,7 @@ if [[ -n $prompt_file ]]; then
     fi
   done
   set -- "${args[@]}"
-  account_env=$(python3 "$(dirname "$0")/codex-local-account.py" --prompt-file "$prompt_file" --shell-env)
+  account_env=$(python3 "$(dirname "$0")/codex-local-account.py" --prompt-file "$prompt_file" --shell-env ${account_args[@]+"${account_args[@]}"})
   if [[ -n $account_env ]]; then
     eval "$account_env"
   fi

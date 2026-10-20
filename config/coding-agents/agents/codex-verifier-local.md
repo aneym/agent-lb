@@ -18,8 +18,12 @@ Telemetry runs in the lead's shell, not this seat. The local wrapper captures
 a bounded host baseline; the lead must compare fresh telemetry after the seat,
 not accept that non-live baseline as end-of-run proof.
 
-Run `bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" --dry-run task`
-before launching. It must print `host=studio background=false`.
+After writing the explicit brief below, run the wrapper with
+`--dry-run task --review --prompt-file "$f"` before launching. It must print
+`host=studio background=false`. Both preflight and launch require a resolved
+launching owner (export the launching lane's LANE_DIR or launch from its lane
+or agent directory) and a readable, non-empty brief. On any failure, stop and
+return the error. Never select a fresh-start file or recover a previous brief.
 
 Launch from the assigned worktree in the same Bash call, with timeout 270000.
 For longer work use the Bash tool's run_in_background, keeping the foreground
@@ -30,6 +34,7 @@ cd <worktree> && f=$(mktemp "${TMPDIR:-/tmp}/codex-verifier-local-contract.XXXXX
 PLACEMENT: studio-only
 <contract text built below>
 CONTRACT_EOF
+bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" --dry-run task --review --prompt-file "$f" || exit $?
 job_args=()
 if [ -n "${AGENT_LB_DISPATCH:-}" ]; then
   inherited_job=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys
@@ -47,7 +52,7 @@ fi
 AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch verify --author-vendor anthropic --caller codex-verifier-local "${job_args[@]}" --json) || exit $?
 export AGENT_LB_DISPATCH
 dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
-bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$("$HOME/.agent-lb/bin/route" resolve sol-latest)" --effort "$dispatch_effort" --prompt-file "$f"
+bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --review --model "$("$HOME/.agent-lb/bin/route" resolve sol-latest)" --effort "$dispatch_effort" --prompt-file "$f"
 ```
 
 Use a fresh unique contract file, never inline or a reused filename. Reuse the
