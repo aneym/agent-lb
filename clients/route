@@ -2619,7 +2619,7 @@ def workflow_quota():
         mode = 'tight'
     if mode not in ('tight', 'normal'):
         raise ValueError('invalid factory quota mode')
-    return {'mode': mode, 'agent_cap': 6 if mode == 'tight' else 16,
+    return {'mode': mode,
             'default_model': 'sol-latest', 'opus_stages': list(WORKFLOW_OPUS_STAGES), 'opus_effort': 'medium',
             'excluded_work': ['status', 'wake', 'polling', 'single-file'],
             'maintenance_model': 'sol-latest', 'auto_tighten_used_percent': 70}
@@ -2677,7 +2677,6 @@ def command_workflow_args(args: argparse.Namespace) -> int:
         "generated_at": now_iso(),
         "ladder": table.get("ladder"),
         "table_sha256": hashlib.sha256(table_path().read_bytes()).hexdigest() if table_path().is_file() else None,
-        "agent_cap": quota["agent_cap"],
         "quota": quota,
         "policy_rev": table.get("policy_rev"),
         "stages": {},

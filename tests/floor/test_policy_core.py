@@ -60,7 +60,7 @@ OBLIGATIONS = {
     "forge factory only": r"Forge runs factory work only, never personal agents",
     "computer use off desktop": r"Computer use never runs on Alex's desktop",
     "plan docs": r"Docs Alex reads \(2026-10-15\)\*\* are Agent Native Plan docs via `plan-publish`",
-    "workflow cap": r"at most 6 agents in tight mode or 16 normal",
+    "workflow fan-out": r"Workflows fan out without an agent cap; host admission throttles only at real memory or disk floors\.",
     "slice check": r"Each names its files, fixed interfaces and one check",
 }
 
