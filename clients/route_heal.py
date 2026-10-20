@@ -100,6 +100,8 @@ def select(
     job_id: str,
 ) -> tuple:
     class_name = args.task_class
+    if standard.get("chain") and not any(v is not None for v in (args.seat, args.model, args.effort)):
+        return chain_choice(api, args, table, standard, pools_doc), [], False
     explore = table.get("explore") or {}
     excluded = set(args.exclude)
     explicit = any(value is not None for value in (args.seat, args.model, args.effort))
@@ -237,3 +239,64 @@ def reserve_candidates(request: Any, payload: dict) -> tuple[int, dict]:
         key = candidate["capacity_key"]
         candidates = [row for row in candidates if row["capacity_key"] != key]
     return (75 if result.get("status") == "wait" else code), result
+
+
+def balance_pool(document: dict, read_accounts: Any) -> None:
+    if any(p.get("id") == "deepseek-flash" for p in document["pools"]):
+        return
+    result = read_accounts()
+    body = result.body if result.json_ok else {}
+    accounts = body.get("accounts", []) if isinstance(body, dict) else body
+    members = [a for a in accounts if a.get("provider") == "openrouter"]
+    usable = []
+    for account in members:
+        balance, cap = account.get("creditsBalance"), account.get("creditsCap")
+        if (account.get("status") == "active" and isinstance(balance, (int, float))
+                and not isinstance(balance, bool) and math.isfinite(balance) and balance > 0
+                and isinstance(cap, (int, float)) and not isinstance(cap, bool) and math.isfinite(cap) and cap > 0):
+            usable.append(min(100, 100 * balance / cap))
+    empty = members and all(a.get("creditsBalance") == 0 for a in members)
+    document["pools"].append({
+        "id": "deepseek-flash", "provider": "openrouter", "kind": "weekly",
+        "accounts": len(members), "eligibleAccounts": len(usable),
+        "headroomPercent": max(usable, default=0),
+        "aggregateRemainingPercent": sum(usable) / len(members) if members else 0,
+        "status": "ok" if usable else "exhausted",
+        **({"unavailableReason": "no balance"} if empty else {}),
+    })
+
+
+def chain_choice(api: Any, args: Any, table: dict, standard: dict, pools_doc: dict) -> dict | None:
+    if standard["seat"] in args.exclude:
+        return None
+    pools = api.pools_by_id(pools_doc)
+    for alias in standard["chain"]:
+        pool_id = api.pool_for_model(table, alias)
+        pool = pools.get(pool_id, {})
+        headroom = pool.get("headroomPercent")
+        if (not isinstance(headroom, (int, float)) or isinstance(headroom, bool)
+                or not math.isfinite(headroom) or headroom <= 0
+                or pool.get("eligibleAccounts", 0) <= 0
+                or pool.get("status") in ("exhausted", "empty")):
+            continue
+        arm = {**standard, "model": alias}
+        ctx = api.DispatchContext(table, args.task_class, args.author_vendor)
+        if seat_block(api, ctx, arm, set(args.exclude)):
+            continue
+        return {**standard_choice(arm, "first available chain pool"), "pool": pool_id}
+    return None
+
+
+def pool_status(headroom: float) -> str:
+    if headroom >= 25.0:
+        return "ok"
+    if headroom >= 5.0:
+        return "low"
+    return "exhausted"
+
+
+def window(usage: Any, key: str, missing: float) -> float:
+    value = usage.get(key) if isinstance(usage, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return missing
+    return float(value)
