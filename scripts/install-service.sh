@@ -69,6 +69,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, os.environ["INSTALL_AGENT_LB_REPO_DIR"])
+from app.core.shutdown_budget import minimum_exit_timeout
+
 
 def _str_dict(value: Any, *, key: str) -> dict[str, str]:
     if value is None:
@@ -113,11 +116,6 @@ env.setdefault("AGENT_LB_METRICS_ENABLED", "true")
 env.setdefault("AGENT_LB_METRICS_HOST", "127.0.0.1")
 env.setdefault("AGENT_LB_METRICS_PORT", "9090")
 
-try:
-    graceful_shutdown = int(env.get("UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN", "75"))
-except ValueError:
-    graceful_shutdown = 75
-
 plist: dict[str, Any] = {
     "Label": label,
     "ProgramArguments": _program_args(existing.get("ProgramArguments"), bin_path=bin_path),
@@ -128,7 +126,7 @@ plist: dict[str, Any] = {
     "ProcessType": "Interactive",
     "Nice": existing.get("Nice") if type(existing.get("Nice")) is int else -10,
 
-    "ExitTimeOut": graceful_shutdown + 120,
+    "ExitTimeOut": max(int(existing.get("ExitTimeOut", 0)), minimum_exit_timeout(env)),
     "StandardOutPath": f"{log_dir}/agent-lb.out.log",
     "StandardErrorPath": f"{log_dir}/agent-lb.err.log",
     "EnvironmentVariables": env,

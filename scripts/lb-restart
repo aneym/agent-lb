@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-
 from __future__ import annotations
-
 import argparse
 import datetime as dt
 import errno
@@ -19,8 +17,10 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-
 HOME = Path.home()
+source = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(source if (source / "app").is_dir() else HOME / ".agent-lb/runtime/agent-lb"))
+from scripts.restart_budget import EXCHANGE_SETTLE_S, minimum_exit_timeout, regenerate_plist, parse_reaper_args
 LB_HOME = HOME / ".agent-lb"
 RUNTIME = LB_HOME / "runtime" / "agent-lb"
 BACKUPS = LB_HOME / "runtime" / "backups"
@@ -40,30 +40,22 @@ PRIMARY_PORT = 2457
 STANDBY_PORT = 2459
 UID = os.getuid()
 LSOF = shutil.which("lsof") or "/usr/sbin/lsof"
-
 SANDBOX_LABEL_PREFIX = "com.agent-lb.drill."
 SANDBOX_FORBIDDEN_PORTS = frozenset({1455, 2455, 2457, 2459})
 SANDBOX_MIN_PORT = 2470
 SANDBOX_KEYS = ('root', 'label', 'plist', 'runtime', 'state_dir', 'front_port', 'primary_port', 'standby_port')
 SANDBOX_CONFIG: Path | None = None
 SANDBOX_ROOT: Path | None = None
-
 LIVE_BINDINGS: dict[str, object] = {name: globals()[name] for name in ('SANDBOX_ROOT', 'RUNTIME', 'BACKUPS', 'SYNC_LOG', 'STATE_DIR', 'LOCK_FILE', 'PREFERRED_FILE', 'FRONT_STATE', 'STANDBY_PIDFILE', 'STANDBY_LOG', 'WATCHDOG_PAUSE', 'LABEL', 'FRONT_LABEL', 'PLIST', 'FRONT_PORT', 'PRIMARY_PORT', 'STANDBY_PORT')}
-
 class SandboxRefused(Exception):
     pass
-
 def _real_home() -> Path:
     import pwd
-
     return Path(pwd.getpwuid(os.getuid()).pw_dir)
-
 def _inside(path: Path, parent: Path) -> bool:
     return path == parent or parent in path.parents
-
 def _lexical(path: Path) -> Path:
     return Path(os.path.normpath(str(path)))
-
 def _refuse_links_on(name: str, path: Path, leaf: str) -> None:
     parts = path.parts
     for i in range(1, len(parts) + 1):
@@ -77,7 +69,6 @@ def _refuse_links_on(name: str, path: Path, leaf: str) -> None:
                 raise SandboxRefused(f"{name} {path}: {prefix} is a link or not a directory")
         elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise SandboxRefused(f"{name} {path} is not a single-link regular file (a link to live state?)")
-
 def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object]:
     missing = [key for key in SANDBOX_KEYS if key not in config]
     if missing:
@@ -89,7 +80,6 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
     root = _lexical(root)
     if root.parent != sandboxes or root.name in ("", ".", ".."):
         raise SandboxRefused(f"sandbox root {root} is not directly under {sandboxes}")
-
     _refuse_links_on("root", root, "dir")
     label = str(config["label"])
     suffix = label.removeprefix(SANDBOX_LABEL_PREFIX)
@@ -126,13 +116,11 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
     }
     for name, path in (("RUNTIME", paths["runtime"]), ("STATE_DIR", state_dir), ("BACKUPS", derived["BACKUPS"])):
         _refuse_links_on(name, path, "dir")
-
     _refuse_links_on("data", root / "data", "dir")
     for leaf in ("store.db", "encryption.key"):
         _refuse_links_on("data", root / "data" / leaf, "file")
     for name, path in derived.items():
         if name != "BACKUPS":
-
             _refuse_links_on(name, path, "file")
     _refuse_links_on("plist", paths["plist"], "file")
     return {
@@ -147,19 +135,14 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
         "PRIMARY_PORT": ports[1],
         "STANDBY_PORT": ports[2],
     }
-
 SANDBOX_PORT_URL = re.compile(r"^http://127\.0\.0\.1:([0-9]{4})$")
 SANDBOX_LEADING_PORT = re.compile(r"^([0-9]{1,5})\b")
-
 SANDBOX_PLIST_KEYS = frozenset({'Label', 'ProgramArguments', 'WorkingDirectory', 'EnvironmentVariables', 'RunAtLoad', 'KeepAlive', 'ThrottleInterval', 'ExitTimeOut', 'StandardOutPath', 'StandardErrorPath'})
-
 def sandbox_bootstrap() -> Path:
     return Path(__file__).resolve().parent / "lb-sandbox"
-
 def _trusted_file(what: str, path: Path, info: os.stat_result) -> None:
     if info.st_uid not in (os.getuid(), 0) or info.st_mode & 0o022:
         raise SandboxRefused(f"{what} {path} is one another user could write")
-
 def check_sandbox_bootstrap(root: Path) -> None:
     script = sandbox_bootstrap()
     if _inside(script, root.parent):
@@ -170,13 +153,10 @@ def check_sandbox_bootstrap(root: Path) -> None:
     except OSError as exc:
         raise SandboxRefused(f"sandbox bootstrap {script} is missing") from exc
     _trusted_file("sandbox bootstrap", script, info)
-
 def sandbox_python_for(root: Path) -> Path:
     return root.parent.parent / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
-
 NATIVE_MAGIC = (b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe', b'\xca\xfe\xba\xbe', b'\xca\xfe\xba\xbf') if sys.platform == 'darwin' else (b'\x7fELF',)
 BASE_INTERPRETER_NAME = re.compile(r"^python(3(\.[0-9]+)?)?$")
-
 def sandbox_venv_base_dir(python: Path) -> Path:
     cfg = python.parent.parent / "pyvenv.cfg"
     try:
@@ -204,7 +184,6 @@ def sandbox_venv_base_dir(python: Path) -> Path:
     except OSError as exc:
         raise SandboxRefused(f"venv home {home} is missing") from exc
     return base
-
 def check_sandbox_interpreter(python: Path, root: Path) -> None:
     python = _lexical(python)
     sandboxes = root.parent
@@ -229,14 +208,11 @@ def check_sandbox_interpreter(python: Path, root: Path) -> None:
     if not stat.S_ISREG(info.st_mode) or not info.st_mode & stat.S_IXUSR or head not in NATIVE_MAGIC:
         raise SandboxRefused(f"interpreter {python} does not lead to a native executable (a script or shim?)")
     _trusted_file("interpreter", target, info)
-
 def sandbox_program(root: Path) -> list[str]:
     return [str(sandbox_python_for(root)), "-I", str(sandbox_bootstrap()), "_serve", str(root)]
-
 SANDBOX_ENV_KEYS = frozenset({'HOME', 'PATH', 'PYTHONPATH', 'LB_SANDBOX_ROOT', 'FORWARDED_ALLOW_IPS', 'UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN'})
 SANDBOX_ENV_PREFIX = "AGENT_LB_"
 SANDBOX_PATH_ENV = "/usr/bin:/bin:/usr/sbin:/sbin"
-
 def _has_control_characters(value: object) -> bool:
     if isinstance(value, str):
         return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
@@ -245,7 +221,6 @@ def _has_control_characters(value: object) -> bool:
     if isinstance(value, list):
         return any(_has_control_characters(v) for v in value)
     return False
-
 def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int) -> None:
     if not isinstance(data, dict):
         raise SandboxRefused("sandbox plist is not a dictionary")
@@ -303,14 +278,11 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
                 raise SandboxRefused(f"sandbox plist {key} names a live port")
             if part.startswith("~"):
                 raise SandboxRefused(f"sandbox plist {key} names a home-relative path")
-
             if part.startswith("/") or "/" in part or part in (".", ".."):
                 if not _inside((cwd / part).resolve(), root):
                     raise SandboxRefused(f"sandbox plist {key} names a path outside the sandbox root")
-
 SANDBOX_CONFIG_NAME = "lb-restart.json"
 SANDBOX_CONFIG_MAX = 1 << 16
-
 def read_sandbox_config(config_path: Path) -> tuple[dict, int, os.stat_result]:
     path = _lexical(Path(config_path).expanduser().absolute())
     sandboxes = _lexical(_real_home() / ".agent-lb" / "sandboxes")
@@ -348,7 +320,6 @@ def read_sandbox_config(config_path: Path) -> tuple[dict, int, os.stat_result]:
         os.close(root_fd)
         raise
     return config, root_fd, root_info
-
 def apply_sandbox(config_path: Path) -> None:
     global SANDBOX_CONFIG, SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
     unpin_sandbox_root()
@@ -359,10 +330,8 @@ def apply_sandbox(config_path: Path) -> None:
         os.close(root_fd)
         raise
     globals().update(bindings)
-
     SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED = root_fd, (bindings["SANDBOX_ROOT"], root_info.st_dev, root_info.st_ino)
     try:
-
         pin_sandbox_root()
         with os.fdopen(sandbox_open(bindings["PLIST"], os.O_RDONLY), "rb") as fh:
             plist = plistlib.load(fh)
@@ -376,10 +345,8 @@ def apply_sandbox(config_path: Path) -> None:
             raise SandboxRefused(f"cannot read sandbox plist: {exc.__class__.__name__}") from exc
         raise
     SANDBOX_CONFIG = _lexical(Path(config_path).expanduser().absolute())
-
 SANDBOX_ROOT_FD: int | None = None
 SANDBOX_ROOT_PINNED: tuple[Path, int, int] | None = None
-
 def _open_dir_nofollow(path: Path) -> int:
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
@@ -392,7 +359,6 @@ def _open_dir_nofollow(path: Path) -> int:
     except BaseException:
         os.close(fd)
         raise
-
 def _check_owned_dir(fd: int, what: str, path: Path, private: bool) -> os.stat_result:
     info = os.fstat(fd)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
@@ -400,7 +366,6 @@ def _check_owned_dir(fd: int, what: str, path: Path, private: bool) -> os.stat_r
     if info.st_mode & (0o077 if private else 0o022):
         raise SandboxRefused(f"{what} {path} has mode {stat.S_IMODE(info.st_mode):o}; lb-sandbox makes it 0700")
     return info
-
 def pin_sandbox_root() -> int:
     global SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
     assert SANDBOX_ROOT is not None
@@ -410,10 +375,8 @@ def pin_sandbox_root() -> int:
     fd, info = open_sandbox_root(SANDBOX_ROOT)
     SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED = fd, (SANDBOX_ROOT, info.st_dev, info.st_ino)
     return fd
-
 def _root_on_own_volume(root_info: os.stat_result, sandboxes_info: os.stat_result) -> bool:
     return root_info.st_dev != sandboxes_info.st_dev
-
 def open_sandbox_root(root: Path) -> tuple[int, os.stat_result]:
     try:
         parent = _open_dir_nofollow(root.parent)
@@ -437,13 +400,11 @@ def open_sandbox_root(root: Path) -> tuple[int, os.stat_result]:
         os.close(fd)
         raise
     return fd, info
-
 def unpin_sandbox_root() -> None:
     global SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
     if SANDBOX_ROOT_FD is not None:
         os.close(SANDBOX_ROOT_FD)
     SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED = None, None
-
 def verify_sandbox_ancestry() -> None:
     fd = pin_sandbox_root()
     try:
@@ -456,7 +417,6 @@ def verify_sandbox_ancestry() -> None:
         os.close(again)
     if (now.st_dev, now.st_ino) != (pinned.st_dev, pinned.st_ino):
         raise SandboxRefused(f"sandbox root {SANDBOX_ROOT} no longer names the directory this run pinned")
-
 def _sandbox_dir_fd(directory: Path, create: bool = True) -> int:
     assert SANDBOX_ROOT is not None
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -484,7 +444,6 @@ def _sandbox_dir_fd(directory: Path, create: bool = True) -> int:
     except BaseException:
         os.close(fd)
         raise
-
 def _open_in(dir_fd: int, path: Path, flags: int, mode: int = 0o600) -> int:
     try:
         fd = os.open(path.name, (flags & ~os.O_TRUNC) | os.O_NOFOLLOW, mode, dir_fd=dir_fd)
@@ -497,7 +456,6 @@ def _open_in(dir_fd: int, path: Path, flags: int, mode: int = 0o600) -> int:
     if flags & os.O_TRUNC:
         os.ftruncate(fd, 0)
     return fd
-
 def _state_dir_fd(directory: Path, create: bool = True) -> int:
     try:
         return _sandbox_dir_fd(directory, create=create)
@@ -505,7 +463,6 @@ def _state_dir_fd(directory: Path, create: bool = True) -> int:
         raise
     except OSError as exc:
         raise SandboxRefused(f"{directory} is a link or unreachable inside the sandbox root ({exc})") from exc
-
 def _same_dir_still(dir_fd: int, directory: Path) -> None:
     again = _state_dir_fd(directory, create=False)
     try:
@@ -514,14 +471,12 @@ def _same_dir_still(dir_fd: int, directory: Path) -> None:
         os.close(again)
     if (now.st_dev, now.st_ino) != (held.st_dev, held.st_ino):
         raise SandboxRefused(f"{directory} was swapped during the operation; refusing to continue")
-
 def sandbox_open(path: Path, flags: int, mode: int = 0o600) -> int:
     dir_fd = _state_dir_fd(path.parent)
     try:
         return _open_in(dir_fd, path, flags, mode)
     finally:
         os.close(dir_fd)
-
 def read_state(path: Path) -> tuple[str, float] | None:
     if SANDBOX_ROOT is None:
         try:
@@ -534,7 +489,6 @@ def read_state(path: Path) -> tuple[str, float] | None:
         return None
     except OSError as exc:
         raise SandboxRefused(f"{path.parent} is a link or unreachable inside the sandbox root ({exc})") from exc
-
     try:
         for attempt in range(5):
             try:
@@ -553,7 +507,6 @@ def read_state(path: Path) -> tuple[str, float] | None:
     finally:
         os.close(dir_fd)
     return None
-
 def remove_state(path: Path) -> None:
     if SANDBOX_ROOT is None:
         path.unlink(missing_ok=True)
@@ -573,23 +526,19 @@ def remove_state(path: Path) -> None:
         _same_dir_still(dir_fd, path.parent)
     finally:
         os.close(dir_fd)
-
 def ensure_dir(path: Path) -> None:
     if SANDBOX_ROOT is None:
         path.mkdir(parents=True, exist_ok=True)
-
 def open_append(path: Path):
     if SANDBOX_ROOT is None:
         return path.open("a")
     return os.fdopen(sandbox_open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT), "a")
-
 def write_state(path: Path, text: str) -> None:
     if SANDBOX_ROOT is None:
         path.write_text(text)
         return
     with os.fdopen(sandbox_open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC), "w") as fh:
         fh.write(text)
-
 def read_plist() -> dict:
     if SANDBOX_ROOT is None:
         with PLIST.open("rb") as fh:
@@ -599,19 +548,14 @@ def read_plist() -> dict:
     check_sandbox_plist(data, SANDBOX_ROOT, LABEL, PRIMARY_PORT)
     check_sandbox_bootstrap(SANDBOX_ROOT)
     return data
-
 T0 = time.monotonic()
-
 def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 def say(msg: str) -> None:
     print(f"[lb-restart +{time.monotonic() - T0:6.1f}s] {msg}", flush=True)
-
 def sync_log(line: str) -> None:
     with open_append(SYNC_LOG) as fh:
         fh.write(f"{now_iso()} {line}\n")
-
 def http_get(port: int, path: str, timeout: float = 3.0) -> tuple[int, bytes]:
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=timeout) as resp:
@@ -620,7 +564,6 @@ def http_get(port: int, path: str, timeout: float = 3.0) -> tuple[int, bytes]:
         return exc.code, b""
     except Exception:
         return 0, b""
-
 def healthy(port: int) -> bool:
     code, body = http_get(port, "/health/ready")
     if code != 200:
@@ -632,7 +575,6 @@ def healthy(port: int) -> bool:
         return False
     code, _ = http_get(port, "/v1/models", timeout=5.0)
     return code == 200
-
 def in_flight(port: int, key: str = "in_flight") -> int | None:
     code, body = http_get(port, "/internal/drain/status", timeout=2.0)
     if code != 200:
@@ -641,9 +583,7 @@ def in_flight(port: int, key: str = "in_flight") -> int | None:
         return int(json.loads(body)["checks"][key])
     except (ValueError, KeyError, TypeError):
         return None
-
 OAUTH_POLL_S = 2.0
-
 def oauth_pending(port: int) -> tuple[int, list[float]] | None:
     code, body = http_get(port, "/internal/oauth/pending", timeout=2.0)
     if code != 200:
@@ -653,21 +593,24 @@ def oauth_pending(port: int) -> tuple[int, list[float]] | None:
         return int(data["pending"]), [float(age) for age in data.get("ages_seconds", [])]
     except (ValueError, KeyError, TypeError):
         return None
-
 def wait_for_oauth_flows(port: int, bound: float, exchanges: bool = False) -> float:
     start = time.monotonic()
     label = "token_exchanges" if exchanges else "oauth flows"
+    previous = object()
     while True:
         waited = time.monotonic() - start
         status = None if exchanges else oauth_pending(port)
-        count = in_flight(port, "token_exchanges") if exchanges else status[0] if status else None
-        sync_log(f"lb-restart waiting on {count} {label} on :{port} (bound {bound:.0f}s)")
+        count = (in_flight(port, "token_exchanges") or 0) if exchanges else status[0] if status else None
+        if count != previous:
+            detail = f"; flow ages {status[1]}s" if status else ""
+            message = f"lb-restart waiting on {count} {label} on :{port} (bound {bound:.0f}s){detail}"
+            say(message)
+            sync_log(message)
+            previous = count
         if count == 0 or (count is None and not exchanges) or waited >= bound:
             sync_log(f"lb-restart {label} :{port}: {count} pending after {waited:.0f}s")
             return waited
         time.sleep(OAUTH_POLL_S)
-
-
 def established(port: int) -> int:
     out = subprocess.run(
         [LSOF, "-nP", f"-iTCP:{port}", "-sTCP:ESTABLISHED"],
@@ -675,12 +618,10 @@ def established(port: int) -> int:
         text=True,
     ).stdout
     return sum(1 for line in out.splitlines()[1:] if f":{port}->" in line)
-
 def launchctl_print(label: str) -> subprocess.CompletedProcess:
     if SANDBOX_ROOT is not None and label != LABEL:
         raise SandboxRefused(f"launchctl print of {label} refused in a sandbox restart (only {LABEL})")
     return subprocess.run(["launchctl", "print", f"gui/{UID}/{label}"], capture_output=True, text=True)
-
 def launchd_pid(label: str) -> int | None:
     out = launchctl_print(label).stdout
     for line in out.splitlines():
@@ -688,7 +629,6 @@ def launchd_pid(label: str) -> int | None:
         if line.startswith("pid = "):
             return int(line.split("=", 1)[1])
     return None
-
 def pid_alive(pid: int | None) -> bool:
     if not pid:
         return False
@@ -697,13 +637,11 @@ def pid_alive(pid: int | None) -> bool:
         return True
     except OSError as exc:
         return exc.errno == errno.EPERM
-
 def listener_pid(port: int) -> int | None:
     out = subprocess.run(
         [LSOF, "-nP", f"-iTCP@127.0.0.1:{port}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True
     ).stdout.split()
     return int(out[0]) if out else None
-
 def wait_until(pred, timeout: float, interval: float = 0.25) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -711,7 +649,6 @@ def wait_until(pred, timeout: float, interval: float = 0.25) -> bool:
             return True
         time.sleep(interval)
     return pred()
-
 def set_preferred(port: int) -> None:
     tmp = PREFERRED_FILE.with_suffix(".tmp")
     if SANDBOX_ROOT is None:
@@ -719,7 +656,6 @@ def set_preferred(port: int) -> None:
         tmp.write_text(f"{port}\n")
         os.replace(tmp, PREFERRED_FILE)
         return
-
     if tmp.parent != PREFERRED_FILE.parent:
         raise SandboxRefused("preference temp file is not beside the preference file")
     dir_fd = _state_dir_fd(PREFERRED_FILE.parent)
@@ -730,16 +666,13 @@ def set_preferred(port: int) -> None:
         _same_dir_still(dir_fd, PREFERRED_FILE.parent)
     finally:
         os.close(dir_fd)
-
 def owned_by_sandbox(pid: int) -> bool:
     if SANDBOX_ROOT is None:
         return True
     cmd = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
     root = str(SANDBOX_ROOT)
     return any(token == root or token.startswith(root + os.sep) for token in cmd.split())
-
 def front_understands_preference() -> bool:
-
     pid = listener_pid(FRONT_PORT)
     got = read_state(FRONT_STATE)
     if got is None:
@@ -750,7 +683,6 @@ def front_understands_preference() -> bool:
         return False
     fresh = time.time() - got[1] < 5
     return bool(pid and state.get("pid") == pid and fresh and STANDBY_PORT in state.get("upstreams", []))
-
 def front_routes_to(port: int, timeout: float = 5.0) -> bool:
     def ok() -> bool:
         got = read_state(FRONT_STATE)
@@ -758,15 +690,12 @@ def front_routes_to(port: int, timeout: float = 5.0) -> bool:
             return got is not None and json.loads(got[0]).get("preferred") == port
         except (ValueError, AttributeError):
             return False
-
     return wait_until(ok, timeout)
-
 class Lock:
     def __init__(self, reason: str, wait: float) -> None:
         self.reason = reason
         self.wait = wait
         self.fh = None
-
     def __enter__(self) -> "Lock":
         ensure_dir(LOCK_FILE.parent)
         if SANDBOX_ROOT is None:
@@ -793,22 +722,18 @@ class Lock:
         self.fh.write(f"pid={os.getpid()} since={now_iso()} reason={self.reason}\n")
         self.fh.flush()
         return self
-
     def __exit__(self, *exc) -> None:
         assert self.fh is not None
         self.fh.seek(0)
         self.fh.truncate()
         fcntl.flock(self.fh, fcntl.LOCK_UN)
         self.fh.close()
-
 class Files:
-
     def __init__(self, label: str) -> None:
         self.backup_dir: Path | None = None
         self.created: list[Path] = []
         self.restored_from: Path | None = None
         self.label = label
-
     def deploy(self, src_root: Path, rel_paths: list[str]) -> None:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         self.backup_dir = BACKUPS / f"{self.label}-{stamp}"
@@ -835,10 +760,8 @@ class Files:
             if (src_root / rel).read_bytes() != dst.read_bytes():
                 raise SystemExit(f"copy verify failed for {rel}")
         say(f"deployed {len(rel_paths)} file(s); backup {self.backup_dir}")
-
     def use_backup(self, backup: Path) -> None:
         self.backup_dir = backup / "runtime" if (backup / "runtime").is_dir() else backup
-
     def rollback(self) -> bool:
         if self.backup_dir is None or not self.backup_dir.is_dir():
             return False
@@ -856,14 +779,11 @@ class Files:
         say(f"rolled back {restored} file(s) from {self.backup_dir}, removed {len(self.created)} new file(s)")
         self.restored_from = self.backup_dir
         return True
-
 def plist_env() -> dict[str, str]:
     data = read_plist()
     return {str(k): str(v) for k, v in data.get("EnvironmentVariables", {}).items()}
-
 def plist_program() -> list[str]:
     return list(read_plist()["ProgramArguments"])
-
 def start_standby(drain_seconds: int) -> subprocess.Popen:
     env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "TMPDIR", "LANG") if k in os.environ}
     env.update(plist_env())
@@ -890,9 +810,7 @@ def start_standby(drain_seconds: int) -> subprocess.Popen:
             start_new_session=True,
         )
     else:
-
         verify_sandbox_ancestry()
-
         if args[: len(sandbox_program(SANDBOX_ROOT))] != sandbox_program(SANDBOX_ROOT):
             raise SandboxRefused("standby program is not `<venv python> -I <installed lb-sandbox> _serve <root>`")
         check_sandbox_interpreter(Path(args[0]), SANDBOX_ROOT)
@@ -917,7 +835,6 @@ def start_standby(drain_seconds: int) -> subprocess.Popen:
     ensure_dir(STATE_DIR)
     write_state(STANDBY_PIDFILE, f"{proc.pid}\n")
     return proc
-
 def signal_group(pid: int, sig: int) -> bool:
     try:
         os.killpg(os.getpgid(pid), sig)
@@ -927,9 +844,6 @@ def signal_group(pid: int, sig: int) -> bool:
         except OSError:
             return False
     return True
-
-EXCHANGE_SETTLE_S = 75
-
 def stop_pid_gracefully(pid: int, port: int, bound: float, force: bool = False) -> tuple[float, bool]:
     if not force:
         wait_for_oauth_flows(port, EXCHANGE_SETTLE_S, exchanges=True)
@@ -951,7 +865,6 @@ def stop_pid_gracefully(pid: int, port: int, bound: float, force: bool = False) 
         forced = True
         signal_group(pid, signal.SIGKILL)
     return time.monotonic() - start, forced
-
 def stop_leftover_standby(drain_seconds: int, hold_for_oauth=lambda port: None, force: bool = False) -> None:
     pid = listener_pid(STANDBY_PORT)
     if pid is None:
@@ -972,18 +885,14 @@ def stop_leftover_standby(drain_seconds: int, hold_for_oauth=lambda port: None, 
     wait_until(lambda: listener_pid(STANDBY_PORT) is None, 15)
     say("leftover standby stopped listening; it drains in the background")
     remove_state(STANDBY_PIDFILE)
-
 REAP_MARGIN_S = 150
-
 def is_standby(pid: int) -> bool:
     out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
     return "agent-lb" in out and f"--port {STANDBY_PORT}" in out and owned_by_sandbox(pid)
-
 def spawn_reaper(pid: int, drain_seconds: int) -> None:
     argv = [sys.executable, str(Path(__file__).resolve()), "--reap", str(pid), str(drain_seconds + REAP_MARGIN_S)]
     env = None
     if SANDBOX_CONFIG is not None:
-
         argv = [argv[0], "-I", *argv[1:], "--sandbox", str(SANDBOX_CONFIG)]
         env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "DYLD_"))}
     subprocess.Popen(
@@ -994,7 +903,6 @@ def spawn_reaper(pid: int, drain_seconds: int) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-
 def reap(pid: int, deadline_s: float) -> int:
     end = time.monotonic() + deadline_s
     while time.monotonic() < end:
@@ -1014,17 +922,12 @@ def reap(pid: int, deadline_s: float) -> int:
         "stack dump requested (SIGUSR2, forensics log), then SIGKILL"
     )
     return 1
-
 def job_loaded(label: str) -> bool:
     return launchctl_print(label).returncode == 0
-
 JOB_ENV_BLOCKS = ("environment", "inherited environment", "default environment")
 LAUNCHD_ENV_KEYS = frozenset({'XPC_SERVICE_NAME', 'OSLogRateLimit', 'XPC_FLAGS'})
-
 JOB_STREAMS = {'stdout path': 'StandardOutPath', 'stderr path': 'StandardErrorPath', 'stdin path': 'StandardInPath'}
-
 JOB_FLAG_LINES = frozenset({"submitted job. ignore execute allowed"})
-
 def parse_job_print(text: str) -> tuple[dict[str, str], dict[str, list[str]]]:
     scalars: dict[str, str] = {}
     blocks: dict[str, list[str]] = {}
@@ -1062,7 +965,6 @@ def parse_job_print(text: str) -> tuple[dict[str, str], dict[str, list[str]]]:
         if name not in JOB_ENV_BLOCKS and name != "arguments" and any(" => " in entry for entry in entries):
             raise SandboxRefused(f"launchctl print of the sandbox job has environment entries in {name!r}")
     return scalars, blocks
-
 def job_env_block(entries: list[str]) -> dict[str, str]:
     env: dict[str, str] = {}
     for entry in entries:
@@ -1071,7 +973,6 @@ def job_env_block(entries: list[str]) -> dict[str, str]:
             raise SandboxRefused("launchctl print of the sandbox job has a malformed environment")
         env[key] = value
     return env
-
 def check_loaded_job_print(text: str, plist: dict, python: Path, want: list[str]) -> None:
     scalars, blocks = parse_job_print(text)
     if scalars.get("program") != str(python) or blocks.get("arguments") != want:
@@ -1094,7 +995,6 @@ def check_loaded_job_print(text: str, plist: dict, python: Path, want: list[str]
     for shown, key in JOB_STREAMS.items():
         if scalars.get(shown) != (str(plist[key]) if key in plist else None):
             raise SandboxRefused(f"loaded job {LABEL} sends its {shown.split()[0]} elsewhere than its checked plist")
-
 def check_loaded_sandbox_job() -> None:
     assert SANDBOX_ROOT is not None
     python = sandbox_python_for(SANDBOX_ROOT)
@@ -1104,7 +1004,6 @@ def check_loaded_sandbox_job() -> None:
     out = launchctl_print(LABEL).stdout
     want = [*sandbox_program(SANDBOX_ROOT), "--host", "127.0.0.1", "--port", str(PRIMARY_PORT)]
     check_loaded_job_print(out, plist, python, want)
-
 def kickstart_primary(wait: bool) -> None:
     if SANDBOX_ROOT is not None:
         check_loaded_sandbox_job()
@@ -1113,12 +1012,10 @@ def kickstart_primary(wait: bool) -> None:
         subprocess.run(argv, check=False)
     else:
         subprocess.Popen(argv)
-
 def restart_primary(reload_plist: bool, old_pid: int | None, bound: float) -> None:
     if not reload_plist:
         kickstart_primary(wait=False)
         return
-
     WATCHDOG_PAUSE.touch()
     try:
         subprocess.run(["launchctl", "bootout", f"gui/{UID}/{LABEL}"], timeout=bound, check=False)
@@ -1133,32 +1030,11 @@ def restart_primary(reload_plist: bool, old_pid: int | None, bound: float) -> No
             time.sleep(0.5)
     finally:
         WATCHDOG_PAUSE.unlink(missing_ok=True)
-
 def graceful_seconds() -> int:
     env = plist_env()
     return int(env.get("UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN", "75"))
-
 def exit_timeout() -> int:
     return int(read_plist().get("ExitTimeOut", 20))
-
-def parse_reaper_args(argv: list[str]) -> tuple[int, float, Path | None]:
-    if len(argv) not in (3, 5) or argv[0] != "--reap":
-        raise SandboxRefused(f"reaper takes --reap PID SECONDS [--sandbox CONFIG], got {len(argv)} word(s)")
-    if not argv[1].isascii() or not argv[1].isdigit() or int(argv[1]) <= 1:
-        raise SandboxRefused("reaper pid must be a positive integer above 1")
-    try:
-        deadline = float(argv[2])
-    except ValueError as exc:
-        raise SandboxRefused("reaper seconds must be a number") from exc
-    if not 0 <= deadline <= 86400:
-        raise SandboxRefused("reaper seconds out of range")
-    config = None
-    if len(argv) == 5:
-        if argv[3] != "--sandbox" or not argv[4]:
-            raise SandboxRefused(f"reaper option {argv[3]!r} is not --sandbox CONFIG")
-        config = Path(argv[4])
-    return int(argv[1]), deadline, config
-
 def main() -> int:
     if any(arg.startswith("--reap") for arg in sys.argv[1:]):
         try:
@@ -1166,7 +1042,7 @@ def main() -> int:
             if config is not None:
                 apply_sandbox(config)
             return reap(pid, deadline)
-        except SandboxRefused as exc:
+        except (SandboxRefused, ValueError) as exc:
             print(f"lb-restart --reap refused: {exc}", file=sys.stderr)
             return 2
     p = argparse.ArgumentParser(description='Controlled, zero-gap restart of the live agent-lb service (blue/green).', formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1178,7 +1054,8 @@ def main() -> int:
     p.add_argument(
         "--check", action="store_true", help="Only boot and health-gate a standby on the code on disk, then stop it."
     )
-    p.add_argument("--force", action="store_true", help="Swap without waiting for OAuth sign-ins in progress.")
+    p.add_argument("--skip-exchange-wait", action="store_true", help="Skip OAuth/exchange waits.")
+    p.add_argument("--skip-exit-timeout-gate", action="store_true", help="Skip ExitTimeOut gate.")
     p.add_argument(
         "--oauth-wait", type=float, default=600, help="Seconds to wait in total for sign-ins in progress (default 600)."
     )
@@ -1215,11 +1092,8 @@ def main() -> int:
         p.error("--files needs --from")
     if not RUNTIME.is_dir() or not PLIST.is_file():
         p.error(f"runtime {RUNTIME} or plist {PLIST} missing")
-
     if shutil.which("launchctl") != "/bin/launchctl":
-
         p.error(f"launchctl resolves to {shutil.which('launchctl')}, not /bin/launchctl; refusing to touch the live LB")
-
     try:
         with Lock(args.reason, args.lock_wait):
             try:
@@ -1238,26 +1112,31 @@ def main() -> int:
     except SandboxRefused as exc:
         say(f"--sandbox refused: {exc}")
         return 2
-
 def run(args) -> int:
     drain = graceful_seconds()
-    required = drain + int(plist_env().get("AGENT_LB_SHUTDOWN_DRAIN_TIMEOUT_SECONDS", "30")) + EXCHANGE_SETTLE_S + 15
-    if exit_timeout() < required and not args.force:
-        say(f"ExitTimeOut needs {required}s; reload plist")
-        return 3
+    required = minimum_exit_timeout(plist_env())
+    if exit_timeout() < required and not args.skip_exit_timeout_gate:
+        say(f"ExitTimeOut < {required}; regenerating via install-service")
+        try:
+            if SANDBOX_ROOT is not None:
+                raise RuntimeError("regenerate sandbox plist")
+            regenerate_plist(RUNTIME, PLIST)
+            args.reload_plist = True
+            say("plist repaired; reload")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            say(f"ExitTimeOut regeneration failed: {exc}")
+            return 3
     primary_bound = max(drain, exit_timeout()) + 15
     files = Files(label="lb-restart")
     stats: dict[str, object] = {"reason": args.reason}
     say(f"reason: {args.reason}; drain bound {drain}s")
     oauth_waited = 0.0
-
     def hold_for_oauth(port: int) -> None:
         nonlocal oauth_waited
-        if args.force or args.check or (oauth_waited > 0 and oauth_waited >= args.oauth_wait):
+        if args.skip_exchange_wait or args.check or (oauth_waited > 0 and oauth_waited >= args.oauth_wait):
             return
         oauth_waited += wait_for_oauth_flows(port, max(0.0, args.oauth_wait - oauth_waited))
         stats["oauth_wait_s"] = round(oauth_waited, 1)
-
     if not front_understands_preference():
         say("the running front does not support blue/green (old build or not running); refusing")
         if FRONT_LABEL:
@@ -1265,22 +1144,19 @@ def run(args) -> int:
                 f"install the front from scripts/agent-lb-front.mjs and kickstart {FRONT_LABEL} in a quiet moment first"
             )
         return 3
-
     if SANDBOX_ROOT is not None:
         check_loaded_sandbox_job()
-    stop_leftover_standby(drain, hold_for_oauth, args.force)
+    stop_leftover_standby(drain, hold_for_oauth, args.skip_exchange_wait)
     set_preferred(PRIMARY_PORT)
     old_pid = launchd_pid(LABEL)
     if not healthy(PRIMARY_PORT):
         say("primary is not healthy before the restart; continuing (the standby will carry traffic)")
     else:
         hold_for_oauth(PRIMARY_PORT)
-
     if args.files:
         files.deploy(args.src, args.files)
     elif args.backup:
         files.use_backup(args.backup)
-
     t = time.monotonic()
     standby = start_standby(drain)
     if not wait_until(lambda: healthy(STANDBY_PORT) or standby.poll() is not None, args.boot_timeout):
@@ -1289,7 +1165,7 @@ def run(args) -> int:
     if standby.poll() is not None or not healthy(STANDBY_PORT):
         say(f"standby failed its health gate (exit={standby.poll()}); see {STANDBY_LOG}")
         if standby.poll() is None:
-            stop_pid_gracefully(standby.pid, STANDBY_PORT, 10, args.force)
+            stop_pid_gracefully(standby.pid, STANDBY_PORT, 10, args.skip_exchange_wait)
         rolled = files.rollback()
         remove_state(STANDBY_PIDFILE)
         sync_log(
@@ -1299,17 +1175,16 @@ def run(args) -> int:
         return 1
     say(f"standby healthy on :{STANDBY_PORT} in {stats['standby_boot_s']}s (pid {standby.pid})")
     if args.check:
-        secs, forced = stop_pid_gracefully(standby.pid, STANDBY_PORT, drain + 15, args.force)
+        secs, forced = stop_pid_gracefully(standby.pid, STANDBY_PORT, drain + 15, args.skip_exchange_wait)
         remove_state(STANDBY_PIDFILE)
         say(f"--check: code on disk boots and passes health; standby stopped in {secs:.1f}s; primary untouched")
         return 0
-
     if healthy(PRIMARY_PORT):
         hold_for_oauth(PRIMARY_PORT)
     set_preferred(STANDBY_PORT)
     if not front_routes_to(STANDBY_PORT):
         say("front did not pick up the standby preference; aborting before touching the primary")
-        stop_pid_gracefully(standby.pid, STANDBY_PORT, drain + 15, args.force)
+        stop_pid_gracefully(standby.pid, STANDBY_PORT, drain + 15, args.skip_exchange_wait)
         set_preferred(PRIMARY_PORT)
         return 4
     time.sleep(0.5)
@@ -1322,25 +1197,20 @@ def run(args) -> int:
         f"{stats['primary_conns_at_cutover']} connection(s); draining it (bound {primary_bound}s)"
     )
     t = time.monotonic()
-    if not args.force:
+    if not args.skip_exchange_wait:
         wait_for_oauth_flows(PRIMARY_PORT, EXCHANGE_SETTLE_S, exchanges=True)
     restart_primary(args.reload_plist, old_pid, primary_bound)
-
     def old_gone() -> bool:
         return not pid_alive(old_pid)
-
     last = [0.0]
-
     def old_gone_logged() -> bool:
         if time.monotonic() - last[0] >= 10:
             last[0] = time.monotonic()
             say(f"  primary draining, {established(PRIMARY_PORT)} connection(s) open")
         return old_gone()
-
     wait_until(old_gone_logged, primary_bound, 0.25)
     stats["primary_drain_s"] = round(time.monotonic() - t, 1)
     say(f"old primary exited after {stats['primary_drain_s']}s")
-
     t = time.monotonic()
     primary_ok = wait_until(
         lambda: (launchd_pid(LABEL) not in (None, old_pid)) and healthy(PRIMARY_PORT), args.boot_timeout, 0.25
@@ -1360,15 +1230,13 @@ def run(args) -> int:
             say(f"primary still down; standby pid {standby.pid} keeps serving on :{STANDBY_PORT}. Fix by hand.")
             return 2
     say(f"new primary healthy on :{PRIMARY_PORT} (pid {launchd_pid(LABEL)}) {stats['primary_boot_s']}s after exit")
-
     hold_for_oauth(STANDBY_PORT)
     set_preferred(PRIMARY_PORT)
     front_routes_to(PRIMARY_PORT)
     time.sleep(0.5)
     hold_for_oauth(STANDBY_PORT)
     stats["standby_in_flight_at_cutover"] = in_flight(STANDBY_PORT)
-
-    if not args.force:
+    if not args.skip_exchange_wait:
         wait_for_oauth_flows(STANDBY_PORT, EXCHANGE_SETTLE_S, exchanges=True)
     signal_group(standby.pid, signal.SIGTERM)
     spawn_reaper(standby.pid, drain)
@@ -1387,6 +1255,5 @@ def run(args) -> int:
         + f" old_pid={old_pid} new_pid={launchd_pid(LABEL)}{backup_note}{rollback_note}"
     )
     return 0 if not files.restored_from else 1
-
 if __name__ == "__main__":
     sys.exit(main())

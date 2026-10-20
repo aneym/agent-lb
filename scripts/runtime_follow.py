@@ -234,7 +234,7 @@ def step(paths: Paths, state: dict, now: float, *, force: bool) -> int:
         ]
         tree.apply_live(paths, [rel for rel in live if rel not in deleted], deleted)
         log_line(paths, f"runtime-follow: live sync {len(live)} path(s) to {want[:10]}")
-    if bin_todo:
+    if bin_todo and not need:
         runtime_bin.install(bin_todo, bin_report)
         log_line(paths, f"runtime-follow: refreshed bin {','.join(bin_report.refreshed)} to origin/main {want[:10]}")
     if not need:
