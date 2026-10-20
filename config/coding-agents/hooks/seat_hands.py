@@ -62,8 +62,8 @@ HANDS = re.compile(
 READ = re.compile(r"\b(?:read|find|trace|measure)\b", re.IGNORECASE)
 EDIT = re.compile(r"\b(?:edit|fix|land|commit|implement|patch|install|studio_merge)\b", re.IGNORECASE)
 STUDIO = re.compile(
-    r"~/\.agent-rails/|/Users/aneyman/\.agent-rails|~/\.claude/|/Users/aneyman/\.claude|~/\.agent-lb"
-    r"|studio_merge|127\.0\.0\.1|localhost:|log show|tailscale|lane-post|agent-test-account|factory-install|plan-publish",
+    r"~/\.agent-rails/|/Users/[^/]+/\.agent-rails|~/\.claude/|/Users/[^/]+/\.claude|~/\.agent-lb"
+    r"|studio_merge|127\.0\.0\.1|localhost:|log show|lane-post|agent-test-account|factory-install|plan-publish",
     re.IGNORECASE,
 )
 
