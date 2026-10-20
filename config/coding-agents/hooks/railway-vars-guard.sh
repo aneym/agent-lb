@@ -201,7 +201,6 @@ def check(command, inherited, value_output=False):
         if found:
             return found
     words = []
-    parsed = True
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()<>\n')
         lexer.whitespace = ' \t\r'
@@ -210,33 +209,24 @@ def check(command, inherited, value_output=False):
         for word in lexer:
             words.append(word)
     except ValueError:
-        parsed = False
         print('WARNING: railway guard could not fully parse the command.', file=sys.stderr)
         if lexer.token:
             words.append(lexer.token)
     segments, current = [], []
-    names = set()
-    redir = False
     i = 0
     while i < len(words):
         word = words[i]
         if re.fullmatch(r'[<>]+|[<>]+&', word):
-            redir = True
             i += 2
             continue
         if word and all(c in ';&|()\n' for c in word):
-            if (parsed and JQ and word == '|' and not redir and len(words) == i + 3
-                    and re.fullmatch(r'''\s*/(?:usr|opt/homebrew)/bin/jq\s+(?:keys|'keys'|"keys")\s*''',
-                        command.rsplit('|', 1)[-1])):
-                names.add(len(segments))
             segments.append(current)
             current = []
-            redir = False
         else:
             current.append(word)
         i += 1
     segments.append(current)
-    for index, words in enumerate(segments):
+    for words in segments:
         env = dict(inherited)
         i = 0
         while i < len(words):
@@ -379,9 +369,7 @@ def check(command, inherited, value_output=False):
                     if (not write or 'get' in command_args[1:]
                             or any(arg in {'--kv', '--json'} or re.fullmatch(r'-[^-]*k[^-]*', arg)
                                    for arg in command_args[1:])):
-                        if not (index in names and '--json' in command_args
-                                and not any(arg in {'--kv', '-k'} for arg in command_args)):
-                            secret_warning(KV_DENIAL)
+                        secret_warning(KV_DENIAL)
                         break
                     if not WARNINGS:
                         print('Railway variable write allowed pre-GA: explicit or unknown linked environment; values withheld.', file=sys.stderr)
@@ -408,9 +396,6 @@ try:
     command = tool_input.get('command', '') if isinstance(tool_input, dict) else ''
     if not isinstance(command, str):
         command = ''
-    JQ = not re.search(
-        r'\b(?:function|alias|enable|builtin|command)\b|'
-        r'\bhash\b[^;&|\n]*\s-p\b|[^\s;&|()]+\s*\(\s*\)', command)
     denied = check(command, dict(os.environ))
 except Exception as error:
     destructive = re.search(r'\brailway\s+(?:(?:service|volume|environment)\s+)?(?:delete|down)\b', command)
