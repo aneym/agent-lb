@@ -2,6 +2,7 @@
 roots = ["app", "clients", "config", "scripts", "tests"]
 
 [ts]
+checker = "tsrs"
 build = ["frontend/tsconfig.json"]
 
 [js]
