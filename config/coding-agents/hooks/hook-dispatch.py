@@ -32,7 +32,6 @@ FLOOR_SCRIPTS = (
     "dangerous-command-guard.sh",
     "no-chrome-guard.sh",
     "host-credential-guard.py",
-    "desktop-guard",
 )
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
 FLOOR_TEXT = "BLOCKED: Dangerous command"
