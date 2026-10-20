@@ -57,7 +57,8 @@ def run_value_output(args):
         args = args[i:]
     if not args:
         return False
-    if name in {'printenv', 'env', 'set'} or (name == 'export' and '-p' in args[1:]):
+    if (name in {'printenv', 'env', 'set'} or (name == 'export' and '-p' in args[1:])
+            or (name == 'declare' and '-x' in args[1:])):
         return True
     if name == 'railway' and len(args) > 1 and args[1] in {'variables', 'variable', 'vars'}:
         return (not variable_write(args[2:]) or 'get' in args[2:]
@@ -71,22 +72,20 @@ def run_value_output(args):
     if name == 'cat' and any(Path(arg).name == '.env' or Path(arg).name.startswith('.env.')
                              for arg in args[1:]):
         return True
-    if name in {'sh', 'bash', 'zsh', 'dash', 'ksh'}:
-        for i, arg in enumerate(args[1:-1], 1):
-            if arg.startswith('-') and 'c' in arg[1:]:
-                try:
-                    lexer = shlex.shlex(args[i + 1], posix=True, punctuation_chars=';&|\n')
-                    lexer.whitespace_split = True
-                    segment = []
-                    for word in list(lexer) + [';']:
-                        if word and all(c in ';&|\n' for c in word):
-                            if run_value_output(segment):
-                                return True
-                            segment = []
-                        else:
-                            segment.append(word)
-                except ValueError:
+    if name in {'sh', 'bash', 'zsh', 'dash', 'ksh', 'fish'}:
+        return any(arg.startswith('-') and 'c' in arg[1:] for arg in args[1:])
+    if re.fullmatch(r'python(?:\d+(?:\.\d+)*)?|node(?:js)?|ruby|perl|bun|deno', name):
+        for arg in args[1:]:
+            if arg in {'--eval', '--print', 'eval', '-'}:
+                return True
+            if arg.startswith('--eval=') or arg.startswith('--print='):
+                return True
+            if arg.startswith('-'):
+                if not arg.startswith('--') and any(flag in arg[1:] for flag in 'cep'):
                     return True
+                continue
+            return False
+        return True
     return False
 def production_environment(args):
     for i, arg in enumerate(args):
@@ -345,6 +344,8 @@ def check(command, inherited, value_output=False):
                 if help_requested or not command_args or command_args[0] in READS:
                     break
                 subcommand = command_args[0]
+                if subcommand == 'shell':
+                    return 'Railway shell exposes every environment variable (secret floor).'
                 if subcommand in {'ssh', 'run'}:
                     k = 1
                     while k < len(command_args) and command_args[k].startswith('-'):
