@@ -18,6 +18,7 @@ from app.modules.accounts.credits import (
     credits_exhausted,
     window_from_usage,
 )
+from app.modules.accounts.health import account_problems
 from app.modules.accounts.schemas import (
     AccountAdditionalQuota,
     AccountCreditsWindow,
@@ -257,6 +258,7 @@ def _account_to_summary(
         additional_quotas = _openrouter_additional_quotas(additional_quotas)
     account_is_locally_owned = is_locally_owned(account, config_settings.get_settings())
     return AccountSummary(
+        problems=account_problems(account, primary_usage, secondary_usage),
         account_id=account.id,
         provider=account.provider,
         email=account.email,

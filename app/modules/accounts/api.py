@@ -11,7 +11,7 @@ from app.core.clients.rate_limit_resets import ResetCreditsError
 from app.core.config.settings import get_settings
 from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
 from app.dependencies import AccountsContext, get_accounts_context
-from app.modules.accounts.auth_manager import _cross_process_refresh_lock
+from app.modules.accounts.auth_manager import AccountNotOwnedError, _cross_process_refresh_lock
 from app.modules.accounts.identity_repository import AccountIdentityConflictError
 from app.modules.accounts.schemas import (
     AccountAliasRequest,
@@ -258,6 +258,8 @@ async def probe_account(
     requested_model = body.model if body is not None else None
     try:
         result = await context.service.probe_account(account_id, model=requested_model)
+    except AccountNotOwnedError as exc:
+        raise DashboardConflictError(str(exc), code="account_not_owned") from exc
     except AccountNotProbableError as exc:
         raise DashboardConflictError(str(exc), code="account_not_probable") from exc
     except RefreshError as exc:

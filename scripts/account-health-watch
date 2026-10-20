@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def snapshot():
+    base = os.environ.get("BASE_URL", "http://127.0.0.1:2455").rstrip("/")
+    headers = {"Accept": "application/json"}
+    if cookie := os.environ.get("AGENT_LB_STATUS_COOKIE"):
+        headers["Cookie"] = cookie
+    opener = build_opener(ProxyHandler({}), NoRedirect())
+    with opener.open(Request(base + "/api/accounts", headers=headers), timeout=15) as response:
+        payload = json.load(response)
+    current = {}
+    for account in payload["accounts"]:
+        for problem in account["problems"]:
+            key = json.dumps([account["accountId"], problem["code"]])
+            message = f"{account['email']} ({account['provider']}) {problem['code']}: {problem['message']}"
+            current[key] = " ".join(message.split())[:799]
+    return current
+
+
+def inspect(state_path, dry_run):
+    previous = json.loads(state_path.read_text()) if state_path.exists() else {}
+    current = snapshot()
+    fresh = {key: message for key, message in current.items() if key not in previous}
+    for message in fresh.values():
+        print(message)
+    if dry_run:
+        return
+    lane_post = shutil.which("lane-post")
+    with state_path.with_suffix(".log").open("a") as log:
+        for message in fresh.values():
+            log.write(f"{datetime.now(timezone.utc).isoformat()} {message}\n")
+            log.flush()
+            if lane_post:
+                subprocess.run(
+                    [lane_post, "post", "--to", "factory", "--from", "agent-lb-health", "--kind", "info", message],
+                    check=True,
+                    timeout=30,
+                )
+    fd, temporary = tempfile.mkstemp(dir=state_path.parent, prefix=".account-health-")
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(current, stream, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary, state_path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    state = Path.home() / ".agent-lb/state/account-health.json"
+    if args.dry_run:
+        inspect(state, True)
+        return
+    state.parent.mkdir(parents=True, exist_ok=True)
+    with state.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        inspect(state, False)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"account-health-watch failed: {type(exc).__name__}", file=sys.stderr)
+        sys.exit(1)

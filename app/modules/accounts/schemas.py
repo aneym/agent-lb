@@ -104,7 +104,13 @@ class AccountIdentityMismatch(DashboardModel):
     payload_plan_type: str | None = None
 
 
+class AccountProblem(DashboardModel):
+    code: str
+    message: str
+
+
 class AccountSummary(DashboardModel):
+    problems: list[AccountProblem] = Field(default_factory=list)
     account_id: str
     provider: str = "openai"
     email: str

@@ -19,6 +19,8 @@ def _project_account(account: dict[str, Any]) -> dict[str, Any]:
         or _optional_text(account.get("account_id"))
         or "unknown",
         "provider": _text(account.get("provider"), "openai"),
+        "email": _text(account.get("email"), "unknown"),
+        "problems": account.get("problems", []),
         "status": status,
         "subscription": {
             "status": subscription_status,

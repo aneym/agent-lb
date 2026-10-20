@@ -280,6 +280,12 @@ def _emit(payload: dict[str, Any], *, json_output: bool) -> None:
         return
     for provider in payload["providers"]:
         print(f"{provider['provider']}: {provider['usable']}/{provider['accounts']} usable")
+    attention = [account for account in payload["accounts"] if account.get("problems")]
+    if attention:
+        print("needs attention:")
+        for account in attention:
+            for problem in account["problems"]:
+                print(f"  {account['email']} ({account['provider']}) {problem['code']}: {problem['message']}")
     for account in payload["accounts"]:
         fable = (
             f"; Fable scoped weekly {_format_window(account['fable']['scoped_weekly'])}"
