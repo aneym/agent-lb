@@ -1736,13 +1736,27 @@ def main() -> int:
                 changes[target] = desired
         core = (source / "routing/core.md").read_text()
         desired_models = MODELS_MARKER + " from routing/core.md; generated, do not edit. -->\n\n" + core
+        if models_text and not models_text.startswith(MODELS_MARKER):
+            backup = (
+                args.home
+                / ".claude/ledgers"
+                / ("models-handkept-" + hashlib.sha256(models_text.encode()).hexdigest()[:12] + ".md")
+            )
+            if not backup.exists():
+                changes[backup] = models_text
         if desired_models != models_text:
             changes[models_path] = desired_models
         if full_disk.startswith(MODELS_MARKER):
             changes[full_path] = None
         old_policy = args.home / POLICY_DIR / "ROUTING.md"
         if old_policy.is_file() and not old_policy.is_symlink():
-            changes[old_policy] = None
+            old_text = old_policy.read_text()
+            legacy = source / "routing-legacy-sha256.json"
+            known = json.loads(legacy.read_text()) if legacy.is_file() else []
+            if hashlib.sha256(old_text.encode()).hexdigest() in known:
+                changes[old_policy] = None
+            else:
+                print(f"PRESERVE {old_policy}: modified or unrecognized legacy routing document")
 
     if desired_settings != disk_settings:
         changes[settings_path] = desired_settings_text
