@@ -556,7 +556,9 @@ def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 name = None
                 if isinstance(command, str):
                     name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
-                    name = name or next((n for n in RETIRED_HOOKS if f"hooks/{n}" in command), None)
+                    name = name or next((n for n in (*RETIRED_HOOKS, "routing-pulse.py") if n in command), None)
+                    if event == "PostToolUse" and "factory-lint-hook" in command:
+                        name = "factory-lint-hook"
                 if name:
                     dropped.append(f"{event} {group.get('matcher') or '*'}: {name}")
                 else:
@@ -1228,12 +1230,6 @@ def reconcile_settings(
     if not uninstall:
         for event, groups in hooks.items():
             for group in groups:
-                group["hooks"] = [
-                    h
-                    for h in group.get("hooks", [])
-                    if not any(n in h.get("command", "") for n in ("seat-budget.py", "routing-pulse.py"))
-                    and not (event == "PostToolUse" and "factory-lint-hook" in h.get("command", ""))
-                ]
                 for hook in group["hooks"]:
                     command = hook.get("command", "")
                     if "skill-stats" in command:
@@ -1692,10 +1688,7 @@ def main() -> int:
                     keep_fold = True
                     print(f"WARNING hook dispatcher: parity failed twice ({summary}); keeping installed fold")
                 else:
-                    print(
-                        f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
-                        f"({summary}); restoring the per-hook config"
-                    )
+                    print(f"WARNING hook dispatcher: parity failed ({summary}); restoring per-hook config")
             if new_registry is not None:
                 desired_settings = {**desired_settings, "hooks": folded_hooks}
             elif keep_fold:
@@ -1766,15 +1759,6 @@ def main() -> int:
 
     if desired_settings != disk_settings:
         changes[settings_path] = desired_settings_text
-    if not args.uninstall:
-        for relative in (
-            ".claude/hooks/seat-budget.py",
-            ".agents/policy/coding-agents/hooks/seat-budget.py",
-            ".agent-lb/managed/coding-agents/seat-budget",
-        ):
-            target = args.home / relative
-            if target.is_file() and not target.is_symlink():
-                changes[target] = None
     if not args.uninstall and registry_path.parent.is_dir():
         for path in registry_path.parent.glob("registry*.json"):
             legacy = json.loads(path.read_text())
@@ -1911,7 +1895,10 @@ def main() -> int:
                 if path.is_file() and path.resolve().parent != source / "agents":
                     changes[path] = None
         for name in RETIRED_HOOKS:
-            changes[args.home / ".claude/hooks" / name] = "import sys; sys.stdin.read()\n"
+            for relative in (Path(".claude/hooks") / name, POLICY_DIR / "hooks" / name, MANAGED_DIR / Path(name).stem):
+                target = args.home / relative
+                if target.is_file() and not target.is_symlink():
+                    changes[target] = None
         for name in RETIRED_AGENTS:
             for relative in (
                 Path(".claude/agents") / f"{name}.md",
