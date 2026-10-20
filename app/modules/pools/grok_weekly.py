@@ -24,7 +24,7 @@ POOL_SOURCE_GROK_VENDOR_STALE = "grok_vendor_stale"
 USAGE_ENDPOINT = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus"
 APP_DATA_DIR = Path.home() / "Library/Application Support/Grok Bot"
 APP_INFO_PLIST = Path("/Applications/Grok Bot.app/Contents/Info.plist")
-_STALE_AFTER = timedelta(minutes=15)
+_GROK_STALE_AFTER = timedelta(minutes=15)
 
 
 class CredentialError(Exception):
@@ -209,7 +209,7 @@ def grok_pool(path: Path | None = None, *, now: datetime | None = None) -> PoolS
     exhausted = reading.get("hasAvailableUsage") is False or (
         measured and used >= 100 and (resets is None or resets > current)
     )
-    stale = observed is None or current - observed > _STALE_AFTER
+    stale = observed is None or current - observed > _GROK_STALE_AFTER
     error = reading.get("lastError") if isinstance(reading.get("lastError"), dict) else {}
     ultra = sum(1 for account in cursor_seat_accounts() if _is_ultra(account)) or 1
     windows = (
