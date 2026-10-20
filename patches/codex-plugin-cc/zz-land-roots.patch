@@ -1,0 +1,56 @@
+diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/codex.mjs
+index c8036f5..51aa887 100644
+--- a/plugins/codex/scripts/lib/codex.mjs
++++ b/plugins/codex/scripts/lib/codex.mjs
+@@ -1133,6 +1133,7 @@ export async function importExternalAgentSession(cwd, options = {}) {
+ }
+ 
+ export async function runAppServerTurn(cwd, options = {}) {
++  landPrompt = options.prompt ?? "";
+   const availability = getCodexAvailability(cwd);
+   if (!availability.available) {
+     throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/codex:setup`.");
+@@ -1316,3 +1317,43 @@ sandboxConfig = async function(client, cwd, sandbox) {
+   }
+   return { config: { ...result.config, sandbox_workspace_write: { writable_roots: [...new Set([...configured, ...roots])], network_access: true } } };
+ };
++
++let landPrompt = "";
++
++function briefLands(text) {
++  const needs = /^[ \t]*NEEDS\b[ \t]*:?[ \t]*([^\n]*)/im.exec(text);
++  const line = needs ? needs[1] : "";
++  const tools = /\btools=(\S+)/.exec(line);
++  return /\bland=yes\b/i.test(line) ||
++    Boolean(tools && /(?<![\w-])(?:gh|git[ -]push|push)(?![\w-])/i.test(tools[1].replaceAll(",", " "))) ||
++    /\bff[- ]push\b|\bgit push\b|\bstudio_merge\b|\bfactory-install --tick\b/i.test(text);
++}
++
++function landWritableRoots(cwd, prompt) {
++  const repos = process.env.FACTORY_REPOS_ROOT || "/Volumes/StudioExt/repos";
++  const names = new Set();
++  const pattern = new RegExp(`${repos.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/([A-Za-z0-9._-]+)`, "g");
++  for (const match of `${cwd}\n${prompt}`.matchAll(pattern)) names.add(match[1].replace(/-wt$/, ""));
++  const roots = [];
++  for (const name of names) {
++    const repo = path.join(repos, name);
++    if (!fs.existsSync(path.join(repo, ".git", "HEAD"))) continue;
++    const trees = path.join(repos, `${name}-wt`);
++    fs.mkdirSync(trees, { recursive: true });
++    roots.push(fs.realpathSync(path.join(repo, ".git")), fs.realpathSync(trees));
++  }
++  return roots;
++}
++
++const localSandboxConfig = sandboxConfig;
++sandboxConfig = async function(client, cwd, sandbox) {
++  const result = await localSandboxConfig(client, cwd, sandbox);
++  if (sandbox !== "workspace-write" || !briefLands(landPrompt)) return result;
++  const roots = landWritableRoots(cwd, landPrompt);
++  let configured = result.config?.sandbox_workspace_write?.writable_roots;
++  if (!configured) {
++    const response = await client.request("config/read", { includeLayers: false, cwd });
++    configured = response?.config?.sandbox_workspace_write?.writable_roots ?? [];
++  }
++  return { config: { ...result.config, sandbox_workspace_write: { writable_roots: [...new Set([...configured, ...roots])], network_access: true } } };
++};
