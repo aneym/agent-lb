@@ -21,6 +21,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import route_cache
+import route_heal
 from route_cache import HttpResult, _fixture_file
 from route_grok import constraint_choice, hands_refusal, hands_seat, rung_block, seat_defaults
 from route_spread import dispatch_choice
@@ -2149,7 +2150,7 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
             key, capacity = reservation_capacity(row, pools, policy)
             candidates.append({**{field: row.get(field) for field in ("rung", "seat", "model", "pool")},
                                "capacity_key": key, "capacity": capacity})
-        code, result = _reservation_request("POST", "", {"job": args.job, "class": args.task_class,
+        code, result = route_heal.reserve_candidates(_reservation_request, {"job": args.job, "class": args.task_class,
             "host": os.environ.get("ROUTE_HOST") or socket.gethostname(),
             "ttl_s": args.ttl if args.ttl is not None else policy.get("ttl_s", 120),
             "pinned": bool(args.prefer), "candidates": candidates})
@@ -2858,8 +2859,6 @@ def dispatch_wait(reason: str, class_name: str, job_id: str, as_json: bool) -> i
     return EXIT_WAIT
 
 def command_dispatch(args: argparse.Namespace) -> int:
-    import random
-
     table = load_table()
     standards = table.get("standards") if isinstance(table.get("standards"), dict) else {}
     if args.task_class not in standards:
@@ -2885,73 +2884,10 @@ def command_dispatch(args: argparse.Namespace) -> int:
     if not prior and not explicit:
         standard = swapped_standard(table, class_name, standard, mode_state)
     ctx = DispatchContext(table, class_name, args.author_vendor)
-    explore = table.get("explore") or {}
-    eligible: list[str] = []
-    sticky = False
-    if explicit:
-        seat = args.seat or standard["seat"]
-        seat_spec = seat_defaults(table, class_name, seat)
-        model_alias = args.model or (standard["model"] if seat == standard["seat"] else seat_spec.get("model"))
-        effort = args.effort or (standard.get("effort") if seat == standard["seat"] else seat_spec.get("effort"))
-        choice = {"arm": "explicit", "arm_id": "explicit", "seat": seat, "model_alias": model_alias,
-                  "effort": effort, "pool": None, "propensity": 1.0, "reason": "explicit flags"}
-    else:
-        if prior:
-            first = prior[0]
-            arms = {arm.get("id"): arm for arm in (explore.get("arms") or {}).get(class_name) or []}
-            if first.get("arm") == "explore":
-                blocked = arm_block(ctx, arms.get(first.get("arm_id")) or {"id": first.get("arm_id"), "paused": True})
-                if blocked:
-                    return dispatch_wait(f"sticky arm {first.get('arm_id')} is held: {blocked}",
-                                         class_name, job_id, args.json)
-            sticky = True
-            choice = {"arm": first.get("arm") or "default", "arm_id": first.get("arm_id") or "standard",
-                      "seat": first.get("seat"), "model_alias": first.get("model_alias"),
-                      "effort": first.get("effort"), "pool": first.get("pool"),
-                      "propensity": first.get("propensity", 1.0),
-                      "reason": f"sticky: job {job_id} keeps {first.get('decision_id')}"}
-            eligible = list(first.get("eligible_arms") or [])
-        else:
-            today_key = decision_day(now_iso())
-            today = [row for row in history if row.get("arm") == "explore" and decision_day(row.get("ts")) == today_key]
-            candidates = []
-            for arm in (explore.get("arms") or {}).get(class_name) or []:
-                if not isinstance(arm, dict):
-                    continue
-                if mode_state["mode"] == "codex-swap" and class_name in (table.get("quota_swap") or {}):
-                    continue
-                if arm_block(ctx, arm) or arm_cap_block(ctx, arm, today):
-                    continue
-                candidates.append(arm)
-            total = sum(float(arm.get("share") or 0) for arm in candidates)
-            cap = float(explore.get("max_share_per_class") or 0)
-            scale = cap / total if total > cap and total > 0 else 1.0
-            shares = [(arm, float(arm.get("share") or 0) * scale) for arm in candidates]
-            eligible = [arm["id"] for arm in candidates]
-            rng = random.Random(args.seed) if args.seed is not None else random.SystemRandom()
-            draw = rng.random()
-            cumulative = 0.0
-            choice = None
-            for arm, share in shares:
-                cumulative += share
-                if draw < cumulative:
-                    choice = {"arm": "explore", "arm_id": arm["id"], "seat": arm["seat"], "model_alias": arm["model"],
-                              "effort": arm.get("effort"), "pool": arm.get("pool"), "propensity": round(share, 6),
-                              "reason": f"explore draw {draw:.4f} < {cumulative:.4f}"}
-                    break
-            if choice is None:
-                choice = dispatch_choice(table, class_name, rng, pools_by_id(pools_doc), standard, explore, shares, draw)
-        leases = (lambda: pools_doc.get("reservations")) if args.pools_file else pick_leases
-        constrained, skipped = constraint_choice(table, class_name, pools_by_id(pools_doc), args.tag,
-                                                 mode_state["mode"], ledger_path(), leases)
-        choice = constrained or {**choice, "reason": choice["reason"] + (f"; grok skipped: {skipped}" * bool(skipped))}
-    choice["reason"] = standard.get("fallback_reason", choice["reason"])
-    seat = choice["seat"]
-    model_alias = choice["model_alias"]
-    refused = hands_refusal(table, class_name, seat, model_alias)
-    if refused:
-        print(json.dumps({"status": "refused", "reason": refused}) if args.json else refused)
-        return EXIT_UNROUTABLE
+    choice, eligible, sticky = route_heal.select(sys.modules[__name__], args, table, standard, ctx, prior, history, mode_state, pools_doc, job_id)
+    if choice is None:
+        return dispatch_wait("all dispatch seats excluded or unavailable", class_name, job_id, args.json)
+    seat, model_alias = choice["seat"], choice["model_alias"]
     served = ServedModels()
     model = None
     if model_alias:
@@ -4775,6 +4711,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     dispatch.add_argument("--caller", default=None)
     dispatch.add_argument("--author-vendor", "--author-maker", dest="author_vendor", default=None)
     dispatch.add_argument("--seat", default=None)
+    dispatch.add_argument("--exclude", action="append", default=[], metavar="SEAT")
     dispatch.add_argument("--model", default=None)
     dispatch.add_argument("--effort", default=None)
     dispatch.add_argument("--seed", type=int, default=None)

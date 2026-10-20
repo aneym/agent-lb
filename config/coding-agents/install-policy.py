@@ -33,6 +33,7 @@ ROUTE_FILES = (
     "route_storage.py",
     "route_cache.py",
     "route_grok.py",
+    "route_heal.py",
     "route_spread.py",
 )
 
