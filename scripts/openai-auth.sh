@@ -23,7 +23,7 @@ case "$cmd" in
   start)
     curl -sS -X POST "$BASE_URL/api/oauth/start" \
       -H 'Content-Type: application/json' \
-      -d '{"provider":"openai"}' | pp
+      -d '{"provider":"openai","forceMethod":"browser"}' | pp
     echo >&2
     echo "Open the authorizationUrl above in a browser logged into the target ChatGPT account." >&2
     echo "The flow completes automatically once you approve; check with:" >&2

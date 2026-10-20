@@ -154,8 +154,9 @@ scripts/openai-auth.sh start
    `scripts/openai-auth.sh accounts`.
 4. Repeat for the next account.
 
-If `start` returns `{"method": "browser"}` with no `flowId`, the server treated the
-request as already satisfied — check `accounts` before assuming anything failed.
+`start` forces a browser OAuth flow and returns an `authorizationUrl` and `flowId`,
+even when an OpenAI account is already in the pool. Use the same command to reauthenticate
+an existing account.
 
 ## 5. Wire up clients
 
