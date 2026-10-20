@@ -278,7 +278,7 @@ final class AppState {
   private func fetchMakerData(silently: Bool = false) async {
     do {
       let seats = try await client.seatAccounts()
-      seatAccounts = seats.accounts
+      seatAccounts = SeatAccount.bySubscription(seats.accounts)
       seatSource = seats.source
       seatStateUpdatedAt = seats.stateUpdatedAt
       seatQuotaRefreshedAt = seats.quotaRefreshedAt

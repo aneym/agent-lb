@@ -352,6 +352,7 @@ struct SeatAccount: Decodable, Equatable, Sendable, Identifiable {
   var statusResetAt: Date? = nil
   var quota: SeatQuota? = nil
   var today: SeatToday? = nil
+  var logins: [String]? = nil
 }
 
 struct SeatDailyUsage: Decodable, Equatable, Sendable {
@@ -416,6 +417,31 @@ struct SeatTodayModel: Decodable, Equatable, Sendable {
 }
 
 extension SeatAccount {
+  var subscriptionKey: String {
+    if vendor.lowercased() == "cursor", let plan { return "cursor:\(plan)" }
+    return id
+  }
+
+  var displayId: String {
+    guard let logins, logins.count > 1 else { return id }
+    return "\(vendorLabel) · \(logins.count) logins"
+  }
+
+  static func bySubscription(_ seats: [SeatAccount]) -> [SeatAccount] {
+    var order: [String] = []
+    var groups: [String: [SeatAccount]] = [:]
+    for seat in seats {
+      if groups[seat.subscriptionKey] == nil { order.append(seat.subscriptionKey) }
+      groups[seat.subscriptionKey, default: []].append(seat)
+    }
+    return order.compactMap { key in
+      guard let group = groups[key], var primary = group.first(where: { $0.auth == "login" && $0.enabled }) ?? group.first
+      else { return nil }
+      if group.count > 1 { primary.logins = group.map(\.id) }
+      return primary
+    }
+  }
+
   var scope: ProviderScope? {
     ProviderScope(rawValue: vendor.lowercased()).flatMap { $0.isSeatVendor ? $0 : nil }
   }

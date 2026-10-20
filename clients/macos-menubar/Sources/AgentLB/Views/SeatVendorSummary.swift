@@ -32,18 +32,21 @@ struct SeatVendorSummary: Equatable, Sendable {
     scope: ProviderScope, pools: [PoolEntry], seats: [SeatAccount], summary: UsageSummary?, now: Date
   ) -> SeatVendorSummary {
     let vendorSeats = scope.filter(seats)
-    let vendorPools = pools.filter {
-      let provider = $0.provider.lowercased()
-      return (provider == scope.rawValue || (scope == .cursor && provider == "grok"))
-        && ($0.kind == "cli_seat" || $0.kind == "cli_seat_budget")
+    let seatPools = pools.filter {
+      $0.provider.lowercased() == scope.rawValue && ($0.kind == "cli_seat" || $0.kind == "cli_seat_budget")
     }
-    let usable = vendorPools.isEmpty
-      ? vendorSeats.filter { $0.enabled && $0.ready && $0.displayStatus != "reauth_required" }.count
-      : vendorPools.map { $0.usableAccounts ?? $0.eligibleAccounts }.max() ?? 0
-    let total = vendorPools.isEmpty
-      ? vendorSeats.count
-      : vendorPools.map { $0.totalAccounts ?? $0.accounts }.max() ?? 0
-    let seatsText = "\(usable)/\(total) " + (total == 1 ? "seat" : "seats")
+    let unifiedMeter = seatPools.contains { pool in windows(of: pool).contains { $0.id == "cursor-models" } }
+    let vendorPools = seatPools + pools.filter {
+      scope == .cursor && !unifiedMeter && $0.provider.lowercased() == "grok" && $0.kind == "cli_seat"
+    }
+    let usable = vendorSeats.isEmpty
+      ? vendorPools.map { $0.usableAccounts ?? $0.eligibleAccounts }.max() ?? 0
+      : vendorSeats.filter { $0.enabled && $0.ready && $0.displayStatus != "reauth_required" }.count
+    let total = vendorSeats.isEmpty
+      ? vendorPools.map { $0.totalAccounts ?? $0.accounts }.max() ?? 0
+      : vendorSeats.count
+    let unit = scope == .cursor ? "subscription" : "seat"
+    let seatsText = "\(usable)/\(total) " + (total == 1 ? unit : unit + "s")
 
     var seen: [String: Int] = [:]
     var picked: [(PoolWindow, PoolEntry)] = []
@@ -65,7 +68,7 @@ struct SeatVendorSummary: Equatable, Sendable {
       let clamped = pool.status == "exhausted" ? 0 : min(100, max(0, remaining))
       let poolUsable = pool.usableAccounts ?? pool.eligibleAccounts
       let poolTotal = pool.totalAccounts ?? pool.accounts
-      let cardSeats = "\(poolUsable)/\(poolTotal) " + (poolTotal == 1 ? "seat" : "seats")
+      let cardSeats = vendorSeats.isEmpty ? "\(poolUsable)/\(poolTotal) " + (poolTotal == 1 ? "seat" : "seats") : seatsText
       let reset = window.resetsAt.map { "resets \(clamped <= 0 ? Format.easternDay($0) : Format.easternMoment($0, relativeTo: now))" } ?? "reset not reported"
       let source = sourceText(window: window, seats: vendorSeats, now: now)
       let detail = detailText(window)
@@ -158,7 +161,7 @@ struct SeatVendorSummary: Equatable, Sendable {
   private static func windows(of pool: PoolEntry) -> [PoolWindow] {
     if let windows = pool.windows { return windows }
     guard pool.kind == "cli_seat_budget", let used = pool.percentUsed else { return [] }
-    let label = pool.id == "cursor-models" ? "Composer"
+    let label = pool.id == "cursor-models" ? "Grok + Composer"
       : pool.id == "cursor-other" ? "Other models" : pool.id
     return [PoolWindow(
       id: pool.id,
@@ -188,6 +191,7 @@ struct SeatVendorSummary: Equatable, Sendable {
   }
 
   private static func detailText(_ window: PoolWindow) -> String? {
+    if window.id == "cursor-models" { return "Grok + Composer" }
     let generic = ["daily", "weekly", "monthly", "session", "5-hour", kindWord(window)]
     return generic.contains(window.label.lowercased()) ? nil : window.label
   }

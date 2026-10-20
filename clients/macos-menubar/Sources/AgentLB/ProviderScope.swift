@@ -18,7 +18,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
     case .all: "All"
     case .openai: "Codex"
     case .anthropic: "Claude"
-    case .cursor: "Cursor"
+    case .cursor: "X Ultra"
     case .devin: "Devin"
     case .muse: "Muse"
     case .other: "Other"

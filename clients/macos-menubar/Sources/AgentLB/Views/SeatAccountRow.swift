@@ -42,7 +42,7 @@ struct SeatAccountRow: View {
   }
 
   var displayName: String {
-    privacyMask.name(for: seat, real: seat.id)
+    privacyMask.name(for: seat, real: seat.displayId)
   }
 
   var trailingText: String? {
