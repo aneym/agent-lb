@@ -32,7 +32,15 @@ PLACEMENT: studio-only
 CONTRACT_EOF
 job_args=()
 if [ -n "${AGENT_LB_DISPATCH:-}" ]; then
-  job_args=(--job "$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job"])')")
+  inherited_job=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys
+try:
+ d=json.load(sys.stdin)
+ print(d.get("job") or d.get("job_id") or "")
+except ValueError:
+ print("")')
+  if [ -n "$inherited_job" ]; then
+    job_args=(--job "$inherited_job")
+  fi
 else
   job_args=(--job "codex-verifier-local-$(date +%s)-$(openssl rand -hex 8)")
 fi

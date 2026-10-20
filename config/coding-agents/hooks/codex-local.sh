@@ -80,10 +80,6 @@ node "$companion" "$@" --dry-run >&2
 export BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only
 export CODEX_LOCAL_WRITE_SANDBOX=danger-full-access
 
-if [[ ${LOCAL_SEAT_ADMITTED:-0} != 1 && -x "$HOME/.local/bin/verify-slot" ]]; then
-  exec "$HOME/.local/bin/verify-slot" codex-local -- env LOCAL_SEAT_ADMITTED=1 bash "$0" "$@"
-fi
-unset LOCAL_SEAT_ADMITTED
 if [[ -n $prompt_file ]]; then
   rendered_prompt=$(mktemp "${TMPDIR:-/tmp}/codex-local-contract.XXXXXX")
   cat "$prompt_file" > "$rendered_prompt"
