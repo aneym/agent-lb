@@ -28,6 +28,8 @@ MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A
 GPT_ID = re.compile(r"^gpt-(\d+(?:\.\d+)*)-([a-z]+)$")
 from policy_verification import MANAGED  # type: ignore[missing-import]
 
+failures: list[str] = []
+
 
 
 def check(condition: bool, message: str) -> None:

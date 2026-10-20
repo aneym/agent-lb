@@ -31,4 +31,3 @@ MANAGED = (
     ("seat-guard", ".claude/hooks/seat-guard.py", "hooks/seat-guard.py"),
     ("subagent-closeout", ".claude/hooks/subagent-closeout.py", "hooks/subagent-closeout.py"),
 )
-failures: list[str] = []

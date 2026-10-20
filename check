@@ -1,6 +1,17 @@
 #!/bin/sh
 set -eu
 
+css_guard="${KIT_ROOT:-$HOME/.agent-rails/kit-runtime/current}/bin/css-changed"
+if [ "${1-}" = "--staged" ]; then
+    "$css_guard" --staged
+else
+    "$css_guard"
+fi
+
+if [ -f atoms.toml ]; then
+    "${KIT_ROOT:-$HOME/.agent-rails/kit-runtime/current}/bin/atoms" validate --repo . --base origin/main
+fi
+
 test_guard="${KIT_ROOT:-$HOME/.agent-rails/kit-runtime/current}/bin/test-guard"
 if [ "${1-}" = "--staged" ]; then
     "$test_guard" --staged

@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path("/Volumes/StudioExt/repos")
+ROOT = Path("/Volumes") / "StudioExt" / "repos"
 
 
 def first_checkout(cwd):

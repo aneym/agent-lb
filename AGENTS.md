@@ -3,7 +3,7 @@
 Local load balancer for Claude Code, Codex and other agent clients; used by its operator and teammates.
 Pools subscription accounts behind one endpoint and provides an operational dashboard.
 
-rules: agent-plugin-kit@055d550
+rules: agent-plugin-kit@cd4c1e6
 
 ## Read first
 1. This file.
@@ -17,10 +17,6 @@ rules: agent-plugin-kit@055d550
 ## Land
 Fast-forward push to `origin/main`.
 The commit body carries a `check:` line: one bare shell command the gate runs.
-
-## Worktrees
-The main checkout `/Volumes/StudioExt/repos/agent-lb` stays on `main`.
-Other branches: `git worktree add ../agent-lb-wt/<topic> -b <branch> origin/main`.
 
 ## Feature map
 Index: `features/README.md` (generated; do not edit by hand).
@@ -43,4 +39,4 @@ Validate with `feature-map check`.
 - Worktree setup: `sh scripts/worktree-setup.sh`; use `.venv/bin/python` or `uv run --no-sync`, not `uv sync`.
 - New machine setup: `GETTING-STARTED.md`; account operations: `.agents/skills/agent-lb-account-operator/SKILL.md`.
 
-- No unit tests (Alex, 2026-10-19). Prove behavior through the running app, HTTP, a CLI subprocess, MCP transport or a real install. Keep kept-floor guards (outbound approval, spend caps, destructive-data approval, secret redaction, Alex’s credentials) and never thin them. Delete unit tests you touch.
+Floors here: outbound approval, spend caps, destructive-data approval, secret redaction and Alex's credentials.
