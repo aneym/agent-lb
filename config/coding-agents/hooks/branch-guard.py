@@ -210,21 +210,23 @@ def main():
             found = fallback_commands(strip_heredocs(text), cwd)
         for action, where in found:
             state = first_checkout(where) if where else None
-            if state is None:
-                print("branch-guard warning: unknown checkout state; allowing command", file=sys.stderr)
-            if state is True:
+            if state is not False:
+                reason = (
+                    "Floor: destructive shared-checkout mutation. Branch changes or removal of the shared checkout can take "
+                    "another agent's working state; use a dedicated <repo>-wt/<topic> worktree."
+                )
                 print(
                     json.dumps(
                         {
                             "hookSpecificOutput": {
                                 "hookEventName": "PreToolUse",
                                 "permissionDecision": "deny",
-                                "permissionDecisionReason": "branch-guard: branch changes or removal of the shared checkout can take another agent's working state; use a dedicated <repo>-wt/<topic> worktree.",
+                                "permissionDecisionReason": reason,
                             }
                         }
                     )
                 )
-                return 0
+                return 2
     except (OSError, ValueError, TypeError) as error:
         print(f"branch-guard: cannot classify command: {error}", file=sys.stderr)
         return 0

@@ -285,10 +285,12 @@ def session_root(table, start):
         seen.add(pid)
         command = table[pid][1]
         exe = command.split()[0] if command.split() else ""
-        if os.path.basename(exe) == "claude" or re.search(r"(^|/)claude(\s|$)|@anthropic-ai/claude-code", command):
+        if os.path.basename(exe) in {"claude", "codex"} or re.search(
+            r"(^|/)claude(\s|$)|@anthropic-ai/claude-code", command
+        ):
             return pid
         pid = table[pid][0]
-    return table.get(start, (start, ""))[0] if start in table else start
+    return start
 
 
 def descendants(table, root):
@@ -313,7 +315,7 @@ def matches(sel, table):
         if pid == os.getpid():
             continue
         words = command.split()
-        subject = command if sel["full"] else os.path.basename(words[0]) if words else ""
+        subject = command if sel["full"] else os.path.basename(words[0]).lstrip("-") if words else ""
         found = rx.fullmatch(subject) if sel["exact"] else rx.search(subject)
         if found:
             hit.append(pid)
@@ -400,7 +402,13 @@ def main():
             marked = len(session) >= 8 and bool(
                 re.search(r"(?:--session[-_]id(?:=|\s+)|session_id=)" + re.escape(session) + r"(?:\s|$)", argv)
             )
-            if gui or shared or (pid not in own and not marked and (pid in live or ppid == 1)):
+            words = argv.split()
+            interactive_shell = executable.lstrip("-") in SHELLS and (
+                executable.startswith("-")
+                or len(words) == 1
+                or any(arg.startswith("-") and "i" in arg[1:] for arg in words[1:])
+            )
+            if gui or shared or (pid not in own and not marked and (pid in live or ppid == 1 or interactive_shell)):
                 others.append(pid)
             elif pid not in own and not marked:
                 warned = True

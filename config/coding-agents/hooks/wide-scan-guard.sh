@@ -129,27 +129,6 @@ def refused_root(path, cwd):
             or re.fullmatch(r'/Volumes/[^/]+', path) is not None
             or re.fullmatch(r'/Volumes/StudioExt/repos(?:/[^/]+-wt)?', path) is not None
             or re.search(r'/\.agent-rails(?:/(?:agents|evidence|lanes))?$', path) is not None)
-def refusal(tool, root, pattern, cwd):
-    home = os.path.expanduser('~')
-    shown = resolve_path(root, cwd)
-    if shown == home or shown.startswith(home + '/'):
-        shown = '~' + shown[len(home):]
-    pattern = pattern or '<pattern>'
-    resolved = resolve_path(root, cwd)
-    if '/.agent-rails' in resolved:
-        scope = '~/.agent-rails/<one dir>'
-    elif resolved.startswith('/Volumes/StudioExt/repos'):
-        scope = '/Volumes/StudioExt/repos/<one repo or worktree>'
-    else:
-        scope = '<one repo or dir>'
-    hint = 'rg -n "%s" %s' % (pattern, scope)
-    if re.fullmatch(r'b-\d{8,}[-0-9a-f]*', pattern):
-        hint = 'lane-post read %s' % pattern
-    elif re.fullmatch(r'\d{8,}', pattern):
-        hint = 'lane-post read %s for a bulletin, gh run view %s for a run, or %s' % (pattern, pattern, hint)
-    return ('wide-scan-guard (warn only): recursive %s over %s is expensive (search one directory under '
-            '~/.agent-rails with rg -n, never all of it, $HOME, a volume root or the repos root). Use: %s'
-            % (tool, shown, hint))
 def wide_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
@@ -424,9 +403,15 @@ def unsafe(args, depth, cwd):
         roots, recursive, word = search_paths(name, args[1:])
         recursive |= tool.startswith('rtk ')
         if recursive:
+            if word and re.search(r'(?i)api[_-]?key|secret|token|password|credential|private[_-]?key', word):
+                for path in (roots or ['.']):
+                    resolved = resolve_path(path, cwd)
+                    current = resolve_path('.', cwd)
+                    if refused_root(path, cwd) or (resolved != current and current.startswith(resolved.rstrip('/') + '/')):
+                        raise Refused('BLOCKED (floor: secrets and protected credentials): credential searches must stay inside one repository or directory.')
             for path in (roots or ['.']):
                 if refused_root(path, cwd):
-                    raise Refused(refusal(tool, path, word, cwd))
+                    WARNED.append(tool)
             if any(wide_root(path, cwd) for path in (roots or ['.'])):
                 WARNED.append(tool)
     if tool.startswith('rtk '):
@@ -546,7 +531,7 @@ PY
 if [ "$SCAN" -eq 0 ]; then
   warn "grep -r under ~/.agent-rails hangs on FIFOs; scope to one directory and use rg or add -D skip"
 elif [ "$SCAN" -eq 2 ]; then
-  allow
+  exit 2
 elif [ "$SCAN" -eq 6 ]; then
   case "$CMD" in *"# wide-scan-ok"*) allow ;; esac
   warn "recursive search over the whole disk, home, a volume root, all repos or ~/.agent-rails; scope it to one repo, lane or directory next time"
