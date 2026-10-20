@@ -18,6 +18,9 @@ rules: agent-plugin-kit@a82dc88
 Fast-forward push to `origin/main`.
 The commit body carries a `check:` line: one bare shell command the gate runs.
 
+## Validate
+A feature lane writes its user stories in plain words. The building agent proves each browser-visible story with `story-run <story.yaml> --agent <its id>` on prod under its own test account, then passes the passing `verdict.json` and `video.mp4` to `prod-evidence record --artifact`. The 30-60 s video is the default report to Alex. Story runs stay out of CI; only a story that guards something critical becomes a Playwright gate check.
+
 ## Feature map
 Index: `features/README.md` (generated; do not edit by hand).
 Feature files: `features/`. Product manifest: `products.json`.
