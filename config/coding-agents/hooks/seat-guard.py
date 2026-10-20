@@ -62,7 +62,9 @@ MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A
 
 
 def emit_context(text: str, extra: str = "", updated: dict | None = None) -> None:
-    output = {"hookEventName": "PreToolUse", "additionalContext": text + ("\n" + extra if extra else "")}
+    context = " ".join((text + (" " + extra if extra else "")).split())
+    context = context.encode("utf-8")[:1024].decode("utf-8", errors="ignore")
+    output = {"hookEventName": "PreToolUse", "additionalContext": context}
     if updated is not None:
         output.update(permissionDecision="allow", updatedInput=updated)
     print(json.dumps({"hookSpecificOutput": output}))
@@ -277,18 +279,36 @@ def snapshot_advisory(snapshot_path: Path) -> str | None:
     return None
 
 
-def emit_refusal(why: str) -> None:
-    emit_context("seat-guard warning: " + why + "; allowing original input unchanged")
+def first_snapshot_advisory(session_id: str, snapshot_path: Path) -> bool:
+    if not session_id:
+        return True
+    try:
+        try:
+            mtime = snapshot_path.stat().st_mtime_ns
+        except FileNotFoundError:
+            mtime = None
+        key = hashlib.sha256(json.dumps([session_id, str(snapshot_path), mtime]).encode()).hexdigest()
+        state = Path(os.environ.get("SEAT_GUARD_STATE_DIR") or Path.home() / ".claude" / "state" / "seat-guard")
+        state.mkdir(parents=True, exist_ok=True)
+        with (state / key).open("x"):
+            pass
+    except FileExistsError:
+        return False
+    except OSError:
+        return False
+    return True
+
+
 
 
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
     except ValueError as error:
-        emit_refusal(f"could not read the Agent hook input (not JSON: {error})")
+        emit_advisory(f"could not read the Agent hook input (not JSON: {error})")
         return
     if not isinstance(payload, dict):
-        emit_refusal("could not read the Agent hook input (not a JSON object)")
+        emit_advisory("could not read the Agent hook input (not a JSON object)")
         return
     if payload.get("tool_name") != "Agent":
         emit_advisory("invalid Agent hook input; dispatch was not blocked")
@@ -297,7 +317,7 @@ def main() -> None:
     if not isinstance(tool_input, dict) or any(
         field in tool_input and not isinstance(tool_input[field], str) for field in ("subagent_type", "model")
     ):
-        emit_refusal("could not read the Agent hook input (tool_input is not an object of text fields)")
+        emit_advisory("could not read the Agent hook input (tool_input is not an object of text fields)")
         return
     subagent = (tool_input.get("subagent_type") or "").strip().lower()
     model = (tool_input.get("model") or "").strip().lower()
@@ -434,12 +454,14 @@ def main() -> None:
         not is_fork or is_anthropic_model(model)
     )
     if requires_snapshot and os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") != "1":
-        capacity_advisory = snapshot_advisory(
-            Path(os.environ.get("LIMIT_WATCH_SNAPSHOT") or Path.home() / ".agent-lb" / "state" / "limit-watch.json")
+        snapshot_path = Path(
+            os.environ.get("LIMIT_WATCH_SNAPSHOT") or Path.home() / ".agent-lb" / "state" / "limit-watch.json"
         )
+        capacity_advisory = snapshot_advisory(snapshot_path)
         if capacity_advisory:
             record["capacity_advisory"] = capacity_advisory
-            advisories.append(capacity_advisory)
+            if first_snapshot_advisory(str(payload.get("session_id") or ""), snapshot_path):
+                advisories.append(capacity_advisory)
     elif requires_snapshot:
         record["anthropic_override"] = True
     brief_on_sol = is_brief(prompt) and sol_choice(subagent, model)
@@ -464,7 +486,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        emit_refusal(f"failed ({type(error).__name__})")
+        emit_advisory(f"failed ({type(error).__name__})")
     else:
         if os.environ.get("HOOK_FLOOR_RECEIPT"):
             print("floor-ok seat-guard.py")
