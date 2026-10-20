@@ -1673,12 +1673,9 @@ def main() -> int:
                     print(f"hook dispatcher parity passed: {summary}")
                 elif mode == "on":
                     raise SystemExit(f"error: hook dispatcher not installed; parity fixture failed: {summary}")
-                elif folded_now and old_registry is not None:
+                elif old_registry and not any(n in json.dumps(old_registry) for n in RETIRED_HOOKS):
                     keep_fold = True
-                    print(
-                        f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
-                        f"twice ({summary}); keeping the installed fold (rev {old_registry.get('rev')}) unchanged"
-                    )
+                    print(f"WARNING hook dispatcher: parity failed twice ({summary}); keeping installed fold")
                 else:
                     print(
                         f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
