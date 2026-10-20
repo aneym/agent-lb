@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from harness_mcp import ensure_harness_mcp
+from hook_inventory import hook_path_problems, validate_hook_changes  # type: ignore[missing-import]
 
 START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
@@ -78,7 +79,7 @@ ADOPTED_KEEP = (
 
 
 RETIRED_AGENTS = ("astra", "implementer")
-RETIRED_HOOKS = ("seat-budget.py",)
+RETIRED_HOOKS = ("seat-budget.py", "routing-pulse.py", "load-governor.py", "repeat-read-warn.py")
 
 
 ROUTING_TABLE = Path(".agent-lb/managed/coding-agents/routing-table.json")
@@ -92,6 +93,7 @@ POLICY_FILES = (
     "install-policy.py",
     "harness_mcp.py",
     "policy_inventory.py",
+    "hook_inventory.py",
     "policy_verification.py",
     "routing-legacy-sha256.json",
     "verify-routing",
@@ -1195,36 +1197,6 @@ def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
                 hook["command"] = command
 
 
-RELEASE_SCOPED = re.compile(r"factory-runtime|/factory/bin/|/repos/|/Volumes/")
-HOOK_PATH = re.compile(r'(?:\$HOME|~|/)[^\s"\';|&)<>]*')
-
-
-def hook_path_problems(home: Path) -> list[str]:
-
-    settings = json.loads(read_text(home / ".claude/settings.json") or "{}")
-    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
-    if is_folded(settings):
-        registry = read_registry(home, folded_rev(settings))
-        if registry is None:
-            return ["the dispatcher registry for these settings is missing or damaged"]
-        hooks = unfold_hooks(hooks, registry)
-    problems = []
-    for event, groups in hooks.items():
-        for group in groups if isinstance(groups, list) else []:
-            for hook in group.get("hooks", []) if isinstance(group, dict) else []:
-                command = hook.get("command")
-                if not isinstance(command, str):
-                    continue
-                for word in HOOK_PATH.findall(command):
-                    if word in ("/", "~"):
-                        continue
-                    if RELEASE_SCOPED.search(word):
-                        problems.append(f"{event}: release-scoped path {word} in: {command}")
-                    elif event == "PreToolUse" and not os.path.exists(re.sub(r"^(?:\$HOME|~)(?=/)", str(home), word)):
-                        problems.append(f"{event}: missing guard target {word} in: {command}")
-    return problems
-
-
 def reconcile_settings(
     settings: dict[str, Any], uninstall: bool, sonnet_model: str = SONNET_MODEL, source: Path | None = None
 ) -> dict[str, Any]:
@@ -1536,7 +1508,7 @@ def autocompact_text(text, window):
 def main() -> int:
     args = parse_args()
     if args.check_hook_paths:
-        problems = hook_path_problems(args.home)
+        problems = hook_path_problems(args.home, is_folded, read_registry, folded_rev, unfold_hooks)
         for line in problems:
             print(line)
         print("hook paths: ok" if not problems else f"hook paths: {len(problems)} problem(s)")
@@ -1948,6 +1920,7 @@ def main() -> int:
                 if replace_policy_link or read_text(policy_dir / relative) != wanted:
                     changes[policy_dir / relative] = wanted
 
+    validate_hook_changes(args.home, changes, desired_settings)
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
     )
