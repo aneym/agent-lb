@@ -109,7 +109,7 @@ def commands(text, cwd, depth=0):
     lexer = shlex.shlex(strip_heredocs(text), posix=True, punctuation_chars=";&|()")
     lexer.whitespace_split = True
     words = list(lexer)
-    unsafe = any(word in {"(", ")", "|", "||", "&&", "&"} for word in words)
+    unsafe = any(word in {"(", ")", "|", "&"} for word in words)
     segments, current = [], []
     for word in words + [";"]:
         if word and set(word) <= set(";&|()"):

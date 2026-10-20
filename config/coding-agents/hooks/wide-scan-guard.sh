@@ -399,21 +399,24 @@ def unsafe(args, depth, cwd):
         if sub not in ('grep', 'rg', 'find'):
             return False
         tool, name, args = 'rtk ' + sub, ('find' if sub == 'find' else 'rg'), [sub] + rest
+    if name == 'git' and 'grep' in args and '--no-index' in args:
+        name, args = 'rg', ['rg'] + args[args.index('grep') + 1:]
+        args = [arg for arg in args if arg != '--no-index']
     if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep'):
         roots, recursive, word = search_paths(name, args[1:])
         recursive |= tool.startswith('rtk ')
+        content = name in ('rg', 'grep', 'egrep', 'fgrep', 'ggrep') and not any(arg in ('--files', '-l', '--files-with-matches', '--files-without-match') for arg in args)
+        if name == 'find':
+            content = any(arg in ('-exec', '-execdir', '-ok', '-okdir') for arg in args) or bool(re.search(r'\bxargs\b[^;]*\bcat\b', os.environ['SCAN_COMMAND']))
         if recursive:
-            if word and re.search(r'(?i)api[_-]?key|secret|token|password|credential|private[_-]?key', word):
-                for path in (roots or ['.']):
-                    resolved = resolve_path(path, cwd)
-                    current = resolve_path('.', cwd)
-                    if refused_root(path, cwd) or (resolved != current and current.startswith(resolved.rstrip('/') + '/')):
-                        raise Refused('BLOCKED (floor: secrets and protected credentials): credential searches must stay inside one repository or directory.')
             for path in (roots or ['.']):
-                if refused_root(path, cwd):
+                resolved = resolve_path(path, cwd)
+                current = resolve_path('.', cwd)
+                protected = resolved in (os.path.expanduser('~'), '/Users/aneyman') or (resolved != current and current.startswith(resolved.rstrip('/') + '/'))
+                if content and protected:
+                    raise Refused('BLOCKED (floor: secrets and protected credentials): recursive content reads must stay inside one repository or directory.')
+                if refused_root(path, cwd) or wide_root(path, cwd):
                     WARNED.append(tool)
-            if any(wide_root(path, cwd) for path in (roots or ['.'])):
-                WARNED.append(tool)
     if tool.startswith('rtk '):
         return False
     if name not in ('grep', 'egrep', 'fgrep', 'ggrep'):

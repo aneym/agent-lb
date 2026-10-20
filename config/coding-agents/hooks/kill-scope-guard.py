@@ -266,15 +266,20 @@ def kills(text, depth=0):
     return out
 
 
+TTY_PIDS = set()
+
+
 def process_table():
     out = subprocess.run(
-        ["/bin/ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, timeout=3, check=True
+        ["/bin/ps", "-axo", "pid=,ppid=,tty=,command="], capture_output=True, text=True, timeout=3, check=True
     )
     table = {}
     for line in out.stdout.splitlines():
-        parts = line.split(None, 2)
+        parts = line.split(None, 3)
         if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-            table[int(parts[0])] = (int(parts[1]), parts[2] if len(parts) > 2 else "")
+            table[int(parts[0])] = (int(parts[1]), parts[3] if len(parts) > 3 else "")
+            if len(parts) > 2 and parts[2] not in {"?", "??", "-"}:
+                TTY_PIDS.add(int(parts[0]))
     return table
 
 
@@ -405,10 +410,12 @@ def main():
             words = argv.split()
             interactive_shell = executable.lstrip("-") in SHELLS and (
                 executable.startswith("-")
-                or len(words) == 1
-                or any(arg.startswith("-") and "i" in arg[1:] for arg in words[1:])
+                or pid in TTY_PIDS
+                or any(
+                    arg.startswith("-") and not arg.startswith("--") and set(arg[1:]) & {"i", "l"} for arg in words[1:]
+                )
             )
-            if gui or shared or (pid not in own and not marked and (pid in live or ppid == 1 or interactive_shell)):
+            if gui or shared or (pid not in own and not marked and (pid in live or interactive_shell)):
                 others.append(pid)
             elif pid not in own and not marked:
                 warned = True
