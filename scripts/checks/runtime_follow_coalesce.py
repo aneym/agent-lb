@@ -173,8 +173,12 @@ def regenerate_budget(root: Path) -> None:
     existing = {
         "Label": "com.aneyman.agent-lb",
         "ProgramArguments": [
-            "/bin/bash", str(root / "home/.agent-lb/bin/run-agent-lb.sh"),
-            "--host", "127.0.0.1", "--port", "2457",
+            "/bin/bash",
+            str(root / "home/.agent-lb/bin/run-agent-lb.sh"),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "2457",
         ],
         "WorkingDirectory": str(root),
         "KeepAlive": True,

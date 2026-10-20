@@ -17,16 +17,18 @@ def regenerate_plist(plist: Path) -> int:
     arguments = existing.get("ProgramArguments")
     if not isinstance(arguments, list) or not arguments or not all(isinstance(arg, str) for arg in arguments):
         raise RuntimeError("existing plist has no usable ProgramArguments")
-    env = {str(k): str(v) for k, v in existing.get("EnvironmentVariables", {}).items()}
+    raw_env = existing.get("EnvironmentVariables", {})
+    if not isinstance(raw_env, dict):
+        raise RuntimeError("existing plist has unusable EnvironmentVariables")
+    env = {str(k): str(v) for k, v in raw_env.items()}
     required = minimum_exit_timeout(env)
     updated = dict(existing)
     updated["ExitTimeOut"] = max(int(existing.get("ExitTimeOut", 0)), required)
     if updated["ProgramArguments"] != arguments:
         raise RuntimeError("plist repair changed ProgramArguments")
-    if (
-        {k: v for k, v in updated.items() if k != "ExitTimeOut"}
-        != {k: v for k, v in existing.items() if k != "ExitTimeOut"}
-    ):
+    if {k: v for k, v in updated.items() if k != "ExitTimeOut"} != {
+        k: v for k, v in existing.items() if k != "ExitTimeOut"
+    }:
         raise RuntimeError("plist repair changed unrelated fields")
     if updated["ExitTimeOut"] < required:
         raise RuntimeError("plist repair has an insufficient ExitTimeOut")
@@ -43,7 +45,8 @@ def regenerate_plist(plist: Path) -> int:
         if temp is not None:
             temp.unlink(missing_ok=True)
         raise
-    assert plistlib.loads(plist.read_bytes())["ProgramArguments"] == arguments
+    if plistlib.loads(plist.read_bytes()).get("ProgramArguments") != arguments:
+        raise RuntimeError("plist repair read-back changed ProgramArguments")
     return updated["ExitTimeOut"]
 
 
