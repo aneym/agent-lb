@@ -6,13 +6,16 @@ import time
 _draining: bool = False
 _bridge_drain_active: bool = False
 _in_flight: int = 0
+_exchanges: int = 0
+EXCHANGE_SETTLE_S = 75
 
 
 def reset() -> None:
-    global _draining, _bridge_drain_active, _in_flight
+    global _draining, _bridge_drain_active, _in_flight, _exchanges
     _draining = False
     _bridge_drain_active = False
     _in_flight = 0
+    _exchanges = 0
 
 
 def set_draining(val: bool = True) -> None:
@@ -52,3 +55,24 @@ async def wait_for_in_flight_drain(timeout_seconds: float, poll_interval_seconds
     while get_in_flight() > 0 and time.monotonic() < deadline:
         await asyncio.sleep(poll_interval_seconds)
     return get_in_flight() == 0
+
+
+def begin_exchange() -> None:
+    global _exchanges
+    _exchanges += 1
+
+
+def end_exchange() -> None:
+    global _exchanges
+    _exchanges = max(0, _exchanges - 1)
+
+
+def get_exchanges() -> int:
+    return _exchanges
+
+
+async def settle_exchanges(timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while get_exchanges() > 0 and time.monotonic() < deadline:
+        await asyncio.sleep(0.1)
+    return get_exchanges() == 0
