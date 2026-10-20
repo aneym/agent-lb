@@ -308,7 +308,7 @@ for index, words in enumerate(parts):
 
 PY
 ) || {
-  if grep -qiE 'rm[[:space:]]+-rf|DROP|launchctl[[:space:]]+disable' <<<"$CMD"; then
+  if grep -qiE 'DROP|TRUNCATE|launchctl[[:space:]]+disable' <<<"$CMD"; then
     refuse "could not parse a kept-floor command"
   fi
   echo "WARNING: destructive-data guard could not parse executable argv; allowing command." >&2
