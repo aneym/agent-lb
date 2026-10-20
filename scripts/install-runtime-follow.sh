@@ -32,7 +32,7 @@ plist = {
     "LowPriorityIO": True,
     "Nice": 10,
     "EnvironmentVariables": {
-        "PATH": f"{home}/.bun/bin:{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+        "PATH": f"{home}/.bun/bin:{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
     },
     "StandardOutPath": str(home / ".agent-lb/follow.log"),
     "StandardErrorPath": str(home / ".agent-lb/follow.log"),

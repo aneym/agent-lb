@@ -40,6 +40,7 @@ FRONT_PORT = 2455
 PRIMARY_PORT = 2457
 STANDBY_PORT = 2459
 UID = os.getuid()
+LSOF = shutil.which("lsof") or "/usr/sbin/lsof"
 
 
 SANDBOX_LABEL_PREFIX = "com.agent-lb.drill."
@@ -88,12 +89,10 @@ def _inside(path: Path, parent: Path) -> bool:
 
 
 def _lexical(path: Path) -> Path:
-
     return Path(os.path.normpath(str(path)))
 
 
 def _refuse_links_on(name: str, path: Path, leaf: str) -> None:
-
     parts = path.parts
     for i in range(1, len(parts) + 1):
         prefix = Path(*parts[:i])
@@ -109,7 +108,6 @@ def _refuse_links_on(name: str, path: Path, leaf: str) -> None:
 
 
 def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object]:
-
     missing = [key for key in SANDBOX_KEYS if key not in config]
     if missing:
         raise SandboxRefused(f"sandbox config lacks {', '.join(missing)}")
@@ -203,18 +201,15 @@ SANDBOX_PLIST_KEYS = frozenset(
 
 
 def sandbox_bootstrap() -> Path:
-
     return Path(__file__).resolve().parent / "lb-sandbox"
 
 
 def _trusted_file(what: str, path: Path, info: os.stat_result) -> None:
-
     if info.st_uid not in (os.getuid(), 0) or info.st_mode & 0o022:
         raise SandboxRefused(f"{what} {path} is one another user could write")
 
 
 def check_sandbox_bootstrap(root: Path) -> None:
-
     script = sandbox_bootstrap()
     if _inside(script, root.parent):
         raise SandboxRefused(f"sandbox bootstrap {script} is inside the sandboxes dir")
@@ -227,7 +222,6 @@ def check_sandbox_bootstrap(root: Path) -> None:
 
 
 def sandbox_python_for(root: Path) -> Path:
-
     return root.parent.parent / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
 
 
@@ -240,7 +234,6 @@ BASE_INTERPRETER_NAME = re.compile(r"^python(3(\.[0-9]+)?)?$")
 
 
 def sandbox_venv_base_dir(python: Path) -> Path:
-
     cfg = python.parent.parent / "pyvenv.cfg"
     try:
         fd = os.open(cfg, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -270,7 +263,6 @@ def sandbox_venv_base_dir(python: Path) -> Path:
 
 
 def check_sandbox_interpreter(python: Path, root: Path) -> None:
-
     python = _lexical(python)
     sandboxes = root.parent
     if python != sandbox_python_for(root) or _inside(python, sandboxes):
@@ -297,7 +289,6 @@ def check_sandbox_interpreter(python: Path, root: Path) -> None:
 
 
 def sandbox_program(root: Path) -> list[str]:
-
     return [str(sandbox_python_for(root)), "-I", str(sandbox_bootstrap()), "_serve", str(root)]
 
 
@@ -319,11 +310,9 @@ def _has_control_characters(value: object) -> bool:
 
 
 def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int) -> None:
-
     if not isinstance(data, dict):
         raise SandboxRefused("sandbox plist is not a dictionary")
     if _has_control_characters(data):
-
         raise SandboxRefused("sandbox plist has a control character in a key or value")
     extra = sorted(str(key) for key in set(data) - SANDBOX_PLIST_KEYS)
     if extra:
@@ -372,7 +361,6 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
                 raise SandboxRefused(f"sandbox plist {key} points outside the sandbox's ports")
             continue
         for part in text.split(":"):
-
             port = SANDBOX_LEADING_PORT.match(part)
             if port and int(port.group(1)) in SANDBOX_FORBIDDEN_PORTS:
                 raise SandboxRefused(f"sandbox plist {key} names a live port")
@@ -389,7 +377,6 @@ SANDBOX_CONFIG_MAX = 1 << 16
 
 
 def read_sandbox_config(config_path: Path) -> tuple[dict, int, os.stat_result]:
-
     path = _lexical(Path(config_path).expanduser().absolute())
     sandboxes = _lexical(_real_home() / ".agent-lb" / "sandboxes")
     if path.name != SANDBOX_CONFIG_NAME or path.parent.parent != sandboxes or path.parent.name in ("", ".", ".."):
@@ -429,7 +416,6 @@ def read_sandbox_config(config_path: Path) -> tuple[dict, int, os.stat_result]:
 
 
 def apply_sandbox(config_path: Path) -> None:
-
     global SANDBOX_CONFIG, SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
     unpin_sandbox_root()
     config, root_fd, root_info = read_sandbox_config(config_path)
@@ -464,7 +450,6 @@ SANDBOX_ROOT_PINNED: tuple[Path, int, int] | None = None
 
 
 def _open_dir_nofollow(path: Path) -> int:
-
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -479,7 +464,6 @@ def _open_dir_nofollow(path: Path) -> int:
 
 
 def _check_owned_dir(fd: int, what: str, path: Path, private: bool) -> os.stat_result:
-
     info = os.fstat(fd)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
         raise SandboxRefused(f"{what} {path} is not a directory owned by uid {os.getuid()}")
@@ -489,7 +473,6 @@ def _check_owned_dir(fd: int, what: str, path: Path, private: bool) -> os.stat_r
 
 
 def pin_sandbox_root() -> int:
-
     global SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
     assert SANDBOX_ROOT is not None
     if SANDBOX_ROOT_FD is not None and SANDBOX_ROOT_PINNED is not None and SANDBOX_ROOT_PINNED[0] == SANDBOX_ROOT:
@@ -501,12 +484,10 @@ def pin_sandbox_root() -> int:
 
 
 def _root_on_own_volume(root_info: os.stat_result, sandboxes_info: os.stat_result) -> bool:
-
     return root_info.st_dev != sandboxes_info.st_dev
 
 
 def open_sandbox_root(root: Path) -> tuple[int, os.stat_result]:
-
     try:
         parent = _open_dir_nofollow(root.parent)
     except OSError as exc:
@@ -539,7 +520,6 @@ def unpin_sandbox_root() -> None:
 
 
 def verify_sandbox_ancestry() -> None:
-
     fd = pin_sandbox_root()
     try:
         again = _open_dir_nofollow(SANDBOX_ROOT)
@@ -554,7 +534,6 @@ def verify_sandbox_ancestry() -> None:
 
 
 def _sandbox_dir_fd(directory: Path, create: bool = True) -> int:
-
     assert SANDBOX_ROOT is not None
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     try:
@@ -584,7 +563,6 @@ def _sandbox_dir_fd(directory: Path, create: bool = True) -> int:
 
 
 def _open_in(dir_fd: int, path: Path, flags: int, mode: int = 0o600) -> int:
-
     try:
         fd = os.open(path.name, (flags & ~os.O_TRUNC) | os.O_NOFOLLOW, mode, dir_fd=dir_fd)
     except OSError as exc:
@@ -608,7 +586,6 @@ def _state_dir_fd(directory: Path, create: bool = True) -> int:
 
 
 def _same_dir_still(dir_fd: int, directory: Path) -> None:
-
     again = _state_dir_fd(directory, create=False)
     try:
         now, held = os.fstat(again), os.fstat(dir_fd)
@@ -619,7 +596,6 @@ def _same_dir_still(dir_fd: int, directory: Path) -> None:
 
 
 def sandbox_open(path: Path, flags: int, mode: int = 0o600) -> int:
-
     dir_fd = _state_dir_fd(path.parent)
     try:
         return _open_in(dir_fd, path, flags, mode)
@@ -628,7 +604,6 @@ def sandbox_open(path: Path, flags: int, mode: int = 0o600) -> int:
 
 
 def read_state(path: Path) -> tuple[str, float] | None:
-
     if SANDBOX_ROOT is None:
         try:
             return path.read_text(), path.stat().st_mtime
@@ -663,7 +638,6 @@ def read_state(path: Path) -> tuple[str, float] | None:
 
 
 def remove_state(path: Path) -> None:
-
     if SANDBOX_ROOT is None:
         path.unlink(missing_ok=True)
         return
@@ -674,7 +648,6 @@ def remove_state(path: Path) -> None:
         except FileNotFoundError:
             return
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-
             raise SandboxRefused(f"{path} is not a single-link regular file; refusing to remove it")
         try:
             os.unlink(path.name, dir_fd=dir_fd)
@@ -686,7 +659,6 @@ def remove_state(path: Path) -> None:
 
 
 def ensure_dir(path: Path) -> None:
-
     if SANDBOX_ROOT is None:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -743,7 +715,6 @@ def http_get(port: int, path: str, timeout: float = 3.0) -> tuple[int, bytes]:
 
 
 def healthy(port: int) -> bool:
-
     code, body = http_get(port, "/health/ready")
     if code != 200:
         return False
@@ -770,7 +741,6 @@ OAUTH_POLL_S = 2.0
 
 
 def oauth_pending(port: int) -> tuple[int, list[float]] | None:
-
     code, body = http_get(port, "/internal/oauth/pending", timeout=2.0)
     if code != 200:
         return None
@@ -782,7 +752,6 @@ def oauth_pending(port: int) -> tuple[int, list[float]] | None:
 
 
 def wait_for_oauth_flows(port: int, bound: float) -> float:
-
     start = time.monotonic()
     announced: int | None = None
     while True:
@@ -807,9 +776,8 @@ def wait_for_oauth_flows(port: int, bound: float) -> float:
 
 
 def established(port: int) -> int:
-
     out = subprocess.run(
-        ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:ESTABLISHED"],
+        [LSOF, "-nP", f"-iTCP:{port}", "-sTCP:ESTABLISHED"],
         capture_output=True,
         text=True,
     ).stdout
@@ -817,7 +785,6 @@ def established(port: int) -> int:
 
 
 def launchctl_print(label: str) -> subprocess.CompletedProcess:
-
     if SANDBOX_ROOT is not None and label != LABEL:
         raise SandboxRefused(f"launchctl print of {label} refused in a sandbox restart (only {LABEL})")
     return subprocess.run(["launchctl", "print", f"gui/{UID}/{label}"], capture_output=True, text=True)
@@ -844,7 +811,7 @@ def pid_alive(pid: int | None) -> bool:
 
 def listener_pid(port: int) -> int | None:
     out = subprocess.run(
-        ["lsof", "-nP", f"-iTCP@127.0.0.1:{port}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True
+        [LSOF, "-nP", f"-iTCP@127.0.0.1:{port}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True
     ).stdout.split()
     return int(out[0]) if out else None
 
@@ -880,7 +847,6 @@ def set_preferred(port: int) -> None:
 
 
 def owned_by_sandbox(pid: int) -> bool:
-
     if SANDBOX_ROOT is None:
         return True
     cmd = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
@@ -925,7 +891,6 @@ class Lock:
         if SANDBOX_ROOT is None:
             self.fh = LOCK_FILE.open("a+")
         else:
-
             self.fh = os.fdopen(sandbox_open(LOCK_FILE, os.O_RDWR | os.O_APPEND | os.O_CREAT), "a+")
         deadline = time.monotonic() + self.wait
         announced = False
@@ -993,7 +958,6 @@ class Files:
         say(f"deployed {len(rel_paths)} file(s); backup {self.backup_dir}")
 
     def use_backup(self, backup: Path) -> None:
-
         self.backup_dir = backup / "runtime" if (backup / "runtime").is_dir() else backup
 
     def rollback(self) -> bool:
@@ -1082,7 +1046,6 @@ def start_standby(drain_seconds: int) -> subprocess.Popen:
 
 
 def stop_pid_gracefully(pid: int, port: int, bound: float) -> tuple[float, bool]:
-
     start = time.monotonic()
     try:
 
@@ -1163,7 +1126,6 @@ def spawn_reaper(pid: int, drain_seconds: int) -> None:
 
 
 def reap(pid: int, deadline_s: float) -> int:
-
     end = time.monotonic() + deadline_s
     while time.monotonic() < end:
         if not pid_alive(pid) or not is_standby(pid):
@@ -1202,7 +1164,6 @@ JOB_FLAG_LINES = frozenset({"submitted job. ignore execute allowed"})
 
 
 def parse_job_print(text: str) -> tuple[dict[str, str], dict[str, list[str]]]:
-
     scalars: dict[str, str] = {}
     blocks: dict[str, list[str]] = {}
     lines = text.splitlines()
@@ -1252,7 +1213,6 @@ def job_env_block(entries: list[str]) -> dict[str, str]:
 
 
 def check_loaded_job_print(text: str, plist: dict, python: Path, want: list[str]) -> None:
-
     scalars, blocks = parse_job_print(text)
     if scalars.get("program") != str(python) or blocks.get("arguments") != want:
         raise SandboxRefused(f"loaded job {LABEL} does not run exactly `lb-sandbox _serve` on the checked interpreter")
@@ -1277,7 +1237,6 @@ def check_loaded_job_print(text: str, plist: dict, python: Path, want: list[str]
 
 
 def check_loaded_sandbox_job() -> None:
-
     assert SANDBOX_ROOT is not None
     python = sandbox_python_for(SANDBOX_ROOT)
     check_sandbox_interpreter(python, SANDBOX_ROOT)
@@ -1330,7 +1289,6 @@ def exit_timeout() -> int:
 
 
 def parse_reaper_args(argv: list[str]) -> tuple[int, float, Path | None]:
-
     if len(argv) not in (3, 5) or argv[0] != "--reap":
         raise SandboxRefused(f"reaper takes --reap PID SECONDS [--sandbox CONFIG], got {len(argv)} word(s)")
     if not argv[1].isascii() or not argv[1].isdigit() or int(argv[1]) <= 1:
@@ -1357,7 +1315,6 @@ def main() -> int:
                 apply_sandbox(config)
             return reap(pid, deadline)
         except SandboxRefused as exc:
-
             print(f"lb-restart --reap refused: {exc}", file=sys.stderr)
             return 2
     p = argparse.ArgumentParser(description='Controlled, zero-gap restart of the live agent-lb service (blue/green).', formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1428,7 +1385,6 @@ def main() -> int:
                 )
                 raise
     except SandboxRefused as exc:
-
         say(f"--sandbox refused: {exc}")
         return 2
 
