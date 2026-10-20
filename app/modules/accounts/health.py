@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from app.core.browser_profiles import profile_for
 from app.core.config.settings import get_settings
+from app.core.subscriptions import subscription_for
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.schemas import AccountProblem
 
@@ -63,4 +64,21 @@ def account_problems(
                 message=f"Reauthentication required: {account.deactivation_reason or 'no reason recorded'}. Run: {command}.",
             )
         )
+    subscription = subscription_for(account.email)
+    if subscription:
+        days = (date.fromisoformat(subscription.renews_on) - now.date()).days
+        if subscription.payment != "card" and days <= 7:
+            problems.append(
+                AccountProblem(
+                    code="renewal_payment",
+                    message=f"Subscription {subscription.plan} renews {subscription.renews_on} on a {subscription.payment} payment method; put a real card on the account before then, then run: agent-lb subscriptions set {account.email} --payment card --renews-on <next date>.",
+                )
+            )
+        elif subscription.payment == "card" and days < -2:
+            problems.append(
+                AccountProblem(
+                    code="renewal_stale",
+                    message=f"Renewal date {subscription.renews_on} passed; confirm the renewal and update: agent-lb subscriptions set {account.email} --renews-on <next date>.",
+                )
+            )
     return problems
