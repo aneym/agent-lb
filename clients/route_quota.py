@@ -118,11 +118,19 @@ def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
             append_ledger({"event": "route_quota_mode_flip", "direction": mode,
                            "remaining_fraction": remaining, "cause": cause})
         state.update(mode=mode, remaining_fraction=remaining, reserve_fraction=reserve,
+                     eligible_accounts=eligible,
                      last_limit_error_at=latest.isoformat() if latest else None)
         state.setdefault("last_flip_at", None)
         state.setdefault("last_flip_cause", None)
         atomic_write(path, json.dumps(state, sort_keys=True))
     return state
+
+
+def authority_wait(standard: dict[str, Any], state: dict[str, Any]) -> str | None:
+    if (standard.get("authority") in ("architecture", "verdict")
+            and state.get("eligible_accounts") == 0):
+        return "no eligible Anthropic accounts; Opus authority waits"
+    return None
 
 
 def swapped_standard(table: dict[str, Any], class_name: str, standard: dict[str, Any],

@@ -653,8 +653,8 @@
       "pool": "anthropic-general",
       "min_eligible": 2,
       "headroom_min_percent": 40,
-      "admit_classes": ["orchestrator", "lane-tab", "plan", "council"],
-      "note": "2026-09-30 (Alex: orchestrators must never go down). Under this line only these classes start on the pool; the rest start elsewhere and use it only when nothing else is open."
+      "admit_classes": ["orchestrator", "lane-tab", "plan", "council", "lane", "spec", "scope", "contract", "architecture", "design", "review", "verdict", "judge", "audit", "plan-review", "synthesis"],
+      "note": "2026-10-20 routing-use: Opus-authority classes run on the reserved Claude pool and wait (exit 3) only when no Anthropic account is eligible; codex-swap never moves them (models.md 2026-10-16)."
     },
     "auditor_via": {
       "anthropic-general": {
@@ -713,9 +713,7 @@
     }
   },
   "notes": [
-    "2026-09-29 (Alex): every GPT seat runs sol-latest (GPT-6.1 Sol today); Luna has no seat. The alias floats to the newest served Sol, so a release needs no edit.",
-    "Codex seats take --model <id> plus a separate --effort; the effort suffix is not a model name.",
-    "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB."
+    "2026-10-20 routing-use: Opus-authority classes run on the reserved Claude pool and wait (exit 3) only when no Anthropic account is eligible; codex-swap never moves them (models.md 2026-10-16)."
   ],
   "aliases": {
     "muse-latest": {

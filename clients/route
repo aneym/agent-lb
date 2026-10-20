@@ -24,7 +24,7 @@ import route_cache
 from route_cache import HttpResult, _fixture_file
 from route_grok import constraint_choice, hands_refusal, hands_seat, rung_block, seat_defaults
 from route_spread import dispatch_choice
-from route_quota import degrade_alias, load_quota_policy, quota_swap_state, swapped_standard
+from route_quota import authority_wait, degrade_alias, load_quota_policy, quota_swap_state, swapped_standard
 from route_storage import _parse_ts, atomic_write
 
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
@@ -2879,15 +2879,15 @@ def command_dispatch(args: argparse.Namespace) -> int:
     pools_doc = json.loads(Path(args.pools_file).read_text()) if args.pools_file else fetch_pools()[0]
     mode_state = ({"mode": pools_doc.get("quotaMode", "anthropic")} if args.pools_file
                   else quota_swap_state(table, fetch_pools, api_request_logs, append_ledger))
-    if not prior and not any(value is not None for value in (args.seat, args.model, args.effort)):
+    explicit = any(value is not None for value in (args.seat, args.model, args.effort))
+    if not explicit and (why := authority_wait(standard, mode_state)):
+        return dispatch_wait(why, class_name, job_id, args.json)
+    if not prior and not explicit:
         standard = swapped_standard(table, class_name, standard, mode_state)
-        if mode_state["mode"] == "codex-swap" and class_name == "review" and args.author_vendor:
-            standard["seat"] = "codex-verifier"
     ctx = DispatchContext(table, class_name, args.author_vendor)
     explore = table.get("explore") or {}
     eligible: list[str] = []
     sticky = False
-    explicit = any(value is not None for value in (args.seat, args.model, args.effort))
     if explicit:
         seat = args.seat or standard["seat"]
         seat_spec = seat_defaults(table, class_name, seat)

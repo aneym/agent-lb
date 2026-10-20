@@ -1,80 +1,8 @@
 {
   "quota_swap": {
-    "review": {
-      "seat": "sol-consult",
-      "model": "sol-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "verdict": {
-      "seat": "sol-consult",
-      "model": "sol-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "judge": {
-      "seat": "sol-consult",
-      "model": "sol-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "audit": {
-      "seat": "sol-consult",
-      "model": "sol-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
     "verify": {
       "seat": "codex-verifier",
       "model": "sol-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "plan-review": {
-      "seat": "sol-consult",
-      "model": "sol-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "plan": {
-      "seat": "astra-consult",
-      "model": "astra-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "lane": {
-      "seat": "astra-consult",
-      "model": "astra-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "scope": {
-      "seat": "astra-consult",
-      "model": "astra-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "spec": {
-      "seat": "astra-consult",
-      "model": "astra-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "contract": {
-      "seat": "astra-consult",
-      "model": "astra-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "architecture": {
-      "seat": "astra-consult",
-      "model": "astra-latest",
-      "effort": "high",
-      "wrapper_model": null
-    },
-    "design": {
-      "seat": "astra-consult",
-      "model": "astra-latest",
       "effort": "high",
       "wrapper_model": null
     }
