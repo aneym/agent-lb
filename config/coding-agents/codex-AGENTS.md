@@ -14,7 +14,7 @@ Machine addresses, delivery commands, and browser preferences are in `~/.agents/
 
 Never free a port or stop processes with `lsof -t … | xargs kill`, `kill $(lsof -t …)`, `pkill -9 -f` or `killall -9`: lsof -t lists every client of a port, and on 2026-10-16 that SIGKILLed Tailscale. Use `port-free <port>`, which kills only a listener you started, or `kill <pid>` for a pid you started.
 
-Main checkouts stay on the default branch. Any other branch gets its own worktree at `/Volumes/StudioExt/repos/<repo>-wt/<topic>` (`git worktree add ../<repo>-wt/<topic> -b <branch> origin/main`; no siblings, no `<repo>-worktrees/`; Alex, 2026-10-02); never `git switch` or `git checkout` a shared checkout onto another branch (Alex, 2026-09-29). Where things live outside repos (factory copies, lane and scoping state): `~/.agent-rails/AGENTS.md`.
+Main checkouts stay on the default branch. Any other branch gets its own worktree at `/Volumes/StudioExt/repos/<repo>-wt/<topic>` (`lane-worktree ensure --repo <repo> --branch <branch> [--lane <lane>]`; no siblings, no `<repo>-worktrees/`; Alex, 2026-10-02); never `git switch` or `git checkout` a shared checkout onto another branch (Alex, 2026-09-29). Plain `git worktree add` also goes through the shared copy-on-write path. Where things live outside repos (factory copies, lane and scoping state): `~/.agent-rails/AGENTS.md`.
 
 ## Optional style skills (Codex)
 
