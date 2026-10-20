@@ -126,10 +126,10 @@ def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
     return state
 
 
-def authority_wait(standard: dict[str, Any], state: dict[str, Any]) -> str | None:
-    if (standard.get("authority") in ("architecture", "verdict")
-            and state.get("eligible_accounts") == 0):
-        return "no eligible Anthropic accounts; Opus authority waits"
+def authority_fallback(standard: dict[str, Any], state: dict[str, Any]) -> dict[str, Any] | None:
+    if standard.get("authority") and state.get("eligible_accounts") == 0:
+        return dict(standard, seat="astra-consult", model="astra-latest",
+                    fallback_reason="no eligible Claude account")
     return None
 
 

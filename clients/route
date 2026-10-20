@@ -24,7 +24,7 @@ import route_cache
 from route_cache import HttpResult, _fixture_file
 from route_grok import constraint_choice, hands_refusal, hands_seat, rung_block, seat_defaults
 from route_spread import dispatch_choice
-from route_quota import authority_wait, degrade_alias, load_quota_policy, quota_swap_state, swapped_standard
+from route_quota import authority_fallback, degrade_alias, load_quota_policy, quota_swap_state, swapped_standard
 from route_storage import _parse_ts, atomic_write
 
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
@@ -2880,8 +2880,8 @@ def command_dispatch(args: argparse.Namespace) -> int:
     mode_state = ({"mode": pools_doc.get("quotaMode", "anthropic")} if args.pools_file
                   else quota_swap_state(table, fetch_pools, api_request_logs, append_ledger))
     explicit = any(value is not None for value in (args.seat, args.model, args.effort))
-    if not explicit and (why := authority_wait(standard, mode_state)):
-        return dispatch_wait(why, class_name, job_id, args.json)
+    if not explicit:
+        standard = authority_fallback(standard, mode_state) or standard
     if not prior and not explicit:
         standard = swapped_standard(table, class_name, standard, mode_state)
     ctx = DispatchContext(table, class_name, args.author_vendor)
@@ -2945,6 +2945,7 @@ def command_dispatch(args: argparse.Namespace) -> int:
         constrained, skipped = constraint_choice(table, class_name, pools_by_id(pools_doc), args.tag,
                                                  mode_state["mode"], ledger_path(), leases)
         choice = constrained or {**choice, "reason": choice["reason"] + (f"; grok skipped: {skipped}" * bool(skipped))}
+    choice["reason"] = standard.get("fallback_reason", choice["reason"])
     seat = choice["seat"]
     model_alias = choice["model_alias"]
     refused = hands_refusal(table, class_name, seat, model_alias)
