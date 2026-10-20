@@ -78,6 +78,7 @@ ADOPTED_KEEP = (
 
 
 RETIRED_AGENTS = ("astra", "implementer")
+RETIRED_HOOKS = ("seat-budget.py",)
 
 
 ROUTING_TABLE = Path(".agent-lb/managed/coding-agents/routing-table.json")
@@ -299,12 +300,6 @@ SETTINGS_HOOKS = (
     ("PreToolUse", "Read", HOST_CREDENTIAL_HOOK, True),
     ("SubagentStop", None, CLOSEOUT_HOOK, False),
     ("SubagentStop", None, FOCUS_STEAL_HOOK, False),
-    (
-        "PostToolUse",
-        "*",
-        {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/seat-budget.py"', "timeout": 5},
-        False,
-    ),
     (
         "PostToolUse",
         "Workflow",
@@ -550,8 +545,9 @@ def keep_config_order(groups: list[Any], eligible: list[bool]) -> list[bool]:
 
 def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
 
-    kept, dropped = json.loads(json.dumps(hooks)), []
+    kept, dropped = {}, []
     for event, groups in hooks.items():
+        kept[event] = groups
         if not isinstance(groups, list):
             continue
         out = []
@@ -562,11 +558,10 @@ def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             left = []
             for hook in group["hooks"]:
                 command = hook.get("command") if isinstance(hook, dict) else None
-                name = (
-                    DISPATCH_DROPPED.get(hashlib.sha256(command.encode("utf-8")).hexdigest())
-                    if isinstance(command, str)
-                    else None
-                )
+                name = None
+                if isinstance(command, str):
+                    name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
+                    name = name or next((n for n in RETIRED_HOOKS if f"hooks/{n}" in command), None)
                 if name:
                     dropped.append(f"{event} {group.get('matcher') or '*'}: {name}")
                 else:
@@ -1234,6 +1229,9 @@ def reconcile_settings(
 ) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
     hooks = updated.get("hooks", {})
+    if isinstance(hooks, dict):
+        hooks, _ = drop_hooks(hooks)
+        updated["hooks"] = hooks
     if not uninstall and source is not None and isinstance(hooks, dict):
         for line in rewrite_floor_commands(hooks, source):
             print(f"hook policy: floor guard registered as a direct exec: {line}")
@@ -1305,7 +1303,7 @@ def reconcile_settings(
                 if group is not None:
                     group.setdefault("hooks", []).insert(0, dict(hook))
                     continue
-            group = {"hooks": [dict(hook)]}
+            group = dict[str, Any](hooks=[dict(hook)])
             if matcher is not None:
                 group["matcher"] = matcher
             event_groups.append(group)
@@ -1632,10 +1630,6 @@ def main() -> int:
     new_registry: dict[str, Any] | None = None
     keep_fold = False
     if mode != "off" and isinstance(desired_settings.get("hooks"), dict):
-        kept_hooks, dropped = drop_hooks(desired_settings["hooks"])
-        for name in dropped:
-            print(f"hook dispatcher: dropped {name} at this fold")
-        desired_settings = {**desired_settings, "hooks": kept_hooks}
         only = None
         if mode == "sticky" and old_registry is not None:
             only = {}
@@ -1895,10 +1889,15 @@ def main() -> int:
                 path = args.home / relative
                 if path.is_file() and path.resolve().parent != source / "agents":
                     changes[path] = None
+        for name in RETIRED_HOOKS:
+            for relative in managed(".claude/hooks", f"hooks/{name}")[:2]:
+                path = args.home / relative
+                if path.is_file():
+                    changes[path] = None
         for name in RETIRED_AGENTS:
             for relative in (
                 Path(".claude/agents") / f"{name}.md",
-                Path(".agent-lb/managed/coding-agents") / name,
+                MANAGED_DIR / name,
                 POLICY_DIR / "agents" / f"{name}.md",
             ):
                 if (args.home / relative).is_file() and (args.home / relative).resolve().parent != source / "agents":

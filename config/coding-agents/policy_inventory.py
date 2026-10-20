@@ -40,7 +40,6 @@ MANAGED_HOOKS = (
     "hook_output.py",
     "parity_presentation.py",
     "subagent-closeout.py",
-    "seat-budget.py",
     "seat-guard.py",
     "seat_hands.py",
     "workflow-seat-guard.py",
