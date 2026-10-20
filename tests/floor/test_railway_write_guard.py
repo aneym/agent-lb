@@ -282,13 +282,15 @@ def test_malformed_non_railway_input_fails_open(payload):
         ("railway variables --json | /usr/bin/jq keys; echo done", 2),
         ("railway variables --json | /usr/bin/jq keys > names", 2),
         ("railway variables --kv", 2),
-        ("railway variables --json | /opt/homebrew/bin/jq keys", 0),
-        ("railway variables --json | /usr/bin/jq 'keys'", 0),
-        ('railway variables --json | /usr/bin/jq "keys"', 0),
+        ("railway variables --json | /opt/homebrew/bin/jq keys", 2),
+        ("railway variables --json | /usr/bin/jq 'keys'", 2),
+        ('railway variables --json | /usr/bin/jq "keys"', 2),
+        ("/opt/homebrew/bin/jq(\n) { cat; }; railway variables --json | /opt/homebrew/bin/jq keys", 2),
+        ("BASH_ENV=/tmp/x bash -c 'railway variables --json | /opt/homebrew/bin/jq keys'", 2),
         ("railway status", 0),
     ],
 )
-def test_names_only_requires_absolute_jq_without_shell_overrides(command, expected, secret_floor):
+def test_names_only_pipelines_cannot_exempt_value_reads(command, expected, secret_floor):
     tokens = {} if secret_floor is None else {"RAILWAY_SECRET_FLOOR": secret_floor}
     result = invoke(command, **tokens)
     assert result.returncode == expected, result.stderr
