@@ -66,7 +66,10 @@ allow() {
   if [ -n "${HOOK_FLOOR_RECEIPT:-}" ]; then printf 'floor-ok %s\n' dangerous-command-guard.sh; fi
   exit 0
 }
-CMD=$(jq -n -r 'input | .tool_input.command // empty' 2>/dev/null) || refuse "could not read the hook input (jq exit $?)"
+INPUT=$(cat) || refuse "could not read the hook input (cat exit $?)"
+CMD=$(jq -r '.tool_input.command // empty' <<<"$INPUT" 2>/dev/null) || refuse "could not read the hook input (jq exit $?)"
+HOOK_CWD=$(jq -r '.cwd // empty' <<<"$INPUT" 2>/dev/null || true)
+export HOOK_CWD
 [ -n "$CMD" ] || allow
 
 PROVIDER=$(python3 - "$CMD" <<'PY'
@@ -80,6 +83,19 @@ providers = {
     'neonctl': ('Neon', ('NEON_API_KEY',)),
 }
 text = sys.argv[1]
+RAILS = {'rails', 'rails-staging', 'worker-staging', 'postgres', 'postgres-staging'}
+RAILS_FLOOR = ("kept floor: no acting in Alex's account; raw railway ssh, run or shell into the Rails services "
+               "is refused. Use scripts/owner_admin.py or scripts/owner_admin_move.py with a test account")
+
+def rails_target(words):
+    if len(words) < 2 or words[1] not in ('ssh', 'run', 'shell'):
+        return False
+    for i, word in enumerate(words):
+        if word.startswith('--service='):
+            return word.split('=', 1)[1] in RAILS
+        if word in ('-s', '--service'):
+            return i + 1 < len(words) and words[i + 1] in RAILS
+    return 'agent-rails' in os.environ.get('HOOK_CWD', '') + ' ' + text
 
 match = re.search(r'\s+# alex-approval:\s*(\S+)\s*$', text)
 if match:
@@ -208,6 +224,8 @@ def inspect(source, inherited, depth=0):
                     if result:
                         return result
                     break
+        if name == 'railway' and rails_target(words):
+            return RAILS_FLOOR
         if name in providers:
             label, keys = providers[name]
             if not any(local.get(key) for key in keys):
