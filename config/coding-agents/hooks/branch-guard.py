@@ -37,17 +37,43 @@ def first_checkout(cwd):
 def strip_heredocs(text):
     pending, kept = [], []
     marker = re.compile(r"<<(?P<tabs>-)?[ \t]*(?:'(?P<single>[^'\n]+)'|\"(?P<double>[^\"\n]+)\"|(?P<bare>[\w-]+))")
+    quote = None
     for line in text.splitlines(keepends=True):
         if pending:
             delimiter, tabs = pending[0]
             if (line.lstrip("\t") if tabs else line).rstrip("\r\n") == delimiter:
                 pending.pop(0)
             continue
-        for match in marker.finditer(line):
-            pending.append(
-                (match.group("single") or match.group("double") or match.group("bare"), bool(match.group("tabs")))
-            )
-        kept.append(marker.sub("", line))
+        index, start = 0, 0
+        while index < len(line):
+            char = line[index]
+            if char == "\\" and quote != "'":
+                index += 2
+                continue
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in "'\"":
+                quote = char
+            elif char == "#" and (index == 0 or line[index - 1].isspace()):
+                break
+            elif line.startswith("<<<", index):
+                index += 3
+                continue
+            elif line.startswith("<<", index):
+                match = marker.match(line, index)
+                if match:
+                    pending.append(
+                        (
+                            match.group("single") or match.group("double") or match.group("bare"),
+                            bool(match.group("tabs")),
+                        )
+                    )
+                    kept.append(line[start:index])
+                    index = start = match.end()
+                    continue
+            index += 1
+        kept.append(line[start:])
     return "".join(kept)
 
 

@@ -15,6 +15,7 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_output import cap_context, merge_objects  # type: ignore[missing-import]
+from hook_failure_recovery import answer_problem, deny_reason, parse_json, recover_nonfloor  # type: ignore[missing-import]
 
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DEFAULT_TIMEOUT = 600.0
@@ -877,31 +878,6 @@ def apply_wrapper(plan, result):
     return result
 
 
-_DECISIONS = {"allow", "ask", "deny"}
-
-
-def answer_problem(out):
-
-    if not out.strip():
-        return None
-    obj = parse_json(out)
-    if obj is None:
-        return "printed output that is not a JSON hook answer"
-    specific = obj.get("hookSpecificOutput")
-    if specific is not None:
-        if not isinstance(specific, dict):
-            return "printed a malformed hook answer (hookSpecificOutput is not an object)"
-        decision = specific.get("permissionDecision", "allow")
-        if not isinstance(decision, str) or decision not in _DECISIONS:
-            return "printed a malformed hook answer (permissionDecision %s)" % json.dumps(decision)
-        reason = specific.get("permissionDecisionReason")
-        if reason is not None and not isinstance(reason, str):
-            return "printed a malformed hook answer (permissionDecisionReason is not text)"
-    if "decision" in obj and obj["decision"] not in ("block", "approve"):
-        return "printed a malformed hook answer (decision %s)" % json.dumps(obj["decision"])
-    return None
-
-
 def take_receipt(result, name):
 
     want = (RECEIPT % name).encode("utf-8")
@@ -935,24 +911,7 @@ def finish(plan, raw):
         return raw
     if plan.kind == "inproc":
         raw = apply_wrapper(plan, raw)
-    if re.search(r"(?:branch-guard\.py|stash-guard|agent-lb-bootout-guard\.sh|plutil-guard\.sh)", plan.command):
-        obj = parse_json(raw.out)
-        if not deny_reason(obj) and (raw.code != 2 or b"can't open file" in raw.err):
-            problem = (
-                "timed out"
-                if raw.timed_out
-                else "crashed (exit %s)" % raw.code
-                if raw.code
-                else answer_problem(raw.out)
-            )
-            if problem:
-                note = "hook-dispatch warning: %s %s; allowing original input\n" % (plan.command, problem)
-                return Result(
-                    0,
-                    encode({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": note.strip()}}),
-                    note.encode() + raw.err,
-                )
-    return raw
+    return recover_nonfloor(plan.command, raw, Result)
 
 
 class External(object):
@@ -1037,34 +996,6 @@ class External(object):
 
 
 _RANK = {"allow": 1, "ask": 2, "deny": 3}
-
-
-def parse_json(out):
-    text = out.decode("utf-8", "replace").strip()
-    if not text.startswith("{"):
-        return None
-    try:
-        value = json.loads(text)
-    except ValueError:
-        return None
-    return value if isinstance(value, dict) else None
-
-
-def text_of(value):
-
-    return value if isinstance(value, str) else json.dumps(value)
-
-
-def deny_reason(obj):
-    if not obj:
-        return None
-    specific = obj.get("hookSpecificOutput") if isinstance(obj.get("hookSpecificOutput"), dict) else {}
-    if specific.get("permissionDecision") == "deny":
-        reason = specific.get("permissionDecisionReason") or obj.get("reason")
-        return text_of(reason) if reason else "Blocked by hook"
-    if obj.get("decision") == "block":
-        return text_of(obj["reason"]) if obj.get("reason") else "Blocked by hook"
-    return None
 
 
 def block_message(plan, result, obj):
