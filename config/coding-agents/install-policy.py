@@ -106,6 +106,7 @@ LEGACY_HEADINGS = (
     "Orchestration — Fable architects, the fleet executes",
 )
 MODELS_FULL = Path(".claude/docs/models-full.md")
+CORE_SOURCE = Path("routing/core.md")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1713,7 +1714,7 @@ def main() -> int:
             desired = section.read_text()
             if read_text(target) != desired:
                 changes[target] = desired
-        core = (source / "routing/core.md").read_text()
+        core = (source / CORE_SOURCE).read_text()
         desired_models = MODELS_MARKER + " from routing/core.md; generated, do not edit. -->\n\n" + core
         kit_model = re.match(
             r"^<!-- Generated installed copy: agent-plugin-kit@[0-9a-f]{40} rules/models\.md; edit the canonical source, not this file\. -->\n\n",
@@ -1887,7 +1888,9 @@ def main() -> int:
                 if path.is_file() and path.resolve().parent != source / "agents":
                     changes[path] = None
         for name in RETIRED_HOOKS:
-            changes[args.home / ".claude/hooks" / name] = "import sys; sys.stdin.read()\n"
+            stub = args.home / ".claude/hooks" / name
+            if read_text(stub) != "import sys; sys.stdin.read()\n":
+                changes[stub] = "import sys; sys.stdin.read()\n"
         for name in RETIRED_AGENTS:
             for relative in (
                 Path(".claude/agents") / f"{name}.md",

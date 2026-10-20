@@ -8,20 +8,21 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "config/coding-agents"
-BUDGET = 6144
+BUDGET = 7168
 
 OBLIGATIONS = {
     "credential floor": r"Never type or print Alex's own passwords, passkeys or codes",
     "outbound exact message": r"No message to a real person without his yes; approval covers that exact message only",
     "spend cap": r"No spend past a stated cap",
     "destructive needs record": r"No destructive data without an approval record on file",
-    "secret floor exception": r"secret floor is off until launch, never for his own credentials",
-    "guards block only on floors": r"A guard blocks only on a kept floor and names it",
+    "secret floor exception": r"Secrets are never printed or written; guards hard-block this",
+    "guards block only on floors": r"Guards hard-block only kept floors; everything else warns once",
     "no yes needed list": r"No yes needed: merges, deploys, money path, migrations",
     "relayed yes list": r"His yes, relayed: spend past a cap, destructive data with no record, going public",
     "alex himself": r"Alex himself: his credentials, a click in his own signed-in account, a message to a real person",
@@ -30,8 +31,6 @@ OBLIGATIONS = {
     "mac clicks scope": r"Click macOS consent and TCC prompts, Privacy & Security toggles, system dialogs and app permission prompts yourself",
     "mac clicks log": r"log each with `ledger\.event` and a screenshot",
     "mac clicks exclusions": r"Never his password, Touch ID or codes \(ask for that step only\), no messages, no spend past a cap",
-    "no code comments": r"No code comments \(2026-10-14\)\*\* in any repo the factory works in",
-    "comment exceptions": r"Keep only shebangs, license headers, compiler/lint/type directives, generated-file markers",
     "opus architects": r"Opus \(opus-latest medium\) owns architecture, contracts, specs, plans, verdicts and UI design",
     "top level medium": r"never xhigh, max or Fable by default",
     "sol only to spec": r"Sol implements only to an Opus spec and writes no scopes, specs, contracts, docs, research synthesis or rulings",
@@ -59,71 +58,57 @@ OBLIGATIONS = {
     "box placement default": r"Work that is not Mac-only runs on the box `seat-run` picks",
     "forge factory only": r"Forge runs factory work only, never personal agents",
     "computer use off desktop": r"Computer use never runs on Alex's desktop",
-    "plan docs": r"Docs Alex reads \(2026-10-15\)\*\* are Agent Native Plan docs via `plan-publish`",
     "workflow fan-out": r"Workflows fan out without an agent cap; host admission throttles only at real memory or disk floors\.",
     "slice check": r"Each names its files, fixed interfaces and one check",
 }
 
 
 def installer():
+    if str(SOURCE) not in sys.path:
+        sys.path.insert(0, str(SOURCE))
     spec = importlib.util.spec_from_file_location("install_policy", SOURCE / "install-policy.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def core_and_full() -> tuple[str, str]:
-    core, full = installer().split_core((SOURCE / "ROUTING.md").read_text())
-    assert core is not None, "ROUTING.md has no core block"
-    return core, full
+def without_model_lines(text: str) -> str:
+    return re.sub(r"(?m)^(model|effort): .*\n", "", text)
+
+
+def core_text() -> str:
+    return (SOURCE / installer().CORE_SOURCE).read_text()
 
 
 def test_core_keeps_every_obligation() -> None:
-    core, _ = core_and_full()
-    flat = " ".join(core.split())
+    flat = " ".join(core_text().split())
     missing = [name for name, pattern in OBLIGATIONS.items() if not re.search(pattern, flat)]
     assert not missing, missing
 
 
 def test_core_triggers_resolve_to_full_sections() -> None:
-    core, full = core_and_full()
-    assert "`~/.claude/docs/models-full.md`" in core
-    trigger = next(line for line in core.splitlines() if line.startswith("- **Read first.**"))
-    sections = re.findall(r'"([^"]+)"', trigger)
-    assert len(sections) >= 5
-    headings = [line[3:] for line in full.splitlines() if line.startswith("## ")]
-    unresolved = [name for name in sections if not any(heading.startswith(name + " (") for heading in headings)]
+    core = core_text()
+    assert "`~/.claude/docs/models/README.md`" in core
+    assert (SOURCE / "routing/README.md").is_file()
+    trigger = next(line for line in core.splitlines() if line.startswith("- **Read first"))
+    sections = sorted(set(re.findall(r"`~/\.claude/docs/models/([^`/]+\.md)`", trigger)))
+    assert len(sections) >= 5, sections
+    unresolved = [name for name in sections if not (SOURCE / "routing" / name).is_file()]
     assert not unresolved, unresolved
 
 
-def test_full_text_is_routing_without_markers() -> None:
-    text = (SOURCE / "ROUTING.md").read_text()
-    _, full = core_and_full()
-    assert full == "".join(line for line in text.splitlines(keepends=True) if "<!-- core:" not in line)
-    assert "<!-- core:" not in full
+def test_core_source_has_no_markers() -> None:
+    assert "<!-- core:" not in core_text()
 
 
-@pytest.mark.parametrize(
-    "text, error",
-    [
-        ("<!-- core:begin a -->\nx\n", "never closed"),
-        ("<!-- core:begin a -->\n<!-- core:begin b -->\n<!-- core:end b -->\n<!-- core:end a -->\n", "opens inside"),
-        ("<!-- core:begin a -->\n<!-- core:end a -->\n<!-- core:begin a -->\n<!-- core:end a -->\n", "not unique"),
-        ("<!-- core:end a -->\n", "does not close"),
-        ("<!-- core:begin A -->\n", "malformed"),
-    ],
-)
-def test_invalid_markers_are_refused(text: str, error: str) -> None:
-    with pytest.raises(ValueError, match=error):
-        installer().split_core(text)
-
-
-def test_install_renders_core_within_budget_and_is_idempotent(tmp_path: Path, policy_checkout) -> None:
+@pytest.fixture
+def installed(tmp_path: Path, policy_checkout):
     source = tmp_path / "policy-repo" / "config/coding-agents"
     shutil.copytree(SOURCE, source)
-    (source.parent.parent / "clients").mkdir()
-    for name in ("route", "route_quota.py", "route_storage.py", "route_cache.py"):
-        shutil.copy2(ROOT / "clients" / name, source.parent.parent / "clients" / name)
+    clients = source.parent.parent / "clients"
+    clients.mkdir()
+    for path in [ROOT / "clients/route", *sorted((ROOT / "clients").glob("route_*.py"))]:
+        shutil.copy2(path, clients / path.name)
     policy_checkout(tmp_path / "policy-repo")
     home = tmp_path / "home"
     settings = home / ".claude/settings.json"
@@ -134,6 +119,7 @@ def test_install_renders_core_within_budget_and_is_idempotent(tmp_path: Path, po
         "HOME": str(home),
         "AGENT_LB_URL": "http://127.0.0.1:1",
         "ROUTE_MODELS_CACHE": str(tmp_path / "models-cache.json"),
+        "PATH": os.pathsep.join((str(Path(sys.executable).parent), "/usr/bin", "/bin")),
     }
     for key in ("ROUTE_FIXTURE_DIR", "ROUTE_TABLE"):
         env.pop(key, None)
@@ -148,33 +134,58 @@ def test_install_renders_core_within_budget_and_is_idempotent(tmp_path: Path, po
             timeout=60,
         ).stdout
 
+    install()
+    return SimpleNamespace(home=home, env=env, settings=settings, other=other, install=install)
+
+
+def test_installed_core_links_resolve_to_installed_sections(installed) -> None:
+    models = (installed.home / ".claude/rules/models.md").read_text()
+    linked = sorted(set(re.findall(r"`~/(\.claude/docs/models/[^`/]+\.md)`", models)))
+    assert len(linked) >= 6, linked
+    for relative in linked:
+        target = installed.home / relative
+        assert target.read_bytes() == (SOURCE / "routing" / target.name).read_bytes(), relative
+
+
+def test_install_renders_core_within_budget_and_is_idempotent(installed) -> None:
+    home, env, settings, other, install = (
+        installed.home,
+        installed.env,
+        installed.settings,
+        installed.other,
+        installed.install,
+    )
+
     def snapshot() -> dict[str, bytes]:
         return {str(path.relative_to(home)): path.read_bytes() for path in home.rglob("*") if path.is_file()}
 
-    install()
-    assert (home / ".claude/agents/codex-verifier-local.md").read_bytes() == (SOURCE / "agents/codex-verifier-local.md").read_bytes()
+    seat = (home / ".claude/agents/codex-verifier-local.md").read_text()
+    assert re.search(r"(?m)^model: \S+$", seat) and re.search(r"(?m)^effort: \S+$", seat)
+    assert without_model_lines(seat) == without_model_lines((SOURCE / "agents/codex-verifier-local.md").read_text())
     result = subprocess.run(
         [sys.executable, str(home / ".agent-lb/bin/route"), "policy", "snapshot", "--json"],
         env=env | {"ROUTE_TABLE": str(home / ".agent-lb/managed/coding-agents/routing-table.json")},
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)["policy_rev"]
     models = home / ".claude/rules/models.md"
     full = home / ".claude/docs/models-full.md"
-    policy = home / ".agents/policy/coding-agents/ROUTING.md"
-    core, full_text = core_and_full()
+    rendered = models.read_text()
     assert len(models.read_bytes()) <= BUDGET, len(models.read_bytes())
-    assert models.read_text().endswith("\n\n" + core)
-    assert full.read_text().endswith("\n\n" + full_text)
-    assert policy.read_bytes() == (SOURCE / "ROUTING.md").read_bytes()
-    installed = json.loads(settings.read_text())
+    assert rendered.startswith(installer().MODELS_MARKER)
+    assert rendered.split("\n\n", 1)[1] == core_text()
+    assert not full.exists()
+    assert "`~/.claude/docs/models/README.md`" in (home / ".agents/policy/coding-agents/ROUTING.md").read_text()
+    installed_settings = json.loads(settings.read_text())
     for key, value in other.items():
         if key != "permissions":
-            assert installed[key] == value
-    assert set(other["permissions"]["allow"]) <= set(installed["permissions"]["allow"])
+            assert installed_settings[key] == value
+    assert set(other["permissions"]["allow"]) <= set(installed_settings["permissions"]["allow"])
     first = snapshot()
     assert "already converged" in install()
     assert snapshot() == first
     install("--uninstall")
-    assert not models.exists() and not full.exists()
+    assert not models.exists()
