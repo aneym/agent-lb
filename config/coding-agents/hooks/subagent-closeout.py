@@ -25,7 +25,7 @@ INFRA = (
     ("governor refusal", re.compile(r"\bgovernor (?:refus|denied|declin)", re.IGNORECASE)),
     ("usage limit", re.compile(r"\busage[- ]limit|\b429\b|rate limit reached", re.IGNORECASE)),
 )
-FORWARD_PREFIXES = ("gpt-", "codex-", "cursor-", "devin-", "muse-", "computer-use", "host-relay")
+FORWARD_PREFIXES = ("gpt-", "codex-", "cursor-", "grok-", "devin-", "muse-", "computer-use", "host-relay")
 SEAT_RUN_FORWARDERS = {"opus-seat", "opus-seat-full", "sonnet-implementer", "verifier"}
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 FAILURE = re.compile(
@@ -542,9 +542,7 @@ def decision_row(decision_id: str) -> dict:
 
 def in_process(seat: str) -> bool:
     seat = seat.lower()
-    if seat.startswith(FORWARD_PREFIXES):
-        return False
-    return seat.endswith("-local") or seat not in SEAT_RUN_FORWARDERS
+    return not seat.startswith(FORWARD_PREFIXES) and (seat.endswith("-local") or seat not in SEAT_RUN_FORWARDERS)
 
 
 def exit_code(result: dict):

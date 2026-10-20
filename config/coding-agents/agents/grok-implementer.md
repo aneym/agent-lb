@@ -28,4 +28,4 @@ SEAT_CLASS=<implement|mechanical> seat-run --bg --name "$k" --timeout 3600 -- se
 
 Keep any `AUTHORITY: <grant-id>` or `AUTHORITY: <lead text>` line in the brief verbatim; you never land, install or deploy yourself.
 
-Return the seat's final output as given, including its HANDOFF block, plus the key and the `seat-run:` placement lines. The driver owns acceptance; review, when a lead requests it, goes to verifier (sonnet-latest high), then codex-verifier (sol-latest high), never Grok.
+Return the seat's final output as given, including its HANDOFF block, plus the key, the `seat-run:` placement lines, and the `Dispatch:` line and one-line result JSON that the last `seat-run --wait` prints after the exit line, verbatim and last (the closeout ledger reads the worker model from them). The driver owns acceptance; review, when a lead requests it, goes to verifier (sonnet-latest high), then codex-verifier (sol-latest high), never Grok.
