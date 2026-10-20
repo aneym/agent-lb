@@ -1,0 +1,16 @@
+diff --git a/plugins/codex/scripts/codex-companion.mjs b/plugins/codex/scripts/codex-companion.mjs
+--- a/plugins/codex/scripts/codex-companion.mjs
++++ b/plugins/codex/scripts/codex-companion.mjs
+@@ -503,7 +503,11 @@
+     defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : "",
+     model: request.model,
+     effort: request.effort,
+-    sandbox: request.write ? "workspace-write" : "read-only",
++    sandbox: request.write
++      ? (process.platform === "darwin" && process.env.BOX_EXEC_HOST === "studio" &&
++          process.env.PLACEMENT === "studio-only" && process.env.CODEX_LOCAL_WRITE_SANDBOX === "danger-full-access"
++        ? "danger-full-access" : "workspace-write")
++      : "read-only",
+     onProgress: request.onProgress,
+     persistThread: true,
+     threadName: resumeThreadId ? null : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT)
