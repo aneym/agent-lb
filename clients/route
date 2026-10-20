@@ -400,18 +400,9 @@ def pool_exhausted(pool_doc: Any) -> bool:
         return eligible <= 0
     return pool_doc.get("status") == "exhausted"
 
-def pool_status(headroom: float) -> str:
-    if headroom >= POOL_OK_HEADROOM:
-        return "ok"
-    if headroom >= POOL_LOW_HEADROOM:
-        return "low"
-    return "exhausted"
+pool_status = route_heal.pool_status
 
-def _window(usage: Any, key: str, missing: float) -> float:
-    value = usage.get(key) if isinstance(usage, dict) else None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return missing
-    return float(value)
+_window = route_heal.window
 
 def _remaining(account: dict[str, Any]) -> float:
 
@@ -577,6 +568,7 @@ def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS,
     direct = http_get("/api/pools", timeout=timeout)
     if direct.json_ok and isinstance(direct.body, dict) and isinstance(direct.body.get("pools"), list):
         document = dict(direct.body)
+        route_heal.balance_pool(document, read_accounts)
         document.setdefault("source", "lb")
         if not direct.from_cache and _fixture_file("/api/pools") is None:
             try:
@@ -597,10 +589,12 @@ def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS,
         return document, None
     cached = cached_pool_snapshot()
     if cached is not None:
+        route_heal.balance_pool(cached, read_accounts)
         return cached, None
     accounts = accounts or read_accounts()
     if accounts.json_ok:
         document = pools_from_accounts(accounts.body)
+        route_heal.balance_pool(document, lambda: accounts)
         if refills:
             try:
                 add_pool_refills(document, accounts.body)
@@ -1228,6 +1222,8 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
     family = spec.get("family")
     if not isinstance(family, str) or not family:
         return None, f"alias {name} has no family"
+    if spec.get("vendor") == "openrouter":
+        return spec["pinned"], "pinned OpenRouter model"
     if spec.get("vendor") == "muse":
         pinned = spec.get("pinned")
         if not isinstance(pinned, str) or not re.fullmatch(rf"{re.escape(family)}-\d+(?:\.\d+)*", pinned):

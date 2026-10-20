@@ -5,6 +5,7 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 | Job | Seat | Model, effort |
 |---|---|---|
 | Code to a spec | gpt-implementer; grok-implementer; devin-seat; sonnet-implementer | sol-latest medium; grok-latest medium when Codex is short (2026-10-20); sonnet-implementer off while quota is tight (2026-10-13) |
+| Opus-written stories: browser steps and mechanical loops | story-driver | deepseek-flash; luna-latest low when OpenRouter has no headroom |
 | Mechanical sweeps | gpt-implementer; grok-implementer; devin-seat | sol-latest low; grok-latest-low when Codex is short (2026-10-20) |
 | Judgment code, or work a seat failed twice | opus-seat | opus-latest; overrides the 2026-10-13 off-while-tight note (Opus architects, 2026-10-14) |
 | UI-critical, contract and trust-boundary code | opus-seat | opus-latest; overrides the 2026-10-13 off-while-tight note (Opus architects, 2026-10-14) |
