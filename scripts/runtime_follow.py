@@ -254,6 +254,13 @@ def age_min(stamp: str | None, now: float) -> int | None:
     return None if then is None else int((now - then) // 60)
 
 
+def commit_age_min(paths: Paths, sha: str, now: float) -> int:
+    try:
+        return max(0, int((now - float(tree.git(paths, "log", "-1", "--format=%ct", sha))) // 60))
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired):
+        return 0
+
+
 def summary(paths: Paths) -> tuple[str, bool]:
     state = load(paths)
     now = time.time()
@@ -268,10 +275,14 @@ def summary(paths: Paths) -> tuple[str, bool]:
         drift_age = 0
         text = f"runtime {deployed[:12]} = origin/main"
     else:
-        start = state.get("drift_since") if deployed == main else state.get("main_seen_at") or state.get("drift_since")
-        drift_age = age_min(start, now) or 0
+        if deployed == main:
+            drift_age = age_min(state.get("drift_since"), now) or 0
+        elif state.get("main") == main:
+            drift_age = age_min(state.get("main_seen_at"), now) or 0
+        else:
+            drift_age = commit_age_min(paths, main, now)
         relation = "differs from" if deployed == main else "behind"
-        text = f"runtime {deployed[:12] or 'unknown'} {relation} origin/main {main[:12]} ({state.get('drift_paths', '?')} paths) for {drift_age}m"
+        text = f"runtime {deployed[:12] or 'unknown'} {relation} origin/main {main[:12]} ({state.get('drift_paths', '?') if state.get('main') == main else 'not yet compared'} paths) for {drift_age}m"
         entry = (state.get("attempts") or {}).get(main)
         if entry:
             text += f"; {entry.get('count')} failed deploy(s), last: {entry.get('error', '')[:160]}"
