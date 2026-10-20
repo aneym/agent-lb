@@ -1727,11 +1727,13 @@ def main() -> int:
         if full_disk.startswith(MODELS_MARKER):
             changes[full_path] = None
         old_policy = args.home / POLICY_DIR / "ROUTING.md"
-        if old_policy.is_file() and not old_policy.is_symlink():
+        pointer = "# Routing reference\n\nRead `~/.claude/docs/models/README.md` and its named sections. This compatibility pointer contains no duplicate policy.\n"
+        if not old_policy.exists() and not old_policy.is_symlink():
+            changes[old_policy] = pointer
+        elif old_policy.is_file() and not old_policy.is_symlink():
             old_text = old_policy.read_text()
             legacy = source / "routing-legacy-sha256.json"
             known = json.loads(legacy.read_text()) if legacy.is_file() else []
-            pointer = "# Routing reference\n\nRead `~/.claude/docs/models/README.md` and its named sections. This compatibility pointer contains no duplicate policy.\n"
             if old_text == pointer:
                 pass
             elif hashlib.sha256(old_text.encode()).hexdigest() in known:
