@@ -19,51 +19,12 @@
   ],
   "background_model": "sonnet-latest",
   "standards": {
-    "plan": {
-      "seat": "planner",
-      "model": "opus-latest",
-      "effort": "medium",
-      "explore": false,
-      "authority": "architecture",
-      "evidence": "E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted; Sol fallback removed, under reserve plans WAIT",
-      "since": "2026-10-16"
-    },
-    "lane": {
-      "seat": "lane-lead",
-      "model": "opus-latest",
-      "effort": "medium",
-      "explore": false,
-      "authority": "architecture",
-      "evidence": "models.md 2026-10-14: top-level tabs, lane leads and workflow orchestrators run opus-latest medium",
-      "since": "2026-10-16"
-    },
-    "review": {
-      "seat": "plan-reviewer",
-      "model": "opus-latest",
-      "effort": "medium",
-      "explore": false,
-      "authority": "verdict",
-      "evidence": "E19 Opus medium 9/20 = high 9/20; verdict authority stays on Opus",
-      "since": "2026-10-16"
-    },
-    "design": {
-      "seat": "frontend-designer",
-      "model": "opus-latest",
-      "effort": "medium",
-      "explore": false,
-      "authority": "architecture",
-      "evidence": "Alex 2026-10-14 ~21:00 ET: opus must ALWAYS be the architect and design",
-      "since": "2026-10-16"
-    },
-    "audit": {
-      "seat": "plan-reviewer",
-      "model": "opus-latest",
-      "effort": "medium",
-      "explore": false,
-      "authority": "verdict",
-      "evidence": "verdict authority stays on Opus (Astra review 2026-10-16)",
-      "since": "2026-10-16"
-    },
+    "story": {"seat": "story-driver", "model": "deepseek-flash", "effort": "low", "explore": false, "authority": "bounded", "chain": ["deepseek-flash", "luna-latest"]},
+    "plan": {"seat": "planner", "model": "opus-latest", "effort": "medium", "explore": false, "authority": "architecture", "evidence": "E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted; Sol fallback removed, under reserve plans WAIT", "since": "2026-10-16"},
+    "lane": {"seat": "lane-lead", "model": "opus-latest", "effort": "medium", "explore": false, "authority": "architecture", "evidence": "models.md 2026-10-14: top-level tabs, lane leads and workflow orchestrators run opus-latest medium", "since": "2026-10-16"},
+    "review": {"seat": "plan-reviewer", "model": "opus-latest", "effort": "medium", "explore": false, "authority": "verdict", "evidence": "E19 Opus medium 9/20 = high 9/20; verdict authority stays on Opus", "since": "2026-10-16"},
+    "design": {"seat": "frontend-designer", "model": "opus-latest", "effort": "medium", "explore": false, "authority": "architecture", "evidence": "Alex 2026-10-14 ~21:00 ET: opus must ALWAYS be the architect and design", "since": "2026-10-16"},
+    "audit": {"seat": "plan-reviewer", "model": "opus-latest", "effort": "medium", "explore": false, "authority": "verdict", "evidence": "verdict authority stays on Opus (Astra review 2026-10-16)", "since": "2026-10-16"},
     "implement": {
       "seat": "gpt-implementer",
       "model": "sol-latest",
@@ -84,26 +45,8 @@
       "evidence": {"note": "orch-lab E10 and E12; quota tight 2026-10-13", "aa": {"fetched": "2026-10-20", "source": "artificialanalysis.ai api/v2/data/llms/models; context from /leaderboards/models", "fields": ["intelligence_index", "terminalbench_v4", "scicode", "output_tps", "ttft_s", "context_k"], "coding_field": "terminalbench_v4", "note": "AA coding_index is null for every row; Grok 4.7 medium is unpublished (high shown)", "grok-4.7-low": [42.2, 0.162, 0.549, 63.5, 3.99, 500], "gpt-6.1-sol-low": [42.1, 0.308, 0.532, 41.6, 1.55, 1000], "claude-opus-5-5-low": [42.3, 0.313, 0.586, 76.1, 7.24, 1000], "claude-sonnet-5-5-medium": [40.8, 0.298, 0.529, 93.2, 0.94, 1000]}},
       "since": "2026-10-16"
     },
-    "explore": {
-      "seat": "gpt-explorer",
-      "model": "sol-latest",
-      "effort": "low",
-      "wrapper_model": "sonnet-latest",
-      "explore": true,
-      "authority": "none",
-      "evidence": "Sol low default; Haiku unmeasured",
-      "since": "2026-10-16"
-    },
-    "research": {
-      "seat": "codex-sol",
-      "model": "sol-latest",
-      "effort": "high",
-      "wrapper_model": "sonnet-latest",
-      "explore": true,
-      "authority": "bounded",
-      "evidence": "codex-sol research default; Sonnet Explore arm unmeasured",
-      "since": "2026-10-16"
-    },
+    "explore": {"seat": "gpt-explorer", "model": "sol-latest", "effort": "low", "wrapper_model": "sonnet-latest", "explore": true, "authority": "none", "evidence": "Sol low default; Haiku unmeasured", "since": "2026-10-16"},
+    "research": {"seat": "codex-sol", "model": "sol-latest", "effort": "high", "wrapper_model": "sonnet-latest", "explore": true, "authority": "bounded", "evidence": "codex-sol research default; Sonnet Explore arm unmeasured", "since": "2026-10-16"},
     "verify": {
       "seat": "verifier",
       "model": "sonnet-latest",
@@ -196,7 +139,7 @@
     "claude_daily_cap_jobs": 60,
     "stop_after_nonaccepts": 3,
     "min_n_per_arm": 40,
-    "never_classes": ["plan", "review", "spec", "contract", "verdict", "judge", "design", "audit", "ui_critical", "trust", "money_path", "fix"],
+    "never_classes": ["plan", "review", "spec", "contract", "verdict", "judge", "design", "audit", "ui_critical", "trust", "money_path", "fix", "story"],
     "arms": {
       "implement": [
         {
@@ -603,6 +546,7 @@
     "verifier-local": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "high"}
   },
   "pools": {
+    "deepseek-flash": "deepseek-flash",
     "opus-latest": "anthropic-general",
     "sonnet-latest": "anthropic-general",
     "haiku-latest": "anthropic-general",
@@ -716,6 +660,7 @@
     "2026-10-20 routing-use: Opus-authority classes run on the reserved Claude pool and wait (exit 3) only when no Anthropic account is eligible; codex-swap never moves them (models.md 2026-10-16)."
   ],
   "aliases": {
+    "deepseek-flash": {"vendor": "openrouter", "family": "deepseek", "pinned": "deepseek/deepseek-v4.1-flash-1017"},
     "muse-latest": {
       "vendor": "muse",
       "family": "muse-wonder",
