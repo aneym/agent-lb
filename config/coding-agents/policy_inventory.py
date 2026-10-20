@@ -37,6 +37,7 @@ MANAGED_HOOKS = (
     "branch-guard.py",
     "herdr-send-guard.py",
     "hook_output.py",
+    "parity_presentation.py",
     "subagent-closeout.py",
     "seat-budget.py",
     "seat-guard.py",

@@ -1731,10 +1731,11 @@ def main() -> int:
             old_text = old_policy.read_text()
             legacy = source / "routing-legacy-sha256.json"
             known = json.loads(legacy.read_text()) if legacy.is_file() else []
-            if hashlib.sha256(old_text.encode()).hexdigest() in known:
-                changes[old_policy] = (
-                    "# Routing reference\n\nRead `~/.claude/docs/models/README.md` and its named sections. This compatibility pointer contains no duplicate policy.\n"
-                )
+            pointer = "# Routing reference\n\nRead `~/.claude/docs/models/README.md` and its named sections. This compatibility pointer contains no duplicate policy.\n"
+            if old_text == pointer:
+                pass
+            elif hashlib.sha256(old_text.encode()).hexdigest() in known:
+                changes[old_policy] = pointer
             else:
                 print(f"PRESERVE {old_policy}: modified or unrecognized legacy routing document")
 

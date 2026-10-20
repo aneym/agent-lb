@@ -16,6 +16,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from parity_presentation import expected_presentation, same_effect  # type: ignore[missing-import]
+
 DESCRIPTION = (
     "Parity fixture for hook-dispatch.py: the per-hook config and the dispatcher give Claude Code the same answers."
 )
@@ -810,25 +812,6 @@ def same(value, run):
     return json.loads(json.dumps(value).replace(run, "<run>"))
 
 
-FLOOR_REFUSAL = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard refusal$")
-
-
-def same_effect(old_view, new_view):
-
-    def strip(view):
-        return {key: value for key, value in view.items() if key not in ("block", "block_parts", "block_raw")}
-
-    if strip(old_view) != strip(new_view):
-        return False
-    if old_view["block"] == new_view["block"]:
-        return True
-    pattern = "\n".join(
-        re.escape(match.group(1) + "hook-dispatch: floor guard ") + ".*?" if match else re.escape(part)
-        for part, match in ((part, FLOOR_REFUSAL.match(part)) for part in old_view["block_parts"])
-    )
-    return bool(pattern) and re.fullmatch(pattern, new_view["block_raw"], re.S) is not None
-
-
 def run_case(sandbox, registry, case):
     event, tool = case["event"], case.get("tool")
     olds = old_hooks(registry["per_hook"], event, tool)
@@ -842,7 +825,7 @@ def run_case(sandbox, registry, case):
     execd = {record["exec"] for result in new_results for record in result["trace"] if record.get("exec")}
     old_plain = same(effect(event, old_results), run)
     expected = with_exec_timer(old_results, execd)
-    old_view = same(effect(event, with_floor(event, expected, unfolded)), run)
+    old_view = same(expected_presentation(effect(event, with_floor(event, expected, unfolded)), run, run2), run2)
     new_view = same(effect(event, new_results), run2)
 
     if not same_effect(old_view, new_view):
