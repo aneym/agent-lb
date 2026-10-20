@@ -222,8 +222,15 @@ async def _post_token_request(
                         ) from exc
                     raise OAuthError("invalid_response", f"{error_prefix} response unreadable") from exc
                 if resp.status >= 400:
-                    logger.warning("Anthropic token request failed request_id=%s status=%s", request_id, resp.status)
-                    raise _oauth_error_from_data(data, resp.status, prefix=error_prefix)
+                    error = _oauth_error_from_data(data, resp.status, prefix=error_prefix)
+                    logger.warning(
+                        "Anthropic token request failed request_id=%s status=%s code=%s message=%s",
+                        request_id,
+                        resp.status,
+                        error.code,
+                        error.message[:200],
+                    )
+                    raise error
                 try:
                     payload_data = AnthropicOAuthTokenPayload.model_validate(data)
                 except ValidationError as exc:

@@ -153,8 +153,15 @@ async def exchange_authorization_code(
         payload = _validate_oauth_token_payload(data, "OAuth token response invalid")
         status = _codex_status(resp)
         if status >= 400:
-            logger.warning("OAuth token request failed request_id=%s status=%s", get_request_id(), status)
-            raise _oauth_error_from_payload(payload, status)
+            error = _oauth_error_from_payload(payload, status)
+            logger.warning(
+                "OAuth token request failed request_id=%s status=%s code=%s message=%s",
+                get_request_id(),
+                status,
+                error.code,
+                error.message[:200],
+            )
+            raise error
         return _parse_tokens(payload)
     async with lease_http_session(session) as client_session:
         async with client_session.post(
@@ -173,12 +180,15 @@ async def exchange_authorization_code(
                 )
                 raise OAuthError("invalid_response", "OAuth response invalid") from exc
             if resp.status >= 400:
+                error = _oauth_error_from_payload(payload, resp.status)
                 logger.warning(
-                    "OAuth token request failed request_id=%s status=%s",
+                    "OAuth token request failed request_id=%s status=%s code=%s message=%s",
                     get_request_id(),
                     resp.status,
+                    error.code,
+                    error.message[:200],
                 )
-                raise _oauth_error_from_payload(payload, resp.status)
+                raise error
 
     return _parse_tokens(payload)
 

@@ -283,18 +283,26 @@ def _validate_token_payload(data: JsonObject) -> OAuthTokenPayload:
 
 
 def _refresh_error_from_data(data: JsonObject, status_code: int) -> RefreshError:
-    logger.warning("Token refresh failed request_id=%s status=%s", get_request_id(), status_code)
     try:
         payload = OAuthTokenPayload.model_validate(data)
     except ValidationError:
-        return RefreshError(
+        error = RefreshError(
             f"http_{status_code}",
             f"Token refresh failed ({status_code})",
             False,
             phase=ExchangePhase.ANSWERED,
             status_code=status_code,
         )
-    return _refresh_error_from_payload(payload, status_code)
+    else:
+        error = _refresh_error_from_payload(payload, status_code)
+    logger.warning(
+        "Token refresh failed request_id=%s status=%s code=%s message=%s",
+        get_request_id(),
+        status_code,
+        error.code,
+        error.message[:200],
+    )
+    return error
 
 
 def _refresh_error_from_payload(payload: OAuthTokenPayload, status_code: int) -> RefreshError:
