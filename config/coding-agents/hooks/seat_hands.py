@@ -79,8 +79,7 @@ def hands_target(subagent: str, prompt: str) -> tuple[str, str] | None:
         if tag == "explore" or (READ.search(prompt[:3000]) and not EDIT.search(prompt[:3000]))
         else "gpt-implementer"
     )
-    done = lean_run("check-local", "gpt-implementer-local", prompt=prompt)
-    if STUDIO.search(prompt) or (done is not None and done.returncode == 0):
+    if STUDIO.search(prompt) or re.search(r"\b(?:xcodebuild|simctl|herdr|aside|keychain|tcc)\b", prompt, re.IGNORECASE):
         target += "-local"
     return target, f"class:{tag}" if tagged else "hands markers without a brains marker"
 
