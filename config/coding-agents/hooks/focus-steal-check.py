@@ -81,15 +81,7 @@ def subagent_stop():
     since = first_timestamp(str(payload.get("agent_transcript_path") or ""))
     rows = steals(since)
     if rows:
-        print(
-            json.dumps(
-                {
-                    "decision": "block",
-                    "reason": message(agent_type, since, rows)
-                    + ". End your report with `FAILED: focus steal` and the rows; do not claim success.",
-                }
-            )
-        )
+        print(json.dumps({"systemMessage": message(agent_type, since, rows)}))
     return 0
 
 
