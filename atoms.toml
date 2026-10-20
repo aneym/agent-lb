@@ -76,3 +76,9 @@ paths = ["tests"]
 check = "make test-floor"
 owner = "agent-lb-lead"
 deps = ["app", "bin", "clients", "config", "deploy", "docs", "features", "frontend", "openspec", "patches", "scripts"]
+
+[atom.artifact-manifests]
+paths = ["artifact-manifests"]
+check = "python3 -m scripts.artifact_store screenshots --dest \"$(mktemp -d)/tree\""
+deps = ["scripts"]
+owner = "agent-lb-lead"
