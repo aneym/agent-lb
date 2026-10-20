@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from seat_hands import hands_target, local_warning, steer_input  # type: ignore[missing-import]
+from seat_hands import hands_target, hands_warning, local_warning, preserve_seat, steer_input  # type: ignore[missing-import]
 
 FORWARDER_SEATS = {
     "codex-sol",
@@ -82,9 +82,11 @@ def emit_warning(reason: str, extra: str = "", updated: dict | None = None) -> N
     )
 
 
-def quota_swap_seat(subagent: str) -> str | None:
+def quota_swap_seat(subagent: str, prompt: str = "") -> str | None:
+    if preserve_seat(subagent, prompt) or hands_warning(subagent, prompt):
+        return None
     target = None
-    if subagent in {"verifier", "verifier-local", "plan-reviewer", "security-reviewer"} or fnmatch.fnmatchcase(
+    if subagent in {"security-reviewer"} or fnmatch.fnmatchcase(
         subagent.removesuffix("-local"), "lab-*-verifier"
     ):
         target = "codex-verifier"
@@ -322,7 +324,7 @@ def main() -> None:
         "cwd": payload.get("cwd"),
     }
     updated = None
-    swap_message = ""
+    swap_message = hands_warning(subagent, prompt) or ""
     hands = hands_target(subagent, prompt)
     if hands:
         target, reason = hands
@@ -339,7 +341,7 @@ def main() -> None:
             subagent = target
             model = (updated.get("model") or "").strip().lower()
             prompt = updated["prompt"]
-    replacement = quota_swap_seat(subagent) if not hands else None
+    replacement = quota_swap_seat(subagent, prompt) if not hands else None
     if replacement:
         mode, error = quota_mode()
         record["quota_mode"] = mode

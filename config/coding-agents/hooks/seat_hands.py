@@ -13,8 +13,36 @@ SEATS = {
     "opus-seat",
     "opus-seat-full",
     "opus-seat-local",
-    "planner",
     "fork",
+}
+PRESERVED_SEATS = {
+    "verifier",
+    "verifier-local",
+    "codex-verifier",
+    "codex-verifier-local",
+    "planner",
+    "fable-orchestrator",
+    "plan",
+    "plan-reviewer",
+}
+BRAIN_CLASSES = {
+    "plan",
+    "lane",
+    "scope",
+    "spec",
+    "contract",
+    "architecture",
+    "design",
+    "review",
+    "verdict",
+    "judge",
+    "audit",
+    "synthesis",
+    "lead",
+    "ui-critical",
+    "trust-boundary",
+    "money-path",
+    "judgment",
 }
 TAG = re.compile(r"^\s*\[class:([\w-]+)\]", re.IGNORECASE)
 EXCEPTION = re.compile(
@@ -22,12 +50,13 @@ EXCEPTION = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 BRAINS = re.compile(
-    r"\b(?:write|draft|author)\s+(?:(?:a|an|the)\s+)?(?:spec|scope|plan|contract)\b"
-    r"|\b(?:judge|verdict|architecture|audit)\b|\breview\s+(?:the\s+)?(?:plan|spec|scope|design|diff)\b|\bdesign pass\b",
+    r"\b(?:lead|leader|leading|planner|planning|plan|plans|lane|scope|scoping|spec|specification|"
+    r"contract|architecture|design|review|reviewer|verdict|judge|audit|synthesis|decision)\b",
     re.IGNORECASE,
 )
 HANDS = re.compile(
-    r"studio_merge|\bland\s|\bfix-forward\b|\b(?:implement|fix|patch|commit|worktree|probe|reproduce|install)\b|\brun the check\b",
+    r"studio_merge|\bfix-forward\b|\b(?:implement|fix|patch|commit|probe|reproduce|install|land|sweep)\b"
+    r"|\bedit\s+(?:\S+\s+){0,3}(?:files?|[\w./-]+\.[\w]+)\b|\brun\s+\S+",
     re.IGNORECASE,
 )
 READ = re.compile(r"\b(?:read|find|trace|measure)\b", re.IGNORECASE)
@@ -64,15 +93,36 @@ def lean_active() -> bool:
         return False
 
 
+def preserve_seat(subagent: str, prompt: str) -> bool:
+    match = TAG.match(prompt)
+    tag = match.group(1).lower() if match else ""
+    return (
+        subagent in PRESERVED_SEATS
+        or tag in BRAIN_CLASSES
+        or bool(EXCEPTION.search(prompt))
+        or bool(BRAINS.search(prompt))
+    )
+
+
+def hands_warning(subagent: str, prompt: str) -> str | None:
+    if (
+        (subagent or "general-purpose") in SEATS
+        and not preserve_seat(subagent, prompt)
+        and not HANDS.search(prompt[:3000])
+    ):
+        return "unclear whether this brief is hands work; keeping the requested seat unchanged"
+    return None
+
+
 def hands_target(subagent: str, prompt: str) -> tuple[str, str] | None:
     if (subagent or "general-purpose") not in SEATS or os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") == "1":
         return None
     match = TAG.match(prompt)
     tag = match.group(1).lower() if match else ""
-    if tag in {"ui-critical", "trust-boundary", "money-path", "judgment"} or EXCEPTION.search(prompt):
+    if preserve_seat(subagent, prompt):
         return None
     tagged = tag in {"implement", "mechanical", "fix", "land", "explore", "test"}
-    if not tagged and (BRAINS.search(prompt[:800]) or not HANDS.search(prompt[:3000])):
+    if not HANDS.search(prompt[:3000]):
         return None
     target = (
         "gpt-explorer"
