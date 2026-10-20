@@ -7,60 +7,72 @@ full = "./check --full"
 
 [atom.app]
 paths = ["app"]
-check = "make lint"
+check = "make test-floor"
 owner = "agent-lb-lead"
+deps = ["bin", "clients", "config", "deploy", "docs", "features", "frontend", "openspec", "patches", "scripts", "tests"]
 
 [atom.bin]
 paths = ["bin"]
-check = "make lint"
+check = "./check --full"
 owner = "agent-lb-lead"
+deps = ["app", "clients", "config", "deploy", "docs", "features", "frontend", "openspec", "patches", "scripts", "tests"]
 
 [atom.clients]
 paths = ["clients"]
-check = "make lint"
+check = "./check --full"
 owner = "agent-lb-lead"
+deps = ["app", "bin", "config", "deploy", "docs", "features", "frontend", "openspec", "patches", "scripts", "tests"]
 
 [atom.config]
 paths = ["config"]
-check = "make lint"
+check = "./check --full"
 owner = "agent-lb-lead"
+deps = ["app", "bin", "clients", "deploy", "docs", "features", "frontend", "openspec", "patches", "scripts", "tests"]
 
 [atom.deploy]
 paths = ["deploy"]
-check = "make lint"
+check = "./check --full"
 owner = "agent-lb-lead"
+deps = ["app", "bin", "clients", "config", "docs", "features", "frontend", "openspec", "patches", "scripts", "tests"]
 
 [atom.docs]
 paths = ["docs"]
-check = "make lint"
+check = "./check --full"
 owner = "agent-lb-lead"
+deps = ["app", "bin", "clients", "config", "deploy", "features", "frontend", "openspec", "patches", "scripts", "tests"]
 
 [atom.features]
 paths = ["features"]
-check = "make lint"
+check = "./check --full"
 owner = "agent-lb-lead"
+deps = ["app", "bin", "clients", "config", "deploy", "docs", "frontend", "openspec", "patches", "scripts", "tests"]
 
 [atom.frontend]
 paths = ["frontend"]
-check = "make lint"
+check = "./check --full"
 owner = "agent-lb-lead"
+deps = ["app", "bin", "clients", "config", "deploy", "docs", "features", "openspec", "patches", "scripts", "tests"]
 
 [atom.openspec]
 paths = ["openspec"]
-check = "make lint"
+check = "./check --full"
 owner = "agent-lb-lead"
+deps = ["app", "bin", "clients", "config", "deploy", "docs", "features", "frontend", "patches", "scripts", "tests"]
 
 [atom.patches]
 paths = ["patches"]
-check = "make lint"
+check = "./check --full"
 owner = "agent-lb-lead"
+deps = ["app", "bin", "clients", "config", "deploy", "docs", "features", "frontend", "openspec", "scripts", "tests"]
 
 [atom.scripts]
 paths = ["scripts"]
-check = "make lint"
+check = "./check --full"
 owner = "agent-lb-lead"
+deps = ["app", "bin", "clients", "config", "deploy", "docs", "features", "frontend", "openspec", "patches", "tests"]
 
 [atom.tests]
 paths = ["tests"]
-check = "make lint"
+check = "make test-floor"
 owner = "agent-lb-lead"
+deps = ["app", "bin", "clients", "config", "deploy", "docs", "features", "frontend", "openspec", "patches", "scripts"]
