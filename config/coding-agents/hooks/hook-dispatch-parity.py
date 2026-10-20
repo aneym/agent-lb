@@ -24,7 +24,13 @@ DESCRIPTION = (
 
 DEFAULT_TIMEOUT = 600.0
 PATH_REF = re.compile(r'(?:\$HOME|~)/([^\s"\'$`\\;&|<>(){}]+)')
-CONFIG_COPIES = (".agent-lb/managed/coding-agents/routing-table.json", ".claude/agents", ".claude/load-governor.json")
+CONFIG_COPIES = (
+    ".agent-lb/managed/coding-agents/routing-table.json",
+    ".claude/agents",
+    ".claude/load-governor.json",
+    ".claude/hooks/hook_output.py",
+    ".claude/hooks/hook_failure_recovery.py",
+)
 TEST_PANE = "hp:t1"
 RTK_STATE = "home/Library/Application Support/rtk/"
 FAKE_NPX = r"""#!/bin/sh
@@ -230,13 +236,11 @@ def effect(event, results):
 
 FLOOR_NAMES = (
     "branch-guard.py",
+    "wide-scan-guard.sh",
+    "kill-scope-guard.py",
     "rm-dynamic-deny",
-    "stash-guard",
     "railway-vars-guard.sh",
     "link-cli-guard.sh",
-    "plutil-guard.sh",
-    "kill-guard",
-    "agent-lb-bootout-guard.sh",
     "dangerous-command-guard.sh",
     "host-credential-guard.py",
 )

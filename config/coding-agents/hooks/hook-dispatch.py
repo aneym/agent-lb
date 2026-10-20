@@ -14,11 +14,13 @@ import time
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hook_output import cap_context, merge_objects  # type: ignore[missing-import]
 from hook_failure_recovery import answer_problem, deny_reason, parse_json, recover_nonfloor  # type: ignore[missing-import]
+from hook_output import cap_context, merge_objects  # type: ignore[missing-import]
 
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
-DEFAULT_TIMEOUT = 600.0
+DEFAULT_TIMEOUT = 5.0
+FLOOR_TIMEOUT = 40.0
+DISPATCH_TIMEOUT = 50.0
 SHELL = "/bin/sh"
 HERE = os.path.dirname(os.path.abspath(__file__))
 REWRITERS = {"rtk hook claude"}
@@ -26,11 +28,13 @@ REV = re.compile(r"[0-9a-f]{12}")
 REV_SHA = re.compile(r"[0-9a-f]{64}")
 
 FLOOR_SCRIPTS = (
+    "branch-guard.py",
+    "wide-scan-guard.sh",
+    "kill-scope-guard.py",
     "rm-dynamic-deny",
     "railway-vars-guard.sh",
     "link-cli-guard.sh",
     "dangerous-command-guard.sh",
-    "no-chrome-guard.sh",
     "host-credential-guard.py",
 )
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
@@ -529,6 +533,11 @@ class Plan(object):
         self.devnull, self.fallback_true, self.fallback_text, self.source = False, False, None, None
         self.reason, self.prefilter = "", None
         self.floor = floor_name(self.command)
+        self.timeout = (
+            min(float(timeout), FLOOR_TIMEOUT)
+            if self.floor and isinstance(timeout, (int, float)) and timeout > 0
+            else (FLOOR_TIMEOUT if self.floor else min(self.timeout, DEFAULT_TIMEOUT))
+        )
         self.exec_argv = None
         self.opaque = None
 
@@ -608,7 +617,8 @@ def plan_hook(hook, inproc_names, script_pins=None):
                 "a floor guard never runs through a shell, S44)"
             )
             return plan
-        command = legacy_floor(command) or command
+        plan.reason = "isolated floor guard"
+        return plan
     if command.strip() in REWRITERS:
         plan.kind, plan.reason = "rewriter", "side-effect free rewriter"
         return plan
@@ -908,6 +918,8 @@ def finish(plan, raw):
         take_receipt(raw, plan.floor)
         raw.floor_failure = floor_failure(raw)
         return raw
+    if raw.timed_out:
+        return Result(0, b"", b"", True, raw.mode, raw.spawned)
     if plan.kind == "inproc":
         raw = apply_wrapper(plan, raw)
     return recover_nonfloor(plan.command, raw, Result)
@@ -988,9 +1000,15 @@ class External(object):
                 1,
             )
 
-    def result(self):
+    def result(self, deadline):
         if self.thread is not None:
-            self.thread.join()
+            self.thread.join(max(0, deadline - time.monotonic()))
+        if self.outcome is None:
+            try:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            return Result(1, b"", b"", True, "external", 1)
         return self.outcome
 
 
@@ -1337,6 +1355,7 @@ def log_failures(event, key, plans, results):
 
 
 def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
+    deadline = time.monotonic() + DISPATCH_TIMEOUT
     record = {"event": event, "pid": os.getpid(), "ppid": os.getppid()}
     plans = []
     for hook in hooks:
@@ -1382,6 +1401,7 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
         for index, plan in enumerate(plans):
             if plan.kind != "inproc":
                 continue
+            plan.timeout = min(plan.timeout, max(0.001, deadline - time.monotonic()))
             try:
                 result, crashed = run_inproc(plan, payload)
             except Exception as exc:
@@ -1396,6 +1416,7 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
         for index, plan in enumerate(plans):
             if plan.kind != "rewriter":
                 continue
+            plan.timeout = min(plan.timeout, max(0.001, deadline - time.monotonic()))
             known = [(i, r) for i, r in enumerate(results) if r is not None]
             blocked = any(r.code == 2 or deny_reason(parse_json(r.out)) for _i, r in known if not r.timed_out)
             superseded = any(i > index and updates_input(r) for i, r in known)
@@ -1418,7 +1439,7 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
                 exec_into(plan, payload, record)
             started[index] = External(plan, payload)
         for index, external in started.items():
-            results[index] = finish(plans[index], external.result())
+            results[index] = finish(plans[index], external.result(deadline))
         log_failures(event, key, plans, results)
         record["hooks"] = trace_hooks(plans, results)
         record["spawned"] = _SPAWNS[0]

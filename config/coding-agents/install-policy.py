@@ -115,26 +115,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--preserve-claude-md",
         action="store_true",
-        help="Do not read, validate, checkpoint or write personal Claude instructions",
+        help="Preserve personal instructions",
     )
     parser.add_argument("--uninstall", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--autocompact-only", action="store_true")
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--no-box-sync", action="store_true", help="Skip syncing routing policy to factory boxes")
+    parser.add_argument("--no-box-sync", action="store_true", help="Skip box sync")
     parser.add_argument("--reason", help="Logged reason for forcing installation from a stale revision")
     parser.add_argument(
         "--hook-dispatcher",
         choices=("on", "off"),
-        help="on: fold the PreToolUse, PostToolUse, UserPromptSubmit and Stop hooks into hooks/hook-dispatch.py "
-        "after the parity fixture passes against this home's guards; off: restore the per-hook config verbatim. "
-        "Absent: keep the current state (a folded config stays folded, over the guards it was checked on).",
+        help="on: fold after parity; off: unfold; absent: keep mode",
     )
     parser.add_argument(
         "--check-hook-paths",
         action="store_true",
-        help="write nothing; exit 1 when a hook the live settings run (through the dispatcher registry when folded) "
-        "names a release-scoped path, or a PreToolUse guard names a path that is missing",
+        help="Check folded and direct hook paths",
     )
     return parser.parse_args()
 
@@ -379,7 +376,6 @@ DISPATCH_INPROC = (
     "lane-bulletin-hook",
     "aside-regular-tabs.py",
     "workflow-relay-guard.py",
-    "routing-pulse.py",
     "herdr-tab-autoname.py",
     "idle-agents.py",
 )
@@ -387,7 +383,6 @@ DISPATCH_INPROC = (
 DISPATCH_SKIP_MATCHERS = ("AskUserQuestion",)
 DISPATCH_HOOK_KEYS = {"type", "command", "timeout", "statusMessage"}
 SIMPLE_MATCHER = re.compile(r"[A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*")
-DEFAULT_HOOK_TIMEOUT = 600
 
 
 NAME_LIST = re.compile(r"[a-zA-Z0-9_|, -]+")
@@ -630,7 +625,7 @@ def registry_rev(entries: dict[str, Any]) -> str:
 
 
 def dispatch_group(event: str, key: str, matcher_field: Any, hooks: list[dict[str, Any]], rev: str) -> dict[str, Any]:
-    timeout = sum(hook.get("timeout") or DEFAULT_HOOK_TIMEOUT for hook in hooks) + 5
+    timeout = 60
     entry: dict[str, Any] = {
         "type": "command",
         "command": f"python3 \"$HOME/.claude/{DISPATCH_SCRIPT}\" {event} '{key}' {rev}",
@@ -706,8 +701,6 @@ def fold_hooks(
         folded[event] = out
     registry = {
         "schema": 1,
-        "about": "hook-dispatch.py registry, written by agent-lb install-policy.py --hook-dispatcher on; "
-        "per_hook is the config it replaced (restore: install-policy.py --hook-dispatcher off)",
         "rev": rev,
         "per_hook": per_hook,
         "dispatch": dispatch,
@@ -1232,6 +1225,30 @@ def reconcile_settings(
     if isinstance(hooks, dict):
         hooks, _ = drop_hooks(hooks)
         updated["hooks"] = hooks
+    if not uninstall:
+        for event, groups in hooks.items():
+            for group in groups:
+                group["hooks"] = [
+                    h
+                    for h in group.get("hooks", [])
+                    if not any(n in h.get("command", "") for n in ("seat-budget.py", "routing-pulse.py"))
+                    and not (event == "PostToolUse" and "factory-lint-hook" in h.get("command", ""))
+                ]
+                for hook in group["hooks"]:
+                    command = hook.get("command", "")
+                    if "skill-stats" in command:
+                        hook["timeout"] = 3
+                    if "CACHE_ALERT" in command:
+                        hook["command"] = (
+                            'f="$HOME/.agent-lb/CACHE_ALERT"; [ ! -f "$f" ] || '
+                            '{ printf "agent-lb CACHE ALERT (tell Alex): "; '
+                            'LC_ALL=C head -c 980 "$f" | tr "\\r\\n" "  "; printf "\\n"; }'
+                        )
+                    if event == "PostToolUse" and "idle-agents.py" in command:
+                        matcher = group.get("matcher", "*")
+                        if matcher != "*" and "TaskStop" not in matcher.split("|"):
+                            group["matcher"] = matcher + "|TaskStop"
+            hooks[event] = [g for g in groups if g["hooks"]]
     if not uninstall and source is not None and isinstance(hooks, dict):
         for line in rewrite_floor_commands(hooks, source):
             print(f"hook policy: floor guard registered as a direct exec: {line}")
@@ -1303,10 +1320,10 @@ def reconcile_settings(
                 if group is not None:
                     group.setdefault("hooks", []).insert(0, dict(hook))
                     continue
-            group = dict[str, Any](hooks=[dict(hook)])
+            new_group: dict[str, Any] = {"hooks": [dict(hook)]}
             if matcher is not None:
-                group["matcher"] = matcher
-            event_groups.append(group)
+                new_group["matcher"] = matcher
+            event_groups.append(new_group)
     if not uninstall and source is not None:
         internal_hook_commands(updated.get("hooks", {}), source)
     dedupe_hooks(updated.get("hooks"))
@@ -1586,8 +1603,7 @@ def main() -> int:
             settings = {**settings, "hooks": unfold_hooks(settings["hooks"], old_registry)}
         except ValueError as exc:
             raise SystemExit(
-                f"error: {exc}. The dispatcher refuses PreToolUse calls until this is fixed: restore {registry_path} "
-                "from the newest checkpoint under ~/.agent-lb/config-checkpoints/coding-agents/"
+                f"error: {exc}. Restore {registry_path} from ~/.agent-lb/config-checkpoints/coding-agents/"
             ) from exc
 
     try:
@@ -1623,9 +1639,8 @@ def main() -> int:
         opaque = opaque_floor_commands(desired_settings["hooks"], source)
         if opaque:
             raise SystemExit(
-                "error: hook dispatcher not installed, nothing written: a floor guard must be registered as a direct "
-                "exec of its own script (`[python3|bash] <script> [args]`, S44), and the dispatcher refuses every call "
-                "these would guard: " + "; ".join(opaque)
+                "error: nothing written: floor guards require direct exec (`[python3|bash] <script> [args]`, S44): "
+                + "; ".join(opaque)
             )
     new_registry: dict[str, Any] | None = None
     keep_fold = False
@@ -1751,6 +1766,15 @@ def main() -> int:
 
     if desired_settings != disk_settings:
         changes[settings_path] = desired_settings_text
+    if not args.uninstall:
+        for relative in (
+            ".claude/hooks/seat-budget.py",
+            ".agents/policy/coding-agents/hooks/seat-budget.py",
+            ".agent-lb/managed/coding-agents/seat-budget",
+        ):
+            target = args.home / relative
+            if target.is_file() and not target.is_symlink():
+                changes[target] = None
     if not args.uninstall and registry_path.parent.is_dir():
         for path in registry_path.parent.glob("registry*.json"):
             legacy = json.loads(path.read_text())
