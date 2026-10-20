@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from harness_mcp import ensure_harness_mcp
+from policy_hosts import policy_box_hosts  # type: ignore[missing-import]
 from hook_inventory import hook_path_problems, validate_hook_changes  # type: ignore[missing-import]
 
 START = "<!-- agent-lb:coding-agent-routing:start -->"
@@ -93,6 +94,7 @@ POLICY_FILES = (
     "install-policy.py",
     "harness_mcp.py",
     "policy_inventory.py",
+    "policy_hosts.py",
     "hook_inventory.py",
     "policy_verification.py",
     "routing-legacy-sha256.json",
@@ -1342,39 +1344,6 @@ def write_atomic(path: Path, content: str) -> None:
     finally:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
-
-
-def policy_box_hosts(home: Path) -> list[str]:
-    registry = Path(os.environ.get("FACTORY_HOME") or home / ".agent-rails/factory").expanduser()
-    defaults = home / ".agent-rails/factory-runtime/fleet/config"
-
-    def load(name: str, override: str | None = None) -> Any:
-        path = Path(override).expanduser() if override else registry / name
-        if not path.exists() and not override:
-            path = defaults / name
-        return json.loads(path.read_text())
-
-    machines = load("machines.json", os.environ.get("FACTORY_MACHINES"))
-    boxes = load("boxes.json", os.environ.get("FLEET_BOXES_FILE"))
-    boxes = boxes.get("boxes", []) if isinstance(boxes, dict) else boxes
-    disabled = {
-        row.get("name") for row in [*machines, *boxes] if row.get("enabled") is False or row.get("kind") == "slot"
-    }
-    known = {name for row in machines for name in [row["name"], *row.get("aliases", [])]}
-    hosts = [
-        row["name"]
-        for row in machines
-        if row.get("job_host") is True
-        and not str(row.get("os", "")).lower().startswith("macos")
-        and row["name"] not in disabled
-        and row.get("ssh", row["name"]) not in disabled
-    ]
-    hosts.extend(
-        row["name"]
-        for row in boxes
-        if row.get("kind") == "plain" and row.get("enabled") is True and row["name"] not in known
-    )
-    return list(dict.fromkeys(hosts))
 
 
 def sync_policy_boxes(home: Path) -> None:
