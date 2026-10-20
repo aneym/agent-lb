@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts import runtime_bin
+from scripts import runtime_bin, runtime_plan
 from scripts import runtime_tree as tree
 from scripts.runtime_tree import Paths, log_line, utc
 
@@ -134,6 +134,9 @@ def deploy(paths: Paths, state: dict, want: str, manage_static: bool, bin_todo: 
         rc, tail = 1, [str(exc)]
     if rc != 0:
         return failed(paths, state, want, saved, old_lock, before, f"lb-restart rc={rc}: {tail[0][:200]}")
+    state["restarted_at"] = utc()
+    for key in runtime_plan.PENDING_KEYS:
+        state.pop(key, None)
     state["deployed"] = want
     state["deployed_at"] = utc()
     state["in_sync"] = True
@@ -222,20 +225,39 @@ def step(paths: Paths, state: dict, now: float, *, force: bool) -> int:
     state["bin_drift"] = bin_report.drift
     state["drift_paths"] = len(changes)
     state["drift_sample"] = changes[:5]
-    if not changes:
-        if bin_todo:
-            runtime_bin.install(bin_todo, bin_report)
-            log_line(
-                paths, f"runtime-follow: refreshed bin {','.join(bin_report.refreshed)} to origin/main {want[:10]}"
-            )
+    live, need = runtime_plan.split(changes)
+    if live:
+        deleted = [
+            runtime_plan.rel_of(line)
+            for line in changes
+            if line.startswith("*deleting") and runtime_plan.rel_of(line) in live
+        ]
+        tree.apply_live(paths, [rel for rel in live if rel not in deleted], deleted)
+        log_line(paths, f"runtime-follow: live sync {len(live)} path(s) to {want[:10]}")
+    if bin_todo:
+        runtime_bin.install(bin_todo, bin_report)
+        log_line(paths, f"runtime-follow: refreshed bin {','.join(bin_report.refreshed)} to origin/main {want[:10]}")
+    if not need:
         if state.get("deployed") != want:
             state["deployed"] = want
             state["deployed_at"] = utc()
+        for key in runtime_plan.PENDING_KEYS:
+            state.pop(key, None)
         state.pop("drift_since", None)
+        state["drift_paths"] = 0
+        state["drift_sample"] = []
         state["in_sync"] = True
         return 0
     state["in_sync"] = False
     state.setdefault("drift_since", utc())
+    state["restart_paths"] = need[:5]
+    state["restart_count"] = len(need)
+    state.setdefault("restart_pending_since", utc())
+    due, next_at, reason = runtime_plan.restart_due(state, now)
+    state["next_restart_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(next_at))
+    state["restart_wait_reason"] = reason
+    if not due and not force:
+        return 0
     hand_deploy = state.get("deployed") == want
     if hand_deploy and not force:
         since = epoch(state["drift_since"]) or now
@@ -290,7 +312,14 @@ def summary(paths: Paths) -> tuple[str, bool]:
     if state.get("bin_drift"):
         text += f"; bin copies edited by hand: {','.join(state['bin_drift'])}"
     stale = tick_age is None or tick_age > DRIFT_ALERT_S // 60
-    bad = stale or (not in_sync and drift_age * 60 >= DRIFT_ALERT_S)
+    text += runtime_plan.status_suffix(state, now)
+    pending = epoch(state.get("restart_pending_since"))
+    drift_bad = (
+        now > pending + runtime_plan.CEILING_S + DRIFT_ALERT_S
+        if pending is not None
+        else drift_age * 60 >= DRIFT_ALERT_S
+    )
+    bad = stale or (not in_sync and drift_bad)
     return text, bad
 
 

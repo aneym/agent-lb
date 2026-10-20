@@ -30,7 +30,8 @@ from app.core.forensics import register_stack_dump_signal
 from app.core.handlers import add_exception_handlers
 from app.core.identity_nodes import IdentityNodeCache
 from app.core.metrics.middleware import MetricsMiddleware
-from app.core.metrics.prometheus import MULTIPROCESS_MODE, PROMETHEUS_AVAILABLE, make_scrape_registry, mark_process_dead
+from app.core.metrics.prometheus import PROMETHEUS_AVAILABLE, make_scrape_registry, mark_process_dead
+from app.core.metrics.serve import serve_metrics
 from app.core.middleware import (
     add_api_firewall_middleware,
     add_app_version_middleware,
@@ -100,12 +101,6 @@ from app.modules.usage.additional_quota_keys import reload_additional_quota_regi
 logger = logging.getLogger(__name__)
 
 
-class _MetricsServer(Protocol):
-    should_exit: bool
-
-    async def serve(self) -> None: ...
-
-
 class _RingMembershipReader(Protocol):
     def list_active(
         self,
@@ -124,18 +119,6 @@ def _resolve_static_asset_path(static_root: Path, requested_path: str) -> Path |
     if stat_result is None or not stat.S_ISREG(stat_result.st_mode):
         return None
     return Path(full_path)
-
-
-def _is_benign_metrics_bind_failure(exc: BaseException) -> bool:
-    if not MULTIPROCESS_MODE:
-        return False
-    if isinstance(exc, SystemExit):
-        return exc.code == 1
-    if isinstance(exc, OSError):
-        import errno as _errno
-
-        return exc.errno in (_errno.EADDRINUSE, _errno.EADDRNOTAVAIL)
-    return False
 
 
 @asynccontextmanager
@@ -226,27 +209,7 @@ async def lifespan(app: FastAPI):
         )
         metrics_server = uvicorn.Server(config)
 
-        async def _serve_metrics(srv: _MetricsServer) -> None:
-            try:
-                await srv.serve()
-            except SystemExit as exc:
-                if _is_benign_metrics_bind_failure(exc):
-                    logger.info(
-                        "Metrics port %d unavailable (another worker likely serves metrics)",
-                        settings.metrics_port,
-                    )
-                else:
-                    raise
-            except OSError as exc:
-                if _is_benign_metrics_bind_failure(exc):
-                    logger.info(
-                        "Metrics port %d already bound (another worker serves metrics)",
-                        settings.metrics_port,
-                    )
-                else:
-                    raise
-
-        metrics_server_task = asyncio.create_task(_serve_metrics(metrics_server))
+        metrics_server_task = asyncio.create_task(serve_metrics(metrics_server, settings.metrics_port))
     elif settings.metrics_enabled:
         logger.warning("Metrics endpoint enabled but prometheus-client is not installed")
 
@@ -391,6 +354,8 @@ async def lifespan(app: FastAPI):
         await api_key_limit_reset_scheduler.stop()
         await seat_quota_scheduler.stop()
         await usage_scheduler.stop()
+        if not await shutdown_state.settle_exchanges(shutdown_state.EXCHANGE_SETTLE_S):
+            logger.warning("Shutdown timed out with %d token exchanges pending", shutdown_state.get_exchanges())
         try:
             await close_codex_pool()
             await close_http_client()

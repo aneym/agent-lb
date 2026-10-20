@@ -128,7 +128,7 @@ plist: dict[str, Any] = {
     "ProcessType": "Interactive",
     "Nice": existing.get("Nice") if type(existing.get("Nice")) is int else -10,
 
-    "ExitTimeOut": existing.get("ExitTimeOut") if type(existing.get("ExitTimeOut")) is int else graceful_shutdown + 30,
+    "ExitTimeOut": graceful_shutdown + 120,
     "StandardOutPath": f"{log_dir}/agent-lb.out.log",
     "StandardErrorPath": f"{log_dir}/agent-lb.err.log",
     "EnvironmentVariables": env,

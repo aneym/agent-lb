@@ -142,6 +142,7 @@ async def internal_drain_status(request: Request) -> HealthCheckResponse:
             "draining": str(shutdown_state.is_draining()).lower(),
             "bridge_drain_active": str(shutdown_state.is_bridge_drain_active()).lower(),
             "in_flight": str(shutdown_state.get_in_flight()),
+            "token_exchanges": str(shutdown_state.get_exchanges()),
         },
     )
 

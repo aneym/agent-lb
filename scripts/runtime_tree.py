@@ -210,6 +210,31 @@ def apply(paths: Paths, *, manage_static: bool) -> None:
         raise RuntimeError(f"rsync into runtime rc={done.returncode}")
 
 
+def apply_live(paths: Paths, rels: list[str], deleted: list[str]) -> None:
+    for rel in [*rels, *deleted]:
+        target = paths.runtime / rel
+        if Path(rel).is_absolute() or ".." in Path(rel).parts or ".venv" in Path(rel).parts:
+            raise RuntimeError(f"unsafe live path: {rel}")
+        if not target.parent.resolve().is_relative_to(paths.runtime.resolve()):
+            raise RuntimeError(f"live path escapes runtime: {rel}")
+    if rels:
+        done = subprocess.run(
+            ["rsync", "-a", "--checksum", "--files-from=-", f"{paths.stage}/", f"{paths.runtime}/"],
+            input="\n".join(rels) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if done.returncode:
+            raise RuntimeError(f"live rsync rc={done.returncode}: {done.stderr.strip()[-200:]}")
+    for rel in sorted(deleted, key=lambda name: name.count("/"), reverse=True):
+        target = paths.runtime / rel
+        if target.is_dir() and not target.is_symlink():
+            target.rmdir()
+        else:
+            target.unlink(missing_ok=True)
+
+
 def backup(paths: Paths, label: str) -> Path:
     dest = paths.backups / f"{label}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
     (dest / "runtime").mkdir(parents=True, exist_ok=True)
