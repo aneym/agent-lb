@@ -43,7 +43,7 @@ for name in "${BUNDLE_NAMES[@]}"; do
     exit 1
   fi
 done
-if [[ ! -f "$POLICY_SOURCE/ROUTING.md" || ! -x "$POLICY_SOURCE/verify-routing" || ! -x "$POLICY_INSTALLER" ]]; then
+if [[ ! -f "$POLICY_SOURCE/routing/core.md" || ! -x "$POLICY_SOURCE/verify-routing" || ! -x "$POLICY_INSTALLER" ]]; then
   echo "error: canonical coding-agent policy is incomplete at $POLICY_SOURCE" >&2
   exit 1
 fi

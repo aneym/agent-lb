@@ -13,6 +13,9 @@ import tempfile
 import time
 import types
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hook_output import cap_context, merge_objects  # type: ignore[missing-import]
+
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DEFAULT_TIMEOUT = 600.0
 SHELL = "/bin/sh"
@@ -23,6 +26,7 @@ REV_SHA = re.compile(r"[0-9a-f]{64}")
 
 
 FLOOR_SCRIPTS = (
+    "branch-guard.py",
     "rm-dynamic-deny",
     "stash-guard",
     "railway-vars-guard.sh",
@@ -1114,7 +1118,9 @@ def refuse_failed_floor(plan, result):
 def merge(event, plans, results):
 
     try:
-        return merge_answers(event, plans, results)
+        answer = merge_answers(event, plans, results)
+        answer.out = cap_context(answer.out, event)
+        return answer
     except Exception as exc:
         messages = []
         for plan, result in zip(plans, results):
@@ -1178,77 +1184,6 @@ def merge_answers(event, plans, results):
         return Result(errors[0].code if errors else 0, b"".join(plain), notice_err)
 
     return Result(0, encode(merge_objects(event, items, plain)), b"")
-
-
-def merge_objects(event, objects, plain):
-
-    merged, specific = {}, {}
-    contexts, reasons_by_rank, system = [], {}, []
-    decision, decision_reasons, stop_reasons = None, [], []
-    for obj in objects:
-        if not isinstance(obj, dict):
-            system.append(obj)
-            continue
-        for key, value in obj.items():
-            if key == "hookSpecificOutput" and isinstance(value, dict):
-                for skey, svalue in value.items():
-                    if skey == "additionalContext":
-                        if svalue not in (None, ""):
-                            contexts.append(str(svalue))
-                    elif skey == "permissionDecision":
-                        rank = _RANK.get(svalue, 0) if isinstance(svalue, str) else 0
-                        reasons_by_rank.setdefault(rank, [])
-                        if value.get("permissionDecisionReason"):
-                            reasons_by_rank[rank].append(text_of(value["permissionDecisionReason"]))
-                        if rank > _RANK.get(specific.get("permissionDecision"), 0):
-                            specific["permissionDecision"] = svalue
-                    elif skey in ("permissionDecisionReason", "hookEventName"):
-                        continue
-                    elif skey == "updatedInput":
-                        specific["updatedInput"] = svalue
-                    elif skey not in specific:
-                        specific[skey] = svalue
-            elif key == "continue":
-                merged["continue"] = merged.get("continue", True) and bool(value)
-                if value is False and obj.get("stopReason"):
-                    stop_reasons.append(str(obj["stopReason"]))
-            elif key == "stopReason":
-                continue
-            elif key == "systemMessage":
-                if value:
-                    system.append(str(value))
-            elif key == "decision":
-                if value == "block":
-                    decision = "block"
-                    if obj.get("reason"):
-                        decision_reasons.append(text_of(obj["reason"]))
-                elif decision is None:
-                    decision = value
-            elif key == "reason":
-                continue
-            elif key == "suppressOutput":
-                merged["suppressOutput"] = merged.get("suppressOutput", False) or bool(value)
-            elif key not in merged:
-                merged[key] = value
-    if event == "UserPromptSubmit":
-        contexts.extend(p.decode("utf-8", "replace").rstrip("\n") for p in plain)
-    if "permissionDecision" in specific:
-        reasons = reasons_by_rank.get(_RANK.get(specific["permissionDecision"], 0)) or []
-        if reasons:
-            specific["permissionDecisionReason"] = "\n".join(reasons)
-    if contexts:
-        specific["additionalContext"] = "\n".join(contexts)
-    if specific:
-        merged["hookSpecificOutput"] = dict([("hookEventName", event)] + list(specific.items()))
-    if stop_reasons:
-        merged["stopReason"] = "\n".join(stop_reasons)
-    if system:
-        merged["systemMessage"] = "\n".join(system)
-    if decision is not None:
-        merged["decision"] = decision
-        if decision_reasons:
-            merged["reason"] = "\n".join(decision_reasons)
-    return merged
 
 
 def registry_candidates(rev=None):

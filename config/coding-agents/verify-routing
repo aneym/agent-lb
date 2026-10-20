@@ -26,40 +26,8 @@ FORBIDDEN = ("fable", "claude-planner", "astra")
 
 MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 GPT_ID = re.compile(r"^gpt-(\d+(?:\.\d+)*)-([a-z]+)$")
-MANAGED = (
-    ("computer-use", ".claude/agents/computer-use.md", "agents/computer-use.md"),
-    ("frontend-designer", ".claude/agents/frontend-designer.md", "agents/frontend-designer.md"),
-    ("planner", ".claude/agents/planner.md", "agents/planner.md"),
-    ("plan-reviewer", ".claude/agents/plan-reviewer.md", "agents/plan-reviewer.md"),
-    ("codex-sol", ".claude/agents/codex-sol.md", "agents/codex-sol.md"),
-    ("Explore", ".claude/agents/Explore.md", "agents/Explore.md"),
-    ("opus-seat", ".claude/agents/opus-seat.md", "agents/opus-seat.md"),
-    ("opus-seat-full", ".claude/agents/opus-seat-full.md", "agents/opus-seat-full.md"),
-    ("cursor-seat", ".claude/agents/cursor-seat.md", "agents/cursor-seat.md"),
-    ("devin-seat", ".claude/agents/devin-seat.md", "agents/devin-seat.md"),
-    ("codex-verifier", ".claude/agents/codex-verifier.md", "agents/codex-verifier.md"),
-    ("codex-test-runner", ".claude/agents/codex-test-runner.md", "agents/codex-test-runner.md"),
-    ("verifier", ".claude/agents/verifier.md", "agents/verifier.md"),
-    ("gpt-implementer", ".claude/agents/gpt-implementer.md", "agents/gpt-implementer.md"),
-    ("gpt-explorer", ".claude/agents/gpt-explorer.md", "agents/gpt-explorer.md"),
-    ("sol-consult", ".claude/agents/sol-consult.md", "agents/sol-consult.md"),
-    ("astra-consult", ".claude/agents/astra-consult.md", "agents/astra-consult.md"),
-    ("fable-orchestrator", ".claude/agents/fable-orchestrator.md", "agents/fable-orchestrator.md"),
-    ("sonnet-implementer", ".claude/agents/sonnet-implementer.md", "agents/sonnet-implementer.md"),
-    ("effort-xhigh", ".claude/agents/effort-xhigh.md", "agents/effort-xhigh.md"),
-    ("host-relay", ".claude/agents/host-relay.md", "agents/host-relay.md"),
-    ("gpt-implementer-local", ".claude/agents/gpt-implementer-local.md", "agents/gpt-implementer-local.md"),
-    ("gpt-explorer-local", ".claude/agents/gpt-explorer-local.md", "agents/gpt-explorer-local.md"),
-    ("sonnet-implementer-local", ".claude/agents/sonnet-implementer-local.md", "agents/sonnet-implementer-local.md"),
-    ("verifier-local", ".claude/agents/verifier-local.md", "agents/verifier-local.md"),
-    ("opus-seat-local", ".claude/agents/opus-seat-local.md", "agents/opus-seat-local.md"),
-    ("codex-sol-local", ".claude/agents/codex-sol-local.md", "agents/codex-sol-local.md"),
-    ("codex-test-runner-local", ".claude/agents/codex-test-runner-local.md", "agents/codex-test-runner-local.md"),
-    ("computer-use-local", ".claude/agents/computer-use-local.md", "agents/computer-use-local.md"),
-    ("seat-guard", ".claude/hooks/seat-guard.py", "hooks/seat-guard.py"),
-    ("subagent-closeout", ".claude/hooks/subagent-closeout.py", "hooks/subagent-closeout.py"),
-)
-failures: list[str] = []
+from policy_verification import MANAGED  # type: ignore[missing-import]
+
 
 
 def check(condition: bool, message: str) -> None:
@@ -104,9 +72,11 @@ def frontmatter_model(text: str) -> str | None:
 settings = {}
 if not SOURCE_ONLY:
 
-    for name in ("ROUTING.md", "claude-adapter.md", "routing-table.json"):
+    for name in ("claude-adapter.md", "routing-table.json"):
         check(read(CANONICAL / name) == read(SOURCE / name) != "", f"{CANONICAL / name} matches {SOURCE / name}")
 
+    for section in sorted((SOURCE / "routing").glob("*.md")):
+        check(read(HOME / ".claude/docs/models" / section.name) == read(section), f"installed routing section matches {section.name}")
     claude_doc = HOME / ".claude" / "CLAUDE.md"
     claude_text = read(claude_doc)
     check(
@@ -326,12 +296,13 @@ factory(
         "when": "complex or risky plans, before the work is split"},
     "complex plans get astra-consult/astra-latest/openai/high",
 )
-routing_text = read(SOURCE / "ROUTING.md")
+routing_sections = sorted((SOURCE / "routing").glob("*.md"))
+routing_text = "\n".join(read(path) for path in routing_sections)
 factory(
     "routing-doc",
-    bool(routing_text) and len(routing_text.splitlines()) <= 200
+    bool(routing_text) and all(path.stat().st_size <= 20000 for path in routing_sections)
     and all(re.search(r"20\d\d-\d\d-\d\d", line) for line in routing_text.splitlines() if line.startswith("## ")),
-    "ROUTING.md headings are dated and document is at most 200 lines",
+    "routing section headings are dated and sections are below 20000 bytes",
 )
 seats = {entry.get("seat") for spec in classes.values() for entry in spec.get("chain", [])}
 seats.update(auditor.get("seat") for spec in classes.values()
@@ -640,11 +611,12 @@ def stale_reason(model, exempt=()):
 
 if SOURCE_ONLY:
     pinned_sources = [(path, read(path)) for path in sorted((SOURCE / "agents").glob("*.md"))]
-    pinned_sources += [(SOURCE / name, read(SOURCE / name)) for name in ("ROUTING.md", "claude-adapter.md")]
+    pinned_sources += [(SOURCE / name, read(SOURCE / name)) for name in ("claude-adapter.md",)]
 else:
     pinned_sources = [(path, read(path)) for path in sorted((HOME / ".claude" / "agents").glob("*.md"))]
-    pinned_sources += [(SOURCE / name, read(SOURCE / name)) for name in ("ROUTING.md", "claude-adapter.md")]
+    pinned_sources += [(SOURCE / name, read(SOURCE / name)) for name in ("claude-adapter.md",)]
     pinned_sources += [(HOME / ".codex" / "AGENTS.md", read(HOME / ".codex" / "AGENTS.md"))]
+pinned_sources += [(path, read(path)) for path in routing_sections]
 stale = []
 for path, text in pinned_sources:
     for match in MODEL_PIN.finditer(text):
