@@ -1,26 +1,50 @@
 from __future__ import annotations
 
+import os
 import plistlib
-import subprocess
+import stat
+import tempfile
 from pathlib import Path
 
 from app.core.shutdown_budget import EXCHANGE_SETTLE_S as EXCHANGE_SETTLE_S
 from app.core.shutdown_budget import minimum_exit_timeout as minimum_exit_timeout
 
 
-def regenerate_plist(runtime: Path, plist: Path) -> None:
-    result = subprocess.run(
-        ["bash", str(runtime / "scripts/install-service.sh"), "--print"],
-        capture_output=True,
-        check=True,
-        timeout=30,
-    )
-    generated = plistlib.loads(result.stdout)
-    if int(generated.get("ExitTimeOut", 0)) < minimum_exit_timeout(generated["EnvironmentVariables"]):
-        raise RuntimeError("generated plist still has an insufficient ExitTimeOut")
-    temp = plist.with_suffix(".plist.tmp")
-    temp.write_bytes(result.stdout)
-    temp.replace(plist)
+def regenerate_plist(plist: Path) -> int:
+    existing = plistlib.loads(plist.read_bytes())
+    if not isinstance(existing, dict):
+        raise RuntimeError("existing plist has no usable ProgramArguments")
+    arguments = existing.get("ProgramArguments")
+    if not isinstance(arguments, list) or not arguments or not all(isinstance(arg, str) for arg in arguments):
+        raise RuntimeError("existing plist has no usable ProgramArguments")
+    env = {str(k): str(v) for k, v in existing.get("EnvironmentVariables", {}).items()}
+    required = minimum_exit_timeout(env)
+    updated = dict(existing)
+    updated["ExitTimeOut"] = max(int(existing.get("ExitTimeOut", 0)), required)
+    if updated["ProgramArguments"] != arguments:
+        raise RuntimeError("plist repair changed ProgramArguments")
+    if (
+        {k: v for k, v in updated.items() if k != "ExitTimeOut"}
+        != {k: v for k, v in existing.items() if k != "ExitTimeOut"}
+    ):
+        raise RuntimeError("plist repair changed unrelated fields")
+    if updated["ExitTimeOut"] < required:
+        raise RuntimeError("plist repair has an insufficient ExitTimeOut")
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=plist.parent, prefix=plist.name + ".", suffix=".tmp", delete=False) as f:
+            temp = Path(f.name)
+            f.write(plistlib.dumps(updated, sort_keys=True))
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(temp, stat.S_IMODE(plist.stat().st_mode))
+        os.replace(temp, plist)
+    except Exception:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+        raise
+    assert plistlib.loads(plist.read_bytes())["ProgramArguments"] == arguments
+    return updated["ExitTimeOut"]
 
 
 def parse_reaper_args(argv: list[str]) -> tuple[int, float, Path | None]:

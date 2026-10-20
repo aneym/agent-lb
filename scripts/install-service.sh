@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(realpath "$REPO_DIR")"
 BIN="$REPO_DIR/.venv/bin/agent-lb"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+PLIST="${AGENT_LB_INSTALL_PLIST:-$HOME/Library/LaunchAgents/$LABEL.plist}"
 LOG_DIR="$HOME/.agent-lb"
 PYTHON_BIN="${PYTHON_BIN:-$REPO_DIR/.venv/bin/python}"
 READY_TIMEOUT_SECONDS="${AGENT_LB_INSTALL_READY_TIMEOUT_SECONDS:-120}"
@@ -84,6 +84,8 @@ def _str_dict(value: Any, *, key: str) -> dict[str, str]:
 def _program_args(value: Any, *, bin_path: str) -> list[str]:
     if not isinstance(value, list) or not value:
         return [bin_path]
+    if Path(value[0]).name != "agent-lb":
+        return [str(arg) for arg in value]
     return [bin_path, *(str(arg) for arg in value[1:])]
 
 
