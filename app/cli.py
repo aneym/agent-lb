@@ -56,6 +56,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     from app.latency_cli import add_parser as add_latency_parser
 
     add_latency_parser(subparsers)
+    from app.profiles_cli import add_parser as add_profiles_parser
+
+    add_profiles_parser(subparsers)
 
     status = subparsers.add_parser(
         "status",
@@ -198,6 +201,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             from app.audit_tokens import run
 
         run(args)
+        return
+
+    if args.command in {"profiles", "reauth"}:
+        from app.profiles_cli import run_profiles, run_reauth
+
+        (run_profiles if args.command == "profiles" else run_reauth)(args)
         return
 
     if args.command == "latency":

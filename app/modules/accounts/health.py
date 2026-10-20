@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from app.core.browser_profiles import profile_for
 from app.core.config.settings import get_settings
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.schemas import AccountProblem
@@ -50,10 +51,16 @@ def account_problems(
                 AccountProblem(code="usage_stale", message=f"Last usage observation was {latest.isoformat()}.")
             )
     if account.status == AccountStatus.REAUTH_REQUIRED:
+        profile = profile_for(account.email)
+        command = (
+            f"agent-lb reauth {account.email} (profile {profile.dir})"
+            if profile
+            else f"agent-lb profiles add {account.email} --dir <chrome dir>, then agent-lb reauth {account.email}"
+        )
         problems.append(
             AccountProblem(
                 code="reauth_required",
-                message=f"Reauthentication required: {account.deactivation_reason or 'no reason recorded'}.",
+                message=f"Reauthentication required: {account.deactivation_reason or 'no reason recorded'}. Run: {command}.",
             )
         )
     return problems
