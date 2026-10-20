@@ -426,8 +426,12 @@ class OauthService(OAuthCallbackHandlers):
             if flow_id is not None and flow is None:
                 return
             if flow is None:
+                if self._store.state.status == "success":
+                    return
                 self._store.state.status = "error"
                 self._store.state.error_message = message
+                return
+            if flow.status == "success":
                 return
             self._store.set_flow_status_locked(flow, status="error", error_message=message)
 

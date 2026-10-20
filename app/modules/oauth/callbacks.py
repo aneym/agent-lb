@@ -99,6 +99,8 @@ class OAuthCallbackHandlers:
         async with self._store.lock:
             flow = self._store.get_flow_by_state_token_locked(state)
             verifier = flow.code_verifier if flow is not None else None
+            if flow is not None and flow.status == "success":
+                return self._html_response(_success_html())
 
         if error:
             await self._set_error(f"OAuth error: {error}", flow_id=flow.flow_id if flow is not None else None)

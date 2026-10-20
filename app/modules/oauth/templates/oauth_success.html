@@ -100,10 +100,10 @@
       let remaining = 3;
       const tick = () => {
         if (remaining <= 0) {
-          if (message) {
-            message.textContent = "Closing...";
-          }
           window.close();
+          if (message) {
+            message.textContent = "Signed in. You can close this tab.";
+          }
           return;
         }
         if (countdown) {
