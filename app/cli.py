@@ -59,6 +59,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     from app.profiles_cli import add_parser as add_profiles_parser
 
     add_profiles_parser(subparsers)
+    from app.subscriptions_cli import add_parser as add_subscriptions_parser
+
+    add_subscriptions_parser(subparsers)
 
     status = subparsers.add_parser(
         "status",
@@ -201,6 +204,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             from app.audit_tokens import run
 
         run(args)
+        return
+
+    if args.command == "subscriptions":
+        from app.subscriptions_cli import run as run_subscriptions
+
+        run_subscriptions(args)
         return
 
     if args.command in {"profiles", "reauth"}:

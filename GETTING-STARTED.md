@@ -121,6 +121,8 @@ each). Then connect them **one at a time**. If they're connecting multiple accou
 same provider, tell them to use a separate browser profile or a private window per account
 so they approve from the right login.
 
+After adding an account with a paid plan, record it with `agent-lb subscriptions set <email> --plan <plan> --renews-on YYYY-MM-DD --payment card|single-use|none`.
+
 ### Claude (Anthropic) — manual code paste-back
 
 ```bash
