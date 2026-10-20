@@ -1,6 +1,14 @@
 {
   "version": 2,
-  "policy_rev": "2026-10-20.1",
+  "policy_rev": "2026-10-20.2",
+  "mission_critical": ["plan", "lane", "scope", "spec", "contract", "architecture", "design", "review", "verdict", "judge", "audit", "plan-review", "synthesis", "orchestrator", "lane-tab", "ui-critical", "trust-boundary", "money-path"],
+  "spread": {"note": "AA 2026-10-20 TerminalBench: Sol 56%, Grok high 25%, low 16%; Grok $0 marginal", "min_headroom_percent": 15, "classes": {
+      "implement": [{"seat": "gpt-implementer", "model": "sol-latest", "effort": "medium", "pool": "openai-codex", "strength": 1.0}, {"seat": "grok-implementer", "model": "grok-latest", "effort": "high", "pool": "grok", "strength": 0.35}],
+      "mechanical": [{"seat": "grok-implementer", "model": "grok-latest-low", "effort": "low", "pool": "grok", "strength": 1.0}, {"seat": "gpt-implementer", "model": "sol-latest", "effort": "low", "pool": "openai-codex", "strength": 0.9}],
+      "explore": [{"seat": "gpt-explorer", "model": "sol-latest", "effort": "low", "pool": "openai-codex", "strength": 0.9}],
+      "research": [{"seat": "codex-sol", "model": "sol-latest", "effort": "high", "pool": "openai-codex", "strength": 1.0}],
+      "computer": [{"seat": "computer-use", "model": "sol-latest", "effort": "medium", "pool": "openai-codex", "strength": 1.0}]
+  }},
   "autocompact_window": {"tab": 300000, "lane": 300000, "box": 300000},
   "precedence": [
     "explicit",

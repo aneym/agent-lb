@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import route_cache
 from route_cache import HttpResult, _fixture_file
 from route_grok import constraint_choice, hands_refusal, hands_seat, rung_block, seat_defaults
+from route_spread import dispatch_choice
 from route_quota import degrade_alias, load_quota_policy, quota_swap_state, swapped_standard
 from route_storage import _parse_ts, atomic_write
 
@@ -2939,14 +2940,7 @@ def command_dispatch(args: argparse.Namespace) -> int:
                               "reason": f"explore draw {draw:.4f} < {cumulative:.4f}"}
                     break
             if choice is None:
-                reason = "standard"
-                if not explore.get("enabled"):
-                    reason = "standard (explore disabled)"
-                elif shares:
-                    reason = f"standard after draw {draw:.4f}"
-                choice = {"arm": "default", "arm_id": "standard", "seat": standard["seat"],
-                          "model_alias": standard["model"], "effort": standard.get("effort"), "pool": None,
-                          "propensity": round(1.0 - sum(share for _, share in shares), 6), "reason": reason}
+                choice = dispatch_choice(table, class_name, rng, pools_by_id(pools_doc), standard, explore, shares, draw)
         leases = (lambda: pools_doc.get("reservations")) if args.pools_file else pick_leases
         constrained, skipped = constraint_choice(table, class_name, pools_by_id(pools_doc), args.tag,
                                                  mode_state["mode"], ledger_path(), leases)
