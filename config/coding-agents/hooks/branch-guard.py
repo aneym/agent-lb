@@ -54,6 +54,16 @@ def commands(text, cwd, depth=0):
             unsafe = True
         git_index = next((i for i, word in enumerate(segment) if Path(word).name == "git"), None)
         if git_index is not None:
+            prefix_head = next((word for word in segment[:git_index] if "=" not in word), None)
+            if prefix_head is not None and Path(prefix_head).name not in {
+                "env",
+                "command",
+                "exec",
+                "sudo",
+                "nohup",
+                "time",
+            }:
+                continue
             args, where = segment[git_index + 1 :], cwd
             pre = segment[:git_index]
             if any(word in {"-C", "--chdir", "-D"} or word.startswith("--chdir=") for word in pre):
