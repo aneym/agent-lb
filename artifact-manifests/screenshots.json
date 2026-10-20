@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "origin": "https://github.com/aneym/agent-lb.git",
+  "source": "0cf2d88377b46f4f94d4d04675b2d3ef34d71680",
+  "tag": "archive/agent-lb/screenshots-20261020",
+  "paths": [
+    "docs/screenshots"
+  ],
+  "trees": {
+    "docs/screenshots": "8c59373b3dbc8cb33d01581b028a1eeb7a3e344b"
+  },
+  "archive_sha256": "0a6b8363bb9e9af67b9de6d42f4e83b3ca0494711bc5c5701392987384f5d8b2",
+  "bytes": 1907915,
+  "files": [
+    "screenshots-000.json"
+  ]
+}

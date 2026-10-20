@@ -1,0 +1,44 @@
+[
+  {
+    "path": "docs/screenshots/accounts-dark.jpg",
+    "sha256": "dbf8ba59e4ffee80a2f512a6859ec037eb3945e89e407878da3f67b839b85220",
+    "bytes": 287996,
+    "mode": 420
+  },
+  {
+    "path": "docs/screenshots/accounts.jpg",
+    "sha256": "f7145aee33414e52dab99fa061587578f3c0f740d5bd50ad7bf14e74b1c5fb49",
+    "bytes": 302927,
+    "mode": 420
+  },
+  {
+    "path": "docs/screenshots/dashboard-dark.jpg",
+    "sha256": "6d2cd5d64f1455e10a8d084d6dab5b9cf8f5bab2d67e3a10c14df4d9acf74e2a",
+    "bytes": 356836,
+    "mode": 420
+  },
+  {
+    "path": "docs/screenshots/dashboard.jpg",
+    "sha256": "cdde0daff4a0967b863d404c1fa15f3aa27ab0db7332c61dd7a10ea54244653b",
+    "bytes": 365483,
+    "mode": 420
+  },
+  {
+    "path": "docs/screenshots/login.jpg",
+    "sha256": "b7b81040c49d0e4f6c05a4f82a95d073189892bb358d5d4a61ebc0f65fb0c2b6",
+    "bytes": 72803,
+    "mode": 420
+  },
+  {
+    "path": "docs/screenshots/settings-dark.jpg",
+    "sha256": "9b0bcdaa01aee06d01b2f632dba3fb5d2b1dba4c00f2c03f7f6620e3ea31efb2",
+    "bytes": 255278,
+    "mode": 420
+  },
+  {
+    "path": "docs/screenshots/settings.jpg",
+    "sha256": "ffd73cd8fc38b9390beec9d836389606d9a273fdf87495e6e3f8f1bce74a335d",
+    "bytes": 266592,
+    "mode": 420
+  }
+]

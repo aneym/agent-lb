@@ -53,7 +53,7 @@ verification, or browser-profile work — say **"account operator"**. Repo-aware
 agents should use the `agent-lb-account-operator` skill and local
 `.agent-lb/account-profiles.json` registry for that work.
 
-| ![dashboard](docs/screenshots/dashboard.jpg) | ![accounts](docs/screenshots/accounts.jpg) |
+| ![dashboard](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/dashboard.jpg) | ![accounts](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/accounts.jpg) |
 | :------------------------------------------: | :----------------------------------------: |
 
 <details>
@@ -61,11 +61,11 @@ agents should use the `agent-lb-account-operator` skill and local
 
 |                  Settings                  |                Login                 |
 | :----------------------------------------: | :----------------------------------: |
-| ![settings](docs/screenshots/settings.jpg) | ![login](docs/screenshots/login.jpg) |
+| ![settings](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/settings.jpg) | ![login](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/login.jpg) |
 
 |                    Dashboard (dark)                    |                   Accounts (dark)                    |                   Settings (dark)                    |
 | :----------------------------------------------------: | :--------------------------------------------------: | :--------------------------------------------------: |
-| ![dashboard-dark](docs/screenshots/dashboard-dark.jpg) | ![accounts-dark](docs/screenshots/accounts-dark.jpg) | ![settings-dark](docs/screenshots/settings-dark.jpg) |
+| ![dashboard-dark](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/dashboard-dark.jpg) | ![accounts-dark](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/accounts-dark.jpg) | ![settings-dark](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/settings-dark.jpg) |
 
 </details>
 
