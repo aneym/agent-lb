@@ -1,0 +1,16 @@
+diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/codex.mjs
+--- a/plugins/codex/scripts/lib/codex.mjs
++++ b/plugins/codex/scripts/lib/codex.mjs
+@@ -1276,6 +1276,12 @@ function localSeatWritableRoots(cwd, sandbox) {
+   const relative = path.relative(laneRoot, resolved);
+   const roots = [
+     path.join(home, ".agent-rails", "factory", "admit"),
++    lanes,
++    ...fs.readdirSync(path.join(home, ".agent-rails", "agents"), { withFileTypes: true })
++      .filter((entry) => entry.isDirectory())
++      .map((entry) => path.join(home, ".agent-rails", "agents", entry.name, "state"))
++      .filter((directory) => canonical(directory) === directory && fs.existsSync(directory)),
++    path.join(home, ".agent-rails", "agents", "factory", "state"),
+     ...["sim-leases", "build-leases", "desktop-guard", "cua-display", "locks", "verify", "browser-sessions"]
+       .map((dir) => path.join(home, ".agent-rails", dir)),
+     path.join(home, ".cua", "herdr-space"), path.join(home, ".argent")

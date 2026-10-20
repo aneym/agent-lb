@@ -302,20 +302,6 @@ def lean_studio_refusal(subagent: str, prompt: str) -> str | None:
     return done.stdout.strip() or None if done.returncode == 1 else None
 
 
-def emit_lean_refusal(why: str) -> None:
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": "seat-guard: " + why,
-                }
-            }
-        )
-    )
-
-
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
@@ -440,10 +426,8 @@ def main() -> None:
             )
     lean = lean_studio_refusal(subagent, prompt)
     if lean:
-        record["lean_studio_refused"] = True
-        append(record, ledger)
-        emit_lean_refusal(lean)
-        return
+        record["lean_studio_warning"] = lean
+        advisories.append(lean)
     if warn_reason:
         record["warned"] = warn_reason
         append(record, ledger)
