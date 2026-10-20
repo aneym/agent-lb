@@ -1,9 +1,4 @@
 #!/bin/bash
-
-
-
-
-
 set -euo pipefail
 INPUT=$(cat) || { echo "BLOCKED: railway-vars-guard could not read the hook input (cat exit $?), so this call is refused." >&2; exit 2; }
 STATUS=0
@@ -14,31 +9,20 @@ import re
 import shlex
 import sys
 from pathlib import Path
-
 DENIAL = ('Railway destructive delete refused (destructive data floor): use a custody '
           "RAILWAY_TOKEN or RAILWAY_API_TOKEN, not the owner's CLI login.")
-
 WARNINGS = set()
 ARGV_DENIAL = 'Railway secret-looking argv detected (secret floor); use stdin or an env file.'
-
-
 def secret_warning(message):
     WARNINGS.add(message)
-
-
 TOKEN_NAMES = {'RAILWAY_TOKEN', 'RAILWAY_API_TOKEN'}
 READS = {'status', 'logs', 'list', 'whoami', 'version', 'help'}
 SECRET_NAME = re.compile(r'(?:token|secret|password|passwd|api[_-]?key|authorization|bearer|credential)', re.I)
 SECRET_VALUE = re.compile(r'''(?:^|[=\s'"])(?:bearer\s+|(?:sk|rk|pk|ghp|gho|github_pat|xox[baprs])[-_]|eyJ[A-Za-z0-9_-]+\.)''', re.I)
 ASSIGNMENT = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', re.S)
-
 KV_DENIAL = "railway variables read prints values (secret floor)."
 PRINTENV_DENIAL = "railway run printenv/env prints every secret (secret floor)."
-
-
 OPTION_VALUES = {'--environment', '-e', '--service', '-s', '--project', '-p'}
-
-
 def variable_write(args):
     i, positional = 0, None
     while i < len(args):
@@ -53,8 +37,6 @@ def variable_write(args):
             positional = arg
         i += 1
     return positional in {'set', 'delete', 'remove'}
-
-
 def run_value_output(args):
     while args:
         if ASSIGNMENT.match(args[0]):
@@ -70,7 +52,6 @@ def run_value_output(args):
             if flag == '--':
                 break
             if flag in {'-n', '-u', '-g', '--user', '--group', '--adjustment'}:
-
                 if flag != '-n' or name == 'nice':
                     i += 1
         args = args[i:]
@@ -106,14 +87,8 @@ def run_value_output(args):
                             segment.append(word)
                 except ValueError:
                     return True
-
-
     return False
-
-
 def production_environment(args):
-
-
     for i, arg in enumerate(args):
         value = None
         if arg in {'--environment', '-e'} and i + 1 < len(args):
@@ -125,10 +100,7 @@ def production_environment(args):
         if value is not None and value.casefold() in {'production', 'prod'}:
             return True
     return False
-
-
 def substitutions(text, heredoc=False):
-
     result, out = [], []
     i, quote = 0, None
     while i < len(text):
@@ -168,8 +140,6 @@ def substitutions(text, heredoc=False):
         out.append(c)
         i += 1
     return ''.join(out), result
-
-
 def heredocs(command):
     lines = command.splitlines(keepends=True)
     out, nested, pending = [], [], []
@@ -194,11 +164,8 @@ def heredocs(command):
                 quote = None if quote else c
             elif not quote:
                 if c == '#' and (i == 0 or line[i - 1] in ' \t;|&()'):
-
-
                     cleaned.append('\n' if line.endswith('\n') else '')
                     break
-
                 fd = re.match(r'\d+(?=[<>])', line[i:])
                 if fd and (i == 0 or line[i - 1] in ' \t;|&()'):
                     i += len(fd[0])
@@ -220,17 +187,11 @@ def heredocs(command):
             i += 1
         out.append(''.join(cleaned))
     return ''.join(out), nested
-
-
 def expand(value, env):
     value = re.sub(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)',
                    lambda m: env.get(m[1] or m[2], ''), value)
     return '' if '$' in value else value
-
-
 def check(command, inherited, value_output=False):
-
-
     if not value_output and not re.search(r'\brailway\b', command):
         return ''
     command, nested = heredocs(command)
@@ -254,27 +215,28 @@ def check(command, inherited, value_output=False):
         if lexer.token:
             words.append(lexer.token)
     segments, current = [], []
-    names_only_sources = set()
-    redirected = False
+    names = set()
+    redir = False
     i = 0
     while i < len(words):
         word = words[i]
         if re.fullmatch(r'[<>]+|[<>]+&', word):
-            redirected = True
+            redir = True
             i += 2
             continue
         if word and all(c in ';&|()\n' for c in word):
-            if (parsed and word == '|' and not redirected and words[i + 1:i + 3] == ['jq', 'keys']
-                    and (i + 3 == len(words) or words[i + 3] in {';', '\n', '&&', '||'})):
-                names_only_sources.add(len(segments))
+            if (parsed and JQ and word == '|' and not redir and len(words) == i + 3
+                    and re.fullmatch(r'''\s*/(?:usr|opt/homebrew)/bin/jq\s+(?:keys|'keys'|"keys")\s*''',
+                        command.rsplit('|', 1)[-1])):
+                names.add(len(segments))
             segments.append(current)
             current = []
-            redirected = False
+            redir = False
         else:
             current.append(word)
         i += 1
     segments.append(current)
-    for segment_index, words in enumerate(segments):
+    for index, words in enumerate(segments):
         env = dict(inherited)
         i = 0
         while i < len(words):
@@ -338,8 +300,6 @@ def check(command, inherited, value_output=False):
                     elif name == 'sudo' and not option.startswith('--'):
                         for j, flag in enumerate(option[1:], 1):
                             if '-' + flag in operands:
-
-
                                 if j == len(option) - 1:
                                     i += 1
                                 break
@@ -383,7 +343,6 @@ def check(command, inherited, value_output=False):
                         secret_warning(ARGV_DENIAL)
                     if SECRET_VALUE.search(arg):
                         secret_warning(ARGV_DENIAL)
-
                 command_args = list(args)
                 help_requested = False
                 while command_args and command_args[0].startswith('-'):
@@ -417,12 +376,10 @@ def check(command, inherited, value_output=False):
                     break
                 if subcommand in {'variables', 'variable', 'vars'}:
                     write = variable_write(command_args[1:])
-
-
                     if (not write or 'get' in command_args[1:]
                             or any(arg in {'--kv', '--json'} or re.fullmatch(r'-[^-]*k[^-]*', arg)
                                    for arg in command_args[1:])):
-                        if not (segment_index in names_only_sources and '--json' in command_args
+                        if not (index in names and '--json' in command_args
                                 and not any(arg in {'--kv', '-k'} for arg in command_args)):
                             secret_warning(KV_DENIAL)
                         break
@@ -442,11 +399,8 @@ def check(command, inherited, value_output=False):
                 if destructive and not any(env.get(key) for key in TOKEN_NAMES):
                     return DENIAL
                 break
-
             break
     return ''
-
-
 command = ''
 try:
     payload = json.loads(os.environ['RAILWAY_GUARD_INPUT'])
@@ -454,9 +408,11 @@ try:
     command = tool_input.get('command', '') if isinstance(tool_input, dict) else ''
     if not isinstance(command, str):
         command = ''
+    JQ = not re.search(
+        r'\b(?:function|alias|enable|builtin|command)\b|'
+        r'\bhash\b[^;&|\n]*\s-p\b|[^\s;&|()]+\s*\(\s*\)', command)
     denied = check(command, dict(os.environ))
 except Exception as error:
-
     destructive = re.search(r'\brailway\s+(?:(?:service|volume|environment)\s+)?(?:delete|down)\b', command)
     secret_surface = re.search(r'\b(?:railway|variables|variable|vars)\b',
                                command or os.environ.get('RAILWAY_GUARD_INPUT', ''))
