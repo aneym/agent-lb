@@ -83,6 +83,7 @@ POLICY_FILES = (
     "harness_mcp.py",
     "policy_inventory.py",
     "policy_verification.py",
+    "routing-legacy-sha256.json",
     "verify-routing",
     "routing-table.json",
     "quota-swap.json",
@@ -1454,7 +1455,11 @@ def sync_policy_boxes(home: Path) -> None:
             if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", host):
                 raise ValueError("invalid box name")
             subprocess.run(
-                [*ssh, host, 'mkdir -p "$HOME/.agent-lb/bin" "$HOME/.agent-lb/managed/coding-agents"'],
+                [
+                    *ssh,
+                    host,
+                    'mkdir -p "$HOME/.agent-lb/bin" "$HOME/.agent-lb/managed/coding-agents" "$HOME/.claude/docs/models"',
+                ],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -1463,6 +1468,7 @@ def sync_policy_boxes(home: Path) -> None:
             for sources, destination in (
                 (bins, ".agent-lb/bin/"),
                 (tables, ".agent-lb/managed/coding-agents/"),
+                (list((home / ".claude/docs/models").glob("*.md")), ".claude/docs/models/"),
             ):
                 subprocess.run(
                     ["rsync", "-az", "-e", shlex.join(ssh), *(str(path) for path in sources), f"{host}:{destination}"],
@@ -1935,6 +1941,7 @@ def main() -> int:
             policy_link_target = os.readlink(policy_dir)
         if replace_policy_link or policy_dir.resolve() != source:
             policy_sources = [Path(name) for name in POLICY_FILES]
+            policy_sources += [path.relative_to(source) for path in sorted((source / "routing").glob("*.md"))]
             policy_sources += [path.relative_to(source) for path in sorted((source / "agents").glob("*.md"))]
 
             policy_sources += [
