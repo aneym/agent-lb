@@ -275,13 +275,13 @@ These rules are intentionally lightweight. They don't require:
 ## Tests
 
 - **Kept-floor guards** live under `tests/floor/`.
-- **Integration tests** live under `tests/integration/` and may spin up the
-  app, hit local sockets, or use fixtures that mimic upstream.
-- New behavior and endpoints need integration or end-to-end coverage.
-- Run a focused subset with:
+- **End-to-end tests** live under `tests/e2e/`.
+- No unit or in-process integration tests before launch (2026-10-19). Prove
+  new behavior through the running app, HTTP, a CLI subprocess or a real install.
+- Run the floor with:
 
 ```bash
-uv run pytest tests/integration/test_request_logs_options_api.py -q
+uv run pytest tests/floor -q
 ```
 
 ## Security issues

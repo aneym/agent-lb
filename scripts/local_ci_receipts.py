@@ -10,7 +10,7 @@ from typing import Any, cast
 
 SCHEMA_VERSION = 1
 
-PG_TARGETS = {"test-postgres", "migration-check-postgres"}
+PG_TARGETS = {"migration-check-postgres"}
 
 IMAGE_TARGETS = {"docker"}
 
@@ -18,10 +18,7 @@ BASELINE_TARGETS = {
     "frontend-build",
     "lint",
     "test-floor",
-    "test-integration-core",
-    "test-integration-bridge",
     "test-e2e",
-    "test-postgres",
     "migration-check",
     "migration-check-postgres",
     "package",

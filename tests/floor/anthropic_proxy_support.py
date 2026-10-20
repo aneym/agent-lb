@@ -53,7 +53,7 @@ class _FakeContent:
         self._chunks = chunks
         self._delay_before_chunk = delay_before_chunk or {}
 
-    async def iter_chunked(self, _: int) -> AsyncIterator[bytes]:
+    async def iter_chunked(self, size: int) -> AsyncIterator[bytes]:
         for index, chunk in enumerate(self._chunks):
             delay = self._delay_before_chunk.get(index)
             if delay:

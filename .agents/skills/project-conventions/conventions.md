@@ -66,7 +66,7 @@ app/
 ## 4. Testing / TC
 
 - Add or update tests whenever contracts change (field names/types, response formats, default values).
-- Keep unit tests under `tests/unit` and integration tests under `tests/integration` using existing markers.
+- No unit tests: kept-floor guards live under `tests/floor` and end-to-end tests under `tests/e2e`.
 - Tests should assert public behavior (API responses, service outputs) rather than internal implementation details.
 - Use fixtures for DB/session setup; do not introduce network calls outside the test server stubs.
 - Prefer deterministic inputs (fixed timestamps, explicit payloads) to avoid flaky tests.

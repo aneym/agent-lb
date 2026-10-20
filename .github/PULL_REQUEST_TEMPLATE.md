@@ -55,12 +55,12 @@ Change directory: <!-- openspec/changes/<change>/ -->
 
 <!--
 How did you verify this works? Paste the commands you ran and the relevant outputs.
-Required: integration or end-to-end coverage for new behavior.
+Required: end-to-end proof for new behavior.
 -->
 
 ```
 # uv run pytest tests/floor -q
-# uv run pytest tests/integration/test_<area>.py -q
+# uv run pytest tests/e2e -q
 ```
 
 ## Screenshots / output

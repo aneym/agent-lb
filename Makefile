@@ -6,10 +6,6 @@ CI_BASE_REF ?= origin/main
 CI_HEAD_REF ?=
 CI_EVENT_PATH ?=
 PYTHON ?= .venv/bin/python
-POSTGRES_PYTEST_TARGETS := \
-	tests/integration/test_proxy_api_extended.py::test_proxy_stream_usage_limit_returns_http_error \
-	tests/integration/test_migration_lock_timeout.py \
-	tests/integration/test_federation_custody_races.py
 SHELL := /bin/bash
 
 .PHONY: help
@@ -19,7 +15,6 @@ help:
 	  '  make lint                    factory-lint lint, format and type checks' \
 	  '  make architecture-check      proxy architecture fitness ratchets' \
 	  '  make test-floor              kept-floor pytest guards, same as CI' \
-	  '  make test-integration-core   integration-core pytest slice' \
 	  '  make package                 build and verify sdist/wheel' \
 	  '  make startup-benchmark       record 5 isolated startup/ready samples' \
 	  '  make ci-fast                 lint/type/floor/package' \
@@ -39,33 +34,14 @@ lint:
 architecture-check:
 	$(PYTHON) scripts/check_proxy_architecture.py
 
-.PHONY: test-floor test-integration-core test-integration-bridge test-e2e test-postgres
+.PHONY: test-floor test-e2e
 test-floor:
 	uv sync --dev --frozen
 	PYTHONFAULTHANDLER=1 uv run pytest $(PYTEST_ARGS) tests/floor
 
-test-integration-core: frontend-build
-	uv sync --dev --frozen
-	PYTHONFAULTHANDLER=1 uv run pytest $(PYTEST_ARGS) tests/integration \
-	  --ignore=tests/integration/test_http_responses_bridge.py \
-	  --ignore=tests/integration/test_proxy_websocket_responses.py
-
-test-integration-bridge: frontend-build
-	uv sync --dev --frozen
-	PYTHONFAULTHANDLER=1 uv run pytest $(PYTEST_ARGS) -vv \
-	  tests/integration/test_http_responses_bridge.py \
-	  tests/integration/test_proxy_websocket_responses.py
-
 test-e2e: frontend-build
 	uv sync --dev --frozen
 	PYTHONFAULTHANDLER=1 uv run pytest $(PYTEST_ARGS) tests/e2e
-
-test-postgres:
-	@test -n "$(POSTGRES_TEST_DATABASE_URL)" || (echo "Set a disposable POSTGRES_TEST_DATABASE_URL"; exit 1)
-	uv sync --dev --frozen
-	AGENT_LB_TEST_DATABASE_URL="$(POSTGRES_TEST_DATABASE_URL)" \
-	  PYTHONFAULTHANDLER=1 \
-	  uv run pytest $(PYTEST_ARGS) $(POSTGRES_PYTEST_TARGETS)
 
 .PHONY: migration-check migration-check-postgres
 migration-check:
@@ -103,8 +79,8 @@ docker:
 ci-fast: lint test-floor package
 
 CI_TARGETS := frontend-build \
-	lint test-floor test-integration-core test-integration-bridge test-e2e \
-	test-postgres migration-check migration-check-postgres package docker \
+	lint test-floor test-e2e \
+	migration-check migration-check-postgres package docker \
 	menubar-build
 
 ci-targets:

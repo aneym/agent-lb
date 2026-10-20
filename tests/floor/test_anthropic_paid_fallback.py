@@ -9,7 +9,7 @@ from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal
 from app.dependencies import _proxy_repo_context
-from tests.integration.anthropic_proxy_support import (
+from tests.floor.anthropic_proxy_support import (
     ANTHROPIC_SSE_BYTES,
     _FakeResponse,
     _FakeResponseContext,

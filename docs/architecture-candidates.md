@@ -25,7 +25,7 @@ Interface: one stdlib-only module `clients/routing_policy.py` that both `app` an
 
 Deletion test today: deleting `app/core/routing_table.py` moves about 20 lines into two callers, so it is shallow. Deleting the proposed module would scatter path lookup and alias rules back into nine files, so it is deep.
 
-Slice: add `routing_policy.py` and move the readers in `clients/route`, `clients/seat` and both hooks onto it. Behavior is unchanged. Check: `uv run pytest -q tests/integration/test_route_quota_swap.py tests/integration/test_seat_lease.py tests/floor/test_policy_core.py tests/floor/test_seat_guard_quota_swap.py`
+Slice: add `routing_policy.py` and move the readers in `clients/route`, `clients/seat` and both hooks onto it. Behavior is unchanged. Check: `uv run pytest -q tests/floor/test_policy_core.py tests/floor/test_seat_guard_quota_swap.py`
 
 ## 2. Seat and route run record
 
@@ -37,7 +37,7 @@ Interface: `clients/run_record.py` with `RunLedger(path).append(event: dict) -> 
 
 Deletion test: the duplicated pairs show the logic already reappears in two callers. One module removes seven duplicate functions and pins one row format that ledger readers can trust.
 
-Slice: extract `run_record.py`, point both binaries at it, and delete the duplicates. Check: `uv run pytest -q tests/integration/test_seat_run_release.py tests/integration/test_seat_run_reservation.py tests/integration/test_route_reservations.py tests/integration/test_route_pick_leases.py`
+Slice: extract `run_record.py`, point both binaries at it, and delete the duplicates. Check: `make test-floor`
 
 ## 3. Anthropic request pipeline
 
@@ -49,7 +49,7 @@ Interface: `AnthropicGateway` with `messages(request, principal) -> StreamingRes
 
 Deletion test: deleting `anthropic_service.py` today would push stream retry, stall detection and quota eligibility into `api.py`, so it is deep inside. Its boundary leaks, though, and private names cross it. The slice closes the boundary rather than adding a layer.
 
-Slice: move the session-route claim and the two private helpers behind the gateway, and stop `api.py` importing `_`-prefixed names from `anthropic_service`. Check: `uv run python scripts/check_proxy_architecture.py && uv run pytest -q tests/integration/test_anthropic_proxy.py tests/integration/test_anthropic_session_routing.py`
+Slice: move the session-route claim and the two private helpers behind the gateway, and stop `api.py` importing `_`-prefixed names from `anthropic_service`. Check: `uv run python scripts/check_proxy_architecture.py && uv run pytest -q tests/floor/test_anthropic_cost_cap.py tests/floor/test_anthropic_paid_fallback.py`
 
 ## 4. Policy install and verify
 
@@ -73,7 +73,7 @@ Interface: per-module table declarations (`app/modules/<m>/tables.py`) registere
 
 Deletion test: deleting `migrate.py` would push lock, timeout and drift handling to every startup path, so it is deep. `models.py` as one file is shallow: it is a list, and splitting it by owner moves no logic.
 
-Slice: move the account, pool and team tables into their modules' `tables.py` with no schema change. Check: `uv run pytest -q tests/integration/test_migrations.py tests/integration/test_migration_lock_timeout.py`
+Slice: move the account, pool and team tables into their modules' `tables.py` with no schema change. Check: `make migration-check`
 
 ## Not ranked
 

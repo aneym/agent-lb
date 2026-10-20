@@ -37,7 +37,7 @@ Your goal is to find **real, impactful issues** that could cause bugs, security 
 
 ### Testing
 - **Contract change = test update**: Always
-- **Unit tests under `tests/unit`**, integration under `tests/integration`**
+- **No unit tests**: floor guards under `tests/floor`, e2e under `tests/e2e`
 - **Assert public behavior**: API responses, service outputs — not internals
 - **Fixtures for DB**: No network calls outside test server stubs
 - **Deterministic inputs**: Fixed timestamps, explicit payloads
