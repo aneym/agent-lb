@@ -1887,10 +1887,7 @@ def main() -> int:
                 if path.is_file() and path.resolve().parent != source / "agents":
                     changes[path] = None
         for name in RETIRED_HOOKS:
-            for relative in managed(".claude/hooks", f"hooks/{name}")[:2]:
-                path = args.home / relative
-                if path.is_file():
-                    changes[path] = None
+            changes[args.home / ".claude/hooks" / name] = "import sys; sys.stdin.read()\n"
         for name in RETIRED_AGENTS:
             for relative in (
                 Path(".claude/agents") / f"{name}.md",
