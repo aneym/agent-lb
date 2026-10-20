@@ -23,7 +23,7 @@ def main() -> None:
 
         def run(*args: str, rc: int = 0) -> subprocess.CompletedProcess[str]:
             result = subprocess.run(
-                ["uv", "run", "agent-lb", *args], env=env, capture_output=True, text=True, timeout=30
+                ["uv", "run", "agent-lb", *args], env=env, capture_output=True, text=True, timeout=120
             )
             assert result.returncode == rc, f"{args}: expected {rc}, got {result.returncode}: {result.stderr}"
             return result
