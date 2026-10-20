@@ -229,6 +229,7 @@ def effect(event, results):
 
 
 FLOOR_NAMES = (
+    "branch-guard.py",
     "rm-dynamic-deny",
     "stash-guard",
     "railway-vars-guard.sh",

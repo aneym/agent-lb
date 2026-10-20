@@ -1714,7 +1714,14 @@ def main() -> int:
                 changes[target] = desired
         core = (source / "routing/core.md").read_text()
         desired_models = MODELS_MARKER + " from routing/core.md; generated, do not edit. -->\n\n" + core
-        if models_text and not models_text.startswith(MODELS_MARKER):
+        kit_model = re.match(
+            r"^<!-- Generated installed copy: agent-plugin-kit@[0-9a-f]{40} rules/models\.md; edit the canonical source, not this file\. -->\n\n",
+            models_text,
+        )
+        canonical_kit_model = bool(kit_model and models_text[kit_model.end() :] == core)
+        if canonical_kit_model:
+            desired_models = models_text
+        if models_text and not models_text.startswith(MODELS_MARKER) and not canonical_kit_model:
             backup = (
                 args.home
                 / ".claude/ledgers"

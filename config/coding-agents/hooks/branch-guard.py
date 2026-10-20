@@ -114,6 +114,8 @@ def main():
         payload = json.load(sys.stdin)
         tool = payload.get("tool_input") or {}
         text = tool.get("command", "")
+        if not isinstance(text, str):
+            raise ValueError("command must be text")
         cwd = payload.get("cwd") or os.getcwd()
         for action, where in commands(text, cwd):
             state = first_checkout(where) if where else None
