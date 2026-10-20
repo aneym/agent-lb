@@ -260,3 +260,37 @@ def test_unbalanced_quotes_are_advisory_except_destructive(command, expected):
 def test_malformed_non_railway_input_fails_open(payload):
     result = subprocess.run(["/bin/bash", str(HOOK)], input=payload, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("secret_floor", [None, "0", "1"])
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        ("jq() { cat; }; railway variables --json | jq keys", 2),
+        ("railway variables --json | jq keys", 2),
+        ("railway variables --json | /tmp/jq keys", 2),
+        ("railway variables --json | ./jq keys", 2),
+        ("alias jq=cat; railway variables --json | /usr/bin/jq keys", 2),
+        ("other() { cat; }; railway variables --json | /usr/bin/jq keys", 2),
+        ("function other { cat; }; railway variables --json | /usr/bin/jq keys", 2),
+        ("enable -f /tmp/jq jq; railway variables --json | /usr/bin/jq keys", 2),
+        ("hash -p /tmp/jq jq; railway variables --json | /usr/bin/jq keys", 2),
+        ("builtin alias jq=cat; railway variables --json | /usr/bin/jq keys", 2),
+        ("command alias jq=cat; railway variables --json | /usr/bin/jq keys", 2),
+        ("railway variables --json | /opt/homebrew/bin/jq 'keys, .'", 2),
+        ("railway variables --json | /usr/bin/jq keys .", 2),
+        ("railway variables --json | /usr/bin/jq keys; echo done", 2),
+        ("railway variables --json | /usr/bin/jq keys > names", 2),
+        ("railway variables --kv", 2),
+        ("railway variables --json | /opt/homebrew/bin/jq keys", 0),
+        ("railway variables --json | /usr/bin/jq 'keys'", 0),
+        ('railway variables --json | /usr/bin/jq "keys"', 0),
+        ("railway status", 0),
+    ],
+)
+def test_names_only_requires_absolute_jq_without_shell_overrides(command, expected, secret_floor):
+    tokens = {} if secret_floor is None else {"RAILWAY_SECRET_FLOOR": secret_floor}
+    result = invoke(command, **tokens)
+    assert result.returncode == expected, result.stderr
+    if expected == 2:
+        assert "secret floor" in result.stderr
