@@ -137,7 +137,7 @@ def plist_budget(root: Path) -> None:
     home = root / "home"
     plist = home / "Library/LaunchAgents/com.aneyman.agent-lb.plist"
     plist.parent.mkdir(parents=True)
-    env = {**os.environ, "HOME": str(home), "PYTHON_BIN": sys.executable}
+    env = {**os.environ, "HOME": str(home), "PYTHON_BIN": sys.executable, "AGENT_LB_INSTALL_PLIST": str(plist)}
     for prior, expected in ((330, 420), (900, 900)):
         plist.write_bytes(
             plistlib.dumps(
@@ -154,7 +154,62 @@ def plist_budget(root: Path) -> None:
         generated = plistlib.loads(output.encode())
         require(generated["ExitTimeOut"] == expected, f"wrong ExitTimeOut for {prior}: {generated['ExitTimeOut']}")
         require(plistlib.loads(plist.read_bytes())["ExitTimeOut"] == prior, "--print changed the installed plist")
+    wrapper = ["/bin/bash", str(home / ".agent-lb/bin/run-agent-lb.sh"), "--host", "127.0.0.1", "--port", "2457"]
+    for original, expected_args in (
+        (wrapper, wrapper),
+        (["/old/.venv/bin/agent-lb", "--port", "2457"], [str(REPO.resolve() / ".venv/bin/agent-lb"), "--port", "2457"]),
+    ):
+        plist.write_bytes(plistlib.dumps({"ProgramArguments": original}))
+        before = plist.read_bytes()
+        output = run(["bash", str(REPO / "scripts/install-service.sh"), "--print"], cwd=root, env=env)
+        require(plistlib.loads(output.encode())["ProgramArguments"] == expected_args, "launcher arguments changed")
+        require(plist.read_bytes() == before, "--print changed the installed plist")
     print("ok: plist generation repairs 330 to 420 and preserves operator timeout 900")
+
+
+def regenerate_budget(root: Path) -> None:
+    plist = root / "regen/com.aneyman.agent-lb.plist"
+    plist.parent.mkdir()
+    existing = {
+        "Label": "com.aneyman.agent-lb",
+        "ProgramArguments": [
+            "/bin/bash", str(root / "home/.agent-lb/bin/run-agent-lb.sh"),
+            "--host", "127.0.0.1", "--port", "2457",
+        ],
+        "WorkingDirectory": str(root),
+        "KeepAlive": True,
+        "RunAtLoad": True,
+        "ExitTimeOut": 330,
+        "EnvironmentVariables": {
+            "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN": "300",
+            "AGENT_LB_SHUTDOWN_DRAIN_TIMEOUT_SECONDS": "30",
+        },
+    }
+    plist.write_bytes(plistlib.dumps(existing))
+    code = (
+        "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+        "from scripts.restart_budget import regenerate_plist; print(regenerate_plist(Path(sys.argv[2])))"
+    )
+    cmd = [sys.executable, "-c", code, str(REPO), str(plist)]
+    require(run(cmd, cwd=root) == "420", "regeneration did not return 420")
+    updated = plistlib.loads(plist.read_bytes())
+    require(updated["ExitTimeOut"] == 420, "regeneration did not repair timeout")
+    require(updated["ProgramArguments"] == existing["ProgramArguments"], "regeneration changed launcher")
+    require(
+        {k: v for k, v in updated.items() if k != "ExitTimeOut"}
+        == {k: v for k, v in existing.items() if k != "ExitTimeOut"},
+        "regeneration changed unrelated fields",
+    )
+    before = plist.read_bytes()
+    require(run(cmd, cwd=root) == "420", "repeat regeneration did not return 420")
+    require(plist.read_bytes() == before, "repeat regeneration changed bytes")
+    plist.write_bytes(plistlib.dumps({"ExitTimeOut": 330}))
+    before = plist.read_bytes()
+    refused = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=120)
+    require(refused.returncode != 0, "regeneration accepted missing ProgramArguments")
+    require("existing plist has no usable ProgramArguments" in refused.stderr, "unexpected refusal reason")
+    require(plist.read_bytes() == before, "refused regeneration changed bytes")
+    print("ok: regenerate_plist 330->420 preserves ProgramArguments and refuses unusable plists")
 
 
 def main() -> int:
@@ -162,6 +217,7 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="runtime-follow-check-") as temp:
             exercise(Path(temp))
             plist_budget(Path(temp))
+            regenerate_budget(Path(temp))
     except (AssertionError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"FAIL runtime-follow: {exc}", file=sys.stderr)
         return 1

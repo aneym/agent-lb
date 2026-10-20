@@ -1120,7 +1120,7 @@ def run(args) -> int:
         try:
             if SANDBOX_ROOT is not None:
                 raise RuntimeError("regenerate sandbox plist")
-            regenerate_plist(RUNTIME, PLIST)
+            regenerate_plist(PLIST)
             args.reload_plist = True
             say("plist repaired; reload")
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
