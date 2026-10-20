@@ -98,7 +98,7 @@ def rails_target(words):
     return 'agent-rails' in os.environ.get('HOOK_CWD', '') + ' ' + text
 
 match = re.search(r'\s+# alex-approval:\s*(\S+)\s*$', text)
-if match:
+if match and not re.search(r'\brailway\b', text):
     path = os.path.expanduser(match[1].replace('${HOME}', os.path.expanduser('~')).replace('$HOME', os.path.expanduser('~')))
     root = os.path.expanduser('~/.open-factory/approvals')
     if (os.path.dirname(path) == root and re.fullmatch(r'alex-.*\.md', os.path.basename(path))
@@ -224,6 +224,15 @@ def inspect(source, inherited, depth=0):
                     if result:
                         return result
                     break
+        if name in ('npx', 'bunx'):
+            args = words[1:]
+            while args and args[0] in ('--yes', '-y', '--no-install', '--bun', '--'):
+                args.pop(0)
+            if args and re.fullmatch(r'(?:@railway/cli|railway)(?:@[^/]+)?', args[0]):
+                words = ['railway', *args[1:]]
+                name = 'railway'
+        if name == 'railway' and (words[1:] in (['--version'], ['--help'], ['-V'], ['-h']) or words[1:2] == ['help']):
+            continue
         if name == 'railway' and rails_target(words):
             return RAILS_FLOOR
         if name in providers:
