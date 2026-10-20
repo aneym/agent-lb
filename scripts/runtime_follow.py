@@ -186,6 +186,7 @@ def tick(paths: Paths, *, force: bool) -> int:
     state = load(paths)
     now = time.time()
     state["ticked_at"] = utc()
+    save(paths, state)
     try:
         return step(paths, state, now, force=force)
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
