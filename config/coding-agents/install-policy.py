@@ -96,48 +96,17 @@ LEGACY_HEADINGS = (
     "Orchestration — Fable architects, the fleet executes",
 )
 MODELS_FULL = Path(".claude/docs/models-full.md")
-CORE_LINE = re.compile(r"<!-- core:(begin|end) ([a-z0-9][a-z0-9-]*) -->")
-
-
-def split_core(text: str) -> tuple[str | None, str]:
-    blocks: list[list[str]] = []
-    full: list[str] = []
-    names: set[str] = set()
-    open_name: str | None = None
-    for number, line in enumerate(text.splitlines(keepends=True), 1):
-        stripped = line.rstrip("\r\n")
-        if "<!-- core:" not in stripped:
-            full.append(line)
-            if open_name is not None:
-                blocks[-1].append(line)
-            continue
-        match = CORE_LINE.fullmatch(stripped)
-        if not match:
-            raise ValueError(f"line {number}: malformed core marker {stripped!r}")
-        kind, name = match.groups()
-        if kind == "begin":
-            if open_name is not None:
-                raise ValueError(f"line {number}: core block {name!r} opens inside {open_name!r}")
-            if name in names:
-                raise ValueError(f"line {number}: core block {name!r} is not unique")
-            names.add(name)
-            open_name = name
-            blocks.append([])
-        else:
-            if open_name != name:
-                raise ValueError(f"line {number}: core:end {name!r} does not close {open_name!r}")
-            open_name = None
-    if open_name is not None:
-        raise ValueError(f"core block {open_name!r} is never closed")
-    if not blocks:
-        return None, "".join(full)
-    return "\n".join("".join(block).strip("\r\n") + "\n" for block in blocks), "".join(full)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--print", action="store_true", dest="preview")
+    parser.add_argument(
+        "--preserve-claude-md",
+        action="store_true",
+        help="Do not read, validate, checkpoint or write personal Claude instructions",
+    )
     parser.add_argument("--uninstall", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--autocompact-only", action="store_true")
@@ -1570,7 +1539,9 @@ def main() -> int:
     claude_path = args.home / ".claude" / "CLAUDE.md"
     codex_path = args.home / ".codex" / "AGENTS.md"
     template = (source / "claude-adapter.md").read_text()
-    originals = {path: read_text(path) for path in (claude_path, codex_path)}
+    originals = {path: read_text(path) for path in (codex_path,) if path != claude_path}
+    if not args.preserve_claude_md:
+        originals[claude_path] = read_text(claude_path)
     settings_path = args.home / ".claude" / "settings.json"
     settings_text = read_text(settings_path)
     try:
@@ -1613,17 +1584,18 @@ def main() -> int:
 
     try:
         desired_docs = {
-            claude_path: (
-                uninstall_adapter(originals[claude_path], claude_path)
-                if args.uninstall
-                else install_adapter(originals[claude_path], template, claude_path)
-            ),
             codex_path: (
                 uninstall_adapter(originals[codex_path], codex_path)
                 if args.uninstall
                 else install_codex_doc(originals[codex_path], (source / "codex-AGENTS.md").read_text(), codex_path)
             ),
         }
+        if not args.preserve_claude_md:
+            desired_docs[claude_path] = (
+                uninstall_adapter(originals[claude_path], claude_path)
+                if args.uninstall
+                else install_adapter(originals[claude_path], template, claude_path)
+            )
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
     sonnet_model = SONNET_MODEL if args.uninstall else snapshot_model(snapshot, "sonnet-latest")
