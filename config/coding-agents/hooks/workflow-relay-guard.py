@@ -12,16 +12,20 @@ def main():
     try:
         data = json.loads(sys.stdin.read())
     except ValueError:
+        print("workflow-relay-guard warning: malformed envelope; allowing original input", file=sys.stderr)
         return
     if not isinstance(data, dict):
+        print("workflow-relay-guard warning: malformed envelope; allowing original input", file=sys.stderr)
         return
     if data.get("tool_name") != "Workflow":
         return
     ti = data.get("tool_input") or {}
     if not isinstance(ti, dict):
+        print("workflow-relay-guard warning: malformed tool input; allowing original input", file=sys.stderr)
         return
-    script = ti.get("script") or ""
+    script = ti.get("script", "")
     if not isinstance(script, str):
+        print("workflow-relay-guard warning: non-text script; allowing original input", file=sys.stderr)
         return
 
     if not script:

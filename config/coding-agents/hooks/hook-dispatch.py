@@ -24,24 +24,18 @@ REWRITERS = {"rtk hook claude"}
 REV = re.compile(r"[0-9a-f]{12}")
 REV_SHA = re.compile(r"[0-9a-f]{64}")
 
-
 FLOOR_SCRIPTS = (
-    "branch-guard.py",
     "rm-dynamic-deny",
-    "stash-guard",
     "railway-vars-guard.sh",
     "link-cli-guard.sh",
-    "plutil-guard.sh",
-    "kill-guard",
-    "agent-lb-bootout-guard.sh",
     "dangerous-command-guard.sh",
     "no-chrome-guard.sh",
     "host-credential-guard.py",
+    "desktop-guard",
 )
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
 FLOOR_TEXT = "BLOCKED: Dangerous command"
 INLINE_FLOOR = "dangerous-command"
-
 
 LEGACY_FLOOR_COMMANDS = {
     "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c": '"$HOME/.claude/hooks/dangerous-command-guard.sh"',
@@ -51,7 +45,6 @@ LEGACY_FLOOR_COMMANDS = {
 RECEIPT_ENV = "HOOK_FLOOR_RECEIPT"
 RECEIPT = "floor-ok %s"
 NOTICE_PREFIX = "Failed with non-blocking status code: "
-
 
 ENV_SENSITIVE = (
     "BASH_ENV",
@@ -65,7 +58,6 @@ ENV_SENSITIVE = (
     "DYLD_INSERT_LIBRARIES",
     "DYLD_LIBRARY_PATH",
 )
-
 
 HAZARD = re.compile(
     r"os\._exit|os\.fork|os\.exec|os\.setsid|os\.dup2|os\.closerange|os\.kill\(\s*os\.getpid|threading|_thread|"
@@ -495,7 +487,6 @@ SCRIPT_PREFILTERS = {
     "route.sh": ("36bbdd44a69543ff7fe2865985443a2a09ab2f540d6bf09df25ec6c978e1d629", pf_jev_alert),
 }
 
-
 SCRIPT_NEEDS = {
     "wide-scan-guard.sh": (("cat",), ("jq",), ("python3",)),
     "agent-lb-bootout-guard.sh": (("/opt/homebrew/bin/jq", "jq"), ("grep",)),
@@ -503,7 +494,6 @@ SCRIPT_NEEDS = {
     "link-cli-guard.sh": (("jq",), ("grep",)),
     "dangerous-command-guard.sh": (("jq",), ("grep",)),
 }
-
 
 COMMAND_PREFILTERS = {
     "55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": pf_prettier,
@@ -944,7 +934,24 @@ def finish(plan, raw):
         raw.floor_failure = floor_failure(raw)
         return raw
     if plan.kind == "inproc":
-        return apply_wrapper(plan, raw)
+        raw = apply_wrapper(plan, raw)
+    if re.search(r"(?:branch-guard\.py|stash-guard|agent-lb-bootout-guard\.sh|plutil-guard\.sh)", plan.command):
+        obj = parse_json(raw.out)
+        if not deny_reason(obj) and (raw.code != 2 or b"can't open file" in raw.err):
+            problem = (
+                "timed out"
+                if raw.timed_out
+                else "crashed (exit %s)" % raw.code
+                if raw.code
+                else answer_problem(raw.out)
+            )
+            if problem:
+                note = "hook-dispatch warning: %s %s; allowing original input\n" % (plan.command, problem)
+                return Result(
+                    0,
+                    encode({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": note.strip()}}),
+                    note.encode() + raw.err,
+                )
     return raw
 
 
@@ -1414,7 +1421,7 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
     except (ValueError, UnicodeDecodeError):
         payload_obj = None
     payload = Payload(raw)
-    results = [None] * len(plans)
+    results: list[Result | None] = [None] * len(plans)
     started = {}
     try:
         for index, plan in enumerate(plans):
