@@ -76,6 +76,24 @@ rotate_service_logs() {
 }
 rotate_service_logs
 
+FOLLOW_SCRIPT="${AGENT_LB_FOLLOW_SCRIPT:-$HOME/.agent-lb/runtime/agent-lb/scripts/runtime_follow.py}"
+FOLLOW_STAMP="${AGENT_LB_FOLLOW_STAMP:-$HOME/.agent-lb/follow-check.last}"
+check_runtime_follow() {
+  local py out
+  [[ -f "$FOLLOW_SCRIPT" ]] || return 0
+  if [[ -f "$FOLLOW_STAMP" && -z "$(find "$FOLLOW_STAMP" -mmin +5 2>/dev/null)" ]]; then
+    return 0
+  fi
+  py=/opt/homebrew/bin/python3
+  [[ -x "$py" ]] || py=python3
+  out=$("$py" "$FOLLOW_SCRIPT" check 2>&1 | tail -n 1)
+  if [[ "$out" != ok* && "$(cat "$FOLLOW_STAMP" 2>/dev/null)" == ok* ]]; then
+    log "runtime-follow: $out"
+  fi
+  printf '%s\n' "$out" > "$FOLLOW_STAMP"
+}
+check_runtime_follow
+
 
 
 

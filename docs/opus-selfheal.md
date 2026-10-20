@@ -21,9 +21,9 @@ guarantee future provider capacity.
 ## Client-only rollout
 
 This lane is client-only. Installers may copy the reviewed and tested client
-files into the internal-disk runtime bundle without restarting agent-lb. A full
-`sync-runtime.sh` is neither required nor recommended because it could deploy
-unrelated dirty main-worktree changes.
+files into the internal-disk runtime bundle without restarting agent-lb. The
+runtime follower (`scripts/runtime_follow.py`) deploys main from a clean export, so
+dirty main-worktree changes never reach the runtime.
 
 For a reviewed source bundle, expose its commands with the existing installer:
 

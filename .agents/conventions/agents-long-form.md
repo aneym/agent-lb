@@ -66,6 +66,19 @@ right away. This is a standing instruction from the repo owner.
   waits for the old job to be gone before bootstrapping). Migrations run while the old
   code still serves, so they must be additive. The front itself is upgraded in place
   with `node scripts/front-hot-swap.mjs` (no dropped connections); never kickstart it.
+- **The runtime follows origin/main by itself (2026-10-20)**: launchd job
+  `com.aneyman.agent-lb-follow` (`scripts/install-runtime-follow.sh`) runs
+  `scripts/runtime_follow.py tick` every 5 min. When the runtime differs from a clean
+  `git archive` of origin/main it backs up, rsyncs, runs `uv sync --frozen` if uv.lock
+  changed, rebuilds the dashboard into `app/static` when `frontend/` changed, refreshes
+  `~/.agent-lb/bin` copies that hold an older main version, then calls `lb-restart`. A
+  failed gate restores the disk, keeps the live primary, and writes one `ALERT
+  runtime-follow` line to `runtime/sync.log`; it retries that sha at most 3 times, 30 min
+  apart. A `--files` deploy that is not on main is reverted to main after 30 min, so land
+  hotfixes on main. `runtime_follow.py status` prints runtime sha against origin/main; the
+  watchdog runs `check` every 5 min and flags drift older than 30 min. Pause with
+  `touch ~/.agent-lb/follow.pause`. Merge to main and wait one tick; there is no manual
+  deploy step.
 - **Anthropic request path (`app/core/anthropic/**`, `app/modules/proxy/anthropic*`)**: after the
   restart, run `python3 scripts/claude_cache_eval.py` and keep its receipt. It drives a real Claude
   Code session with a subagent through the proxy and fails if any steady turn rewrote its context.
