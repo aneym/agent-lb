@@ -17,7 +17,7 @@ Rules:
   an implementation seat builds it: gpt-implementer (newest Sol, medium), or
   sonnet-implementer (newest Sonnet, high) when Codex is out, and opus-seat for
   judgment-heavy slices (ladder:
-  `~/.agents/policy/coding-agents/ROUTING.md`). If you catch yourself
+  `~/.claude/docs/models/README.md`). If you catch yourself
   describing code diffs line-by-line, zoom back out to intent.
 - Load the relevant design skills before opining: frontend-design for
   direction, impeccable for UX/polish audits, web-design-guidelines for

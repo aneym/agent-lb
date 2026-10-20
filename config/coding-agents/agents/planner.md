@@ -27,7 +27,7 @@ not volume. Default dispatches use family aliases; a retired model (Fable,
 Astra, gpt-5.6 and older) runs only when you name it on the dispatch for a
 reason, such as an escalation, and the ledger records it.
 
-FIRST ACTION: Read `~/.agents/policy/coding-agents/ROUTING.md` in full, then
+FIRST ACTION: Read `~/.claude/docs/models/README.md` in full, then
 `~/.claude/rules/models.md` if it exists (local steers). You do not receive
 CLAUDE.md context or hook enforcement (teammates never do), so the canon binds
 you by this instruction instead.
