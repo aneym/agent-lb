@@ -18,7 +18,6 @@ from pathlib import Path
 DENIAL = ('Railway destructive delete refused (destructive data floor): use a custody '
           "RAILWAY_TOKEN or RAILWAY_API_TOKEN, not the owner's CLI login.")
 
-SECRET_FLOOR = os.environ.get('RAILWAY_SECRET_FLOOR') == '1'
 WARNINGS = set()
 ARGV_DENIAL = 'Railway secret-looking argv detected (secret floor); use stdin or an env file.'
 
@@ -241,6 +240,7 @@ def check(command, inherited, value_output=False):
         if found:
             return found
     words = []
+    parsed = True
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()<>\n')
         lexer.whitespace = ' \t\r'
@@ -249,25 +249,32 @@ def check(command, inherited, value_output=False):
         for word in lexer:
             words.append(word)
     except ValueError:
-
-
+        parsed = False
+        print('WARNING: railway guard could not fully parse the command.', file=sys.stderr)
         if lexer.token:
             words.append(lexer.token)
     segments, current = [], []
+    names_only_sources = set()
+    redirected = False
     i = 0
     while i < len(words):
         word = words[i]
         if re.fullmatch(r'[<>]+|[<>]+&', word):
+            redirected = True
             i += 2
             continue
         if word and all(c in ';&|()\n' for c in word):
+            if (parsed and word == '|' and not redirected and words[i + 1:i + 3] == ['jq', 'keys']
+                    and (i + 3 == len(words) or words[i + 3] in {';', '\n', '&&', '||'})):
+                names_only_sources.add(len(segments))
             segments.append(current)
             current = []
+            redirected = False
         else:
             current.append(word)
         i += 1
     segments.append(current)
-    for words in segments:
+    for segment_index, words in enumerate(segments):
         env = dict(inherited)
         i = 0
         while i < len(words):
@@ -415,7 +422,9 @@ def check(command, inherited, value_output=False):
                     if (not write or 'get' in command_args[1:]
                             or any(arg in {'--kv', '--json'} or re.fullmatch(r'-[^-]*k[^-]*', arg)
                                    for arg in command_args[1:])):
-                        secret_warning(KV_DENIAL)
+                        if not (segment_index in names_only_sources and '--json' in command_args
+                                and not any(arg in {'--kv', '-k'} for arg in command_args)):
+                            secret_warning(KV_DENIAL)
                         break
                     if not WARNINGS:
                         print('Railway variable write allowed pre-GA: explicit or unknown linked environment; values withheld.', file=sys.stderr)
@@ -449,14 +458,19 @@ try:
 except Exception as error:
 
     destructive = re.search(r'\brailway\s+(?:(?:service|volume|environment)\s+)?(?:delete|down)\b', command)
+    secret_surface = re.search(r'\b(?:railway|variables|variable|vars)\b',
+                               command or os.environ.get('RAILWAY_GUARD_INPUT', ''))
     denied = (f'{DENIAL} railway guard error: {type(error).__name__}'
-              if destructive and not any(os.environ.get(key) for key in TOKEN_NAMES) else '')
+              if destructive and not any(os.environ.get(key) for key in TOKEN_NAMES) else
+              f'BLOCKED: railway secret check failed: {type(error).__name__}' if secret_surface else '')
+    if not denied:
+        print('WARNING: railway guard could not parse the hook input.', file=sys.stderr)
 if denied:
     print(denied, file=sys.stderr)
     sys.exit(2)
 if WARNINGS:
-    print(('BLOCKED: ' if SECRET_FLOOR else 'WARNING: ') + ' '.join(sorted(WARNINGS)), file=sys.stderr)
-    sys.exit(2 if SECRET_FLOOR else 0)
+    print('BLOCKED: ' + ' '.join(sorted(WARNINGS)), file=sys.stderr)
+    sys.exit(2)
 PY
 if [ "$STATUS" -eq 0 ] && [ -n "${HOOK_FLOOR_RECEIPT:-}" ]; then printf 'floor-ok %s\n' railway-vars-guard.sh; fi
 exit "$STATUS"
