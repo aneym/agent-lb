@@ -16,6 +16,7 @@ MANAGED_SEATS = (
     "codex-test-runner",
     "verifier",
     "gpt-implementer",
+    "grok-implementer",
     "gpt-explorer",
     "sol-consult",
     "astra-consult",

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "policy_rev": "2026-10-17.3",
+  "policy_rev": "2026-10-20.1",
   "autocompact_window": {"tab": 300000, "lane": 300000, "box": 300000},
   "precedence": [
     "explicit",
@@ -63,7 +63,7 @@
       "wrapper_model": "sonnet-latest",
       "explore": true,
       "authority": "bounded",
-      "evidence": "E17 Sol 19/20 $0.64 per accepted, Grok 20/20; Muse 9/9 clean exits only, no acceptance evidence",
+      "evidence": {"note": "E17 Sol 19/20 $0.64 per accepted, Grok 20/20; Muse 9/9 clean exits only, no acceptance evidence", "aa": {"fetched": "2026-10-20", "source": "artificialanalysis.ai api/v2/data/llms/models; context from /leaderboards/models", "fields": ["intelligence_index", "terminalbench_v4", "scicode", "output_tps", "ttft_s", "context_k"], "coding_field": "terminalbench_v4", "note": "AA coding_index is null for every row; Grok 4.7 medium is unpublished (high shown)", "grok-4.7-high": [46.3, 0.247, 0.578, 77.7, 18.25, 500], "gpt-6.1-sol-medium": [47.8, 0.48, 0.532, 43.6, 11.03, 1000], "claude-opus-5-5-medium": [51.2, 0.525, 0.593, 75.1, 15.5, 1000], "claude-sonnet-5-5-high": [46.8, 0.439, 0.537, 103.6, 9.03, 1000]}},
       "since": "2026-10-16"
     },
     "mechanical": {
@@ -73,7 +73,7 @@
       "wrapper_model": "sonnet-latest",
       "explore": true,
       "authority": "bounded",
-      "evidence": "orch-lab E10 and E12; quota tight 2026-10-13",
+      "evidence": {"note": "orch-lab E10 and E12; quota tight 2026-10-13", "aa": {"fetched": "2026-10-20", "source": "artificialanalysis.ai api/v2/data/llms/models; context from /leaderboards/models", "fields": ["intelligence_index", "terminalbench_v4", "scicode", "output_tps", "ttft_s", "context_k"], "coding_field": "terminalbench_v4", "note": "AA coding_index is null for every row; Grok 4.7 medium is unpublished (high shown)", "grok-4.7-low": [42.2, 0.162, 0.549, 63.5, 3.99, 500], "gpt-6.1-sol-low": [42.1, 0.308, 0.532, 41.6, 1.55, 1000], "claude-opus-5-5-low": [42.3, 0.313, 0.586, 76.1, 7.24, 1000], "claude-sonnet-5-5-medium": [40.8, 0.298, 0.529, 93.2, 0.94, 1000]}},
       "since": "2026-10-16"
     },
     "explore": {
@@ -188,20 +188,7 @@
     "claude_daily_cap_jobs": 60,
     "stop_after_nonaccepts": 3,
     "min_n_per_arm": 40,
-    "never_classes": [
-      "plan",
-      "review",
-      "spec",
-      "contract",
-      "verdict",
-      "judge",
-      "design",
-      "audit",
-      "ui_critical",
-      "trust",
-      "money_path",
-      "fix"
-    ],
+    "never_classes": ["plan", "review", "spec", "contract", "verdict", "judge", "design", "audit", "ui_critical", "trust", "money_path", "fix"],
     "arms": {
       "implement": [
         {
@@ -212,18 +199,7 @@
           "share": 0.1,
           "pool": "muse"
         },
-        {
-          "id": "grok",
-          "seat": "cursor-seat",
-          "model": "grok-latest",
-          "effort": "medium",
-          "share": 0.1,
-          "pool": "cursor-models",
-          "gate": {
-            "open": false,
-            "until": "2026-10-30 Cursor probe"
-          }
-        },
+        {"id": "grok", "seat": "grok-implementer", "model": "grok-latest", "effort": "medium", "share": 0.1, "pool": "grok", "gate": {"open": true}},
         {
           "id": "pi-durable",
           "seat": "pi-durable-seat",
@@ -246,6 +222,7 @@
           "share": 0.1,
           "pool": "muse"
         },
+        {"id": "grok-low", "seat": "grok-implementer", "model": "grok-latest-low", "effort": "low", "share": 0.2, "pool": "grok"},
         {
           "id": "luna-low",
           "seat": "gpt-implementer",
@@ -327,7 +304,6 @@
   "implement_default_note": "The default implementer switch (2026-09-28): route moves this seat to the head of the implement and mechanical chains. gpt-implementer (Sol medium) by E12; sonnet-implementer is the Codex-empty fallback, not the default.",
     "ladder": "interim",
     "ladder_note": "2026-09-30 (Alex approved 02:35Z): the interim ladder. Set baseline to get the class chains below back on the next pick. A closed gate opens only on eval evidence (DECISIONS T2, T3).",
-    "implement_note": "2026-10-08 SIMPLIFY-2026-10-07 item 9: implement order is sol-medium, swe2-high, sonnet-standin; mechanical order is sol-low, swe2-medium. Re-add Cursor rungs after a passing probe at the 2026-10-30 Cursor reset; switch only on real 429s or usage-limit errors.",
     "ladders": {
       "baseline": {},
       "interim": {
@@ -339,6 +315,7 @@
             "effort": "medium",
             "maker": "openai"
           },
+          {"id": "grok-medium", "seat": "grok-implementer", "model": "grok-latest", "effort": "medium", "maker": "xai", "pool": "grok"},
           {
             "id": "swe2-high",
             "seat": "devin-seat",
@@ -370,6 +347,7 @@
             "effort": "low",
             "maker": "openai"
           },
+          {"id": "grok-low", "seat": "grok-implementer", "model": "grok-latest-low", "effort": "low", "maker": "xai", "pool": "grok"},
           {
             "id": "swe2-medium",
             "seat": "devin-seat",
@@ -386,16 +364,6 @@
             "model": "sol-latest",
             "effort": "low",
             "maker": "openai"
-          },
-          {
-            "id": "composer",
-            "seat": "cursor-seat",
-            "model": "composer-latest",
-            "effort": null,
-            "maker": "cursor",
-            "pool": "cursor-models",
-            "read_only": true,
-            "gate": {"open": false, "until": "2026-10-05: Composer out of usage on cursor-main and cursor-gmail (seat runs on Studio and ax42 fail with \"You're out of usage\"); reopen at the Cursor cycle reset 2026-10-30 or when a probe passes"}
           },
           {
             "id": "swe2-medium",
@@ -490,138 +458,47 @@
   "classes": {
     "plan": {
       "chain": [
-        {
-          "seat": "planner",
-          "model": "opus-latest",
-          "vendor": "anthropic",
-          "effort": "medium"
-        }
+        {"seat": "planner", "model": "opus-latest", "vendor": "anthropic", "effort": "medium"}
       ],
-      "second_opinion": {
-        "seat": "astra-consult",
-        "model": "astra-latest",
-        "vendor": "openai",
-        "effort": "high",
-        "when": "complex or risky plans, before the work is split"
-      }
+      "second_opinion": {"seat": "astra-consult", "model": "astra-latest", "vendor": "openai", "effort": "high", "when": "complex or risky plans, before the work is split"}
     },
     "review": {
       "chain": [
-        {
-          "seat": "plan-reviewer",
-          "model": "opus-latest",
-          "vendor": "anthropic",
-          "effort": "medium"
-        }
+        {"seat": "plan-reviewer", "model": "opus-latest", "vendor": "anthropic", "effort": "medium"}
       ]
     },
     "explore": {
       "chain": [
-        {
-          "seat": "gpt-explorer",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "low"
-        },
-        {
-          "seat": "Explore",
-          "model": "sonnet-latest",
-          "vendor": "anthropic",
-          "effort": "medium"
-        },
-        {
-          "seat": "codex-sol",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "medium"
-        }
+        {"seat": "gpt-explorer", "model": "sol-latest", "vendor": "openai", "effort": "low"},
+        {"seat": "Explore", "model": "sonnet-latest", "vendor": "anthropic", "effort": "medium"},
+        {"seat": "codex-sol", "model": "sol-latest", "vendor": "openai", "effort": "medium"}
       ]
     },
     "research": {
       "chain": [
-        {
-          "seat": "codex-sol",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "high"
-        },
-        {
-          "seat": "Explore",
-          "model": "sonnet-latest",
-          "vendor": "anthropic",
-          "effort": "medium"
-        },
-        {
-          "seat": "opus-seat",
-          "model": "opus-latest",
-          "vendor": "anthropic",
-          "effort": "high"
-        }
+        {"seat": "codex-sol", "model": "sol-latest", "vendor": "openai", "effort": "high"},
+        {"seat": "Explore", "model": "sonnet-latest", "vendor": "anthropic", "effort": "medium"},
+        {"seat": "opus-seat", "model": "opus-latest", "vendor": "anthropic", "effort": "high"}
       ]
     },
     "implement": {
       "chain": [
-        {
-          "seat": "gpt-implementer",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "medium"
-        },
-        {
-          "seat": "sonnet-implementer",
-          "model": "sonnet-latest",
-          "vendor": "anthropic",
-          "effort": "high"
-        },
-        {
-          "seat": "opus-seat",
-          "model": "opus-latest",
-          "vendor": "anthropic",
-          "effort": "medium",
-          "min_pace": -10
-        }
+        {"seat": "gpt-implementer", "model": "sol-latest", "vendor": "openai", "effort": "medium"},
+        {"seat": "sonnet-implementer", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+        {"seat": "opus-seat", "model": "opus-latest", "vendor": "anthropic", "effort": "medium", "min_pace": -10}
       ],
       "audit": {
         "required": false,
         "mode": "on_request",
         "rule": "pre-launch (2026-10-08, Alex ~12:10 ET): no cross-vendor or post-merge review when the implementing agent e2e-checked its own work and Claude set the architecture and steps; the merge tool reads the slice check as evidence; by_author_vendor names the reviewer a lead may request by name with a logged reason; a missing auditor is a logged advisory, never a refusal; GA brings review back",
         "by_author_vendor": {
-          "openai": {
-            "seat": "verifier",
-            "model": "sonnet-latest",
-            "vendor": "anthropic",
-            "effort": "high"
-          },
-          "cursor": {
-            "seat": "verifier",
-            "model": "sonnet-latest",
-            "vendor": "anthropic",
-            "effort": "high"
-          },
-          "devin": {
-            "seat": "verifier",
-            "model": "sonnet-latest",
-            "vendor": "anthropic",
-            "effort": "high"
-          },
-          "glm": {
-            "seat": "verifier",
-            "model": "sonnet-latest",
-            "vendor": "anthropic",
-            "effort": "high"
-          },
-          "kimi": {
-            "seat": "verifier",
-            "model": "sonnet-latest",
-            "vendor": "anthropic",
-            "effort": "high"
-          },
-          "anthropic": {
-            "seat": "codex-verifier",
-            "model": "sol-latest",
-            "vendor": "openai",
-            "effort": "high"
-          }
+          "openai": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+          "cursor": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+          "devin": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+          "glm": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+          "kimi": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+          "xai": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high", "then": {"seat": "codex-verifier", "model": "sol-latest", "vendor": "openai", "effort": "high"}},
+          "anthropic": {"seat": "codex-verifier", "model": "sol-latest", "vendor": "openai", "effort": "high"}
         },
         "fresh_per_unit": true,
         "release_facts": true
@@ -633,79 +510,27 @@
         "trigger": "real Codex 429s or usage-limit errors on the default implementer (the fold re-seats after two infra failures); a low percentage is not a trigger",
         "evidence": "orch-lab E12 (2026-09-28, E10 units, n=6 per batch, provisional): Sol medium 6/6 at 379k fresh tokens and $0.86 per accepted unit; Sonnet 5.5 high 8/12 at 565k and $2.76; Opus medium 4/6 at 683k and $3.76. Sol stays the default; Sonnet 5.5 high is the first Claude stand-in, ahead of opus-seat, at effort high."
       },
-      "escalation": {
-        "seat": "opus-seat",
-        "at_fix_round": 2,
-        "since": "2026-09-27",
-        "evidence": "ROUTING.md (2026-09-26): opus-seat takes judgment code and anything the default implementer fails twice. The factory fold pipeline sends fix round 2 to opus-seat (with max_fix_rounds 1 since 2026-10-06, a second failure goes to opus-seat as a new piece, not a second fix round); factory scoreboard 2026-09-27: 18 of 32 pieces ended needs_orchestrator in 24 h, so a second failure goes to the escalation seat instead of a third cheap round."
-      }
+      "escalation": {"seat": "opus-seat", "at_fix_round": 2, "since": "2026-09-27", "evidence": "ROUTING.md (2026-09-26): opus-seat takes judgment code and anything the default implementer fails twice. The factory fold pipeline sends fix round 2 to opus-seat (with max_fix_rounds 1 since 2026-10-06, a second failure goes to opus-seat as a new piece, not a second fix round); factory scoreboard 2026-09-27: 18 of 32 pieces ended needs_orchestrator in 24 h, so a second failure goes to the escalation seat instead of a third cheap round."}
     },
     "mechanical": {
       "chain": [
-        {
-          "seat": "gpt-implementer",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "medium"
-        },
-        {
-          "seat": "sonnet-implementer",
-          "model": "sonnet-latest",
-          "vendor": "anthropic",
-          "effort": "high"
-        },
-        {
-          "seat": "cursor-seat",
-          "model": "grok-latest",
-          "vendor": "cursor"
-        },
-        {
-          "seat": "devin-seat",
-          "model": "swe-latest",
-          "vendor": "devin"
-        }
+        {"seat": "gpt-implementer", "model": "sol-latest", "vendor": "openai", "effort": "medium"},
+        {"seat": "sonnet-implementer", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+        {"seat": "grok-implementer", "model": "grok-latest-low", "vendor": "cursor"},
+        {"seat": "devin-seat", "model": "swe-latest", "vendor": "devin"}
       ],
       "audit": {
         "required": false,
         "mode": "on_request",
         "rule": "pre-launch (2026-10-08, Alex ~12:10 ET): no cross-vendor or post-merge review when the implementing agent e2e-checked its own work and Claude set the architecture and steps; the merge tool reads the slice check as evidence; by_author_vendor names the reviewer a lead may request by name with a logged reason; a missing auditor is a logged advisory, never a refusal; GA brings review back",
         "by_author_vendor": {
-          "openai": {
-            "seat": "verifier",
-            "model": "sonnet-latest",
-            "vendor": "anthropic",
-            "effort": "high"
-          },
-          "cursor": {
-            "seat": "verifier",
-            "model": "sonnet-latest",
-            "vendor": "anthropic",
-            "effort": "high"
-          },
-          "devin": {
-            "seat": "verifier",
-            "model": "sonnet-latest",
-            "vendor": "anthropic",
-            "effort": "high"
-          },
-          "glm": {
-            "seat": "verifier",
-            "model": "sonnet-latest",
-            "vendor": "anthropic",
-            "effort": "high"
-          },
-          "kimi": {
-            "seat": "verifier",
-            "model": "sonnet-latest",
-            "vendor": "anthropic",
-            "effort": "high"
-          },
-          "anthropic": {
-            "seat": "codex-verifier",
-            "model": "sol-latest",
-            "vendor": "openai",
-            "effort": "high"
-          }
+          "openai": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+          "cursor": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+          "devin": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+          "glm": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+          "kimi": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+          "xai": {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high", "then": {"seat": "codex-verifier", "model": "sol-latest", "vendor": "openai", "effort": "high"}},
+          "anthropic": {"seat": "codex-verifier", "model": "sol-latest", "vendor": "openai", "effort": "high"}
         },
         "fresh_per_unit": true,
         "release_facts": true
@@ -715,56 +540,21 @@
     "verify": {
       "cross_vendor": true,
       "chain": [
-        {
-          "seat": "verifier",
-          "model": "sonnet-latest",
-          "vendor": "anthropic",
-          "effort": "high"
-        },
-        {
-          "seat": "verifier",
-          "model": "opus-latest",
-          "vendor": "anthropic",
-          "effort": "high"
-        },
-        {
-          "seat": "codex-verifier",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "high"
-        }
+        {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+        {"seat": "verifier", "model": "opus-latest", "vendor": "anthropic", "effort": "high"},
+        {"seat": "codex-verifier", "model": "sol-latest", "vendor": "openai", "effort": "high"}
       ]
     },
     "computer": {
       "chain": [
-        {
-          "seat": "computer-use",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "medium"
-        },
-        {
-          "seat": "opus-seat",
-          "model": "opus-latest",
-          "vendor": "anthropic",
-          "effort": "medium"
-        }
+        {"seat": "computer-use", "model": "sol-latest", "vendor": "openai", "effort": "medium"},
+        {"seat": "opus-seat", "model": "opus-latest", "vendor": "anthropic", "effort": "medium"}
       ]
     },
     "council": {
       "chain": [
-        {
-          "seat": "codex-sol",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "high"
-        },
-        {
-          "seat": "opus-seat",
-          "model": "opus-latest",
-          "vendor": "anthropic",
-          "effort": "high"
-        }
+        {"seat": "codex-sol", "model": "sol-latest", "vendor": "openai", "effort": "high"},
+        {"seat": "opus-seat", "model": "opus-latest", "vendor": "anthropic", "effort": "high"}
       ]
     }
   },
@@ -780,7 +570,8 @@
     "gpt-implementer": {"vendor": "openai", "box": {"adapter": "codex"}},
     "opus-seat": {"vendor": "anthropic", "box": {"adapter": "claude-code"}},
     "opus-seat-full": {"vendor": "anthropic", "box": {"adapter": "claude-code"}, "model": "opus-latest", "effort": "medium"},
-    "cursor-seat": {"vendor": "cursor", "box": {"adapter": "cursor"}},
+    "cursor-seat": {"vendor": "cursor", "box": {"adapter": "cursor"}, "model": "grok-latest", "effort": "medium"},
+    "grok-implementer": {"vendor": "cursor", "maker": "xai", "roles": ["implement", "mechanical"], "box": {"adapter": "cursor"}},
     "devin-seat": {"vendor": "devin", "box": {"adapter": "devin"}},
     "muse-seat": {"vendor": "muse", "box": null, "model": "muse-latest", "effort": "low"},
     "pi-durable-seat": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "low"},
@@ -809,8 +600,8 @@
     "haiku-latest": "anthropic-general",
     "sol-latest": "openai-codex",
     "luna-latest": "openai-codex",
-    "grok-latest": "cursor",
-    "grok-latest-low": "cursor",
+    "grok-latest": "grok",
+    "grok-latest-low": "grok",
     "cursor-*": "cursor",
     "kimi-*": "kimi",
     "glm-*": "glm",
@@ -822,7 +613,7 @@
   "cli_pools": {
     "cursor": {
       "cycle_day_default": 1,
-      "accounts": {"cursor-main": {"plan": "cursor-ultra-shared"}, "cursor-gmail": {"plan": "cursor-ultra-shared"}},
+      "accounts": {"cursor-main": {"plan": "cursor-ultra"}, "cursor-gmail": {"plan": "cursor-ultra"}},
       "fast_multiplier": 3,
       "pools": [
         {"id": "cursor-models", "label": "Cursor models", "models": ["composer-*", "grok-*", "cursor-grok-*"], "budget_usd_by_tier": {"Ultra": 3123}, "note": "2026-09-30 calibration: shared cursor-main + cursor-gmail plan current-cycle service tally $62.46 / 0.02, rounded to $3123 (minimum $200), matches dashboard 2% used."},
@@ -835,14 +626,14 @@
         ["cursor-grok-*", [2, 2, 6]],
         ["claude-sonnet-5-5-*", [2, 0.2, 10]],
         ["*", [5, 5, 25]]
-      ],
-      "note": "2026-09-30: Cursor publishes no usage API. Prices are Cursor's list prices, and an unknown cached price is billed at the input price. Ultra budgets are dashboard-calibrated estimates dated 2026-09-30, not published plan allowances. Over-256k double billing is not counted."
+      ]
     }
   },
   "overrides": [],
   "policy": {
     "concurrency": {"per_account": {"devin": 1, "cursor": 2, "openai": 3, "anthropic": 4, "kimi": 2, "glm": 2}, "default": 2, "ttl_s": 120, "heartbeat_s": 30, "note": "2026-10-06 (A4): live reservations per capacity key may not exceed eligible accounts x per_account. 2026-10-06 (a4d-6): a 120 s TTL renewed every 30 s is the backstop for a hold whose run could not be confirmed gone."},
     "mode": "adaptive",
+    "grok": {"pool": "grok", "max_weekly_used_percent": 80, "codex_error_minutes": 30, "never_tags": ["ui-critical", "contract", "trust-boundary", "money-path", "fix"]},
     "stand_in_rollout": {
       "stage": "canary",
       "tabs": ["w5H:tC8"],
@@ -885,20 +676,11 @@
       "exhausted": "an entry whose pool is exhausted is skipped: its eligibleAccounts is 0, or, when the pool reports no count, its status is exhausted; a headroom label alone never skips it",
       "every_entry": "paced or not, an entry is skipped when its model alias does not resolve, its seat is down, or it shares the author's vendor on a cross-vendor class; in a class that declares auditors it is also skipped when no auditor is declared for its vendor, the auditor's model does not resolve, the auditor's pool is exhausted (no eligible account) or has an eligibleAccounts count of 1 or less, or the auditor's seat is down; a pool counts as exhausted only when its eligibleAccounts is 0, or by its status label when it reports no count"
     },
-    "judgment_classes": [
-      "plan",
-      "review",
-      "verify",
-      "design",
-      "audit"
-    ],
+    "judgment_classes": ["plan", "review", "verify", "design", "audit"],
     "source_of_truth": "~/.agents/policy/coding-agents/ROUTING.md",
     "lineup": {
       "owner_date": "2026-09-26",
-      "drivers": [
-        "opus-latest",
-        "sol-latest"
-      ],
+      "drivers": ["opus-latest", "sol-latest"],
       "retired": "see top-level `retired`: Fable, the whole Astra family, the gpt-5.6 generation and older",
       "implementation": "Opus plans, specs, designs and verifies; gpt-implementer (sol-latest, medium) writes all code and mechanical edits; sonnet-implementer (sonnet-latest, high) stands in when Codex is empty (2026-09-28, E12); opus-seat takes judgment code and is the pace-gated implement fallback; Luna has no seat (2026-09-29, Alex: every GPT seat runs sol-latest)."
     },
@@ -918,48 +700,7 @@
     },
     "stage_effort": {
       "owner_date": "2026-09-26",
-      "bands": {
-        "relay": [
-          "low"
-        ],
-        "explore": [
-          "low",
-          "medium"
-        ],
-        "research": [
-          "medium",
-          "high"
-        ],
-        "implement": [
-          "medium",
-          "high"
-        ],
-        "mechanical": [
-          "medium",
-          "high"
-        ],
-        "plan": [
-          "medium",
-          "high"
-        ],
-        "review": [
-          "medium",
-          "high"
-        ],
-        "council": [
-          "high"
-        ],
-        "verify": [
-          "high",
-          "xhigh"
-        ],
-        "computer": [
-          "medium"
-        ],
-        "money_path": [
-          "xhigh"
-        ]
-      },
+      "bands": {"relay": ["low"], "explore": ["low", "medium"], "research": ["medium", "high"], "implement": ["medium", "high"], "mechanical": ["medium", "high"], "plan": ["medium", "high"], "review": ["medium", "high"], "council": ["high"], "verify": ["high", "xhigh"], "computer": ["medium"], "money_path": ["xhigh"]},
       "evidence": "orch-lab E10 (2026-09-26): Sol medium 6/6 at 92k tokens per accepted unit vs low 5/6 at 124k. A public DeepSWE run (2026-09-26): low 16/20 vs xhigh 17/20 at a third of the cost; per-request routing added latency, not quality. Artificial Analysis TBS 0.1 (2026-09-24): open-ended work depends on effort."
     }
   },
@@ -1051,23 +792,7 @@
       "note": "newest gpt-*-astra the LB serves. Readmitted for the astra-consult seat only (2026-10-05, see `readmitted`)."
     }
   },
-  "retired": [
-    "claude-fable-*",
-    "fable",
-    "claude-planner",
-    "claude-opus-5",
-    "claude-opus-4-*",
-    "claude-sonnet-5",
-    "claude-sonnet-4-*",
-    "gpt-*-astra",
-    "gpt-*-astra-*",
-    "astra",
-    "gpt-5.6*",
-    "gpt-5.5*",
-    "gpt-5.4*",
-    "gpt-5-*",
-    "gpt-5"
-  ],
+  "retired": ["claude-fable-*", "fable", "claude-planner", "claude-opus-5", "claude-opus-4-*", "claude-sonnet-5", "claude-sonnet-4-*", "gpt-*-astra", "gpt-*-astra-*", "astra", "gpt-5.6*", "gpt-5.5*", "gpt-5.4*", "gpt-5-*", "gpt-5"],
   "retired_note": "2026-10-05, Alex: \"we shouldnt just block model usage, we shoudl allow them if we request or we want t escalate things.\" `retired` means off the default ladder: no alias, pick or fallback reaches it, and a seat definition that pins it with nothing asking is denied. A dispatch, brief, `opts.model` or `route resolve <id>` that names one is an explicit request: it runs and the routing ledger records it. Only `blocked` is refused outright.",
   "blocked": ["claude-planner", "gpt-5.4*", "gpt-5-*", "gpt-5"],
   "blocked_note": "2026-10-05: models no longer served upstream (absent from the LB's /api/models and /api/models/anthropic lists that day); denied even on explicit request. Move an id here only when the upstream drops it.",

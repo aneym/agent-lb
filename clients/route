@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import route_cache
 from route_cache import HttpResult, _fixture_file
+from route_grok import constraint_choice, hands_refusal, hands_seat, rung_block, seat_defaults
 from route_quota import degrade_alias, load_quota_policy, quota_swap_state, swapped_standard
 from route_storage import _parse_ts, atomic_write
 
@@ -795,25 +796,6 @@ def command_pools(args: argparse.Namespace) -> int:
     if document is None:
         print(f"route: {error}", file=sys.stderr)
         return EXIT_DEGRADED
-    muse_state = Path(os.environ.get("SEAT_HOME") or Path.home() / ".agent-lb" / "seats") / "state.json"
-    try:
-        state = json.loads(muse_state.read_text())
-        members = [r for r in state.get("accounts", {}).values() if r.get("vendor") == "muse"]
-    except (OSError, ValueError, AttributeError):
-        members = []
-    if members and not any(p.get("id") == "muse" for p in document.get("pools", [])):
-        runs = [run for r in members for run in r.get("runs", [])]
-        stamp = datetime.now(timezone.utc)
-        ready = sum(r.get("enabled", True) and r.get("auth_ok") is True
-                    and (not (until := _parse_ts(r.get("cooldown_until"))) or until <= stamp)
-                    and bool(checked := _parse_ts(r.get("auth_checked_at")))
-                    and (stamp - checked).total_seconds() < 43200 for r in members)
-        document["pools"].append({"id": "muse", "provider": "muse", "kind": "cli_seat",
-            "source": "seat_state", "accounts": len(members), "eligibleAccounts": ready,
-            "status": "ok" if ready else "exhausted", "headroomPercent": None,
-            "observedRuns": len(runs), "observedTokens": (sum(r["tokens_in"] + r["tokens_out"] for r in runs) if runs and
-                all(r.get("tokens_in") is not None and r.get("tokens_out") is not None for r in runs) else None), "limitReadback": "unavailable",
-            "usageSource": "observed request log; token counts unavailable when CLI omits usage"})
     now = datetime.now(timezone.utc)
     history = load_pool_history(now)
     try:
@@ -1784,6 +1766,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
         waived = None
         if reason is not None and prefer in (entry["id"], entry["seat"]):
             waived, reason = reason, None
+        reason = reason or rung_block(table, class_name, entry, pools)
         if reason is None and entry["id"] in (skip_ids or []):
             reason = "skipped by caller"
         if reason is None and entry.get("pool") and entry["pool"] not in pools and pool is None:
@@ -2126,6 +2109,9 @@ def settle_pending(table: dict, row: dict, wanted: str | None) -> tuple[dict | N
 def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
     import socket
 
+    if refused := hands_refusal(table, args.task_class, args.prefer, args.model):
+        return EXIT_UNROUTABLE, {"status": "refused", "reason": refused}
+    args.prefer = hands_seat(table, args.task_class, args.prefer, args.model)
     state = read_state()
     age = state_age_seconds(state)
     stale = bool(state) and (age is None or age > STATE_MAX_AGE_SECONDS)
@@ -2512,7 +2498,7 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
         _print_stand_in(record)
 
 
-WORKFLOW_BRIDGE_SEATS = frozenset({"gpt-implementer", "gpt-explorer", "sol-consult"})
+WORKFLOW_BRIDGE_SEATS = frozenset({"gpt-implementer", "grok-implementer", "gpt-explorer", "sol-consult"})
 WORKFLOW_BRIEF_SEATS = frozenset({"cursor-seat", "devin-seat", "muse-seat", "muse-seat-local"})
 WORKFLOW_EFFORT_BRIEF_SEATS = frozenset({"codex-sol"})
 WORKFLOW_FIXED_FORWARDERS = frozenset({"codex-verifier", "codex-test-runner", "computer-use"})
@@ -2887,7 +2873,11 @@ def command_dispatch(args: argparse.Namespace) -> int:
     prior = [row for row in history if row.get("job_id") == job_id]
     attempt = max((row.get("attempt") or 1 for row in prior), default=0) + 1
     standard = dispatch_standard(table, class_name, args.author_vendor)
-    mode_state = quota_swap_state(table, fetch_pools, api_request_logs, append_ledger)
+    if args.pools_file and not args.dry_run:
+        setup_error("pools_file", "--pools-file needs --dry-run", args.json)
+    pools_doc = json.loads(Path(args.pools_file).read_text()) if args.pools_file else fetch_pools()[0]
+    mode_state = ({"mode": pools_doc.get("quotaMode", "anthropic")} if args.pools_file
+                  else quota_swap_state(table, fetch_pools, api_request_logs, append_ledger))
     if not prior and not any(value is not None for value in (args.seat, args.model, args.effort)):
         standard = swapped_standard(table, class_name, standard, mode_state)
         if mode_state["mode"] == "codex-swap" and class_name == "review" and args.author_vendor:
@@ -2899,7 +2889,7 @@ def command_dispatch(args: argparse.Namespace) -> int:
     explicit = any(value is not None for value in (args.seat, args.model, args.effort))
     if explicit:
         seat = args.seat or standard["seat"]
-        seat_spec = (table.get("seats") or {}).get(seat) or {}
+        seat_spec = seat_defaults(table, class_name, seat)
         model_alias = args.model or (standard["model"] if seat == standard["seat"] else seat_spec.get("model"))
         effort = args.effort or (standard.get("effort") if seat == standard["seat"] else seat_spec.get("effort"))
         choice = {"arm": "explicit", "arm_id": "explicit", "seat": seat, "model_alias": model_alias,
@@ -2957,8 +2947,16 @@ def command_dispatch(args: argparse.Namespace) -> int:
                 choice = {"arm": "default", "arm_id": "standard", "seat": standard["seat"],
                           "model_alias": standard["model"], "effort": standard.get("effort"), "pool": None,
                           "propensity": round(1.0 - sum(share for _, share in shares), 6), "reason": reason}
+        leases = (lambda: pools_doc.get("reservations")) if args.pools_file else pick_leases
+        constrained, skipped = constraint_choice(table, class_name, pools_by_id(pools_doc), args.tag,
+                                                 mode_state["mode"], ledger_path(), leases)
+        choice = constrained or {**choice, "reason": choice["reason"] + (f"; grok skipped: {skipped}" * bool(skipped))}
     seat = choice["seat"]
     model_alias = choice["model_alias"]
+    refused = hands_refusal(table, class_name, seat, model_alias)
+    if refused:
+        print(json.dumps({"status": "refused", "reason": refused}) if args.json else refused)
+        return EXIT_UNROUTABLE
     served = ServedModels()
     model = None
     if model_alias:
@@ -4786,6 +4784,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     dispatch.add_argument("--effort", default=None)
     dispatch.add_argument("--seed", type=int, default=None)
     dispatch.add_argument("--dry-run", dest="dry_run", action="store_true")
+    dispatch.add_argument("--pools-file", default=None)
+    dispatch.add_argument("--tag", action="append", default=[])
     dispatch.add_argument("--json", action="store_true")
     dispatch.set_defaults(handler=command_dispatch)
 

@@ -1,6 +1,6 @@
 ---
 name: cursor-seat
-description: Forward a scoped contract to the Cursor CLI on Cursor's own quota. Does not do the work in Claude Code. Use for mechanical and volume work (sweeps, renames, format/pattern edits, scripted fixes) and for read-only exploration when the Claude pools are tight. The brief names a model family alias; the default is `grok-latest` (the newest Grok on Cursor, medium-fast).
+description: Forward a scoped contract to the Cursor CLI on the Cursor Ultra account (the X subscription weekly pool, `grok` in route pools). Does not do the work in Claude Code. Routed Grok implementation and mechanical work goes through grok-implementer; use this seat when a brief names a Cursor model directly. The brief names a model family alias; the default is `grok-latest` (the newest Grok on Cursor, medium). Grok and Composer never review, verify, judge, plan, spec or design.
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
@@ -22,8 +22,7 @@ Run exactly one command, from the worktree the brief assigns:
   `--prompt-file "$f"`. Never a fixed or reused name such as `p.md`: parallel
   seats share the scratchpad and overwrite each other's contracts.
 - `<alias>` is the family alias the brief names (`grok-latest` when it names none,
-  `grok-latest-low` for scouting, `composer-latest` with `--class explore`, whose
-  ladder runs no Grok on Cursor); `seat` resolves it through `route resolve`,
+  `grok-latest-low` for mechanical work); `seat` resolves it through `route resolve`,
   which never picks a retired model for an alias and refuses blocked ones.
   `glm-*`/`kimi-*` ids pass through as given. A retired id runs only when the
   brief names it outright (Alex, 2026-10-05); never substitute one yourself.
@@ -37,10 +36,11 @@ Run exactly one command, from the worktree the brief assigns:
   under review, as the brief names it; `seat run` refuses verify without it.
 - Exit 4 is a capacity wait (`seat run` holds a reservation per `--class`): return the envelope
   as is and do not retry; the caller decides when to try again.
-- With `--class`, the run uses the model its reservation holds, at the effort the class's ladder sets
-  (`grok-latest` runs the mechanical rung's Grok low); a `--model` whose family the class's
-  ladder does not run on this seat exits 2 with nothing launched. Return that envelope as is;
-  never retry with another model yourself.
+- With `--class implement` or `--class mechanical`, the reservation holds the grok-implementer
+  rung (`grok-latest` medium for implement, `grok-latest-low` low for mechanical) on pool `grok`,
+  and a pool that is missing, stale, exhausted or past 80% weekly use refuses it. Any other class
+  refuses Grok and Composer outright: `route` exits 2 with nothing launched (Grok and Composer
+  never review). Return that envelope as is; never retry with another model yourself.
 - For long interactive work that must survive a disconnect, `cursor-agent persist`
   is still available, but it bypasses account selection and receipts.
 

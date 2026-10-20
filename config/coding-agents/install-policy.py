@@ -26,7 +26,7 @@ MODEL = "opus"
 EFFORT_LEVEL = "medium"
 HAIKU_ENV = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
 POLICY_SNAPSHOT = Path(".agent-lb/managed/coding-agents/policy-snapshot.json")
-ROUTE_FILES = ("route", "seat", "route_quota.py", "route_storage.py", "route_cache.py")
+ROUTE_FILES = ("route", "seat", "route_quota.py", "route_storage.py", "route_cache.py", "route_grok.py")
 
 
 SONNET_ENV = "ANTHROPIC_DEFAULT_SONNET_MODEL"
@@ -1015,6 +1015,7 @@ RELAY_SEATS = frozenset(
         "codex-test-runner",
         "codex-test-runner-local",
         "gpt-implementer",
+        "grok-implementer",
         "gpt-explorer",
         "sonnet-implementer",
         "verifier",

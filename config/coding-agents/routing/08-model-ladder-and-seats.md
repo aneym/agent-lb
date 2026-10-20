@@ -4,8 +4,8 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 
 | Job | Seat | Model, effort |
 |---|---|---|
-| Code to a spec | gpt-implementer; devin-seat; sonnet-implementer | sol-latest medium; sonnet-implementer off while quota is tight (2026-10-13) |
-| Mechanical sweeps | gpt-implementer; devin-seat | sol-latest low while quota is tight (2026-10-13) |
+| Code to a spec | gpt-implementer; grok-implementer; devin-seat; sonnet-implementer | sol-latest medium; grok-latest medium when Codex is short (2026-10-20); sonnet-implementer off while quota is tight (2026-10-13) |
+| Mechanical sweeps | gpt-implementer; grok-implementer; devin-seat | sol-latest low; grok-latest-low when Codex is short (2026-10-20) |
 | Judgment code, or work a seat failed twice | opus-seat | opus-latest; overrides the 2026-10-13 off-while-tight note (Opus architects, 2026-10-14) |
 | UI-critical, contract and trust-boundary code | opus-seat | opus-latest; overrides the 2026-10-13 off-while-tight note (Opus architects, 2026-10-14) |
 | Read-only exploration | gpt-explorer | sol-latest low |
@@ -22,7 +22,7 @@ Available optional seat: `muse-seat` via `muse-seat-local` on Studio, Muse Code 
   Alex, 2026-10-13 ~03:10Z: "token allocation should be to raise and recruiter and that's basically it i think. since those are our priorities".
   Claude quota goes to the Raise and Recruiter tabs only, both at tier `full`. Every other tab (`cos`, `factory`, `rails`, `content`, `home`, `health`, `league-coach`, `frank`, `shelf`, `poker-trainer`, `internet`) is `wake-only`: no scheduled loops, timers, 2h summaries or per-bulletin wakes. These tabs wake only for prod down, a security incident, or Alex typing.
   Lane and workflow helpers run Sol (`sol-latest`). Top-level tabs and workflow orchestrators run `opus-latest` medium; Opus judge and synthesis stages also run at medium. Tonight's normal-mode full tier puts Rails first (Alex, 2026-10-14 ~03:33Z: "full fan out max usage fix absolute everything"); tight-mode defaults resume when a 5h window passes 70%. This quota rule overrides the ladder and older planning, wake and model defaults while quota is tight. Status goes to state files, not bulletins. The quota allocation lives in `~/.config/open-factory/quota.toml` and is managed by `factory quota`, which also emits the workflow policy.
-- **Cursor is out until a passing probe at the 2026-10-30 reset.** Switch pools only on real 429s or usage-limit errors, never on a low percentage (2026-09-28).
+- **Grok is the hands on the X subscription pool (2026-10-20).** grok-implementer takes implement and mechanical work when Codex is low or out, its reservation cap is full, or codex-swap spreads non-critical volume; never UI-critical, contract, trust-boundary, money-path or fix-after-two-fails work, and never past 80% of the weekly `grok` pool. Rules in 07-routing-standard.md.
 - **While Claude is on its last account or a 5h window is under 40%,** Claude runs only tabs, plans and specs (2026-09-29).
 - **Retired models run when asked** (Alex, 2026-10-05 19:55 ET: "we shouldnt just block model usage, we shoudl allow them if we request or we want t escalate things"). Each use is logged; only a model gone upstream is refused.
 - **Grok and Composer never review.** Keep the Haiku background pin on Sonnet (2026-09-30).

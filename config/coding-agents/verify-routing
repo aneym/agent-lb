@@ -222,6 +222,8 @@ expected_auditors = {
     vendor: {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"}
     for vendor in ("openai", "cursor", "devin", "glm", "kimi")
 }
+expected_auditors["xai"] = {**expected_auditors["openai"], "then": {
+    "seat": "codex-verifier", "model": "sol-latest", "vendor": "openai", "effort": "high"}}
 expected_auditors["anthropic"] = {
     "seat": "codex-verifier", "model": "sol-latest", "vendor": "openai", "effort": "high"
 }
@@ -254,7 +256,7 @@ factory(
 )
 bands = source_table.get("policy", {}).get("stage_effort", {}).get("bands", {})
 forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat", "muse-seat", "muse-seat-local",
-              "sonnet-implementer", "verifier", "gpt-implementer", "gpt-explorer",
+              "sonnet-implementer", "verifier", "gpt-implementer", "grok-implementer", "gpt-explorer",
               "codex-sol-local", "codex-test-runner-local", "codex-verifier-local", "computer-use-local"}
 VENDORS = ("anthropic", "openai", "cursor", "devin", "glm", "kimi", "muse")
 BOX_ADAPTERS = {"codex": "openai", "claude-code": "anthropic", "cursor": "cursor", "devin": "devin"}
@@ -371,7 +373,8 @@ for name, value in seat_map.items():
     if not isinstance(value, dict):
         problems.append(f"{name} is not an object")
         continue
-    if not {"vendor", "box"} <= value.keys() or value.keys() - {"vendor", "box", "model", "effort", "needs_test_run"}:
+    allowed = {"vendor", "box", "model", "effort", "needs_test_run", "maker", "roles"}
+    if not {"vendor", "box"} <= value.keys() or value.keys() - allowed:
         problems.append(f"{name} has invalid fields")
     if value.get("vendor") not in VENDORS:
         problems.append(f"{name} has invalid vendor")

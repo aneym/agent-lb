@@ -21,6 +21,7 @@ FORWARDER_SEATS = {
     "cursor-seat",
     "devin-seat",
     "gpt-implementer",
+    "grok-implementer",
     "gpt-explorer",
     "sol-consult",
     "astra-consult",
@@ -54,6 +55,7 @@ BRIEF = re.compile(
 )
 SOL_SEATS = {"codex-sol", "gpt-implementer", "sol-consult", "gpt-explorer", "luna-implementer"}
 SOL_MODEL = re.compile(r"(?:^|[-/_])(?:sol|luna|gpt)(?:$|[-_.\d])", re.IGNORECASE)
+HANDS_MODEL = re.compile(r"(?:^|[-/])(?:grok|composer)(?:$|[-_.\d])")
 MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 
 
@@ -412,6 +414,11 @@ def main() -> None:
             f"subagent type {subagent!r} is defined on the retired model {pinned!r} and nothing asked "
             "for it; name the model on the dispatch or in the brief to request it"
         )
+    hands_class = record["task_class"]
+    if not warn_reason and hands_class not in (None, "implement", "mechanical") and (
+        subagent == "grok-implementer" or HANDS_MODEL.search(model)
+    ):
+        warn_reason = f"Grok and Composer never review: {hands_class} is not implement or mechanical; route refuses it"
     explicit = [{"model": model, "source": "dispatch"}] if model and forbidden_model(model, retired) else []
     explicit += [
         {"model": pin, "source": "brief", **({"blocked": True} if pin in blocked_pins else {})}
