@@ -87,6 +87,7 @@ from app.core.openai.parsing import parse_response_payload
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesReasoning, ResponsesRequest
 from app.core.openai.v1_requests import V1ResponsesCompactRequest, V1ResponsesRequest
 from app.core.providers import get_anthropic_compat_profile
+from app.core.providers.openrouter import is_deepseek_model
 from app.core.resilience.overload import is_local_overload_error_code, merge_retry_after_headers
 from app.core.runtime_logging import log_error_response
 from app.core.types import JsonValue
@@ -171,7 +172,6 @@ from app.modules.proxy.schemas import (
     CodexModelEntry,
     CodexModelsResponse,
     FileCreateRequest,
-    ModelListItem,
     ModelListResponse,
     ModelMetadata,
     RateLimitStatusPayload,
@@ -373,7 +373,6 @@ _UNAVAILABLE_SELECTION_ERROR_CODES = {
 }
 _STREAM_STARTUP_ERROR_PROBE_SECONDS = 0.05
 
-
 _HTTP_BRIDGE_STARTUP_ERROR_PROBE_SECONDS = 2.0
 _CHAT_COMPLETIONS_STARTUP_ERROR_PROBE_SECONDS = 2.0
 _CURSOR_CHAT_COMPLETIONS_STARTUP_ERROR_PROBE_SECONDS = 15.0
@@ -386,7 +385,6 @@ _V1_MAX_OUTPUT_TOKEN_OVERRIDES: Final[dict[str, int]] = {
 }
 _OPPORTUNISTIC_RETRY_AFTER_SECONDS = 60
 
-
 _IMAGE_ERROR_TYPE_STATUS: Final[dict[str, int]] = {
     "invalid_request_error": 400,
     "authentication_error": 401,
@@ -395,7 +393,6 @@ _IMAGE_ERROR_TYPE_STATUS: Final[dict[str, int]] = {
     "rate_limit_error": 429,
     "insufficient_quota": 429,
 }
-
 
 _IMAGE_ERROR_CODE_STATUS: Final[dict[str, int]] = {
     "content_policy_violation": 400,
@@ -2282,56 +2279,9 @@ def _codex_model_entries(
 
 
 async def _build_models_response(api_key: ApiKeyData | None) -> Response:
-    reservation = await _enforce_request_limits(
-        api_key,
-        request_model=None,
-        request_service_tier=None,
-    )
+    from app.modules.proxy.models_api import _build_models_response as build
 
-    allowed_models = _allowed_models_for_api_key(api_key)
-    visibility_allowed_models = _codex_model_visibility_allowed_models(api_key)
-    created = int(time.time())
-
-    registry = get_model_registry()
-    models = registry.get_models_with_fallback()
-
-    if not models:
-        await _release_reservation(reservation)
-        return JSONResponse(content=ModelListResponse(data=[], models=[]).model_dump(mode="json"))
-
-    items: list[ModelListItem] = []
-    for slug, model in models.items():
-        if not is_public_model(model, allowed_models):
-            continue
-        items.append(
-            ModelListItem.model_validate(
-                {
-                    "id": slug,
-                    "created": created,
-                    "owned_by": "agent-lb",
-                    "metadata": _to_model_metadata(model),
-                    "api_types": ["chat_completions"],
-                    "capabilities": _v1_model_capabilities(model),
-                    "context_length": _v1_input_context_window(model),
-                    "contextLength": _v1_input_context_window(model),
-                    "max_output_tokens": _v1_max_output_tokens(model),
-                    "maxOutputTokens": _v1_max_output_tokens(model),
-                    "supports_reasoning": _v1_supports_reasoning(model),
-                    "supportsReasoning": _v1_supports_reasoning(model),
-                    "supports_images": _v1_supports_vision(model),
-                    "supportsImages": _v1_supports_vision(model),
-                    "supports_vision": _v1_supports_vision(model),
-                    "supportsVision": _v1_supports_vision(model),
-                }
-            )
-        )
-    await _release_reservation(reservation)
-    return JSONResponse(
-        content=ModelListResponse(
-            data=items,
-            models=_codex_model_entries(models, allowed_models, visibility_allowed_models),
-        ).model_dump(mode="json")
-    )
+    return await build(api_key)
 
 
 def _allowed_models_for_api_key(api_key: ApiKeyData | None) -> set[str] | None:
@@ -2503,6 +2453,11 @@ async def v1_chat_completions(
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
+    effective_model = _effective_model_for_api_key(api_key, payload.model)
+    if is_deepseek_model(effective_model):
+        from app.modules.proxy.openrouter_api import chat_response
+
+        return await chat_response(request, effective_model, payload.stream, api_key)
     cursor_compat_client = _is_cursor_compat_client(request, api_key)
     effective_model = _effective_model_for_api_key(api_key, payload.model)
     validate_model_access(api_key, effective_model)
@@ -4130,7 +4085,6 @@ _REPLAYABLE_PUBLIC_PRE_CREATED_EVENT_TYPES = frozenset(
         "response.refusal.done",
     }
 )
-
 
 _INDEXED_PRE_CREATED_LIFECYCLE_EVENT_TYPES = frozenset(
     {

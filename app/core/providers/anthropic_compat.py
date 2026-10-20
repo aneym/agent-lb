@@ -167,6 +167,10 @@ def get_anthropic_compat_profile(provider_name: str) -> AnthropicCompatProfile:
 
 
 def provider_name_for_anthropic_model(model: str) -> str:
+    from app.core.providers.openrouter import is_deepseek_model
+
+    if is_deepseek_model(model):
+        return "openrouter"
     normalized = model.strip().lower()
     for profile in ANTHROPIC_COMPAT_PROFILES:
         if profile.model_prefixes and normalized.startswith(profile.model_prefixes):

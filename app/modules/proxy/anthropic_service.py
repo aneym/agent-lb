@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, AsyncContextManager, cast
-from urllib.parse import urljoin
 
 import aiohttp
 from pydantic import ValidationError
@@ -46,6 +45,7 @@ from app.core.providers import (
     get_anthropic_compat_profile,
     provider_name_for_anthropic_model,
 )
+from app.core.providers.openrouter import is_deepseek_model, map_deepseek_body
 from app.core.utils.client_session import get_dispatch_id
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import naive_utc_to_epoch
@@ -65,8 +65,10 @@ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservation
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_cache import get_account_selection_cache
+from app.modules.proxy.anthropic_transport import AnthropicTransport
 from app.modules.proxy.claude_codex_bridge import estimate_claude_input_tokens
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
+from app.modules.proxy.openrouter_usage import chat_usage, collect_chat_usage
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 from app.modules.usage.additional_quota_keys import get_additional_quota_definition_for_model
 
@@ -414,7 +416,7 @@ def _upload_admission_error(exc: upload_admission.UploadAdmissionTimeout) -> tup
     return code, upload_admission.failure_message(exc)
 
 
-class AnthropicProxyService:
+class AnthropicProxyService(AnthropicTransport):
     def __init__(self, repo_factory: ProxyRepoFactory) -> None:
         self._repo_factory = repo_factory
         self._load_balancer = LoadBalancer(repo_factory)
@@ -427,6 +429,7 @@ class AnthropicProxyService:
         payload: AnthropicMessageRequest,
         inbound_headers: Mapping[str, str],
         *,
+        openai_body: dict[str, Any] | None = None,
         api_key: ApiKeyData | None = None,
         api_key_reservation: ApiKeyUsageReservationData | None = None,
     ) -> AnthropicProxyStream:
@@ -545,7 +548,13 @@ class AnthropicProxyService:
                             provider_name=provider_name,
                             fast_mode=_anthropic_fast_mode_requested(payload),
                         )
-                        body_payload = payload.model_dump(mode="json", exclude_none=True)
+                        body_payload = (
+                            openai_body
+                            if openai_body is not None
+                            else payload.model_dump(mode="json", exclude_none=True)
+                        )
+                        if provider_name == "openrouter" and is_deepseek_model(payload.model):
+                            body_payload = map_deepseek_body(body_payload)
                         if (
                             provider_name == ANTHROPIC_PROVIDER_NAME
                             and get_settings().anthropic_claude_code_identity_enabled
@@ -560,7 +569,8 @@ class AnthropicProxyService:
                             body_payload, headers, inbound_headers, provider_name
                         )
 
-                        body_payload, _ = strip_eval_web_tools(body_payload, "anthropic")
+                        if openai_body is None:
+                            body_payload, _ = strip_eval_web_tools(body_payload, "anthropic")
                         nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
 
                         first_byte_seconds = get_settings().anthropic_first_byte_timeout_seconds
@@ -584,6 +594,7 @@ class AnthropicProxyService:
                                     provider_name=provider_name,
                                     headers=headers,
                                     json_body=body_payload,
+                                    **({"openai_chat": True} if openai_body is not None else {}),
                                 ),
                                 attempts=get_settings().upstream_connect_attempts,
                                 label=_provider_label(provider_name),
@@ -878,9 +889,9 @@ class AnthropicProxyService:
                                     if raw_body is not None:
                                         raw_body.extend(chunk_bytes)
                                     else:
-                                        text_buffer, usage, chunk_error, saw_output = _collect_usage_from_chunk(
-                                            text_buffer, chunk_bytes, usage
-                                        )
+                                        text_buffer, usage, chunk_error, saw_output = (
+                                            collect_chat_usage if openai_body is not None else _collect_usage_from_chunk
+                                        )(text_buffer, chunk_bytes, usage)
                                         if latency_first_token_ms is None and saw_output:
                                             latency_first_token_ms = int((time.monotonic() - started_at) * 1000)
                                         if chunk_error is not None:
@@ -900,7 +911,11 @@ class AnthropicProxyService:
                                 if unsent:
                                     yield bytes(unsent)
                                 if raw_body is not None:
-                                    usage = _usage_from_json_body(bytes(raw_body)) or usage
+                                    usage = (
+                                        chat_usage(json.loads(raw_body))
+                                        if openai_body is not None
+                                        else _usage_from_json_body(bytes(raw_body))
+                                    ) or usage
 
                                 if stream_error is not None:
                                     stream_error_type = stream_error.error.type or "unknown"
@@ -1298,42 +1313,6 @@ class AnthropicProxyService:
             model=model,
             provider_name=provider_name,
         )
-
-    def _open_upstream_response(
-        self,
-        session: aiohttp.ClientSession,
-        *,
-        provider_name: str,
-        headers: Mapping[str, str],
-        json_body: Mapping[str, Any],
-    ) -> AsyncContextManager[aiohttp.ClientResponse]:
-        settings = get_settings()
-        url = urljoin(_upstream_base_url(provider_name).rstrip("/") + "/", "v1/messages")
-        timeout = aiohttp.ClientTimeout(
-            total=settings.proxy_request_budget_seconds,
-            connect=settings.upstream_connect_timeout_seconds,
-        )
-        if provider_name == ANTHROPIC_PROVIDER_NAME:
-            return upstream_body.post_json(session, url, json_body=json_body, headers=headers, timeout=timeout)
-        return session.post(url, json=json_body, headers=headers, timeout=timeout)
-
-    def _open_count_tokens_response(
-        self,
-        session: aiohttp.ClientSession,
-        *,
-        provider_name: str,
-        headers: Mapping[str, str],
-        json_body: Mapping[str, Any],
-    ) -> AsyncContextManager[aiohttp.ClientResponse]:
-        settings = get_settings()
-        url = urljoin(_upstream_base_url(provider_name).rstrip("/") + "/", "v1/messages/count_tokens")
-        timeout = aiohttp.ClientTimeout(
-            total=_COUNT_TOKENS_TIMEOUT_SECONDS,
-            connect=settings.upstream_connect_timeout_seconds,
-        )
-        if provider_name == ANTHROPIC_PROVIDER_NAME:
-            return upstream_body.post_json(session, url, json_body=json_body, headers=headers, timeout=timeout)
-        return session.post(url, json=json_body, headers=headers, timeout=timeout)
 
     async def _frame_account(self) -> Account:
         account_id = get_settings().anthropic_frame_account_id
@@ -2067,6 +2046,7 @@ class AnthropicProxyService:
                     error_message=error_message,
                     plan_type=account.plan_type if account else None,
                     provider=provider_name,
+                    upstream_cost_usd=usage.cost if usage else None,
                     unified_5h_utilization=unified_5h_utilization,
                     unified_7d_utilization=unified_7d_utilization,
                     unified_headers=unified_headers,
@@ -2212,18 +2192,18 @@ class AnthropicProxyService:
                 window=CREDITS_USAGE_WINDOW,
                 account_ids=account_ids,
             )
-        eligible: list[str] = []
-        blocked = 0
-        for account in selectable:
-            if account.status == AccountStatus.QUOTA_EXCEEDED:
-                blocked += 1
-                continue
-            window = window_from_usage(credits_usage.get(account.id))
-            if window is not None and credits_exhausted(window):
-                blocked += 1
-                continue
-            eligible.append(account.id)
-        return _AnthropicQuotaEligibility(account_ids=eligible, blocked_count=blocked)
+            eligible: list[str] = []
+            blocked = 0
+            for account in selectable:
+                if account.status == AccountStatus.QUOTA_EXCEEDED:
+                    blocked += 1
+                    continue
+                window = window_from_usage(credits_usage.get(account.id))
+                if window is not None and credits_exhausted(window):
+                    blocked += 1
+                    continue
+                eligible.append(account.id)
+            return _AnthropicQuotaEligibility(account_ids=eligible, blocked_count=blocked)
 
     async def claim_session_route(
         self,

@@ -132,6 +132,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
         unified_7d_utilization: float | None = None,
         unified_headers: dict[str, str] | None = None,
         quota_observed_at: datetime | None = None,
+        upstream_cost_usd: float | None = None,
     ) -> RequestLog:
         caller = identity_for_log(identity)
         async with sqlite_writer_section(self._session):
@@ -201,7 +202,11 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
                 upstream_proxy_fail_closed_reason=upstream_proxy_fail_closed_reason,
                 requested_at=requested_at or utcnow(),
             )
-            log.cost_usd = calculated_cost_from_log(typing_cast(RequestLogLike, log))
+            log.cost_usd = (
+                upstream_cost_usd
+                if upstream_cost_usd is not None
+                else calculated_cost_from_log(typing_cast(RequestLogLike, log))
+            )
             self._session.add(log)
             try:
                 await self._session.commit()

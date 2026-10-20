@@ -10,6 +10,7 @@ from app.core.types import JsonObject
 class AnthropicUsage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    cost: StrictFloat | None = None
     input_tokens: StrictInt | None = None
     output_tokens: StrictInt | None = None
     cache_creation_input_tokens: StrictInt | None = None
@@ -236,6 +237,7 @@ def merge_usage_values(left: AnthropicUsage | None, right: AnthropicUsage | None
         extra["cache_creation"] = breakdown
     return AnthropicUsage(
         **extra,
+        cost=right.cost if right.cost is not None else left.cost,
         input_tokens=right.input_tokens if right.input_tokens is not None else left.input_tokens,
         output_tokens=right.output_tokens if right.output_tokens is not None else left.output_tokens,
         cache_creation_input_tokens=(

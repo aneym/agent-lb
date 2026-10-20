@@ -59,3 +59,30 @@ def register_openrouter_provider() -> None:
 
 
 register_openrouter_provider()
+
+
+DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"
+DEEPSEEK_PROVIDER_ORDER = ("inference-net/fp8", "deepinfra/fp8/priority", "morph/fp8", "cloudflare")
+
+
+def is_deepseek_model(model: str) -> bool:
+    return model in {
+        "deepseek-flash",
+        "deepseek-flash-floor",
+        DEEPSEEK_MODEL,
+        f"{DEEPSEEK_MODEL}:nitro",
+        f"{DEEPSEEK_MODEL}:floor",
+    }
+
+
+def map_deepseek_body(body: dict) -> dict:
+    mapped = dict(body)
+    if mapped["model"] == "deepseek-flash-floor":
+        mapped["model"] = f"{DEEPSEEK_MODEL}:floor"
+    elif mapped["model"] == "deepseek-flash":
+        mapped["model"] = DEEPSEEK_MODEL
+    if mapped["model"] == DEEPSEEK_MODEL:
+        mapped["provider"] = {"order": list(DEEPSEEK_PROVIDER_ORDER), "allow_fallbacks": False}
+    else:
+        mapped.pop("provider", None)
+    return mapped

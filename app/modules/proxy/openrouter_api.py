@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+from fastapi import Request, Response
+from fastapi.responses import StreamingResponse
+
+from app.core.anthropic.models import AnthropicMessageRequest
+from app.dependencies import get_anthropic_proxy_context
+from app.modules.api_keys.service_data import ApiKeyData
+from app.modules.proxy.anthropic_service import AnthropicProxyError
+
+
+async def chat_response(
+    request: Request, effective_model: str, stream_requested: bool | None, api_key: ApiKeyData | None
+) -> Response:
+    from app.modules.proxy.api import (
+        _collect_anthropic_body,
+        _enforce_request_limits,
+        _estimate_anthropic_request_usage,
+        _logged_error_json_response,
+        _release_reservation,
+        openai_error,
+        validate_model_access,
+    )
+
+    validate_model_access(api_key, effective_model)
+    raw_body = await request.json()
+    raw_body["model"] = effective_model
+    if stream_requested:
+        raw_body["stream_options"] = {**(raw_body.get("stream_options") or {}), "include_usage": True}
+    routing_payload = AnthropicMessageRequest(
+        model=effective_model,
+        max_tokens=raw_body.get("max_completion_tokens") or raw_body.get("max_tokens") or 4096,
+        messages=[{"role": "user", "content": ""}],
+        stream=stream_requested,
+    )
+    reservation = await _enforce_request_limits(
+        api_key,
+        request_model=effective_model,
+        request_service_tier=None,
+        request_usage_budget=_estimate_anthropic_request_usage(routing_payload, raw_body=await request.body()),
+    )
+    try:
+        stream = await get_anthropic_proxy_context(request).service.stream_messages(
+            routing_payload,
+            request.headers,
+            openai_body=raw_body,
+            api_key=api_key,
+            api_key_reservation=reservation,
+        )
+        if stream_requested:
+            return StreamingResponse(stream.body, media_type=stream.media_type)
+        return Response(content=await _collect_anthropic_body(stream.body), media_type=stream.media_type)
+    except AnthropicProxyError as exc:
+        await _release_reservation(reservation)
+        return _logged_error_json_response(request, exc.status_code, openai_error(exc.code, exc.message))
