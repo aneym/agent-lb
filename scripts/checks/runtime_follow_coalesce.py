@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import plistlib
 import subprocess
 import sys
 import tarfile
@@ -43,6 +44,8 @@ def exercise(root: Path) -> None:
         run(["git", "push", "origin", "main"], cwd=src)
         return run(["git", "rev-parse", "HEAD"], cwd=src)
 
+    old_bin = '#!/bin/sh\nprintf "old\\n"\n'
+    (src / "scripts/operator-tool").write_text(old_bin)
     push("docs/a.md", "baseline")
     archive = root / "tree.tar"
     run(["git", "archive", "--output", str(archive), "HEAD"], cwd=src)
@@ -53,6 +56,7 @@ def exercise(root: Path) -> None:
     (runtime / ".venv/bin/agent-lb").touch()
     (runtime / ".venv/.uv-lock-sha").write_text(hashlib.sha256((runtime / "uv.lock").read_bytes()).hexdigest() + "\n")
     bins.mkdir()
+    (bins / "operator-tool").write_text(old_bin)
     restarts = root / "restarts.txt"
     stub = bins / "lb-restart"
     stub.write_text('#!/bin/sh\nprintf "restart\\n" >> "$RESTARTS"\n')
@@ -107,13 +111,57 @@ def exercise(root: Path) -> None:
     age(restart_pending_since=10800, main_seen_at=0)
     cli("tick")
     require(count() == 3, "ceiling did not restart")
-    print("ok: live sync, pending status/check, quiet, gap, force, ceiling")
+    (src / "scripts/operator-tool").write_text('#!/bin/sh\nprintf "new\\n"\n')
+    push("app/x.py", "rollback regression")
+    cli("tick")
+    require((bins / "operator-tool").read_text() == old_bin, "pending deploy replaced bin before backup")
+    stub.write_text("#!/bin/sh\nexit 1\n")
+    done = subprocess.run(
+        [sys.executable, str(REPO / "scripts/runtime_follow.py"), "tick", "--force"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    require(done.returncode == 1, "failed restart was not reported")
+    require((bins / "operator-tool").read_text() == old_bin, "failed restart did not restore old bin")
+    push("scripts/operator-tool", '#!/bin/sh\nprintf "live\\n"')
+    push("app/x.py", "code three")
+    cli("tick")
+    require("live" in (bins / "operator-tool").read_text(), "no-restart bin update did not install")
+    print("ok: live sync, pending status/check, quiet, gap, force, ceiling, bin rollback")
+
+
+def plist_budget(root: Path) -> None:
+    home = root / "home"
+    plist = home / "Library/LaunchAgents/com.aneyman.agent-lb.plist"
+    plist.parent.mkdir(parents=True)
+    env = {**os.environ, "HOME": str(home), "PYTHON_BIN": sys.executable}
+    for prior, expected in ((330, 420), (900, 900)):
+        plist.write_bytes(
+            plistlib.dumps(
+                {
+                    "ExitTimeOut": prior,
+                    "EnvironmentVariables": {
+                        "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN": "300",
+                        "AGENT_LB_SHUTDOWN_DRAIN_TIMEOUT_SECONDS": "30",
+                    },
+                }
+            )
+        )
+        output = run(["bash", str(REPO / "scripts/install-service.sh"), "--print"], cwd=REPO, env=env)
+        generated = plistlib.loads(output.encode())
+        require(generated["ExitTimeOut"] == expected, f"wrong ExitTimeOut for {prior}: {generated['ExitTimeOut']}")
+        require(plistlib.loads(plist.read_bytes())["ExitTimeOut"] == prior, "--print changed the installed plist")
+    print("ok: plist generation repairs 330 to 420 and preserves operator timeout 900")
 
 
 def main() -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="runtime-follow-check-") as temp:
             exercise(Path(temp))
+            plist_budget(Path(temp))
     except (AssertionError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"FAIL runtime-follow: {exc}", file=sys.stderr)
         return 1

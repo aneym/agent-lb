@@ -9,7 +9,7 @@ from app.core.config.settings import Settings, get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import naive_utc_to_epoch, utcnow
 from app.db.models import Account, AccountTransferDirection, AccountTransferState
-from app.modules.accounts.auth_manager import _cross_process_refresh_lock
+from app.modules.accounts.refresh_lock import _cross_process_refresh_lock
 from app.modules.federation.exceptions import (
     FederationConflictError,
     FederationNotConfiguredError,

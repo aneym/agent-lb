@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import time
 
+from app.core.shutdown_budget import EXCHANGE_SETTLE_S as EXCHANGE_SETTLE_S
+
 _draining: bool = False
 _bridge_drain_active: bool = False
 _in_flight: int = 0
 _exchanges: int = 0
-EXCHANGE_SETTLE_S = 75
 
 
 def reset() -> None:

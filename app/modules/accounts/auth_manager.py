@@ -36,7 +36,7 @@ from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db import session as db_session
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
-from app.modules.accounts.refresh_lock import _cross_process_refresh_lock
+from app.modules.accounts import refresh_lock
 from app.modules.accounts.repository import EXCHANGE_RESET_REASONS
 from app.modules.proxy.account_cache import get_account_selection_cache
 
@@ -112,7 +112,6 @@ class RefreshAdmissionLeasePort(Protocol):
 
 logger = logging.getLogger(__name__)
 _ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 300
-
 
 _ACCESS_TOKEN_SERVING_MARGIN_SECONDS = 300
 
@@ -277,7 +276,7 @@ class AuthManager:
             provider = get_provider(account.provider)
         except ProviderLookupError as exc:
             raise RefreshError("unsupported_provider", str(exc), True) from exc
-        async with _cross_process_refresh_lock(account.id):
+        async with refresh_lock._cross_process_refresh_lock(account.id):
             return await self._refresh_account_locked(account, provider)
 
     async def _refresh_account_locked(self, account: Account, provider: Provider) -> Account:
