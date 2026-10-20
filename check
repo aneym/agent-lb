@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 
+comment_guard="$HOME/.agent-rails/factory-runtime/bin/no-new-comments"
+if [ "${1-}" = "--staged" ]; then
+    "$comment_guard" HEAD "$(git write-tree)" --repo . --no-main
+else
+    "$comment_guard" origin/main HEAD --repo .
+fi
+
+
 usage() {
   printf '%s\n' 'usage: ./check [--staged|--full]' >&2
 }
