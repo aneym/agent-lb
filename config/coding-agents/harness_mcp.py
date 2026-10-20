@@ -215,6 +215,7 @@ def ensure_harness_mcp(host_home, run):
                     item["env_vars"] = list(entry["env"])
                 if "headers" in entry:
                     item["env_http_headers"] = {key: reference.fullmatch(value)[1] for key, value in entry["headers"].items()}
+                item["default_tools_approval_mode"] = "approve"
                 translated[name] = item
             current = config.get("mcp_servers", {})
             if all(current.get(name) == entry for name, entry in translated.items()):
