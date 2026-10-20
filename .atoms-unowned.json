@@ -1,0 +1,25 @@
+{
+  "prefixes": {
+    ".agents": 116,
+    ".claude": 1,
+    ".dockerignore": 1,
+    ".env.example": 1,
+    ".factory-lint.toml": 1,
+    ".gitignore": 1,
+    "ADR-0005-SEAT-LEASES.md": 1,
+    "CHANGELOG.md": 1,
+    "CLAUDE.md": 1,
+    "CLIENT-SETUP.md": 1,
+    "CODING_STANDARDS.md": 1,
+    "DECISIONS.md": 1,
+    "DESIGN.md": 1,
+    "Dockerfile": 1,
+    "GETTING-STARTED.md": 1,
+    "LICENSE": 1,
+    "PRODUCT.md": 1,
+    "README.md": 1,
+    "docker-compose.yml": 1,
+    "renovate.json": 1
+  },
+  "version": 1
+}

@@ -1,0 +1,66 @@
+version = 1
+[defaults]
+always = ["AGENTS.md", "products.json", "Makefile"]
+meta = [".github", ".githooks", ".filecap.json", ".filecap-baseline.json", "check", "atoms.toml", ".atoms-unowned.json", "uv.lock", "pyproject.toml", "frontend/bun.lock", "frontend/package.json"]
+unowned_baseline = ".atoms-unowned.json"
+full = "./check --full"
+
+[atom.app]
+paths = ["app"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.bin]
+paths = ["bin"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.clients]
+paths = ["clients"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.config]
+paths = ["config"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.deploy]
+paths = ["deploy"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.docs]
+paths = ["docs"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.features]
+paths = ["features"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.frontend]
+paths = ["frontend"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.openspec]
+paths = ["openspec"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.patches]
+paths = ["patches"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.scripts]
+paths = ["scripts"]
+check = "make lint"
+owner = "agent-lb-lead"
+
+[atom.tests]
+paths = ["tests"]
+check = "make lint"
+owner = "agent-lb-lead"
