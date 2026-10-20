@@ -135,7 +135,7 @@ def authority_fallback(standard: dict[str, Any], state: dict[str, Any]) -> dict[
 
 def swapped_standard(table: dict[str, Any], class_name: str, standard: dict[str, Any],
                      state: dict[str, Any]) -> dict[str, Any]:
-    if state["mode"] != "codex-swap":
+    if state["mode"] != "codex-swap" or class_name == "verify":
         return standard
     override = (table.get("quota_swap") or {}).get(class_name)
     return {**standard, **override} if isinstance(override, dict) else standard

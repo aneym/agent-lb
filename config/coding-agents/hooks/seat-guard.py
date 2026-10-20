@@ -91,12 +91,8 @@ def quota_swap_seat(subagent: str, prompt: str = "") -> str | None:
     if preserve_seat(subagent, prompt) or hands_warning(subagent, prompt):
         return None
     target = None
-    if subagent in {"security-reviewer"} or fnmatch.fnmatchcase(subagent.removesuffix("-local"), "lab-*-verifier"):
-        target = "codex-verifier"
-    elif subagent.startswith("sonnet-implementer"):
+    if subagent.removesuffix("-local") == "sonnet-implementer":
         target = "gpt-implementer"
-    elif subagent in {"opus-seat", "opus-seat-full"}:
-        target = "codex-sol"
     if target and subagent.endswith("-local"):
         target += "-local"
         agents = Path(os.environ.get("SEAT_GUARD_AGENTS_DIR") or Path.home() / ".claude" / "agents")

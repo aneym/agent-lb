@@ -29,6 +29,10 @@ def seat_block(api: Any, ctx: Any, arm: dict, excluded: set[str]) -> str | None:
         return "gate closed"
     if arm.get("author_vendor") and arm["author_vendor"] != ctx.author_vendor:
         return "author vendor incompatible"
+    if ctx.class_name == "verify":
+        reviewer = api.dispatch_standard(ctx.table, "verify", ctx.author_vendor)
+        if arm.get("seat") != reviewer["seat"]:
+            return "reviewer must match the cross-vendor author standard"
     return api.hands_refusal(ctx.table, ctx.class_name, arm.get("seat"), arm.get("model"))
 
 

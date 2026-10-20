@@ -24,6 +24,7 @@ PRESERVED_SEATS = {
     "fable-orchestrator",
     "plan",
     "plan-reviewer",
+    "security-reviewer",
 }
 BRAIN_CLASSES = {
     "plan",
@@ -51,7 +52,7 @@ EXCEPTION = re.compile(
 )
 BRAINS = re.compile(
     r"\b(?:lead|leader|leading|planner|planning|plan|plans|lane|scope|scoping|spec|specification|"
-    r"contract|architecture|design|review|reviewer|verdict|judge|audit|synthesis|decision)\b",
+    r"contract|architecture|design|review|reviewer|verdict|judge|judgment|judgement|audit|synthesis|decision)\b",
     re.IGNORECASE,
 )
 HANDS = re.compile(
