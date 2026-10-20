@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 
+test_guard="${KIT_ROOT:-$HOME/.agent-rails/kit-runtime/current}/bin/test-guard"
+if [ "${1-}" = "--staged" ]; then
+    "$test_guard" --staged
+else
+    "$test_guard" --base origin/main
+fi
+
+
 comment_guard="$HOME/.agent-rails/factory-runtime/bin/no-new-comments"
 if [ "${1-}" = "--staged" ]; then
     "$comment_guard" HEAD "$(git write-tree)" --repo . --no-main
