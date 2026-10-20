@@ -129,7 +129,6 @@ def parse_ts(value: Any) -> datetime | None:
 
 
 def route_command(*args: str) -> list[str]:
-
     route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
     try:
         with open(route, "rb") as handle:
@@ -156,11 +155,15 @@ def read_json(path: Path, default: Any) -> Any:
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-    with os.fdopen(handle, "w", encoding="utf-8") as stream:
-        json.dump(value, stream, indent=2, sort_keys=True)
-        stream.write("\n")
-    os.chmod(temp, 0o600)
-    os.replace(temp, path)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
 
 
 def load_registry() -> list[dict[str, Any]]:
@@ -268,8 +271,6 @@ def update_state(apply: Callable[[list[dict[str, Any]], dict[str, Any]], T]) -> 
 
 
 def save_state(state: dict[str, Any], registry: list[dict[str, Any]]) -> None:
-
-
     known = {account["id"]: account for account in registry}
     accounts = state["accounts"]
     for account_id in list(accounts):
@@ -295,12 +296,9 @@ def expand(value: Any) -> Path | None:
 
 
 def read_cursor_key(account: dict[str, Any]) -> str:
-    key_file = expand(account.get("key_file"))
-    if key_file is None or not key_file.is_file():
-        raise RuntimeError(f"key file missing for {account['id']}")
     try:
-        key = key_file.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeError):
+        key = expand(account.get("key_file")).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError, AttributeError):
         raise RuntimeError(f"key file missing for {account['id']}") from None
     if not key:
         raise RuntimeError(f"key file empty for {account['id']}")
@@ -346,14 +344,17 @@ def quota_payload(windows: list[dict[str, Any]], source: str = "vendor",
 def cursor_quota(usage: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
     values = usage.get("planUsage") or {}
     info = plan.get("planInfo") or plan
-    kind = "weekly" if info.get("includedUsagePeriod") == "weekly" else "monthly"
     reset = usage.get("billingCycleEnd") or values.get("billingCycleEnd")
-    windows = [quota_window(window_id, kind, label, values[field], reset)
+    windows = [quota_window(window_id, "monthly", label, values[field], reset)
                for window_id, label, field in (
-                   ("cursor-models", "Cursor models · Grok, Composer", "autoPercentUsed"),
+                   ("cursor-models", "Composer", "autoPercentUsed"),
                    ("cursor-other", "Other models", "apiPercentUsed")) if values.get(field) is not None]
     if not windows:
         raise QuotaError("vendor_error")
+    stamp = parse_ts(windows[0]["resetsAt"])
+    for window in windows:
+        if stamp and stamp - now() <= timedelta(days=8):
+            window["kind"] = "weekly"
     reading = quota_payload(windows)
     reading["planLabel"] = info.get("planName") or info.get("planType")
     reading["email"] = plan.get("email")
@@ -426,7 +427,7 @@ def cursor_access_credential(account: dict[str, Any]) -> str:
             capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         raise QuotaError("credential_unavailable") from None
-    if result.returncode != 0 or not result.stdout.strip():
+    if result.returncode or not result.stdout.strip():
         raise QuotaError("credential_unavailable")
     return result.stdout.strip()
 
@@ -448,8 +449,6 @@ def collect_quota(account: dict[str, Any], observed: dict[str, Any] | None = Non
     if observed:
         return observed
     if vendor == "muse":
-        if observed:
-            return observed
         raise QuotaError("not_reported")
     if vendor == "cursor":
         key = cursor_access_credential(account)
@@ -494,6 +493,12 @@ def refresh_quota(account: dict[str, Any], observed: dict[str, Any] | None = Non
                 if isinstance(label, str) and label:
                     record[field] = label
             record["quota"] = value
+            seen, limits = parse_ts(value.get("observedAt")), record.get("limits") or {}
+            for window in value["windows"]:
+                at = parse_ts(limits.get(window["id"], {}).get("at"))
+                if window["usedPercent"] < 100 and seen and at and seen > at:
+                    for key in ("cooldowns", "limits"):
+                        (record.get(key) or {}).pop(window["id"], None)
         elif previous.get("windows"):
             stamp = parse_ts(previous.get("observedAt"))
             record["quota"] = {**previous, "stale": stamp is None or now() - stamp > timedelta(minutes=15),
@@ -559,7 +564,6 @@ def local_proxy_vars(env: dict[str, str]) -> list[str]:
 
 
 def account_env(account: dict[str, Any]) -> dict[str, str]:
-
     env = dict(os.environ)
     vendor, auth = account.get("vendor"), account.get("auth")
     for key in local_proxy_vars(env):
@@ -579,14 +583,10 @@ def account_env(account: dict[str, Any]) -> dict[str, str]:
         env.pop("CURSOR_API_KEY", None)
         env.pop("AGENT_CLI_CREDENTIAL_STORE", None)
     elif vendor == "muse":
-
         env.pop("META_API_KEY", None)
         env["MUSE_NO_AUTO_UPDATE"] = "1"
-    elif vendor == "devin" and auth == "lease":
+    elif vendor == "devin" and (auth == "lease" or expand(account.get("data_dir"))):
         env["XDG_DATA_HOME"] = str(devin_data_dir(account))
-    elif vendor == "devin":
-        if expand(account.get("data_dir")) is not None:
-            env["XDG_DATA_HOME"] = str(devin_data_dir(account))
     return env
 
 
@@ -612,8 +612,6 @@ def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     elif vendor == "devin":
         command = [cli_bin("devin"), "auth", "status"]
     elif account.get("auth") == "api-key":
-
-
         command = [cli_bin("cursor"), "models"]
     else:
         command = [cli_bin("cursor"), "about"]
@@ -632,7 +630,6 @@ def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
         return {"auth_ok": False, "auth_error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}, None
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", completed.stdout + "\n" + completed.stderr)
     if vendor == "muse":
-
         ok = completed.returncode == 0 and muse_version_ok(text)
         identity = {"version": text.strip(), "auth_source": "existing-login-unverified"}
     elif vendor == "cursor" and account.get("auth") == "api-key":
@@ -662,10 +659,6 @@ def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     return result, text
 
 
-def probe_account(account: dict[str, Any]) -> dict[str, Any]:
-    return run_probe(account)[0]
-
-
 def apply_probe(account_id: str, probe: dict[str, Any]) -> None:
     def apply(registry: list[dict[str, Any]], state: dict[str, Any]) -> None:
         if any(account["id"] == account_id for account in registry):
@@ -683,13 +676,10 @@ def command_probe(args: argparse.Namespace) -> int:
         fail(f"no account {args.account!r} registered", EXIT_NO_ACCOUNT)
     results = {}
     for account in registry:
-        if args.account and account["id"] != args.account:
+        if (args.account and account["id"] != args.account or args.vendor and account.get("vendor") != args.vendor
+                or account.get("enabled", True) is False):
             continue
-        if args.vendor and account.get("vendor") != args.vendor:
-            continue
-        if account.get("enabled", True) is False:
-            continue
-        probe = probe_account(account)
+        probe = run_probe(account)[0]
         apply_probe(account["id"], probe)
         results[account["id"]] = probe
     if args.json:
@@ -715,11 +705,7 @@ def usage_since(record: dict[str, Any], since: datetime) -> dict[str, Any]:
 def cursor_pool(model: str) -> str:
     managed = Path.home() / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
     repo = Path(__file__).resolve().parent.parent / "config" / "coding-agents" / "routing-table.json"
-    path = (
-        Path(os.environ["ROUTE_TABLE"]).expanduser()
-        if os.environ.get("ROUTE_TABLE")
-        else (managed if managed.is_file() else repo)
-    )
+    path = Path(os.environ.get("ROUTE_TABLE") or (managed if managed.is_file() else repo)).expanduser()
     try:
         table = json.loads(path.read_text(encoding="utf-8"))
         definitions = table["cli_pools"]["cursor"]["pools"]
@@ -748,14 +734,12 @@ def mark_limit(record: dict[str, Any], vendor: str, model: str, text: str) -> No
         return
     pool = cursor_pool(model)
     match = re.search(r"reset when your monthly cycle ends on (\d{1,2})/(\d{1,2})/(\d{4})", text, re.I)
-    until = None
-    if match:
-        try:
-            month, day, year = map(int, match.groups())
-            until = datetime(year, month, day, tzinfo=timezone.utc)
-        except ValueError:
-            pass
-    if until is not None:
+    try:
+        month, day, year = map(int, match.groups())
+        until = datetime(year, month, day, tzinfo=timezone.utc)
+    except (AttributeError, ValueError):
+        until = None
+    if until:
         record.setdefault("limits", {})[pool] = {"at": iso(now()), "until": iso(until), "source": "vendor"}
     record.setdefault("cooldowns", {})[pool] = iso(until or cooldown_until(text))
 
@@ -824,7 +808,7 @@ def command_accounts(args: argparse.Namespace) -> int:
         elif row["cooldown_until"]:
             status = f"cooling to {row['cooldown_until'][11:16]}Z"
         elif row["cooldowns"]:
-            labels = {"cursor-models": "Cursor models", "cursor-other": "Other models"}
+            labels = {"cursor-models": "Composer", "cursor-other": "Other models"}
             status = "; ".join(
                 f"{labels.get(pool, pool)} out to {value[5:10]}" for pool, value in row["cooldowns"].items()
             )
@@ -883,12 +867,11 @@ def command_add(args: argparse.Namespace) -> int:
             fail(f"account {args.id} already registered")
         if args.vendor == "muse" and any(a.get("vendor") == "muse" for a in registry):
             fail("one Muse login account per host; credentials are never copied or leased")
-        if args.vendor == "cursor" and account["auth"] == "login":
-            if any(a.get("vendor") == "cursor" and a.get("auth") == "login" for a in registry):
-                fail("a Cursor login account exists already; extra Cursor accounts need --api-key-prompt")
-        if args.vendor == "devin" and not account.get("data_dir"):
-            if any(a.get("vendor") == "devin" and not a.get("data_dir") for a in registry):
-                fail("a Devin account on the default data dir exists already; pass --data-dir for this one")
+        if args.vendor == "cursor" and account["auth"] == "login" and any(a.get("vendor") == "cursor" and a.get("auth") == "login" for a in registry):
+            fail("a Cursor login account exists already; extra Cursor accounts need --api-key-prompt")
+        if args.vendor == "devin" and not account.get("data_dir") and any(
+                a.get("vendor") == "devin" and not a.get("data_dir") for a in registry):
+            fail("a Devin account on the default data dir exists already; pass --data-dir for this one")
         if args.vendor == "cursor" and args.api_key_prompt:
             key_file.parent.mkdir(parents=True, exist_ok=True)
             descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -898,7 +881,7 @@ def command_add(args: argparse.Namespace) -> int:
         write_json(registry_path(), {"version": 1, "accounts": registry})
 
     update_state(add)
-    probe = probe_account(account)
+    probe = run_probe(account)[0]
     apply_probe(args.id, probe)
     print(f"registered {args.id} ({args.vendor}, {account['auth']}): auth {'ok' if probe['auth_ok'] else 'FAILED'}")
     return EXIT_OK if probe["auth_ok"] else EXIT_FAILED
@@ -1024,7 +1007,6 @@ def release_usage(model: str | None, path: str | None) -> dict[str, Any]:
 
 
 def resolve_model(vendor: str, model: str, control: RunControl | None = None) -> str:
-
     try:
         completed = run_stoppable(route_command("resolve", model), control, input=None, timeout=90)
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -1045,7 +1027,6 @@ _CURSOR_MODELS: dict[str, tuple[str, ...]] = {}
 
 
 def cursor_models(account: dict[str, Any], control: RunControl | None = None) -> tuple[str, ...]:
-
     account_id = account["id"]
     if account_id in _CURSOR_MODELS:
         return _CURSOR_MODELS[account_id]
@@ -1071,7 +1052,6 @@ def cursor_models(account: dict[str, Any], control: RunControl | None = None) ->
 
 def check_cursor_model(model: str, candidates: list[dict[str, Any]],
                        control: RunControl | None = None) -> list[dict[str, Any]]:
-
     lists = []
     for account in candidates:
         if control and control.stop_reason():
@@ -1246,7 +1226,6 @@ def parse_outcome(vendor: str, completed: subprocess.CompletedProcess[str], expo
 def order_accounts(
     registry: list[dict[str, Any]], state: dict[str, Any], vendor: str, model: str | None = None
 ) -> list[dict[str, Any]]:
-
     window = now() - timedelta(hours=5)
     ready = []
     for account in registry:
@@ -1616,7 +1595,6 @@ def command_release(args: argparse.Namespace) -> int:
 
 def reserve_capacity(task_class: str, vendor: str, job: str, author_vendor: str | None,
                      model: str, control: RunControl) -> tuple[int, dict[str, Any]]:
-
     argv = route_command("reserve", task_class, *(["--author-vendor", author_vendor] if author_vendor else []),
                          "--job", job, "--prefer", SEAT_FOR_VENDOR[vendor], "--model", model,
                          "--reason", "seat run", "--json")
@@ -1644,8 +1622,6 @@ def reserve_capacity(task_class: str, vendor: str, job: str, author_vendor: str 
 
 
 class RunControl:
-
-
     def __init__(self) -> None:
         self.signals: list[int] = []
         self.first_signal_at: float | None = None
@@ -1673,7 +1649,6 @@ class RunControl:
 
 def run_stoppable(command: list[str], control: RunControl | None, *, input: str | None, timeout: float,
                   echo: Any = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-
     if control is None and echo is None:
         return subprocess.run(command, input=input, capture_output=True, text=True, timeout=timeout, check=False,
                               **kwargs)
@@ -1856,7 +1831,6 @@ class MuseTail:
 
 
 def group_alive(pgid: int) -> bool:
-
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
@@ -1867,8 +1841,6 @@ def group_alive(pgid: int) -> bool:
 
 
 class GroupStop:
-
-
     def __init__(self, pgid: int, control: RunControl, deadline: float) -> None:
         self.pgid = pgid
         self.control = control
@@ -1901,7 +1873,6 @@ class GroupStop:
             self.killed_at = clock
 
     def drain(self) -> None:
-
         while group_alive(self.pgid):
             self.step(leader_done=True)
             if self.killed_at is not None and time.monotonic() - self.killed_at > KILL_DRAIN_SECONDS:
@@ -1914,8 +1885,6 @@ class GroupStop:
 
 
 class CapacityLease:
-
-
     def __init__(self, reservation: dict[str, Any], control: RunControl) -> None:
         self.reservation_id = reservation["reservation_id"]
         self.interval = max(1, int(reservation.get("heartbeat_s") or 300))
@@ -1933,7 +1902,6 @@ class CapacityLease:
                 print(f"seat: route heartbeat {self.reservation_id} failed: {error}", file=sys.stderr)
                 continue
             if completed.returncode == EXIT_NO_ACCOUNT:
-
                 self.control.lost = f"capacity: reservation {self.reservation_id} was lost; the vendor CLI was stopped"
                 print(f"seat: reservation {self.reservation_id} is gone; stopping the vendor CLI", file=sys.stderr)
                 return
@@ -1944,7 +1912,6 @@ class CapacityLease:
         self.thread.start()
 
     def release(self, outcome: str) -> None:
-
         until = time.monotonic() + RELEASE_BUDGET_SECONDS
         self.stopped.set()
         if self.thread.is_alive():
@@ -1974,7 +1941,6 @@ class CapacityLease:
 
 
 def run_envelope(args: argparse.Namespace, model: str | None, run_id: str, error: str, **extra: Any) -> None:
-
     print(json.dumps({"ok": False, "vendor": args.vendor, "account": None, "model": model, "run_id": run_id,
                       "vendor_session_id": None, "wall_s": 0, "tokens_in": None, "tokens_out": None,
                       "attempts": [], "error": error, **extra, "result": None}, indent=2))
@@ -1982,7 +1948,6 @@ def run_envelope(args: argparse.Namespace, model: str | None, run_id: str, error
 
 def ready_candidates(args: argparse.Namespace, registry: list[dict[str, Any]], state: dict[str, Any], model: str,
                      run_id: str) -> tuple[list[dict[str, Any]] | None, int]:
-
     if args.account:
         candidates = [a for a in registry if a["id"] == args.account and a.get("vendor") == args.vendor]
         if not candidates:
@@ -2005,7 +1970,6 @@ def ready_candidates(args: argparse.Namespace, registry: list[dict[str, Any]], s
         run_envelope(args, model, run_id, error)
         return None, EXIT_NO_ACCOUNT
     fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
-    return None, EXIT_NO_ACCOUNT
 
 
 def finish_text() -> str:
@@ -2021,7 +1985,6 @@ def finish_text() -> str:
 
 
 def final_prompt(prompt: str, task_class: str | None = None) -> str:
-
     if task_class == "verify" or "END HANDOFF" in prompt.splitlines():
         return prompt
     finish = finish_text()
@@ -2060,19 +2023,14 @@ def command_run(args: argparse.Namespace) -> int:
             candidates = check_cursor_model(model, candidates)
         why = "no --class" if not args.task_class else "--account pins one account; a lease is its own admission"
         return run_on_accounts(args, prompt, cwd, model, candidates, run_id, None, why, None)
-
-
     if not order_accounts(registry, state, args.vendor):
         fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
-
-
     control = RunControl()
     control.install()
     host = os.environ.get("ROUTE_HOST") or socket.gethostname()
     code, reservation = reserve_capacity(args.task_class, args.vendor, f"seat/{host}/{run_id}", args.author_vendor,
                                          args.model, control)
     if code == EXIT_OK and control.stop_reason():
-
         CapacityLease(reservation, control).release("cancelled")
         code = EXIT_FAILED
     if code != EXIT_OK:
@@ -2087,7 +2045,6 @@ def command_run(args: argparse.Namespace) -> int:
         lease.start()
         code = run_reserved(args, prompt, cwd, registry, state, run_id, reservation, control)
     except SystemExit as stop:
-
         code = stop.code if isinstance(stop.code, int) else EXIT_FAILED
     finally:
         outcome = "cancelled" if control.signals else "ok" if code == EXIT_OK and not control.lost else "failed"
@@ -2102,14 +2059,12 @@ EFFORT_SUFFIX = re.compile(r"-(?:low|medium|high|xhigh|max)$")
 
 
 def same_model(wanted: str, *names: str | None) -> bool:
-
     base = EFFORT_SUFFIX.sub("", wanted)
     return any(name and (wanted == name or base == EFFORT_SUFFIX.sub("", name)) for name in names)
 
 
 def run_reserved(args: argparse.Namespace, prompt: str, cwd: Path, registry: list[dict[str, Any]],
                  state: dict[str, Any], run_id: str, reservation: dict[str, Any], control: RunControl) -> int:
-
     reserved = reservation.get("model")
     if not isinstance(reserved, str) or not reserved:
         run_envelope(args, args.model, run_id, "capacity: the reservation names no model")
@@ -2226,7 +2181,6 @@ def run_on_accounts(
                     outcome = {"ok": False, "error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}
                 wall = round(time.monotonic() - started, 1)
                 if control and (stopped := control.stop_reason()):
-
                     outcome, kind = {"ok": False, "error": stopped}, "stopped"
                     attempts.append({"account": account["id"], "outcome": "cancelled" if control.signals
                                      else "reservation_lost", "wall_s": wall})
@@ -2295,7 +2249,6 @@ def run_on_accounts(
                         time.sleep(random.uniform(lo, hi))
                         continue
                 else:
-
                     break
 
                 break

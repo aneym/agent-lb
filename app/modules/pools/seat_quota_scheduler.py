@@ -8,7 +8,7 @@ import random
 import sys
 from pathlib import Path
 
-from app.modules.pools.grok_bot import collect_grok_bot_usage
+from app.modules.pools.grok_weekly import collect_grok_usage
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +66,9 @@ class SeatQuotaScheduler:
                         process.kill()
                     await process.wait()
             try:
-                await asyncio.to_thread(collect_grok_bot_usage)
+                await asyncio.to_thread(collect_grok_usage)
             except OSError:
-                logger.warning("Grok Bot usage collector failed")
+                logger.warning("Grok weekly usage collector failed")
 
 
 def build_seat_quota_scheduler() -> SeatQuotaScheduler:

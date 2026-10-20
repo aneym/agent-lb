@@ -61,6 +61,23 @@ def _usage(record: dict[str, Any], since: datetime) -> SeatAccountUsage:
     )
 
 
+def _recovered_pools(record: dict[str, Any]) -> set[str]:
+    quota = record.get("quota") if isinstance(record.get("quota"), dict) else {}
+    observed = parse_seat_timestamp(quota.get("observedAt"))
+    limits = record.get("limits") if isinstance(record.get("limits"), dict) else {}
+    return {
+        window["id"]
+        for window in quota.get("windows") or []
+        if isinstance(window, dict)
+        and isinstance(window.get("id"), str)
+        and isinstance(window.get("usedPercent"), (int, float))
+        and window["usedPercent"] < 100
+        and observed is not None
+        and (at := parse_seat_timestamp((limits.get(window["id"]) or {}).get("at"))) is not None
+        and observed > at
+    }
+
+
 def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None) -> SeatAccountsResponse:
     current = now or datetime.now(timezone.utc)
     state = _read_state(path or seat_state_path())
@@ -110,6 +127,7 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
             logger.warning("Ignoring malformed seat usage for %s", account_id)
             usage = SeatAccount(id=str(account_id), vendor=record["vendor"])
         try:
+            recovered = _recovered_pools(record)
             cooldown = parse_seat_timestamp(record.get("cooldown_until"))
             if cooldown is not None and cooldown <= current:
                 cooldown = None
@@ -143,9 +161,13 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
                     cooldowns={
                         pool: stamp
                         for pool, value in (record.get("cooldowns") or {}).items()
-                        if (stamp := parse_seat_timestamp(value)) is not None and stamp > current
+                        if pool not in recovered
+                        and (stamp := parse_seat_timestamp(value)) is not None
+                        and stamp > current
                     },
-                    limits=record.get("limits") or {},
+                    limits={
+                        pool: limit for pool, limit in (record.get("limits") or {}).items() if pool not in recovered
+                    },
                     last_error_kind=error.get("kind"),
                     last_error_at=parse_seat_timestamp(error.get("ts")),
                     last_run_at=parse_seat_timestamp(record.get("last_run_at")),
@@ -180,7 +202,7 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
                 SeatQuotaWindow(
                     id=pool.id,
                     kind="monthly",
-                    label="Cursor models · Grok, Composer" if pool.id == "cursor-models" else "Other models",
+                    label="Composer" if pool.id == "cursor-models" else "Other models",
                     used_percent=pool.percent_used,
                     remaining_percent=pool.aggregate_remaining_percent,
                     resets_at=pool.cycle_reset_at,

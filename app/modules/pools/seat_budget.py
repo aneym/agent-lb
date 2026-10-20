@@ -62,6 +62,8 @@ def cursor_budget_pools(seats: SeatAccountsResponse, config: dict, *, now: datet
     current = now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now.astimezone(timezone.utc)
 
     def membership(model: str) -> int | None:
+        if fnmatch.fnmatchcase(model, "*grok-*"):
+            return None
         return next(
             (
                 index

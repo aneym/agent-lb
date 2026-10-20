@@ -50,7 +50,7 @@ enum PoolMenu {
 
   private static func canonicalID(_ pool: PoolEntry) -> String? {
     switch pool.id {
-    case "anthropic-general", "openai-codex", "cursor-models", "cursor-other", "devin", "muse":
+    case "anthropic-general", "openai-codex", "cursor-models", "cursor-other", "grok", "devin", "muse":
       return pool.id
     default:
       switch pool.provider {
@@ -118,6 +118,7 @@ enum PoolMenu {
     case "openai-codex": "OpenAI"
     case "cursor-models": "Cursor models"
     case "cursor-other": "Cursor other"
+    case "grok": "Grok"
     case "muse": "Muse"
     default: "Devin"
     }

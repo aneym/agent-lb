@@ -7,6 +7,7 @@ import os
 import plistlib
 import subprocess
 import tempfile
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,18 +18,69 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from app.modules.pools.schemas import POOL_STATUS_EXHAUSTED, POOL_STATUS_OK, PoolSummary, PoolWindow
 from app.modules.pools.seat_quota import parse_seat_timestamp
 
-GROK_BOT_POOL_ID = "grok-bot"
-POOL_SOURCE_GROK_BOT_APP = "grok_bot_app"
-POOL_SOURCE_GROK_BOT_APP_STALE = "grok_bot_app_stale"
+GROK_POOL_ID = "grok"
+POOL_SOURCE_GROK_VENDOR = "grok_vendor"
+POOL_SOURCE_GROK_VENDOR_STALE = "grok_vendor_stale"
 USAGE_ENDPOINT = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus"
 APP_DATA_DIR = Path.home() / "Library/Application Support/Grok Bot"
 APP_INFO_PLIST = Path("/Applications/Grok Bot.app/Contents/Info.plist")
 _STALE_AFTER = timedelta(minutes=15)
 
 
-def grok_bot_usage_path() -> Path:
-    configured = os.environ.get("AGENT_LB_GROK_BOT_USAGE")
-    return Path(configured).expanduser() if configured else Path.home() / ".agent-lb" / "seats" / "grok-bot.json"
+class CredentialError(Exception):
+    pass
+
+
+def grok_usage_path() -> Path:
+    configured = os.environ.get("AGENT_LB_GROK_USAGE")
+    return Path(configured).expanduser() if configured else Path.home() / ".agent-lb" / "seats" / "grok.json"
+
+
+def _seat_home() -> Path:
+    return Path(os.environ.get("SEAT_HOME") or Path.home() / ".agent-lb" / "seats").expanduser()
+
+
+def cursor_seat_accounts() -> list[dict[str, Any]]:
+    try:
+        document = json.loads((_seat_home() / "accounts.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    accounts = document.get("accounts") if isinstance(document, dict) else None
+    return [
+        account
+        for account in accounts or []
+        if isinstance(account, dict) and account.get("vendor") == "cursor" and account.get("enabled", True) is not False
+    ]
+
+
+def _is_ultra(account: dict[str, Any]) -> bool:
+    return "ultra" in f"{account.get('tier') or ''} {account.get('plan') or ''}".lower()
+
+
+def _keychain(service: str, account: str | None = None) -> str:
+    command = ["/usr/bin/security", "find-generic-password", "-w", "-s", service]
+    if account:
+        command += ["-a", account]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        raise CredentialError(service) from None
+    if result.returncode or not result.stdout.strip():
+        raise CredentialError(service)
+    return result.stdout.strip()
+
+
+def _seat_credential(account: dict[str, Any]) -> tuple[str, str]:
+    if account.get("auth") == "api-key":
+        key_file = Path(str(account.get("key_file") or "")).expanduser()
+        try:
+            value = key_file.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            raise CredentialError("key_file") from None
+        if not value:
+            raise CredentialError("key_file")
+        return value, f"seat:{account.get('id')}:key_file"
+    return _keychain("cursor-access-token", "cursor-user"), f"seat:{account.get('id')}:keychain"
 
 
 def _decrypt(value: str, password: str) -> str:
@@ -41,14 +93,18 @@ def _decrypt(value: str, password: str) -> str:
     return padded[: -padded[-1]].decode()
 
 
-def _active_account() -> dict[str, Any] | None:
+def _app_credential() -> tuple[str, str | None]:
     try:
         stored = json.loads((APP_DATA_DIR / "sand-secrets.json").read_text(encoding="utf-8"))
         accounts = json.loads(stored.get("cursor-accounts") or "null") or {}
+        active = (accounts.get("accounts") or {}).get(accounts.get("active"))
     except (OSError, json.JSONDecodeError, AttributeError):
-        return None
-    active = (accounts.get("accounts") or {}).get(accounts.get("active"))
-    return active if isinstance(active, dict) and active.get("cursor-access-token") else None
+        raise CredentialError("grok_bot_app") from None
+    if not isinstance(active, dict) or not active.get("cursor-access-token"):
+        raise CredentialError("grok_bot_app")
+    password = _keychain("Grok Bot Safe Storage")
+    team = active.get("cursor-selected-team-id")
+    return _decrypt(active["cursor-access-token"], password), _decrypt(team, password) if team else None
 
 
 def _app_version() -> str:
@@ -58,35 +114,44 @@ def _app_version() -> str:
         return "0.20.0"
 
 
-def fetch_grok_bot_usage(account: dict[str, Any]) -> dict[str, Any]:
-    password = subprocess.run(
-        ["/usr/bin/security", "find-generic-password", "-w", "-s", "Grok Bot Safe Storage"],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=10,
-    ).stdout.rstrip("\n")
+def _post(token: str, team: str | None) -> dict[str, Any]:
     headers = {
         "content-type": "application/json",
         "connect-protocol-version": "1",
-        "authorization": "Bearer " + _decrypt(account["cursor-access-token"], password),
+        "authorization": "Bearer " + token,
         "x-cursor-client-type": "sand",
         "x-cursor-client-version": _app_version(),
         "x-sand-box-namespace": "prod",
     }
-    if account.get("cursor-selected-team-id"):
-        headers["x-cursor-team-id"] = _decrypt(account["cursor-selected-team-id"], password)
+    if team:
+        headers["x-cursor-team-id"] = team
     request = urllib.request.Request(USAGE_ENDPOINT, data=b"{}", headers=headers, method="POST")
     with urllib.request.urlopen(request, timeout=15) as response:
         body = json.load(response)
     return body if isinstance(body, dict) else {}
 
 
-def usage_reading(body: dict[str, Any], observed_at: datetime) -> dict[str, Any]:
+def fetch_grok_usage() -> tuple[dict[str, Any], str]:
+    failure: Exception = CredentialError("no_credential")
+    for account in cursor_seat_accounts():
+        try:
+            token, source = _seat_credential(account)
+            return _post(token, None), source
+        except (CredentialError, urllib.error.HTTPError) as exc:
+            failure = exc
+    try:
+        token, team = _app_credential()
+        return _post(token, team), "grok_bot_app"
+    except CredentialError:
+        raise failure from None
+
+
+def usage_reading(body: dict[str, Any], observed_at: datetime, source: str) -> dict[str, Any]:
     percent = body.get("usagePercent")
     pooled = body.get("usesPooledEnterpriseAllowance") is True
     return {
         "observedAt": observed_at.isoformat(),
+        "credentialSource": source,
         "usedPercent": float(percent) if isinstance(percent, (int, float)) and not pooled else None,
         "resetsAt": body.get("nextResetTimestampUtc"),
         "periodStart": body.get("currentPeriodStart"),
@@ -97,22 +162,25 @@ def usage_reading(body: dict[str, Any], observed_at: datetime) -> dict[str, Any]
     }
 
 
-def _write(path: Path, value: dict[str, Any]) -> None:
+def write_reading(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, encoding="utf-8") as handle:
-        json.dump(value, handle, indent=2)
-    os.replace(handle.name, path)
+    handle, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, indent=2)
+        os.replace(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
 
 
-def collect_grok_bot_usage(path: Path | None = None, *, now: datetime | None = None) -> dict[str, Any] | None:
-    account = _active_account()
-    if account is None:
-        return None
-    target = path or grok_bot_usage_path()
+def collect_grok_usage(path: Path | None = None, *, now: datetime | None = None) -> dict[str, Any]:
+    target = path or grok_usage_path()
     current = now or datetime.now(timezone.utc)
     try:
-        reading = usage_reading(fetch_grok_bot_usage(account), current)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        body, source = fetch_grok_usage()
+        reading = usage_reading(body, current, source)
+    except (OSError, ValueError, CredentialError, subprocess.SubprocessError) as exc:
         try:
             previous = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -121,14 +189,14 @@ def collect_grok_bot_usage(path: Path | None = None, *, now: datetime | None = N
             **(previous if isinstance(previous, dict) else {}),
             "lastError": {"kind": type(exc).__name__, "at": current.isoformat()},
         }
-    _write(target, reading)
+    write_reading(target, reading)
     return reading
 
 
-def grok_bot_pool(path: Path | None = None, *, now: datetime | None = None) -> PoolSummary | None:
+def grok_pool(path: Path | None = None, *, now: datetime | None = None) -> PoolSummary | None:
     current = now or datetime.now(timezone.utc)
     try:
-        reading = json.loads((path or grok_bot_usage_path()).read_text(encoding="utf-8"))
+        reading = json.loads((path or grok_usage_path()).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(reading, dict):
@@ -143,12 +211,13 @@ def grok_bot_pool(path: Path | None = None, *, now: datetime | None = None) -> P
     )
     stale = observed is None or current - observed > _STALE_AFTER
     error = reading.get("lastError") if isinstance(reading.get("lastError"), dict) else {}
+    ultra = sum(1 for account in cursor_seat_accounts() if _is_ultra(account)) or 1
     windows = (
         [
             PoolWindow(
-                id="weekly",
+                id="grok-weekly",
                 kind="weekly",
-                label=reading.get("plan") or "Grok Bot",
+                label=f"Grok · {reading.get('plan') or 'subscription'}",
                 used_percent=used,
                 remaining_percent=remaining,
                 resets_at=resets,
@@ -160,11 +229,11 @@ def grok_bot_pool(path: Path | None = None, *, now: datetime | None = None) -> P
         else []
     )
     return PoolSummary(
-        id=GROK_BOT_POOL_ID,
-        provider=GROK_BOT_POOL_ID,
+        id=GROK_POOL_ID,
+        provider=GROK_POOL_ID,
         kind="cli_seat",
-        accounts=1,
-        eligible_accounts=0 if exhausted else 1,
+        accounts=ultra,
+        eligible_accounts=0 if exhausted else ultra,
         headroom_percent=remaining,
         aggregate_remaining_percent=remaining,
         weekly_remaining_percent=remaining,
@@ -172,7 +241,7 @@ def grok_bot_pool(path: Path | None = None, *, now: datetime | None = None) -> P
         reset_at=resets,
         window_label="week",
         status=POOL_STATUS_EXHAUSTED if exhausted else POOL_STATUS_OK,
-        source=POOL_SOURCE_GROK_BOT_APP_STALE if stale else POOL_SOURCE_GROK_BOT_APP,
+        source=POOL_SOURCE_GROK_VENDOR_STALE if stale else POOL_SOURCE_GROK_VENDOR,
         windows=windows,
         quota_source="vendor" if measured else "unavailable",
         unavailable_reason=None if measured else error.get("kind") or "not_reported",
@@ -182,6 +251,6 @@ def grok_bot_pool(path: Path | None = None, *, now: datetime | None = None) -> P
 
 
 if __name__ == "__main__":
-    collect_grok_bot_usage()
-    pool = grok_bot_pool()
+    collect_grok_usage()
+    pool = grok_pool()
     print(json.dumps(pool.model_dump(mode="json", by_alias=True) if pool else None, indent=2))

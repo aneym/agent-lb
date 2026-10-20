@@ -36,7 +36,7 @@
           "unavailableReason": null,
           "primaryWindowId": "cursor-other",
           "windows": [
-            {"id": "cursor-models", "kind": "monthly", "label": "Cursor models · Grok, Composer", "durationMins": null, "usedPercent": 62, "remainingPercent": 38, "resetsAt": "2026-10-30T00:00:00Z", "source": "vendor"},
+            {"id": "cursor-models", "kind": "monthly", "label": "Composer", "durationMins": null, "usedPercent": 62, "remainingPercent": 38, "resetsAt": "2026-10-30T00:00:00Z", "source": "vendor"},
             {"id": "cursor-other", "kind": "monthly", "label": "Other models", "durationMins": null, "usedPercent": 100, "remainingPercent": 0, "resetsAt": "2026-10-30T00:00:00Z", "source": "vendor"}
           ]
         },
@@ -112,7 +112,7 @@
   },
   "poolsExcerpt": [
     {"id": "cursor-models", "provider": "cursor", "kind": "cli_seat_budget", "accounts": 2, "eligibleAccounts": 2, "totalAccounts": 2, "usableAccounts": 2, "status": "ok", "source": "seat_state", "windowLabel": "month", "headroomPercent": 38.0, "aggregateRemainingPercent": 38.0, "percentUsed": 62.0, "percentSource": "vendor", "cycleResetAt": "2026-10-30T00:00:00Z", "quotaSource": "vendor",
-     "windows": [{"id": "cursor-models", "kind": "monthly", "label": "Cursor models · Grok, Composer", "remainingPercent": 38.0, "usedPercent": 62.0, "resetsAt": "2026-10-30T00:00:00Z", "measuredAccounts": 1, "source": "vendor"}]},
+     "windows": [{"id": "cursor-models", "kind": "monthly", "label": "Composer", "remainingPercent": 38.0, "usedPercent": 62.0, "resetsAt": "2026-10-30T00:00:00Z", "measuredAccounts": 1, "source": "vendor"}]},
     {"id": "muse", "provider": "muse", "kind": "cli_seat", "accounts": 1, "eligibleAccounts": 1, "totalAccounts": 1, "usableAccounts": 1, "status": "ok", "source": "seat_state", "headroomPercent": null, "aggregateRemainingPercent": null, "observedRuns": 0, "observedTokens": null, "quotaSource": "unavailable", "windows": []}
   ],
   "usageSummaryCursor": {

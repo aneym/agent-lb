@@ -33,7 +33,9 @@ struct SeatVendorSummary: Equatable, Sendable {
   ) -> SeatVendorSummary {
     let vendorSeats = scope.filter(seats)
     let vendorPools = pools.filter {
-      $0.provider.lowercased() == scope.rawValue && ($0.kind == "cli_seat" || $0.kind == "cli_seat_budget")
+      let provider = $0.provider.lowercased()
+      return (provider == scope.rawValue || (scope == .cursor && provider == "grok"))
+        && ($0.kind == "cli_seat" || $0.kind == "cli_seat_budget")
     }
     let usable = vendorPools.isEmpty
       ? vendorSeats.filter { $0.enabled && $0.ready && $0.displayStatus != "reauth_required" }.count
@@ -156,7 +158,7 @@ struct SeatVendorSummary: Equatable, Sendable {
   private static func windows(of pool: PoolEntry) -> [PoolWindow] {
     if let windows = pool.windows { return windows }
     guard pool.kind == "cli_seat_budget", let used = pool.percentUsed else { return [] }
-    let label = pool.id == "cursor-models" ? "Cursor models · Grok, Composer"
+    let label = pool.id == "cursor-models" ? "Composer"
       : pool.id == "cursor-other" ? "Other models" : pool.id
     return [PoolWindow(
       id: pool.id,

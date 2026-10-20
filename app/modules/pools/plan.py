@@ -60,23 +60,8 @@ def _pool_for(rung: dict, table: dict) -> str:
 def _entry(rung: dict, table: dict, costs: list[dict]) -> dict:
     pool = _pool_for(rung, table)
     alias = rung.get("model", "")
-    model = table.get("aliases", {}).get(alias, {}).get("pinned")
     trial = next((row for row in costs if row["rung"] == rung.get("id")), None)
-    if model is None:
-        model = (
-            trial["model"]
-            if trial
-            else {
-                "sol-latest": "gpt-6.1-sol",
-                "sonnet-latest": "claude-sonnet-5-5",
-                "opus-latest": "claude-opus-5-5",
-                "composer-latest": "composer-2.5",
-                "grok-latest": "grok-4.7-medium",
-                "grok-latest-low": "grok-4.7-low",
-                "swe-latest": "swe-2",
-                "swe-latest-medium": "swe-2",
-            }.get(alias, alias)
-        )
+    model = table.get("aliases", {}).get(alias, {}).get("pinned") or (trial["model"] if trial else alias)
     harness = {"cursor": "Cursor CLI", "devin": "Devin", "openai": "Codex CLI", "anthropic": "Claude Code"}[pool]
     return {"id": rung.get("id", rung.get("seat", alias)), "model": model, "harness": harness}
 
