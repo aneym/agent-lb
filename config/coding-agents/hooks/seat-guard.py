@@ -13,6 +13,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from seat_hands import hands_target, local_warning, steer_input  # type: ignore[missing-import]
+
 FORWARDER_SEATS = {
     "codex-sol",
     "codex-verifier",
@@ -289,17 +291,6 @@ def emit_refusal(why: str) -> None:
     )
 
 
-def lean_studio_refusal(subagent: str, prompt: str) -> str | None:
-    if not (subagent.endswith("-local") or "-local-" in subagent):
-        return None
-    tool = os.environ.get("LEAN_STUDIO_BIN") or str(Path.home() / ".local" / "bin" / "lean-studio")
-    if not os.access(tool, os.X_OK):
-        return None
-    try:
-        done = subprocess.run([tool, "check-local", subagent], input=prompt, capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return done.stdout.strip() or None if done.returncode == 1 else None
 
 
 def main() -> None:
@@ -346,7 +337,23 @@ def main() -> None:
     }
     updated = None
     swap_message = ""
-    replacement = quota_swap_seat(subagent)
+    hands = hands_target(subagent, prompt)
+    if hands:
+        target, reason = hands
+        swap_message = (
+            f"seat-guard: hands brief on {subagent or 'general-purpose'} -> {target} "
+            "(Opus plans, specs and judges; Codex does hands). Keep Opus only with a line "
+            "OPUS-REASON: ui-critical|trust-boundary|money-path|twice-failed|judgment|contract."
+        )
+        if subagent != "fork":
+            updated = steer_input(tool_input, target, prompt, is_anthropic_model(model))
+            record.update(original_subagent_type=subagent or "general-purpose", subagent_type=target,
+                          steered="hands", steer_reason=reason, model=updated.get("model"))
+            tool_input = updated
+            subagent = target
+            model = (updated.get("model") or "").strip().lower()
+            prompt = updated["prompt"]
+    replacement = quota_swap_seat(subagent) if not hands else None
     if replacement:
         mode, error = quota_mode()
         record["quota_mode"] = mode
@@ -362,7 +369,6 @@ def main() -> None:
             tool_input = updated
             subagent = replacement
             model = (tool_input.get("model") or "").strip().lower()
-        print(swap_message or f"seat-guard: mode={mode}; no rewrite", file=sys.stderr)
     open_ended = not re.search(r"^(?:One check:|check:)", prompt, re.IGNORECASE | re.MULTILINE) and re.search(
         r"fix (every|all|each) (gap|issue|bug|problem)s?|end to end and fix|until (it|everything) (works|passes)",
         prompt,
@@ -424,7 +430,7 @@ def main() -> None:
                 + ", ".join(repr(pin) for pin in blocked_pins)
                 + ", no longer served upstream; prose is not enforced, the seat may fail on it"
             )
-    lean = lean_studio_refusal(subagent, prompt)
+    lean = local_warning(subagent, prompt)
     if lean:
         record["lean_studio_warning"] = lean
         advisories.append(lean)

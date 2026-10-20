@@ -42,6 +42,7 @@ MANAGED_HOOKS = (
     "subagent-closeout.py",
     "seat-budget.py",
     "seat-guard.py",
+    "seat_hands.py",
     "workflow-seat-guard.py",
     "workflow-readback.py",
     "factory-context.py",
