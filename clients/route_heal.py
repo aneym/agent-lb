@@ -276,6 +276,7 @@ def chain_choice(api: Any, args: Any, table: dict, standard: dict, pools_doc: di
         headroom = pool.get("headroomPercent")
         if (not isinstance(headroom, (int, float)) or isinstance(headroom, bool)
                 or not math.isfinite(headroom) or headroom <= 0
+                or headroom < (table.get("spread") or {}).get("min_headroom_percent", 15)
                 or pool.get("eligibleAccounts", 0) <= 0
                 or pool.get("status") in ("exhausted", "empty")):
             continue
