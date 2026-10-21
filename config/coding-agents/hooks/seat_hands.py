@@ -58,6 +58,11 @@ BRAINS = re.compile(
     r"contract|architecture|design|review|reviewer|verdict|judge|judgment|judgement|audit|synthesis|decision)\b",
     re.IGNORECASE,
 )
+DECIDING = re.compile(
+    r"\b(?:review|reviewer|verdict|judge|judgment|judgement|audit|decide|decision|architecture|design|"
+    r"spec|specification|plan|plans|planner|planning|contract|synthesis)\b",
+    re.IGNORECASE,
+)
 HANDS = re.compile(
     r"studio_merge|\bfix-forward\b|\b(?:implement|fix|patch|commit|test|probe|reproduce|install|land|sweep|drain|bulletin)\b"
     r"|\bedit\s+(?:\S+\s+){0,3}(?:files?|[\w./-]+\.[\w]+)\b|\brun\s+\S+",
@@ -124,7 +129,7 @@ def preserve_seat(subagent: str, prompt: str) -> bool:
             and not HANDS.match(first)
             and not READ.match(first)
             and not RESEARCH.match(first)
-            and bool(BRAINS.search(first))
+            and (bool(DECIDING.search(first)) or (not HANDS.search(first) and bool(BRAINS.search(first))))
         )
     )
 

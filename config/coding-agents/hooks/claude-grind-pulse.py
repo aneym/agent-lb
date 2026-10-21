@@ -1,30 +1,38 @@
 #!/usr/bin/env python3
 import json
-import math
 import os
-import re
-import signal
 import sys
 import time
-import urllib.parse
-import urllib.request
-from collections import deque
-from datetime import datetime, timezone
-from pathlib import Path
 
 
 def main():
     payload = json.load(sys.stdin)
     session = payload.get("session_id")
-    if not isinstance(session, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", session):
+    if (
+        not isinstance(session, str)
+        or not 1 <= len(session) <= 200
+        or not all(char.isascii() and (char.isalnum() or char in "_-") for char in session)
+    ):
         return
     now = time.time()
-    cache = Path.home() / ".cache/claude-grind-pulse"
-    checked = cache / session
-    if checked.exists() and now - checked.stat().st_mtime < 600:
+    cache_dir = os.path.expanduser("~/.cache/claude-grind-pulse")
+    checked_file = os.path.join(cache_dir, session)
+    if os.path.exists(checked_file) and now - os.stat(checked_file).st_mtime < 600:
         return
+
+    import math
+    import signal
+    import urllib.parse
+    import urllib.request
+    from collections import deque
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    signal.signal(signal.SIGALRM, timeout)
+    signal.setitimer(signal.ITIMER_REAL, 2)
+    cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
-    checked.touch()
+    Path(checked_file).touch()
     fired = cache / f"{session}.fired"
     if fired.exists() and now - fired.stat().st_mtime < 7200:
         return
@@ -80,8 +88,6 @@ def timeout(signum, frame):
 
 if __name__ == "__main__":
     try:
-        signal.signal(signal.SIGALRM, timeout)
-        signal.setitimer(signal.ITIMER_REAL, 2)
         main()
     except Exception:
         pass

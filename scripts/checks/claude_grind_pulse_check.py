@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import resource
 import subprocess
 import sys
 import tempfile
@@ -66,7 +67,12 @@ def main():
             assert len(text.encode()) <= 600 and "Claude 200" in text and "dispatches 0" in text
             assert "/route-fix" in text and "gpt-implementer / gpt-explorer / codex-sol" in text
             calls = state["calls"]
+            before = resource.getrusage(resource.RUSAGE_CHILDREN)
             assert run("fire") == "" and state["calls"] == calls
+            after = resource.getrusage(resource.RUSAGE_CHILDREN)
+            cpu = (after.ru_utime + after.ru_stime) - (before.ru_utime + before.ru_stime)
+            assert cpu < 0.08, f"throttled hook used {cpu:.6f}s CPU (limit 0.08s)"
+            print(f"PASS throttled CPU: {cpu:.6f}s < 0.08s")
             print("PASS fire: 200 Claude, zero dispatches; context <= 600 bytes; immediate throttle avoids HTTP")
             checked = home / ".cache/claude-grind-pulse/fire"
             old = (datetime.now(timezone.utc) - timedelta(minutes=11)).timestamp()

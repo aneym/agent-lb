@@ -22,6 +22,14 @@ CASES = [
     ("opus-seat", "[class:plan] implement the change", None),
     ("fork", "implement the change", None),
     ("general-purpose", "An unclear request", None),
+    ("opus-seat", "For lane X, run the tests and fix failures", "gpt-implementer"),
+    ("opus-seat", "In lane X, run the tests and fix failures", "gpt-implementer"),
+    ("opus-seat", "As lane lead, run the tests and fix failures", "gpt-implementer"),
+    ("opus-seat", "For scope X, run the tests and fix failures", "gpt-implementer"),
+    ("opus-seat", "For project X, run the tests and fix failures", "gpt-implementer"),
+    ("opus-seat", "Review this PR diff and give a verdict", None),
+    ("opus-seat", "Audit the hook and fix failing tests", None),
+    ("opus-seat", "Decide the architecture. Then implement it.", None),
 ]
 CASES += [
     ("opus-seat", f"[class:{tag}] Complete the assigned deliverable", "gpt-implementer")
