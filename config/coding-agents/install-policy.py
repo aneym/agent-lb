@@ -1849,14 +1849,14 @@ def main() -> int:
             changes[args.home / owner_path] = owner_marker
         policy_dir = args.home / POLICY_DIR
 
-        for name in ROUTE_FILES:
-            client = source.parents[1] / "clients" / name
-            target = args.home / ".agent-lb/bin" / name
-            if client.is_file() and read_text(target) != client.read_text():
-                changes[target] = client.read_text()
+        root = source.parents[1]
+        for client in [*(root / "clients" / n for n in ROUTE_FILES), root / "scripts/llm-usage-publish.sh"]:
+            target = args.home / ".agent-lb/bin" / client.name
+            if client.is_file() and read_text(target) != (text := client.read_text()):
+                changes[target] = text
         route_owner = args.home / ROUTING_TABLE.with_name("route-cli")
-        if read_text(route_owner) != "agent-lb:route-cli:v1\n":
-            changes[route_owner] = "agent-lb:route-cli:v1\n"
+        if read_text(route_owner) != (marker := "agent-lb:route-cli:v1\n"):
+            changes[route_owner] = marker
         target = args.home / ROUTING_TABLE.with_name("quota-swap.json")
         wanted = (source / "quota-swap.json").read_text()
         if read_text(target) != wanted:
@@ -1939,12 +1939,11 @@ def main() -> int:
     for path, content in sorted(changes.items(), key=write_order):
         if content is None:
             path.unlink()
-            print(f"removed {path}")
         else:
             write_atomic(path, content)
             if path.suffix in (".py", ".sh") or path.name in ("verify-routing", "route", "seat"):
                 os.chmod(path, path.stat().st_mode | 0o111)
-            print(f"updated {path}")
+        print(f"{'removed' if content is None else 'updated'} {path}")
     for reason, path in preserved_agents:
         print(f"preserved {reason} {path}")
     return 0

@@ -29,9 +29,9 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   fi
 fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
-if [ ! -d "$REPO_DIR/.git" ]; then git clone "$REMOTE" "$REPO_DIR" >>"$LOG" 2>&1; fi
+if [ ! -d "$REPO_DIR/.git" ]; then /opt/homebrew/bin/git clone "$REMOTE" "$REPO_DIR" >>"$LOG" 2>&1; fi
 cd "$REPO_DIR"
-git pull --ff-only >>"$LOG" 2>&1 || true
+/opt/homebrew/bin/git pull --ff-only >>"$LOG" 2>&1 || true
 ok=0
 for d in 7 30 90 365 730; do
   if curl -fsS -m 30 "$ENDPOINT?days=$d" -o "usage-$d.json.tmp"; then mv "usage-$d.json.tmp" "usage-$d.json"; ok=1; else rm -f "usage-$d.json.tmp"; echo "$(date -u +%FT%TZ) warn: fetch days=$d failed" >>"$LOG"; fi
@@ -42,28 +42,28 @@ if [ "$ok" = "0" ]; then echo "$(date -u +%FT%TZ) error: all fetches failed; kee
 
 for f in usage.json usage-7.json usage-30.json usage-90.json usage-365.json usage-730.json; do
   [ -f "$f" ] || continue
-  git cat-file -e "HEAD:$f" 2>/dev/null || continue
-  git show "HEAD:$f" > ".head.$f" 2>/dev/null || continue
+  /opt/homebrew/bin/git cat-file -e "HEAD:$f" 2>/dev/null || continue
+  /opt/homebrew/bin/git show "HEAD:$f" > ".head.$f" 2>/dev/null || continue
   if python3 -c 'import json,sys
 a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
 a.pop("generatedAt",None); b.pop("generatedAt",None)
 sys.exit(0 if a==b else 1)' "$f" ".head.$f"; then
-    git checkout -- "$f" 2>/dev/null || cp ".head.$f" "$f"
+    /opt/homebrew/bin/git checkout -- "$f" 2>/dev/null || cp ".head.$f" "$f"
   fi
   rm -f ".head.$f"
 done
-git add -A
-if git diff --cached --quiet; then
+/opt/homebrew/bin/git add -A
+if /opt/homebrew/bin/git diff --cached --quiet; then
   echo "$(date -u +%FT%TZ) no change" >>"$LOG"
 else
-  git -c user.name="llm-usage-bot" -c user.email="llm-usage-bot@users.noreply.github.com" commit -m "usage snapshot $(date -u +%FT%TZ)" >>"$LOG" 2>&1
+  /opt/homebrew/bin/git -c user.name="llm-usage-bot" -c user.email="llm-usage-bot@users.noreply.github.com" commit -m "usage snapshot $(date -u +%FT%TZ)" >>"$LOG" 2>&1
 fi
 
 
 
-ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+ahead=$(/opt/homebrew/bin/git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 if [ "$ahead" -gt 0 ]; then
-  if git push origin HEAD:main >>"$LOG" 2>&1; then
+  if /opt/homebrew/bin/git push origin HEAD:main >>"$LOG" 2>&1; then
     echo "$(date -u +%FT%TZ) pushed ($ahead commit(s))" >>"$LOG"
     rm -f "$FAIL_MARKER"
   else
