@@ -116,47 +116,223 @@ def write(args):
     return input_body or bool(fields) and method != "GET"
 
 
+def shell_words(text, heredoc=False):
+    i, word, quote, active = 0, "", None, False
+    while i < len(text):
+        char = text[i]
+        if char == "\\" and quote != "'":
+            if i + 1 < len(text):
+                if text[i + 1] != "\n":
+                    word += text[i + 1]
+                    active = True
+                i += 2
+                continue
+        if quote != "'" and (char == "`" or text.startswith("$(", i)):
+            backtick = char == "`"
+            start = i + (1 if backtick else 2)
+            j, level, inner = start, 1, None
+            while j < len(text):
+                c = text[j]
+                if c == "\\" and inner != "'":
+                    j += 2
+                    continue
+                if backtick and c == "`":
+                    break
+                if inner:
+                    if c == inner:
+                        inner = None
+                elif c in "\"'":
+                    inner = c
+                elif not backtick:
+                    if c == "(":
+                        level += 1
+                    elif c == ")":
+                        level -= 1
+                        if not level:
+                            break
+                j += 1
+            if j == len(text):
+                raise ValueError("unfinished substitution")
+            yield "substitution", text[start:j]
+            word += "__substitution__"
+            active = True
+            i = j + 1
+            continue
+        if heredoc:
+            i += 1
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            else:
+                word += char
+        elif char in "\"'":
+            quote, active = char, True
+        elif char == "#" and not active:
+            end = text.find("\n", i)
+            i = len(text) if end < 0 else end
+            continue
+        elif char in " \t\r\n;&|()<>":
+            if active:
+                if not (char in "<>" and word.isdigit()):
+                    yield "word", word
+                word, active = "", False
+            if char not in " \t\r":
+                end = i + 1
+                if char in ";&|<>":
+                    while end < len(text) and text[end] == char:
+                        end += 1
+                yield "operator", text[i:end]
+                i = end
+                continue
+        else:
+            word += char
+            active = True
+        i += 1
+    if quote:
+        raise ValueError("unfinished quote")
+    if active and not heredoc:
+        yield "word", word
+
+
+def shell_source(text):
+    pending, kept, live = [], [], []
+    marker = re.compile(r"<<(?P<tabs>-)?[ \t]*(?P<spelling>'[^'\n]+'|\"[^\"\n]+\"|[\w-]+)")
+    quote = None
+    for line in text.splitlines(keepends=True):
+        if pending:
+            delimiter, tabs, quoted, executable, body = pending[0]
+            if (line.lstrip("\t") if tabs else line).rstrip("\r\n") == delimiter:
+                pending.pop(0)
+                if executable:
+                    live.append("".join(body))
+                elif not quoted:
+                    live.extend(
+                        value for kind, value in shell_words("".join(body), heredoc=True) if kind == "substitution"
+                    )
+            else:
+                body.append(line.lstrip("\t") if tabs else line)
+            continue
+        index, start = 0, 0
+        while index < len(line):
+            char = line[index]
+            if char == "\\" and quote != "'":
+                index += 2
+                continue
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in "\"'":
+                quote = char
+            elif char == "#" and (index == 0 or line[index - 1].isspace()):
+                break
+            elif line.startswith("<<<", index):
+                index += 3
+                continue
+            elif line.startswith("<<", index):
+                match = marker.match(line, index)
+                if not match:
+                    raise ValueError("unknown heredoc delimiter")
+                spelling = match.group("spelling")
+                prefix = list(shell_words(line[:index]))
+                command_words = []
+                for kind, value in prefix:
+                    if kind == "operator" and value[0] in ";&|()\n":
+                        command_words = []
+                    elif kind == "word":
+                        command_words.append(value)
+                executable = bool(command_words) and os.path.basename(command_words[0]) in {"sh", "bash", "zsh"}
+                pending.append(
+                    (shlex.split(spelling)[0], bool(match.group("tabs")), spelling[0] in "\"'", executable, [])
+                )
+                kept.append(line[start:index])
+                index = start = match.end()
+                continue
+            index += 1
+        kept.append(line[start:])
+    if pending:
+        raise ValueError("unfinished heredoc")
+    return "".join(kept), live
+
+
 def check(command, environ=None, depth=0):
-    env = dict(os.environ if environ is None else environ)
+    base = dict(os.environ if environ is None else environ)
     if depth > 8:
         raise ValueError("nested shell limit")
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    words = list(lexer)
-    i = 0
-    while i < len(words):
-        word = words[i]
-        assignment = re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)=(.*)", word, re.S)
-        if assignment:
-            env[assignment[1]] = assignment[2]
-        if word and set(word) <= set(";&|()\n"):
-            env = dict(os.environ if environ is None else environ)
-        if os.path.basename(word) in {"sh", "bash", "zsh"} and i + 2 < len(words) and "c" in words[i + 1].lstrip("-"):
-            check(words[i + 2], env, depth + 1)
-        if os.path.basename(word) == "gh":
-            end = next(
-                (j for j in range(i + 1, len(words)) if words[j] and set(words[j]) <= set(";&|()\n")), len(words)
-            )
-            args = words[i + 1 : end]
-            while args and (
-                args[0] in {"-R", "--repo", "--hostname"} or args[0].startswith(("--repo=", "-R", "--hostname="))
-            ):
-                args = args[2:] if args[0] in {"-R", "--repo", "--hostname"} else args[1:]
-            token = env.get("GH_TOKEN") or env.get("GITHUB_TOKEN") or ""
-            path = shutil.which(word, path=env.get("PATH")) or word
-            app_shim = False
-            try:
-                with open(os.path.realpath(path), encoding="utf-8") as source:
-                    app_shim = "import gh_guard" in source.read(20000)
-            except (OSError, UnicodeError):
-                pass
-            app = token.startswith("ghs_") or (
-                not token and env.get("GH_APP") == "on" and env.get("GH_APP_FALLBACK") == "off" and app_shim
-            )
-            if write(args) and (not app or token and token_login(token, env) in {"aneym", "alexneyman"}):
-                raise PermissionError(REFUSAL)
-        i += 1
+    source, live = shell_source(command)
+    for body in live:
+        check(body, base, depth + 1)
+    tokens = list(shell_words(source))
+    words, segments, redirect = [], [], False
+    for kind, value in tokens:
+        if kind == "substitution":
+            check(value, base, depth + 1)
+        elif kind == "operator" and value[0] in "<>":
+            redirect = True
+        elif kind == "operator":
+            if words:
+                segments.append(words)
+            words, redirect = [], False
+        elif redirect:
+            redirect = False
+        else:
+            words.append(value)
+    if words:
+        segments.append(words)
+    for words in segments:
+        env, i = dict(base), 0
+        while i < len(words):
+            word = words[i]
+            assignment = re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)=(.*)", word, re.S)
+            if assignment:
+                env[assignment[1]] = assignment[2]
+                i += 1
+                continue
+            name = os.path.basename(word)
+            if name in {"env", "command", "exec", "nohup", "sudo"} or name in {
+                "if",
+                "then",
+                "elif",
+                "while",
+                "do",
+                "!",
+            }:
+                i += 1
+                while i < len(words) and words[i].startswith("-"):
+                    option = words[i]
+                    i += 1
+                    if name == "env" and option in {"-u", "--unset"} and i < len(words):
+                        env.pop(words[i], None)
+                        i += 1
+                continue
+            break
+        if i >= len(words):
+            continue
+        word, args = words[i], words[i + 1 :]
+        if os.path.basename(word) in {"sh", "bash", "zsh"}:
+            for j, arg in enumerate(args):
+                if arg.startswith("-") and "c" in arg and j + 1 < len(args):
+                    check(args[j + 1], env, depth + 1)
+                    break
+        if os.path.basename(word) != "gh":
+            continue
+        while args and (
+            args[0] in {"-R", "--repo", "--hostname"} or args[0].startswith(("--repo=", "-R", "--hostname="))
+        ):
+            args = args[2:] if args[0] in {"-R", "--repo", "--hostname"} else args[1:]
+        token = env.get("GH_TOKEN") or env.get("GITHUB_TOKEN") or ""
+        path = shutil.which(word, path=env.get("PATH")) or word
+        app_shim = False
+        try:
+            with open(os.path.realpath(path), encoding="utf-8") as source:
+                app_shim = "import gh_guard" in source.read(20000)
+        except (OSError, UnicodeError):
+            pass
+        app = token.startswith("ghs_") or (
+            not token and env.get("GH_APP") == "on" and env.get("GH_APP_FALLBACK") == "off" and app_shim
+        )
+        if write(args) and (not app or token and token_login(token, env) in {"aneym", "alexneyman"}):
+            raise PermissionError(REFUSAL)
 
 
 def main():
