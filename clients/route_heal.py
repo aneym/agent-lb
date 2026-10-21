@@ -258,7 +258,8 @@ def balance_pool(document: dict, read_accounts: Any) -> None:
     empty = members and all(a.get("creditsBalance") == 0 for a in members)
     document["pools"].append({
         "id": "deepseek-flash", "provider": "openrouter", "kind": "weekly",
-        "accounts": len(members), "eligibleAccounts": len(usable),
+        "accounts": len(members), "totalAccounts": len(members),
+        "usableAccounts": len(usable), "eligibleAccounts": len(usable),
         "headroomPercent": max(usable, default=0),
         "aggregateRemainingPercent": sum(usable) / len(members) if members else 0,
         "status": "ok" if usable else "exhausted",
