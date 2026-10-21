@@ -13,16 +13,11 @@ import {
   useUsageSummary,
   type Receipt,
 } from "../../api/receipts";
-import { useSeatActivity } from "../../api";
-import {
-  FilterSelect,
-  PageHead,
-  Section,
-  Toast,
-} from "../../kit/primitives";
+import { usePools, useSeatActivity } from "../../api";
+import { FilterSelect, PageHead, Section, Toast } from "../../kit/primitives";
 import { displayAccount, providerName } from "./usage-format";
 import { Breakdown, type Group } from "./usage-breakdown";
-import { SummaryStats, SeatActivityStats } from "./usage-stats";
+import { SummaryStats, SeatActivityStats, SubscriptionQuota } from "./usage-stats";
 import { UsageChart } from "./usage-chart";
 import { ReceiptRow, RouteTrace } from "./usage-receipt";
 import "./usage.css";
@@ -66,6 +61,7 @@ export function UsagePage() {
   }
   const filterString = filters.toString();
   const summary = useUsageSummary(filterString, group, range.bucket);
+  const pools = usePools();
   const seatActivity = useSeatActivity(params.get("provider") || "");
   const modelFilters = new URLSearchParams(filters);
   modelFilters.delete("model");
@@ -170,8 +166,8 @@ export function UsagePage() {
           </div>
         }
       >
-        Every request agent-lb served: which key asked, which account paid, and what it would have
-        cost at API prices.
+        Every request agent-lb served: which key asked, which account served it, and its API
+        list-price equivalent (not billed).
       </PageHead>
       <div className="toolbar filters usage-filters">
         <FilterSelect
@@ -297,11 +293,18 @@ export function UsagePage() {
       {summary.isError || receipts.isError ? (
         <p role="alert">Could not load usage. Try refreshing the page.</p>
       ) : null}
+      <SubscriptionQuota pools={pools.data?.pools} failed={pools.isError} />
       {seatActivity.data?.seatActivity && (
-        <SeatActivityStats activity={seatActivity.data.seatActivity} provider={params.get("provider") || ""} />
+        <SeatActivityStats
+          activity={seatActivity.data.seatActivity}
+          provider={params.get("provider") || ""}
+        />
       )}
       {summary.data ? (
-        !( ["cursor", "devin", "muse"].includes(params.get("provider") || "") && summary.data.totals.requests === 0) && (
+        !(
+          ["cursor", "devin", "muse"].includes(params.get("provider") || "") &&
+          summary.data.totals.requests === 0
+        ) && (
           <>
             <SummaryStats totals={summary.data.totals} hours={range.hours} />
             <UsageChart series={summary.data.series} bucket={range.bucket} />
@@ -309,8 +312,12 @@ export function UsagePage() {
         )
       ) : summary.isPending ? (
         <>
-          <div className="usage-loading-stats" role="status">Loading usage totals…</div>
-          <div className="usage-chart-panel usage-loading-chart" role="status">Loading request chart…</div>
+          <div className="usage-loading-stats" role="status">
+            Loading usage totals…
+          </div>
+          <div className="usage-chart-panel usage-loading-chart" role="status">
+            Loading request chart…
+          </div>
         </>
       ) : null}
       <Breakdown

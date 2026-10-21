@@ -172,3 +172,41 @@ def degrade_alias(result: dict[str, Any], table: dict[str, Any], served: Any,
         result.update(model=replacement, degraded_from=name, resolved_alias="sol-latest",
                       pool=pool_id, reason="no eligible Anthropic accounts")
         append_ledger({"event": "model_degraded", "source": "route resolve", **result})
+
+
+def print_report_quota(fetch_pools: Callable) -> None:
+    document, error = fetch_pools(refills=True)
+    print("# Subscription quota (current; independent of report date range)")
+    if document is None:
+        print(f"Quota unknown: {error}\n")
+        return
+    for pool in document.get("pools", []):
+        windows = [
+            ("5h", pool.get("fiveHourRemainingPercent"), None, pool.get("fiveHourResetAt")),
+            ("weekly", pool.get("weeklyRemainingPercent"), None, pool.get("weeklyResetAt")),
+        ]
+        windows.extend(
+            (f"{window['label']} ({window['kind']})", window.get("remainingPercent"),
+             window.get("usedPercent"), window.get("resetsAt"))
+            for window in pool.get("windows") or []
+        )
+        if pool.get("percentUsed") is not None and not pool.get("windows"):
+            windows.append(("cycle", None, pool["percentUsed"], pool.get("cycleResetAt") or pool.get("resetAt")))
+        values = []
+        for label, remaining, used, reset in windows:
+            if remaining is None and used is None:
+                value = "unknown"
+            else:
+                remaining_value = float(remaining) if remaining is not None else 100.0 - float(used or 0)
+                used_value = float(used) if used is not None else 100.0 - remaining_value
+                value = f"{remaining_value:.1f}% remaining / {used_value:.1f}% used"
+            values.append(f"{label}: {value}; reset {reset or 'unknown'}")
+        print(f"{pool.get('id', '?')}: " + " | ".join(values))
+    print("API list-price equivalent (not billed) follows below.\n")
+
+
+def print_equivalent_note(costs: dict, every_session: set[str]) -> None:
+    if costs:
+        print("\nAPI list-price equivalent (not billed) covers the whole LB session; a session shared by several rows is counted in each.")
+    elif every_session:
+        print("\nAPI list-price equivalent (not billed) unavailable: the LB session analytics endpoint did not answer.")

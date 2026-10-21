@@ -87,7 +87,7 @@ struct ActivityRow: View {
       } else {
         HStack(spacing: 8) {
           Text(entry.tokens.map(Format.tokens) ?? "—")
-          Text(entry.costUsd.map { String(format: "$%.4f", $0) } ?? "—")
+          Text(entry.costUsd.map { String(format: "API-equiv $%.4f", $0) } ?? "—")
           Text(entry.latencyMs.map(Format.latency) ?? "—")
         }
         .font(.system(size: 11, design: .monospaced))

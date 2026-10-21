@@ -25,7 +25,7 @@ import route_heal
 from route_cache import HttpResult, _fixture_file
 from route_grok import constraint_choice, hands_refusal, hands_seat, rung_block, seat_defaults
 from route_spread import dispatch_choice
-from route_quota import authority_fallback, degrade_alias, load_quota_policy, quota_swap_state, swapped_standard
+from route_quota import print_equivalent_note, print_report_quota, authority_fallback, degrade_alias, load_quota_policy, quota_swap_state, swapped_standard
 from route_storage import _parse_ts, atomic_write
 
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
@@ -4085,6 +4085,7 @@ def ok_rate(row: dict[str, Any]) -> float | None:
 def command_report(args: argparse.Namespace) -> int:
     import statistics
 
+    print_report_quota(fetch_pools)
     since = datetime.now(timezone.utc) - timedelta(days=args.days)
     dispatches, closeouts = read_ledger(since)
     rows = aggregate(dispatches, closeouts)
@@ -4104,7 +4105,7 @@ def command_report(args: argparse.Namespace) -> int:
     print(f"Ledger: `{ledger_path()}` · {len(dispatches)} dispatches · {len(closeouts)} closeouts\n")
     print(
         "| class | seat | model | dispatches | denied | closeouts | ok-rate | median s | tokens in | tokens out "
-        "| sessions | session cost |"
+        "| sessions | API-equiv $ |"
     )
     print("|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for key in sorted(rows):
@@ -4118,10 +4119,7 @@ def command_report(args: argparse.Namespace) -> int:
             f"{row['closeouts']} | {'-' if rate is None else f'{rate:.0%}'} | {median} | "
             f"{row['tokens_in']:,} | {row['tokens_out']:,} | {len(row['sessions'])} | {cost_text} |"
         )
-    if costs:
-        print("\nSession cost is the whole LB session's spend; a session shared by several rows is counted in each.")
-    elif every_session:
-        print("\nSession cost unavailable: the LB session analytics endpoint did not answer.")
+    print_equivalent_note(costs, every_session)
     print_implement_report(since, args.days)
     return EXIT_OK
 
@@ -4663,7 +4661,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     doctor.add_argument("--write", action="store_true", help="write routing-state.json and the alert")
     doctor.set_defaults(handler=command_doctor)
 
-    report = sub.add_parser("report", help="dispatch ledger joined with LB session cost")
+    report = sub.add_parser("report", help="dispatch ledger with subscription quota and API-equivalent value")
     report.add_argument("--days", type=int, default=7)
     report.add_argument("--implement", action="store_true", help="only the implement comparison per seat/model")
     report.set_defaults(handler=command_report)

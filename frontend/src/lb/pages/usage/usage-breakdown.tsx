@@ -29,7 +29,7 @@ export function Breakdown({
   const max = Math.max(0, ...(summary?.groups.map((row) => row.costUsd) || []));
   return (
     <Section
-      title="Breakdown"
+      title="API list-price equivalent (not billed) breakdown"
       aside={
         <Seg
           options={groups.map((g) => ({ value: g, label: g[0].toUpperCase() + g.slice(1) }))}
@@ -44,9 +44,9 @@ export function Breakdown({
           <span>Requests</span>
           <span>Tokens</span>
           <span>Cache</span>
-          <span>API value</span>
+          <span>API-equiv $</span>
           <span>Errors</span>
-          <span>Share of cost</span>
+          <span>Share of API equivalent</span>
         </div>
         {!summary && (
           <div className="usage-empty" role="status">
