@@ -103,7 +103,6 @@ def new_hooks(dispatch, event, tool):
 
 
 def reap_group(pid):
-
     try:
         os.killpg(pid, signal.SIGKILL)
     except OSError:
@@ -158,7 +157,6 @@ def parse_json(text):
 
 
 def effect(event, results):
-
     view = {
         "decision": None,
         "block": [],
@@ -238,7 +236,9 @@ FLOOR_NAMES = (
     "kill-guard",
     "agent-lb-bootout-guard.sh",
     "dangerous-command-guard.sh",
+    "no-chrome-guard.sh",
     "host-credential-guard.py",
+    "gh-write-guard.py",
 )
 FLOOR_INLINE = "BLOCKED: Dangerous command"
 FLOOR_MESSAGE = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard [^\n]*(?:\n.*)?$", re.S)
@@ -270,7 +270,6 @@ def floor_of(command):
 
 
 def direct_argv(command, name, home):
-
     match = DIRECT.match(legacy(command) or command)
     if not match:
         return None
@@ -285,7 +284,6 @@ def direct_argv(command, name, home):
 
 
 def run_direct(argv, name, payload, env, cwd, timeout):
-
     started = time.monotonic()
     env = dict(env, **{RECEIPT_ENV: "1"})
     try:
@@ -335,7 +333,6 @@ def run_direct(argv, name, payload, env, cwd, timeout):
 
 
 def floor_failed(raw):
-
     if raw.get("opaque") or raw["timed_out"]:
         return True
     if raw["code"] == 2:
@@ -362,7 +359,6 @@ def floor_failed(raw):
 
 
 def with_floor(event, results, unfolded=()):
-
     if event != "PreToolUse":
         return results
     out = []
@@ -379,7 +375,6 @@ def with_floor(event, results, unfolded=()):
 
 
 def with_exec_timer(results, execd):
-
     return [
         dict(result, code=128 + signal.SIGALRM, out="", err="", timed_out=False)
         if result["command"] in execd and result["timed_out"]
@@ -389,7 +384,6 @@ def with_exec_timer(results, execd):
 
 
 def effective(result):
-
     if result is None:
         return None
     if result["timed_out"]:
@@ -774,7 +768,6 @@ def payload_for(case, run):
 
 
 def run_path(sandbox, case, hooks, extra, trace):
-
     run = sandbox.fresh()
     setup_case(case, run)
     payload = payload_for(case, run)
@@ -952,7 +945,6 @@ _NATIVE = {}
 
 
 def _native():
-
     if not _NATIVE:
         import ctypes
 
@@ -963,7 +955,6 @@ def _native():
 
 
 def child_pids(pid):
-
     native = _native()
     ctypes = native["ctypes"]
     buf = (ctypes.c_int * 4096)()
@@ -972,7 +963,6 @@ def child_pids(pid):
 
 
 def reaped_children(pid):
-
     native = _native()
     ctypes = native["ctypes"]
     buf = (ctypes.c_uint64 * 20)()
@@ -982,7 +972,6 @@ def reaped_children(pid):
 
 
 def proc_argv(pid):
-
     native = _native()
     ctypes, libc = native["ctypes"], native["libc"]
     mib = (ctypes.c_int * 3)(1, 49, pid)
@@ -1007,7 +996,6 @@ def runs_dispatcher(pid):
 
 
 def observe(command, payload, env, cwd, timeout, grace=5.0):
-
     row = {
         "observed": False,
         "processes": None,
@@ -1203,7 +1191,6 @@ SELFTEST = (
 
 
 def counter_selftest(env, cwd):
-
     rows = []
     for command, processes, hook_layer in SELFTEST:
         for attempt in range(1, 4):
@@ -1230,7 +1217,6 @@ CWD_PLAIN = "outside HOME (no .claude directory above)"
 
 
 def measure_call(sandbox, registry, command, where, path):
-
     total, layer, detail, complete = 0, 0, [], True
     for event in ("PreToolUse", "PostToolUse"):
         run = sandbox.fresh()
@@ -1265,7 +1251,6 @@ def measure_call(sandbox, registry, command, where, path):
 
 
 def process_count(sandbox, registry, jobs=4):
-
     pairs = [(where, command) for where in (CWD_CLAUDE, CWD_PLAIN) for command in PROCESS_COMMANDS]
 
     def one(pair):
@@ -1372,7 +1357,6 @@ REPLAY_INPUT = {
 
 
 def replay_leaves(registry):
-
     leaves, control = [], None
     for group in registry["per_hook"].get("PreToolUse", []):
         key = group_key(group)
@@ -1467,7 +1451,6 @@ def floor_replay(root, dispatcher, real_home, registry, jobs=4):
 
 
 def build_registry(per_hook, inproc):
-
     entries, dispatch = {}, {}
     for event, groups in per_hook.items():
         keys = []
@@ -1513,7 +1496,6 @@ def crash_cases(root, dispatcher, real_home):
 
 
 def install_lock(home, wait=600):
-
     import fcntl
 
     digest = hashlib.sha256(str(os.path.realpath(os.path.expanduser(home))).encode()).hexdigest()[:16]
@@ -1532,7 +1514,6 @@ def install_lock(home, wait=600):
 
 
 def timing_only(case):
-
     return case["result"] != "pass" and case.get("timeouts")
 
 
@@ -1542,13 +1523,13 @@ def main():
     parser.add_argument("--registry")
     parser.add_argument("--dispatcher")
     parser.add_argument("--out")
-    parser.add_argument("--workdir", help="sandbox parent (default: a new temp dir, removed afterwards)")
+    parser.add_argument("--workdir", help="sandbox parent (default: a new temp dir)")
     parser.add_argument("--keep", action="store_true", help="keep the sandbox")
     parser.add_argument(
         "--overlay", action="append", default=[], metavar="REL=PATH", help="run PATH in place of HOME/REL (repeatable)"
     )
     parser.add_argument("--only", help="regex: run only cases whose name matches")
-    parser.add_argument("--jobs", type=int, default=4, help="cases run at once (each in its own sandbox runs)")
+    parser.add_argument("--jobs", type=int, default=4, help="cases run at once")
     parser.add_argument("--require-process-count", action="store_true")
     parser.add_argument(
         "--no-process-count",

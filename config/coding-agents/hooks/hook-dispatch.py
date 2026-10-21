@@ -284,7 +284,7 @@ def hazardous(text):
 
 
 def cached(key, build, kind):
-    path = os.path.join(HERE, "dispatch", "cache", key)
+    path = os.path.join(HERE, "__pycache__", "hook-dispatch-" + key)
     try:
         with open(path, "rb") as handle:
             value = marshal.load(handle)
