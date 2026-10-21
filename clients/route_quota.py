@@ -66,8 +66,10 @@ def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
         stamp = _parse_ts(row.get("requestedAt") or row.get("requested_at"))
         if stamp and stamp.tzinfo and 0 <= (now - stamp).total_seconds() <= 900:
             stamps.append(stamp)
+    state_home = Path(os.environ.get("XDG_STATE_HOME") or
+                      Path.home() / ".local" / "state").expanduser()
     path = Path(os.environ.get("ROUTE_QUOTA_MODE_STATE") or
-                Path.home() / ".claude" / "route-quota-mode.json").expanduser()
+                state_home / "agent-lb" / "route-quota-mode.json").expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
