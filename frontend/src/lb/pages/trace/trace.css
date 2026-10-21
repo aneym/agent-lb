@@ -33,7 +33,7 @@
   min-width: 1px;
 }
 .lb .trace-page .trace-parts > i.outlined {
-  box-shadow: inset 0 0 0 1px var(--line);
+  box-shadow: inset 0 0 0 1px var(--ink-2);
 }
 .lb .trace-page .trace-parts.wide {
   height: 8px;
@@ -66,10 +66,15 @@
   border-radius: 3px;
 }
 .lb .trace-page .trace-legend li > i.outlined {
-  box-shadow: inset 0 0 0 1px var(--line);
+  box-shadow: inset 0 0 0 1px var(--ink-2);
 }
 .lb .trace-page .trace-legend .mono {
   color: var(--ink-2);
+}
+.lb .trace-page .trace-load {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
 }
 .lb .trace-page .trace-rows {
   background: var(--card);
@@ -173,8 +178,14 @@
   .lb .trace-page .trace-row.hd {
     display: none;
   }
+  .lb .trace-page .trace-model {
+    grid-column: 2 / -1;
+  }
   .lb .trace-page .trace-track {
-    grid-column: 1 / -1;
+    grid-column: 1 / 3;
+    grid-row: 2;
+  }
+  .lb .trace-page .trace-fig {
     grid-row: 2;
   }
   .lb .trace-page .trace-totals .stats {

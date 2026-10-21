@@ -124,6 +124,7 @@ export function TracePage() {
   const { sessionId = "" } = useParams();
   const query = useSessionTrace(sessionId);
   const [selected, setSelected] = useState<TraceRequest | null>(null);
+  const [limit, setLimit] = useState(50);
   if (query.isPending) {
     return (
       <div className="trace-page">
@@ -147,6 +148,7 @@ export function TracePage() {
     );
   }
   const trace = query.data;
+  const visible = trace.requests.slice(-limit);
   return (
     <div className="trace-page">
       <PageHead title="Session trace">
@@ -157,9 +159,16 @@ export function TracePage() {
       <Totals trace={trace} />
       <Section
         title="Requests"
-        aside="Oldest first · width is latency · colour is share read from cache · tag is cache event"
+        aside="Oldest first · width is latency · colour is share read from cache · tag is cache event · line below is prompt size, dashed if not measured"
       >
-        <TraceTimeline requests={trace.requests} onSelect={setSelected} />
+        {trace.requests.length > visible.length && (
+          <div className="trace-load">
+            <button className="btn" onClick={() => setLimit((n) => n + 50)}>
+              Load 50 more
+            </button>
+          </div>
+        )}
+        <TraceTimeline requests={visible} onSelect={setSelected} />
       </Section>
       <RequestPanel request={selected} onClose={() => setSelected(null)} />
     </div>
