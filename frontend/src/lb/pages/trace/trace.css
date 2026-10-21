@@ -130,10 +130,25 @@
   display: grid;
   gap: 3px;
 }
+.lb .trace-page .trace-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .lb .trace-page .trace-bar {
   display: block;
+  flex: 0 1 auto;
+  min-width: 2px;
   height: 14px;
   border-radius: 3px;
+}
+.lb .trace-page .trace-tag {
+  flex: none;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--ink-2);
+  white-space: nowrap;
 }
 .lb .trace-page .trace-strip {
   display: block;

@@ -4,15 +4,24 @@ import { compact } from "../../format";
 import { ModelChip } from "../../kit/primitives";
 import { latency, percent } from "../usage/usage-format";
 
-const CACHE_FILL: Record<string, string> = {
-  growth: "var(--ok-fill)",
-  first_write: "var(--warn-fill)",
-  compaction: "var(--warn-fill)",
-  ttl_expiry: "var(--bad-fill)",
-  account_switch: "var(--bad-fill)",
-  bust: "var(--bad-fill)",
-  other_miss: "var(--bad-fill)",
-};
+// Share of the prompt read from cache: at or above HIGH is calm, below LOW is waste.
+export const CACHE_READ_BANDS = { high: 0.8, low: 0.3 } as const;
+
+const BAND_FILL = {
+  high: "var(--ok-fill)",
+  mid: "var(--warn-fill)",
+  low: "var(--bad-fill)",
+  none: "var(--g3)",
+} as const;
+
+const band = (ratio: number | null): keyof typeof BAND_FILL =>
+  ratio === null
+    ? "none"
+    : ratio >= CACHE_READ_BANDS.high
+      ? "high"
+      : ratio >= CACHE_READ_BANDS.low
+        ? "mid"
+        : "low";
 
 const partsAttr = (parts: TraceParts | null) =>
   parts ? PARTS.map((part) => parts[part.key]).join(",") : "";
@@ -56,6 +65,7 @@ function TraceRow({
   const barWidth = maxLatency > 0 ? (latencyMs / maxLatency) * 100 : 0;
   const stripWidth = maxPrompt > 0 ? (request.promptTokens / maxPrompt) * 100 : 0;
   const cache = request.cacheKind ?? "none";
+  const readBand = band(request.cacheReadRatio);
   const failed = request.status !== "success";
   const onKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -84,18 +94,23 @@ function TraceRow({
         <ModelChip model={request.model} />
       </span>
       <span className="trace-track">
-        <span
-          className="trace-bar"
-          data-testid="trace-bar"
-          data-cache={cache}
-          data-latency={latencyMs}
-          data-parts={partsAttr(request.estParts)}
-          title={cache === "none" ? "No cache write event" : cache.replace(/_/g, " ")}
-          style={{
-            width: `max(2px, ${barWidth}%)`,
-            background: CACHE_FILL[cache] ?? "var(--g3)",
-          }}
-        />
+        <span className="trace-line">
+          <span
+            className="trace-bar"
+            data-testid="trace-bar"
+            data-cache={cache}
+            data-band={readBand}
+            data-latency={latencyMs}
+            data-parts={partsAttr(request.estParts)}
+            title={readBand === "none" ? "No prompt tokens" : `${percent(request.cacheReadRatio)} read from cache`}
+            style={{ width: `max(2px, ${barWidth}%)`, background: BAND_FILL[readBand] }}
+          />
+          {request.cacheKind && (
+            <span className="trace-tag mono" data-testid="trace-tag">
+              {request.cacheKind.replace(/_/g, " ")}
+            </span>
+          )}
+        </span>
         {request.estParts ? (
           <span className="trace-strip" style={{ width: `${stripWidth}%` }}>
             <PartsBar parts={request.estParts} className="thin" />
