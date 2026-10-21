@@ -12,9 +12,15 @@ from pathlib import Path
 root = Path.home() / ".agent-rails/jobs/seat-run"
 today = root / "archive" / datetime.now(UTC).strftime("%Y-%m-%d")
 paths = list(root.glob("*.rc")) + list(today.glob("*.rc")) + list(today.glob("dup-*/*.rc"))
-for path in sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True):
+def mtime(path):
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0
+names = []
+for path in sorted(paths, key=mtime, reverse=True):
     name = path.stem
-    if not name.startswith(("opus-seat-", "verifier-")):
+    if not name.startswith(("opus-seat-", "verifier-")) or name in names:
         continue
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9@._:/-]{0,63}", name):
         continue
@@ -23,13 +29,20 @@ for path in sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True):
     except (OSError, ValueError):
         continue
     if isinstance(record, dict) and record.get("job_id") == name:
-        probe = subprocess.run(
-            [".venv/bin/python", "-m", "app.cli", "audit", "jobs", "--json", "--since", "24h", "--job", name],
-            capture_output=True, text=True, timeout=100, check=True,
-        )
-        if json.loads(probe.stdout)["jobs"]:
-            print(name)
-            break
+        names.append(name)
+    if len(names) == 40:
+        break
+if not names:
+    raise SystemExit("audit-jobs-check: no matching recorded job")
+command = [".venv/bin/python", "-m", "app.cli", "audit", "jobs", "--json", "--since", "24h", "--calls", "0"]
+for name in names:
+    command += ["--job", name]
+probe = subprocess.run(command, capture_output=True, text=True, timeout=200, check=True)
+found = {job["job_id"] for job in json.loads(probe.stdout)["jobs"]}
+for name in names:
+    if name in found:
+        print(name)
+        break
 else:
     raise SystemExit("audit-jobs-check: no matching recorded job")
 ')
