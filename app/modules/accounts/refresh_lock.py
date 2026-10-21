@@ -6,7 +6,6 @@ from hashlib import sha256
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import NullPool
 
 from app.core import shutdown as shutdown_state
 from app.core.auth.refresh import RefreshError
@@ -29,7 +28,14 @@ def _refresh_lock_engine() -> AsyncEngine | None:
     if db_session.engine.dialect.name != "postgresql":
         return None
     if _REFRESH_LOCK_ENGINE is None:
-        _REFRESH_LOCK_ENGINE = create_async_engine(db_session.engine.url, poolclass=NullPool)
+        _REFRESH_LOCK_ENGINE = create_async_engine(
+            db_session.engine.url,
+            pool_size=1,
+            max_overflow=0,
+            pool_timeout=REFRESH_LOCK_TIMEOUT_SECONDS,
+            pool_pre_ping=True,
+            pool_recycle=300,
+        )
     return _REFRESH_LOCK_ENGINE
 
 

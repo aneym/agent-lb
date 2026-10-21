@@ -50,12 +50,12 @@ def _postgres_async_engine_kwargs(url: str, *, background: bool) -> dict[str, ob
     if os.environ.get("AGENT_LB_TEST_DATABASE_URL") and url.startswith("postgresql+asyncpg://"):
         kwargs["poolclass"] = NullPool
     else:
-        kwargs["pool_size"] = _database_pool_size(background=background)
-        kwargs["max_overflow"] = _database_max_overflow(background=background)
+        kwargs["pool_size"] = min(4, _database_pool_size(background=background))
+        kwargs["max_overflow"] = 0
         kwargs["pool_timeout"] = _settings.database_pool_timeout_seconds
-
+        kwargs["pool_use_lifo"] = True
         kwargs["pool_pre_ping"] = True
-        kwargs["pool_recycle"] = _settings.database_pool_recycle_seconds
+        kwargs["pool_recycle"] = min(300, _settings.database_pool_recycle_seconds)
     return kwargs
 
 
@@ -207,6 +207,10 @@ def init_background_db(url: str | None = None) -> None:
             connect_args={"timeout": _SQLITE_BUSY_TIMEOUT_SECONDS},
         )
         _configure_sqlite_engine(_background_engine.sync_engine, enable_wal=not is_sqlite_memory)
+    elif db_url == _settings.database_url:
+        _background_engine = engine
+        _background_session_factory = SessionLocal
+        return
     else:
         _background_engine = create_async_engine(
             db_url,
