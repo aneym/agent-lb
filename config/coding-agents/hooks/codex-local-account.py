@@ -43,11 +43,11 @@ def launching_owner(env, cwd):
         if candidate.is_dir() and launch.is_dir():
             return (kind, parts[0]), None
     if not env.get("LANE_DIR"):
-        repo_root = (
-            Path(env.get("REPOS_ROOT") or env.get("GIT_GUARD_REPOS_ROOT") or Path.home() / "repos")
-            .expanduser()
-            .resolve()
-        )
+        source = Path(__file__).resolve()
+        fallback = Path.home() / "repos"
+        if source.parent.parts[-3:] == ("config", "coding-agents", "hooks"):
+            fallback = source.parents[4]
+        repo_root = Path(env.get("REPOS_ROOT") or env.get("GIT_GUARD_REPOS_ROOT") or fallback).expanduser().resolve()
         attempted.append(str(repo_root))
         try:
             parts = launch.relative_to(repo_root).parts
