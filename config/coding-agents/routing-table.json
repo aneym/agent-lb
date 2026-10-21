@@ -134,7 +134,7 @@
   },
   "explore": {
     "enabled": false,
-    "max_share_per_class": 0.3,
+    "max_share_per_class": 0.4,
     "daily_cap_per_arm": 40,
     "claude_daily_cap_jobs": 60,
     "stop_after_nonaccepts": 3,
