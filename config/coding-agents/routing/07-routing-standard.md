@@ -18,7 +18,7 @@ Precedence, in order:
 | Tabs, leads, workflow orchestrators | Opus tab, opus-latest medium | none | 2026-10-14 |
 | plan, review, design, audit, judge, synthesis | planner, plan-reviewer, frontend-designer, Opus stage; opus-latest medium | none | E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted |
 | implement | gpt-implementer, sol-latest medium | muse-seat 10%; grok-implementer grok-latest 10% (gate open) | E17 Sol 19/20 at $0.64 per accepted, Grok 20/20; AA 2026-10-20 in `standards.implement.evidence.aa` |
-| mechanical | gpt-implementer, sol-latest low | muse-seat 10%; grok-implementer grok-latest-low 20%; luna-latest low 10% (gated on Alex) | E10, E12; AA 2026-10-20 in `standards.mechanical.evidence.aa` |
+| mechanical | gpt-implementer, sol-latest low | muse-seat 10%; grok-implementer grok-latest-low 20%; luna-latest low 10% (Alex approved 2026-10-21; eligible only while phase-3 exploration, `explore.enabled`, is on) | E10, E12; AA 2026-10-20 in `standards.mechanical.evidence.aa` |
 | explore | gpt-explorer, sol-latest low | Explore on haiku-latest 20% | Haiku unmeasured |
 | research | codex-sol, sol-latest high | Explore on sonnet-latest 10% | |
 | verify | verifier, sonnet-latest high; codex-verifier sol-latest high for Claude authors | sol-latest xhigh 10% for Claude authors | E15 Sonnet 16/16 at $0.101 vs $0.216; DeepSWE low 16/20 vs xhigh 17/20 at a third of the cost |

@@ -9,7 +9,7 @@
       "research": [{"seat": "codex-sol", "model": "sol-latest", "effort": "high", "pool": "openai-codex", "strength": 1.0}],
       "computer": [{"seat": "computer-use", "model": "sol-latest", "effort": "medium", "pool": "openai-codex", "strength": 1.0}]
   }},
-  "autocompact_window": {"tab": 300000, "lane": 300000, "box": 300000},
+  "autocompact_window": {"tab": 300000, "lane": 180000, "box": 300000},
   "precedence": [
     "explicit",
     "constraints",
@@ -182,8 +182,7 @@
           "share": 0.1,
           "pool": "openai-codex",
           "gate": {
-            "open": false,
-            "until": "Alex yes (Q3)"
+            "open": true
           }
         }
       ],
