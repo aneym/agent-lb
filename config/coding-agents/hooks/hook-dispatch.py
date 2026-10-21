@@ -14,7 +14,7 @@ import tempfile
 import time
 import types
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path[:0] = [os.path.dirname(os.path.abspath(__file__)), os.path.dirname(os.path.realpath(__file__))]
 from hook_failure_recovery import answer_problem, deny_reason, parse_json  # type: ignore[missing-import]
 from hook_output import cap_context, merge_objects  # type: ignore[missing-import]
 from hook_prefilters import COMMAND_PREFILTERS, SCRIPT_NEEDS, SCRIPT_PREFILTERS, escapes_in_input, never  # type: ignore[missing-import]
