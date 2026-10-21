@@ -120,6 +120,8 @@ def browser(session):
 BARS = """() => ({
   bars: [...document.querySelectorAll('[data-testid=trace-bar]')].map((e) => ({
     cache: e.dataset.cache,
+    band: e.dataset.band,
+    tag: e.closest('[data-testid=trace-row]').querySelector('[data-testid=trace-tag]')?.textContent ?? null,
     latency: e.dataset.latency,
     parts: e.dataset.parts,
     width: e.getBoundingClientRect().width,
@@ -155,7 +157,10 @@ def check_page(base, sid, trace):
         for bar, row in zip(bars, rows):
             assert bar["cache"] == (row["cacheKind"] or "none"), (bar, row["cacheKind"])
             assert bar["width"] > 0, bar
-        assert bars[4]["cache"] not in {bars[i]["cache"] for i in (0, 1, 2, 3, 5)}, bars
+        assert bars[4]["band"] == "high", bars[4]
+        for i in (0, 1, 2, 3, 5):
+            assert bars[i]["band"] == "low", (i, bars[i])
+        assert bars[0]["tag"] == "first write", bars[0]
         for bar, row in zip(bars[:5], rows[:5]):
             parts = row["estParts"]
             assert bar["parts"] == f"{parts['system']},{parts['tools']},{parts['history']},{parts['toolResults']}", bar
