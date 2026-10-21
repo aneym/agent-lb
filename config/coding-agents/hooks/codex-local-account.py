@@ -22,6 +22,45 @@ def roots():
     return [("lane", lanes), ("agent", base / "agents")]
 
 
+def launching_owner(env, cwd):
+    owner_roots = roots()
+    attempted = []
+    launch = Path(env.get("LANE_DIR") or cwd).expanduser().resolve()
+    attempted.append(str(launch))
+    for kind, root in owner_roots:
+        root = root.resolve()
+        attempted.append(str(root))
+        try:
+            parts = launch.relative_to(root).parts
+        except ValueError:
+            continue
+        if not parts or not NAME.fullmatch(parts[0]):
+            continue
+        candidate = root / parts[0]
+        attempted.append(str(candidate))
+        if env.get("LANE_DIR") and launch != candidate:
+            continue
+        if candidate.is_dir() and launch.is_dir():
+            return (kind, parts[0]), None
+    if not env.get("LANE_DIR"):
+        repo_root = Path("/Volumes/StudioExt/repos").resolve()
+        attempted.append(str(repo_root))
+        try:
+            parts = launch.relative_to(repo_root).parts
+        except ValueError:
+            parts = ()
+        if parts:
+            agents = dict(owner_roots)["agent"].resolve()
+            for name in (env.get("FACTORY_OWNER_PANE", ""), parts[0]):
+                if not NAME.fullmatch(name):
+                    continue
+                candidate = agents / name
+                attempted.append(str(candidate))
+                if candidate.is_dir():
+                    return ("agent", name), None
+    return None, "launching owner directory cannot be resolved; tried: " + ", ".join(attempted)
+
+
 def owner(brief, env, cwd):
     commands = [OWNER_FLAG.findall(command) for command in ACCOUNT_COMMAND.findall(brief)]
     found = set(OWNER_ENV.findall(brief))
@@ -31,23 +70,9 @@ def owner(brief, env, cwd):
         found.update(flags)
     if len(found) > 1:
         return None, "brief names more than one account owner"
-    selected = None
-    if env.get("LANE_DIR"):
-        name = Path(env["LANE_DIR"]).expanduser().name
-        if not NAME.fullmatch(name):
-            return None, "invalid launching lane owner"
-        selected = ("lane", name)
-    else:
-        for kind, root in roots():
-            try:
-                parts = Path(cwd).resolve().relative_to(root.resolve()).parts
-            except ValueError:
-                continue
-            if parts:
-                selected = (kind, parts[0])
-                break
+    selected, reason = launching_owner(env, cwd)
     if not selected:
-        return None, "no launching owner: export LANE_DIR or launch from a lane or agent directory"
+        return None, reason
     if found and found != {selected}:
         return None, "brief account owner differs from launching owner"
     return selected, None
@@ -112,12 +137,6 @@ def main():
         selected, reason = owner(brief, dict(os.environ), os.getcwd())
         if not selected:
             print("codex-local: review refused: " + reason, file=sys.stderr)
-            return 2
-        kind, name = selected
-        owner_path = next(root / name for owner_kind, root in roots() if owner_kind == kind).resolve()
-        launch_path = Path(os.environ.get("LANE_DIR", str(owner_path))).expanduser().resolve()
-        if not owner_path.is_dir() or launch_path != owner_path:
-            print("codex-local: review refused: launching owner directory cannot be resolved", file=sys.stderr)
             return 2
     if args.validate_only:
         return 0
