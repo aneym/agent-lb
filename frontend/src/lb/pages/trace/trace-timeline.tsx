@@ -4,7 +4,7 @@ import { compact } from "../../format";
 import { ModelChip } from "../../kit/primitives";
 import { latency, percent } from "../usage/usage-format";
 
-export const CACHE_READ_BANDS = { high: 0.8, low: 0.3 } as const;
+const CACHE_READ_BANDS = { high: 0.8, low: 0.3 } as const;
 
 const BAND_FILL = {
   high: "var(--ok-fill)",
@@ -101,7 +101,11 @@ function TraceRow({
             data-band={readBand}
             data-latency={latencyMs}
             data-parts={partsAttr(request.estParts)}
-            title={readBand === "none" ? "No prompt tokens" : `${percent(request.cacheReadRatio)} read from cache`}
+            title={
+              readBand === "none"
+                ? "No prompt tokens"
+                : `${percent(request.cacheReadRatio)} read from cache`
+            }
             style={{ width: `max(2px, ${barWidth}%)`, background: BAND_FILL[readBand] }}
           />
           {request.cacheKind && (

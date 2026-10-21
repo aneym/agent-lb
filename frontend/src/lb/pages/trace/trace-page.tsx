@@ -155,7 +155,10 @@ export function TracePage() {
         {trace.totals.requests} requests · {trace.totals.measured} measured
       </PageHead>
       <Totals trace={trace} />
-      <Section title="Requests" aside="Oldest first · width is latency · colour is share read from cache · tag is cache event">
+      <Section
+        title="Requests"
+        aside="Oldest first · width is latency · colour is share read from cache · tag is cache event"
+      >
         <TraceTimeline requests={trace.requests} onSelect={setSelected} />
       </Section>
       <RequestPanel request={selected} onClose={() => setSelected(null)} />
