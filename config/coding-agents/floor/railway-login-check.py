@@ -24,6 +24,11 @@ cases = [
     ("railway help", True),
     ("railway --help", True),
     ("echo railway ssh", True),
+    ('RAILWAY_TOKEN="$(agent-secret get railway-factory-prod-token)" railway status', True),
+    ('env RAILWAY_TOKEN="$(agent-secret get railway-factory-prod-token)" railway variables --set-from-stdin', True),
+    ("railway variables --help", True),
+    ("railway run --help", True),
+    ("RAILWAY_TOKEN=dummy railway login", False),
 ]
 for command, allowed in cases:
     result = subprocess.run(
@@ -45,4 +50,29 @@ for key in ("RAILWAY_TOKEN", "RAILWAY_API_TOKEN"):
         env={**env, key: "dummy"},
     )
     assert result.returncode == 0, result.stderr
-print(f"PASS: {len(cases) + 2} Railway hook floor cases; no Railway process executed")
+variable_cases = [
+    ("railway --help", True),
+    ("railway variables --help", True),
+    ('RAILWAY_TOKEN="$(agent-secret get railway-factory-prod-token)" railway variables --set-from-stdin', True),
+    ("railway variables keys", True),
+    ("railway variables --keys-only", True),
+    ("railway variables", False),
+    ("railway variables --kv", False),
+    ("railway variables set --kv", False),
+    ("railway run env", False),
+    ("railway run printenv", False),
+    ('railway run sh -c "env"', False),
+    ("railway run railway variables", False),
+    ("railway variables set API_TOKEN=not-a-real-secret", False),
+    ('RAILWAY_TOKEN="$(agent-secret get railway-factory-prod-token)" railway delete', True),
+]
+for command, allowed in variable_cases:
+    result = subprocess.run(
+        ["bash", str(hook.with_name("railway-vars-guard.sh"))],
+        input=json.dumps({"tool_input": {"command": command}}),
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    assert result.returncode == (0 if allowed else 2), (command, result.returncode, result.stderr)
+print(f"PASS: {len(cases) + 2 + len(variable_cases)} Railway hook floor cases; no Railway process executed")

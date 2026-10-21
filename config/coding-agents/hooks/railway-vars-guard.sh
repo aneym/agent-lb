@@ -23,6 +23,8 @@ ASSIGNMENT = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', re.S)
 KV_DENIAL = "railway variables read prints values (secret floor)."
 PRINTENV_DENIAL = "railway run printenv/env prints every secret (secret floor)."
 OPTION_VALUES = {'--environment', '-e', '--service', '-s', '--project', '-p'}
+def keys_only(args):
+    return args in (['keys'], ['--keys-only'])
 def variable_write(args):
     i, positional = 0, None
     while i < len(args):
@@ -61,7 +63,7 @@ def run_value_output(args):
             or (name == 'declare' and '-x' in args[1:])):
         return True
     if name == 'railway' and len(args) > 1 and args[1] in {'variables', 'variable', 'vars'}:
-        return (not variable_write(args[2:]) or 'get' in args[2:]
+        return (not (variable_write(args[2:]) or keys_only(args[2:])) or 'get' in args[2:]
                 or any(arg in {'--kv', '--json'} or re.fullmatch(r'-[^-]*k[^-]*', arg)
                        for arg in args[2:]))
     if name in {'echo', 'printf'} and any(
@@ -194,6 +196,9 @@ def check(command, inherited, value_output=False):
     if not value_output and not re.search(r'\brailway\b', command):
         return ''
     command, nested = heredocs(command)
+    command = re.sub(
+        r'\$\(\s*agent-secret\s+get\s+railway-factory-prod-token\s*\)',
+        'FACTORY_PROJECT_TOKEN', command)
     command, expansions = substitutions(command)
     for value in nested + expansions:
         found = check(value, inherited, value_output)
@@ -315,6 +320,8 @@ def check(command, inherited, value_output=False):
                 break
             if name == 'railway':
                 args = words[i + 1:]
+                if any(arg in {'--help', '-h'} for arg in args) or args[:1] == ['help']:
+                    break
                 for j, arg in enumerate(args):
                     if '$UNKNOWN_SUBSTITUTION' in arg and (
                             arg.startswith('--set=') or (j > 0 and args[j - 1] in {'--set', 'set'})):
@@ -367,7 +374,7 @@ def check(command, inherited, value_output=False):
                     break
                 if subcommand in {'variables', 'variable', 'vars'}:
                     write = variable_write(command_args[1:])
-                    if (not write or 'get' in command_args[1:]
+                    if (not (write or keys_only(command_args[1:])) or 'get' in command_args[1:]
                             or any(arg in {'--kv', '--json'} or re.fullmatch(r'-[^-]*k[^-]*', arg)
                                    for arg in command_args[1:])):
                         secret_warning(KV_DENIAL)

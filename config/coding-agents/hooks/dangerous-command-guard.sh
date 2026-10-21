@@ -180,6 +180,9 @@ def inspect(source, inherited, depth=0):
         result = inspect(body, inherited, depth + 1)
         if result:
             return result
+    source = re.sub(
+        r'\$\(\s*agent-secret\s+get\s+railway-factory-prod-token\s*\)',
+        'FACTORY_PROJECT_TOKEN', source)
     exported = dict(inherited)
     for words in segments(source):
         local = dict(exported)
@@ -231,8 +234,10 @@ def inspect(source, inherited, depth=0):
             if args and re.fullmatch(r'(?:@railway/cli|railway)(?:@[^/]+)?', args[0]):
                 words = ['railway', *args[1:]]
                 name = 'railway'
-        if name == 'railway' and (words[1:] in (['--version'], ['--help'], ['-V'], ['-h']) or words[1:2] == ['help']):
+        if name == 'railway' and (any(arg in {'--help', '-h'} for arg in words[1:]) or words[1:] in (['--version'], ['-V']) or words[1:2] == ['help']):
             continue
+        if name == 'railway' and words[1:2] == ['login']:
+            return "kept floor: Alex's own Railway login. Use a factory-provisioned RAILWAY_TOKEN"
         if name == 'railway' and rails_target(words):
             return RAILS_FLOOR
         if name in providers:
