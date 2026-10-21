@@ -61,6 +61,7 @@ variable_cases = [
     ("railway variables set --kv", False),
     ("railway run env", False),
     ("railway run printenv", False),
+    ("railway run env --help", False),
     ('railway run sh -c "env"', False),
     ("railway run railway variables", False),
     ("railway variables set API_TOKEN=not-a-real-secret", False),

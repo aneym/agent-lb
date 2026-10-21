@@ -89,18 +89,6 @@ def run_value_output(args):
             return False
         return True
     return False
-def production_environment(args):
-    for i, arg in enumerate(args):
-        value = None
-        if arg in {'--environment', '-e'} and i + 1 < len(args):
-            value = args[i + 1]
-        elif arg.startswith('--environment='):
-            value = arg.split('=', 1)[1]
-        elif arg.startswith('-e') and len(arg) > 2:
-            value = arg[2:].lstrip('=')
-        if value is not None and value.casefold() in {'production', 'prod'}:
-            return True
-    return False
 def substitutions(text, heredoc=False):
     result, out = [], []
     i, quote = 0, None
@@ -320,7 +308,18 @@ def check(command, inherited, value_output=False):
                 break
             if name == 'railway':
                 args = words[i + 1:]
-                if any(arg in {'--help', '-h'} for arg in args) or args[:1] == ['help']:
+                help_args = list(args)
+                if help_args and not help_args[0].startswith('-'):
+                    help_args.pop(0)
+                while help_args and help_args[0].startswith('-') and help_args[0] != '--':
+                    flag = help_args.pop(0)
+                    if flag in {'--help', '-h'}:
+                        break
+                    if flag in OPTION_VALUES and help_args:
+                        help_args.pop(0)
+                else:
+                    flag = None
+                if flag in {'--help', '-h'} or args[:1] == ['help']:
                     break
                 for j, arg in enumerate(args):
                     if '$UNKNOWN_SUBSTITUTION' in arg and (

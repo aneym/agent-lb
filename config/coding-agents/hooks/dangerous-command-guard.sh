@@ -234,7 +234,7 @@ def inspect(source, inherited, depth=0):
             if args and re.fullmatch(r'(?:@railway/cli|railway)(?:@[^/]+)?', args[0]):
                 words = ['railway', *args[1:]]
                 name = 'railway'
-        if name == 'railway' and (any(arg in {'--help', '-h'} for arg in words[1:]) or words[1:] in (['--version'], ['-V']) or words[1:2] == ['help']):
+        if name == 'railway' and (words[1:2] in (['--help'], ['-h']) or words[2:3] in (['--help'], ['-h']) or words[1:] in (['--version'], ['-V']) or words[1:2] == ['help']):
             continue
         if name == 'railway' and words[1:2] == ['login']:
             return "kept floor: Alex's own Railway login. Use a factory-provisioned RAILWAY_TOKEN"
