@@ -118,7 +118,7 @@ def commands(text, cwd, depth=0):
                 current = []
         else:
             current.append(word)
-    found = []
+    found: list[tuple[str, str | None]] = []
     for segment in segments:
         if not segment:
             continue
@@ -137,6 +137,7 @@ def commands(text, cwd, depth=0):
             }:
                 continue
             args, where = segment[git_index + 1 :], cwd
+            bypass = False
             pre = segment[:git_index]
             if any(word in {"-C", "--chdir", "-D"} or word.startswith("--chdir=") for word in pre):
                 where = None
@@ -155,13 +156,54 @@ def commands(text, cwd, depth=0):
                     where = None if where is None else str((Path(where) / arg[2:]).resolve())
                 elif arg in {"-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}:
                     if args:
-                        args.pop(0)
+                        value = args.pop(0)
+                        bypass |= arg in {"-c", "--config-env"} and value.lower().startswith("core.hookspath=")
                     if arg in {"--git-dir", "--work-tree"}:
                         where = None
+                elif arg.startswith("-c"):
+                    bypass |= arg[2:].lower().startswith("core.hookspath=")
+                elif arg.startswith("--config-env="):
+                    bypass |= arg.split("=", 1)[1].lower().startswith("core.hookspath=")
                 elif arg.startswith(("--git-dir=", "--work-tree=")):
                     where = None
+            if bypass:
+                found.append(("hook bypass", None))
             if args:
                 action, rest = args[0], args[1:]
+                if action == "commit":
+                    takes_value = {
+                        "-m",
+                        "--message",
+                        "-F",
+                        "--file",
+                        "-C",
+                        "--reuse-message",
+                        "-c",
+                        "--reedit-message",
+                        "--author",
+                        "--date",
+                        "--cleanup",
+                        "--fixup",
+                        "--squash",
+                        "--trailer",
+                        "-t",
+                        "--template",
+                    }
+                    skip = False
+                    for word in rest:
+                        if skip:
+                            skip = False
+                            continue
+                        if word == "--":
+                            break
+                        if (
+                            word == "--no-verify"
+                            or word.startswith("--no-verify=")
+                            or re.fullmatch(r"-[a-zA-Z]*n[a-zA-Z]*", word)
+                        ):
+                            found.append(("hook bypass", None))
+                            break
+                        skip = word in takes_value
                 flags = {"-b", "-B", "--orphan", "--detach"}
                 if action == "switch" or action == "checkout" and rest and (flags & set(rest) or "--" not in rest):
                     found.append((action, where))
@@ -212,7 +254,9 @@ def main():
             state = first_checkout(where) if where else None
             if state is not False:
                 reason = (
-                    "Floor: destructive shared-checkout mutation. Branch changes or removal of the shared checkout can take "
+                    "Git hook bypass is forbidden: do not use --no-verify, -n or core.hooksPath overrides; fix the hook failure."
+                    if action == "hook bypass"
+                    else "Floor: destructive shared-checkout mutation. Branch changes or removal of the shared checkout can take "
                     "another agent's working state; use a dedicated <repo>-wt/<topic> worktree."
                 )
                 print(
