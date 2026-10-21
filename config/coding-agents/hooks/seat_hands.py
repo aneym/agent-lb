@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 SEATS = {
+    "explore",
     "general-purpose",
     "claude",
     "effort-low",
@@ -45,6 +46,8 @@ BRAIN_CLASSES = {
     "money-path",
     "judgment",
 }
+HANDS_CLASSES = {"implement", "mechanical", "fix", "land", "explore", "test", "probe", "sweep", "bulletin", "research"}
+RESEARCH = re.compile(r"^(?:research|investigate|survey|compare)\b", re.IGNORECASE)
 TAG = re.compile(r"^\s*\[class:([\w-]+)\]", re.IGNORECASE)
 EXCEPTION = re.compile(
     r"^\s*OPUS-REASON:\s*(ui-critical|trust-boundary|money-path|twice-failed|judgment|contract)\b",
@@ -56,7 +59,7 @@ BRAINS = re.compile(
     re.IGNORECASE,
 )
 HANDS = re.compile(
-    r"studio_merge|\bfix-forward\b|\b(?:implement|fix|patch|commit|probe|reproduce|install|land|sweep)\b"
+    r"studio_merge|\bfix-forward\b|\b(?:implement|fix|patch|commit|test|probe|reproduce|install|land|sweep|drain|bulletin)\b"
     r"|\bedit\s+(?:\S+\s+){0,3}(?:files?|[\w./-]+\.[\w]+)\b|\brun\s+\S+",
     re.IGNORECASE,
 )
@@ -94,42 +97,66 @@ def lean_active() -> bool:
         return False
 
 
+def brief_header(prompt: str) -> tuple[str, str]:
+    tag = ""
+    for line in prompt.splitlines():
+        line = line.strip()
+        if not line or line.upper().startswith("NEEDS:"):
+            continue
+        match = TAG.match(line)
+        if match:
+            tag = match.group(1).lower()
+            line = line[match.end() :].strip()
+            if not line:
+                continue
+        return tag, line
+    return tag, ""
+
+
 def preserve_seat(subagent: str, prompt: str) -> bool:
-    match = TAG.match(prompt)
-    tag = match.group(1).lower() if match else ""
+    tag, first = brief_header(prompt)
     return (
-        subagent in PRESERVED_SEATS
+        subagent.lower() in PRESERVED_SEATS
         or tag in BRAIN_CLASSES
         or bool(EXCEPTION.search(prompt))
-        or bool(BRAINS.search(prompt))
+        or (
+            tag not in HANDS_CLASSES
+            and not HANDS.match(first)
+            and not READ.match(first)
+            and not RESEARCH.match(first)
+            and bool(BRAINS.search(first))
+        )
     )
 
 
 def hands_warning(subagent: str, prompt: str) -> str | None:
     if (
-        (subagent or "general-purpose") in SEATS
+        (subagent or "general-purpose").lower() in SEATS
+        and os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") != "1"
         and not preserve_seat(subagent, prompt)
-        and not HANDS.search(prompt[:3000])
+        and not hands_target(subagent, prompt)
     ):
         return "unclear whether this brief is hands work; keeping the requested seat unchanged"
     return None
 
 
 def hands_target(subagent: str, prompt: str) -> tuple[str, str] | None:
-    if (subagent or "general-purpose") not in SEATS or os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") == "1":
+    if (subagent or "general-purpose").lower() not in SEATS or os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") == "1":
         return None
-    match = TAG.match(prompt)
-    tag = match.group(1).lower() if match else ""
+    tag, first = brief_header(prompt)
     if preserve_seat(subagent, prompt):
         return None
-    tagged = tag in {"implement", "mechanical", "fix", "land", "explore", "test"}
-    if not HANDS.search(prompt[:3000]):
+    tagged = tag in HANDS_CLASSES
+    research = tag == "research" or bool(RESEARCH.match(first))
+    explore = subagent.lower() == "explore" or tag == "explore"
+    if not (tagged or research or explore or HANDS.search(prompt[:3000])):
         return None
-    target = (
-        "gpt-explorer"
-        if tag == "explore" or (READ.search(prompt[:3000]) and not EDIT.search(prompt[:3000]))
-        else "gpt-implementer"
-    )
+    if research:
+        target = "codex-sol"
+    elif explore or (READ.search(prompt[:3000]) and not EDIT.search(prompt[:3000])):
+        target = "gpt-explorer"
+    else:
+        target = "gpt-implementer"
     if STUDIO.search(prompt) or re.search(r"\b(?:xcodebuild|simctl|herdr|aside|keychain|tcc)\b", prompt, re.IGNORECASE):
         target += "-local"
     return target, f"class:{tag}" if tagged else "hands markers without a brains marker"
