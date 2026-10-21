@@ -46,7 +46,6 @@ ADOPTED_KEEP_NAMES = (
 MANAGED_HOOKS = (
     "claude-grind-pulse.py",
     "branch-guard.py",
-    "herdr-send-guard.py",
     "hook_output.py",
     "hook_failure_recovery.py",
     "parity_presentation.py",
@@ -75,7 +74,6 @@ MANAGED_HOOKS = (
 
 DISPATCH_INPROC = (
     "branch-guard.py",
-    "herdr-send-guard.py",
     "rm-dynamic-deny",
     "desktop-guard",
     "stash-guard",

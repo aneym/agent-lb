@@ -70,7 +70,7 @@ MANAGED_AGENTS = (
 ADOPTED_KEEP = tuple(Path(".claude/hooks") / name for name in ADOPTED_KEEP_NAMES)
 
 RETIRED_AGENTS = ("astra", "implementer")
-RETIRED_HOOKS = ("seat-budget.py", "routing-pulse.py", "load-governor.py", "repeat-read-warn.py")
+RETIRED_HOOKS = ("seat-budget.py", "routing-pulse.py", "load-governor.py", "repeat-read-warn.py", "herdr-send-guard.py")
 
 ROUTING_TABLE = Path(".agent-lb/managed/coding-agents/routing-table.json")
 ROUTING_TABLE_OWNER = (Path(".agent-lb/managed/coding-agents/routing-table"), "agent-lb:routing-table:v1\n")
@@ -281,12 +281,6 @@ SETTINGS_HOOKS = (
         "PreToolUse",
         "Bash",
         {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/branch-guard.py"', "timeout": 10},
-        True,
-    ),
-    (
-        "PreToolUse",
-        "Bash",
-        {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/herdr-send-guard.py"', "timeout": 10},
         True,
     ),
     ("PreToolUse", "Agent", SEAT_GUARD_HOOK, False),
