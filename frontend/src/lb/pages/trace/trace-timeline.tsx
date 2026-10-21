@@ -4,7 +4,6 @@ import { compact } from "../../format";
 import { ModelChip } from "../../kit/primitives";
 import { latency, percent } from "../usage/usage-format";
 
-// Share of the prompt read from cache: at or above HIGH is calm, below LOW is waste.
 export const CACHE_READ_BANDS = { high: 0.8, low: 0.3 } as const;
 
 const BAND_FILL = {
