@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from dispatch_parity import run_parity  # type: ignore[missing-import]
 from harness_mcp import ensure_harness_mcp
 from hook_inventory import hook_path_problems, validate_hook_changes  # type: ignore[missing-import]
 from policy_hosts import policy_box_hosts  # type: ignore[missing-import]
@@ -307,7 +308,12 @@ SETTINGS_HOOKS = (
     (
         "PostToolUse",
         None,
-        {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/claude-grind-pulse.py"', "timeout": 2},
+        {
+            "type": "command",
+            "command": '/usr/bin/python3 "$HOME/.claude/hooks/claude-grind-pulse.py"',
+            "timeout": 2,
+            "async": True,
+        },
         True,
     ),
     ("SessionStart", "compact|resume", FACTORY_CONTEXT_HOOK, False),
@@ -365,8 +371,8 @@ def opaque_floor_commands(hooks: dict[str, Any], source: Path) -> list[str]:
 
 DISPATCH_EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DISPATCH_SCRIPT = "hooks/hook-dispatch.py"
+DISPATCH_PYTHON = '"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14"'
 DISPATCH_REGISTRY = Path(".claude/hooks/dispatch/registry.json")
-DISPATCH_PARITY = Path(".claude/hooks/dispatch/parity-last.json")
 
 DISPATCH_SKIP_MATCHERS = ("AskUserQuestion",)
 DISPATCH_HOOK_KEYS = {"type", "command", "timeout", "statusMessage"}
@@ -615,7 +621,8 @@ def dispatch_group(event: str, key: str, matcher_field: Any, hooks: list[dict[st
     timeout = sum(hook.get("timeout") or DEFAULT_HOOK_TIMEOUT for hook in hooks) + 5
     entry: dict[str, Any] = {
         "type": "command",
-        "command": f"python3 \"$HOME/.claude/{DISPATCH_SCRIPT}\" {event} '{key}' {rev}",
+        "command": f'P={DISPATCH_PYTHON}; [ -x "$P" ] || P=python3; '
+        f'exec "$P" -I -S "$HOME/.claude/{DISPATCH_SCRIPT}" {event} \'{key}\' {rev}',
         "timeout": int(timeout) if float(timeout).is_integer() else timeout,
     }
     messages = list(dict.fromkeys(hook["statusMessage"] for hook in hooks if hook.get("statusMessage")))
@@ -894,7 +901,8 @@ def pin_inproc(registry: dict[str, Any], home: Path, source: Path) -> dict[str, 
     for event_entries in registry["entries"].values():
         for hooks in event_entries.values():
             for hook in hooks:
-                match = SCRIPT_WORD.match(hook["command"])
+                guarded = dispatcher_module(source).IF_READABLE.match(hook["command"])
+                match = SCRIPT_WORD.match(guarded.group("run") if guarded else hook["command"])
                 if not match:
                     continue
                 word = match.group(1).strip('"')
@@ -911,66 +919,6 @@ def pin_inproc(registry: dict[str, Any], home: Path, source: Path) -> dict[str, 
     pinned["script_sha"] = script_pins(source)
     pinned["dispatcher_sha256"] = hashlib.sha256((source / DISPATCH_SCRIPT).read_bytes()).hexdigest()
     return pinned
-
-
-def run_parity(source: Path, home: Path, registry: dict[str, Any]) -> tuple[bool, str]:
-
-    try:
-        wake = subprocess.run(
-            [
-                sys.executable,
-                str(source / "hooks" / "seat-run-wake-parity.py"),
-                "--dispatcher",
-                str(source / DISPATCH_SCRIPT),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return False, f"seat-run wake fixture did not run: {exc.__class__.__name__}"
-    if wake.returncode != 0:
-        return False, f"seat-run wake fixture failed: {wake.stderr.strip()[-400:]}"
-    report = home / DISPATCH_PARITY
-    report.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="hook-dispatch-stage-") as stage:
-        staged = Path(stage) / "registry.json"
-        staged.write_text(json.dumps(registry, indent=2) + "\n")
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(source / "hooks" / "hook-dispatch-parity.py"),
-                    "--home",
-                    str(home),
-                    "--registry",
-                    str(staged),
-                    "--dispatcher",
-                    str(source / DISPATCH_SCRIPT),
-                    "--out",
-                    str(report),
-                    "--workdir",
-                    str(Path(tempfile.gettempdir()) / "hook-dispatch-parity"),
-                    *[
-                        arg
-                        for target, template in managed_hooks(home, source).items()
-                        for arg in ("--overlay", f"{target.relative_to(home)}={template}")
-                    ],
-                    "--lock-held",
-                    "--no-process-count",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=600,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return False, f"parity fixture did not run: {exc.__class__.__name__}"
-    summary = (result.stdout.strip().splitlines() or [""])[-1]
-    if result.returncode != 0:
-        return False, f"{summary or result.stderr.strip()[-400:]} (exit {result.returncode}; report {report})"
-    return True, f"{summary} (report {report})"
 
 
 def resolve_sol(source: Path, home: Path) -> str:
@@ -1230,12 +1178,17 @@ def reconcile_settings(
                 continue
             event_groups = updated.setdefault("hooks", {}).setdefault(event, [])
             matchers = ("Bash", "*") if matcher == "Bash" else (matcher,)
-            if any(
-                is_settings_hook(existing.get("command"), hook)
+            present = [
+                existing
                 for group in event_groups
                 if matcher is None or group.get("matcher") in matchers
                 for existing in group.get("hooks", [])
-            ):
+                if is_settings_hook(existing.get("command"), hook)
+            ]
+            if present:
+                for existing in present:
+                    if hook.get("async"):
+                        existing["async"] = True
                 continue
             if matcher in ("Agent", "Workflow"):
                 group = next((group for group in event_groups if group.get("matcher") == matcher), None)
@@ -1566,10 +1519,10 @@ def main() -> int:
             elif unchanged:
                 new_registry = candidate
             else:
-                ok, summary = run_parity(source, args.home, candidate)
+                ok, summary = run_parity(source, args.home, candidate, managed_hooks(args.home, source))
                 if not ok and mode == "sticky":
                     print(f"hook dispatcher: parity fixture failed ({summary}); running it once more")
-                    ok, summary = run_parity(source, args.home, candidate)
+                    ok, summary = run_parity(source, args.home, candidate, managed_hooks(args.home, source))
                 if ok:
                     candidate["parity"] = {
                         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

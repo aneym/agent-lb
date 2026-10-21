@@ -65,3 +65,4 @@ excalidraw.log
 /openspec/changes/macos-menubar-app/menubar-glass.json
 
 features/.gen/
+config/coding-agents/hooks/dispatch/

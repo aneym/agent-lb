@@ -544,8 +544,8 @@ def builtin_cases():
         dict(bash("screencapture -x out.png"), name="allow-display-wake-fires", expect="allow"),
         dict(bash("cd %s && python3 -m pytest -q checks" % HEAVY_DIR), name="allow-box-offload", expect="allow"),
         dict(bash("cd sub && rm a1 a2"), name="allow-rm-cd-rewrite", expect="allow", setup="rmcd"),
-        dict(bash("open -a Preview out.png"), name="allow-open-other-app", expect="allow"),
-        dict(bash("railway variables --json | jq 'keys'"), name="allow-railway-names", expect="allow"),
+        dict(bash("open -a Preview out.png"), name="deny-open-other-app", expect=deny),
+        dict(bash("railway variables --json | jq 'keys'"), name="deny-railway-names", expect=deny),
         dict(
             bash("link-cli auth status --filter-output authenticated"), name="allow-link-cli-filtered", expect="allow"
         ),
@@ -627,8 +627,8 @@ def builtin_cases():
             event="PreToolUse",
             tool="mcp__aside__repl",
             input={"code": "await openTab('https://x')"},
-            name="deny-aside-open-tab",
-            expect=deny,
+            name="warn-aside-open-tab",
+            expect="allow",
         ),
         dict(
             event="PreToolUse",

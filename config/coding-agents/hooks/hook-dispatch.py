@@ -4,6 +4,7 @@ import builtins
 import hashlib
 import io
 import json
+import marshal
 import os
 import re
 import shutil
@@ -14,8 +15,9 @@ import time
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hook_output import cap_context, merge_objects  # type: ignore[missing-import]
 from hook_failure_recovery import answer_problem, deny_reason, parse_json  # type: ignore[missing-import]
+from hook_output import cap_context, merge_objects  # type: ignore[missing-import]
+from hook_prefilters import COMMAND_PREFILTERS, SCRIPT_NEEDS, SCRIPT_PREFILTERS, escapes_in_input, never  # type: ignore[missing-import]
 
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DEFAULT_TIMEOUT = 600.0
@@ -86,6 +88,11 @@ SHAPE = re.compile(
     r"^\s*(?:(?P<interp>/usr/bin/python3|python3)\s+)?(?P<script>%s)(?P<args>(?:\s+%s)*)"
     r"(?P<devnull>\s+2>\s*/dev/null)?"
     r"(?:\s+\|\|\s+(?:(?P<true>true)|\{\s*printf\s+%%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?\s*$" % (_PATH_WORD, _ARG_WORD)
+)
+
+IF_READABLE = re.compile(
+    r'^if \[ -r "(?P<path>\$HOME/[^"$`\\]+)" \]; then (?P<run>(?:/usr/bin/python3|python3) "(?P=path)"); '
+    r"else printf '%s\\n' \"hook warning: missing (?P=path); continuing\" >&2; fi(?: #[^\n]*)?$"
 )
 
 FLOOR_EXEC = re.compile(
@@ -188,311 +195,6 @@ def sha256_file(path):
         return None
 
 
-def _jq_field(payload, field):
-    if not isinstance(payload, dict):
-        return None
-    tool_input = payload.get("tool_input")
-    if tool_input is None:
-        return ""
-    if not isinstance(tool_input, dict):
-        return None
-    value = tool_input.get(field)
-    if value is None or value is False:
-        return ""
-    if not isinstance(value, str):
-        return None
-    return value.replace("\x00", "")
-
-
-def escapes_in_input(payload):
-    tool_input = payload.get("tool_input") if isinstance(payload, dict) else None
-    if not isinstance(tool_input, dict):
-        return False
-    return any(isinstance(value, str) and "\\" in value for value in tool_input.values())
-
-
-def pf_dangerous(payload):
-    command = _jq_field(payload, "command")
-    if command is None:
-        return True
-
-    return any(name in command for name in ("psql", "railway", "vercel", "fly", "neonctl"))
-
-
-def pf_bootout(payload):
-    command = _jq_field(payload, "command")
-    return command is None or "launchctl" in command
-
-
-def pf_link_cli(payload):
-    command = _jq_field(payload, "command")
-    return command is None or "link-cli" in command
-
-
-def pf_railway_custody(payload):
-    if not isinstance(payload, dict):
-        return True
-    tool_input = payload.get("tool_input", {})
-    if not isinstance(tool_input, dict):
-        return True
-    command = tool_input.get("command", "")
-    return not isinstance(command, str) or "railway" in command
-
-
-def pf_no_chrome(payload):
-    command = _jq_field(payload, "command")
-    if command is None:
-        return True
-
-    literals = ("--remote-debugging-port", "--headless", "puppeteer.launch", "launchPersistentContext")
-    return any(text in command for text in literals) or "chrom" in re.sub(r"[\"'\\\n]", "", command).lower()
-
-
-_WIDE_TOOL = re.compile(r"(^|[;&|(`\s])(grep\s+([^;&|]*\s)?-[a-zA-Z]*[rR]|rg\s|find\s|fd\s)", re.M)
-_WIDE_PATH = re.compile(
-    r"\s(/|~|~/|\$HOME/?|\"\$HOME\"/?|/(?:Users)/[^/ \t\n\r\f\v]+/?|/(?:Volumes)/[^/ \t\n\r\f\v]+/?|"
-    r"/(?:Volumes)/[^/ \t\n\r\f\v]+/repos/?|"
-    r"/System/?|/Library/?|/home/?|/home/[^/ \t\n\r\f\v]+/?|/home/[^/ \t\n\r\f\v]+/repos/?|/root/?)(\s|$|;|\||\))",
-    re.M,
-)
-
-
-def pf_wide_scan(payload):
-    command = _jq_field(payload, "command")
-    if command is None:
-        return True
-    if not command:
-        return False
-    norm = re.sub(r"[\s'\"\\]", "", command)
-    places = [
-        norm.lower(),
-        str(payload.get("cwd") or "").lower(),
-        os.getcwd().lower(),
-        os.environ.get("HOME", "").lower(),
-        os.path.expanduser("~").lower(),
-    ]
-    if "grep" in norm and any(".agent-rails" in place for place in places):
-        return True
-    if ".agent-rails" in command and re.search(r"(rg|grep|find|fd)\s", command):
-        return True
-    if _WIDE_TOOL.search(command) and _WIDE_PATH.search(command):
-        return True
-
-    return norm.count("$(") + norm.count("`") + norm.count("sh") + norm.count("env") >= 8
-
-
-_SCAN_NAMES = ("rg", "find", "fd", "grep", "egrep", "fgrep", "ggrep")
-_SCAN_SPLIT = re.compile(r"[\s;&|()<>`]+")
-
-
-def _scan_resolve(word, cwd):
-    home = os.path.expanduser("~")
-    word = re.sub(r"^\$(?:HOME|\{HOME\})(?=/|$)", lambda _m: home, word)
-    if word.startswith("~"):
-        head, _sep, rest = word.partition("/")
-        word = (home if head == "~" else "/home/" + head[1:]) + "/" + rest
-    return os.path.normpath(word if word.startswith("/") else os.path.join(cwd, word))
-
-
-def _scan_maybe_wide(path):
-    if ".agent-rails" in path.lower():
-        return True
-    parts = [part for part in path.split("/") if part]
-    if len(parts) <= 1:
-        return True
-    if parts[0] in ("Users", "home", "Volumes") and (len(parts) == 2 or (len(parts) == 3 and parts[2] == "repos")):
-        return True
-    if parts[:3] == ["Volumes", "StudioExt", "repos"] and len(parts) == 4 and parts[3].endswith("-wt"):
-        return True
-    home = os.path.expanduser("~")
-    return path in (home, home + "/repos")
-
-
-def pf_wide_scan_paths(payload):
-    command = _jq_field(payload, "command")
-    if command is None:
-        return True
-    if not command:
-        return False
-    if pf_wide_scan(payload):
-        return True
-    cwd = payload.get("cwd")
-    if cwd is not None and not isinstance(cwd, str):
-        return True
-    pieces, cds = {"."}, 0
-    for word in _SCAN_SPLIT.split(re.sub(r"[\"'\\]", "", command)):
-        if word:
-            forms = {word, word.split("=", 1)[-1], word[2:] if word.startswith("-S") else word}
-            pieces |= forms
-            cds += bool(forms & {"cd", "pushd"})
-    if not any(piece.rsplit("/", 1)[-1] in _SCAN_NAMES for piece in pieces):
-        return False
-    if ".." in command and re.search(r"[\"']", command):
-        return True
-    candidates = {cwd or os.getcwd(), os.getcwd()}
-    if cds:
-        candidates.add(os.path.expanduser("~"))
-    if cds > 4:
-        return True
-    for _round in range(cds):
-        if len(candidates) * len(pieces) > 4096:
-            return True
-        candidates |= {_scan_resolve(piece, base) for base in candidates for piece in pieces}
-    return any(_scan_maybe_wide(_scan_resolve(piece, base)) for base in candidates for piece in pieces)
-
-
-def _guard_shell_tokens(text):
-    import shlex
-
-    cleaned, quote, escaped, boundary, comment = [], None, False, True, False
-    for char in text:
-        if comment:
-            if char != "\n":
-                continue
-            comment = False
-        if escaped:
-            escaped = False
-            boundary = False
-        elif char == "\\" and quote != "'":
-            escaped = True
-            boundary = False
-        elif quote:
-            if char == quote:
-                quote = None
-        elif char in "\"'":
-            quote = char
-            boundary = False
-        elif char == "#" and boundary:
-            comment = True
-            continue
-        else:
-            boundary = char in " \t\r\n;&|()"
-        cleaned.append(char)
-    lexer = shlex.shlex("".join(cleaned), posix=True, punctuation_chars=";&|()<>\n")
-    lexer.whitespace = " \t\r"
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    return list(lexer)
-
-
-def pf_wide_scan_parse(payload):
-    command = _jq_field(payload, "command")
-    if command is None:
-        return True
-    if not command:
-        return False
-    if pf_wide_scan_paths(payload):
-        return True
-    if "<<" in command or "$(" in command or "`" in command:
-        return True
-    flat = re.sub(r"[\s\"'\\]", "", command)
-    if sum(flat.count(word) for word in ("sh", "env", "watch")) >= 8:
-        return True
-    if "'" in command or '"' in command:
-        try:
-            tokens = _guard_shell_tokens(command)
-        except ValueError:
-            return True
-        if any("'" in token or '"' in token for token in tokens):
-            return True
-    return False
-
-
-def pf_display_wake(payload):
-    if not isinstance(payload, dict):
-        return True
-    name = str(payload.get("tool_name") or payload.get("tool") or "")
-    tool_input = payload.get("tool_input") or {}
-    command = str(tool_input.get("command") or "") if isinstance(tool_input, dict) else ""
-    if "DISPLAY_WAKE_SKIP" in command:
-        return False
-    return re.search(r"computer[_-]?use|cua-driver|screencapture", name + "\n" + command, re.I) is not None
-
-
-def pf_jev_alert(_payload):
-    return True
-
-
-def _prettier_config_near(start):
-    seen = set()
-    for top in (start, os.path.realpath(start)):
-        path = top
-        while True:
-            if path not in seen:
-                seen.add(path)
-                try:
-                    names = os.listdir(path)
-                except OSError:
-                    return True
-                for name in names:
-                    if name.startswith(".prettierrc") or name.startswith("prettier.config"):
-                        return True
-                for name in ("package.json", "package.yaml"):
-                    if name in names:
-                        try:
-                            with open(os.path.join(path, name), "rb") as handle:
-                                if b"prettier" in handle.read():
-                                    return True
-                        except OSError:
-                            return True
-            parent = os.path.dirname(path)
-            if parent == path:
-                break
-            path = parent
-    return False
-
-
-def pf_prettier(payload):
-    target = _jq_field(payload, "file_path")
-    if target is None:
-        return True
-    if not target or not re.search(r"\.(ts|tsx|js|jsx|json|css|md)$", target):
-        return False
-    directory = os.path.dirname(target) or "."
-    if not os.path.isabs(directory) and os.environ.get("CDPATH"):
-        return True
-    directory = os.path.abspath(directory)
-    if not os.path.isdir(directory):
-        return False
-    return _prettier_config_near(directory)
-
-
-SCRIPT_PREFILTERS = {
-    "agent-lb-bootout-guard.sh": ("8f4a0eea5f7639e7d0f6e8d02a048ffd00db3c37daa9b6f4acb86d612a36d304", pf_bootout),
-    "display-wake.sh": ("e701783e043516bdca4397ae0a1acdb8838645ee125931921e345704ce64056b", pf_display_wake),
-    "wide-scan-guard.sh": ((), pf_wide_scan_parse),
-    "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
-    "dangerous-command-guard.sh": ((), pf_dangerous),
-    "no-chrome-guard.sh": (
-        (
-            "110606670fe66ed2f9dc5824e6d9cb4ed0819286d4b2f73f99b97a73196d9468",
-            "02f4782aadb16febacc1544cfc84dc270d28350fae29c2ce77facdd511b68b82",
-            "3464abbaaf2e8c8ed5ce6fa6203dc51745aad9bb17e220580b442026356bbeee",
-            "64cf185450a08b3faab701fb8c289d32b55611ebe6049065854b2c92fd2450c8",
-            "77520a3185bc8d146aa0ae2a3cf2d0b0267240db5820448fde3487c085c5eb48",
-            "67708a8bbd00fa5fed75e70422ecd1281855606d32bb60c811e78f152e0ec75b",
-            "6dab221f51c25d4c97645ffe8e34318426fa9682e4a7db6ce77fc45a3178ea84",
-            "6c8dfc6a63731027e0a27bdfa1a2de3093f0d100ce94a1870e68dc37515801b3",
-        ),
-        pf_no_chrome,
-    ),
-    "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
-    "route.sh": ("36bbdd44a69543ff7fe2865985443a2a09ab2f540d6bf09df25ec6c978e1d629", pf_jev_alert),
-}
-
-SCRIPT_NEEDS = {
-    "wide-scan-guard.sh": (("cat",), ("jq",), ("python3",)),
-    "agent-lb-bootout-guard.sh": (("/opt/homebrew/bin/jq", "jq"), ("grep",)),
-    "railway-vars-guard.sh": (("cat",), ("python3",)),
-    "link-cli-guard.sh": (("jq",), ("grep",)),
-    "dangerous-command-guard.sh": (("jq",), ("grep",)),
-}
-
-COMMAND_PREFILTERS = {
-    "55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": pf_prettier,
-}
-
-
 class Plan(object):
     __slots__ = (
         "hook",
@@ -581,6 +283,35 @@ def hazardous(text):
     return False
 
 
+def cached(key, build, kind):
+    path = os.path.join(HERE, "dispatch", "cache", key)
+    try:
+        with open(path, "rb") as handle:
+            value = marshal.load(handle)
+        if isinstance(value, kind):
+            return value
+    except (OSError, EOFError, ValueError, TypeError):
+        pass
+    value = build()
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        fd, temp = tempfile.mkstemp(dir=os.path.dirname(path))
+        with os.fdopen(fd, "wb") as handle:
+            marshal.dump(value, handle)
+        os.replace(temp, path)
+    except (OSError, ValueError):
+        pass
+    return value
+
+
+def guard_code(plan):
+    key = hashlib.sha256((plan.script + "\0" + plan.source).encode("utf-8")).hexdigest()
+    tag = sys.implementation.cache_tag or "python"
+    return cached(
+        "code-%s-%s" % (tag, key), lambda: compile(plan.source, plan.script, "exec", dont_inherit=True), types.CodeType
+    )
+
+
 def plan_hook(hook, inproc_names, script_pins=None):
     plan = Plan(hook)
     command = plan.command
@@ -608,6 +339,12 @@ def plan_hook(hook, inproc_names, script_pins=None):
         else:
             plan.kind, plan.prefilter, plan.reason = "filtered", prefilter, "pinned command"
         return plan
+    guarded = IF_READABLE.match(command)
+    if guarded:
+        if not os.access(expand_word(guarded.group("path")), os.R_OK):
+            plan.kind, plan.prefilter, plan.reason = "filtered", never, "its script is missing, so it only warns"
+            return plan
+        command = guarded.group("run")
     match = SHAPE.match(command)
     if not match:
         plan.reason = "shape"
@@ -664,7 +401,8 @@ def plan_hook(hook, inproc_names, script_pins=None):
         plan.reason = "changed since the parity fixture passed on it"
         return plan
     texts = [source] + sibling_sources(os.path.dirname(os.path.realpath(script)), source)
-    if any(hazardous(text) for text in texts):
+    key = hashlib.sha256("\0".join(texts).encode("utf-8")).hexdigest()
+    if cached("hazard-" + key, lambda: any(hazardous(text) for text in texts), bool):
         plan.reason = "hazard"
         return plan
     plan.script, plan.interp, plan.source = script, interp, source
@@ -784,7 +522,7 @@ def run_inproc(plan, payload):
     try:
         signal.setitimer(signal.ITIMER_REAL, plan.timeout)
         try:
-            exec(compile(plan.source, plan.script, "exec", dont_inherit=True), module.__dict__)
+            exec(guard_code(plan), module.__dict__)
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
     except _GuardTimeout:
