@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Callable
 from typing import Any
 
 
@@ -36,8 +37,32 @@ def seat_block(api: Any, ctx: Any, arm: dict, excluded: set[str]) -> str | None:
     return api.hands_refusal(ctx.table, ctx.class_name, arm.get("seat"), arm.get("model"))
 
 
+def explore_stop(api: Any, ctx: Any) -> Callable[[dict], str | None]:
+    streaks = None
+
+    def block(arm: dict) -> str | None:
+        nonlocal streaks
+        threshold = (ctx.table.get("explore") or {}).get("stop_after_nonaccepts", 3)
+        if not isinstance(threshold, int) or threshold < 1:
+            api.fail("stop_after_nonaccepts must be positive")
+        if streaks is None:
+            streaks = {}
+            since, until = api.learning_window("30d")
+            for row in api.learning_outcomes(since, until):
+                if row.get("class") != ctx.class_name or not api.attributed_outcome(row):
+                    continue
+                key = row.get("arm_id")
+                streaks[key] = 0 if row["outcome"] == "accepted" else streaks.get(key, 0) + 1
+        if streaks.get(arm.get("id"), 0) >= threshold:
+            return f"stopped after {threshold} consecutive non-accepts"
+        return None
+
+    return block
+
+
 def fallback(
-    api: Any, ctx: Any, standard: dict, excluded: set[str], reason: str, pools: dict, today: list
+    api: Any, ctx: Any, standard: dict, excluded: set[str], reason: str, pools: dict,
+    today: list, stop: Callable[[dict], str | None],
 ) -> dict | None:
     table = ctx.table
     class_name = ctx.class_name
@@ -46,7 +71,7 @@ def fallback(
     for kind, arms in (("spread", spread), ("explore", explore)):
         for arm in arms:
             if seat_block(api, ctx, arm, excluded) or (
-                kind == "explore" and (api.arm_block(ctx, arm) or api.arm_cap_block(ctx, arm, today))
+                kind == "explore" and (api.arm_block(ctx, arm) or api.arm_cap_block(ctx, arm, today) or stop(arm))
             ):
                 continue
             if kind == "spread":
@@ -111,6 +136,7 @@ def select(
     today_key = api.decision_day(api.now_iso())
     today = [row for row in history if row.get("arm") == "explore" and api.decision_day(row.get("ts")) == today_key]
     choice = None
+    stop = explore_stop(api, ctx)
     if explicit:
         seat = args.seat or standard["seat"]
         spec = api.seat_defaults(table, class_name, seat)
@@ -167,6 +193,10 @@ def select(
             if mode_state["mode"] == "codex-swap" and class_name in (table.get("quota_swap") or {}):
                 continue
             if api.arm_block(ctx, arm) or api.arm_cap_block(ctx, arm, today):
+                continue
+            stopped = stop(arm)
+            if stopped:
+                notes.append(f"{arm['id']}: {stopped}")
                 continue
             candidates.append(arm)
         total = sum(float(arm.get("share") or 0) for arm in candidates)
@@ -226,7 +256,7 @@ def select(
             return None, eligible, False
         notes.append(blocked)
         choice = fallback(
-            api, ctx, standard, excluded, "reselected after unavailable seat", api.pools_by_id(pools_doc), today
+            api, ctx, standard, excluded, "reselected after unavailable seat", api.pools_by_id(pools_doc), today, stop
         )
         sticky = False
     if choice is not None:

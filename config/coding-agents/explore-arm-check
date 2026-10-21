@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+import copy
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def main():
+    shipped = json.loads((ROOT / "config/coding-agents/routing-table.json").read_text())
+    failures = 0
+    with tempfile.TemporaryDirectory(prefix="explore-arm-check-") as directory:
+        temp = Path(directory)
+        env = {**os.environ, "HOME": directory}
+        for name in (
+            "ROUTE_TABLE", "ROUTE_STATE", "ROUTE_DECISIONS_LOG", "ROUTE_OUTCOMES",
+            "ROUTE_LEDGER", "ROUTE_ALERT", "ROUTE_POOL_SNAPSHOT", "ROUTE_POOL_HISTORY",
+            "ROUTE_MODELS_CACHE", "ROUTE_QUOTA_MODE_STATE",
+        ):
+            env[name] = str(temp / name.lower())
+        env["ROUTE_FIXTURE_DIR"] = directory
+        (temp / "v1_models.json").write_text(json.dumps({"data": [{"id": "gpt-6-sol"}]}))
+        pools = temp / "pools.json"
+        pools.write_text(json.dumps({"quotaMode": "anthropic", "reservations": {"live": []}, "pools": [
+            {"id": "openai-codex", "eligibleAccounts": 4, "status": "ok", "headroomPercent": 90}
+        ]}))
+        now = datetime.now(timezone.utc)
+        stamp = now.isoformat()
+
+        def run(label, expected, enabled=None, gate=None, decisions=(), outcomes=()):
+            nonlocal failures
+            table = copy.deepcopy(shipped)
+            if enabled is not None:
+                table["explore"]["enabled"] = enabled
+            if gate is not None:
+                next(arm for arm in table["explore"]["arms"]["mechanical"]
+                     if arm["id"] == "luna-low")["gate"] = gate
+            Path(env["ROUTE_TABLE"]).write_text(json.dumps(table))
+            for name, rows in (("ROUTE_DECISIONS_LOG", decisions), ("ROUTE_OUTCOMES", outcomes)):
+                Path(env[name]).write_text("".join(json.dumps(row) + "\n" for row in rows))
+            result = subprocess.run(
+                [str(ROOT / "clients/route"), "dispatch", "mechanical", "--job", uuid4().hex,
+                 "--dry-run", "--seed", "7", "--json", "--pools-file", str(pools)],
+                env=env, capture_output=True, text=True, timeout=30,
+            )
+            try:
+                row = json.loads(result.stdout)
+                passed = result.returncode == 0 and ("luna-low" in row["eligible_arms"]) == expected
+            except (ValueError, KeyError):
+                passed = False
+            print(f"{'PASS' if passed else 'FAIL'} {label}")
+            if not passed:
+                failures += 1
+                print(f"  rc={result.returncode} stdout={result.stdout.strip()} stderr={result.stderr.strip()}")
+
+        decisions = [{"v": 1, "decision_id": f"dcn_{i}", "ts": stamp, "class": "mechanical",
+                      "job_id": f"cap-{i}", "arm_id": "luna-low", "arm": "explore"}
+                     for i in range(40)]
+        outcomes = [{"v": 1, "ts": (now - timedelta(seconds=10-i)).isoformat(),
+                     "job_id": f"outcome-{i}", "class": "mechanical", "arm_id": "luna-low",
+                     "outcome": "rejected", "source": "prod", "propensity": 0.1,
+                     "attribution_complete": True} for i in range(3)]
+        accepted = {**outcomes[-1], "ts": (now - timedelta(seconds=1)).isoformat(),
+                    "job_id": "accepted", "outcome": "accepted"}
+        run("shipped exploration disabled", False)
+        run("exploration enabled", True, True)
+        run("closed Luna gate", False, True, {"open": False})
+        run("39 distinct jobs today", True, True, decisions=decisions[:39])
+        run("40 distinct jobs today", False, True, decisions=decisions)
+        run("three attributed non-accepts", False, True, outcomes=outcomes)
+        run("accepted outcome resets streak", True, True, outcomes=[*outcomes, accepted])
+        run("two non-accepts remain eligible", True, True, outcomes=outcomes[:2])
+    return int(failures > 0)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
