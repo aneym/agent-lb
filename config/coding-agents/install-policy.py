@@ -58,7 +58,7 @@ def managed(target_dir: str, template: str, name: str | None = None) -> tuple[Pa
     )
 
 
-from policy_inventory import DISPATCH_INPROC, MANAGED_HOOKS, MANAGED_SEATS  # type: ignore[missing-import]
+from policy_inventory import ADOPTED_KEEP_NAMES, DISPATCH_INPROC, MANAGED_HOOKS, MANAGED_SEATS  # type: ignore[missing-import]
 
 MANAGED_AGENTS = (
     managed(".agent-lb/managed/coding-agents", "codex-seat-home.py"),
@@ -67,14 +67,7 @@ MANAGED_AGENTS = (
     *(managed(".claude/hooks", f"hooks/{name}") for name in MANAGED_HOOKS),
 )
 
-ADOPTED_KEEP = (
-    Path(".claude/hooks/wide-scan-guard.sh"),
-    Path(".claude/hooks/railway-vars-guard.sh"),
-    Path(".claude/hooks/agent-lb-bootout-guard.sh"),
-    Path(".claude/hooks/dangerous-command-guard.sh"),
-    Path(".claude/hooks/link-cli-guard.sh"),
-    Path(".claude/hooks/workflow-relay-guard.py"),
-)
+ADOPTED_KEEP = tuple(Path(".claude/hooks") / name for name in ADOPTED_KEEP_NAMES)
 
 RETIRED_AGENTS = ("astra", "implementer")
 RETIRED_HOOKS = ("seat-budget.py", "routing-pulse.py", "load-governor.py", "repeat-read-warn.py")
@@ -316,6 +309,12 @@ SETTINGS_HOOKS = (
         "Workflow",
         {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-readback.py"', "timeout": 5},
         False,
+    ),
+    (
+        "PostToolUse",
+        None,
+        {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/claude-grind-pulse.py"', "timeout": 2},
+        True,
     ),
     ("SessionStart", "compact|resume", FACTORY_CONTEXT_HOOK, False),
     ("PreCompact", None, COMPACT_CHECKPOINT_HOOK, False),

@@ -34,7 +34,17 @@ MANAGED_SEATS = (
     "codex-test-runner-local",
     "computer-use-local",
 )
+ADOPTED_KEEP_NAMES = (
+    "wide-scan-guard.sh",
+    "railway-vars-guard.sh",
+    "agent-lb-bootout-guard.sh",
+    "dangerous-command-guard.sh",
+    "link-cli-guard.sh",
+    "workflow-relay-guard.py",
+)
+
 MANAGED_HOOKS = (
+    "claude-grind-pulse.py",
     "branch-guard.py",
     "herdr-send-guard.py",
     "hook_output.py",
