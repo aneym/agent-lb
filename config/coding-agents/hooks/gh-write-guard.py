@@ -325,7 +325,7 @@ def check(command, environ=None, depth=0):
         app_shim = False
         try:
             with open(os.path.realpath(path), encoding="utf-8") as source:
-                app_shim = "import gh_guard" in source.read(20000)
+                app_shim = any(line.strip() == "import gh_guard" for line in source)
         except (OSError, UnicodeError):
             pass
         app = token.startswith("ghs_") or (
