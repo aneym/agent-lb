@@ -52,6 +52,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     from app.audit_tabs import add_parser as add_tabs_parser
 
     add_tabs_parser(commands)
+    from app.audit_jobs import add_parser as add_jobs_parser
+
+    add_jobs_parser(commands)
 
     from app.latency_cli import add_parser as add_latency_parser
 
@@ -198,6 +201,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             from app.audit_routing import run
         elif args.audit_command == "tabs":
             from app.audit_tabs import run
+        elif args.audit_command == "jobs":
+            from app.audit_jobs import run
         elif args.audit_command == "forwarded":
             from app.audit_forwarded import run
         else:

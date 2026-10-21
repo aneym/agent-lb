@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import tomllib
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -78,7 +79,8 @@ FROM base ORDER BY requested_at,id
 """
 
 
-def load_receipts(args, since, until, notes):
+@contextmanager
+def connect(args, notes):
     import psycopg
     from psycopg.rows import dict_row
 
@@ -94,6 +96,11 @@ def load_receipts(args, since, until, notes):
     with psycopg.connect(
         url, options="-c default_transaction_read_only=on -c statement_timeout=90000", row_factory=dict_row
     ) as connection:
+        yield connection
+
+
+def load_receipts(args, since, until, notes):
+    with connect(args, notes) as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT id,alias FROM accounts")
             aliases = {r["id"]: safe_label(r["alias"], r["id"][:8]) for r in cursor.fetchall()}
