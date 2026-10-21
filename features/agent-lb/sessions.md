@@ -15,6 +15,7 @@ unmapped:
 
 ## Sub-features
 `GET /api/sessions/{session_id}/trace` reports measured context parts and estimated token shares per request.
+`/s/<id>` opens the trace page at `/sessions/<id>`: one bar per request, width by latency, colour by cache kind.
 
 HTTP route handlers defined in `app/modules/sessions/api.py`.
 

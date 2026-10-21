@@ -64,7 +64,13 @@ export function Breakdown({
           const body = (
             <>
               {group === "account" || group === "pool" ? (
-                <ProviderMark id={markFor(accountsPending && !account && row.provider !== "muse" ? null : row.provider || account?.provider)} />
+                <ProviderMark
+                  id={markFor(
+                    accountsPending && !account && row.provider !== "muse"
+                      ? null
+                      : row.provider || account?.provider,
+                  )}
+                />
               ) : null}
               <div className="t">
                 {group === "model" ? (
@@ -95,7 +101,7 @@ export function Breakdown({
                 ) : group === "session" ? (
                   <Link
                     className="usage-name"
-                    to={`/usage?session=${encodeURIComponent(row.key || "")}`}
+                    to={`/sessions/${encodeURIComponent(row.key || "")}`}
                   >
                     {body}
                   </Link>
@@ -125,4 +131,3 @@ export function Breakdown({
     </Section>
   );
 }
-

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
@@ -91,4 +93,4 @@ async def redirect_session_short_link(
         raise HTTPException(status_code=404, detail="Session not found")
     if len(matches) > 1:
         raise HTTPException(status_code=409, detail="Session prefix is ambiguous")
-    return RedirectResponse(url=f"/sessions?session={matches[0]}", status_code=302)
+    return RedirectResponse(url="/sessions/" + quote(matches[0], safe=""), status_code=302)

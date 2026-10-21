@@ -14,8 +14,8 @@ import { PipelineTab } from "@/lb/pages/routing/pipeline-tab";
 import { PolicyTab } from "@/lb/pages/routing/policy-tab";
 import { RoutingLayout } from "@/lb/pages/routing/routing-layout";
 import { SettingsPage } from "@/lb/pages/settings/settings-page";
+import { TracePage } from "@/lb/pages/trace/trace-page";
 import { UsagePage } from "@/lb/pages/usage/usage-page";
-
 
 const REDIRECTS: Record<string, string> = {
   "/dashboard": "/",
@@ -45,6 +45,7 @@ export default function App() {
               <Route path="evals" element={<EvalsTab />} />
             </Route>
             <Route path="/usage" element={<UsagePage />} />
+            <Route path="/sessions/:sessionId" element={<TracePage />} />
             <Route path="/keys" element={<KeysPage />} />
             <Route path="/settings/:section" element={<SettingsPage />} />
           </Route>
