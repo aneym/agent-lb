@@ -24,23 +24,59 @@ def write(args):
         return False
     if args[0] != "api":
         return len(args) > 1 and args[1] in WRITES.get(args[0], set())
-    for i, arg in enumerate(args[1:], 1):
-        if arg in {"-f", "-F", "--field", "--raw-field", "--input"} or arg.startswith(
-            ("-f", "-F", "--field=", "--raw-field=", "--input=")
-        ):
-            return True
-        method = (
-            args[i + 1]
-            if arg in {"-X", "--method"} and i + 1 < len(args)
-            else arg[2:]
-            if arg.startswith("-X")
-            else arg.split("=", 1)[1]
-            if arg.startswith("--method=")
-            else ""
+    method, endpoint = "", ""
+    fields, queries = [], []
+    input_body = False
+    i = 1
+    while i < len(args):
+        arg = args[i]
+        value = ""
+        if arg in {
+            "-X",
+            "--method",
+            "-f",
+            "-F",
+            "--field",
+            "--raw-field",
+            "--input",
+            "-H",
+            "--header",
+            "--hostname",
+            "--jq",
+            "-q",
+            "--template",
+            "-t",
+            "--cache",
+        }:
+            i += 1
+            value = args[i] if i < len(args) else ""
+        elif arg.startswith(("--method=", "--field=", "--raw-field=", "--input=")):
+            arg, value = arg.split("=", 1)
+        elif arg.startswith(("-X", "-f", "-F")):
+            arg, value = arg[:2], arg[2:]
+        elif not arg.startswith("-") and not endpoint:
+            endpoint = arg.strip("/")
+        if arg in {"-X", "--method"}:
+            method = value.upper()
+        elif arg in {"-f", "-F", "--field", "--raw-field"}:
+            fields.append(value)
+            if value.startswith("query="):
+                queries.append(value[6:])
+        elif arg == "--input":
+            input_body = True
+        i += 1
+    if method in {"POST", "PATCH", "PUT", "DELETE"}:
+        return True
+    if endpoint == "graphql":
+        return (
+            input_body
+            or not queries
+            or any(
+                not query.lstrip().startswith(("query", "{")) or re.search(r"\bmutation\b", query, re.IGNORECASE)
+                for query in queries
+            )
         )
-        if method.upper() in {"POST", "PATCH", "PUT", "DELETE"}:
-            return True
-    return False
+    return input_body or bool(fields) and method != "GET"
 
 
 def check(command, environ=None, depth=0):
