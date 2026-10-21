@@ -90,10 +90,7 @@ class Account(Base):
     seat_type: Mapped[str | None] = mapped_column(String, nullable=True)
     plan_type: Mapped[str] = mapped_column(String, nullable=False)
     routing_policy: Mapped[str] = mapped_column(
-        String,
-        default="normal",
-        server_default=text("'normal'"),
-        nullable=False,
+        String, default="normal", server_default=text("'normal'"), nullable=False
     )
 
     access_token_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
@@ -124,17 +121,9 @@ class Account(Base):
     subscription_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     blocked_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    limit_warmup_enabled: Mapped[bool] = mapped_column(
-        Boolean,
-        default=True,
-        server_default=true(),
-        nullable=False,
-    )
+    limit_warmup_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     security_work_authorized: Mapped[bool] = mapped_column(
-        Boolean,
-        default=False,
-        server_default=false(),
-        nullable=False,
+        Boolean, default=False, server_default=false(), nullable=False
     )
 
     owner_instance: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
@@ -144,10 +133,7 @@ class Account(Base):
         back_populates="account",
         cascade="all, delete-orphan",
     )
-    request_logs: Mapped[list["RequestLog"]] = relationship(
-        "RequestLog",
-        back_populates="account",
-    )
+    request_logs: Mapped[list["RequestLog"]] = relationship("RequestLog", back_populates="account")
     limit_warmups: Mapped[list["AccountLimitWarmup"]] = relationship(
         "AccountLimitWarmup",
         back_populates="account",
@@ -238,9 +224,7 @@ class RequestLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_id: Mapped[str | None] = mapped_column(
-        String,
-        ForeignKey("accounts.id", ondelete="SET NULL"),
-        nullable=True,
+        String, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
     )
     provider: Mapped[str] = mapped_column(String, default="openai", server_default=text("'openai'"), nullable=False)
     api_key_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -262,10 +246,7 @@ class RequestLog(Base):
     quota_observed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     request_id: Mapped[str] = mapped_column(String, nullable=False)
     request_kind: Mapped[str] = mapped_column(
-        String,
-        default=RequestKind.NORMAL.value,
-        server_default=text("'normal'"),
-        nullable=False,
+        String, default=RequestKind.NORMAL.value, server_default=text("'normal'"), nullable=False
     )
     requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -303,10 +284,7 @@ class RequestLog(Base):
     upstream_proxy_endpoint_id: Mapped[str | None] = mapped_column(String, nullable=True)
     upstream_proxy_fallback_used: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     upstream_proxy_fail_closed_reason: Mapped[str | None] = mapped_column(String, nullable=True)
-    account: Mapped[Account | None] = relationship(
-        "Account",
-        back_populates="request_logs",
-    )
+    account: Mapped[Account | None] = relationship("Account", back_populates="request_logs")
 
 
 class ProxyEndpoint(Base):
@@ -1242,6 +1220,12 @@ Index("idx_logs_request_kind_time", RequestLog.request_kind, RequestLog.requeste
 Index("idx_logs_requested_at", RequestLog.requested_at)
 Index("idx_logs_source_requested_at", RequestLog.source, RequestLog.requested_at.desc())
 Index("idx_logs_session_time", RequestLog.session_id, RequestLog.requested_at.desc())
+Index(
+    "idx_logs_job_time",
+    RequestLog.job_id,
+    RequestLog.requested_at.desc(),
+    postgresql_where=RequestLog.job_id.is_not(None),
+).ddl_if(dialect="postgresql")
 Index("idx_logs_requested_at_id", RequestLog.requested_at.desc(), RequestLog.id.desc())
 Index(
     "idx_logs_deleted_at_requested_at_id",
