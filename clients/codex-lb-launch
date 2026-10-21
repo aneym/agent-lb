@@ -472,6 +472,8 @@ def _append_no_proxy(hosts: tuple[str, ...]) -> None:
 
 
 def main(argv: list[str]) -> None:
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        os.environ.pop(name, None)
     if len(argv) == 2 and argv[0] == "--proxy-daemon":
         run_proxy_daemon(Path(argv[1]))
         return

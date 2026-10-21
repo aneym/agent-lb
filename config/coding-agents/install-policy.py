@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from harness_mcp import ensure_harness_mcp
-from policy_hosts import policy_box_hosts  # type: ignore[missing-import]
 from hook_inventory import hook_path_problems, validate_hook_changes  # type: ignore[missing-import]
+from policy_hosts import policy_box_hosts  # type: ignore[missing-import]
 
 START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
@@ -38,7 +38,6 @@ ROUTE_FILES = (
     "route_heal.py",
     "route_spread.py",
 )
-
 
 SONNET_ENV = "ANTHROPIC_DEFAULT_SONNET_MODEL"
 SONNET_MODEL = "claude-sonnet-5-5"
@@ -68,7 +67,6 @@ MANAGED_AGENTS = (
     *(managed(".claude/hooks", f"hooks/{name}") for name in MANAGED_HOOKS),
 )
 
-
 ADOPTED_KEEP = (
     Path(".claude/hooks/wide-scan-guard.sh"),
     Path(".claude/hooks/railway-vars-guard.sh"),
@@ -78,10 +76,8 @@ ADOPTED_KEEP = (
     Path(".claude/hooks/workflow-relay-guard.py"),
 )
 
-
 RETIRED_AGENTS = ("astra", "implementer")
 RETIRED_HOOKS = ("seat-budget.py", "routing-pulse.py", "load-governor.py", "repeat-read-warn.py")
-
 
 ROUTING_TABLE = Path(".agent-lb/managed/coding-agents/routing-table.json")
 ROUTING_TABLE_OWNER = (Path(".agent-lb/managed/coding-agents/routing-table"), "agent-lb:routing-table:v1\n")
@@ -230,13 +226,11 @@ SEAT_GUARD_HOOK = {
     "statusMessage": "Seat guard",
 }
 
-
 WORKFLOW_SEAT_GUARD_HOOK = {
     **SEAT_GUARD_HOOK,
     "command": SEAT_GUARD_HOOK["command"].replace("seat-guard", "workflow-seat-guard"),
     "statusMessage": "Workflow seat guard",
 }
-
 
 CLOSEOUT_HOOK = {
     "type": "command",
@@ -245,14 +239,12 @@ CLOSEOUT_HOOK = {
     "statusMessage": "Dispatch closeout",
 }
 
-
 FOCUS_STEAL_HOOK = {
     "type": "command",
     "command": '/usr/bin/python3 "$HOME/.agents/policy/coding-agents/hooks/focus-steal-check.py" subagent-stop',
     "timeout": 15,
     "statusMessage": "Focus steal check",
 }
-
 
 FACTORY_CONTEXT_HOOK = {
     "type": "command",
@@ -261,14 +253,12 @@ FACTORY_CONTEXT_HOOK = {
     "statusMessage": "Factory context",
 }
 
-
 COMPACT_CHECKPOINT_HOOK = {
     "type": "command",
     "command": '/usr/bin/python3 "$HOME/.claude/hooks/compact-checkpoint.py"',
     "timeout": 10,
     "statusMessage": "Compact checkpoint",
 }
-
 
 DANGEROUS_GUARD_HOOK = {"type": "command", "command": '"$HOME/.claude/hooks/dangerous-command-guard.sh"', "timeout": 10}
 RAILWAY_GUARD_HOOK = {"type": "command", "command": 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"', "timeout": 10}
@@ -284,6 +274,16 @@ HOST_CREDENTIAL_HOOK = {
 }
 
 SETTINGS_HOOKS = (
+    (
+        "SessionStart",
+        None,
+        {
+            "type": "command",
+            "command": '/usr/bin/python3 "$HOME/.claude/hooks/gh-write-guard.py" --session-env',
+            "timeout": 10,
+        },
+        True,
+    ),
     (
         "PreToolUse",
         "Bash",
@@ -375,12 +375,10 @@ DISPATCH_SCRIPT = "hooks/hook-dispatch.py"
 DISPATCH_REGISTRY = Path(".claude/hooks/dispatch/registry.json")
 DISPATCH_PARITY = Path(".claude/hooks/dispatch/parity-last.json")
 
-
 DISPATCH_SKIP_MATCHERS = ("AskUserQuestion",)
 DISPATCH_HOOK_KEYS = {"type", "command", "timeout", "statusMessage"}
 SIMPLE_MATCHER = re.compile(r"[A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*")
 DEFAULT_HOOK_TIMEOUT = 600
-
 
 NAME_LIST = re.compile(r"[a-zA-Z0-9_|, -]+")
 TOOL_ALIASES = {
@@ -393,7 +391,6 @@ TOOL_ALIASES = {
     "ReadMcpResource": "ReadMcpResourceTool",
     "ReadMcpResourceDir": "ReadMcpResourceDirTool",
 }
-
 
 DISPATCH_DROPPED = {
     "55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": "global prettier --write",
@@ -1523,20 +1520,20 @@ def main() -> int:
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
     sonnet_model = SONNET_MODEL if args.uninstall else snapshot_model(snapshot, "sonnet-latest")
-    desired_settings = reconcile_settings(settings, args.uninstall, sonnet_model, source)
+    nxt = reconcile_settings(settings, args.uninstall, sonnet_model, source)
     if not args.uninstall:
-        desired_settings["autoCompactWindow"] = snapshot["autocompact_window"]["tab"]
+        nxt["autoCompactWindow"] = snapshot["autocompact_window"]["tab"]
     if args.uninstall:
-        if isinstance(desired_settings.get("env"), dict):
-            desired_settings["env"].pop(HAIKU_ENV, None)
-            if not desired_settings["env"]:
-                desired_settings.pop("env")
+        if isinstance(nxt.get("env"), dict):
+            nxt["env"].pop(HAIKU_ENV, None)
+            if not nxt["env"]:
+                nxt.pop("env")
     else:
         background = snapshot.get("background_model") or snapshot["standards"]["background_model"]
-        desired_settings["env"][HAIKU_ENV] = snapshot_model(snapshot, background)
+        nxt["env"][HAIKU_ENV] = snapshot_model(snapshot, background)
     mode = "off" if args.uninstall else (args.hook_dispatcher or ("sticky" if folded_now else "off"))
-    if mode != "off" and isinstance(desired_settings.get("hooks"), dict):
-        opaque = opaque_floor_commands(desired_settings["hooks"], source)
+    if mode != "off" and isinstance(nxt.get("hooks"), dict):
+        opaque = opaque_floor_commands(nxt["hooks"], source)
         if opaque:
             raise SystemExit(
                 "error: hook dispatcher not installed, nothing written: a floor guard must be registered as a direct "
@@ -1545,7 +1542,7 @@ def main() -> int:
             )
     new_registry: dict[str, Any] | None = None
     keep_fold = False
-    if mode != "off" and isinstance(desired_settings.get("hooks"), dict):
+    if mode != "off" and isinstance(nxt.get("hooks"), dict):
         only = None
         if mode == "sticky" and old_registry is not None:
             only = {}
@@ -1557,7 +1554,7 @@ def main() -> int:
                 )
                 rewrite_floor_commands({"PreToolUse": folded_groups} if event == "PreToolUse" else {}, source)
                 only[event] = folded_groups
-        folded_hooks, candidate = fold_hooks(desired_settings["hooks"], only, dispatch_worth(source, args.home))
+        folded_hooks, candidate = fold_hooks(nxt["hooks"], only, dispatch_worth(source, args.home))
         if candidate is not None:
             candidate = pin_inproc(candidate, args.home, source)
             if mode == "sticky" and old_registry is not None:
@@ -1598,16 +1595,16 @@ def main() -> int:
                         f"({summary}); restoring the per-hook config"
                     )
             if new_registry is not None:
-                desired_settings = {**desired_settings, "hooks": folded_hooks}
+                nxt = {**nxt, "hooks": folded_hooks}
             elif keep_fold:
-                hooks_now = dict(desired_settings["hooks"])
+                hooks_now = dict(nxt["hooks"])
                 for event in DISPATCH_EVENTS:
                     if event in (disk_settings.get("hooks") or {}):
                         hooks_now[event] = disk_settings["hooks"][event]
                     else:
                         hooks_now.pop(event, None)
-                desired_settings = {**desired_settings, "hooks": hooks_now}
-    desired_settings_text = json.dumps(desired_settings, indent=2, ensure_ascii=False) + "\n"
+                nxt = {**nxt, "hooks": hooks_now}
+    nxt_text = json.dumps(nxt, indent=2, ensure_ascii=False) + "\n"
     changes: dict[Path, str | None] = {
         path: desired for path, desired in desired_docs.items() if desired != originals[path]
     }
@@ -1665,8 +1662,8 @@ def main() -> int:
             else:
                 print(f"PRESERVE {old_policy}: modified or unrecognized legacy routing document")
 
-    if desired_settings != disk_settings:
-        changes[settings_path] = desired_settings_text
+    if nxt != disk_settings:
+        changes[settings_path] = nxt_text
     if not args.uninstall and registry_path.parent.is_dir():
         for path in registry_path.parent.glob("registry*.json"):
             legacy = json.loads(path.read_text())
@@ -1709,7 +1706,7 @@ def main() -> int:
         legacy_text = json.dumps(old_registry, indent=2, ensure_ascii=False) + "\n"
         if read_text(legacy_path) != legacy_text:
             changes[legacy_path] = legacy_text
-    in_use = {f"registry.{rev}.json" for rev in (folded_rev(desired_settings), folded_rev(disk_settings)) if rev}
+    in_use = {f"registry.{rev}.json" for rev in (folded_rev(nxt), folded_rev(disk_settings)) if rev}
     if registry_path.parent.is_dir():
         for path in registry_path.parent.iterdir():
             if (
@@ -1863,7 +1860,7 @@ def main() -> int:
                 if replace_policy_link or read_text(policy_dir / relative) != wanted:
                     changes[policy_dir / relative] = wanted
 
-    validate_hook_changes(args.home, changes, desired_settings)
+    validate_hook_changes(args.home, changes, nxt)
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
     )

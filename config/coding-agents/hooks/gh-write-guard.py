@@ -160,6 +160,12 @@ def check(command, environ=None, depth=0):
 
 
 def main():
+    if sys.argv[1:] == ["--session-env"]:
+        target = os.environ.get("CLAUDE_ENV_FILE")
+        if target:
+            with open(target, "a", encoding="utf-8") as handle:
+                handle.write("\nunset GH_TOKEN GITHUB_TOKEN\n")
+        return 0
     try:
         data = json.load(sys.stdin)
         command = data.get("tool_input", {}).get("command", "")
