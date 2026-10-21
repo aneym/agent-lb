@@ -15,7 +15,7 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_output import cap_context, merge_objects  # type: ignore[missing-import]
-from hook_failure_recovery import answer_problem, deny_reason, parse_json, recover_nonfloor  # type: ignore[missing-import]
+from hook_failure_recovery import answer_problem, deny_reason, parse_json  # type: ignore[missing-import]
 
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DEFAULT_TIMEOUT = 600.0
@@ -26,9 +26,14 @@ REV = re.compile(r"[0-9a-f]{12}")
 REV_SHA = re.compile(r"[0-9a-f]{64}")
 
 FLOOR_SCRIPTS = (
+    "branch-guard.py",
     "rm-dynamic-deny",
+    "stash-guard",
     "railway-vars-guard.sh",
     "link-cli-guard.sh",
+    "plutil-guard.sh",
+    "kill-guard",
+    "agent-lb-bootout-guard.sh",
     "dangerous-command-guard.sh",
     "no-chrome-guard.sh",
     "host-credential-guard.py",
@@ -98,7 +103,6 @@ class Result(object):
         self.receipt = False
 
     def empty(self):
-
         return not self.timed_out and self.code == 0 and not self.out
 
 
@@ -111,7 +115,6 @@ def registry_path():
 
 
 def env_sensitive():
-
     for key in ENV_SENSITIVE:
         if key in os.environ:
             return key
@@ -145,7 +148,6 @@ def expand_word(word):
 
 
 def interpreter_of(script):
-
     try:
         with open(script, "rb") as handle:
             first = handle.readline(256)
@@ -186,7 +188,6 @@ def sha256_file(path):
 
 
 def _jq_field(payload, field):
-
     if not isinstance(payload, dict):
         return None
     tool_input = payload.get("tool_input")
@@ -203,7 +204,6 @@ def _jq_field(payload, field):
 
 
 def escapes_in_input(payload):
-
     tool_input = payload.get("tool_input") if isinstance(payload, dict) else None
     if not isinstance(tool_input, dict):
         return False
@@ -229,7 +229,6 @@ def pf_link_cli(payload):
 
 
 def pf_railway_custody(payload):
-
     if not isinstance(payload, dict):
         return True
     tool_input = payload.get("tool_input", {})
@@ -286,7 +285,6 @@ _SCAN_SPLIT = re.compile(r"[\s;&|()<>`]+")
 
 
 def _scan_resolve(word, cwd):
-
     home = os.path.expanduser("~")
     word = re.sub(r"^\$(?:HOME|\{HOME\})(?=/|$)", lambda _m: home, word)
     if word.startswith("~"):
@@ -296,7 +294,6 @@ def _scan_resolve(word, cwd):
 
 
 def _scan_maybe_wide(path):
-
     if ".agent-rails" in path.lower():
         return True
     parts = [part for part in path.split("/") if part]
@@ -311,7 +308,6 @@ def _scan_maybe_wide(path):
 
 
 def pf_wide_scan_paths(payload):
-
     command = _jq_field(payload, "command")
     if command is None:
         return True
@@ -345,7 +341,6 @@ def pf_wide_scan_paths(payload):
 
 
 def _guard_shell_tokens(text):
-
     import shlex
 
     cleaned, quote, escaped, boundary, comment = [], None, False, True, False
@@ -380,7 +375,6 @@ def _guard_shell_tokens(text):
 
 
 def pf_wide_scan_parse(payload):
-
     command = _jq_field(payload, "command")
     if command is None:
         return True
@@ -415,12 +409,10 @@ def pf_display_wake(payload):
 
 
 def pf_jev_alert(_payload):
-
     return True
 
 
 def _prettier_config_near(start):
-
     seen = set()
     for top in (start, os.path.realpath(start)):
         path = top
@@ -534,12 +526,10 @@ class Plan(object):
 
 
 def legacy_floor(command):
-
     return LEGACY_FLOOR_COMMANDS.get(hashlib.sha256(command.encode("utf-8")).hexdigest()) if command else None
 
 
 def floor_name(command):
-
     if not command:
         return None
     match = FLOOR_WORD.search(legacy_floor(command) or command)
@@ -549,7 +539,6 @@ def floor_name(command):
 
 
 def floor_exec(command, name):
-
     match = FLOOR_EXEC.match(legacy_floor(command) or command)
     if not match:
         return None
@@ -560,7 +549,6 @@ def floor_exec(command, name):
 
 
 def sibling_sources(script_dir, source, depth=0, seen=None):
-
     seen = seen if seen is not None else set()
     found = []
     for match in IMPORT_NAMES.finditer(source):
@@ -593,7 +581,6 @@ def hazardous(text):
 
 
 def plan_hook(hook, inproc_names, script_pins=None):
-
     plan = Plan(hook)
     command = plan.command
     if hook.get("type", "command") != "command" or not command:
@@ -709,7 +696,6 @@ class Payload(object):
         self.restore()
 
     def restore(self):
-
         fd, path = tempfile.mkstemp(prefix="hook-dispatch-")
         try:
             raw = self.raw
@@ -744,7 +730,6 @@ def _stdlib_dirs():
 
 
 def run_inproc(plan, payload):
-
     saved_fds = [os.dup(0), os.dup(1), os.dup(2)]
     saved_std = (sys.stdin, sys.stdout, sys.stderr)
     saved_argv, saved_path = sys.argv[:], sys.path[:]
@@ -863,7 +848,6 @@ def run_inproc(plan, payload):
 
 
 def apply_wrapper(plan, result):
-
     if result.timed_out:
         return result
     if plan.devnull:
@@ -878,7 +862,6 @@ def apply_wrapper(plan, result):
 
 
 def take_receipt(result, name):
-
     want = (RECEIPT % name).encode("utf-8")
     body = result.out[:-1] if result.out.endswith(b"\n") else result.out
     cut = body.rfind(b"\n") + 1
@@ -888,7 +871,6 @@ def take_receipt(result, name):
 
 
 def floor_failure(result):
-
     if result.timed_out:
         return "timed out"
     if result.code == 2:
@@ -903,14 +885,13 @@ def floor_failure(result):
 
 
 def finish(plan, raw):
-
     if plan.floor:
         take_receipt(raw, plan.floor)
         raw.floor_failure = floor_failure(raw)
         return raw
     if plan.kind == "inproc":
-        raw = apply_wrapper(plan, raw)
-    return recover_nonfloor(plan.command, raw, Result)
+        return apply_wrapper(plan, raw)
+    return raw
 
 
 class External(object):
@@ -994,11 +975,7 @@ class External(object):
         return self.outcome
 
 
-_RANK = {"allow": 1, "ask": 2, "deny": 3}
-
-
 def block_message(plan, result, obj):
-
     reason = deny_reason(obj)
     if reason:
         return reason
@@ -1006,12 +983,10 @@ def block_message(plan, result, obj):
 
 
 def encode(obj):
-
     return (json.dumps(obj, ensure_ascii=True) + "\n").encode("ascii")
 
 
 def refusal(event, note, blocked=False):
-
     err = (note.rstrip("\n") + "\n").encode("utf-8", "backslashreplace")
     if event == "PreToolUse":
         obj = {
@@ -1029,12 +1004,10 @@ def refusal(event, note, blocked=False):
 
 
 def notice_text(result):
-
     return NOTICE_PREFIX + (result.err.decode("utf-8", "replace").strip() or "No stderr output")
 
 
 def refuse_failed_floor(plan, result):
-
     if result is None or not result.floor_failure:
         return result
     note = "hook-dispatch: floor guard %s %s, so this call is refused (a floor guard that fails denies)" % (
@@ -1053,7 +1026,6 @@ def refuse_failed_floor(plan, result):
 
 
 def merge(event, plans, results):
-
     try:
         answer = merge_answers(event, plans, results)
         answer.out = cap_context(answer.out, event)
@@ -1076,7 +1048,6 @@ def merge(event, plans, results):
 
 
 def merge_answers(event, plans, results):
-
     if event == "PreToolUse":
         results = [refuse_failed_floor(p, r) for p, r in zip(plans, results)]
     pairs = [(p, r) for p, r in zip(plans, results) if r is not None and not r.empty()]
@@ -1124,7 +1095,6 @@ def merge_answers(event, plans, results):
 
 
 def registry_candidates(rev=None):
-
     base = registry_path()
     folder = os.path.dirname(base)
     pinned = bool(os.environ.get("HOOK_DISPATCH_REGISTRY"))
@@ -1138,7 +1108,6 @@ def registry_candidates(rev=None):
 
 
 def load_entry(event, key, rev=None):
-
     errors = []
     for path in registry_candidates(rev):
         try:
@@ -1167,12 +1136,10 @@ def load_entry(event, key, rev=None):
 
 
 def entries_rev(entries):
-
     return hashlib.sha256(json.dumps(entries, sort_keys=True).encode("utf-8")).hexdigest()[:12]
 
 
 def entry_hooks(registry, event, key):
-
     hooks = (registry["entries"].get(event) or {}) if isinstance(registry["entries"].get(event), dict) else None
     if hooks is None or key not in hooks:
         raise ValueError("no %s '%s' entry" % (event, key))
@@ -1226,7 +1193,6 @@ def trace_hooks(plans, results):
 
 
 def rewriter_env():
-
     env = dict(os.environ)
     git = which("git")
     if git:
@@ -1238,7 +1204,6 @@ def rewriter_env():
 
 
 def exec_into(plan, payload, record):
-
     words = plan.command.split()
     target = which(words[0])
     if not target:
@@ -1269,7 +1234,6 @@ def updates_input(result):
 
 
 def subagent_bash(payload, event):
-
     return (
         event == "PreToolUse"
         and isinstance(payload, dict)
@@ -1279,7 +1243,6 @@ def subagent_bash(payload, event):
 
 
 def suppress_subagent_owner(result, payload, event):
-
     if not subagent_bash(payload, event) or result.code != 0:
         return result
     obj = parse_json(result.out) if result.out else {}
@@ -1300,7 +1263,6 @@ def suppress_subagent_owner(result, payload, event):
 
 
 def log_failures(event, key, plans, results):
-
     rows = []
     for plan, result in zip(plans, results):
         if result is None or result.mode.startswith("skipped"):
@@ -1435,7 +1397,6 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
 
 
 def answer(result):
-
     out, err = sys.stdout.buffer, sys.stderr.buffer
     if result.out:
         out.write(result.out)

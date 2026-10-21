@@ -229,7 +229,6 @@ def main():
                 return 2
     except (OSError, ValueError, TypeError) as error:
         print(f"branch-guard: cannot classify command: {error}", file=sys.stderr)
-        return 0
     if os.environ.get("HOOK_FLOOR_RECEIPT"):
         print("floor-ok branch-guard.py")
     return 0

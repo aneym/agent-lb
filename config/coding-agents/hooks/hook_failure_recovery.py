@@ -1,5 +1,4 @@
 import json
-import re
 
 _DECISIONS = {"allow", "ask", "deny"}
 
@@ -52,16 +51,3 @@ def deny_reason(obj):
     if obj.get("decision") == "block":
         return text_of(obj["reason"]) if obj.get("reason") else "Blocked by hook"
     return None
-
-
-def recover_nonfloor(command, raw, result_type):
-    if not re.search(r"(?:branch-guard\.py|stash-guard|agent-lb-bootout-guard\.sh|plutil-guard\.sh)", command):
-        return raw
-    if deny_reason(parse_json(raw.out)):
-        return raw
-    problem = "timed out" if raw.timed_out else "crashed (exit %s)" % raw.code if raw.code else answer_problem(raw.out)
-    if not problem:
-        return raw
-    note = "hook-dispatch warning: %s %s; allowing original input\n" % (command, problem)
-    answer = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": note.strip()}}
-    return result_type(0, (json.dumps(answer) + "\n").encode(), note.encode() + raw.err)
