@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+import hashlib
 import json
 import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
+from pathlib import Path
 
 WRITES = {
     "workflow": {"run", "enable", "disable"},
@@ -17,6 +20,40 @@ WRITES = {
     "variable": {"set", "delete"},
 }
 REFUSAL = "BLOCKED: kept floor \"Alex's credentials\": gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN)."
+
+
+def token_login(token, env):
+    directory = Path(env.get("GH_SHIM_DIR", "~/.cache/gh-shim")).expanduser()
+    cache = directory / "token-logins.json"
+    key = hashlib.sha256(token.encode()).hexdigest()[:12]
+    try:
+        logins = json.loads(cache.read_text())
+    except (OSError, ValueError):
+        logins = {}
+    if not isinstance(logins, dict):
+        logins = {}
+    if key in logins:
+        return logins[key]
+    real = env.get("GH_SHIM_REAL") or next(
+        (path for path in ("/opt/homebrew/bin/gh", "/usr/bin/gh", "/usr/local/bin/gh") if Path(path).is_file()), None
+    )
+    if not real:
+        return None
+    try:
+        result = subprocess.run(
+            [real, "api", "user", "--jq", ".login"], env=env, capture_output=True, text=True, timeout=10, check=False
+        )
+        login = result.stdout.strip() if result.returncode == 0 else None
+        if login and re.fullmatch(r"[A-Za-z0-9-]+", login):
+            directory.mkdir(parents=True, exist_ok=True)
+            logins[key] = login
+            temporary = cache.with_name(f"token-logins.{os.getpid()}.tmp")
+            temporary.write_text(json.dumps(logins) + "\n")
+            os.replace(temporary, cache)
+            return login
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
 
 
 def write(args):
@@ -117,7 +154,7 @@ def check(command, environ=None, depth=0):
             app = token.startswith("ghs_") or (
                 not token and env.get("GH_APP") == "on" and env.get("GH_APP_FALLBACK") == "off" and app_shim
             )
-            if write(args) and not app:
+            if write(args) and (not app or token and token_login(token, env) in {"aneym", "alexneyman"}):
                 raise PermissionError(REFUSAL)
         i += 1
 
