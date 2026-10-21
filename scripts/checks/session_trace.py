@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import secrets
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -88,6 +90,87 @@ def split(prompt):
     for index in sorted(range(4), key=lambda i: (-exact[i][1], i))[: prompt - sum(allocated)]:
         allocated[index] += 1
     return dict(zip(("system", "tools", "history", "toolResults"), allocated))
+
+
+def browser(session):
+    command = shutil.which("playwright-cli")
+    assert command, "playwright-cli not on PATH"
+    probe = subprocess.run([command, "cli", "--help"], capture_output=True, text=True, timeout=60)
+    prefix = [command, "cli"] if probe.returncode == 0 and "-s=<session>" in probe.stdout else [command]
+
+    def run(*args):
+        done = subprocess.run([*prefix, f"-s={session}", *args], capture_output=True, text=True, timeout=120)
+        assert done.returncode == 0 and "### Error" not in done.stdout, (
+            f"{args[0]}: {done.stdout[-600:]}{done.stderr[-600:]}"
+        )
+        return done.stdout
+
+    def evaluate(script):
+        lines = run("eval", script).splitlines()
+        start = lines.index("### Result") + 1
+        end = next((i for i in range(start, len(lines)) if lines[i].startswith("### ")), len(lines))
+        return json.loads("\n".join(lines[start:end]))
+
+    def close():
+        subprocess.run([*prefix, f"-s={session}", "close"], capture_output=True, timeout=60)
+
+    return run, evaluate, close
+
+
+BARS = """() => ({
+  bars: [...document.querySelectorAll('[data-testid=trace-bar]')].map((e) => ({
+    cache: e.dataset.cache,
+    latency: e.dataset.latency,
+    parts: e.dataset.parts,
+    width: e.getBoundingClientRect().width,
+  })),
+  prompt: document.querySelector('[data-testid=trace-totals]')?.dataset.prompt ?? null,
+})"""
+PANEL = """() => {
+  const e = document.querySelector('[data-testid=trace-panel]');
+  return e && e.checkVisibility() ? { logId: e.dataset.logId, prompt: e.dataset.prompt } : null;
+}"""
+
+
+def check_page(base, sid, trace):
+    connection = http.client.HTTPConnection(base.removeprefix("http://"), timeout=30)
+    connection.request("GET", f"/s/{sid[:12]}")
+    response = connection.getresponse()
+    response.read()
+    connection.close()
+    assert response.status == 302, f"short link status {response.status}"
+    assert response.getheader("Location") == f"/sessions/{sid}", response.getheader("Location")
+    rows = trace["requests"]
+    run, evaluate, close = browser("trace-check-" + secrets.token_hex(4))
+    try:
+        run("open", "--browser=chromium", f"{base}/s/{sid}")
+        deadline = time.monotonic() + 15
+        while True:
+            seen = evaluate(BARS)
+            if len(seen["bars"]) >= 3 or time.monotonic() > deadline:
+                break
+            time.sleep(0.5)
+        bars = seen["bars"]
+        assert len(bars) == 6, seen
+        for bar, row in zip(bars, rows):
+            assert bar["cache"] == (row["cacheKind"] or "none"), (bar, row["cacheKind"])
+            assert bar["width"] > 0, bar
+        assert bars[4]["cache"] not in {bars[i]["cache"] for i in (0, 1, 2, 3, 5)}, bars
+        for bar, row in zip(bars[:5], rows[:5]):
+            parts = row["estParts"]
+            assert bar["parts"] == f"{parts['system']},{parts['tools']},{parts['history']},{parts['toolResults']}", bar
+        assert bars[5]["parts"] == "", bars[5]
+        assert seen["prompt"] == str(trace["totals"]["promptTokens"]), seen["prompt"]
+        evaluate("() => { document.querySelector('[data-testid=trace-row]').focus(); return true; }")
+        run("press", "Enter")
+        panel = evaluate(PANEL)
+        assert panel == {"logId": str(rows[0]["logId"]), "prompt": str(rows[0]["promptTokens"])}, panel
+        run("press", "Escape")
+        assert evaluate(PANEL) is None, "panel stayed open after Escape"
+        run("screenshot", f"--filename={Path(tempfile.gettempdir()) / 'session-trace-check.png'}")
+    finally:
+        close()
+    return f" page={len(bars)} bars panel=ok"
 
 
 def main():
@@ -216,8 +299,10 @@ def main():
                     assert rows[5]["partChars"] is None and rows[5]["estParts"] is None, rows[5]
                     assert rows[5]["bodyBytes"] > 4194304, rows[5]
                     assert trace["totals"]["measured"] == 5 and trace["totals"]["coverage"] == 0.8333, trace["totals"]
+                    page = check_page(base, sid, trace) if "--page" in sys.argv[1:] else ""
                     print(
                         "session_trace ok requests=6 measured=5 coverage=0.8333 stream=measured hot=None first=first_write"
+                        + page
                     )
                 finally:
                     process.terminate()

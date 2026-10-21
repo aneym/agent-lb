@@ -65,13 +65,13 @@
     opacity: 0.4;
   }
 }
-.lb .lb-sheet-overlay {
+.lb-sheet-overlay {
   position: fixed;
   inset: 0;
   background: oklch(0 0 0/0.45);
   z-index: 60;
 }
-.lb .lb-sheet {
+.lb.lb-sheet {
   position: fixed;
   right: 0;
   top: 0;
@@ -131,7 +131,6 @@
 html.dark .lb img.logo[src$="kimi-color.svg"] {
   filter: invert(1) hue-rotate(180deg);
 }
-
 
 .lb .tone {
   display: inline-flex;
