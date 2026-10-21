@@ -114,6 +114,12 @@ def select(
     if explicit:
         seat = args.seat or standard["seat"]
         spec = api.seat_defaults(table, class_name, seat)
+        if seat in ("opus-seat", "opus-seat-local", "opus-seat-full"):
+            pool_id = ((table.get("policy") or {}).get("reserve") or {}).get("pool", "anthropic-general")
+            pool = api.pools_by_id(pools_doc).get(pool_id, {})
+            if mode_state.get("eligible_accounts") == 0 or pool.get("eligibleAccounts") == 0:
+                return None, [], False
+            spec = {"model": "opus-latest", "effort": "medium", **spec}
         choice = {
             "arm": "explicit",
             "arm_id": "explicit",
@@ -216,6 +222,8 @@ def select(
         sticky = False
     blocked = seat_block(api, ctx, {**choice, "model": choice["model_alias"]}, excluded)
     if blocked:
+        if explicit and args.seat in ("opus-seat", "opus-seat-local", "opus-seat-full"):
+            return None, eligible, False
         notes.append(blocked)
         choice = fallback(
             api, ctx, standard, excluded, "reselected after unavailable seat", api.pools_by_id(pools_doc), today
