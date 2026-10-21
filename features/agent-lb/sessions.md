@@ -4,7 +4,7 @@ product: agent-lb
 owner: weekend-finish
 status: live
 covers: []
-paths: ["features/agent-lb/sessions.md"]
+paths: ["features/agent-lb/sessions.md", "app/modules/session_trace/**"]
 proofs: []
 unmapped:
   - {"path": "app/modules/sessions/api.py", "date": "2026-10-18", "reason": "dynamic route template /api/sessions/{session_id} is unclassifiable"}
@@ -14,6 +14,8 @@ unmapped:
 # Sessions
 
 ## Sub-features
+`GET /api/sessions/{session_id}/trace` reports measured context parts and estimated token shares per request.
+
 HTTP route handlers defined in `app/modules/sessions/api.py`.
 
 ## How to get to it

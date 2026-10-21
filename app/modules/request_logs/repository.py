@@ -10,6 +10,7 @@ from sqlalchemy import exc as sa_exc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.context_parts.capture import measured_parts
 from app.core.eval_guard import eval_guard_state
 from app.core.identity import RequestIdentity, identity_for_log
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
@@ -28,6 +29,7 @@ from app.db.session import sqlite_writer_section
 from app.modules.request_logs.aggregates import RequestLogAggregates
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 from app.modules.request_logs.queries import RequestLogQueries
+from app.modules.session_trace.recorder import store_context_parts
 
 
 class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
@@ -134,6 +136,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
         quota_observed_at: datetime | None = None,
         upstream_cost_usd: float | None = None,
     ) -> RequestLog:
+        parts = await measured_parts()
         caller = identity_for_log(identity)
         async with sqlite_writer_section(self._session):
             resolved_request_id = ensure_request_id(request_id)
@@ -211,6 +214,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
             try:
                 await self._session.commit()
                 await self._session.refresh(log)
+                await store_context_parts(self._session, log.id, parts)
                 return log
             except sa_exc.ResourceClosedError:
                 return log

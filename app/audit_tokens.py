@@ -12,6 +12,7 @@ from app.audit_quota import quota_allocation
 from app.audit_token_output import html_report, text_report
 from app.audit_token_report import DIMS, add_quota_units, build_report
 from app.audit_transcripts import RULE_PATH, metadata, pane_maps, safe_label, session_agents, session_index
+from app.core.prompt_tokens import SESSION_KEY_SQL
 
 
 def add_parser(subparsers):
@@ -61,13 +62,13 @@ def window(args):
     return since, until
 
 
-QUERY = """
+QUERY = f"""
 WITH base AS (
  SELECT id, account_id, provider, model, reasoning_effort, useragent_group, source, request_kind,
  service_tier, input_tokens, output_tokens, cached_input_tokens, cache_creation_tokens, cache_read_tokens,
  reasoning_tokens, cost_usd, status, error_code, upstream_status_code, requested_at, request_id,
  caller_seat, ATTRIBUTION_COLUMNS,
- coalesce(nullif(client_session_id,''),nullif(session_id,''),'receipt:' || id::text) AS sid
+ coalesce({SESSION_KEY_SQL},'receipt:' || id::text) AS sid
  FROM request_logs WHERE deleted_at IS NULL AND requested_at >= %s AND requested_at < %s
 )
 SELECT *, 1 AS requests,
@@ -128,12 +129,13 @@ def load_receipts(args, since, until, notes):
                 ]
             )
             cursor.execute(
-                QUERY.replace("ATTRIBUTION_COLUMNS", columns), (since.replace(tzinfo=None), until.replace(tzinfo=None))
+                QUERY.replace("ATTRIBUTION_COLUMNS", columns).encode(),
+                (since.replace(tzinfo=None), until.replace(tzinfo=None)),
             )
             rows = cursor.fetchall()
             cursor.execute(
-                """SELECT DISTINCT coalesce(nullif(client_session_id,''),nullif(session_id,'')) AS sid
-                FROM request_logs WHERE deleted_at IS NULL AND requested_at >= %s AND requested_at < %s""",
+                f"""SELECT DISTINCT {SESSION_KEY_SQL} AS sid
+                FROM request_logs WHERE deleted_at IS NULL AND requested_at >= %s AND requested_at < %s""".encode(),
                 ((since - timedelta(hours=1)).replace(tzinfo=None), since.replace(tzinfo=None)),
             )
             preexisting = {r["sid"] for r in cursor.fetchall()}

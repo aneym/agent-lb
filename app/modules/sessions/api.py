@@ -5,6 +5,9 @@ from fastapi.responses import RedirectResponse
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.dependencies import SessionsContext, get_sessions_context
+from app.modules.session_trace.repository import SessionTraceRepository
+from app.modules.session_trace.schemas import SessionTraceResponse
+from app.modules.session_trace.service import SessionTraceService
 from app.modules.sessions.schemas import (
     SessionAnalyticsResponse,
     SessionDetailResponse,
@@ -35,6 +38,18 @@ async def list_sessions(
         offset=offset,
     )
     return SessionListResponse(sessions=page.sessions, total=page.total)
+
+
+@router.get("/{session_id}/trace", response_model=SessionTraceResponse)
+async def get_session_trace(
+    session_id: str,
+    limit: int = Query(500, ge=1, le=2000),
+    context: SessionsContext = Depends(get_sessions_context),
+) -> SessionTraceResponse:
+    trace = await SessionTraceService(SessionTraceRepository(context.session)).trace(session_id, limit)
+    if trace is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return trace
 
 
 @router.get("/{session_id}/analytics", response_model=SessionAnalyticsResponse)

@@ -8,6 +8,9 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 
 from app.db.models import Base
+from app.db.models_trace import RequestContextParts
+
+assert RequestContextParts.metadata is Base.metadata
 
 _MANUAL_DRIFT_INDEX_REQUIREMENTS: dict[str, frozenset[str]] = {
     "usage_history": frozenset(

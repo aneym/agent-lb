@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from app.core.prompt_tokens import prompt_split
 from app.modules.receipts.repository import POOL_IDS, ReceiptFilters, ReceiptsRepository
 from app.modules.receipts.schemas import (
     Receipt,
@@ -30,10 +31,13 @@ class ReceiptsService:
         rows, total = await self.repository.page(filters, limit, offset)
         receipts = []
         for log, key_name, key_prefix in rows:
-            read = log.cache_read_tokens if log.cache_read_tokens is not None else (log.cached_input_tokens or 0)
-            write = log.cache_creation_tokens or 0
-            raw = log.input_tokens or 0
-            inp = raw if log.provider == "anthropic" else max(raw - read, 0)
+            inp, read, write, _ = prompt_split(
+                log.provider,
+                log.input_tokens,
+                log.cached_input_tokens,
+                log.cache_read_tokens,
+                log.cache_creation_tokens,
+            )
             receipts.append(
                 Receipt(
                     id=log.id,
