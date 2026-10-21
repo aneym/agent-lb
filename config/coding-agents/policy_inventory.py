@@ -57,6 +57,28 @@ MANAGED_HOOKS = (
     "plutil-guard.sh",
     "kill-scope-guard.py",
     "host-credential-guard.py",
+    "gh-write-guard.py",
     "hook-dispatch.py",
     "hook-dispatch-parity.py",
+)
+
+
+DISPATCH_INPROC = (
+    "branch-guard.py",
+    "herdr-send-guard.py",
+    "rm-dynamic-deny",
+    "desktop-guard",
+    "stash-guard",
+    "host-credential-guard.py",
+    "gh-write-guard.py",
+    "herdr-shell-host-guard.py",
+    "rm-cd-rewrite.py",
+    "no-direct-merge.py",
+    "box-offload-hook",
+    "lane-bulletin-hook",
+    "aside-regular-tabs.py",
+    "workflow-relay-guard.py",
+    "routing-pulse.py",
+    "herdr-tab-autoname.py",
+    "idle-agents.py",
 )

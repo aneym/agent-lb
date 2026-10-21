@@ -59,7 +59,7 @@ def managed(target_dir: str, template: str, name: str | None = None) -> tuple[Pa
     )
 
 
-from policy_inventory import MANAGED_HOOKS, MANAGED_SEATS  # type: ignore[missing-import]
+from policy_inventory import DISPATCH_INPROC, MANAGED_HOOKS, MANAGED_SEATS  # type: ignore[missing-import]
 
 MANAGED_AGENTS = (
     managed(".agent-lb/managed/coding-agents", "codex-seat-home.py"),
@@ -302,6 +302,12 @@ SETTINGS_HOOKS = (
     ("PreToolUse", "Bash", DANGEROUS_GUARD_HOOK, True),
     ("PreToolUse", "Bash", KILL_SCOPE_GUARD_HOOK, True),
     ("PreToolUse", "Bash", HOST_CREDENTIAL_HOOK, True),
+    (
+        "PreToolUse",
+        "Bash",
+        {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/gh-write-guard.py"', "timeout": 10},
+        True,
+    ),
     ("PreToolUse", "Read", HOST_CREDENTIAL_HOOK, True),
     ("SubagentStop", None, CLOSEOUT_HOOK, False),
     ("SubagentStop", None, FOCUS_STEAL_HOOK, False),
@@ -369,25 +375,6 @@ DISPATCH_SCRIPT = "hooks/hook-dispatch.py"
 DISPATCH_REGISTRY = Path(".claude/hooks/dispatch/registry.json")
 DISPATCH_PARITY = Path(".claude/hooks/dispatch/parity-last.json")
 
-
-DISPATCH_INPROC = (
-    "branch-guard.py",
-    "herdr-send-guard.py",
-    "rm-dynamic-deny",
-    "desktop-guard",
-    "stash-guard",
-    "host-credential-guard.py",
-    "herdr-shell-host-guard.py",
-    "rm-cd-rewrite.py",
-    "no-direct-merge.py",
-    "box-offload-hook",
-    "lane-bulletin-hook",
-    "aside-regular-tabs.py",
-    "workflow-relay-guard.py",
-    "routing-pulse.py",
-    "herdr-tab-autoname.py",
-    "idle-agents.py",
-)
 
 DISPATCH_SKIP_MATCHERS = ("AskUserQuestion",)
 DISPATCH_HOOK_KEYS = {"type", "command", "timeout", "statusMessage"}

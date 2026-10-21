@@ -24,7 +24,7 @@ owner = "agent-lb-lead"
 deps = ["app", "bin", "config", "deploy", "docs", "features", "frontend", "openspec", "patches", "scripts", "tests"]
 
 [atom.config]
-paths = ["config"]
+paths = ["config", "floor"]
 check = "./check --full"
 owner = "agent-lb-lead"
 deps = ["app", "bin", "clients", "deploy", "docs", "features", "frontend", "openspec", "patches", "scripts", "tests"]
