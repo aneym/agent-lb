@@ -20,6 +20,9 @@ struct AccountRow: View {
     if account.isSubscriptionCanceled { return .unsubscribed }
     if account.status == "paused" { return .paused }
     if account.status == "exchange_uncertain" { return .reconnecting }
+    if account.status == "deactivated" && (account.deactivationReason ?? "").hasPrefix("Account on hold") {
+      return .onHold
+    }
     if account.isDisconnected {
       let reauth = account.status == "reauth_required"
         || (account.deactivationReason ?? "").localizedCaseInsensitiveContains("auth")
@@ -324,7 +327,7 @@ struct AccountRow: View {
       Button("Pause") {
         run { await appState.pause(accountId: account.accountId) }
       }
-    case .paused, .deactivated:
+    case .paused, .deactivated, .onHold:
       Button("Reactivate") {
         run { await appState.reactivate(accountId: account.accountId) }
       }

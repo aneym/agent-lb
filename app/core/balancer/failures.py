@@ -30,6 +30,7 @@ PERMANENT_FAILURE_CODES = {
     "account_deactivated": "Account has been deactivated",
     "account_suspended": "Account has been suspended",
     "account_deleted": "Account has been deleted",
+    "account_on_hold": "Account on hold at Anthropic (billing/account issue) - relogin won't help",
 }
 REAUTH_REQUIRED_FAILURE_CODES = frozenset(
     {
@@ -41,6 +42,17 @@ REAUTH_REQUIRED_FAILURE_CODES = frozenset(
         "token_expired",
         "account_session_expired",
         "account_auth_invalidated",
+    }
+)
+ACCOUNT_ON_HOLD_REASON = PERMANENT_FAILURE_CODES["account_on_hold"]
+TOKENS_LOST_REASON = "Refreshed tokens were lost before saving - re-login required"
+DEAD_REFRESH_GRANT_REASONS = frozenset(
+    {
+        TOKENS_LOST_REASON,
+        *(
+            PERMANENT_FAILURE_CODES[code]
+            for code in ("refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated", "invalid_grant")
+        ),
     }
 )
 _AUTH_REFRESH_ERROR_PREFIX = "auth_refresh_"

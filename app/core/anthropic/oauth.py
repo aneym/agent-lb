@@ -147,10 +147,13 @@ async def refresh_anthropic_access_token(
             on_exchange_start=on_exchange_start,
         )
     except OAuthError as exc:
+        code = (
+            "account_on_hold" if exc.code == "invalid_grant" and "account_on_hold" in (exc.message or "") else exc.code
+        )
         raise RefreshError(
-            exc.code,
+            code,
             exc.message,
-            classify_refresh_error(exc.code),
+            classify_refresh_error(code),
             transport_error=exc.code == "transport_error",
             phase=exc.phase,
             status_code=exc.status_code,
@@ -234,6 +237,11 @@ async def _post_token_request(
                 try:
                     payload_data = AnthropicOAuthTokenPayload.model_validate(data)
                 except ValidationError as exc:
+                    logger.error(
+                        "Anthropic token response failed validation request_id=%s fields=%s",
+                        request_id,
+                        [f"{'.'.join(map(str, error['loc']))}:{error['type']}" for error in exc.errors()],
+                    )
                     raise OAuthError("invalid_response", f"{error_prefix} response invalid") from exc
     except OAuthError:
         raise

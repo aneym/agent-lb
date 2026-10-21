@@ -13,6 +13,7 @@ from enum import Enum
 
 from app.core.audit.service import AuditService
 from app.core.auth.refresh import RefreshError, classify_refresh_error
+from app.core.balancer import ACCOUNT_ON_HOLD_REASON, DEAD_REFRESH_GRANT_REASONS
 from app.core.crypto import TokenEncryptor
 from app.core.providers import (
     ANTHROPIC_PROVIDER_NAME,
@@ -49,6 +50,7 @@ from app.modules.accounts.subscription_status import (
 from app.modules.proxy.account_cache import get_account_selection_cache
 
 logger = logging.getLogger(__name__)
+_ON_HOLD_MIN_RETRY_SECONDS = 3600.0
 
 
 class FableProbeVerdict(str, Enum):
@@ -207,6 +209,11 @@ class AccountPulseScheduler:
     def _is_pulse_candidate(self, account: Account, *, recovery_only: bool) -> bool:
         if account.status == AccountStatus.PAUSED:
             return False
+        if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+            if account.deactivation_reason in DEAD_REFRESH_GRANT_REASONS:
+                return account.id not in self._failures
+            if account.deactivation_reason == ACCOUNT_ON_HOLD_REASON:
+                return not self._in_backoff(account.id, min_delay_seconds=_ON_HOLD_MIN_RETRY_SECONDS)
         if not recovery_only:
             return not self._in_backoff(account.id)
         if not _is_recovery_pending(account):
@@ -365,11 +372,13 @@ class AccountPulseScheduler:
                 exc_info=True,
             )
 
-    def _in_backoff(self, account_id: str, *, max_delay_seconds: float | None = None) -> bool:
+    def _in_backoff(
+        self, account_id: str, *, max_delay_seconds: float | None = None, min_delay_seconds: float = 0.0
+    ) -> bool:
         failure = self._failures.get(account_id)
         if failure is None:
             return False
-        retry_after = failure.retry_after_monotonic
+        retry_after = max(failure.retry_after_monotonic, failure.recorded_monotonic + min_delay_seconds)
         if max_delay_seconds is not None:
             retry_after = min(retry_after, failure.recorded_monotonic + max_delay_seconds)
         return retry_after > time.monotonic()

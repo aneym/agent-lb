@@ -200,7 +200,7 @@ async def reset_uncertain_exchange(
         if isinstance(outcome, datetime):
             raise DashboardConflictError(f"Exchange reset becomes available at {outcome.isoformat()} UTC")
         if not outcome:
-            raise DashboardConflictError("Account is not exchange-uncertain")
+            raise DashboardConflictError("Account is not exchange-uncertain or its tokens were lost; re-login required")
     return {
         "account_id": account_id,
         "status": "active",

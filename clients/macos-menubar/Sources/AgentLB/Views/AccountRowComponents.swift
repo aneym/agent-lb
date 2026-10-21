@@ -6,6 +6,7 @@ enum RowPresentation: Equatable, Sendable {
   case paused
   case reconnecting
   case deactivated(reauth: Bool)
+  case onHold
   case unsubscribed
 
   static func forSeat(_ seat: SeatAccount) -> RowPresentation {
@@ -38,6 +39,8 @@ enum RowPresentation: Equatable, Sendable {
       return "reconnecting"
     case .deactivated(let reauth):
       return reauth ? "re-auth needed" : "inactive"
+    case .onHold:
+      return "on hold at Anthropic"
     case .unsubscribed:
       return "unsubscribed"
     }
@@ -68,7 +71,7 @@ struct RowRing: View {
           EmptyView()
         case .paused:
           StatusGlyph(kind: .paused, size: 8)
-        case .deactivated:
+        case .deactivated, .onHold:
           StatusGlyph(kind: .deactivated, size: 8)
         }
       }

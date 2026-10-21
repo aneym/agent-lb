@@ -10,6 +10,7 @@ from typing import AsyncIterator, Protocol, cast
 
 from app.core.audit.service import AuditDetails, AuditService
 from app.core.auth.refresh import RefreshError
+from app.core.balancer import TOKENS_LOST_REASON
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME, OPENAI_PROVIDER_NAME
@@ -165,6 +166,22 @@ class UsageRefreshScheduler:
                                             account.id,
                                         )
                                         audit_events.append(("account_exchange_auto_exhausted", details))
+                                    elif result.outcome == "unsaved":
+                                        await accounts_repo.update_status(
+                                            account.id,
+                                            AccountStatus.REAUTH_REQUIRED,
+                                            TOKENS_LOST_REASON,
+                                            expected_refresh_token_encrypted=account.refresh_token_encrypted,
+                                        )
+                                        logger.warning(
+                                            "Uncertain exchange tokens lost before saving account_id=%s provider=%s; "
+                                            "consumed refresh token not replayed, re-login required",
+                                            account.id,
+                                            account.provider,
+                                        )
+                                        audit_events.append(("account_exchange_unsaved_lost", details))
+                                        get_account_selection_cache().invalidate()
+                                        continue
                                 await auth_manager.ensure_fresh(account, recover_uncertain=True)
                             except RefreshError as exc:
                                 logger.debug(

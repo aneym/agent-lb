@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+from app.core.balancer import ACCOUNT_ON_HOLD_REASON
 from app.core.browser_profiles import profile_for
 from app.core.config.settings import get_settings
 from app.core.subscriptions import subscription_for
@@ -62,6 +63,13 @@ def account_problems(
             AccountProblem(
                 code="reauth_required",
                 message=f"Reauthentication required: {account.deactivation_reason or 'no reason recorded'}. Run: {command}.",
+            )
+        )
+    if account.status == AccountStatus.DEACTIVATED and account.deactivation_reason == ACCOUNT_ON_HOLD_REASON:
+        problems.append(
+            AccountProblem(
+                code="account_on_hold",
+                message="Anthropic has put this account on hold (billing/account issue); relogin won't help. Resolve it on claude.ai billing/support; agent-lb reactivates it automatically once a refresh succeeds.",
             )
         )
     subscription = subscription_for(account.email)

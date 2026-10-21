@@ -26,7 +26,7 @@ EXCHANGE_RESET_REASONS = frozenset({"operator_reset", "auto_reset"})
 
 @dataclass(frozen=True)
 class AutoResetResult:
-    outcome: Literal["reset", "waiting", "exhausted", "ineligible"]
+    outcome: Literal["reset", "waiting", "exhausted", "ineligible", "unsaved"]
     attempt: int
     prior_replay: bool
     prior_reason: str | None
@@ -214,11 +214,12 @@ class AccountsRepository(AccountIdentityRepository, AccountUsageRepository, Acco
             or account.owner_instance not in (None, get_settings().local_instance_id)
             or intent is None
             or intent.refresh_token_sha256 != token_hash
-            or intent.reason not in (None, "unsaved")
-            or not (intent.replay or intent.reason == "unsaved")
+            or intent.reason is not None
+            or not intent.replay
         ):
             await self._session.commit()
-            return AutoResetResult("ineligible", attempt, prior_replay, prior_reason)
+            unsaved = intent is not None and intent.reason == "unsaved" and intent.refresh_token_sha256 == token_hash
+            return AutoResetResult("unsaved" if unsaved else "ineligible", attempt, prior_replay, prior_reason)
         if attempt >= max_attempts:
             intent.reason = "auto_exhausted"
             await self._session.commit()
@@ -382,7 +383,7 @@ class AccountsRepository(AccountIdentityRepository, AccountUsageRepository, Acco
     async def clear_exchange_intent(self, account_id: str, timeout_seconds: float) -> bool | datetime:
 
         window = await self.exchange_intent_window(account_id, timeout_seconds)
-        if window is None:
+        if window is None or window.reason == "unsaved":
             return False
         if not window.ready:
             return window.available_at

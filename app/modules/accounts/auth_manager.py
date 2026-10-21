@@ -5,7 +5,7 @@ import inspect
 import logging
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import datetime, timedelta
 from hashlib import sha256
 from typing import Any, Protocol, TypeAlias
@@ -37,6 +37,12 @@ from app.db import session as db_session
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts import refresh_lock
+from app.modules.accounts.exchange_persist import (
+    dedicated_accounts_repo,
+    mark_exchange_unsaved,
+    persist_budget_seconds,
+    persist_exchange_result,
+)
 from app.modules.accounts.repository import EXCHANGE_RESET_REASONS
 from app.modules.proxy.account_cache import get_account_selection_cache
 
@@ -300,6 +306,7 @@ class AuthManager:
         expected_refresh_token_encrypted = latest.refresh_token_encrypted
         token_hash = _refresh_token_material_fingerprint(self._encryptor, expected_refresh_token_encrypted)
         intent_supported = isinstance(getattr(self._repo, "session", None), db_session.AsyncSession)
+        persist_repo = dedicated_accounts_repo if intent_supported else lambda: nullcontext(self._repo)
         replay = False
         if intent_supported:
             timeout = _exchange_timeout_seconds()
@@ -393,12 +400,12 @@ class AuthManager:
                     )
                     logger.info("Refresh exchange resolved account_id=%s outcome=reauth_required", account.id)
                     raise
-                await self._repo.mark_exchange_uncertain(
-                    account.id,
-                    token_hash,
-                    expected_refresh_token_encrypted,
-                    reason="unsaved" if isinstance(exc, RefreshError) and exc.code == "invalid_response" else None,
-                )
+                if isinstance(exc, RefreshError) and exc.code == "invalid_response":
+                    await mark_exchange_unsaved(
+                        persist_repo, account.id, account.provider, token_hash, expected_refresh_token_encrypted
+                    )
+                else:
+                    await self._repo.mark_exchange_uncertain(account.id, token_hash, expected_refresh_token_encrypted)
                 get_account_selection_cache().invalidate()
                 raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False) from exc
             if not isinstance(exc, RefreshError):
@@ -444,8 +451,8 @@ class AuthManager:
 
         if provider.requires_id_token and not result.id_token:
             if intent_supported:
-                await self._repo.mark_exchange_uncertain(
-                    account.id, token_hash, expected_refresh_token_encrypted, reason="unsaved"
+                await mark_exchange_unsaved(
+                    persist_repo, account.id, account.provider, token_hash, expected_refresh_token_encrypted
                 )
             raise RefreshError("invalid_response", "Refresh response missing id token", False)
 
@@ -508,51 +515,44 @@ class AuthManager:
         if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
             self._repo.session.expunge(account)
 
-        tokens_updated = False
-        for attempt in range(3):
-            try:
-                tokens_updated = await self._repo.update_tokens(
-                    account.id,
-                    access_token_encrypted=account.access_token_encrypted,
-                    refresh_token_encrypted=account.refresh_token_encrypted,
-                    id_token_encrypted=account.id_token_encrypted,
-                    last_refresh=account.last_refresh,
-                    plan_type=account.plan_type,
-                    email=account.email,
-                    chatgpt_account_id=account.chatgpt_account_id,
-                    workspace_id=next_workspace_id,
-                    workspace_label=account.workspace_label,
-                    seat_type=account.seat_type,
-                    expected_refresh_token_encrypted=expected_refresh_token_encrypted,
-                    access_expires_at=account.access_expires_at,
-                    exchange_token_hash=token_hash if intent_supported else None,
-                )
-            except Exception:
-                if attempt == 2:
-                    if intent_supported:
-                        await self._repo.mark_exchange_uncertain(
-                            account.id, token_hash, expected_refresh_token_encrypted, reason="unsaved"
-                        )
-                    raise RefreshError("refresh_unsaved", "Refreshed tokens could not be stored", False) from None
-                await asyncio.sleep(0)
-                continue
-            if tokens_updated:
-                break
+        try:
+            tokens_updated = await persist_exchange_result(
+                persist_repo,
+                account.id,
+                account.provider,
+                {
+                    "access_token_encrypted": account.access_token_encrypted,
+                    "refresh_token_encrypted": account.refresh_token_encrypted,
+                    "id_token_encrypted": account.id_token_encrypted,
+                    "last_refresh": account.last_refresh,
+                    "plan_type": account.plan_type,
+                    "email": account.email,
+                    "chatgpt_account_id": account.chatgpt_account_id,
+                    "workspace_id": next_workspace_id,
+                    "workspace_label": account.workspace_label,
+                    "seat_type": account.seat_type,
+                    "access_expires_at": account.access_expires_at,
+                },
+                expected_refresh_token_encrypted,
+                token_hash if intent_supported else None,
+                persist_budget_seconds(),
+            )
+        except Exception:
+            tokens_updated = None
+        if tokens_updated is False:
             latest = await self._repo.reload_by_id(account.id)
             if latest is not None and _refresh_token_material_changed(
                 self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
             ):
                 return _snapshot(self._repo, latest)
-            if attempt < 2:
-                await asyncio.sleep(0)
-        if replay and tokens_updated:
-            logger.info("Refresh exchange resolved account_id=%s outcome=active", account.id)
         if not tokens_updated:
             if intent_supported:
-                await self._repo.mark_exchange_uncertain(
-                    account.id, token_hash, expected_refresh_token_encrypted, reason="unsaved"
+                await mark_exchange_unsaved(
+                    persist_repo, account.id, account.provider, token_hash, expected_refresh_token_encrypted
                 )
             raise RefreshError("refresh_unsaved", "Refreshed tokens could not be stored", False)
+        if replay:
+            logger.info("Refresh exchange resolved account_id=%s outcome=active", account.id)
         get_account_selection_cache().invalidate()
         if hasattr(self._repo, "session"):
             stored = await self._repo.reload_by_id(account.id)
