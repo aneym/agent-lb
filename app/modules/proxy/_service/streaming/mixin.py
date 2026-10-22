@@ -16,7 +16,7 @@ from app.core.clients.files import create_file as core_create_file  # noqa: F401
 from app.core.clients.files import finalize_file as core_finalize_file  # noqa: F401
 from app.core.clients.http import lease_http_session as lease_http_session  # noqa: F401
 from app.core.clients.proxy import CodexControlResponse as CodexControlResponse
-from app.core.clients.proxy import (  # noqa: F401
+from app.core.clients.proxy import (  # noqa: F401  # noqa: F401
     ImageFetchSession,
     ProxyResponseError,
     UpstreamProxyRouteTrace,
@@ -1061,7 +1061,7 @@ class _StreamingMixin(_StreamingRetryMixin):
         elif code in PERMANENT_FAILURE_CODES:
             await proxy._load_balancer.mark_permanent_failure(account, code)
         else:
-            await proxy._load_balancer.record_error(account, code)
+            await proxy._load_balancer.record_error(account)
             _facade().logger.info(
                 "Recorded transient account error account_id=%s request_id=%s code=%s",
                 account.id,
