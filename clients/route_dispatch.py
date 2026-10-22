@@ -22,13 +22,25 @@ from route_class_candidates import (  # pyrefly: ignore [missing-import]
     DispatchContext,
     alias_vendor,
     class_candidates,
+    decision_day,  # noqa: F401  # pyrefly: ignore [missing-import]
     read_decisions,
     table_digest,
 )
-from route_ladder_walk import dispatch_wait, ladder_walk  # pyrefly: ignore [missing-import]
+from route_grok import (  # pyrefly: ignore [missing-import]
+    constraint_choice,  # noqa: F401  # pyrefly: ignore [missing-import]
+    hands_refusal,  # noqa: F401  # pyrefly: ignore [missing-import]
+    seat_defaults,  # noqa: F401  # pyrefly: ignore [missing-import]
+)
+from route_ladder_walk import (  # pyrefly: ignore [missing-import]
+    arm_block,  # noqa: F401  # pyrefly: ignore [missing-import]
+    dispatch_wait,
+    ladder_walk,
+)
+from route_learning_text import learning_outcomes  # noqa: F401  # pyrefly: ignore [missing-import]
 from route_pace_state import (  # pyrefly: ignore [missing-import]
     append_ledger,
     load_pool_history,
+    pick_leases,  # noqa: F401  # pyrefly: ignore [missing-import]
     record_explicit_model,
     record_pool_history,
     state_age_seconds,
@@ -50,12 +62,19 @@ from route_reserve_state import (  # pyrefly: ignore [missing-import]
 )
 from route_resolve_one import ServedModels, append_decision, five_hour_windows, ladder_entries, resolve_alias  # pyrefly: ignore [missing-import]
 from route_seat import fetch_pools  # pyrefly: ignore [missing-import]
-from route_seat_states import api_request_logs, pinned_model  # pyrefly: ignore [missing-import]
+from route_seat_states import (  # pyrefly: ignore [missing-import]
+    api_request_logs,
+    attributed_outcome,  # noqa: F401  # pyrefly: ignore [missing-import]
+    learning_window,  # noqa: F401  # pyrefly: ignore [missing-import]
+    pinned_model,
+)
+from route_spread import dispatch_choice  # noqa: F401  # pyrefly: ignore [missing-import]
 from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     EXIT_OK,
     EXIT_UNROUTABLE,
     STATE_MAX_AGE_SECONDS,
     fail,
+    ledger_path,  # noqa: F401  # pyrefly: ignore [missing-import]
     load_table,
     now_iso,
     parse_ts,
