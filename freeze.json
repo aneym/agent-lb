@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T18:57:21Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-config-coding-agents-install-policy",
-   "path": "config/coding-agents/install-policy.py",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T17:27:21Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -135,6 +125,23 @@
    "path": "config/coding-agents/hooks/wide-scan-guard.sh",
    "sha": "547565080f3c374a91bd32f0b5ccc6822ccab907",
    "until": "2026-10-29T17:27:15Z"
+  },
+  {
+   "into": [
+    "config/coding-agents/policy_documents.py",
+    "config/coding-agents/policy_files.py",
+    "config/coding-agents/policy_hook_groups.py",
+    "config/coding-agents/policy_hook_install.py",
+    "config/coding-agents/policy_hook_registry.py",
+    "config/coding-agents/policy_layout.py",
+    "config/coding-agents/policy_lock.py",
+    "config/coding-agents/policy_plan.py",
+    "config/coding-agents/policy_settings.py"
+   ],
+   "note": "config/coding-agents/install-policy.py split at 606d905691. Reapply your diff onto the new module that now holds the code. Map: config/coding-agents/policy_documents.py: read_text, validate_markers, h2_span, install_adapter, install_codex_doc, uninstall_adapter; config/coding-agents/policy_files.py: desired_routing_table, write_atomic, sync_policy_boxes, checkpoint_changes, autocompact_text; config/coding-agents/policy_hook_groups.py: is_owned_hook, installed_manifest, is_settings_hook, dispatcher_module, opaque_floor_commands, is_dispatch_hook, matcher_key, tool_names, keys_overlap, foldable_groups, commands_of, unfold_shared; config/coding-agents/policy_hook_install.py: dispatch_worth, script_pins, managed_hooks, pin_inproc; config/coding-agents/policy_hook_registry.py: registry_problem, registry_rev, dispatch_group, fold_hooks, unfold_hooks, folded_revs, folded_rev, read_registry, is_folded; config/coding-agents/policy_layout.py: managed; config/coding-agents/policy_lock.py: parse_args, same_policy_tree, verify_install_revision, locked_main; config/coding-agents/policy_plan.py: plan_managed_files; config/coding-agents/policy_settings.py: resolve_sol, policy_snapshot, snapshot_model, seat_template, check_policy, internal_hook_commands, reconcile_settings, dedupe_hooks",
+   "path": "config/coding-agents/install-policy.py",
+   "sha": "606d905691f4072e8a44af0f9662c4ad15643fb1",
+   "until": "2026-10-29T17:27:46Z"
   }
  ]
 }
