@@ -2,8 +2,8 @@ from sqlalchemy import literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.prompt_tokens import SESSION_KEY_SQL
-from app.db.models import RequestLog
 from app.db.models_trace import RequestContextParts
+from app.db.request_models import RequestLog
 from app.modules.sessions.repository import SessionsRepository
 
 

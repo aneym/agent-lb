@@ -5,10 +5,11 @@ from datetime import datetime, timedelta, timezone
 
 from app.core import usage as usage_core
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory  # noqa: I001  # fmt: skip
+from app.db.models import Account, AccountStatus, AdditionalUsageHistory, UsageHistory
+from app.db.request_models import AccountLimitWarmup
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.limit_warmup.constants import _ANTHROPIC_CONTINUOUS_WINDOW, _ANTHROPIC_PRIME_SPACING_SLACK, _ANTHROPIC_RESET_GRACE_SECONDS, _ANTHROPIC_TELEMETRY_MAX_AGE_SECONDS, _DEFAULT_PRIMARY_WINDOW_MINUTES, _DEFAULT_WORKING_HOURS_END, _DEFAULT_WORKING_HOURS_START, _OPENAI_CONTINUOUS_WINDOW, _OPENAI_FAILURE_BRAKE_SECONDS, _OPENAI_LOG_ERROR_CODE, _OPENAI_PRIME_BUCKET_SECONDS, _OPENAI_PRIME_SPACING_SECONDS, _OPENAI_TELEMETRY_MAX_AGE_SECONDS, _OPENAI_UNSTARTED_LEAD_SLACK_SECONDS  # noqa: I001  # fmt: skip
-from app.modules.limit_warmup.repository import _MAX_CONTINUOUS_RETRIES  # noqa: I001  # fmt: skip
+from app.modules.limit_warmup.repository import _MAX_CONTINUOUS_RETRIES
 from app.modules.quota_planner.calendar import _parse_hhmm, _to_planner_tz
 from app.modules.quota_planner.logic import PlannerSettings
 from app.modules.usage.mappers import usage_history_to_window_row

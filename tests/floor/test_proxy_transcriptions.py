@@ -10,7 +10,7 @@ import app.modules.proxy.service as proxy_module
 from app.core.auth.refresh import RefreshError
 from app.core.errors import openai_error
 from app.core.openai.model_registry import ReasoningLevel, UpstreamModel, get_model_registry
-from app.db.models import ApiKeyLimit
+from app.db.request_models import ApiKeyLimit
 from app.db.session import SessionLocal
 
 pytestmark = pytest.mark.integration

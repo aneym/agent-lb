@@ -17,7 +17,8 @@ from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
 from app.core.utils.client_session import get_caller_seat, get_client_session_id, get_dispatch_id, get_job_id, get_lane, get_room  # noqa: I001  # fmt: skip
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
-from app.db.models import Account, RequestKind, RequestLog
+from app.db.models import Account
+from app.db.request_models import RequestKind, RequestLog
 from app.db.session import sqlite_writer_section
 from app.modules.request_logs.aggregates import RequestLogAggregates
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs

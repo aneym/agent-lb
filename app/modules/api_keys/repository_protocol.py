@@ -5,7 +5,8 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, ApiKey, ApiKeyLimit
+from app.db.models import Account
+from app.db.request_models import ApiKey, ApiKeyLimit
 from app.modules.api_keys.repository_data import ApiKeyTrendBucket, ApiKeyUsageSummary, ApiKeyUsageTotals, ReservationResult, UsageReservationData, UsageReservationItemData, _Unset  # noqa: I001  # fmt: skip
 
 

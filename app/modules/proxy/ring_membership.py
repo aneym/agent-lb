@@ -13,7 +13,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import utcnow
-from app.db.models import BridgeRingMember
+from app.db.federation_models import BridgeRingMember
 
 if TYPE_CHECKING:
     from collections.abc import Callable

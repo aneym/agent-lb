@@ -6,8 +6,8 @@ import logging
 from collections.abc import Mapping, Sequence
 
 from app.core.utils.request_id import get_request_id
-from app.db.models import AuditLog
 from app.db.session import get_session
+from app.db.settings_models import AuditLog
 
 logger = logging.getLogger(__name__)
 

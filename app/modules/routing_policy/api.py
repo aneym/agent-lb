@@ -5,8 +5,8 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
-from app.db.models import RoutingPolicyVersion
 from app.db.session import SessionLocal
+from app.db.settings_models import RoutingPolicyVersion
 from app.modules.routing_policy.repository import RoutingPolicyRepository
 from app.modules.routing_policy.schemas import DraftCreate, DraftPatch, PolicyDetail, PolicyVersions
 from app.modules.routing_policy.service import _digest, _serialize, detail, observe, require_draft, summary

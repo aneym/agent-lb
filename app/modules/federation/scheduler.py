@@ -14,7 +14,7 @@ from pathlib import Path
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import RequestLog
+from app.db.request_models import RequestLog
 from app.db.session import get_background_session
 from app.modules.federation.peer_client import AiohttpFederationPeerClient, FederationPeerClient
 from app.modules.federation.repository import FederationRepository

@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, ApiKeyUsageReservation, ApiKeyUsageReservationItem, LimitType, LimitWindow  # noqa: I001  # fmt: skip
+from app.db.access_models import ApiKeyUsageReservation, ApiKeyUsageReservationItem
+from app.db.models import Account, AccountStatus
+from app.db.request_models import ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType, LimitWindow
 from app.db.session import sqlite_writer_section
 from app.modules.api_keys.limit_windows import advance_limit_reset
 from app.modules.api_keys.repository_data import _EXPIRED_LIMIT_RESET_BATCH_SIZE, _STALE_USAGE_RESERVATION_RELEASE_BATCH_SIZE, _UNSET, UsageReservationItemData, _Unset  # noqa: I001  # fmt: skip

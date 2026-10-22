@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import or_
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.db.models import RequestLog
+from app.db.request_models import RequestLog
 
 
 def exclude_forwarded_edge_logs() -> ColumnElement[bool]:

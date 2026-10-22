@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.models import Base
+from app.db.base import Base
 
 
 class RequestContextParts(Base):

@@ -6,7 +6,7 @@ from sqlalchemy import delete, func, insert, literal, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DashboardRateLimitError
-from app.db.models import RateLimitAttempt
+from app.db.access_models import RateLimitAttempt
 
 
 class DatabaseRateLimiter:

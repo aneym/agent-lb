@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CacheInvalidation
+from app.db.settings_models import CacheInvalidation
 
 if TYPE_CHECKING:
     pass

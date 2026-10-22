@@ -17,7 +17,8 @@ from app.core.openai.requests import ResponsesRequest
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, DashboardSettings, UsageHistory  # noqa: I001  # fmt: skip
+from app.db.models import Account, AccountStatus, AdditionalUsageHistory, DashboardSettings, UsageHistory
+from app.db.request_models import AccountLimitWarmup
 from app.modules.accounts.auth_manager import AuthManager, is_locally_owned
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.limit_warmup.anthropic_primer import send_anthropic_primer

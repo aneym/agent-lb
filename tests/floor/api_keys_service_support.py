@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import utcnow
-from app.db.models import Account, ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType, UsageHistory
+from app.db.models import Account, UsageHistory
+from app.db.request_models import ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType
 from app.modules.api_keys.repository_data import _UNSET, ApiKeyUsageSummary, ReservationResult, UsageReservationData, UsageReservationItemData, _Unset  # noqa: I001  # fmt: skip
 from app.modules.api_keys.repository_protocol import ApiKeysRepositoryProtocol
 from app.modules.api_keys.service import ApiKeysService

@@ -7,7 +7,8 @@ from sqlalchemy import select
 
 import app.modules.proxy.anthropic_service as anthropic_proxy_module
 from app.core.utils.time import utcnow
-from app.db.models import AdditionalUsageHistory, RequestLog
+from app.db.models import AdditionalUsageHistory
+from app.db.request_models import RequestLog
 from app.db.session import SessionLocal
 from app.dependencies import _proxy_repo_context
 from tests.floor.anthropic_proxy_support import _ALLOWED_BODY, _BILLED_BODY, _BodyTrackingResponse, _FakeResponse, _FakeResponseContext, _insert_account, _insert_primary_usage, _messages_payload, _pin_sticky  # noqa: I001  # fmt: skip

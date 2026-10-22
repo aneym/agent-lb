@@ -9,7 +9,8 @@ from app.core.providers import OPENAI_PROVIDER_NAME
 from app.core.usage.logs import cached_input_tokens_from_log, cost_from_log, total_tokens_from_log
 from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate, UsageCostByModel, UsageCostSummary, UsageMetricsSummary, UsageSummaryPayload, UsageWindowRow, UsageWindowSnapshot  # noqa: I001  # fmt: skip
 from app.core.utils.time import from_epoch_seconds
-from app.db.models import Account, AdditionalUsageHistory, RequestLog
+from app.db.models import Account, AdditionalUsageHistory
+from app.db.request_models import RequestLog
 from app.modules.usage.schemas import MetricsTrends, TrendPoint, UsageCost, UsageHistoryItem, UsageHistoryResponse, UsageMetrics, UsageSummaryResponse, UsageWindow, UsageWindowResponse  # noqa: I001  # fmt: skip
 
 _BUCKET_COUNT = 28

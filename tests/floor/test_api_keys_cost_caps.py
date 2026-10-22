@@ -5,12 +5,12 @@ from typing import Any
 
 import pytest
 
-from app.db.models import LimitType
+from app.db.request_models import LimitType
 from app.modules.api_keys.repository_data import ApiKeyTrendBucket
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyRequestUsageBudget
 from app.modules.api_keys.usage_calculations import _build_api_key_trends
-from tests.floor.api_keys_service_support import _cost_capped_key, _FakeApiKeysRepository  # noqa: I001  # fmt: skip
+from tests.floor.api_keys_service_support import _cost_capped_key, _FakeApiKeysRepository
 
 pytestmark = pytest.mark.unit
 

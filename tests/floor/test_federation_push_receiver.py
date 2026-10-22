@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from app.core.utils.time import utcnow
-from app.db.models import AccountStatus, RequestLog
+from app.db.models import AccountStatus
+from app.db.request_models import RequestLog
 from app.db.session import SessionLocal
 from app.modules.proxy.account_cache import get_account_selection_cache
 from tests.floor.federation_push_helpers import _HOUR_MS as _HOUR_MS

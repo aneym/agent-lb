@@ -7,7 +7,8 @@ from sqlalchemy import select
 
 from app.core.auth import fallback_account_id, generate_unique_account_id
 from app.core.utils.time import utcnow
-from app.db.models import Account, RequestLog
+from app.db.models import Account
+from app.db.request_models import RequestLog
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.request_logs.repository import RequestLogsRepository

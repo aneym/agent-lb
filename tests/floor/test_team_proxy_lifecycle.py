@@ -20,7 +20,7 @@ import app.modules.proxy.service as proxy_module
 from app.core import conversation_archive
 from app.core.config.settings import get_settings
 from app.core.utils.time import utcnow
-from app.db.models import RequestLog
+from app.db.request_models import RequestLog
 from app.db.session import SessionLocal
 from app.modules.team.service import reset_team_usage_cache
 

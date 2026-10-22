@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.db.models import RequestLog
+from app.db.request_models import RequestLog
 
 _REPLAYED_REQUEST_ID_CHUNK = 500
 
