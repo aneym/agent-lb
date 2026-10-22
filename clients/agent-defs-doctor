@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+sys.path = [str(Path(__file__).resolve().parent), *sys.path]
 from agent_defs_models import DEFAULT_MODELS, load_models as _catalog
 
 VERSION = "1"

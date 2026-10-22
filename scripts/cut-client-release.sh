@@ -7,6 +7,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 RELEASES="${AGENT_LB_CLIENT_RELEASES:-$HOME/.agent-lb/client-releases}"
 BIN_DIR="${AGENT_LB_CLIENT_BIN_DIR:-$HOME/.local/bin}"
 CLIENTS=(claude-lb-launch cc fable opus agent-defs-doctor opus-runtime-doctor)
+BUNDLE_FILES=("${CLIENTS[@]}" agent_defs_models.py)
 ref=origin/main
 links=()
 print=0
@@ -34,12 +35,12 @@ if [[ ! -d "$release" ]]; then
   mkdir -p "$RELEASES"
   stage="$(mktemp -d "$RELEASES/.cut-${sha:0:8}.XXXXXX")"
   trap 'rm -rf "$stage"' EXIT
-  git -C "$REPO_DIR" archive "$sha" "${CLIENTS[@]/#/clients/}" | tar -x -C "$stage"
+  git -C "$REPO_DIR" archive "$sha" "${BUNDLE_FILES[@]/#/clients/}" | tar -x -C "$stage"
   mv "$stage/clients/"* "$stage/"
   rmdir "$stage/clients"
   {
     echo "commit ${sha:0:8} $(date -u +%Y-%m-%dT%H:%M:%SZ) cut by scripts/cut-client-release.sh from $ref"
-    (cd "$stage" && shasum -a 256 "${CLIENTS[@]}")
+    (cd "$stage" && shasum -a 256 "${BUNDLE_FILES[@]}")
   } > "$stage/RELEASE"
   chmod 755 "$stage"
   mv "$stage" "$release"
