@@ -1,0 +1,243 @@
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+SAFE_MODEL = re.compile(r"^[A-Za-z0-9_.\[\]-]{1,100}$")
+
+SAFE_METADATA = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")
+
+def _text_contains(value: Any, nonce: str) -> bool:
+    if isinstance(value, str):
+        return nonce in value
+    if isinstance(value, list):
+        return any(_text_contains(item, nonce) for item in value)
+    if isinstance(value, dict):
+        return any(_text_contains(item, nonce) for item in value.values())
+    return False
+
+def _message(event: dict[str, Any]) -> dict[str, Any] | None:
+    message = event.get("message")
+    return message if isinstance(message, dict) else None
+
+def _model_base(model: str) -> str:
+    return model.removesuffix("[1m]")
+
+def _safe_model(value: Any) -> str | None:
+    return value if isinstance(value, str) and SAFE_MODEL.fullmatch(value) else None
+
+def _stderr_tags(stderr: str) -> list[str]:
+    lowered = stderr.lower()
+    patterns = (
+        ("permission_denied", ("permission denied", "eacces")),
+        ("operation_not_permitted", ("operation not permitted", "eperm")),
+        ("auth", ("authentication failed", "unauthorized", "not logged in", "invalid api key")),
+        ("keychain", ("keychain", "security framework")),
+        ("connection", ("connection refused", "could not connect", "network is unreachable", "timed out")),
+        ("rate_limit", ("rate limit", "rate_limit", "429", "usage limit")),
+    )
+    return [tag for tag, needles in patterns if any(needle in lowered for needle in needles)] or ["none"]
+
+def stream_diagnostics(stdout: str, stderr: str, *, fd_soft_limit: int | None = None) -> dict[str, Any]:
+
+    event_count = 0
+    init_model: str | None = None
+    session_id: str | None = None
+    last_type: str | None = None
+    last_subtype: str | None = None
+    terminal_subtype: str | None = None
+    parent_models: set[str] = set()
+    child_models: set[str] = set()
+    malformed_lines = 0
+    for raw_line in stdout.splitlines():
+        if not raw_line.strip():
+            continue
+        try:
+            event = json.loads(raw_line)
+        except json.JSONDecodeError:
+            malformed_lines += 1
+            continue
+        if not isinstance(event, dict):
+            malformed_lines += 1
+            continue
+        event_count += 1
+        event_type = event.get("type")
+        event_subtype = event.get("subtype")
+        last_type = event_type if isinstance(event_type, str) and SAFE_METADATA.fullmatch(event_type) else None
+        last_subtype = (
+            event_subtype if isinstance(event_subtype, str) and SAFE_METADATA.fullmatch(event_subtype) else None
+        )
+        if event_type == "result":
+            terminal_subtype = last_subtype
+        safe_session = event.get("session_id")
+        if session_id is None and isinstance(safe_session, str) and SAFE_METADATA.fullmatch(safe_session):
+            session_id = safe_session
+        message = _message(event)
+        model = _safe_model(message.get("model") if message else event.get("model"))
+        parent_id = event.get("parent_tool_use_id") or (message.get("parent_tool_use_id") if message else None)
+        if event_type == "system" and event_subtype == "init":
+            init_model = _safe_model(event.get("model"))
+        elif model and isinstance(parent_id, str):
+            child_models.add(model)
+        elif model:
+            parent_models.add(model)
+    diagnostics = {
+        "event_count": event_count,
+        "malformed_lines": malformed_lines,
+        "init_model": init_model,
+        "session_id": session_id,
+        "last_event_type": last_type,
+        "last_event_subtype": last_subtype,
+        "terminal_subtype": terminal_subtype,
+        "parent_models": sorted(parent_models)[:10],
+        "child_models": sorted(child_models)[:10],
+        "stderr_tags": _stderr_tags(stderr),
+    }
+    if fd_soft_limit is not None:
+        diagnostics["fd_soft_limit"] = fd_soft_limit
+    return diagnostics
+
+def analyze_stream(stdout: str, nonce: str, expected_model: str) -> tuple[str, str | None, dict[str, Any]]:
+
+    events: list[dict[str, Any]] = []
+    for raw_line in stdout.splitlines():
+        if not raw_line.strip():
+            continue
+        try:
+            value = json.loads(raw_line)
+        except json.JSONDecodeError:
+            return "FAIL", "malformed_stream", {"event_count": len(events)}
+        if not isinstance(value, dict):
+            return "FAIL", "malformed_stream", {"event_count": len(events)}
+        events.append(value)
+
+    calls: list[dict[str, Any]] = []
+    results: dict[str, tuple[int, bool, bool]] = {}
+    child_models: dict[str, list[str]] = {}
+    child_reads: dict[str, set[str]] = {}
+    child_read_results: dict[str, set[str]] = {}
+    child_replies: dict[str, bool] = {}
+    result_metadata: dict[str, dict[str, Any]] = {}
+    terminal_success = False
+    for index, event in enumerate(events):
+        event_type = event.get("type")
+        message = _message(event)
+        content = message.get("content") if message else None
+        blocks = content if isinstance(content, list) else []
+        parent_id = event.get("parent_tool_use_id") or (message.get("parent_tool_use_id") if message else None)
+        model = message.get("model") if message else None
+        if event_type == "assistant" and isinstance(parent_id, str) and isinstance(model, str):
+            child_models.setdefault(parent_id, []).append(model)
+            if _text_contains(message.get("content"), nonce) and _text_contains(
+                message.get("content"), _model_base(expected_model)
+            ):
+                child_replies[parent_id] = True
+        if event.get("type") == "result":
+            terminal_success = event.get("subtype") == "success" and event.get("is_error") is False
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if event_type == "assistant" and block.get("type") == "tool_use" and block.get("name") == "Agent":
+                tool_id = block.get("id")
+                inputs = block.get("input")
+                if isinstance(tool_id, str) and isinstance(inputs, dict):
+                    calls.append({"id": tool_id, "index": index, "input": inputs})
+            if (
+                event_type == "assistant"
+                and isinstance(parent_id, str)
+                and block.get("type") == "tool_use"
+                and block.get("name") == "Read"
+                and isinstance(block.get("id"), str)
+            ):
+                child_reads.setdefault(parent_id, set()).add(block["id"])
+            if (
+                event_type == "user"
+                and block.get("type") == "tool_result"
+                and isinstance(block.get("tool_use_id"), str)
+            ):
+                tool_use_id = block["tool_use_id"]
+                results[tool_use_id] = (
+                    index,
+                    not bool(block.get("is_error")),
+                    _text_contains(block.get("content"), nonce),
+                )
+                if (
+                    isinstance(parent_id, str)
+                    and not bool(block.get("is_error"))
+                    and _text_contains(block.get("content"), nonce)
+                ):
+                    child_read_results.setdefault(parent_id, set()).add(tool_use_id)
+                metadata = event.get("tool_use_result")
+                if isinstance(metadata, dict):
+                    result_metadata[tool_use_id] = metadata
+
+    evidence: dict[str, Any] = {
+        "event_count": len(events),
+        "agent_call_count": len(calls),
+        "general_alias_seen": False,
+        "opus_seat_seen": False,
+        "sequential": False,
+        "nonce_results": 0,
+        "matched_child_models": 0,
+        "forwarded_model_metadata": False,
+        "child_nonce_reads": 0,
+        "completed_result_metadata": 0,
+        "child_identity_replies": 0,
+        "terminal_success": terminal_success,
+    }
+    if len(calls) != 2:
+        return "FAIL", "missing_or_extra_agent_calls", evidence
+    first, second = calls
+    first_input, second_input = first["input"], second["input"]
+    evidence["general_alias_seen"] = (
+        first_input.get("subagent_type") == "general-purpose"
+        and first_input.get("model") == "opus"
+        and first_input.get("run_in_background") is not True
+    )
+    evidence["opus_seat_seen"] = (
+        second_input.get("subagent_type") == "opus-seat"
+        and "model" not in second_input
+        and second_input.get("run_in_background") is not True
+    )
+    first_result, second_result = results.get(first["id"]), results.get(second["id"])
+    if first_result and second_result:
+        evidence["sequential"] = first["index"] < first_result[0] < second["index"] < second_result[0]
+        evidence["nonce_results"] = sum(1 for result in (first_result, second_result) if result[1] and result[2])
+    models = [child_models.get(first["id"], []), child_models.get(second["id"], [])]
+    evidence["forwarded_model_metadata"] = all(models)
+    expected_base = _model_base(expected_model)
+    evidence["matched_child_models"] = sum(
+        1 for values in models if values and all(_model_base(value) == expected_base for value in values)
+    )
+    evidence["child_nonce_reads"] = sum(
+        1
+        for call in (first, second)
+        if child_reads.get(call["id"], set()) & child_read_results.get(call["id"], set())
+    )
+    evidence["completed_result_metadata"] = sum(
+        1
+        for call in (first, second)
+        if result_metadata.get(call["id"], {}).get("status") == "completed"
+    )
+    evidence["child_identity_replies"] = sum(1 for call in (first, second) if child_replies.get(call["id"]))
+
+    if not evidence["general_alias_seen"] or not evidence["opus_seat_seen"]:
+        return "FAIL", "agent_call_contract", evidence
+    if not evidence["sequential"]:
+        return "FAIL", "agent_calls_not_sequential", evidence
+    if evidence["nonce_results"] != 2:
+        return "FAIL", "missing_successful_nonce_result", evidence
+    if evidence["child_nonce_reads"] != 2:
+        return "FAIL", "missing_child_nonce_read", evidence
+    if evidence["completed_result_metadata"] != 2:
+        return "FAIL", "missing_completed_result_metadata", evidence
+    if not evidence["forwarded_model_metadata"]:
+        return "BLOCKED", "forwarded_model_metadata_missing", evidence
+    if evidence["matched_child_models"] != 2:
+        return "FAIL", "unexpected_child_model", evidence
+    if evidence["child_identity_replies"] != 2:
+        return "FAIL", "missing_child_identity_reply", evidence
+    if not evidence["terminal_success"]:
+        return "FAIL", "missing_terminal_success", evidence
+    return "PASS", None, evidence
