@@ -122,16 +122,17 @@ PROBE_CONNECT_TIMEOUT_SECONDS = probes.PROBE_CONNECT_TIMEOUT_SECONDS
 PROBE_NETWORK_FAILURE_STATUS = probes.PROBE_NETWORK_FAILURE_STATUS
 
 
-_REQUEST_USAGE_CACHE_TTL_SECONDS = 60.0
-_request_usage_cache: StaleWhileRevalidate[dict[str, AccountRequestUsage]] = StaleWhileRevalidate(
-    "request_usage", ttl_seconds=_REQUEST_USAGE_CACHE_TTL_SECONDS
+USAGE_CACHE_TTL = 60.0
+usage_cache: StaleWhileRevalidate[dict[str, AccountRequestUsage]] = StaleWhileRevalidate(
+    "request_usage", ttl_seconds=USAGE_CACHE_TTL
 )
-_ADDITIONAL_QUOTAS_CACHE_TTL_SECONDS = 12.0
-_additional_quotas_cache: StaleWhileRevalidate[dict[str, list[AccountAdditionalQuota]]] = StaleWhileRevalidate(
-    "additional_quotas", ttl_seconds=_ADDITIONAL_QUOTAS_CACHE_TTL_SECONDS
+QUOTA_CACHE_TTL = 12.0
+quota_cache: StaleWhileRevalidate[dict[str, list[AccountAdditionalQuota]]] = StaleWhileRevalidate(
+    "additional_quotas", ttl_seconds=QUOTA_CACHE_TTL
 )
 
 _T = TypeVar("_T")
+_S = TypeVar("_S")
 
 
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
@@ -140,25 +141,25 @@ _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 
 def clear_account_caches() -> None:
 
-    _request_usage_cache.clear()
-    _additional_quotas_cache.clear()
+    usage_cache.clear()
+    quota_cache.clear()
 
 
 def invalidate_additional_quotas_cache() -> None:
 
-    _additional_quotas_cache.clear()
+    quota_cache.clear()
 
 
 async def cancel_account_cache_refreshes() -> None:
 
-    await _request_usage_cache.cancel_refresh()
-    await _additional_quotas_cache.cancel_refresh()
+    await usage_cache.cancel_refresh()
+    await quota_cache.cancel_refresh()
 
 
-async def with_background_accounts_service(load: Callable[[AccountsService], Awaitable[_T]]) -> _T:
+async def with_background_service(service_type: Callable[..., _S], load: Callable[[_S], Awaitable[_T]]) -> _T:
 
     async with get_background_session() as session:
-        service = AccountsService(
+        service = service_type(
             AccountsRepository(session),
             UsageRepository(session),
             AdditionalUsageRepository(session),
@@ -204,7 +205,7 @@ def _additional_quota_window(
     )
 
 
-class AccountsService:
+class AccountsQueries:
     def __init__(
         self,
         repo: AccountsRepository,
@@ -282,18 +283,18 @@ class AccountsService:
             return
         key = frozenset(account_ids)
         account_id_set = set(account_ids)
-        await _additional_quotas_cache.refresh_now(
-            key, lambda: self._load_additional_quotas(account_ids, account_id_set)
-        )
+        await quota_cache.refresh_now(key, lambda: self._load_additional_quotas(account_ids, account_id_set))
         if include_request_usage:
-            await _request_usage_cache.refresh_now(key, lambda: self._load_request_usage(account_ids))
+            await usage_cache.refresh_now(key, lambda: self._load_request_usage(account_ids))
 
     async def _request_usage_by_account(self, account_ids: list[str]) -> dict[str, AccountRequestUsage]:
 
-        return await _request_usage_cache.get(
+        return await usage_cache.get(
             frozenset(account_ids),
             load=lambda: self._load_request_usage(account_ids),
-            refresh=lambda: with_background_accounts_service(lambda service: service._load_request_usage(account_ids)),
+            refresh=lambda: with_background_service(
+                type(self), lambda service: service._load_request_usage(account_ids)
+            ),
         )
 
     async def _load_request_usage(self, account_ids: list[str]) -> dict[str, AccountRequestUsage]:
@@ -314,11 +315,11 @@ class AccountsService:
         self, account_ids: list[str], account_id_set: set[str]
     ) -> dict[str, list[AccountAdditionalQuota]]:
 
-        return await _additional_quotas_cache.get(
+        return await quota_cache.get(
             frozenset(account_ids),
             load=lambda: self._load_additional_quotas(account_ids, account_id_set),
-            refresh=lambda: with_background_accounts_service(
-                lambda service: service._load_additional_quotas(account_ids, account_id_set)
+            refresh=lambda: with_background_service(
+                type(self), lambda service: service._load_additional_quotas(account_ids, account_id_set)
             ),
         )
 
@@ -388,6 +389,53 @@ class AccountsService:
             secondary_scheduled=trend.secondary_scheduled if trend else [],
         )
 
+    async def list_anthropic_models(self) -> AnthropicModelsResponse:
+
+        cached = _anthropic_models
+        if cached is not None and time.monotonic() - cached[0] < ANTHROPIC_MODELS_TTL_SECONDS:
+            return AnthropicModelsResponse(models=cached[2], fetched_at=cached[1])
+
+        async with _anthropic_models_refresh_lock():
+            return await self._refresh_anthropic_models()
+
+    async def _refresh_anthropic_models(self) -> AnthropicModelsResponse:
+        global _anthropic_models
+        cached = _anthropic_models
+        if cached is not None and time.monotonic() - cached[0] < ANTHROPIC_MODELS_TTL_SECONDS:
+            return AnthropicModelsResponse(models=cached[2], fetched_at=cached[1])
+        error = "no Anthropic account can list models"
+        accounts = [
+            account
+            for account in await self._repo.list_accounts()
+            if normalize_provider_name(account.provider) == ANTHROPIC_PROVIDER_NAME
+            and (account.status == AccountStatus.ACTIVE or account.status in _LIMITED_LISTABLE_STATUSES)
+        ]
+        accounts.sort(key=lambda account: account.status != AccountStatus.ACTIVE)
+        for account in accounts[:ANTHROPIC_MODELS_MAX_ACCOUNTS]:
+            try:
+                fresh = account
+                if account.status == AccountStatus.ACTIVE and self._auth_manager:
+                    fresh = await self._auth_manager.ensure_fresh(account, force=False)
+                    if fresh.status != AccountStatus.ACTIVE:
+                        continue
+                access_token = self._encryptor.decrypt(fresh.access_token_encrypted)
+            except Exception as exc:
+                error = f"account token unavailable ({type(exc).__name__})"
+                continue
+            status, ids = await probes.list_anthropic_models(
+                access_token=access_token,
+                base_url=get_settings().anthropic_upstream_base_url,
+            )
+            if ids:
+                _anthropic_models = (time.monotonic(), utcnow(), ids)
+                return AnthropicModelsResponse(models=ids, fetched_at=_anthropic_models[1])
+            error = f"upstream model list returned HTTP {status}"
+        if cached is not None:
+            return AnthropicModelsResponse(models=cached[2], fetched_at=cached[1], stale=True, error=error)
+        return AnthropicModelsResponse(error=error)
+
+
+class AccountsTransfer(AccountsQueries):
     async def export_opencode_auth(self, account_id: str) -> AccountOpenCodeAuthExportResponse | None:
         account = await self._repo.get_by_id(account_id)
         if account is None:
@@ -602,6 +650,37 @@ class AccountsService:
             status=saved.status,
         )
 
+    async def export_account(self, account_id: str) -> AccountExportResponse | None:
+        account = await self._repo.get_by_id(account_id)
+        if not account:
+            return None
+        access_token = self._encryptor.decrypt(account.access_token_encrypted)
+        refresh_token = self._encryptor.decrypt(account.refresh_token_encrypted)
+        id_token = self._encryptor.decrypt(account.id_token_encrypted) if account.id_token_encrypted else ""
+        auth_json = {
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": None,
+            "tokens": {
+                "id_token": id_token,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "account_id": account.chatgpt_account_id,
+            },
+            "last_refresh": account.last_refresh.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        }
+        return AccountExportResponse(
+            account_id=account.id,
+            email=account.email,
+            workspace_id=account.workspace_id,
+            workspace_label=account.workspace_label,
+            seat_type=account.seat_type,
+            plan_type=account.plan_type,
+            status=account.status.value,
+            auth_json=json.dumps(auth_json, indent=2),
+        )
+
+
+class AccountsLifecycle(AccountsTransfer):
     async def reactivate_account(self, account_id: str) -> bool:
         account = await self._repo.get_by_id(account_id)
         if account is None:
@@ -789,35 +868,6 @@ class AccountsService:
             normalized = None
         return await self._repo.update_alias(account_id, normalized)
 
-    async def export_account(self, account_id: str) -> AccountExportResponse | None:
-        account = await self._repo.get_by_id(account_id)
-        if not account:
-            return None
-        access_token = self._encryptor.decrypt(account.access_token_encrypted)
-        refresh_token = self._encryptor.decrypt(account.refresh_token_encrypted)
-        id_token = self._encryptor.decrypt(account.id_token_encrypted) if account.id_token_encrypted else ""
-        auth_json = {
-            "auth_mode": "chatgpt",
-            "OPENAI_API_KEY": None,
-            "tokens": {
-                "id_token": id_token,
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "account_id": account.chatgpt_account_id,
-            },
-            "last_refresh": account.last_refresh.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
-        }
-        return AccountExportResponse(
-            account_id=account.id,
-            email=account.email,
-            workspace_id=account.workspace_id,
-            workspace_label=account.workspace_label,
-            seat_type=account.seat_type,
-            plan_type=account.plan_type,
-            status=account.status.value,
-            auth_json=json.dumps(auth_json, indent=2),
-        )
-
     async def probe_account(
         self,
         account_id: str,
@@ -883,6 +933,55 @@ class AccountsService:
             account_status_after=refreshed.status.value,
         )
 
+    async def _latest_usage_percents(self, account_id: str) -> tuple[float | None, float | None]:
+        if self._usage_repo is None:
+            return None, None
+        primary_entry = await self._usage_repo.latest_entry_for_account(account_id, window="primary")
+        secondary_entry = await self._usage_repo.latest_entry_for_account(account_id, window="secondary")
+        return (
+            primary_entry.used_percent if primary_entry is not None else None,
+            secondary_entry.used_percent if secondary_entry is not None else None,
+        )
+
+    async def _send_probe_request(
+        self,
+        *,
+        access_token: str,
+        chatgpt_account_id: str | None,
+        model: str,
+    ) -> int:
+        return await probes.send_openai_probe(
+            access_token=access_token,
+            chatgpt_account_id=chatgpt_account_id,
+            model=model,
+        )
+
+    async def _send_messages_probe_request(
+        self,
+        *,
+        access_token: str,
+        base_url: str,
+        model: str,
+    ) -> tuple[int, str | None]:
+        return await probes.send_messages_probe(
+            access_token=access_token,
+            base_url=base_url,
+            model=model,
+        )
+
+    async def _send_anthropic_subscription_check_request(
+        self,
+        *,
+        access_token: str,
+    ) -> tuple[int, str | None]:
+        return await self._send_messages_probe_request(
+            access_token=access_token,
+            base_url=get_settings().anthropic_upstream_base_url,
+            model=DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL,
+        )
+
+
+class AccountsService(AccountsLifecycle):
     async def list_rate_limit_reset_credits(self, account_id: str) -> AccountResetCreditsResponse | None:
         account = await self._repo.get_by_id(account_id)
         if account is None:
@@ -1179,98 +1278,6 @@ class AccountsService:
         if self._auth_manager is not None:
             return await self._auth_manager.ensure_fresh(account, force=False)
         return account
-
-    async def _latest_usage_percents(self, account_id: str) -> tuple[float | None, float | None]:
-        if self._usage_repo is None:
-            return None, None
-        primary_entry = await self._usage_repo.latest_entry_for_account(account_id, window="primary")
-        secondary_entry = await self._usage_repo.latest_entry_for_account(account_id, window="secondary")
-        return (
-            primary_entry.used_percent if primary_entry is not None else None,
-            secondary_entry.used_percent if secondary_entry is not None else None,
-        )
-
-    async def _send_probe_request(
-        self,
-        *,
-        access_token: str,
-        chatgpt_account_id: str | None,
-        model: str,
-    ) -> int:
-        return await probes.send_openai_probe(
-            access_token=access_token,
-            chatgpt_account_id=chatgpt_account_id,
-            model=model,
-        )
-
-    async def list_anthropic_models(self) -> AnthropicModelsResponse:
-
-        cached = _anthropic_models
-        if cached is not None and time.monotonic() - cached[0] < ANTHROPIC_MODELS_TTL_SECONDS:
-            return AnthropicModelsResponse(models=cached[2], fetched_at=cached[1])
-
-        async with _anthropic_models_refresh_lock():
-            return await self._refresh_anthropic_models()
-
-    async def _refresh_anthropic_models(self) -> AnthropicModelsResponse:
-        global _anthropic_models
-        cached = _anthropic_models
-        if cached is not None and time.monotonic() - cached[0] < ANTHROPIC_MODELS_TTL_SECONDS:
-            return AnthropicModelsResponse(models=cached[2], fetched_at=cached[1])
-        error = "no Anthropic account can list models"
-        accounts = [
-            account
-            for account in await self._repo.list_accounts()
-            if normalize_provider_name(account.provider) == ANTHROPIC_PROVIDER_NAME
-            and (account.status == AccountStatus.ACTIVE or account.status in _LIMITED_LISTABLE_STATUSES)
-        ]
-        accounts.sort(key=lambda account: account.status != AccountStatus.ACTIVE)
-        for account in accounts[:ANTHROPIC_MODELS_MAX_ACCOUNTS]:
-            try:
-                fresh = account
-                if account.status == AccountStatus.ACTIVE and self._auth_manager:
-                    fresh = await self._auth_manager.ensure_fresh(account, force=False)
-                    if fresh.status != AccountStatus.ACTIVE:
-                        continue
-                access_token = self._encryptor.decrypt(fresh.access_token_encrypted)
-            except Exception as exc:
-                error = f"account token unavailable ({type(exc).__name__})"
-                continue
-            status, ids = await probes.list_anthropic_models(
-                access_token=access_token,
-                base_url=get_settings().anthropic_upstream_base_url,
-            )
-            if ids:
-                _anthropic_models = (time.monotonic(), utcnow(), ids)
-                return AnthropicModelsResponse(models=ids, fetched_at=_anthropic_models[1])
-            error = f"upstream model list returned HTTP {status}"
-        if cached is not None:
-            return AnthropicModelsResponse(models=cached[2], fetched_at=cached[1], stale=True, error=error)
-        return AnthropicModelsResponse(error=error)
-
-    async def _send_messages_probe_request(
-        self,
-        *,
-        access_token: str,
-        base_url: str,
-        model: str,
-    ) -> tuple[int, str | None]:
-        return await probes.send_messages_probe(
-            access_token=access_token,
-            base_url=base_url,
-            model=model,
-        )
-
-    async def _send_anthropic_subscription_check_request(
-        self,
-        *,
-        access_token: str,
-    ) -> tuple[int, str | None]:
-        return await self._send_messages_probe_request(
-            access_token=access_token,
-            base_url=get_settings().anthropic_upstream_base_url,
-            model=DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL,
-        )
 
 
 def _opencode_auth_export_filename(account: Account) -> str:

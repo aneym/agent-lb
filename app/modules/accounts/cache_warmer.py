@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 
 from app.core.config.settings import get_settings
-from app.modules.accounts.service import cancel_account_cache_refreshes, with_background_accounts_service
+from app.modules.accounts.service import AccountsService, cancel_account_cache_refreshes, with_background_service
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +54,8 @@ class AccountsCacheWarmer:
                 logger.warning("Accounts cache refresh failed", exc_info=True)
 
     async def _warm(self, *, include_request_usage: bool) -> None:
-        await with_background_accounts_service(
-            lambda service: service.warm_read_caches(include_request_usage=include_request_usage)
+        await with_background_service(
+            AccountsService, lambda service: service.warm_read_caches(include_request_usage=include_request_usage)
         )
 
 
