@@ -324,12 +324,12 @@ PRETTIER = (
 FLAKY = "import sys, time\nsys.stdin.read()\nprint(time.time_ns())\n"
 
 
-def policy_module():
+def policy_module(name="policy_hook_registry"):
     import importlib.util
 
     if str(SOURCE) not in sys.path:
         sys.path.insert(0, str(SOURCE))
-    spec = importlib.util.spec_from_file_location("install_policy", SOURCE / "install-policy.py")
+    spec = importlib.util.spec_from_file_location("install_policy", SOURCE / (name + ".py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

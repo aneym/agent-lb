@@ -103,7 +103,7 @@ def test_installer_revision_refuses_stale_and_passes_descendant(tmp_path, monkey
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.delenv("AGENT_LB_POLICY_TEST_PIN", raising=False)
 
-    installer = GUARD.parent.parent / "install-policy.py"
+    installer = GUARD.parent.parent / "policy_lock.py"
     verify = runpy.run_path(str(installer))["verify_install_revision"]
     remote = tmp_path / "remote.git"
     repo = tmp_path / "work"
