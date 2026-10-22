@@ -29,6 +29,8 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 def dispatch_document(value: str) -> dict:
     if not value.lstrip().startswith("{"):
         return {}
@@ -104,10 +106,13 @@ def resolve_lane_tags(argv: list[str]) -> str:
                 kind = json.loads(registry.read_text())
             except FileNotFoundError:
                 kind = {}
-            review_lane = any(
-                re.search(r"(?<![A-Za-z])(?:review|verif|audit)", str(value), re.IGNORECASE)
-                for value in (kind.get("lane", ""), kind.get("title", ""))
-            ) or str(kind.get("kind", "")).lower() == "review"
+            review_lane = (
+                any(
+                    re.search(r"(?<![A-Za-z])(?:review|verif|audit)", str(value), re.IGNORECASE)
+                    for value in (kind.get("lane", ""), kind.get("title", ""))
+                )
+                or str(kind.get("kind", "")).lower() == "review"
+            )
             lane = kind.get("lane") or tab
             if not isinstance(lane, str) or re.fullmatch(r"[A-Za-z0-9._:/-]{1,128}", lane) is None:
                 lane = tab
@@ -120,7 +125,9 @@ def resolve_lane_tags(argv: list[str]) -> str:
             elif registry_kind in {"ephemeral", "background"}:
                 result.append(("", "", "excluded registry kind"))
             elif (
-                stage == "all" or tab in tabs or kind.get("lane") in lanes
+                stage == "all"
+                or tab in tabs
+                or kind.get("lane") in lanes
                 or (stage == "half" and int(hashlib.sha256(tab.encode()).hexdigest(), 16) % 2 == 0)
             ):
                 result.append(("orchestrator" if registry_kind == "orchestrator" else "lane-tab", lane, stage))
@@ -139,7 +146,10 @@ def resolve_lane_tags(argv: list[str]) -> str:
         label = ""
         try:
             lookup = subprocess.run(
-                ["herdr", "tab", "get", tab], capture_output=True, text=True, timeout=2,
+                ["herdr", "tab", "get", tab],
+                capture_output=True,
+                text=True,
+                timeout=2,
             )
             if lookup.returncode == 0:
                 label = json.loads(lookup.stdout)["result"]["tab"]["label"]
@@ -364,7 +374,6 @@ def ensure_mitm_certs() -> None:
     CERT_MARKER.write_text("1\n")
 
 class LbActivity:
-
     def __init__(self, path: Path, *, only_if_exists: bool = False) -> None:
         self.path = path
         self.only_if_exists = only_if_exists
@@ -414,7 +423,6 @@ class LbActivity:
             self._write()
 
 class LbApiHandler(http.server.BaseHTTPRequestHandler):
-
     protocol_version = "HTTP/1.1"
     timeout = SHIM_CLIENT_IDLE_TIMEOUT_SECONDS
 
@@ -440,10 +448,10 @@ class LbApiHandler(http.server.BaseHTTPRequestHandler):
         self._forward()
 
     def _forward(self) -> None:
-        parent_pid = self.server.parent_pid
-        session_id = self.server.session_id
-        upstream_base_url = self.server.upstream_base_url
-        shared = self.server.shared
+        parent_pid = self.server.parent_pid  # pyrefly: ignore[missing-attribute]
+        session_id = self.server.session_id  # pyrefly: ignore[missing-attribute]
+        upstream_base_url = self.server.upstream_base_url  # pyrefly: ignore[missing-attribute]
+        shared = self.server.shared  # pyrefly: ignore[missing-attribute]
 
         if not shared:
             try:
@@ -481,7 +489,7 @@ class LbApiHandler(http.server.BaseHTTPRequestHandler):
             return
 
         try:
-            upstream_path = ccgpt_upstream_path(self.path, body) if self.server.ccgpt_mode else self.path
+            upstream_path = ccgpt_upstream_path(self.path, body) if self.server.ccgpt_mode else self.path  # pyrefly: ignore[missing-attribute]
         except CcgptModelViolation as error:
             message = json.dumps(
                 {
@@ -529,12 +537,15 @@ class LbApiHandler(http.server.BaseHTTPRequestHandler):
             if activity is not None:
                 activity.end()
                 if client_id is not None:
-                    with client_lock:
-                        if client_activities.get(client_id) is activity and activity.inflight == 0:
-                            client_activities.pop(client_id, None)
+                    with client_lock:  # pyrefly: ignore[bad-context-manager, unbound-name]
+                        if client_activities.get(client_id) is activity and activity.inflight == 0:  # pyrefly: ignore[missing-attribute, unbound-name]
+                            client_activities.pop(client_id, None)  # pyrefly: ignore[missing-attribute]
 
     def _forward_lb(
-        self, request: urllib.request.Request, shared: bool, parent_pid: int | None,
+        self,
+        request: urllib.request.Request,
+        shared: bool,
+        parent_pid: int | None,
         activity: LbActivity | None,
     ) -> None:
 
@@ -572,9 +583,7 @@ class LbApiHandler(http.server.BaseHTTPRequestHandler):
 
     def _is_websocket_upgrade(self) -> bool:
         connection_tokens = {
-            token.strip().lower()
-            for value in self.headers.get_all("connection") or []
-            for token in value.split(",")
+            token.strip().lower() for value in self.headers.get_all("connection") or [] for token in value.split(",")
         }
         return "upgrade" in connection_tokens and (self.headers.get("upgrade") or "").strip().lower() == "websocket"
 
@@ -630,9 +639,9 @@ class LbApiHandler(http.server.BaseHTTPRequestHandler):
 
     def _copy_response(self, response: object, activity: LbActivity | None = None) -> None:
         status = getattr(response, "status", None) or getattr(response, "code", 502)
-        content_type = response.headers.get("content-type", "")
+        content_type = response.headers.get("content-type", "")  # pyrefly: ignore[missing-attribute]
         self.send_response(int(status))
-        for key, value in response.headers.items():
+        for key, value in response.headers.items():  # pyrefly: ignore[missing-attribute]
             header = key.lower()
             if header not in HOP_BY_HOP_HEADERS and header != "content-length":
                 self.send_header(key, value)
@@ -640,7 +649,7 @@ class LbApiHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         if "text/event-stream" in content_type:
             while True:
-                line = response.readline()
+                line = response.readline()  # pyrefly: ignore[missing-attribute]
                 if not line:
                     break
                 self.wfile.write(line)
@@ -649,7 +658,7 @@ class LbApiHandler(http.server.BaseHTTPRequestHandler):
                     activity.progress()
         else:
             while True:
-                chunk = response.read(65536)
+                chunk = response.read(65536)  # pyrefly: ignore[missing-attribute]
                 if not chunk:
                     break
                 self.wfile.write(chunk)
@@ -659,7 +668,6 @@ class LbApiHandler(http.server.BaseHTTPRequestHandler):
         self.close_connection = True
 
 class TunnelBucket:
-
     SMALL_WRITE_BYTES = 8192
 
     def __init__(self, rate_bytes_per_second: float, burst_bytes: float | None = None) -> None:
@@ -740,7 +748,6 @@ def splice(
     return a_to_b, b_to_a
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
-
     protocol_version = "HTTP/1.1"
     timeout = SHIM_CLIENT_IDLE_TIMEOUT_SECONDS
 
@@ -787,7 +794,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         raw.settimeout(SHIM_CLIENT_IDLE_TIMEOUT_SECONDS)
         try:
-            tls = self.server.tls_context.wrap_socket(raw, server_side=True)
+            tls = self.server.tls_context.wrap_socket(raw, server_side=True)  # pyrefly: ignore[missing-attribute]
         except (OSError, ValueError):
             try:
                 raw.close()
@@ -795,7 +802,6 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 pass
             return
         try:
-
             LbApiHandler(tls, ("127.0.0.1", 0), self.server)
         except OSError:
             pass
@@ -811,8 +817,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             if safe_tunnel_target(host, port) == "<invalid target>":
                 raise OSError("invalid CONNECT target")
             upstream = socket.create_connection((host, port), timeout=20)
-        except OSError as error:
-
+        except OSError:
             try:
                 self.connection.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             except OSError:
@@ -847,8 +852,11 @@ _tunnel_log_count = 0
 _tunnel_log_suppressed = 0
 
 def safe_tunnel_target(host: str, port: int) -> str:
-    if (re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", host)
-            and isinstance(port, int) and 1 <= port <= 65535):
+    if (
+        re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", host)
+        and isinstance(port, int)
+        and 1 <= port <= 65535
+    ):
         return f"{host}:{port}"
     return "<invalid target>"
 
@@ -873,7 +881,9 @@ def queue_tunnel_log(line: str) -> None:
         if now - _tunnel_log_window >= 60:
             if _tunnel_log_suppressed:
                 try:
-                    _tunnel_logs.put_nowait((sys.stderr, f"cc-proxy: suppressed {_tunnel_log_suppressed} tunnel log lines\n"))
+                    _tunnel_logs.put_nowait(
+                        (sys.stderr, f"cc-proxy: suppressed {_tunnel_log_suppressed} tunnel log lines\n")
+                    )
                 except queue.Full:
                     pass
             _tunnel_log_window, _tunnel_log_count, _tunnel_log_suppressed = now, 0, 0
@@ -901,7 +911,6 @@ def log_tunnel_connect(host: str, port: int, elapsed: float, outcome: str) -> No
         pass
 
 class ThreadingProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-
     daemon_threads = True
     allow_reuse_address = True
 
@@ -1162,7 +1171,9 @@ def bypass_anthropic_proxy() -> None:
         os.environ[name] = ",".join(exclusions)
 
 def lb_json(path: str, *, timeout: float = 2.5, base_url: str | None = None) -> dict:
-    request = urllib.request.Request(f"{base_url or LaunchConfig.base_url}{path}", headers={"accept": "application/json"})
+    request = urllib.request.Request(
+        f"{base_url or LaunchConfig.base_url}{path}", headers={"accept": "application/json"}
+    )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         body = response.read().decode("utf-8")
     return json.loads(body) if body else {}
@@ -1610,7 +1621,7 @@ def claim_at_endpoint(
         if not should_wait_for_reset(retry_at, deadline):
             return None, error_message
         try:
-            wait_until_reset(retry_at, error_message)
+            wait_until_reset(retry_at, error_message)  # pyrefly: ignore[bad-argument-type]
         except KeyboardInterrupt:
             print("cc: aborted while waiting for limits to reset", file=sys.stderr)
             sys.exit(130)
@@ -1671,7 +1682,6 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     selected_account_id = str(claim.get("accountId") or "")
 
     try:
-
         payload = lb_json("/api/accounts", timeout=env_float("CLAUDE_LB_BANNER_TIMEOUT", 1.5))
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         account_label = claim.get("alias") or claim.get("email") or selected_account_id[:8]
@@ -1721,7 +1731,6 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
 def prepare_interactive_endpoint() -> bool:
 
     failures: list[str] = []
-
 
     local_timeout = env_float("CLAUDE_LB_LOCAL_READY_TIMEOUT", 1.0)
     remote_timeout = env_float("CLAUDE_LB_REMOTE_READY_TIMEOUT", 3.0)
@@ -1900,7 +1909,6 @@ def build_command(argv: list[str]) -> list[str]:
         effort_arg = arg_value(argv, "--effort")
         effort_env = (os.environ.get("CC_EFFORT_LEVEL") or "").strip()
 
-
         if effort_arg is None:
             if effort_env.lower() not in {"", "none", "off"}:
                 command.extend(["--effort", effort_env])
@@ -2042,7 +2050,10 @@ def work_process_alive(child_pid: int) -> bool:
 
     try:
         output = subprocess.run(
-            ["ps", "-axo", "pid=,ppid=,etime=,args="], capture_output=True, text=True, timeout=5,
+            ["ps", "-axo", "pid=,ppid=,etime=,args="],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if output.returncode != 0:
             return True
@@ -2085,7 +2096,10 @@ def activity_life(path: Path, now: float, wall_now: float, stall_timeout: float)
 
 
 def run_supervised(
-    command: list[str], activity: Path, stall_timeout: float, session_id: str | None = None,
+    command: list[str],
+    activity: Path,
+    stall_timeout: float,
+    session_id: str | None = None,
 ) -> int:
     if not math.isfinite(stall_timeout) or stall_timeout <= 0:
         try:
@@ -2130,7 +2144,7 @@ def run_supervised(
                 if not primary.exists() and now >= next_lookup:
                     next_lookup = now + 30
                     try:
-                        discovered = next(projects.glob(f"*/{session_id}.jsonl"), None)
+                        discovered = next(projects.glob(f"*/{session_id}.jsonl"), None)  # pyrefly: ignore[unbound-name]
                     except OSError:
                         discovered = None
                     if discovered is not None:
@@ -2155,7 +2169,7 @@ def run_supervised(
                 stop_child(child)
                 return EXIT_TEMPFAIL
     except KeyboardInterrupt:
-        stop_child(child, interrupt=True)
+        stop_child(child, interrupt=True)  # pyrefly: ignore[unbound-name]
         return 130
     finally:
         for path in (activity, client_activity):
@@ -2197,7 +2211,6 @@ def run_headless_with_resume(
         returncode = run_supervised(current, activity, stall_timeout, session_id=claude_session_id)
         if returncode in (0, EXIT_TEMPFAIL) or claude_session_id is None:
             return returncode
-
 
         claim, _, retry_at = claim_session_route(session_id, model, quota_key, LaunchConfig.base_url)
         if claim is not None or not should_wait_for_reset(retry_at, deadline):
