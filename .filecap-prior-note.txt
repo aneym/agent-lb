@@ -1,1 +1,0 @@
-Blocked: the split needs several private names in dependency modules (support.py, affinity.py, observability.py, proxy/helpers.py) made public, which the seat judged outside its edit scope. It made no commits and the worktree is clean. helpers.py is still 42225 bytes. The worktree was on a detached 
