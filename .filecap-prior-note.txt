@@ -1,0 +1,1 @@
+Blocked: no commit made. The split is staged in the worktree, but ./check --staged rejects the moved LEGACY_FLOOR identifiers in parity_execution.py (2 no-new-comments violations, one at line 177). The entry file is 8,616 bytes and the largest module is 12,581 bytes. Importers were updated: policy_i
