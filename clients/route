@@ -22,11 +22,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import route_cache
 import route_heal
-from route_cache import HttpResult, _fixture_file
+from route_cache import HttpResult
 from route_grok import constraint_choice, hands_refusal, hands_seat, rung_block, seat_defaults
 from route_spread import dispatch_choice
 from route_quota import print_equivalent_note, print_report_quota, authority_fallback, degrade_alias, load_quota_policy, quota_swap_state, swapped_standard
-from route_storage import _parse_ts, atomic_write
+from route_storage import atomic_write
 
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
 DEFAULT_CODEX_COMPANION = "~/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs"
@@ -61,6 +61,21 @@ CLI_SEAT_HOLD_AFTER_FAILURES = 2
 CLI_SEAT_HOLD_SECONDS = 600
 
 ANALYTICS_SESSION_CAP = 20
+
+def parse_ts(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+def fixture_file(path: str) -> Path | None:
+    directory = (os.environ.get("ROUTE_FIXTURE_DIR") or "").strip()
+    if not directory:
+        return None
+    slug = path.split("?", 1)[0].strip("/").replace("/", "_") or "root"
+    return Path(directory).expanduser() / f"{slug}.json"
 
 class ModelState:
     ANTHROPIC_MODELS: tuple[list[str], str] | None = None
@@ -423,7 +438,7 @@ WEEKLY_CYCLE_HOURS = 168.0
 def account_weekly_pace(account: dict[str, Any]) -> float:
 
     remaining = route_heal.window(account.get("usage"), "secondaryRemainingPercent", 100.0)
-    reset_at = _parse_ts(account.get("resetAtSecondary"))
+    reset_at = parse_ts(account.get("resetAtSecondary"))
     hours_left = WEEKLY_CYCLE_HOURS
     if reset_at is not None:
         hours_left = max(0.0, (reset_at - datetime.now(timezone.utc)).total_seconds() / 3600)
@@ -521,7 +536,7 @@ def add_pool_refills(document: dict[str, Any], body: Any) -> None:
                 continue
             if pool.get("id") not in pool_ids(account):
                 continue
-            stamp = _parse_ts(account.get("resetAtSecondary"))
+            stamp = parse_ts(account.get("resetAtSecondary"))
             remaining = route_heal.window(account.get("usage"), "secondaryRemainingPercent", 100.0)
             if stamp is not None and stamp.tzinfo is not None and stamp > now:
                 resets.append((stamp.astimezone(timezone.utc), remaining))
@@ -546,7 +561,7 @@ def pool_snapshot_path() -> Path:
     return env_path("ROUTE_POOL_SNAPSHOT", Path.home() / ".cache" / "agent-lb" / "route-pools.json")
 
 def cached_pool_snapshot() -> dict[str, Any] | None:
-    if _fixture_file("/api/pools") is not None:
+    if fixture_file("/api/pools") is not None:
         return None
     try:
         record = json.loads(pool_snapshot_path().read_text(encoding="utf-8"))
@@ -574,7 +589,7 @@ def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS,
         document = dict(direct.body)
         route_heal.balance_pool(document, read_accounts)
         document.setdefault("source", "lb")
-        if not direct.from_cache and _fixture_file("/api/pools") is None:
+        if not direct.from_cache and fixture_file("/api/pools") is None:
             try:
                 atomic_write(pool_snapshot_path(), json.dumps({
                     "baseUrl": base_url(), "savedAt": time.time(), "document": document}))
@@ -671,7 +686,7 @@ def pool_remaining(pool: dict[str, Any]) -> float | None:
     return remaining if remaining is not None else pace_number(pool.get("aggregateRemainingPercent"))
 
 def pace_timestamp(value: Any) -> datetime | None:
-    stamp = _parse_ts(value)
+    stamp = parse_ts(value)
     return stamp if stamp is not None and stamp.tzinfo is not None else None
 
 def load_pool_history(now: datetime) -> list[dict]:
@@ -826,7 +841,7 @@ def command_pools(args: argparse.Namespace) -> int:
         if "refills" in pool:
             refills = []
             for refill in pool["refills"]:
-                stamp = _parse_ts(refill["at"])
+                stamp = parse_ts(refill["at"])
                 refills.append(f"{stamp:%m-%d %H:%MZ} +{refill['accounts']} accounts")
             print("  refills: " + (", ".join(refills) or "none"))
     return EXIT_OK
@@ -913,7 +928,7 @@ def served_models() -> tuple[list[str], str]:
         if ids:
             cache = models_cache_path()
             try:
-                if not result.from_cache and _fixture_file(path) is None:
+                if not result.from_cache and fixture_file(path) is None:
                     atomic_write(cache, json.dumps({"ts": now_iso(), "models": ids}))
             except OSError:
                 pass
@@ -922,7 +937,7 @@ def served_models() -> tuple[list[str], str]:
         cached = json.loads(models_cache_path().read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return [], "no LB model list and no cache"
-    stamp = _parse_ts(cached.get("ts")) if isinstance(cached, dict) else None
+    stamp = parse_ts(cached.get("ts")) if isinstance(cached, dict) else None
     ids = cached.get("models") if isinstance(cached, dict) else None
     if stamp is None or not isinstance(ids, list):
         return [], "model cache unreadable"
@@ -942,7 +957,7 @@ def anthropic_models() -> tuple[list[str], str]:
         result.ok and isinstance(result.body, dict) and isinstance(result.body.get("models"), list)) else []
     if ids:
         try:
-            if not result.from_cache and _fixture_file("/api/models/anthropic") is None:
+            if not result.from_cache and fixture_file("/api/models/anthropic") is None:
                 atomic_write(cache, json.dumps({"ts": now_iso(), "models": ids}))
         except OSError:
             pass
@@ -953,7 +968,7 @@ def anthropic_models() -> tuple[list[str], str]:
         cached = json.loads(cache.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return ModelState.ANTHROPIC_MODELS
-    stamp = _parse_ts(cached.get("ts")) if isinstance(cached, dict) else None
+    stamp = parse_ts(cached.get("ts")) if isinstance(cached, dict) else None
     if stamp is not None and stamp.tzinfo is None:
         stamp = None
     listed = cached.get("models") if isinstance(cached, dict) else None
@@ -1015,7 +1030,7 @@ def model_list_failed_recently(cache: Path) -> bool:
     failure = cache.with_suffix(".failed.json")
     try:
         cached = json.loads(failure.read_text(encoding="utf-8"))
-        stamp = _parse_ts(cached.get("ts"))
+        stamp = parse_ts(cached.get("ts"))
         return bool(stamp and stamp.tzinfo and (datetime.now(timezone.utc) - stamp).total_seconds() < 300)
     except (OSError, ValueError, AttributeError):
         return False
@@ -1038,7 +1053,7 @@ def fetch_cursor_models() -> list[str]:
     cache = models_cache_path().with_name("route-cursor-models.json")
     try:
         cached = json.loads(cache.read_text(encoding="utf-8"))
-        stamp = _parse_ts(cached.get("ts"))
+        stamp = parse_ts(cached.get("ts"))
         if (stamp and stamp.tzinfo
                 and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS):
             return [value for value in cached.get("models", []) if isinstance(value, str)]
@@ -1131,7 +1146,7 @@ def fetch_devin_models() -> list[str]:
     cache = models_cache_path().with_name("route-devin-models.json")
     try:
         cached = json.loads(cache.read_text(encoding="utf-8"))
-        stamp = _parse_ts(cached.get("ts"))
+        stamp = parse_ts(cached.get("ts"))
         if (stamp and stamp.tzinfo
                 and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS):
             return [value for value in cached.get("models", []) if isinstance(value, str)]
@@ -1369,7 +1384,7 @@ def read_state() -> dict[str, Any]:
 def state_age_seconds(state: dict[str, Any]) -> float | None:
     if not state:
         return None
-    stamp = _parse_ts(state.get("ts"))
+    stamp = parse_ts(state.get("ts"))
     if stamp is None:
         return None
     return (datetime.now(timezone.utc) - stamp).total_seconds()
@@ -1383,7 +1398,7 @@ def seat_is_up(seats: Any, seat: str) -> bool:
         return True
     if record.get("ok") is not False:
         return True
-    hold_until = _parse_ts(record.get("hold_until"))
+    hold_until = parse_ts(record.get("hold_until"))
     return hold_until is not None and hold_until <= datetime.now(timezone.utc)
 
 def override_matches(override: Any, class_name: str, entry: dict[str, Any]) -> bool:
@@ -2447,7 +2462,7 @@ def command_menu(args: argparse.Namespace) -> int:
         for pool_id, pool in menu["pools"].items():
             if pool.get("refills"):
                 print(f"{pool_id} refills: " + ", ".join(
-                    f"{_parse_ts(row['at']):%m-%d %H:%MZ} +{row['accounts']} accounts"
+                    f"{parse_ts(row['at']):%m-%d %H:%MZ} +{row['accounts']} accounts"
                     for row in pool["refills"]))
         for class_name, entry in menu["classes"].items():
             if entry["driver"]:
@@ -2781,7 +2796,7 @@ def dispatch_standard(table: dict[str, Any], class_name: str, author_vendor: str
 def decision_day(ts: Any) -> str | None:
     from zoneinfo import ZoneInfo
 
-    stamp = _parse_ts(ts)
+    stamp = parse_ts(ts)
     return stamp.astimezone(ZoneInfo("America/New_York")).date().isoformat() if stamp else None
 
 
@@ -3031,7 +3046,7 @@ def utc_stamp(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def row_time(row: dict[str, Any]) -> datetime | None:
-    stamp = _parse_ts(row.get("ts"))
+    stamp = parse_ts(row.get("ts"))
     if stamp is None:
         return None
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
@@ -3060,7 +3075,7 @@ class OutcomeSources:
         self.now = now
 
 def outcomes_now() -> datetime:
-    configured = _parse_ts((os.environ.get("ROUTE_OUTCOMES_NOW") or "").strip())
+    configured = parse_ts((os.environ.get("ROUTE_OUTCOMES_NOW") or "").strip())
     return configured if configured else datetime.now(timezone.utc)
 
 def git_reverts(receipts: list[dict[str, Any]], since: datetime) -> list[dict[str, Any]]:
@@ -3114,7 +3129,7 @@ def replay_sources(directory: Path) -> OutcomeSources:
     meta = {}
     with contextlib.suppress(OSError, json.JSONDecodeError):
         meta = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
-    now = _parse_ts(meta.get("now")) if isinstance(meta, dict) else None
+    now = parse_ts(meta.get("now")) if isinstance(meta, dict) else None
     return OutcomeSources(
         decisions=read_jsonl(directory / "route-decisions.jsonl"),
         ledger=read_jsonl(directory / "dispatch.jsonl"),
@@ -3405,10 +3420,10 @@ def job_status(view: JobView, index: DecisionIndex, now: datetime) -> tuple[str,
     awaiting = last_close is None or (last_close.get("attempt") or 1) < last_attempt
     failed = last_close is not None and not last_close["data"].get("ok", False) and not awaiting
     if rule == "merged_no_repair_72h":
-        merged_at = _parse_ts(merges[0]["ts"]) if merges else None
+        merged_at = parse_ts(merges[0]["ts"]) if merges else None
         horizon = merged_at + REPAIR_WINDOW if merged_at else None
         trouble = [event for event in view.kind("repair", "escalation", "revert")
-                   if horizon is None or _parse_ts(event["ts"]) <= horizon]
+                   if horizon is None or parse_ts(event["ts"]) <= horizon]
         if trouble:
             return "rejected", rule
         if merged_at is not None:
@@ -3440,7 +3455,7 @@ def job_status(view: JobView, index: DecisionIndex, now: datetime) -> tuple[str,
         return "rejected", rule
     if awaiting or last_close is None:
         return "pending", rule
-    closed_at = _parse_ts(last_close["ts"])
+    closed_at = parse_ts(last_close["ts"])
     caller = view.first.get("caller")
     if caller:
         for rows in index.by_job.values():
@@ -3987,7 +4002,7 @@ def read_ledger(since: datetime) -> tuple[list[dict[str, Any]], list[dict[str, A
             continue
         if not isinstance(record, dict):
             continue
-        stamp = _parse_ts(record.get("ts"))
+        stamp = parse_ts(record.get("ts"))
         if stamp is None or stamp < since:
             continue
         if record.get("event") == "dispatch":
@@ -4162,7 +4177,7 @@ def implement_results(since: datetime) -> list[dict[str, Any]]:
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        stamp = _parse_ts(record.get("ts"))
+        stamp = parse_ts(record.get("ts"))
         if (
             record.get("event") == IMPLEMENT_EVENT
             and record.get("class", "implement") == "implement"
@@ -4236,7 +4251,7 @@ def learning_outcomes(since: datetime, until: datetime, source: str = "prod") ->
             continue
         if source != "all" and (row.get("source") == "eval") != (source == "eval"):
             continue
-        stamp = _parse_ts(row.get("ts"))
+        stamp = parse_ts(row.get("ts"))
         if stamp is None or stamp.tzinfo is None or not since <= stamp <= until:
             continue
         job = row.get("job_id")
