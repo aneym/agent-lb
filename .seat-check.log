@@ -1,0 +1,131 @@
+{"findings": [], "count": 0}
+{
+  "cycles": [
+    "app",
+    "bin",
+    "clients",
+    "config",
+    "deploy",
+    "docs",
+    "features",
+    "frontend",
+    "openspec",
+    "patches",
+    "scripts",
+    "tests"
+  ],
+  "errors": [],
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+filecap: 0.366 s
+modcheck: 0.719 s
+comments: 0.234 s
+freeze: 0.163 s
+modcheck: app/modules/proxy/_service/http_bridge/alias_reuse.py:4: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_durable_bridge_lookup_allows_local_reuse
+app/modules/proxy/_service/http_bridge/alias_reuse.py:4: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_previous_response_alias_key
+app/modules/proxy/_service/http_bridge/alias_reuse.py:4: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_session_allows_api_key
+app/modules/proxy/_service/http_bridge/alias_reuse.py:4: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_session_matches_preferred_account
+app/modules/proxy/_service/http_bridge/alias_reuse.py:4: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_session_retiring_with_visible_requests
+app/modules/proxy/_service/http_bridge/alias_reuse.py:4: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_session_reusable_for_request
+app/modules/proxy/_service/http_bridge/alias_reuse.py:4: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_turn_state_alias_key
+app/modules/proxy/_service/http_bridge/alias_reuse.py:4: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_log_http_bridge_event
+app/modules/proxy/_service/http_bridge/alias_reuse.py:15: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_service_time
+app/modules/proxy/_service/http_bridge/alias_reuse.py:16: private_reach app/modules/proxy/_service/support.py:_HTTPBridgeSession
+app/modules/proxy/_service/http_bridge/alias_reuse.py:16: private_reach app/modules/proxy/_service/support.py:_HTTPBridgeSessionKey
+app/modules/proxy/_service/http_bridge/alias_reuse.py:17: private_reach app/modules/proxy/affinity.py:_extract_model_class
+app/modules/proxy/_service/http_bridge/capacity_admission.py:9: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_continuity_lost_error_envelope
+app/modules/proxy/_service/http_bridge/capacity_admission.py:9: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_eviction_priority
+app/modules/proxy/_service/http_bridge/capacity_admission.py:9: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_previous_response_alias_key
+app/modules/proxy/_service/http_bridge/capacity_admission.py:9: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_turn_state_alias_key
+app/modules/proxy/_service/http_bridge/capacity_admission.py:9: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_log_http_bridge_event
+app/modules/proxy/_service/http_bridge/capacity_admission.py:17: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_record_continuity_fail_closed
+app/modules/proxy/_service/http_bridge/capacity_admission.py:17: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_service_time
+app/modules/proxy/_service/http_bridge/capacity_admission.py:18: private_reach app/modules/proxy/affinity.py:_extract_model_class
+app/modules/proxy/_service/http_bridge/durable_session.py:13: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_durable_lease_ttl_seconds
+app/modules/proxy/_service/http_bridge/durable_session.py:13: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_is_missing_durable_bridge_table_error
+app/modules/proxy/_service/http_bridge/durable_session.py:13: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_log_http_bridge_event
+app/modules/proxy/_service/http_bridge/durable_session.py:13: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_record_bridge_reattach
+app/modules/proxy/_service/http_bridge/durable_session.py:20: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_headers_with_turn_state
+app/modules/proxy/_service/http_bridge/durable_session.py:20: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_service_get_settings
+app/modules/proxy/_service/http_bridge/durable_session.py:21: private_reach app/modules/proxy/_service/support.py:_HTTPBridgeSession
+app/modules/proxy/_service/http_bridge/durable_session.py:22: private_reach app/modules/proxy/affinity.py:_extract_model_class
+app/modules/proxy/_service/http_bridge/lifecycle.py:18: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_request_counts_against_queue
+app/modules/proxy/_service/http_bridge/lifecycle.py:18: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_log_http_bridge_event
+app/modules/proxy/_service/http_bridge/lifecycle.py:23: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_await_cancelled_task
+app/modules/proxy/_service/http_bridge/lifecycle.py:23: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_headers_with_turn_state
+app/modules/proxy/_service/http_bridge/lifecycle.py:23: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_service_get_settings
+app/modules/proxy/_service/http_bridge/lifecycle.py:23: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_service_time
+app/modules/proxy/_service/http_bridge/lifecycle.py:29: private_reach app/modules/proxy/_service/observability.py:_hash_identifier
+app/modules/proxy/_service/http_bridge/lifecycle.py:29: reexport _hash_identifier
+app/modules/proxy/_service/http_bridge/lifecycle.py:30: private_reach app/modules/proxy/_service/support.py:_HTTPBridgeSession
+app/modules/proxy/_service/http_bridge/lifecycle.py:30: private_reach app/modules/proxy/_service/support.py:_HTTPBridgeSessionKey
+app/modules/proxy/_service/http_bridge/lifecycle.py:31: private_reach app/modules/proxy/affinity.py:_AffinityPolicy
+app/modules/proxy/_service/http_bridge/lifecycle.py:31: private_reach app/modules/proxy/affinity.py:_extract_model_class
+app/modules/proxy/_service/http_bridge/lifecycle.py:243: private_reach app/modules/proxy/load_balancer.py:_select_long_window_entry
+app/modules/proxy/_service/http_bridge/lifecycle.py:243: private_reach app/modules/proxy/load_balancer.py:_state_from_account
+app/modules/proxy/_service/http_bridge/operation_contract.py:5: private_reach app/modules/proxy/_service/http_bridge/protocol.py:_HTTPBridgeServiceProtocol
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_active_http_bridge_instance_ring
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_durable_bridge_lookup_active_owner
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_can_local_recover_without_ring
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_can_single_instance_owner_takeover_without_anchor
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_can_single_instance_prompt_cache_takeover_without_anchor
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_endpoint_matches_current_instance
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_has_durable_recovery_anchor
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_key_strength
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_owner_instance
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_owner_lookup_unavailable_error_envelope
+app/modules/proxy/_service/http_bridge/owner_recovery.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_log_http_bridge_event
+app/modules/proxy/_service/http_bridge/owner_recovery.py:28: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_record_continuity_fail_closed
+app/modules/proxy/_service/http_bridge/owner_recovery.py:29: private_reach app/modules/proxy/_service/support.py:_HTTPBridgeOwnerForward
+app/modules/proxy/_service/http_bridge/owner_recovery.py:30: private_reach app/modules/proxy/affinity.py:_extract_model_class
+app/modules/proxy/_service/http_bridge/session_connect.py:16: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_record_bridge_first_turn_timeout
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_call_with_supported_optional_kwargs
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_estimated_lease_tokens_from_request_usage_budget
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_headers_with_turn_state
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_is_local_account_cap_code
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_prefer_earlier_reset_window
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_raise_proxy_unavailable
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_record_same_account_takeover
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_remaining_budget_seconds
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_routing_strategy
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_service_get_settings
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_service_get_settings_cache
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_service_time
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_upstream_turn_state_from_socket
+app/modules/proxy/_service/http_bridge/session_connect.py:18: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_websocket_connect_deadline
+app/modules/proxy/_service/http_bridge/session_connect.py:34: private_reach app/modules/proxy/_service/support.py:_HTTPBridgeSession
+app/modules/proxy/_service/http_bridge/session_connect.py:34: private_reach app/modules/proxy/_service/support.py:_HTTPBridgeSessionKey
+app/modules/proxy/_service/http_bridge/session_connect.py:34: private_reach app/modules/proxy/_service/support.py:_WebSocketRequestState
+app/modules/proxy/_service/http_bridge/session_connect.py:34: private_reach app/modules/proxy/_service/support.py:_WebSocketUpstreamControl
+app/modules/proxy/_service/http_bridge/session_connect.py:34: private_reach app/modules/proxy/_service/support.py:_copy_websocket_route_metadata_to_session
+app/modules/proxy/_service/http_bridge/session_connect.py:41: private_reach app/modules/proxy/affinity.py:_AffinityPolicy
+app/modules/proxy/_service/http_bridge/session_connect.py:41: private_reach app/modules/proxy/affinity.py:_sticky_key_from_turn_state_header
+app/modules/proxy/_service/http_bridge/session_reconnect.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_log_http_bridge_event
+app/modules/proxy/_service/http_bridge/session_reconnect.py:14: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_preferred_http_bridge_reconnect_turn_state
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_await_cancelled_task
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_estimated_lease_tokens_from_request_usage_budget
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_headers_with_turn_state
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_is_local_account_cap_code
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_prefer_earlier_reset_window
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_record_same_account_takeover
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_remaining_budget_seconds
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_routing_strategy
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_service_get_settings
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_service_get_settings_cache
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_upstream_turn_state_from_socket
+app/modules/proxy/_service/http_bridge/session_reconnect.py:19: private_reach app/modules/proxy/_service/http_bridge/service_stubs.py:_websocket_connect_deadline
+app/modules/proxy/_service/http_bridge/session_reconnect.py:33: private_reach app/modules/proxy/_service/support.py:_HTTPBridgeSession
+app/modules/proxy/_service/http_bridge/session_reconnect.py:33: private_reach app/modules/proxy/_service/support.py:_WebSocketRequestState
+app/modules/proxy/_service/http_bridge/session_reconnect.py:33: private_reach app/modules/proxy/_service/support.py:_WebSocketUpstreamControl
+app/modules/proxy/_service/http_bridge/session_reconnect.py:33: private_reach app/modules/proxy/_service/support.py:_copy_websocket_route_metadata_to_session
+app/modules/proxy/_service/http_bridge/session_reconnect.py:39: private_reach app/modules/proxy/affinity.py:_extract_model_class
+app/modules/proxy/_service/http_bridge/session_registration.py:7: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_allow_durable_takeover
+app/modules/proxy/_service/http_bridge/session_registration.py:7: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_http_bridge_startup_wait_timeout_error
+app/modules/proxy/_service/http_bridge/session_registration.py:7: private_reach app/modules/proxy/_service/http_bridge/helpers.py:_log_http_bridge_event
+app/modules/proxy/_service/http_bridge/session_registration.py:13: private_reach app/modules/proxy/_service/support.py:_HTTPBridgeSession
+app/modules/proxy/_service/http_bridge/session_registration.py:14: private_reach app/modules/proxy/affinity.py:_extract_model_class
+SCC membership: 26 -> 26 modules; 8 -> 8 cyclic SCCs
+modcheck staged: 103 new findings; 7 cycle pairs; 1041 modules
+gate-precheck: 1 findings in 1.490 s
