@@ -51,7 +51,7 @@ def _anthropic_overflow_message(detail: str | None) -> str:
     return f"{_PROMPT_TOO_LONG}: {text}"
 
 
-def _anthropic_error_payload(code: str | None, message: str) -> JsonObject:
+def anthropic_error_payload(code: str | None, message: str) -> JsonObject:
     if _is_context_overflow_error(code, message):
         return {"type": "invalid_request_error", "message": _anthropic_overflow_message(message)}
     return {"type": "api_error", "message": message}
@@ -244,7 +244,7 @@ async def responses_to_claude_events(
     source: AsyncIterator[bytes | str], model: str = CCGPT_MODEL, input_tokens_estimate: int = 0
 ) -> AsyncIterator[JsonObject]:
 
-    state = _ClaudeStreamState(actual_model=model, input_tokens_estimate=input_tokens_estimate)
+    state = ClaudeStreamState(actual_model=model, input_tokens_estimate=input_tokens_estimate)
     buffer = ""
     async for chunk in source:
         buffer += chunk.decode("utf-8", "replace") if isinstance(chunk, bytes) else chunk
@@ -452,7 +452,7 @@ def anthropic_error_from_response(status_code: int, body: bytes) -> JsonObject:
                 message = error["message"]
             if isinstance(error.get("code"), str):
                 code = error["code"]
-    return {"type": "error", "error": _anthropic_error_payload(code, message)}
+    return {"type": "error", "error": anthropic_error_payload(code, message)}
 
 
 def _text_message(role: str, text: str) -> JsonObject:
@@ -546,7 +546,8 @@ def _decode_reasoning_signature(value: JsonValue | None) -> str | None:
 
 
 @dataclass(slots=True)
-class _ClaudeStreamState:
+class ClaudeStreamState:
+    actual_model: str
     message_id: str = field(default_factory=lambda: f"msg_{uuid.uuid4().hex}")
     block_index: int = 0
     open_block: str | None = None
@@ -555,7 +556,6 @@ class _ClaudeStreamState:
     saw_terminal: bool = False
     emitted_text: bool = False
     emitted_tool: bool = False
-    actual_model: str = CCGPT_MODEL
 
     input_tokens_estimate: int = 0
 
@@ -658,7 +658,7 @@ class _ClaudeStreamState:
         elif event_type in {"response.failed", "error"}:
             output.extend(self._close_block())
             code, message = _error_fields_from_event(event)
-            output.append({"type": "error", "error": _anthropic_error_payload(code, message)})
+            output.append({"type": "error", "error": anthropic_error_payload(code, message)})
             self.saw_terminal = True
         return output
 
