@@ -2,6 +2,7 @@ import json
 import os
 import signal
 
+import parity_offload  # type: ignore[missing-import]
 from parity_cases import payload_for, setup_case  # type: ignore[missing-import]
 
 from parity_execution import direct_argv, effect, effective, floor_failed, floor_of, hook_timeout, run_direct, run_shell, with_exec_timer, with_floor  # type: ignore[missing-import]  # isort: skip  # fmt: skip
@@ -17,6 +18,7 @@ def run_path(sandbox, case, hooks, extra, trace):
     setup_case(case, run)
     payload = payload_for(case, run)
     trace_path = os.path.join(run, "trace.jsonl")
+    extra = dict(extra, **parity_offload.env(case, run))
     env = sandbox.env(run, dict(extra, HOOK_DISPATCH_TRACE=trace_path) if trace else extra)
     cwd = os.path.join(run, case.get("cwd_rel", "work"))
     results = []
@@ -168,6 +170,7 @@ def run_case(sandbox, registry, case):
             r["code"] == 128 + signal.SIGALRM and any(record.get("exec") for record in r["trace"]) for r in new_results
         )
     )
+    outcome["mismatches"] = parity_offload.verdict(case, outcome)
     outcome["result"] = "pass" if not outcome["mismatches"] else "fail"
     return outcome
 

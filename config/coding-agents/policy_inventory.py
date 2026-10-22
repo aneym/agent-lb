@@ -59,6 +59,7 @@ MANAGED_HOOKS = (
     "parity_comparison.py",
     "parity_processes.py",
     "parity_replay.py",
+    "parity_offload.py",
     "subagent-closeout.py",
     "seat-guard.py",
     "seat_guard_advisory.py",

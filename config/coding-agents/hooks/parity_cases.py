@@ -3,6 +3,7 @@ import os
 import subprocess
 import time
 
+import parity_offload  # type: ignore[missing-import]
 from parity_sandbox import TEST_PANE  # type: ignore[missing-import]
 
 HEAVY_DIR = os.path.join(os.path.expanduser("~"), "factory")
@@ -28,7 +29,7 @@ def builtin_cases():
         dict(bash("pkill -f kill-guard-test-marker"), name="allow-pkill (kill-guard is a PATH shim)", expect="allow"),
         dict(bash("DISPLAY_WAKE_SKIP=1 screencapture -x /tmp/x.png"), name="allow-display-skip", expect="allow"),
         dict(bash("screencapture -x out.png"), name="allow-display-wake-fires", expect="allow"),
-        dict(bash("cd %s && python3 -m pytest -q checks" % HEAVY_DIR), name="allow-box-offload", expect="allow"),
+        *parity_offload.cases(bash),
         dict(bash("cd sub && rm a1 a2"), name="allow-rm-cd-rewrite", expect="allow", setup="rmcd"),
         dict(bash("open -a Preview out.png"), name="deny-open-other-app", expect=deny),
         dict(bash("wslview https://x"), name="deny-wslview", expect=deny),
@@ -186,6 +187,8 @@ def builtin_cases():
 def setup_case(case, run):
     setup = case.get("setup") or ""
     work = os.path.join(run, "work")
+    if "offload" in setup:
+        parity_offload.setup(case, run)
     if "rmcd" in setup:
         os.makedirs(os.path.join(work, "sub"), exist_ok=True)
         for name in ("a1", "a2"):
