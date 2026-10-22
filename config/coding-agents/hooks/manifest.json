@@ -1,0 +1,172 @@
+{
+  "owner": "agent-lb",
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\" --session-env",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Agent",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/seat-guard.py\"",
+        "timeout": 5,
+        "statusMessage": "Seat guard"
+      },
+      "needs_source": false
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Workflow",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-seat-guard.py\"",
+        "timeout": 5,
+        "statusMessage": "Workflow seat guard"
+      },
+      "needs_source": false
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+        "timeout": 10
+      },
+      "needs_source": false
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Read",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "SubagentStop",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/subagent-closeout.py\" 2>/dev/null || true",
+        "timeout": 5,
+        "statusMessage": "Dispatch closeout"
+      },
+      "needs_source": false
+    },
+    {
+      "event": "SubagentStop",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.agents/policy/coding-agents/hooks/focus-steal-check.py\" subagent-stop",
+        "timeout": 15,
+        "statusMessage": "Focus steal check"
+      },
+      "needs_source": false
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Workflow",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-readback.py\"",
+        "timeout": 5
+      },
+      "needs_source": false
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claude-grind-pulse.py\"",
+        "timeout": 2,
+        "async": true
+      },
+      "needs_source": true
+    },
+    {
+      "event": "SessionStart",
+      "matcher": "compact|resume",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/factory-context.py\" 2>/dev/null || true",
+        "timeout": 10,
+        "statusMessage": "Factory context"
+      },
+      "needs_source": false
+    },
+    {
+      "event": "PreCompact",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/compact-checkpoint.py\"",
+        "timeout": 10,
+        "statusMessage": "Compact checkpoint"
+      },
+      "needs_source": false
+    }
+  ]
+}
