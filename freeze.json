@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T18:57:50Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-config-coding-agents-verify-routing",
-   "path": "config/coding-agents/verify-routing",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T17:27:50Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -152,6 +142,16 @@
    "path": "config/coding-agents/install-policy.py",
    "sha": "606d905691f4072e8a44af0f9662c4ad15643fb1",
    "until": "2026-10-29T17:27:46Z"
+  },
+  {
+   "into": [
+    "config/coding-agents/hooks/routing_factory_verification.py",
+    "config/coding-agents/hooks/routing_installation_verification.py"
+   ],
+   "note": "config/coding-agents/verify-routing split at bdfd4fce2c. Reapply your diff onto the new module that now holds the code. Map: config/coding-agents/hooks/routing_factory_verification.py: verify_factory; config/coding-agents/hooks/routing_installation_verification.py: verify_installation",
+   "path": "config/coding-agents/verify-routing",
+   "sha": "bdfd4fce2c896811b95f46f84a9ff58867408c9f",
+   "until": "2026-10-29T17:28:08Z"
   }
  ]
 }
