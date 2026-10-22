@@ -106,7 +106,12 @@ export BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only
 export CODEX_LOCAL_WRITE_SANDBOX=danger-full-access
 
 if [[ -n $prompt_file ]]; then
-  rendered_prompt=$(mktemp "${TMPDIR:-/tmp}/codex-local-contract.XXXXXX")
+  contract_name=$(basename "$prompt_file")
+  [[ $contract_name == *.contract.* ]] || { echo 'codex-local: prompt path must be a job-key-bound contract' >&2; exit 2; }
+  k=${contract_name%%.contract.*}
+  [[ $k =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo 'codex-local: invalid contract job key' >&2; exit 2; }
+  rendered_prompt=$(mktemp "${TMPDIR:-/tmp}/$k.contract.XXXXXX")
+  printf 'contract=%s\n' "$rendered_prompt"
   cat "$prompt_file" > "$rendered_prompt"
   printf '\n\n' >> "$rendered_prompt"
   python3 "$(dirname "$0")/seat-finish.py" --prompt-file "$prompt_file" >> "$rendered_prompt"

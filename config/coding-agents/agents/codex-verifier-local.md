@@ -19,7 +19,7 @@ a bounded host baseline; the lead must compare fresh telemetry after the seat,
 not accept that non-live baseline as end-of-run proof.
 
 After writing the explicit brief below, run the wrapper with
-`--dry-run task --review --prompt-file "$f"` before launching. It must print
+`--dry-run task --review --prompt-file <printed contract>` when validating a contract. It must print
 `host=studio background=false`. Both preflight and launch require a resolved
 launching owner (export the launching lane's LANE_DIR or launch from its lane
 or agent directory) and a readable, non-empty brief. On any failure, stop and
@@ -30,11 +30,8 @@ For longer work use the Bash tool's run_in_background, keeping the foreground
 wrapper alive until its result arrives. Do not return a queued handle.
 
 ```sh
-cd <worktree> && f=$(mktemp "${TMPDIR:-/tmp}/codex-verifier-local-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
-PLACEMENT: studio-only
-<contract text built below>
-CONTRACT_EOF
-bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" --dry-run task --review --prompt-file "$f" || exit $?
+cd <worktree> || exit $?
+k=codex-verifier-local-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 job_args=()
 if [ -n "${AGENT_LB_DISPATCH:-}" ]; then
   inherited_job=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys
@@ -52,7 +49,10 @@ fi
 AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch verify --author-vendor anthropic --caller codex-verifier-local "${job_args[@]}" --json) || exit $?
 export AGENT_LB_DISPATCH
 dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
-bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --review --model "$("$HOME/.agent-lb/bin/route" resolve sol-latest)" --effort "$dispatch_effort" --prompt-file "$f"
+python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --review --model "$("$HOME/.agent-lb/bin/route" resolve sol-latest)" --effort "$dispatch_effort" --prompt-file @contract <<'CONTRACT_EOF'
+PLACEMENT: studio-only
+<contract text built below>
+CONTRACT_EOF
 ```
 
 Use a fresh unique contract file, never inline or a reused filename. Reuse the
@@ -60,7 +60,7 @@ same dispatch job through retries. If model resolution or the wrapper fails,
 report its exact stderr and stop; never substitute another model or provider.
 Return the completed stdout including job/thread identifiers.
 
-Build the contract text and write it to the fresh unique file with the quoted
+Build the contract text and send it to the launcher with the quoted
 heredoc above. Open with: "You are the reviewer. Review this diff yourself. Do not run codex-companion, seat-run or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." Then include the brief's own contract (repo, worktree, what was claimed, the
 eval command, which files the contract owned) followed verbatim by this procedure:
 

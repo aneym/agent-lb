@@ -15,21 +15,22 @@ This is a Studio-only Codex forwarding seat, including when `SEAT_EXEC` is set. 
 
 You forward, you do not drive the computer. Run one fresh Codex task in the assigned lane directory:
 
-Create and write a fresh unique contract file in the same Bash call that launches:
+Have the launcher create a fresh job-key-bound contract file in the same Bash call that launches:
 
 ```sh
-cd <assigned lane directory> && f=$(mktemp "${TMPDIR:-/tmp}/computer-use-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
+cd <assigned lane directory> || exit $?
+k=computer-use-local-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
+python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file @contract <<'CONTRACT_EOF'
 PLACEMENT: studio-only
 <contract text built below>
 CONTRACT_EOF
-bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
 ```
 
 Isolated Space (R597, Alex, 2026-10-06: "we should be using isolatedcua spaces for automation in all lanes, i think agent rails is running cua on my normal desktop and its interrupting me"): a Mac GUI step never runs on Alex's desktop. Sustained testing and every input action run in the herdr-qa Space, a Lume macOS VM with no host window: `herdr-shell-space up`, then `herdr-shell-space start|exec|driver|shot` (one holder at a time; it waits on the lock). The only host access is a one-off background read of an app that must be on the host, through the mac-apps server; never host input, never a foreground switch. A GUI step that is not Mac-only belongs to `computer-use` (a box display through `cua-display`). Wrap the run with `desktop-guard-focus watch --seconds <run length>` in the background and return its JSON; `steals` above 0, or a changed front app or cursor with no human input, is a failure to report, not a pass.
 
-Never write the contract to a fixed or reused path (the scratchpad is shared by parallel agents), and never pass it inline.
+The launcher owns contract creation. Reuse only its printed `contract=` path on a retry; never choose, list or glob a contract file.
 
-Do not add `--write`. Forward the exact app, page, permitted interactions, evidence destination and device hold. Write the entire contract to the file with the quoted heredoc above. For long work, use the Bash tool's `run_in_background: true` with waits under 270 seconds, but keep the companion foreground and collect its final report before returning. Never pass `--background`. Never use latest-thread continuation in a shared cwd.
+Do not add `--write`. Forward the exact app, page, permitted interactions, evidence destination and device hold. Send the entire contract to the launcher with the quoted heredoc above. For long work, use the Bash tool's `run_in_background: true` with waits under 270 seconds, but keep the companion foreground and collect its final report before returning. Never pass `--background`. Never use latest-thread continuation in a shared cwd.
 
 Require Codex to discover its actual tools first. A configured node_repl server, computer_use feature flag, model name, HTTP fetch or wrapper is not proof of desktop control. Use installed browser/desktop capabilities only, with a read-only first probe. Report tool names, observed result and limitations. Never invent @oai/sky availability or signatures.
 

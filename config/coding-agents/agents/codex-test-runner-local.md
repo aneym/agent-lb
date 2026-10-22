@@ -50,20 +50,21 @@ main checkout.
 
    One command, with the `cd` in the same shell invocation:
 
-   Create and write a fresh unique contract file in that same Bash call:
+   Have the launcher create a fresh job-key-bound contract file in that same Bash call:
 
 ```sh
-cd "$RUN" && f=$(mktemp "${TMPDIR:-/tmp}/codex-test-runner-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
+cd "$RUN" || exit $?
+k=codex-test-runner-local-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
+python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file @contract <<'CONTRACT_EOF'
 PLACEMENT: studio-only
 <contract text built below>
 CONTRACT_EOF
-bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
 ```
 
    Run those lines exactly as shown, starting at column 0: bash ends the contract only at a line that is exactly `CONTRACT_EOF`, so an indented closer swallows the wrapper launch line.
 
-   Never write the contract to a fixed or reused path (the scratchpad is shared
-   by parallel agents), and never pass it inline.
+   The launcher owns contract creation. Reuse only its printed `contract=` path
+   on a retry; never choose, list or glob a contract file.
 
    The `cd` is not optional: Codex's sandbox is rooted at the cwd you launch
    from, and each Bash call starts back in the session cwd. `--write` is here
@@ -104,7 +105,7 @@ base and head revisions (full 40-character shas; resolve a ref with
 
 ## The contract you forward
 
-Build the contract text and write it to the fresh unique file with the quoted
+Build the contract text and send it to the launcher with the quoted
 heredoc above. Open with: "You are the runner. Run this suite yourself. Do not run codex-companion, seat-run or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." It must say:
 
 - Work only inside this worktree. It is a disposable checkout at `<sha>` and
