@@ -10,6 +10,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from seat_hands import hands_target  # type: ignore[missing-import]
+
 AGENT_MODEL = re.compile(r"^model:\s*(\S+)\s*$", re.MULTILINE)
 
 
@@ -321,6 +323,22 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
             reasons.append("agent() without agentType: pass agentType (models.md, Workflows)")
         seat_token = keys.get("agentType")
         seat = seat_token[1] if seat_token and seat_token[0] == "string" else None
+        prompt_start, prompt_end = args[0]
+        prompt = (
+            items[prompt_start][1]
+            if prompt_end == prompt_start + 1 and items[prompt_start][0] in ("string", "opaque")
+            else ""
+        )
+        if (
+            seat
+            and "OPUS-REASON" not in prompt
+            and (seat in {"general-purpose", "claude", "effort-low", "effort-xhigh"} or seat.startswith("opus-seat"))
+        ):
+            target = hands_target("general-purpose", prompt)
+            if target:
+                reasons.append(
+                    f"agent() sends hands work to {seat!r}: use {target[0]} via seat-run and keep Opus for decisions (models.md, Teams and workflows)."
+                )
         model = keys.get("model")
         if model in (("word", "undefined"), ("word", "null")):
             keys.pop("model")

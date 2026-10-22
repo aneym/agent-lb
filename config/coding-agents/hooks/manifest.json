@@ -2,6 +2,16 @@
   "owner": "agent-lb",
   "hooks": [
     {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claude-bash-hands-nudge.py\"",
+        "timeout": 5
+      },
+      "needs_source": false
+    },
+    {
       "event": "SessionStart",
       "matcher": null,
       "hook": {
