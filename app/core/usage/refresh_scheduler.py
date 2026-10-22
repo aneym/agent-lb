@@ -34,9 +34,8 @@ from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.quota_planner.repository import QuotaPlannerRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.settings.repository import SettingsRepository
-from app.modules.usage import updater as usage_updater_module
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
-from app.modules.usage.updater import UsageUpdater
+from app.modules.usage.updater import USAGE_REFRESH_SINGLEFLIGHT, UsageUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +94,7 @@ class UsageRefreshScheduler:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
-        await usage_updater_module._USAGE_REFRESH_SINGLEFLIGHT.cancel_all()
+        await USAGE_REFRESH_SINGLEFLIGHT.cancel_all()
 
     async def _run_loop(self) -> None:
         while not self._stop.is_set():

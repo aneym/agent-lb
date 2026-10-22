@@ -150,18 +150,18 @@ class _MergedAdditionalWindow:
     window_minutes: int | None
 
 
-_last_successful_refresh: dict[str, datetime] = {}
-_usage_refresh_auth_cooldowns: dict[str, float] = {}
+last_successful_refresh: dict[str, datetime] = {}
+usage_refresh_auth_cooldowns: dict[str, float] = {}
 
 
-_usage_refresh_rate_limit_strikes: dict[str, int] = {}
+usage_refresh_rate_limit_strikes: dict[str, int] = {}
 _USAGE_REFRESH_RATE_LIMIT_BASE_SECONDS = 60.0
 _USAGE_REFRESH_RATE_LIMIT_MAX_SECONDS = 900.0
-_USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME})
+USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME})
 
 
-_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
-_ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
+ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
+ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 
 
 class _UsageRefreshSingleflight:
@@ -236,10 +236,10 @@ class _UsageRefreshSingleflight:
             await asyncio.gather(*tasks, return_exceptions=True)
 
 
-_USAGE_REFRESH_SINGLEFLIGHT = _UsageRefreshSingleflight()
+USAGE_REFRESH_SINGLEFLIGHT = _UsageRefreshSingleflight()
 
 
-class UsageUpdater:
+class UsageAccountSync:
     def __init__(
         self,
         usage_repo: UsageRepositoryPort,
@@ -253,407 +253,12 @@ class UsageUpdater:
         self._encryptor = TokenEncryptor()
         self._auth_manager = AuthManager(accounts_repo) if accounts_repo else None
 
-    async def refresh_accounts(
-        self,
-        accounts: list[Account],
-        latest_usage: Mapping[str, UsageHistory],
-    ) -> bool:
-
-        settings = get_settings()
-        if not settings.usage_refresh_enabled:
-            return False
-
-        refreshed = False
-        now = utcnow()
-        interval = settings.usage_refresh_interval_seconds
-        _prune_usage_refresh_auth_cooldowns()
-        for account in accounts:
-            if account.provider not in _USAGE_REFRESH_PROVIDERS:
-                continue
-            if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
-                continue
-            if _is_usage_refresh_in_cooldown(account.id):
-                continue
-            latest = await self._freshness_usage_entry(account, latest_usage.get(account.id))
-            bypass_freshness = _quota_recovery_should_bypass_freshness(account, latest=latest)
-            if not bypass_freshness and _latest_usage_is_fresh(latest, now=now, interval_seconds=interval):
-                continue
-
-            if latest is None:
-                last_ok = _last_successful_refresh.get(account.id)
-                if not bypass_freshness and last_ok and (now - last_ok).total_seconds() < interval:
-                    continue
-                if self._additional_usage_repo is not None:
-                    additional_fresh_at = await self._additional_usage_repo.latest_recorded_at_for_account(
-                        account.id,
-                    )
-                    if (
-                        not bypass_freshness
-                        and additional_fresh_at
-                        and (now - additional_fresh_at).total_seconds() < interval
-                    ):
-                        _last_successful_refresh[account.id] = additional_fresh_at
-                        continue
-
-            try:
-                result = await _USAGE_REFRESH_SINGLEFLIGHT.run(
-                    account.id,
-                    lambda account=account: self._refresh_account_if_stale(
-                        account,
-                        usage_account_id=account.chatgpt_account_id,
-                        interval_seconds=interval,
-                    ),
-                )
-                await self._sync_account_from_repo(account)
-                refreshed = refreshed or result.usage_written
-
-                if result.fetch_succeeded:
-                    _last_successful_refresh[account.id] = now
-                    _clear_usage_refresh_auth_cooldown(account.id)
-            except Exception as exc:
-                logger.warning(
-                    "Usage refresh failed account_id=%s request_id=%s error=%s",
-                    account.id,
-                    get_request_id(),
-                    exc,
-                    exc_info=True,
-                )
-
-                continue
-            finally:
-                if not is_subscription_usable(account):
-                    _usage_refresh_auth_cooldowns[account.id] = max(
-                        _usage_refresh_auth_cooldowns.get(account.id, 0.0),
-                        time.monotonic() + settings.account_pulse_recovery_interval_seconds,
-                    )
-        return refreshed
-
-    async def force_refresh(self, account: Account) -> bool:
-
-        settings = get_settings()
-        if not settings.usage_refresh_enabled:
-            return False
-        if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
-            return False
-        if _usage_refresh_rate_limit_strikes.get(account.id) and _is_usage_refresh_in_cooldown(account.id):
-            return False
-        try:
-            result = await _USAGE_REFRESH_SINGLEFLIGHT.run(
-                account.id,
-                lambda: self._refresh_account(
-                    account,
-                    usage_account_id=account.chatgpt_account_id,
-                ),
-                join_existing=False,
-            )
-            await self._sync_account_from_repo(account)
-            if result.fetch_succeeded:
-                _last_successful_refresh[account.id] = utcnow()
-                _clear_usage_refresh_auth_cooldown(account.id)
-            return result.usage_written
-        except Exception as exc:
-            logger.warning(
-                "Forced usage refresh failed account_id=%s request_id=%s error=%s",
-                account.id,
-                get_request_id(),
-                exc,
-                exc_info=True,
-            )
-            return False
-
-    async def _refresh_account_if_stale(
-        self,
-        account: Account,
-        *,
-        usage_account_id: str | None,
-        interval_seconds: int,
-    ) -> AccountRefreshResult:
-        primary_latest = await self._usage_repo.latest_entry_for_account(account.id, window="primary")
-        latest = await self._freshness_usage_entry(account, primary_latest)
-        if not _quota_recovery_should_bypass_freshness(account, latest=latest) and _latest_usage_is_fresh(
-            latest,
-            now=utcnow(),
-            interval_seconds=interval_seconds,
-        ):
-            return AccountRefreshResult(usage_written=False)
-        return await self._refresh_account(
-            account,
-            usage_account_id=usage_account_id,
-        )
-
     async def _freshness_usage_entry(self, account: Account, latest: UsageHistory | None) -> UsageHistory | None:
         if latest is not None:
             return latest
         if usage_core.capacity_for_plan(account.plan_type, "monthly") is None:
             return None
         return await self._usage_repo.latest_entry_for_account(account.id, window="monthly")
-
-    async def _refresh_account(
-        self,
-        account: Account,
-        *,
-        usage_account_id: str | None,
-    ) -> AccountRefreshResult:
-        access_token = self._encryptor.decrypt(account.access_token_encrypted)
-        payload: UsagePayload | None = None
-        try:
-            payload = await _fetch_usage_payload(
-                account=account,
-                access_token=access_token,
-                usage_account_id=usage_account_id,
-            )
-        except UpstreamProxyRouteError as exc:
-            logger.warning(
-                "Usage refresh upstream proxy route unavailable account_id=%s reason=%s",
-                account.id,
-                exc.reason,
-            )
-            _mark_usage_refresh_auth_cooldown(account.id, 0)
-            return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
-        except UsageFetchError as exc:
-            if _should_deactivate_for_usage_error(exc):
-                await self._deactivate_for_client_error(account, exc)
-                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
-            if exc.status_code != 401 or not self._auth_manager:
-                _mark_usage_refresh_auth_cooldown(account.id, exc.status_code)
-                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
-            try:
-                account = await self._auth_manager.ensure_fresh(account, force=True)
-            except RefreshError:
-                _mark_usage_refresh_auth_cooldown(account.id, exc.status_code)
-                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
-            access_token = self._encryptor.decrypt(account.access_token_encrypted)
-            try:
-                payload = await _fetch_usage_payload(
-                    account=account,
-                    access_token=access_token,
-                    usage_account_id=usage_account_id,
-                )
-            except UpstreamProxyRouteError as route_exc:
-                logger.warning(
-                    "Usage refresh retry upstream proxy route unavailable account_id=%s reason=%s",
-                    account.id,
-                    route_exc.reason,
-                )
-                _mark_usage_refresh_auth_cooldown(account.id, 0)
-                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
-            except UsageFetchError as retry_exc:
-                if _should_deactivate_for_usage_error(retry_exc):
-                    await self._deactivate_for_client_error(account, retry_exc)
-                else:
-                    _mark_usage_refresh_auth_cooldown(account.id, retry_exc.status_code)
-                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
-
-        if payload is None:
-            return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
-
-        if _payload_mismatches_account_slot(account, payload):
-            logger.warning(
-                "Usage refresh payload identity mismatch; skipping account mutation "
-                "account_id=%s stored_workspace_id=%s payload_workspace_id=%s stored_plan_type=%s "
-                "payload_plan_type=%s stored_seat_type=%s payload_seat_type=%s request_id=%s",
-                account.id,
-                account.workspace_id,
-                payload.workspace_id,
-                account.plan_type,
-                payload.plan_type,
-                account.seat_type,
-                payload.seat_type,
-                get_request_id(),
-            )
-            record_identity_mismatch(
-                account.id,
-                stored_plan_type=account.plan_type,
-                payload_plan_type=payload.plan_type,
-                stored_workspace_id=account.workspace_id,
-                payload_workspace_id=payload.workspace_id,
-            )
-            return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
-        clear_identity_mismatch(account.id)
-
-        identity_matches_slot = await self._sync_identity_metadata(account, payload)
-        if not identity_matches_slot:
-            logger.warning(
-                "Usage refresh payload reported a workspace slot owned by another account; "
-                "skipping account usage mutation account_id=%s payload_workspace_id=%s request_id=%s",
-                account.id,
-                payload.workspace_id,
-                get_request_id(),
-            )
-            return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
-
-        if account.provider == ANTHROPIC_PROVIDER_NAME:
-            if payload.reset_credits_available is None:
-                reset_credit_cache.clear(account.id)
-            else:
-                reset_credit_cache.record_count(account.id, payload.reset_credits_available)
-        elif account.provider == OPENAI_PROVIDER_NAME:
-            reset_summary = payload.rate_limit_reset_credits
-            if reset_summary is not None and reset_summary.available_count is not None:
-                reset_credit_cache.record_count(account.id, reset_summary.available_count)
-        now_epoch = _now_epoch()
-        if self._additional_usage_repo is not None:
-            if payload.additional_rate_limits:
-                merged_limits = _merge_additional_rate_limits(
-                    payload.additional_rate_limits,
-                    account_id=account.id,
-                    now_epoch=now_epoch,
-                )
-                current_entries: set[tuple[str, str]] = set()
-                for quota_key, windows in merged_limits.items():
-                    for window, merged_window in windows.items():
-                        current_entries.add((quota_key, window))
-                        await _add_additional_usage_entry(
-                            self._additional_usage_repo,
-                            account_id=account.id,
-                            limit_name=merged_window.limit_name,
-                            metered_feature=merged_window.metered_feature,
-                            quota_key=quota_key,
-                            window=window,
-                            used_percent=merged_window.used_percent,
-                            reset_at=merged_window.reset_at,
-                            window_minutes=merged_window.window_minutes,
-                        )
-                current_quota_keys = {name for name, _ in current_entries}
-                existing_quota_keys = await _list_additional_usage_quota_keys(
-                    self._additional_usage_repo,
-                    account_ids=[account.id],
-                )
-                for stale_key in existing_quota_keys:
-                    if stale_key not in current_quota_keys:
-                        await _delete_additional_usage_quota_key(
-                            self._additional_usage_repo,
-                            account.id,
-                            stale_key,
-                        )
-                        continue
-                    for window in ("primary", "secondary"):
-                        if (stale_key, window) not in current_entries:
-                            await _delete_additional_usage_quota_key_window(
-                                self._additional_usage_repo,
-                                account.id,
-                                stale_key,
-                                window,
-                            )
-            elif payload.additional_rate_limits is not None:
-                await self._additional_usage_repo.delete_for_account(account.id)
-
-        scoped = payload.fable_scoped_weekly
-        fable_scoped_written = False
-        if (
-            self._additional_usage_repo is not None
-            and account.provider == ANTHROPIC_PROVIDER_NAME
-            and scoped is not None
-            and scoped.used_percent is not None
-        ):
-            await _add_additional_usage_entry(
-                self._additional_usage_repo,
-                account_id=account.id,
-                limit_name=_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
-                metered_feature=_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
-                quota_key=_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
-                window=_ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW,
-                used_percent=float(scoped.used_percent),
-                reset_at=_reset_at(scoped.reset_at, scoped.reset_after_seconds, now_epoch),
-                window_minutes=_window_minutes(scoped.limit_window_seconds),
-            )
-            fable_scoped_written = True
-
-        rate_limit = payload.rate_limit
-        if rate_limit is None:
-            additional_synced = (
-                self._additional_usage_repo is not None and payload.additional_rate_limits is not None
-            ) or fable_scoped_written
-            return AccountRefreshResult(usage_written=additional_synced)
-
-        normalized_windows = usage_core.normalize_rate_limit_windows(
-            rate_limit.primary_window,
-            rate_limit.secondary_window,
-        )
-        primary = normalized_windows.primary
-        secondary = normalized_windows.secondary
-        monthly = normalized_windows.monthly
-        if primary is None and secondary is None:
-            if monthly is None:
-                additional_synced = (
-                    self._additional_usage_repo is not None and payload.additional_rate_limits is not None
-                ) or fable_scoped_written
-                return AccountRefreshResult(usage_written=additional_synced)
-        if primary is None and secondary is None and monthly is None:
-            additional_synced = (
-                self._additional_usage_repo is not None and payload.additional_rate_limits is not None
-            ) or fable_scoped_written
-            return AccountRefreshResult(usage_written=additional_synced)
-        credits_has, credits_unlimited, credits_balance = _credits_snapshot(payload)
-        usage_written = fable_scoped_written
-
-        if primary and primary.used_percent is not None:
-            entry = await self._usage_repo.add_entry(
-                account_id=account.id,
-                used_percent=float(primary.used_percent),
-                provider=account.provider,
-                input_tokens=None,
-                output_tokens=None,
-                window="primary",
-                reset_at=_bounded_exhaustion_reset_at(
-                    primary.used_percent,
-                    primary.reset_at,
-                    primary.reset_after_seconds,
-                    primary.limit_window_seconds,
-                    now_epoch,
-                ),
-                window_minutes=_window_minutes(primary.limit_window_seconds),
-                credits_has=credits_has,
-                credits_unlimited=credits_unlimited,
-                credits_balance=credits_balance,
-            )
-            usage_written = usage_written or _usage_entry_written(entry)
-
-        if secondary and secondary.used_percent is not None:
-            entry = await self._usage_repo.add_entry(
-                account_id=account.id,
-                used_percent=float(secondary.used_percent),
-                provider=account.provider,
-                input_tokens=None,
-                output_tokens=None,
-                window="secondary",
-                reset_at=_reset_at(secondary.reset_at, secondary.reset_after_seconds, now_epoch),
-                window_minutes=_window_minutes(secondary.limit_window_seconds),
-            )
-            usage_written = usage_written or _usage_entry_written(entry)
-
-        if monthly and monthly.used_percent is not None:
-            entry = await self._usage_repo.add_entry(
-                account_id=account.id,
-                used_percent=float(monthly.used_percent),
-                provider=account.provider,
-                input_tokens=None,
-                output_tokens=None,
-                window="monthly",
-                reset_at=_reset_at(monthly.reset_at, monthly.reset_after_seconds, now_epoch),
-                window_minutes=_window_minutes(monthly.limit_window_seconds),
-                credits_has=credits_has,
-                credits_unlimited=credits_unlimited,
-                credits_balance=credits_balance,
-            )
-            usage_written = usage_written or _usage_entry_written(entry)
-        await self._recover_quota_status_from_usage(account, primary=primary, secondary=secondary, monthly=monthly)
-        if self._auth_manager and account.deactivation_reason == ANTHROPIC_OAUTH_ORGANIZATION_BLOCK:
-            repo = cast(AccountsRepositoryWithStatusComparePort, self._auth_manager._repo)
-            updated = await repo.update_status_if_current(
-                account.id,
-                account.status,
-                None,
-                account.reset_at,
-                blocked_at=account.blocked_at,
-                expected_status=account.status,
-                expected_deactivation_reason=ANTHROPIC_OAUTH_ORGANIZATION_BLOCK,
-                expected_reset_at=account.reset_at,
-                expected_blocked_at=account.blocked_at,
-            )
-            if updated:
-                account.deactivation_reason = None
-        return AccountRefreshResult(usage_written=usage_written)
 
     async def _deactivate_for_client_error(self, account: Account, exc: UsageFetchError) -> None:
         if not self._auth_manager:
@@ -692,10 +297,10 @@ class UsageUpdater:
     async def _sync_identity_metadata(self, account: Account, payload: UsagePayload) -> bool:
         expected_refresh_token_encrypted = account.refresh_token_encrypted
         next_plan_type = coerce_account_plan_type(payload.plan_type, account.plan_type or "free")
-        payload_workspace_id = _clean_optional(payload.workspace_id)
+        payload_workspace_id = clean_optional(payload.workspace_id)
         next_workspace_id = payload_workspace_id or account.workspace_id
-        next_workspace_label = _clean_optional(payload.workspace_label) or account.workspace_label
-        next_seat_type = _clean_optional(payload.seat_type) or account.seat_type
+        next_workspace_label = clean_optional(payload.workspace_label) or account.workspace_label
+        next_seat_type = clean_optional(payload.seat_type) or account.seat_type
         if self._auth_manager and payload_workspace_id and not account.workspace_id:
             slot_taken = await self._auth_manager._repo.workspace_slot_taken(
                 account_id=account.id,
@@ -743,7 +348,7 @@ class UsageUpdater:
         if not updated:
             stored = await self._auth_manager._repo.reload_by_id(account.id)
             if stored is not None:
-                _copy_refresh_sensitive_account_state(account, stored)
+                copy_refresh_sensitive_account_state(account, stored)
         return True
 
     async def _recover_quota_status_from_usage(
@@ -760,11 +365,11 @@ class UsageUpdater:
             long_window = monthly or secondary
             if primary is None and monthly is None:
                 return
-            if primary is not None and not _window_has_available_quota(primary):
+            if primary is not None and not window_has_available_quota(primary):
                 return
-            if primary is None and (long_window is None or not _window_has_available_quota(long_window)):
+            if primary is None and (long_window is None or not window_has_available_quota(long_window)):
                 return
-            if long_window is not None and not _window_has_available_quota(long_window):
+            if long_window is not None and not window_has_available_quota(long_window):
                 return
             target_status = AccountStatus.ACTIVE
             target_reset_at = None
@@ -774,17 +379,17 @@ class UsageUpdater:
                 return
             long_window = monthly or secondary
             windows = [window for window in (primary, long_window) if window is not None]
-            if long_window is None or not _window_has_available_quota(long_window):
+            if long_window is None or not window_has_available_quota(long_window):
                 return
-            if primary is not None and _window_is_exhausted(primary):
+            if primary is not None and window_is_exhausted(primary):
                 target_status = AccountStatus.RATE_LIMITED
-                target_reset_at = _reset_at(primary.reset_at, primary.reset_after_seconds, _now_epoch())
+                target_reset_at = reset_time(primary.reset_at, primary.reset_after_seconds, epoch_now())
             else:
-                if any(_window_is_exhausted(window) for window in windows):
+                if any(window_is_exhausted(window) for window in windows):
                     return
                 target_status = AccountStatus.ACTIVE
                 target_reset_at = None
-            if not any(_window_has_available_quota(window) for window in windows):
+            if not any(window_has_available_quota(window) for window in windows):
                 return
             expected_status = AccountStatus.QUOTA_EXCEEDED
         else:
@@ -816,10 +421,409 @@ class UsageUpdater:
         stored = await self._accounts_repo.get_by_id(account.id)
         if stored is None:
             return
-        _copy_refresh_sensitive_account_state(account, stored)
+        copy_refresh_sensitive_account_state(account, stored)
 
 
-def _copy_refresh_sensitive_account_state(account: Account, stored: Account) -> None:
+class UsageAccountRefresh(UsageAccountSync):
+    async def _refresh_account(
+        self,
+        account: Account,
+        *,
+        usage_account_id: str | None,
+    ) -> AccountRefreshResult:
+        access_token = self._encryptor.decrypt(account.access_token_encrypted)
+        payload: UsagePayload | None = None
+        try:
+            payload = await fetch_usage_payload(
+                account=account,
+                access_token=access_token,
+                usage_account_id=usage_account_id,
+            )
+        except UpstreamProxyRouteError as exc:
+            logger.warning(
+                "Usage refresh upstream proxy route unavailable account_id=%s reason=%s",
+                account.id,
+                exc.reason,
+            )
+            mark_usage_refresh_auth_cooldown(account.id, 0)
+            return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+        except UsageFetchError as exc:
+            if should_deactivate_for_usage_error(exc):
+                await self._deactivate_for_client_error(account, exc)
+                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+            if exc.status_code != 401 or not self._auth_manager:
+                mark_usage_refresh_auth_cooldown(account.id, exc.status_code)
+                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+            try:
+                account = await self._auth_manager.ensure_fresh(account, force=True)
+            except RefreshError:
+                mark_usage_refresh_auth_cooldown(account.id, exc.status_code)
+                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+            access_token = self._encryptor.decrypt(account.access_token_encrypted)
+            try:
+                payload = await fetch_usage_payload(
+                    account=account,
+                    access_token=access_token,
+                    usage_account_id=usage_account_id,
+                )
+            except UpstreamProxyRouteError as route_exc:
+                logger.warning(
+                    "Usage refresh retry upstream proxy route unavailable account_id=%s reason=%s",
+                    account.id,
+                    route_exc.reason,
+                )
+                mark_usage_refresh_auth_cooldown(account.id, 0)
+                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+            except UsageFetchError as retry_exc:
+                if should_deactivate_for_usage_error(retry_exc):
+                    await self._deactivate_for_client_error(account, retry_exc)
+                else:
+                    mark_usage_refresh_auth_cooldown(account.id, retry_exc.status_code)
+                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+
+        if payload is None:
+            return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+
+        if payload_mismatches_account_slot(account, payload):
+            logger.warning(
+                "Usage refresh payload identity mismatch; skipping account mutation "
+                "account_id=%s stored_workspace_id=%s payload_workspace_id=%s stored_plan_type=%s "
+                "payload_plan_type=%s stored_seat_type=%s payload_seat_type=%s request_id=%s",
+                account.id,
+                account.workspace_id,
+                payload.workspace_id,
+                account.plan_type,
+                payload.plan_type,
+                account.seat_type,
+                payload.seat_type,
+                get_request_id(),
+            )
+            record_identity_mismatch(
+                account.id,
+                stored_plan_type=account.plan_type,
+                payload_plan_type=payload.plan_type,
+                stored_workspace_id=account.workspace_id,
+                payload_workspace_id=payload.workspace_id,
+            )
+            return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+        clear_identity_mismatch(account.id)
+
+        identity_matches_slot = await self._sync_identity_metadata(account, payload)
+        if not identity_matches_slot:
+            logger.warning(
+                "Usage refresh payload reported a workspace slot owned by another account; "
+                "skipping account usage mutation account_id=%s payload_workspace_id=%s request_id=%s",
+                account.id,
+                payload.workspace_id,
+                get_request_id(),
+            )
+            return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+
+        if account.provider == ANTHROPIC_PROVIDER_NAME:
+            if payload.reset_credits_available is None:
+                reset_credit_cache.clear(account.id)
+            else:
+                reset_credit_cache.record_count(account.id, payload.reset_credits_available)
+        elif account.provider == OPENAI_PROVIDER_NAME:
+            reset_summary = payload.rate_limit_reset_credits
+            if reset_summary is not None and reset_summary.available_count is not None:
+                reset_credit_cache.record_count(account.id, reset_summary.available_count)
+        now_epoch = epoch_now()
+        if self._additional_usage_repo is not None:
+            if payload.additional_rate_limits:
+                merged_limits = merge_additional_rate_limits(
+                    payload.additional_rate_limits,
+                    account_id=account.id,
+                    now_epoch=now_epoch,
+                )
+                current_entries: set[tuple[str, str]] = set()
+                for quota_key, windows in merged_limits.items():
+                    for window, merged_window in windows.items():
+                        current_entries.add((quota_key, window))
+                        await add_additional_usage_entry(
+                            self._additional_usage_repo,
+                            account_id=account.id,
+                            limit_name=merged_window.limit_name,
+                            metered_feature=merged_window.metered_feature,
+                            quota_key=quota_key,
+                            window=window,
+                            used_percent=merged_window.used_percent,
+                            reset_at=merged_window.reset_at,
+                            window_minutes=merged_window.window_minutes,
+                        )
+                current_quota_keys = {name for name, _ in current_entries}
+                existing_quota_keys = await list_additional_usage_quota_keys(
+                    self._additional_usage_repo,
+                    account_ids=[account.id],
+                )
+                for stale_key in existing_quota_keys:
+                    if stale_key not in current_quota_keys:
+                        await delete_additional_usage_quota_key(
+                            self._additional_usage_repo,
+                            account.id,
+                            stale_key,
+                        )
+                        continue
+                    for window in ("primary", "secondary"):
+                        if (stale_key, window) not in current_entries:
+                            await delete_additional_usage_quota_key_window(
+                                self._additional_usage_repo,
+                                account.id,
+                                stale_key,
+                                window,
+                            )
+            elif payload.additional_rate_limits is not None:
+                await self._additional_usage_repo.delete_for_account(account.id)
+
+        scoped = payload.fable_scoped_weekly
+        fable_scoped_written = False
+        if (
+            self._additional_usage_repo is not None
+            and account.provider == ANTHROPIC_PROVIDER_NAME
+            and scoped is not None
+            and scoped.used_percent is not None
+        ):
+            await add_additional_usage_entry(
+                self._additional_usage_repo,
+                account_id=account.id,
+                limit_name=ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+                metered_feature=ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+                quota_key=ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+                window=ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW,
+                used_percent=float(scoped.used_percent),
+                reset_at=reset_time(scoped.reset_at, scoped.reset_after_seconds, now_epoch),
+                window_minutes=minutes_of(scoped.limit_window_seconds),
+            )
+            fable_scoped_written = True
+
+        rate_limit = payload.rate_limit
+        if rate_limit is None:
+            additional_synced = (
+                self._additional_usage_repo is not None and payload.additional_rate_limits is not None
+            ) or fable_scoped_written
+            return AccountRefreshResult(usage_written=additional_synced)
+
+        normalized_windows = usage_core.normalize_rate_limit_windows(
+            rate_limit.primary_window,
+            rate_limit.secondary_window,
+        )
+        primary = normalized_windows.primary
+        secondary = normalized_windows.secondary
+        monthly = normalized_windows.monthly
+        if primary is None and secondary is None:
+            if monthly is None:
+                additional_synced = (
+                    self._additional_usage_repo is not None and payload.additional_rate_limits is not None
+                ) or fable_scoped_written
+                return AccountRefreshResult(usage_written=additional_synced)
+        if primary is None and secondary is None and monthly is None:
+            additional_synced = (
+                self._additional_usage_repo is not None and payload.additional_rate_limits is not None
+            ) or fable_scoped_written
+            return AccountRefreshResult(usage_written=additional_synced)
+        credits_has, credits_unlimited, credits_balance = credits_snapshot(payload)
+        usage_written = fable_scoped_written
+
+        if primary and primary.used_percent is not None:
+            entry = await self._usage_repo.add_entry(
+                account_id=account.id,
+                used_percent=float(primary.used_percent),
+                provider=account.provider,
+                input_tokens=None,
+                output_tokens=None,
+                window="primary",
+                reset_at=bounded_exhaustion_reset_at(
+                    primary.used_percent,
+                    primary.reset_at,
+                    primary.reset_after_seconds,
+                    primary.limit_window_seconds,
+                    now_epoch,
+                ),
+                window_minutes=minutes_of(primary.limit_window_seconds),
+                credits_has=credits_has,
+                credits_unlimited=credits_unlimited,
+                credits_balance=credits_balance,
+            )
+            usage_written = usage_written or usage_entry_written(entry)
+
+        if secondary and secondary.used_percent is not None:
+            entry = await self._usage_repo.add_entry(
+                account_id=account.id,
+                used_percent=float(secondary.used_percent),
+                provider=account.provider,
+                input_tokens=None,
+                output_tokens=None,
+                window="secondary",
+                reset_at=reset_time(secondary.reset_at, secondary.reset_after_seconds, now_epoch),
+                window_minutes=minutes_of(secondary.limit_window_seconds),
+            )
+            usage_written = usage_written or usage_entry_written(entry)
+
+        if monthly and monthly.used_percent is not None:
+            entry = await self._usage_repo.add_entry(
+                account_id=account.id,
+                used_percent=float(monthly.used_percent),
+                provider=account.provider,
+                input_tokens=None,
+                output_tokens=None,
+                window="monthly",
+                reset_at=reset_time(monthly.reset_at, monthly.reset_after_seconds, now_epoch),
+                window_minutes=minutes_of(monthly.limit_window_seconds),
+                credits_has=credits_has,
+                credits_unlimited=credits_unlimited,
+                credits_balance=credits_balance,
+            )
+            usage_written = usage_written or usage_entry_written(entry)
+        await self._recover_quota_status_from_usage(account, primary=primary, secondary=secondary, monthly=monthly)
+        if self._auth_manager and account.deactivation_reason == ANTHROPIC_OAUTH_ORGANIZATION_BLOCK:
+            repo = cast(AccountsRepositoryWithStatusComparePort, self._auth_manager._repo)
+            updated = await repo.update_status_if_current(
+                account.id,
+                account.status,
+                None,
+                account.reset_at,
+                blocked_at=account.blocked_at,
+                expected_status=account.status,
+                expected_deactivation_reason=ANTHROPIC_OAUTH_ORGANIZATION_BLOCK,
+                expected_reset_at=account.reset_at,
+                expected_blocked_at=account.blocked_at,
+            )
+            if updated:
+                account.deactivation_reason = None
+        return AccountRefreshResult(usage_written=usage_written)
+
+
+class UsageUpdater(UsageAccountRefresh):
+    async def refresh_accounts(
+        self,
+        accounts: list[Account],
+        latest_usage: Mapping[str, UsageHistory],
+    ) -> bool:
+
+        settings = get_settings()
+        if not settings.usage_refresh_enabled:
+            return False
+
+        refreshed = False
+        now = utcnow()
+        interval = settings.usage_refresh_interval_seconds
+        prune_usage_refresh_auth_cooldowns()
+        for account in accounts:
+            if account.provider not in USAGE_REFRESH_PROVIDERS:
+                continue
+            if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+                continue
+            if is_usage_refresh_in_cooldown(account.id):
+                continue
+            latest = await self._freshness_usage_entry(account, latest_usage.get(account.id))
+            bypass_freshness = quota_recovery_should_bypass_freshness(account, latest=latest)
+            if not bypass_freshness and latest_usage_is_fresh(latest, now=now, interval_seconds=interval):
+                continue
+
+            if latest is None:
+                last_ok = last_successful_refresh.get(account.id)
+                if not bypass_freshness and last_ok and (now - last_ok).total_seconds() < interval:
+                    continue
+                if self._additional_usage_repo is not None:
+                    additional_fresh_at = await self._additional_usage_repo.latest_recorded_at_for_account(
+                        account.id,
+                    )
+                    if (
+                        not bypass_freshness
+                        and additional_fresh_at
+                        and (now - additional_fresh_at).total_seconds() < interval
+                    ):
+                        last_successful_refresh[account.id] = additional_fresh_at
+                        continue
+
+            try:
+                result = await USAGE_REFRESH_SINGLEFLIGHT.run(
+                    account.id,
+                    lambda account=account: self._refresh_account_if_stale(
+                        account,
+                        usage_account_id=account.chatgpt_account_id,
+                        interval_seconds=interval,
+                    ),
+                )
+                await self._sync_account_from_repo(account)
+                refreshed = refreshed or result.usage_written
+
+                if result.fetch_succeeded:
+                    last_successful_refresh[account.id] = now
+                    clear_usage_refresh_auth_cooldown(account.id)
+            except Exception as exc:
+                logger.warning(
+                    "Usage refresh failed account_id=%s request_id=%s error=%s",
+                    account.id,
+                    get_request_id(),
+                    exc,
+                    exc_info=True,
+                )
+
+                continue
+            finally:
+                if not is_subscription_usable(account):
+                    usage_refresh_auth_cooldowns[account.id] = max(
+                        usage_refresh_auth_cooldowns.get(account.id, 0.0),
+                        time.monotonic() + settings.account_pulse_recovery_interval_seconds,
+                    )
+        return refreshed
+
+    async def force_refresh(self, account: Account) -> bool:
+
+        settings = get_settings()
+        if not settings.usage_refresh_enabled:
+            return False
+        if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+            return False
+        if usage_refresh_rate_limit_strikes.get(account.id) and is_usage_refresh_in_cooldown(account.id):
+            return False
+        try:
+            result = await USAGE_REFRESH_SINGLEFLIGHT.run(
+                account.id,
+                lambda: self._refresh_account(
+                    account,
+                    usage_account_id=account.chatgpt_account_id,
+                ),
+                join_existing=False,
+            )
+            await self._sync_account_from_repo(account)
+            if result.fetch_succeeded:
+                last_successful_refresh[account.id] = utcnow()
+                clear_usage_refresh_auth_cooldown(account.id)
+            return result.usage_written
+        except Exception as exc:
+            logger.warning(
+                "Forced usage refresh failed account_id=%s request_id=%s error=%s",
+                account.id,
+                get_request_id(),
+                exc,
+                exc_info=True,
+            )
+            return False
+
+    async def _refresh_account_if_stale(
+        self,
+        account: Account,
+        *,
+        usage_account_id: str | None,
+        interval_seconds: int,
+    ) -> AccountRefreshResult:
+        primary_latest = await self._usage_repo.latest_entry_for_account(account.id, window="primary")
+        latest = await self._freshness_usage_entry(account, primary_latest)
+        if not quota_recovery_should_bypass_freshness(account, latest=latest) and latest_usage_is_fresh(
+            latest,
+            now=utcnow(),
+            interval_seconds=interval_seconds,
+        ):
+            return AccountRefreshResult(usage_written=False)
+        return await self._refresh_account(
+            account,
+            usage_account_id=usage_account_id,
+        )
+
+
+def copy_refresh_sensitive_account_state(account: Account, stored: Account) -> None:
     account.chatgpt_account_id = stored.chatgpt_account_id
     account.email = stored.email
     account.workspace_id = stored.workspace_id
@@ -836,7 +840,7 @@ def _copy_refresh_sensitive_account_state(account: Account, stored: Account) -> 
     account.blocked_at = stored.blocked_at
 
 
-def _credits_snapshot(payload: UsagePayload) -> tuple[bool | None, bool | None, float | None]:
+def credits_snapshot(payload: UsagePayload) -> tuple[bool | None, bool | None, float | None]:
     credits = payload.credits
     if credits is None:
         return None, None, None
@@ -846,7 +850,7 @@ def _credits_snapshot(payload: UsagePayload) -> tuple[bool | None, bool | None, 
     return credits_has, credits_unlimited, _parse_credits_balance(balance_value)
 
 
-async def _fetch_usage_payload(
+async def fetch_usage_payload(
     *,
     account: Account,
     access_token: str,
@@ -863,8 +867,8 @@ async def _fetch_usage_payload(
     )
 
 
-def _payload_mismatches_account_slot(account: Account, payload: UsagePayload) -> bool:
-    payload_workspace_id = _clean_optional(payload.workspace_id)
+def payload_mismatches_account_slot(account: Account, payload: UsagePayload) -> bool:
+    payload_workspace_id = clean_optional(payload.workspace_id)
     if account.workspace_id and payload_workspace_id and account.workspace_id != payload_workspace_id:
         return True
     if not payload_workspace_id:
@@ -879,23 +883,23 @@ def _payload_mismatches_account_slot(account: Account, payload: UsagePayload) ->
     return False
 
 
-def _clean_optional(value: str | None) -> str | None:
+def clean_optional(value: str | None) -> str | None:
     if not isinstance(value, str):
         return None
     cleaned = value.strip()
     return cleaned or None
 
 
-def _usage_entry_written(entry: UsageHistory | None) -> bool:
+def usage_entry_written(entry: UsageHistory | None) -> bool:
     return entry is not None
 
 
-def _window_has_available_quota(window: UsageWindow) -> bool:
+def window_has_available_quota(window: UsageWindow) -> bool:
     used_percent = window.used_percent
     return used_percent is not None and float(used_percent) < 100.0
 
 
-def _window_is_exhausted(window: UsageWindow) -> bool:
+def window_is_exhausted(window: UsageWindow) -> bool:
     used_percent = window.used_percent
     return used_percent is not None and float(used_percent) >= 100.0
 
@@ -947,7 +951,7 @@ def _prefer_merged_additional_window(
     return preferred
 
 
-def _merge_additional_rate_limits(
+def merge_additional_rate_limits(
     additional_rate_limits: Collection[AdditionalRateLimitPayload],
     *,
     account_id: str,
@@ -984,14 +988,14 @@ def _merge_additional_rate_limits(
                 limit_name=str(limit_name),
                 metered_feature=str(metered_feature),
                 used_percent=float(usage_window.used_percent),
-                reset_at=_bounded_exhaustion_reset_at(
+                reset_at=bounded_exhaustion_reset_at(
                     usage_window.used_percent,
                     usage_window.reset_at,
                     usage_window.reset_after_seconds,
                     usage_window.limit_window_seconds,
                     now_epoch,
                 ),
-                window_minutes=_window_minutes(usage_window.limit_window_seconds),
+                window_minutes=minutes_of(usage_window.limit_window_seconds),
             )
             windows = merged.setdefault(quota_key, {})
             existing = windows.get(window_name)
@@ -1008,7 +1012,7 @@ def _merge_additional_rate_limits(
     return merged
 
 
-async def _add_additional_usage_entry(
+async def add_additional_usage_entry(
     repo: AdditionalUsageRepositoryPort | AdditionalUsageRepository,
     *,
     account_id: str,
@@ -1032,7 +1036,7 @@ async def _add_additional_usage_entry(
     )
 
 
-async def _list_additional_usage_quota_keys(
+async def list_additional_usage_quota_keys(
     repo: AdditionalUsageRepositoryPort | AdditionalUsageRepository,
     *,
     account_ids: Collection[str] | None = None,
@@ -1040,7 +1044,7 @@ async def _list_additional_usage_quota_keys(
     return await repo.list_quota_keys(account_ids=account_ids)
 
 
-async def _delete_additional_usage_quota_key(
+async def delete_additional_usage_quota_key(
     repo: AdditionalUsageRepositoryPort | AdditionalUsageRepository,
     account_id: str,
     quota_key: str,
@@ -1048,7 +1052,7 @@ async def _delete_additional_usage_quota_key(
     await repo.delete_for_account_and_quota_key(account_id, quota_key)
 
 
-async def _delete_additional_usage_quota_key_window(
+async def delete_additional_usage_quota_key_window(
     repo: AdditionalUsageRepositoryPort | AdditionalUsageRepository,
     account_id: str,
     quota_key: str,
@@ -1057,7 +1061,7 @@ async def _delete_additional_usage_quota_key_window(
     await repo.delete_for_account_quota_key_window(account_id, quota_key, window)
 
 
-def _latest_usage_is_fresh(
+def latest_usage_is_fresh(
     latest: UsageHistory | None,
     *,
     now: datetime,
@@ -1074,7 +1078,7 @@ def _latest_usage_is_fresh(
     return True
 
 
-def _quota_recovery_should_bypass_freshness(account: Account, *, latest: UsageHistory | None) -> bool:
+def quota_recovery_should_bypass_freshness(account: Account, *, latest: UsageHistory | None) -> bool:
     if _account_needs_post_reset_refresh(account, latest=latest):
         return True
     if account.status != AccountStatus.QUOTA_EXCEEDED:
@@ -1120,17 +1124,17 @@ def _parse_credits_balance(value: str | int | float | None) -> float | None:
     return None
 
 
-def _window_minutes(limit_seconds: int | None) -> int | None:
+def minutes_of(limit_seconds: int | None) -> int | None:
     if not limit_seconds or limit_seconds <= 0:
         return None
     return max(1, math.ceil(limit_seconds / 60))
 
 
-def _now_epoch() -> int:
+def epoch_now() -> int:
     return int(utcnow().replace(tzinfo=timezone.utc).timestamp())
 
 
-def _reset_at(reset_at: int | None, reset_after_seconds: int | None, now_epoch: int) -> int | None:
+def reset_time(reset_at: int | None, reset_after_seconds: int | None, now_epoch: int) -> int | None:
     if reset_at is not None:
         return int(reset_at)
     if reset_after_seconds is None:
@@ -1141,7 +1145,7 @@ def _reset_at(reset_at: int | None, reset_after_seconds: int | None, now_epoch: 
 _DEFAULT_EXHAUSTION_HORIZON_SECONDS = 3600
 
 
-def _bounded_exhaustion_reset_at(
+def bounded_exhaustion_reset_at(
     used_percent: float | None,
     reset_at: int | None,
     reset_after_seconds: int | None,
@@ -1149,7 +1153,7 @@ def _bounded_exhaustion_reset_at(
     now_epoch: int,
 ) -> int | None:
 
-    resolved = _reset_at(reset_at, reset_after_seconds, now_epoch)
+    resolved = reset_time(reset_at, reset_after_seconds, now_epoch)
     if resolved is not None:
         return resolved
     if used_percent is None or float(used_percent) < 100.0:
@@ -1169,7 +1173,7 @@ _DEACTIVATING_USAGE_MESSAGE_HINTS = (
 )
 
 
-def _should_deactivate_for_usage_error(exc: UsageFetchError) -> bool:
+def should_deactivate_for_usage_error(exc: UsageFetchError) -> bool:
     if exc.status_code in _DEACTIVATING_USAGE_STATUS_CODES:
         return True
     if exc.code in PERMANENT_FAILURE_CODES:
@@ -1188,48 +1192,48 @@ async def _resolve_upstream_route_for_account(account: Account, *, operation: st
         )
 
 
-def _mark_usage_refresh_auth_cooldown(account_id: str, status_code: int) -> None:
+def mark_usage_refresh_auth_cooldown(account_id: str, status_code: int) -> None:
     if status_code == 429:
-        strikes = _usage_refresh_rate_limit_strikes.get(account_id, 0) + 1
-        _usage_refresh_rate_limit_strikes[account_id] = strikes
+        strikes = usage_refresh_rate_limit_strikes.get(account_id, 0) + 1
+        usage_refresh_rate_limit_strikes[account_id] = strikes
         delay = min(
             _USAGE_REFRESH_RATE_LIMIT_MAX_SECONDS,
             _USAGE_REFRESH_RATE_LIMIT_BASE_SECONDS * (2 ** min(strikes - 1, 10)) * random.uniform(0.8, 1.2),
         )
-        _usage_refresh_auth_cooldowns[account_id] = time.monotonic() + delay
+        usage_refresh_auth_cooldowns[account_id] = time.monotonic() + delay
         return
     if status_code not in {401, 403}:
         return
     cooldown_seconds = max(0.0, float(get_settings().usage_refresh_auth_failure_cooldown_seconds))
     if cooldown_seconds <= 0:
         return
-    _usage_refresh_auth_cooldowns[account_id] = time.monotonic() + cooldown_seconds
+    usage_refresh_auth_cooldowns[account_id] = time.monotonic() + cooldown_seconds
 
 
-def _is_usage_refresh_in_cooldown(account_id: str) -> bool:
-    expires_at = _usage_refresh_auth_cooldowns.get(account_id)
+def is_usage_refresh_in_cooldown(account_id: str) -> bool:
+    expires_at = usage_refresh_auth_cooldowns.get(account_id)
     if expires_at is None:
         return False
     if expires_at > time.monotonic():
         return True
-    _usage_refresh_auth_cooldowns.pop(account_id, None)
+    usage_refresh_auth_cooldowns.pop(account_id, None)
     return False
 
 
-def _clear_usage_refresh_auth_cooldown(account_id: str) -> None:
-    _usage_refresh_auth_cooldowns.pop(account_id, None)
-    _usage_refresh_rate_limit_strikes.pop(account_id, None)
+def clear_usage_refresh_auth_cooldown(account_id: str) -> None:
+    usage_refresh_auth_cooldowns.pop(account_id, None)
+    usage_refresh_rate_limit_strikes.pop(account_id, None)
 
 
-def _prune_usage_refresh_auth_cooldowns() -> None:
+def prune_usage_refresh_auth_cooldowns() -> None:
     now = time.monotonic()
-    stale = [account_id for account_id, expires_at in _usage_refresh_auth_cooldowns.items() if expires_at <= now]
+    stale = [account_id for account_id, expires_at in usage_refresh_auth_cooldowns.items() if expires_at <= now]
     for account_id in stale:
-        _usage_refresh_auth_cooldowns.pop(account_id, None)
+        usage_refresh_auth_cooldowns.pop(account_id, None)
 
 
 def _clear_usage_refresh_state() -> None:
-    _usage_refresh_auth_cooldowns.clear()
-    _usage_refresh_rate_limit_strikes.clear()
-    _last_successful_refresh.clear()
-    _USAGE_REFRESH_SINGLEFLIGHT.clear()
+    usage_refresh_auth_cooldowns.clear()
+    usage_refresh_rate_limit_strikes.clear()
+    last_successful_refresh.clear()
+    USAGE_REFRESH_SINGLEFLIGHT.clear()
