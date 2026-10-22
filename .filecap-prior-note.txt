@@ -1,0 +1,1 @@
+Blocked, no commits: the shared private helper _env_float is used across the proxy, endpoint and launch code, so a split needs it renamed public, which breaks the move-only multiset rule. The installed cutover checker also parses the required "->" trailer token as a file path. The seat reverted its 
