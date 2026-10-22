@@ -1,0 +1,1 @@
+Blocked, no commit made (HEAD is still the base). The split is in the worktree uncommitted: the entry shrank to 16,291 bytes and the new module is 6,311 bytes. Ruff format would reformat the new module, and the move-only rule and the comment gate (which rejects a format directive) rule out the fix. 
