@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T18:54:51Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-pp-modules-proxy-service-streaming-retry",
-   "path": "app/modules/proxy/_service/streaming/retry.py",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T17:24:51Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -58,6 +48,20 @@
    "path": "app/main.py",
    "sha": "dd682fef3629d9d007eb9cc5f98652d01688d341",
    "until": "2026-10-29T17:24:46Z"
+  },
+  {
+   "into": [
+    "app/modules/proxy/_service/streaming/retry_affinity.py",
+    "app/modules/proxy/_service/streaming/retry_attempt.py",
+    "app/modules/proxy/_service/streaming/retry_prepare.py",
+    "app/modules/proxy/_service/streaming/retry_recovery.py",
+    "app/modules/proxy/_service/streaming/retry_selection.py",
+    "app/modules/proxy/_service/streaming/retry_state.py"
+   ],
+   "note": "app/modules/proxy/_service/streaming/retry.py split at f402a93ee3. Reapply your diff onto the new module that now holds the code. Map: app/modules/proxy/_service/streaming/retry_affinity.py: resolve_retry_affinity; app/modules/proxy/_service/streaming/retry_attempt.py: stream_account_attempts; app/modules/proxy/_service/streaming/retry_prepare.py: prepare_stream_attempt; app/modules/proxy/_service/streaming/retry_recovery.py: recover_stream_response_error; app/modules/proxy/_service/streaming/retry_selection.py: select_retry_account; app/modules/proxy/_service/streaming/retry_state.py: retry_facade, RetryState, release_tracked_stream_lease",
+   "path": "app/modules/proxy/_service/streaming/retry.py",
+   "sha": "f402a93ee37f6eaa234f7f7f404581d1424f6dbc",
+   "until": "2026-10-29T17:25:04Z"
   }
  ]
 }
