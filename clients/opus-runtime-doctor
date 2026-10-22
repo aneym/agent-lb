@@ -342,14 +342,10 @@ def analyze_stream(stdout: str, nonce: str, expected_model: str) -> tuple[str, s
         1 for values in models if values and all(_model_base(value) == expected_base for value in values)
     )
     evidence["child_nonce_reads"] = sum(
-        1
-        for call in (first, second)
-        if child_reads.get(call["id"], set()) & child_read_results.get(call["id"], set())
+        1 for call in (first, second) if child_reads.get(call["id"], set()) & child_read_results.get(call["id"], set())
     )
     evidence["completed_result_metadata"] = sum(
-        1
-        for call in (first, second)
-        if result_metadata.get(call["id"], {}).get("status") == "completed"
+        1 for call in (first, second) if result_metadata.get(call["id"], {}).get("status") == "completed"
     )
     evidence["child_identity_replies"] = sum(1 for call in (first, second) if child_replies.get(call["id"]))
 
