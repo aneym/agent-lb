@@ -68,6 +68,8 @@ MANAGED_HOOKS = (
     "kill-scope-guard.py",
     "host-credential-guard.py",
     "gh-write-guard.py",
+    "merge-gate-guard.py",
+    "main-checkout-write-warn.py",
     "hook-dispatch.py",
     "hook-dispatch-parity.py",
 )

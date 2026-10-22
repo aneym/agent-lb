@@ -480,7 +480,7 @@ def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 name = None
                 if isinstance(command, str):
                     name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
-                    name = name or next((n for n in (*RETIRED_HOOKS, "routing-pulse.py") if n in command), None)
+                    name = name or next((n for n in (*RETIRED_HOOKS, "/_root/hooks/") if n in command), None)
                     if event == "PostToolUse" and "factory-lint-hook" in command:
                         name = "factory-lint-hook"
                 if name:
