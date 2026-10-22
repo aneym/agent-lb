@@ -1,0 +1,1 @@
+Blocked: main() alone is 23,555 bytes, so a move-only split cannot get every file under 20,000 bytes. A further split would need helper calls, which the move-only rule forbids. No commits were made.
