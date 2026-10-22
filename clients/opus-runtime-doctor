@@ -262,9 +262,7 @@ def analyze_stream(stdout: str, nonce: str, expected_model: str) -> tuple[str, s
         model = message.get("model") if message else None
         if event_type == "assistant" and isinstance(parent_id, str) and isinstance(model, str):
             child_models.setdefault(parent_id, []).append(model)
-            if _text_contains(message.get("content"), nonce) and _text_contains(
-                message.get("content"), _model_base(expected_model)
-            ):
+            if _text_contains(content, nonce) and _text_contains(content, _model_base(expected_model)):
                 child_replies[parent_id] = True
         if event.get("type") == "result":
             terminal_success = event.get("subtype") == "success" and event.get("is_error") is False
