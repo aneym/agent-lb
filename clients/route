@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-
 from __future__ import annotations
 
 import argparse
@@ -45,17 +44,13 @@ DEVIN_TIMEOUT_SECONDS = 15.0
 CODEX_TIMEOUT_SECONDS = 15.0
 READ_TIMEOUT_SECONDS = 5.0
 
-
 PROBE_BUDGET_SECONDS = 2.0
 SESSION_WINDOW_MINUTES = 30
 MESSAGE_HEAD_CHARS = 160
 
-
 STATE_MAX_AGE_SECONDS = 7200
 
-
 SEAT_PROBE = {"cursor-seat": "cursor-agent", "devin-seat": "devin", "muse-seat-local": "muse"}
-
 
 CLI_SEAT_HOLD_AFTER_FAILURES = 2
 CLI_SEAT_HOLD_SECONDS = 600
@@ -150,7 +145,6 @@ def apply_implement_default(table: dict[str, Any]) -> dict[str, Any]:
 def fail(message: str) -> Any:
     print(f"route: {message}", file=sys.stderr)
     raise SystemExit(EXIT_UNROUTABLE)
-
 
 SEAT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 COMMIT_NAME = re.compile(r"^[0-9a-f]{7,64}$")
@@ -408,7 +402,6 @@ def _remaining(account: dict[str, Any]) -> float:
 
     return min(route_heal.window(usage, "secondaryRemainingPercent", 0.0), route_heal.window(usage, "primaryRemainingPercent", 100.0))
 
-
 _ROUTABLE_STATUSES = frozenset({"active", "rate_limited", "quota_exceeded"})
 WEEKLY_CYCLE_HOURS = 168.0
 
@@ -646,7 +639,6 @@ def pools_by_id(document: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
 
 def pool_pace(pool: dict[str, Any], cycle_hours: float) -> float | None:
 
-
     pace = pool.get("weeklyPacePercent")
     if isinstance(pace, (int, float)) and not isinstance(pace, bool):
         return float(pace)
@@ -852,7 +844,6 @@ def command_plan(args: argparse.Namespace) -> int:
     print(plan["risk"])
     return EXIT_OK
 
-
 MODELS_CACHE_MAX_AGE_SECONDS = 86400
 LOW_BAND_MAX_ELIGIBLE = 2
 DEFAULT_RETIRED = ("claude-fable-*", "fable", "claude-planner", "gpt-*-astra", "gpt-*-astra-*", "gpt-5.6*", "gpt-5.5*")
@@ -865,7 +856,6 @@ def retired_patterns(table: dict[str, Any]) -> tuple[str, ...]:
     if isinstance(configured, list) and all(isinstance(item, str) for item in configured):
         return tuple(configured)
     return DEFAULT_RETIRED
-
 
 DEFAULT_BLOCKED = ("claude-planner", "gpt-5.4*", "gpt-5-*", "gpt-5")
 
@@ -921,7 +911,6 @@ def served_models() -> tuple[list[str], str]:
     if (datetime.now(timezone.utc) - stamp).total_seconds() > MODELS_CACHE_MAX_AGE_SECONDS:
         return [], "LB unreachable and the model cache is over a day old"
     return [value for value in ids if isinstance(value, str)], "cache (LB unreachable)"
-
 
 _ANTHROPIC_MODELS: tuple[list[str], str] | None = None
 
@@ -980,15 +969,17 @@ def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tup
         return harness, f"Claude Code alias {harness!r} (its newest {harness})"
     return None, f"alias for {family} has no model list, pin or harness"
 
-
 _CURSOR_MODELS: list[str] | None = None
-
 
 _DEFER_DISCOVERY = False
 _DEFERRED_DISCOVERY: set[str] = set()
 
 def model_list_pending(vendor: str) -> str:
     return f"pending: the {vendor} model list is listed once capacity is held"
+
+def defer_discovery() -> None:
+    global _DEFER_DISCOVERY
+    _DEFER_DISCOVERY = True
 
 def allow_discovery() -> None:
 
@@ -1052,7 +1043,6 @@ def fetch_cursor_models() -> list[str]:
     cache_model_list(cache, ids)
     return ids
 
-
 LISTING_TERM_GRACE_SECONDS = 1.0
 LISTING_DRAIN_SECONDS = 3.0
 STOP_BUDGET_SECONDS = 8.0
@@ -1112,7 +1102,6 @@ def end_group(process: subprocess.Popen, within: float) -> bool:
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.05)
-
 
 _DEVIN_MODELS: list[str] | None = None
 
@@ -1210,7 +1199,6 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
             return None, f"{name} is retired"
         if "*" in name or "?" in name:
 
-
             return None, f"{name} is a wildcard, not a served model"
         return name, "not an alias"
     if spec.get("vendor") == "anthropic" or (spec.get("harness") and not spec.get("family")):
@@ -1301,7 +1289,6 @@ def command_resolve(args: argparse.Namespace) -> int:
             continue
         model, reason = resolve_alias(table, name, served)
         if not model and reason == f"{name} is retired":
-
 
             model = name
             record_explicit_model(name, "route resolve")
@@ -1406,9 +1393,7 @@ def apply_overrides(chain: list[dict[str, Any]], overrides: Any, class_name: str
         target.append(entry)
     return kept + demoted
 
-
 class ServedModels:
-
 
     def __init__(self) -> None:
         self._models: list[str] | None = None
@@ -1505,7 +1490,6 @@ def class_candidates(
             continue
         min_pace = entry.get("min_pace")
         if isinstance(min_pace, (int, float)) and not isinstance(min_pace, bool):
-
 
             pace = pool_pace(pool_doc, cycle_hours) if pool_doc else None
             if pace is None and pool_doc and pool:
@@ -1703,7 +1687,6 @@ def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | No
             return None, f"{model} is not listed for {entry['seat']}"
     return model, why
 
-
 EFFORT_SUFFIX = re.compile(r"-(?:low|medium|high|xhigh|max)$")
 
 def same_model(wanted: str, *names: str | None) -> bool:
@@ -1838,7 +1821,6 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
     chosen = next(iter(opened or soft), None)
     if chosen is not None and not opened:
         chosen = {**chosen, "reason": chosen["reason"] + "; no other rung open"}
-
 
     default = chosen if prefer is None else ladder_walk(
         table, class_name, pools, seats, served, history, now, author, skip_ids, leases=leases)["chosen"]
@@ -1994,9 +1976,7 @@ def _reservation_request(method: str, path: str, payload: dict | None = None,
     return EXIT_DEGRADED, {"status": "error", "error": "reservations_unavailable",
                            "message": response.error or "invalid reservation response"}
 
-
 class ReserveStopped(Exception):
-
 
     def __init__(self, signum: int) -> None:
         super().__init__(signum)
@@ -2055,7 +2035,6 @@ def command_reserve(args: argparse.Namespace) -> int:
         status = "cancelled"
         if _UNDRAINED:
 
-
             reason = f"{reason}; {'; '.join(_UNDRAINED)}, released anyway"
             print(f"route: {'; '.join(_UNDRAINED)}; releasing the hold anyway", file=sys.stderr)
         left = release_job_hold(args.job, until=stop.at + STOP_BUDGET_SECONDS)
@@ -2097,8 +2076,7 @@ def settle_pending(table: dict, row: dict, wanted: str | None) -> tuple[dict | N
                 resolved["auditor"] = resolved["audit"]
         return resolved, None
     finally:
-        global _DEFER_DISCOVERY
-        _DEFER_DISCOVERY = True
+        defer_discovery()
 
 def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
     import socket
@@ -2119,9 +2097,7 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
     pools = pools_by_id(document)
     policy = (table.get("policy") or {}).get("concurrency") or {}
 
-
-    global _DEFER_DISCOVERY
-    _DEFER_DISCOVERY = True
+    defer_discovery()
     skip = list(args.skip)
     released: str | None = None
     while True:
@@ -2160,7 +2136,6 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
         lost = False
         if resolved is not None:
 
-
             beat, body = _reservation_request("POST", f"/{result['reservation_id']}/heartbeat",
                                               {"model": resolved.get("model", result.get("model"))})
             if beat == EXIT_OK and body.get("status") == "reserved":
@@ -2169,12 +2144,10 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
                 return code, result
             lost = beat == EXIT_UNROUTABLE
 
-
             released = (f"{row['rung']} hold was lost while its models were listed" if lost else
                         f"{row['rung']} hold could not be renewed after its models were listed: "
                         f"{body.get('message') or body.get('status')}")
         if not lost:
-
 
             for _attempt in range(2):
                 _freed, body = _reservation_request("POST", f"/{result['reservation_id']}/release",
@@ -2353,7 +2326,6 @@ def _five_hour_windows(accounts_body: Any) -> dict[str, dict[str, Any]]:
                 window["fiveHourResetAt"] = reset
     return windows
 
-
 MENU_POOL_FIELDS = (
     "status",
     "accounts",
@@ -2490,7 +2462,6 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
         print(f"audit     {auditor.get('seat')}/{shown}{via} audits this seat's closeout before acceptance")
     for record in result["standing_in"]:
         _print_stand_in(record)
-
 
 WORKFLOW_BRIDGE_SEATS = frozenset({"gpt-implementer", "grok-implementer", "gpt-explorer", "sol-consult"})
 WORKFLOW_BRIEF_SEATS = frozenset({"cursor-seat", "devin-seat", "muse-seat", "muse-seat-local"})
@@ -2701,7 +2672,6 @@ def command_workflow_args(args: argparse.Namespace) -> int:
         return EXIT_UNROUTABLE
     return EXIT_DEGRADED if document["errors"] else EXIT_OK
 
-
 EXIT_WAIT = 3
 OPUS_AUTHORITY = frozenset({"verdict", "architecture"})
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -2730,7 +2700,6 @@ def read_decisions() -> list[dict[str, Any]]:
         if isinstance(row, dict) and row.get("v") == 1:
             rows.append(row)
     return rows
-
 
 SYNTHETIC_PREFIXES = ("test", "probe", "synthetic", "smoke", "eval-")
 
@@ -2784,7 +2753,6 @@ def decision_day(ts: Any) -> str | None:
 
     stamp = _parse_ts(ts)
     return stamp.astimezone(ZoneInfo("America/New_York")).date().isoformat() if stamp else None
-
 
 class DispatchContext:
     def __init__(self, table: dict[str, Any], class_name: str, author_vendor: str | None) -> None:
@@ -2987,7 +2955,6 @@ def command_policy(args: argparse.Namespace) -> int:
             print(f"  {seat}: {spec['model']} {spec['effort'] or ''}".rstrip())
     return EXIT_OK
 
-
 MERGE_CLASSES = frozenset({"implement", "mechanical", "ui"})
 VERDICT_CLASSES = frozenset({"verify", "review", "audit", "judge"})
 METRIC_CLASSES = frozenset({"decide"})
@@ -3046,7 +3013,6 @@ def parse_since(value: str) -> timedelta:
 
 def number_or_none(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-
 
 class OutcomeSources:
     def __init__(self, *, decisions: list[dict[str, Any]], ledger: list[dict[str, Any]],
@@ -3140,7 +3106,6 @@ def outcome_event(kind: str, source: str, key: str, ts: datetime, decision: dict
         "source": source,
         "data": data,
     }
-
 
 class DecisionIndex:
     def __init__(self, decisions: list[dict[str, Any]]) -> None:
@@ -3308,7 +3273,6 @@ def pool_part(part: str, source: str, pool_pct: float | None) -> dict[str, Any]:
     if source == "cursor_pool":
         entry["pool_pct"] = pool_pct
     return entry
-
 
 class JobView:
     def __init__(self, job_id: str, decisions: list[dict[str, Any]], events: list[dict[str, Any]]) -> None:
@@ -3624,12 +3588,10 @@ def _probe(name: str, started: float, *, ok: bool, error: str | None, **detail: 
     record.update(detail)
     return record
 
-
 LB_HEALTH_ATTEMPTS = 3
 LB_HEALTH_RETRY_SECONDS = 5.0
 
 def probe_lb_health() -> dict[str, Any]:
-
 
     started = time.monotonic()
     for attempt in range(LB_HEALTH_ATTEMPTS):
@@ -3997,7 +3959,6 @@ def read_ledger(since: datetime) -> tuple[list[dict[str, Any]], list[dict[str, A
             closeouts.append(record)
     return dispatches, closeouts
 
-
 RowKey = tuple[str, str, str]
 
 def aggregate(dispatches: list[dict[str, Any]], closeouts: list[dict[str, Any]]) -> dict[RowKey, dict[str, Any]]:
@@ -4046,7 +4007,6 @@ def aggregate(dispatches: list[dict[str, Any]], closeouts: list[dict[str, Any]])
         if origin is not None:
             merged.setdefault("task_class", origin.get("task_class"))
             merged.setdefault("subagent_type", origin.get("subagent_type"))
-
 
         requested = merged.get("dispatch_model") or (origin or {}).get("model")
         if requested or "dispatch_model" in merged:
@@ -4122,7 +4082,6 @@ def command_report(args: argparse.Namespace) -> int:
     print_implement_report(since, args.days)
     return EXIT_OK
 
-
 IMPLEMENT_EVENT = "implement_result"
 AUDIT_VERDICTS = ("pass", "fix-needed")
 
@@ -4181,7 +4140,6 @@ def print_implement_report(since: datetime, days: int) -> None:
     if not results:
         print("No implement_result rows yet (`route record` writes them).")
         return
-
 
     tasks: dict[tuple[str, str, str], dict[str, Any]] = {}
     for record in results:
@@ -4311,7 +4269,6 @@ def arm_paused(table: dict[str, Any], class_name: str, arm_id: str) -> bool:
     return any(entry.get("class") == class_name and entry.get("arm_id") == arm_id
                and entry.get("action") == "pause" and not entry.get("reverted_at")
                for entry in table.get("overrides", []) if isinstance(entry, dict))
-
 
 EVAL_MDD = "MDD ~30pp per-trial at 30 trials/arm (alpha .1 one-sided, power .8)"
 EVAL_ARM_MAP = {"sol-med": "implement standard", "sol-low": "mechanical standard"}
@@ -4749,7 +4706,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     return int(args.handler(args))
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
