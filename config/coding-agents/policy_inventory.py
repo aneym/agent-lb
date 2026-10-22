@@ -86,7 +86,6 @@ DISPATCH_INPROC = (
     "no-direct-merge.py",
     "box-offload-hook",
     "lane-bulletin-hook",
-    "aside-regular-tabs.py",
     "workflow-relay-guard.py",
     "herdr-tab-autoname.py",
     "idle-agents.py",

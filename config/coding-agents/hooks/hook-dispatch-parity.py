@@ -623,13 +623,6 @@ def builtin_cases():
         dict(
             event="PreToolUse",
             tool="mcp__aside__repl",
-            input={"code": "await openTab('https://x')"},
-            name="warn-aside-open-tab",
-            expect="allow",
-        ),
-        dict(
-            event="PreToolUse",
-            tool="mcp__aside__repl",
             input={"code": "await listBrowserTabs()"},
             name="allow-aside",
             expect="allow",
