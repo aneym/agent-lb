@@ -1,0 +1,1 @@
+Blocked, no commits: _get_or_create_http_bridge_session alone is 59,934 bytes, so a move-only split cannot get under 20,000 bytes. It would need executable helper calls and return plumbing, which move-only forbids. The checkout is detached at b36a6635, not on the requested branch. The driver must de
