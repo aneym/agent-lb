@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 PROBE_INTERVAL_SECONDS = 6 * 60 * 60
 PROBE_TIMEOUT_SECONDS = 180
 EXPECTED_MODEL_DEFAULT = "claude-opus-5-5"
@@ -258,7 +260,7 @@ def analyze_stream(stdout: str, nonce: str, expected_model: str) -> tuple[str, s
         blocks = content if isinstance(content, list) else []
         parent_id = event.get("parent_tool_use_id") or (message.get("parent_tool_use_id") if message else None)
         model = message.get("model") if message else None
-        if event_type == "assistant" and isinstance(parent_id, str) and isinstance(model, str):
+        if event_type == "assistant" and isinstance(parent_id, str) and isinstance(model, str) and message is not None:
             child_models.setdefault(parent_id, []).append(model)
             if _text_contains(message.get("content"), nonce) and _text_contains(
                 message.get("content"), _model_base(expected_model)
@@ -342,14 +344,10 @@ def analyze_stream(stdout: str, nonce: str, expected_model: str) -> tuple[str, s
         1 for values in models if values and all(_model_base(value) == expected_base for value in values)
     )
     evidence["child_nonce_reads"] = sum(
-        1
-        for call in (first, second)
-        if child_reads.get(call["id"], set()) & child_read_results.get(call["id"], set())
+        1 for call in (first, second) if child_reads.get(call["id"], set()) & child_read_results.get(call["id"], set())
     )
     evidence["completed_result_metadata"] = sum(
-        1
-        for call in (first, second)
-        if result_metadata.get(call["id"], {}).get("status") == "completed"
+        1 for call in (first, second) if result_metadata.get(call["id"], {}).get("status") == "completed"
     )
     evidence["child_identity_replies"] = sum(1 for call in (first, second) if child_replies.get(call["id"]))
 
@@ -619,7 +617,7 @@ def schedule() -> int:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Hermetic runtime proof for the two canonical Opus Agent seats.')
+    parser = argparse.ArgumentParser(description="Hermetic runtime proof for the two canonical Opus Agent seats.")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--schedule", action="store_true", help="claim the six-hour slot and detach a probe")
     modes.add_argument("--background", action="store_true", help=argparse.SUPPRESS)
