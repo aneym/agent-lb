@@ -1,0 +1,1 @@
+Blocked, no commits made: in upstream_events.py (41,085 bytes) the method _process_http_bridge_upstream_text is 28,459 bytes by itself, so a move-only split cannot get any file under 20,000 bytes. Cutting it into helpers needs new calls and state handoffs, which the move-only rule forbids. It needs 
