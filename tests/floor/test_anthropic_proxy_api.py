@@ -39,11 +39,11 @@ async def test_anthropic_stream_error_guard_releases_api_key_reservation(
             code="no_available_anthropic_accounts",
         )
 
-    monkeypatch.setattr(proxy_api, "_release_reservation", fake_release_reservation)
+    monkeypatch.setattr(proxy_api, "release_reservation", fake_release_reservation)
 
     chunks = [
         chunk
-        async for chunk in proxy_api._anthropic_stream_error_guard(
+        async for chunk in proxy_api.anthropic_stream_error_guard(
             failing_body(),
             streaming=True,
             api_key_reservation=reservation,
@@ -122,7 +122,7 @@ async def test_v1_messages_forwards_server_tool_and_stream_unchanged(
 
         return AnthropicProxyStream(body=body(), media_type="text/event-stream")
 
-    monkeypatch.setattr(proxy_api, "_enforce_request_limits", fake_enforce_request_limits)
+    monkeypatch.setattr(proxy_api, "enforce_request_limits", fake_enforce_request_limits)
     monkeypatch.setattr(
         anthropic_service_module.AnthropicProxyService,
         "stream_messages",
@@ -148,7 +148,7 @@ async def test_v1_ccgpt_messages_rejects_anthropic_defined_tools(
         del args, kwargs
         was_called = True
 
-    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream_responses)
+    monkeypatch.setattr(proxy_api, "stream_responses", fake_stream_responses)
 
     response = await async_client.post(
         "/v1/ccgpt/messages",
@@ -184,8 +184,8 @@ def _guard_reservation_paths(monkeypatch: pytest.MonkeyPatch) -> tuple[list[obje
     async def fake_release_reservation(reservation: ApiKeyUsageReservationData | None) -> None:
         released.append(reservation)
 
-    monkeypatch.setattr(proxy_api, "_enforce_request_limits", fake_enforce_request_limits)
-    monkeypatch.setattr(proxy_api, "_release_reservation", fake_release_reservation)
+    monkeypatch.setattr(proxy_api, "enforce_request_limits", fake_enforce_request_limits)
+    monkeypatch.setattr(proxy_api, "release_reservation", fake_release_reservation)
     return enforced, released
 
 

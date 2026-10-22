@@ -26,7 +26,7 @@ async def test_ccgpt_messages_uses_openai_responses_path_and_returns_anthropic_s
 
         return StreamingResponse(source(), media_type="text/event-stream")
 
-    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+    monkeypatch.setattr(proxy_api, "stream_responses", fake_stream)
 
     async with async_client.stream(
         "POST",
@@ -84,7 +84,7 @@ async def test_ccgpt_messages_propagates_per_task_effort(async_client, monkeypat
 
         return StreamingResponse(source(), media_type="text/event-stream")
 
-    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+    monkeypatch.setattr(proxy_api, "stream_responses", fake_stream)
     response = await async_client.post(
         "/v1/ccgpt/messages",
         json={
