@@ -1,1 +1,0 @@
-Blocked: no commits made. proxy_responses_websocket alone is 36,361 bytes, and 20,711 bytes with indentation, blank lines and comments stripped. A move-only split cannot get it under 20,000. It needs a refactor that adds calls and return values, which the move-only rule forbids. Seat key gpt-impleme
