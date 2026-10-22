@@ -1,6 +1,16 @@
 {
  "claims": [],
- "freezes": [],
+ "freezes": [
+  {
+   "by": "aneyman@alexs-Mac-Studio",
+   "expires": "2026-10-22T18:55:29Z",
+   "lane": "filecap-council",
+   "owner_branch": "filecap-w8-lb-clients-agent-defs-doctor",
+   "path": "clients/agent-defs-doctor",
+   "reason": "filecap-council move-only split",
+   "since": "2026-10-22T17:25:29Z"
+  }
+ ],
  "moved": [
   {
    "into": [
