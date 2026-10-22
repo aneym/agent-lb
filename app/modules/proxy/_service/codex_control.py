@@ -40,6 +40,7 @@ from app.modules.proxy._service.codex_control_context import (
 )
 from app.modules.proxy._service.support import _request_log_useragent_fields, _RequestLogFailureMetadata
 from app.modules.proxy.affinity import _sticky_key_for_codex_control_request
+from app.modules.proxy.codex_control_usage import CodexControlUsage
 from app.modules.proxy.helpers import _header_account_id, _normalize_error_code, _parse_openai_error
 from app.modules.proxy.load_balancer import AccountSelection
 
@@ -88,6 +89,8 @@ class _CodexControlMixin:
         route_fallback_used: bool | None = None
         route_fail_closed_reason: str | None = None
         request_kind = f"codex_control_{path.strip('/').replace('/', '_')}"
+        observed_usage = CodexControlUsage()
+        observed_usage.observe(payload, request=True)
 
         try:
             selection = await proxy._select_account_with_budget_compatible(
@@ -144,7 +147,7 @@ class _CodexControlMixin:
                     route_endpoint_id = route.endpoint_id
                 route_trace = UpstreamProxyRouteTrace()
                 try:
-                    return await _service_core_codex_control_request()(
+                    result = await _service_core_codex_control_request()(
                         path,
                         method=method,
                         payload=payload,
@@ -157,6 +160,8 @@ class _CodexControlMixin:
                         allow_direct_egress=route is None,
                         route_trace=route_trace,
                     )
+                    observed_usage.observe(result.body)
+                    return result
                 finally:
                     if route_trace.mode is not None:
                         route_mode = route_trace.mode
@@ -330,7 +335,12 @@ class _CodexControlMixin:
                 account_id=account_id_value,
                 api_key=api_key,
                 request_id=request_id,
-                model=None,
+                model=observed_usage.model,
+                input_tokens=observed_usage.input_tokens,
+                output_tokens=observed_usage.output_tokens,
+                cached_input_tokens=observed_usage.cached_input_tokens,
+                reasoning_tokens=observed_usage.reasoning_tokens,
+                request_kind=request_kind,
                 latency_ms=int((_service_time().monotonic() - start) * 1000),
                 status=log_status,
                 error_code=log_error_code,
