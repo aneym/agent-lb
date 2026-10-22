@@ -18,6 +18,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from dispatch_parity import run_parity  # type: ignore[missing-import]
+from codex_home import codex_changes  # type: ignore[missing-import]
 from harness_mcp import ensure_harness_mcp
 from hook_inventory import hook_path_problems, validate_hook_changes  # type: ignore[missing-import]
 from policy_hosts import policy_box_hosts  # type: ignore[missing-import]
@@ -91,6 +92,7 @@ POLICY_FILES = (
     "claude-adapter.md",
     "install-policy.py",
     "dispatch_parity.py",
+    "codex_home.py",
     "harness_mcp.py",
     "policy_inventory.py",
     "policy_hosts.py",
@@ -1057,24 +1059,6 @@ def check_policy(source: Path, home: Path, snapshot: dict[str, Any]) -> int:
     return int(bool(problems))
 
 
-def reconcile_codex_config(text: str, model: str) -> str:
-
-    section = ""
-    lines = []
-    assignment = re.compile(
-        r"^(\s*(model|extract_model|consolidation_model)\s*=\s*)([\"\'])(gpt-\d+(?:\.\d+)*-(?:sol|luna))(\3)(.*)$"
-    )
-    for line in text.splitlines(keepends=True):
-        if line.lstrip().startswith("["):
-            section = line.strip()
-        match = assignment.match(line.rstrip("\r\n"))
-        if match and (match[2] != "model" or not section):
-            start, end = match.span(4)
-            line = line[:start] + model + line[end:]
-        lines.append(line)
-    return "".join(lines)
-
-
 def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
 
     dispatcher = dispatcher_module(source)
@@ -1697,21 +1681,7 @@ def main() -> int:
                 )
             ):
                 changes[path] = None
-    if not args.uninstall:
-        codex_config = args.home / ".codex" / "config.toml"
-        if codex_config.is_file():
-            codex_config = codex_config.resolve()
-            try:
-                codex_config.relative_to(args.home.resolve())
-                config_text = codex_config.read_bytes().decode("utf-8")
-            except UnicodeDecodeError:
-                print("SKIP Codex config rewrite: config.toml is not UTF-8")
-            except ValueError:
-                print("SKIP Codex config rewrite: config.toml target is outside --home")
-            else:
-                desired_config = reconcile_codex_config(config_text, resolve_sol(source, args.home))
-                if desired_config != config_text:
-                    changes[codex_config] = desired_config
+    changes.update(codex_changes(args.home, None if args.uninstall else resolve_sol(source, args.home)))
     preserved_agents: list[tuple[str, Path]] = []
     replace_policy_link = False
     policy_link_target = ""
