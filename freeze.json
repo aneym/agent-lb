@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T16:13:26Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-scripts-lb-spend-cap-check",
-   "path": "scripts/lb-spend-cap-check",
-   "reason": "filecap-council wave 8 move-only split",
-   "since": "2026-10-22T14:43:26Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -20,6 +10,15 @@
    "path": "config/coding-agents/hooks/subagent-closeout.py",
    "sha": "1529fca653442db347c9a0194e9e68f08dc4d74f",
    "until": "2026-10-29T14:43:16Z"
+  },
+  {
+   "into": [
+    "scripts/lb-spend-cap-check"
+   ],
+   "note": "split not landed; no change",
+   "path": "scripts/lb-spend-cap-check",
+   "sha": "e17b54718af8f7e466da1db2b4e943daef5a236a",
+   "until": "2026-10-29T14:46:56Z"
   }
  ]
 }
