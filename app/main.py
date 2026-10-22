@@ -473,6 +473,10 @@ def configure_app(app: FastAPI, settings) -> None:
     app.include_router(federation_api.router)
     app.include_router(federation_api.dashboard_router)
 
+    configure_static_routes(app)
+
+
+def configure_static_routes(app: FastAPI) -> None:
     static_dir = Path(__file__).parent / "static"
     index_html = static_dir / "index.html"
     static_root = static_dir.resolve()
