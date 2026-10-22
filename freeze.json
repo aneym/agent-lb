@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T20:14:33Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-clients-claude-lb-launch",
-   "path": "clients/claude-lb-launch",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T18:44:33Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -183,6 +173,25 @@
    "path": "clients/opus-runtime-doctor",
    "sha": "7015813d223db5a32e59d01cfb3d8be084b50567",
    "until": "2026-10-29T18:43:22Z"
+  },
+  {
+   "into": [
+    "clients/claude_lb_api.py",
+    "clients/claude_lb_certs.py",
+    "clients/claude_lb_common.py",
+    "clients/claude_lb_endpoints.py",
+    "clients/claude_lb_models.py",
+    "clients/claude_lb_network.py",
+    "clients/claude_lb_process.py",
+    "clients/claude_lb_proxy.py",
+    "clients/claude_lb_quota.py",
+    "clients/claude_lb_tags.py",
+    "clients/claude_lb_tunnel.py"
+   ],
+   "note": "clients/claude-lb-launch split at 450116a2d4. Reapply your diff onto the new module that now holds the code. Map: clients/claude_lb_api.py: LbApiHandler; clients/claude_lb_certs.py: routes_to_agent_lb, run_openssl, ensure_mitm_certs, LbActivity; clients/claude_lb_common.py: remote_only_mac, default_remote_url, LaunchConfig, direct_upgrade_tls_context, splice, proxy_ready_path, activity_path, client_activity_path, raise_fd_soft_limit, env_float, env_int, is_retryable_shim_connect_error; clients/claude_lb_endpoints.py: print_lb_banner, prepare_interactive_endpoint, prepare_ccgpt_endpoint, probe_ccgpt_at; clients/claude_lb_models.py: CcgptModelViolation, ccgpt_upstream_path, ccgpt_request_model; clients/claude_lb_network.py: lb_enabled, doctor_path, run_opus_doctor, schedule_opus_doctor, bypass_anthropic_proxy, lb_json, lb_post_json, is_unreachable_health_error, is_timeout_error, probe_interactive_ready, probe_health_at, local_launchd_job_loaded; clients/claude_lb_process.py: without_option, claude_executable, build_command, derive_session_id, auto_resume_enabled, build_resume_command, stop_child, transcript_mtime, parse_elapsed, shell_command_process, work_process_alive, activity_life; clients/claude_lb_proxy.py: run_lb_proxy, proxy_port_ready, prune_stale_shim_files, start_lb_proxy, spawn_lb_proxy; clients/claude_lb_quota.py: requested_model, requested_effort, anthropic_quota_key, short_account_name, number, reset_label, stderr_color, c, pct_left, fable_remaining_percent, fabl",
+   "path": "clients/claude-lb-launch",
+   "sha": "450116a2d426c68a241cba2ede5ec005b38b02c7",
+   "until": "2026-10-29T18:44:55Z"
   }
  ]
 }
