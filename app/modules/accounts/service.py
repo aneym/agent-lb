@@ -38,7 +38,7 @@ from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory
 from app.db.session import get_background_session
 from app.modules.accounts import probes, reset_credit_cache
-from app.modules.accounts.auth_manager import AuthManager, _expiry_datetime, is_locally_owned
+from app.modules.accounts.auth_manager import AuthManager, expiry_datetime, is_locally_owned
 from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
     credits_exhausted,
@@ -96,13 +96,6 @@ _SPARKLINE_DAYS = 7
 _DETAIL_BUCKET_SECONDS = 3600
 
 
-DEFAULT_PROBE_MODEL = probes.DEFAULT_PROBE_MODEL
-DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = probes.DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL
-DEFAULT_GLM_PROBE_MODEL = probes.DEFAULT_GLM_PROBE_MODEL
-DEFAULT_KIMI_PROBE_MODEL = probes.DEFAULT_KIMI_PROBE_MODEL
-PROBE_REQUEST_TIMEOUT_SECONDS = probes.PROBE_REQUEST_TIMEOUT_SECONDS
-
-
 ANTHROPIC_MODELS_TTL_SECONDS = 3600.0
 ANTHROPIC_MODELS_MAX_ACCOUNTS = 3
 
@@ -116,10 +109,6 @@ _anthropic_models_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, as
 
 def _anthropic_models_refresh_lock() -> asyncio.Lock:
     return _anthropic_models_locks.setdefault(asyncio.get_running_loop(), asyncio.Lock())
-
-
-PROBE_CONNECT_TIMEOUT_SECONDS = probes.PROBE_CONNECT_TIMEOUT_SECONDS
-PROBE_NETWORK_FAILURE_STATUS = probes.PROBE_NETWORK_FAILURE_STATUS
 
 
 USAGE_CACHE_TTL = 60.0
@@ -540,7 +529,7 @@ class AccountsTransfer(AccountsQueries):
             refresh_token_encrypted=self._encryptor.encrypt(auth.tokens.refresh_token),
             id_token_encrypted=self._encryptor.encrypt(auth.tokens.id_token),
             last_refresh=last_refresh,
-            access_expires_at=_expiry_datetime(auth.tokens.access_token),
+            access_expires_at=expiry_datetime(auth.tokens.access_token),
             status=AccountStatus.ACTIVE,
             deactivation_reason=None,
         )
@@ -818,7 +807,7 @@ class AccountsLifecycle(AccountsTransfer):
             probe_status = await self._send_probe_request(
                 access_token=access_token,
                 chatgpt_account_id=check_account.chatgpt_account_id,
-                model=DEFAULT_PROBE_MODEL,
+                model=probes.DEFAULT_PROBE_MODEL,
             )
         else:
             raise AccountStateTransitionError(f"Provider {provider} cannot be subscription-checked")
@@ -893,7 +882,7 @@ class AccountsLifecycle(AccountsTransfer):
             probe_account = await self._auth_manager.ensure_fresh(account, force=False)
 
         access_token = self._encryptor.decrypt(probe_account.access_token_encrypted)
-        probe_model = model or DEFAULT_PROBE_MODEL
+        probe_model = model or probes.DEFAULT_PROBE_MODEL
         provider = normalize_provider_name(probe_account.provider)
         compat_profiles = {profile.provider_name: profile for profile in ANTHROPIC_COMPAT_PROFILES}
         compat_profile = compat_profiles.get(provider)
@@ -977,7 +966,7 @@ class AccountsLifecycle(AccountsTransfer):
         return await self._send_messages_probe_request(
             access_token=access_token,
             base_url=get_settings().anthropic_upstream_base_url,
-            model=DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL,
+            model=probes.DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL,
         )
 
 
@@ -1152,7 +1141,7 @@ class AccountsService(AccountsLifecycle):
                 )
             except Exception:
                 reset_credit_cache.clear(account_id)
-                logger.warning(
+                logging.getLogger(__name__).warning(
                     "Post-redemption reset-credit listing failed account=%s",
                     account_id,
                     exc_info=True,

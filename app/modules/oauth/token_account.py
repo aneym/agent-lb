@@ -13,7 +13,7 @@ from app.core.plan_types import coerce_account_plan_type
 from app.core.providers import OPENAI_PROVIDER_NAME, get_provider
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
-from app.modules.accounts.auth_manager import _expiry_datetime
+from app.modules.accounts.auth_manager import expiry_datetime
 
 
 def account_from_tokens(tokens: OAuthTokens, provider_name: str, encryptor: TokenEncryptor) -> Account:
@@ -58,7 +58,7 @@ def account_from_tokens(tokens: OAuthTokens, provider_name: str, encryptor: Toke
         refresh_token_encrypted=encryptor.encrypt(tokens.refresh_token),
         id_token_encrypted=id_token_encrypted,
         last_refresh=utcnow(),
-        access_expires_at=_expiry_datetime(tokens.access_token, tokens.expires_in),
+        access_expires_at=expiry_datetime(tokens.access_token, tokens.expires_in),
         status=AccountStatus.ACTIVE,
         deactivation_reason=None,
     )

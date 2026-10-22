@@ -465,7 +465,7 @@ class AuthManager:
         else:
             account.id_token_encrypted = None
         account.last_refresh = utcnow()
-        account.access_expires_at = _expiry_datetime(result.access_token, result.expires_in, now=account.last_refresh)
+        account.access_expires_at = expiry_datetime(result.access_token, result.expires_in, now=account.last_refresh)
         if result.account_id:
             account.chatgpt_account_id = result.account_id
         if result.plan_type is not None:
@@ -784,7 +784,7 @@ def _clear_refresh_singleflight_state() -> None:
     _REFRESH_SINGLEFLIGHT.clear()
 
 
-def _expiry_datetime(
+def expiry_datetime(
     access_token: str, expires_in: int | None = None, *, now: datetime | None = None
 ) -> datetime | None:
     expires_ms = token_expiry_epoch_ms(access_token)
