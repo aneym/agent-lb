@@ -1,0 +1,1 @@
+Blocked: method _stream_via_http_bridge alone is 45,851 bytes (42,431 dedented), so a move-only split cannot get under 20,000 bytes; it needs new call/return statements the move-only rule forbids. No commits made. Seat ran on ax42; key gpt-implementer-filecap-w8-streaming-1792673037-2cbd. Behavior t
