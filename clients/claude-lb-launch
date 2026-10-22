@@ -162,7 +162,7 @@ def resolve_lane_tags(argv: list[str]) -> str:
         return "tag assignment failed"
     return reason
 
-def _safe_tag(value: str) -> str:
+def safe_tag(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._:/-]", "?", value)[:128]
 
 def stand_in_banner() -> str:
@@ -170,7 +170,7 @@ def stand_in_banner() -> str:
     if not intent:
         return "stand-in: off"
     lane = os.environ.get("AGENT_LB_LANE")
-    return f"stand-in: {_safe_tag(intent)}" + (f" ({_safe_tag(lane)})" if lane else " (lane: none)")
+    return f"stand-in: {safe_tag(intent)}" + (f" ({safe_tag(lane)})" if lane else " (lane: none)")
 
 LOCAL_LB_URL = "http://127.0.0.1:2455"
 STUDIO_LB_URL = "https://studio.tailf266ac.ts.net:2455"
@@ -238,7 +238,7 @@ AGENT_LB_ANTHROPIC_PATHS = frozenset(
     }
 )
 
-def _routes_to_agent_lb(path: str) -> bool:
+def routes_to_agent_lb(path: str) -> bool:
 
     parsed = urllib.parse.urlsplit(path)
     if parsed.scheme or parsed.netloc:
@@ -247,7 +247,7 @@ def _routes_to_agent_lb(path: str) -> bool:
         parsed.path.endswith("/") and parsed.path[:-1] in AGENT_LB_ANTHROPIC_PATHS
     )
 
-def _run_openssl(args: list[str]) -> None:
+def run_openssl(args: list[str]) -> None:
     proc = subprocess.run(
         ["openssl", *args],
         stdin=subprocess.DEVNULL,
@@ -295,7 +295,7 @@ def ensure_mitm_certs() -> None:
         "subjectAltName = DNS:api.anthropic.com\n"
     )
 
-    _run_openssl(
+    run_openssl(
         [
             "req",
             "-x509",
@@ -314,7 +314,7 @@ def ensure_mitm_certs() -> None:
             str(ca_conf),
         ]
     )
-    _run_openssl(
+    run_openssl(
         [
             "req",
             "-new",
@@ -329,7 +329,7 @@ def ensure_mitm_certs() -> None:
             str(leaf_req_conf),
         ]
     )
-    _run_openssl(
+    run_openssl(
         [
             "x509",
             "-req",
@@ -363,7 +363,7 @@ def ensure_mitm_certs() -> None:
             pass
     CERT_MARKER.write_text("1\n")
 
-class _LbActivity:
+class LbActivity:
 
     def __init__(self, path: Path, *, only_if_exists: bool = False) -> None:
         self.path = path
@@ -413,7 +413,7 @@ class _LbActivity:
             self.last_progress = time.time()
             self._write()
 
-class _LbApiHandler(http.server.BaseHTTPRequestHandler):
+class LbApiHandler(http.server.BaseHTTPRequestHandler):
 
     protocol_version = "HTTP/1.1"
     timeout = SHIM_CLIENT_IDLE_TIMEOUT_SECONDS
@@ -453,7 +453,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error(503, "parent process exited")
                 return
 
-        if self._is_websocket_upgrade() and not _routes_to_agent_lb(self.path):
+        if self._is_websocket_upgrade() and not routes_to_agent_lb(self.path):
             self._tunnel_upgrade()
             return
 
@@ -465,7 +465,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                 length = 0
             body = self.rfile.read(length) if length > 0 else b""
 
-        routes_to_lb = _routes_to_agent_lb(self.path)
+        routes_to_lb = routes_to_agent_lb(self.path)
         headers = {
             key: value
             for key, value in self.headers.items()
@@ -481,7 +481,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
             return
 
         try:
-            upstream_path = _ccgpt_upstream_path(self.path, body) if self.server.ccgpt_mode else self.path
+            upstream_path = ccgpt_upstream_path(self.path, body) if self.server.ccgpt_mode else self.path
         except CcgptModelViolation as error:
             message = json.dumps(
                 {
@@ -518,7 +518,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                     with client_lock:
                         activity = client_activities.get(client_id)
                         if activity is None:
-                            activity = _LbActivity(client_path, only_if_exists=True)
+                            activity = LbActivity(client_path, only_if_exists=True)
                             client_activities[client_id] = activity
                         activity.start()
         elif activity is not None:
@@ -535,12 +535,12 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
 
     def _forward_lb(
         self, request: urllib.request.Request, shared: bool, parent_pid: int | None,
-        activity: _LbActivity | None,
+        activity: LbActivity | None,
     ) -> None:
 
-        connect_retries = max(0, _env_int("CLAUDE_LB_SHIM_CONNECT_RETRIES", SHIM_CONNECT_RETRIES_DEFAULT))
-        backoff = max(0.05, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF", SHIM_CONNECT_BACKOFF_DEFAULT))
-        backoff_cap = max(backoff, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF_CAP", SHIM_CONNECT_BACKOFF_CAP_DEFAULT))
+        connect_retries = max(0, env_int("CLAUDE_LB_SHIM_CONNECT_RETRIES", SHIM_CONNECT_RETRIES_DEFAULT))
+        backoff = max(0.05, env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF", SHIM_CONNECT_BACKOFF_DEFAULT))
+        backoff_cap = max(backoff, env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF_CAP", SHIM_CONNECT_BACKOFF_CAP_DEFAULT))
         attempt = 0
         while True:
             try:
@@ -555,7 +555,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                         os.kill(parent_pid, 0)
                     except OSError:
                         parent_alive = False
-                if attempt < connect_retries and parent_alive and _is_retryable_shim_connect_error(error):
+                if attempt < connect_retries and parent_alive and is_retryable_shim_connect_error(error):
                     time.sleep(min(backoff * (2**attempt), backoff_cap))
                     attempt += 1
                     continue
@@ -583,7 +583,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         upstream = None
         try:
             raw = socket.create_connection(DIRECT_UPGRADE_ADDRESS, timeout=20)
-            upstream = _direct_upgrade_tls_context().wrap_socket(raw, server_hostname=DIRECT_UPGRADE_HOST)
+            upstream = direct_upgrade_tls_context().wrap_socket(raw, server_hostname=DIRECT_UPGRADE_HOST)
             request = f"{self.command} {self.path} HTTP/1.1\r\n" + "".join(
                 f"{key}: {value}\r\n" for key, value in self.headers.items()
             )
@@ -598,7 +598,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
             self._send_shim_error(error)
             return
         self.wfile.flush()
-        _splice(self.connection, upstream)
+        splice(self.connection, upstream)
 
     def _forward_direct(self, body: bytes | None, headers: dict[str, str]) -> None:
 
@@ -628,7 +628,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(message)
         self.close_connection = True
 
-    def _copy_response(self, response: object, activity: _LbActivity | None = None) -> None:
+    def _copy_response(self, response: object, activity: LbActivity | None = None) -> None:
         status = getattr(response, "status", None) or getattr(response, "code", 502)
         content_type = response.headers.get("content-type", "")
         self.send_response(int(status))
@@ -658,7 +658,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                     activity.progress()
         self.close_connection = True
 
-class _TunnelBucket:
+class TunnelBucket:
 
     SMALL_WRITE_BYTES = 8192
 
@@ -685,20 +685,20 @@ class _TunnelBucket:
             time.sleep(step)
             wait -= step
 
-def _tunnel_bucket_from_env() -> _TunnelBucket | None:
-    rate_mbps = _env_float("CLAUDE_LB_TUNNEL_RATE_MBPS", SHIM_TUNNEL_RATE_MBPS_DEFAULT)
+def tunnel_bucket_from_env() -> TunnelBucket | None:
+    rate_mbps = env_float("CLAUDE_LB_TUNNEL_RATE_MBPS", SHIM_TUNNEL_RATE_MBPS_DEFAULT)
 
     if not math.isfinite(rate_mbps) or rate_mbps <= 0:
         return None
-    return _TunnelBucket(rate_mbps * 125_000.0)
+    return TunnelBucket(rate_mbps * 125_000.0)
 
-def _direct_upgrade_tls_context() -> ssl.SSLContext:
+def direct_upgrade_tls_context() -> ssl.SSLContext:
     return ssl.create_default_context()
 
-def _splice(
+def splice(
     a: socket.socket,
     b: socket.socket,
-    bucket: "_TunnelBucket | None" = None,
+    bucket: "TunnelBucket | None" = None,
 ) -> tuple[int, int]:
 
     ends = (a, b)
@@ -739,7 +739,7 @@ def _splice(
                 pass
     return a_to_b, b_to_a
 
-class _ProxyHandler(http.server.BaseHTTPRequestHandler):
+class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
     protocol_version = "HTTP/1.1"
     timeout = SHIM_CLIENT_IDLE_TIMEOUT_SECONDS
@@ -761,7 +761,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.connection.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
             except OSError:
                 pass
-            _log_tunnel_connect("", 0, 0.0, "failed")
+            log_tunnel_connect("", 0, 0.0, "failed")
             return
         host = target.group(1)
         if host in INTERCEPT_HOSTS:
@@ -796,7 +796,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             return
         try:
 
-            _LbApiHandler(tls, ("127.0.0.1", 0), self.server)
+            LbApiHandler(tls, ("127.0.0.1", 0), self.server)
         except OSError:
             pass
         finally:
@@ -808,7 +808,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
     def _tunnel(self, host: str, port: int) -> None:
         connecting = time.monotonic()
         try:
-            if _safe_tunnel_target(host, port) == "<invalid target>":
+            if safe_tunnel_target(host, port) == "<invalid target>":
                 raise OSError("invalid CONNECT target")
             upstream = socket.create_connection((host, port), timeout=20)
         except OSError as error:
@@ -817,7 +817,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.connection.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             except OSError:
                 pass
-            _log_tunnel_connect(host, port, time.monotonic() - connecting, "failed")
+            log_tunnel_connect(host, port, time.monotonic() - connecting, "failed")
             return
         try:
             self.connection.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -829,13 +829,13 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             return
         connect_elapsed = time.monotonic() - connecting
         started = time.monotonic()
-        sent, received = _splice(self.connection, upstream, getattr(self.server, "tunnel_bucket", None))
+        sent, received = splice(self.connection, upstream, getattr(self.server, "tunnel_bucket", None))
         if connect_elapsed >= SHIM_TUNNEL_SLOW_CONNECT_SECONDS:
-            _log_tunnel_connect(host, port, connect_elapsed, "slow")
+            log_tunnel_connect(host, port, connect_elapsed, "slow")
         if sent + received >= SHIM_TUNNEL_LOG_MIN_BYTES:
             duration = max(time.monotonic() - started, 0.001)
-            _queue_tunnel_log(
-                f"cc-proxy: tunnel {_safe_tunnel_target(host, port)} relayed "
+            queue_tunnel_log(
+                f"cc-proxy: tunnel {safe_tunnel_target(host, port)} relayed "
                 f"{received / 1e6:.1f}MB down / {sent / 1e6:.1f}MB up in {duration:.0f}s\n"
             )
 
@@ -846,13 +846,13 @@ _tunnel_log_window = 0.0
 _tunnel_log_count = 0
 _tunnel_log_suppressed = 0
 
-def _safe_tunnel_target(host: str, port: int) -> str:
+def safe_tunnel_target(host: str, port: int) -> str:
     if (re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", host)
             and isinstance(port, int) and 1 <= port <= 65535):
         return f"{host}:{port}"
     return "<invalid target>"
 
-def _drain_tunnel_logs() -> None:
+def drain_tunnel_logs() -> None:
     while True:
         sink, line = _tunnel_logs.get()
         try:
@@ -863,7 +863,7 @@ def _drain_tunnel_logs() -> None:
         finally:
             _tunnel_logs.task_done()
 
-def _queue_tunnel_log(line: str) -> None:
+def queue_tunnel_log(line: str) -> None:
 
     global _tunnel_log_worker, _tunnel_log_window, _tunnel_log_count, _tunnel_log_suppressed
     if not _tunnel_log_lock.acquire(blocking=False):
@@ -881,7 +881,7 @@ def _queue_tunnel_log(line: str) -> None:
             _tunnel_log_suppressed += 1
             return
         if _tunnel_log_worker is None:
-            _tunnel_log_worker = threading.Thread(target=_drain_tunnel_logs, daemon=True)
+            _tunnel_log_worker = threading.Thread(target=drain_tunnel_logs, daemon=True)
             _tunnel_log_worker.start()
         try:
             _tunnel_logs.put_nowait((sys.stderr, line))
@@ -893,14 +893,14 @@ def _queue_tunnel_log(line: str) -> None:
     finally:
         _tunnel_log_lock.release()
 
-def _log_tunnel_connect(host: str, port: int, elapsed: float, outcome: str) -> None:
+def log_tunnel_connect(host: str, port: int, elapsed: float, outcome: str) -> None:
     try:
         stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        _queue_tunnel_log(f"cc-proxy: {stamp} connect {_safe_tunnel_target(host, port)} {outcome} after {elapsed:.1f}s\n")
+        queue_tunnel_log(f"cc-proxy: {stamp} connect {safe_tunnel_target(host, port)} {outcome} after {elapsed:.1f}s\n")
     except Exception:
         pass
 
-class _ThreadingProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+class ThreadingProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
     daemon_threads = True
     allow_reuse_address = True
@@ -928,7 +928,7 @@ def client_activity_path(client_session_id: str) -> Path | None:
         return None
     return proxy_ready_path("x").parent / f"client-{client_session_id}.activity"
 
-def _raise_fd_soft_limit(target: int = 10240) -> None:
+def raise_fd_soft_limit(target: int = 10240) -> None:
 
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -950,14 +950,14 @@ def run_lb_proxy(
 ) -> None:
     if not shared and parent_pid is None:
         raise ValueError("parent_pid is required for a launcher-scoped proxy")
-    _raise_fd_soft_limit()
+    raise_fd_soft_limit()
     ensure_mitm_certs()
     tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls_context.load_cert_chain(certfile=str(LEAF_CERT), keyfile=str(LEAF_KEY))
 
-    server = _ThreadingProxyServer(("127.0.0.1", listen_port), _ProxyHandler)
+    server = ThreadingProxyServer(("127.0.0.1", listen_port), ProxyHandler)
     server.tls_context = tls_context
-    server.tunnel_bucket = _tunnel_bucket_from_env()
+    server.tunnel_bucket = tunnel_bucket_from_env()
     server.session_id = session_id
     server.parent_pid = parent_pid
     server.shared = shared
@@ -965,7 +965,7 @@ def run_lb_proxy(
     server.ccgpt_mode = CCGPT_MODE and not shared
     server.upstream_base_url = upstream_base_url.rstrip("/")
     server.activity = (
-        _LbActivity(activity_path(session_id, parent_pid)) if not shared and parent_pid is not None else None
+        LbActivity(activity_path(session_id, parent_pid)) if not shared and parent_pid is not None else None
     )
     if shared:
         server.client_activity = {}
@@ -999,7 +999,7 @@ def run_lb_proxy(
                 except OSError:
                     pass
 
-def _proxy_port_ready(port: int, timeout: float = 0.4) -> bool:
+def proxy_port_ready(port: int, timeout: float = 0.4) -> bool:
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=timeout):
             return True
@@ -1009,7 +1009,7 @@ def _proxy_port_ready(port: int, timeout: float = 0.4) -> bool:
 SHIM_READY_FILE_MAX_AGE_SECONDS = 24 * 3600
 SHIM_READY_FILE_DEAD_GRACE_SECONDS = 10
 
-def _prune_stale_shim_files(shim_dir: Path, *, now: float | None = None) -> int:
+def prune_stale_shim_files(shim_dir: Path, *, now: float | None = None) -> int:
 
     current_time = time.time() if now is None else now
     old_cutoff = current_time - SHIM_READY_FILE_MAX_AGE_SECONDS
@@ -1034,7 +1034,7 @@ def _prune_stale_shim_files(shim_dir: Path, *, now: float | None = None) -> int:
                     port = int(Path(entry.path).read_text().strip())
                 except ValueError:
                     port = 0
-                if 1 <= port <= 65535 and _proxy_port_ready(port, timeout=0.2):
+                if 1 <= port <= 65535 and proxy_port_ready(port, timeout=0.2):
                     continue
             os.unlink(entry.path)
             removed += 1
@@ -1046,14 +1046,14 @@ def start_lb_proxy(session_id: str) -> str:
     parent_pid = os.getpid()
 
     ready = proxy_ready_path(f"{session_id}.{parent_pid}")
-    _prune_stale_shim_files(ready.parent)
+    prune_stale_shim_files(ready.parent)
     for path in (ready, activity_path(session_id, parent_pid)):
         try:
             path.unlink()
         except OSError:
             pass
-    _spawn_lb_proxy(ready, session_id, parent_pid, LaunchConfig.base_url)
-    deadline = time.monotonic() + _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", SHIM_START_TIMEOUT_DEFAULT)
+    spawn_lb_proxy(ready, session_id, parent_pid, LaunchConfig.base_url)
+    deadline = time.monotonic() + env_float("CLAUDE_LB_SHIM_START_TIMEOUT", SHIM_START_TIMEOUT_DEFAULT)
     while time.monotonic() < deadline:
         try:
             text = ready.read_text().strip()
@@ -1064,12 +1064,12 @@ def start_lb_proxy(session_id: str) -> str:
                 port = int(text)
             except ValueError:
                 port = 0
-            if port and _proxy_port_ready(port):
+            if port and proxy_port_ready(port):
                 return f"http://127.0.0.1:{port}"
         time.sleep(0.01)
     raise RuntimeError("Claude LB intercepting proxy did not start")
 
-def _spawn_lb_proxy(ready: Path, session_id: str, parent_pid: int, upstream_base_url: str) -> None:
+def spawn_lb_proxy(ready: Path, session_id: str, parent_pid: int, upstream_base_url: str) -> None:
     command = [
         sys.executable,
         str(Path(__file__).resolve().with_name("claude-lb-launch")),
@@ -1090,11 +1090,11 @@ def _spawn_lb_proxy(ready: Path, session_id: str, parent_pid: int, upstream_base
 def lb_enabled() -> bool:
     return os.environ.get("CLAUDE_LB_DISABLE") != "1"
 
-def _doctor_path(name: str) -> Path:
+def doctor_path(name: str) -> Path:
     return Path(__file__).resolve().with_name(name)
 
 def run_opus_doctor(nightly: bool = False) -> int:
-    doctor = _doctor_path("opus-runtime-doctor")
+    doctor = doctor_path("opus-runtime-doctor")
     if not doctor.is_file():
         print(f"cc: Opus runtime doctor is missing at {doctor}", file=sys.stderr)
         return 127
@@ -1118,7 +1118,7 @@ def schedule_opus_doctor() -> None:
     ):
         return
     env = {**os.environ, "CLAUDE_LB_DOCTOR_SKIP": "1"}
-    definitions = _doctor_path("agent-defs-doctor")
+    definitions = doctor_path("agent-defs-doctor")
     if definitions.is_file():
         try:
             completed = subprocess.run(
@@ -1138,7 +1138,7 @@ def schedule_opus_doctor() -> None:
                 print(f"agent-defs-doctor: repair failed with exit {completed.returncode}", file=sys.stderr)
         except (OSError, subprocess.TimeoutExpired):
             print("agent-defs-doctor: repair could not complete", file=sys.stderr)
-    runtime = _doctor_path("opus-runtime-doctor")
+    runtime = doctor_path("opus-runtime-doctor")
     if runtime.is_file():
         try:
             subprocess.run(
@@ -1179,26 +1179,26 @@ def lb_post_json(path: str, payload: dict[str, str], *, timeout: float = 4.0, ba
         response_body = response.read().decode("utf-8")
     return json.loads(response_body) if response_body else {}
 
-def _env_float(name: str, default: float) -> float:
+def env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, "") or default)
     except (TypeError, ValueError):
         return default
 
-def _env_int(name: str, default: int) -> int:
+def env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, "") or default)
     except (TypeError, ValueError):
         return default
 
-def _is_retryable_shim_connect_error(error: BaseException) -> bool:
+def is_retryable_shim_connect_error(error: BaseException) -> bool:
 
     if isinstance(error, urllib.error.HTTPError):
         return False
     reason = getattr(error, "reason", None)
     return isinstance(error, ConnectionError) or isinstance(reason, ConnectionError)
 
-def _is_unreachable_health_error(error: BaseException) -> bool:
+def is_unreachable_health_error(error: BaseException) -> bool:
     if isinstance(error, urllib.error.HTTPError):
         return False
     reason = getattr(error, "reason", error)
@@ -1211,7 +1211,7 @@ def _is_unreachable_health_error(error: BaseException) -> bool:
         errno.ENETUNREACH,
     }
 
-def _is_timeout_error(error: BaseException) -> bool:
+def is_timeout_error(error: BaseException) -> bool:
 
     if isinstance(error, urllib.error.HTTPError):
         return False
@@ -1220,7 +1220,7 @@ def _is_timeout_error(error: BaseException) -> bool:
         return True
     return isinstance(reason, OSError) and reason.errno in {errno.ETIMEDOUT, errno.EAGAIN}
 
-def _probe_interactive_ready(base_url: str, *, timeout: float, retries: int, gap: float) -> tuple[str, str]:
+def probe_interactive_ready(base_url: str, *, timeout: float, retries: int, gap: float) -> tuple[str, str]:
 
     last_error = "no response"
     for attempt in range(max(1, retries)):
@@ -1229,15 +1229,15 @@ def _probe_interactive_ready(base_url: str, *, timeout: float, retries: int, gap
             return "ready", ""
         except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
             last_error = str(error) or error.__class__.__name__
-            if _is_timeout_error(error):
+            if is_timeout_error(error):
                 return "busy", last_error
-            if _is_unreachable_health_error(error):
+            if is_unreachable_health_error(error):
                 return "unreachable", last_error
             if attempt + 1 < retries:
                 time.sleep(gap)
     return "down", last_error
 
-def _probe_health_at(base_url: str, *, retries: int, timeout: float, gap: float) -> tuple[bool, str, bool]:
+def probe_health_at(base_url: str, *, retries: int, timeout: float, gap: float) -> tuple[bool, str, bool]:
 
     last_error = "no response"
     last_error_unreachable = False
@@ -1247,12 +1247,12 @@ def _probe_health_at(base_url: str, *, retries: int, timeout: float, gap: float)
             return True, "", False
         except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
             last_error = str(error) or error.__class__.__name__
-            last_error_unreachable = _is_unreachable_health_error(error)
+            last_error_unreachable = is_unreachable_health_error(error)
             if attempt + 1 < retries:
                 time.sleep(gap)
     return False, last_error, last_error_unreachable
 
-def _local_launchd_job_loaded() -> bool:
+def local_launchd_job_loaded() -> bool:
     label = os.environ.get("CLAUDE_LB_LAUNCHD_LABEL") or "com.aneyman.agent-lb"
     try:
         result = subprocess.run(
@@ -1267,9 +1267,9 @@ def _local_launchd_job_loaded() -> bool:
         return False
     return result.returncode == 0
 
-def _wait_for_local_startup(base_url: str, *, probe_timeout: float) -> bool:
-    grace_seconds = max(0.0, _env_float("CLAUDE_LB_STARTUP_GRACE_SECONDS", 90.0))
-    if grace_seconds == 0 or not _local_launchd_job_loaded():
+def wait_for_local_startup(base_url: str, *, probe_timeout: float) -> bool:
+    grace_seconds = max(0.0, env_float("CLAUDE_LB_STARTUP_GRACE_SECONDS", 90.0))
+    if grace_seconds == 0 or not local_launchd_job_loaded():
         return False
 
     print(
@@ -1285,7 +1285,7 @@ def _wait_for_local_startup(base_url: str, *, probe_timeout: float) -> bool:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return False
-        ready, _, _ = _probe_health_at(
+        ready, _, _ = probe_health_at(
             base_url,
             retries=1,
             timeout=min(probe_timeout, remaining),
@@ -1295,7 +1295,7 @@ def _wait_for_local_startup(base_url: str, *, probe_timeout: float) -> bool:
             print("cc: agent-lb is ready — continuing with local LB", file=sys.stderr)
             return True
 
-def _lb_candidates() -> list[tuple[str, str]]:
+def lb_candidates() -> list[tuple[str, str]]:
 
     local_url = (os.environ.get("CLAUDE_LB_LOCAL_URL") or LOCAL_LB_URL).rstrip("/")
     remote_url = (os.environ.get("CLAUDE_LB_BASE_URL") or default_remote_url()).rstrip("/")
@@ -1365,19 +1365,19 @@ def reset_label(reset_at: object) -> str:
         return f"resets {round(remaining / 60)}m"
     return f"resets {round(remaining / 3600)}h"
 
-def _stderr_color() -> bool:
+def stderr_color() -> bool:
     return sys.stderr.isatty() and not os.environ.get("NO_COLOR")
 
-def _c(text: str, code: str) -> str:
-    return f"\033[{code}m{text}\033[0m" if _stderr_color() else text
+def c(text: str, code: str) -> str:
+    return f"\033[{code}m{text}\033[0m" if stderr_color() else text
 
-def _pct_left(remaining: float) -> str:
+def pct_left(remaining: float) -> str:
     label = f"{remaining:.0f}%"
     if remaining >= 50:
-        return _c(label, "32")
+        return c(label, "32")
     if remaining >= 20:
-        return _c(label, "33")
-    return _c(label, "31")
+        return c(label, "33")
+    return c(label, "31")
 
 def fable_remaining_percent(account: dict) -> float | None:
     for quota in account.get("additionalQuotas") or []:
@@ -1396,14 +1396,14 @@ def fable_availability_label(account: dict) -> str:
     eligible = account.get("fableEligible")
     remaining = fable_remaining_percent(account)
     if remaining is not None:
-        remaining_label = _pct_left(remaining)
+        remaining_label = pct_left(remaining)
         if eligible is False:
             return f"fable out ({remaining_label} left)"
         return f"fable {remaining_label} left"
     if eligible is True:
-        return f"fable {_c('available', '32')}"
+        return f"fable {c('available', '32')}"
     if eligible is False:
-        return f"fable {_c('out', '31')}"
+        return f"fable {c('out', '31')}"
     return ""
 
 def quota_window(account: dict, quota_key: str) -> dict:
@@ -1432,19 +1432,19 @@ def account_pressure(account: dict, quota_key: str) -> tuple[bool, float, float,
     quota_name = quota_key.replace("anthropic_", "").replace("_", "-")
     quota_left = max(0.0, min(100.0, 100.0 - quota_used_percent))
     parts = [
-        f"left: {quota_name} {_pct_left(quota_left)}",
-        f"5h {_pct_left(100.0 - primary_used)}",
-        f"weekly {_pct_left(100.0 - weekly_used)}",
+        f"left: {quota_name} {pct_left(quota_left)}",
+        f"5h {pct_left(100.0 - primary_used)}",
+        f"weekly {pct_left(100.0 - weekly_used)}",
     ]
     fable_label = fable_availability_label(account)
     if fable_label:
         parts.append(fable_label)
     reason = " · ".join(parts)
     if blocked:
-        reason = f"{reason} · {_c(reset_label(reset_at), '31')}"
+        reason = f"{reason} · {c(reset_label(reset_at), '31')}"
     return blocked, primary_used, weekly_used, quota_used_percent, short_account_name(account), reason
 
-def _error_message_from_body(body: str) -> str:
+def error_message_from_body(body: str) -> str:
     text = body.strip()
     if not text:
         return "Request failed"
@@ -1466,7 +1466,7 @@ def _error_message_from_body(body: str) -> str:
         return message.strip()
     return text
 
-def _prettify_anthropic_selection_error(message: str) -> str:
+def prettify_anthropic_selection_error(message: str) -> str:
     marker = "Anthropic account"
     status_marker = "; statuses: "
     if marker not in message or "none are selectable" not in message or status_marker not in message:
@@ -1500,12 +1500,12 @@ def _prettify_anthropic_selection_error(message: str) -> str:
     return f"{summary}.{quota_detail}{suffix}"
 
 def format_lb_pick_error(body: str) -> str:
-    return _prettify_anthropic_selection_error(_error_message_from_body(body))
+    return prettify_anthropic_selection_error(error_message_from_body(body))
 
 WAIT_BUFFER_SECONDS = 20
 RESUME_MAX_ATTEMPTS = 5
 
-def _epoch_from_iso(value: str) -> int | None:
+def epoch_from_iso(value: str) -> int | None:
     normalized = value.strip()
     if normalized.endswith("Z"):
         normalized = f"{normalized[:-1]}+00:00"
@@ -1525,7 +1525,7 @@ def retry_at_from_error_body(body: str) -> int | None:
         return None
     retry_at = error.get("retryAt")
     if isinstance(retry_at, str):
-        epoch = _epoch_from_iso(retry_at)
+        epoch = epoch_from_iso(retry_at)
         if epoch is not None:
             return epoch
     retry_after = error.get("retryAfterSeconds")
@@ -1552,7 +1552,7 @@ def wait_until_reset(retry_at: int, reason: str) -> None:
     target = retry_at + WAIT_BUFFER_SECONDS
     local_label = time.strftime("%H:%M:%S", time.localtime(target))
     print(
-        f"cc: {reason} Waiting until {_c(local_label, '1;33')} for limits to reset (Ctrl-C to abort).",
+        f"cc: {reason} Waiting until {c(local_label, '1;33')} for limits to reset (Ctrl-C to abort).",
         file=sys.stderr,
     )
     while True:
@@ -1567,7 +1567,7 @@ def claim_session_route(
     session_id: str, model: str, quota_key: str, base_url: str, *, timeout: float | None = None
 ) -> tuple[dict | None, str, int | None]:
 
-    budget = timeout if timeout is not None else _env_float("CLAUDE_LB_CLAIM_TIMEOUT", 5.0)
+    budget = timeout if timeout is not None else env_float("CLAUDE_LB_CLAIM_TIMEOUT", 5.0)
     for attempt in range(2):
         try:
             claim = lb_post_json(
@@ -1581,14 +1581,14 @@ def claim_session_route(
             body = error.read().decode("utf-8", errors="replace")
             return None, format_lb_pick_error(body), retry_at_from_error_body(body)
         except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-            if _is_timeout_error(error) and attempt == 0:
+            if is_timeout_error(error) and attempt == 0:
                 continue
-            if _is_timeout_error(error):
+            if is_timeout_error(error):
                 return DEFERRED_CLAIM, "", None
             return None, str(error), None
     return None, "claim retries exhausted", None
 
-def _claim_at_endpoint(
+def claim_at_endpoint(
     base_url: str,
     session_id: str,
     model: str,
@@ -1621,7 +1621,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     quota_key, quota_label = anthropic_quota_key(model, effort)
     model_label = model.replace("claude-", "")
 
-    timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
+    timeout = env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
     local_timeout = min(2.0, timeout)
     deadline = time.time() + wait_max_seconds()
 
@@ -1629,9 +1629,9 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     selected_url = ""
     selected_label = ""
     claim: dict | None = None
-    for label, url in _lb_candidates():
-        request_timeout = local_timeout if label == "local" else _env_float("CLAUDE_LB_CLAIM_TIMEOUT", 5.0)
-        claim, claim_error = _claim_at_endpoint(
+    for label, url in lb_candidates():
+        request_timeout = local_timeout if label == "local" else env_float("CLAUDE_LB_CLAIM_TIMEOUT", 5.0)
+        claim, claim_error = claim_at_endpoint(
             url,
             session_id,
             model,
@@ -1662,8 +1662,8 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
 
     if claim is DEFERRED_CLAIM:
         print(
-            f"cc: {_c('Claude LB', '1;36')} · {model_label}/{quota_label} · LB busy, sticky account "
-            f"selected on first message {_c(endpoint_note, '2')} · {stand_in_banner()}",
+            f"cc: {c('Claude LB', '1;36')} · {model_label}/{quota_label} · LB busy, sticky account "
+            f"selected on first message {c(endpoint_note, '2')} · {stand_in_banner()}",
             file=sys.stderr,
         )
         return True
@@ -1672,13 +1672,13 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
 
     try:
 
-        payload = lb_json("/api/accounts", timeout=_env_float("CLAUDE_LB_BANNER_TIMEOUT", 1.5))
+        payload = lb_json("/api/accounts", timeout=env_float("CLAUDE_LB_BANNER_TIMEOUT", 1.5))
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         account_label = claim.get("alias") or claim.get("email") or selected_account_id[:8]
         print(
-            f"cc: {_c('Claude LB', '1;36')} → {_c(account_label, '1')} · {model_label}/{quota_label} · "
-            f"proxy-claimed session route {_c('· OAuth/Max · sticky+failover', '2')} "
-            f"{_c(endpoint_note, '2')} · {stand_in_banner()}",
+            f"cc: {c('Claude LB', '1;36')} → {c(account_label, '1')} · {model_label}/{quota_label} · "
+            f"proxy-claimed session route {c('· OAuth/Max · sticky+failover', '2')} "
+            f"{c(endpoint_note, '2')} · {stand_in_banner()}",
             file=sys.stderr,
         )
         return True
@@ -1692,9 +1692,9 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     if not anthropic:
         account_label = claim.get("alias") or claim.get("email") or selected_account_id[:8]
         print(
-            f"cc: {_c('Claude LB', '1;36')} → {_c(account_label, '1')} · {model_label}/{quota_label} · "
-            f"proxy-claimed session route {_c('· OAuth/Max · sticky+failover', '2')} "
-            f"{_c(endpoint_note, '2')} · {stand_in_banner()}",
+            f"cc: {c('Claude LB', '1;36')} → {c(account_label, '1')} · {model_label}/{quota_label} · "
+            f"proxy-claimed session route {c('· OAuth/Max · sticky+failover', '2')} "
+            f"{c(endpoint_note, '2')} · {stand_in_banner()}",
             file=sys.stderr,
         )
         return True
@@ -1711,8 +1711,8 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     }
     _, _, _, _, _, reason = account_pressure(selected, quota_key)
     print(
-        f"cc: {_c('Claude LB', '1;36')} → {_c(short_account_name(selected), '1')} · {model_label} · "
-        f"{reason} {_c('· OAuth/Max · sticky+failover', '2')} {_c(endpoint_note, '2')} · {stand_in_banner()}",
+        f"cc: {c('Claude LB', '1;36')} → {c(short_account_name(selected), '1')} · {model_label} · "
+        f"{reason} {c('· OAuth/Max · sticky+failover', '2')} {c(endpoint_note, '2')} · {stand_in_banner()}",
         file=sys.stderr,
     )
     return True
@@ -1723,18 +1723,18 @@ def prepare_interactive_endpoint() -> bool:
     failures: list[str] = []
 
 
-    local_timeout = _env_float("CLAUDE_LB_LOCAL_READY_TIMEOUT", 1.0)
-    remote_timeout = _env_float("CLAUDE_LB_REMOTE_READY_TIMEOUT", 3.0)
+    local_timeout = env_float("CLAUDE_LB_LOCAL_READY_TIMEOUT", 1.0)
+    remote_timeout = env_float("CLAUDE_LB_REMOTE_READY_TIMEOUT", 3.0)
     strict = os.environ.get("CLAUDE_LB_STRICT_READY") == "1"
-    for label, url in _lb_candidates():
-        state, error = _probe_interactive_ready(
+    for label, url in lb_candidates():
+        state, error = probe_interactive_ready(
             url,
             timeout=local_timeout if label == "local" else remote_timeout,
             retries=3,
             gap=1.0,
         )
         if label == "local" and state == "unreachable":
-            if _wait_for_local_startup(url, probe_timeout=local_timeout):
+            if wait_for_local_startup(url, probe_timeout=local_timeout):
                 state = "ready"
         if state == "busy" and strict:
             state = "down"
@@ -1746,8 +1746,8 @@ def prepare_interactive_endpoint() -> bool:
         suffix = " (local)" if label == "local" else ""
         note = " · LB busy, routing anyway" if state == "busy" else ""
         print(
-            f"cc: {_c('Claude LB', '1;36')} · sticky account selected on first message "
-            f"{_c(f'via {endpoint}{suffix}{note}', '2')} · {stand_in_banner()}",
+            f"cc: {c('Claude LB', '1;36')} · sticky account selected on first message "
+            f"{c(f'via {endpoint}{suffix}{note}', '2')} · {stand_in_banner()}",
             file=sys.stderr,
         )
         return True
@@ -1758,9 +1758,9 @@ def prepare_interactive_endpoint() -> bool:
 def prepare_ccgpt_endpoint() -> bool:
 
     failures: list[str] = []
-    timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
-    for label, url in _lb_candidates():
-        compatible, capability_error = _probe_ccgpt_at(
+    timeout = env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
+    for label, url in lb_candidates():
+        compatible, capability_error = probe_ccgpt_at(
             url,
             timeout=min(2.0, timeout) if label == "local" else timeout,
         )
@@ -1771,9 +1771,9 @@ def prepare_ccgpt_endpoint() -> bool:
         endpoint = urllib.parse.urlsplit(url).netloc or url
         suffix = " (local)" if label == "local" else ""
         print(
-            f"ccgpt: {_c('Claude Code + Codex', '1;36')} · {CCGPT_MODEL}/high · "
-            f"{'bypass perms' if not _has_permission_option(sys.argv[1:]) else 'custom perms'} · "
-            f"requested priority {_c(f'via {endpoint}{suffix}', '2')} · {stand_in_banner()}",
+            f"ccgpt: {c('Claude Code + Codex', '1;36')} · {CCGPT_MODEL}/high · "
+            f"{'bypass perms' if not has_permission_option(sys.argv[1:]) else 'custom perms'} · "
+            f"requested priority {c(f'via {endpoint}{suffix}', '2')} · {stand_in_banner()}",
             file=sys.stderr,
         )
         return True
@@ -1781,7 +1781,7 @@ def prepare_ccgpt_endpoint() -> bool:
     return False
 
 
-def _probe_ccgpt_at(base_url: str, *, timeout: float) -> tuple[bool, str]:
+def probe_ccgpt_at(base_url: str, *, timeout: float) -> tuple[bool, str]:
     payload = json.dumps({"model": CCGPT_MODEL, "messages": []}).encode()
     request = urllib.request.Request(
         f"{base_url}/v1/ccgpt/messages/count_tokens",
@@ -1815,7 +1815,7 @@ class CcgptModelViolation(ValueError):
     pass
 
 
-def _ccgpt_upstream_path(path: str, body: bytes | None = None) -> str:
+def ccgpt_upstream_path(path: str, body: bytes | None = None) -> str:
     if not CCGPT_MODE:
         return path
     parsed = urllib.parse.urlsplit(path)
@@ -1834,14 +1834,14 @@ def _ccgpt_upstream_path(path: str, body: bytes | None = None) -> str:
     trailing_slash = "/" if parsed.path.endswith("/") else ""
     if normalized == "/v1/messages/count_tokens":
         return f"/v1/ccgpt/messages/count_tokens{trailing_slash}{suffix}"
-    requested = _ccgpt_request_model(body)
+    requested = ccgpt_request_model(body)
     if not requested or not CCGPT_MODEL_NAME.match(requested):
         label = requested or "missing model"
         raise CcgptModelViolation(f"CCGPT only permits GPT models; rejected Messages request for {label}")
     return f"/v1/ccgpt/messages{trailing_slash}{suffix}"
 
 
-def _ccgpt_request_model(body: bytes | None) -> str | None:
+def ccgpt_request_model(body: bytes | None) -> str | None:
     if not body:
         return None
     try:
@@ -1852,7 +1852,7 @@ def _ccgpt_request_model(body: bytes | None) -> str | None:
     return model if isinstance(model, str) else None
 
 
-def _without_option(argv: list[str], option: str) -> list[str]:
+def without_option(argv: list[str], option: str) -> list[str]:
     cleaned: list[str] = []
     skip_next = False
     for argument in argv:
@@ -1892,7 +1892,7 @@ def claude_executable() -> str:
 def build_command(argv: list[str]) -> list[str]:
     command = [claude_executable()]
     if CCGPT_MODE:
-        argv = _without_option(_without_option(argv, "--model"), "--effort")
+        argv = without_option(without_option(argv, "--model"), "--effort")
         command.extend(["--model", CCGPT_MODEL, "--effort", "high"])
     else:
         if arg_value(argv, "--model", "-m") is None and not os.environ.get("ANTHROPIC_MODEL"):
@@ -1909,9 +1909,9 @@ def build_command(argv: list[str]) -> list[str]:
             else:
                 command.extend(["--effort", DEFAULT_CLAUDE_EFFORT])
         elif effort_arg.lower() in {"none", "off"}:
-            argv = _without_option(argv, "--effort")
+            argv = without_option(argv, "--effort")
     permission_mode = None if CCGPT_MODE else os.environ.get("CC_PERMISSION_MODE")
-    if CCGPT_MODE and not _has_permission_option(argv):
+    if CCGPT_MODE and not has_permission_option(argv):
         permission_mode = "bypassPermissions"
     if permission_mode:
         command.extend(["--permission-mode", permission_mode])
@@ -1919,7 +1919,7 @@ def build_command(argv: list[str]) -> list[str]:
     return command
 
 
-def _has_permission_option(argv: list[str]) -> bool:
+def has_permission_option(argv: list[str]) -> bool:
     return any(
         argument == "--permission-mode"
         or argument.startswith("--permission-mode=")
@@ -1971,7 +1971,7 @@ def build_resume_command(argv: list[str], claude_session_id: str) -> list[str]:
     return command
 
 
-def _stop_child(child: subprocess.Popen[bytes], *, interrupt: bool = False) -> None:
+def stop_child(child: subprocess.Popen[bytes], *, interrupt: bool = False) -> None:
     if child.poll() is None:
         if not interrupt:
             child.terminate()
@@ -1982,7 +1982,7 @@ def _stop_child(child: subprocess.Popen[bytes], *, interrupt: bool = False) -> N
             child.wait()
 
 
-def _transcript_mtime(session_dir: Path, session_id: str) -> float | None:
+def transcript_mtime(session_dir: Path, session_id: str) -> float | None:
 
     latest = None
     paths = [session_dir / f"{session_id}.jsonl"]
@@ -2007,7 +2007,7 @@ def _transcript_mtime(session_dir: Path, session_id: str) -> float | None:
     return latest
 
 
-def _parse_elapsed(text: str) -> int:
+def parse_elapsed(text: str) -> int:
 
     match = re.fullmatch(r"(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)", text)
     if match is None:
@@ -2016,7 +2016,7 @@ def _parse_elapsed(text: str) -> int:
     return int(days or 0) * 86400 + int(hours or 0) * 3600 + int(minutes) * 60 + int(seconds)
 
 
-def _shell_command_process(args: str) -> bool:
+def shell_command_process(args: str) -> bool:
 
     words = args.split()
     if not words:
@@ -2038,7 +2038,7 @@ def _shell_command_process(args: str) -> bool:
     return False
 
 
-def _work_process_alive(child_pid: int) -> bool:
+def work_process_alive(child_pid: int) -> bool:
 
     try:
         output = subprocess.run(
@@ -2049,7 +2049,7 @@ def _work_process_alive(child_pid: int) -> bool:
         processes = {}
         for line in output.stdout.splitlines():
             pid, ppid, age, *args = line.split(maxsplit=3)
-            processes[int(pid)] = (int(ppid), _parse_elapsed(age), args[0] if args else "")
+            processes[int(pid)] = (int(ppid), parse_elapsed(age), args[0] if args else "")
         if child_pid not in processes:
             return True
         parent_age = processes[child_pid][1]
@@ -2060,7 +2060,7 @@ def _work_process_alive(child_pid: int) -> bool:
         while descendants:
             parent = descendants.pop()
             for pid, age, args in children.get(parent, ()):
-                if _shell_command_process(args) or age < parent_age - STALL_STARTUP_GRACE:
+                if shell_command_process(args) or age < parent_age - STALL_STARTUP_GRACE:
                     return True
                 descendants.append(pid)
         return False
@@ -2068,7 +2068,7 @@ def _work_process_alive(child_pid: int) -> bool:
         return True
 
 
-def _activity_life(path: Path, now: float, wall_now: float, stall_timeout: float) -> float | None:
+def activity_life(path: Path, now: float, wall_now: float, stall_timeout: float) -> float | None:
     try:
         inflight_text, progress_text = path.read_text().split()
         inflight = int(inflight_text)
@@ -2122,7 +2122,7 @@ def run_supervised(
             wall_now = time.time()
             for path in (activity, client_activity):
                 if path is not None:
-                    life = _activity_life(path, now, wall_now, stall_timeout)
+                    life = activity_life(path, now, wall_now, stall_timeout)
                     if life is not None:
                         last_life = max(last_life, life)
             if session_dir is not None and session_id is not None:
@@ -2135,13 +2135,13 @@ def run_supervised(
                         discovered = None
                     if discovered is not None:
                         session_dir = discovered.parent
-                modified = _transcript_mtime(session_dir, session_id)
+                modified = transcript_mtime(session_dir, session_id)
                 if modified is not None and wall_now - modified < stall_timeout:
                     last_life = max(last_life, now - max(0, wall_now - modified))
             if now - last_life >= stall_timeout or (
                 now >= next_work_check and (work_seen or now - last_life >= work_interval)
             ):
-                alive = _work_process_alive(child.pid)
+                alive = work_process_alive(child.pid)
                 if alive or work_seen:
                     last_life = now
                 work_seen = alive
@@ -2152,10 +2152,10 @@ def run_supervised(
                     f"(CLAUDE_LB_STALL_TIMEOUT); stopping claude, exit {EXIT_TEMPFAIL} (retryable)",
                     file=sys.stderr,
                 )
-                _stop_child(child)
+                stop_child(child)
                 return EXIT_TEMPFAIL
     except KeyboardInterrupt:
-        _stop_child(child, interrupt=True)
+        stop_child(child, interrupt=True)
         return 130
     finally:
         for path in (activity, client_activity):
@@ -2192,7 +2192,7 @@ def run_headless_with_resume(
     deadline = time.time() + wait_max_seconds()
     current = command
     activity = activity_path(session_id, os.getpid())
-    stall_timeout = _env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT)
+    stall_timeout = env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT)
     for attempt in range(RESUME_MAX_ATTEMPTS + 1):
         returncode = run_supervised(current, activity, stall_timeout, session_id=claude_session_id)
         if returncode in (0, EXIT_TEMPFAIL) or claude_session_id is None:
@@ -2214,7 +2214,7 @@ def run_headless_with_resume(
     return 1
 
 
-def _check_working_directory() -> None:
+def check_working_directory() -> None:
     try:
         os.getcwd()
         with os.scandir(".") as entries:
@@ -2252,8 +2252,8 @@ def main() -> None:
         )
         return
 
-    _check_working_directory()
-    _raise_fd_soft_limit(65536)
+    check_working_directory()
+    raise_fd_soft_limit(65536)
 
     if sys.argv[1:] == ["--doctor"]:
         sys.exit(run_opus_doctor())
@@ -2320,7 +2320,7 @@ def main() -> None:
             except RuntimeError as error:
                 label = "ccgpt" if CCGPT_MODE else "cc"
                 if os.environ.get("CLAUDE_LB_ALLOW_FALLBACK") != "1":
-                    timeout = _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", SHIM_START_TIMEOUT_DEFAULT)
+                    timeout = env_float("CLAUDE_LB_SHIM_START_TIMEOUT", SHIM_START_TIMEOUT_DEFAULT)
                     print(
                         f"{label}: proxy did not start within {timeout:g} seconds "
                         "(CLAUDE_LB_SHIM_START_TIMEOUT); exit 75 (retryable). "
@@ -2354,8 +2354,8 @@ def main() -> None:
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":
         print(" ".join(command))
         print(
-            f"agent-lb tags: intent={_safe_tag(resolved_tags.get('x-agent-lb-intent', 'none'))} "
-            f"lane={_safe_tag(resolved_tags.get('x-agent-lb-lane', 'none'))} reason={tag_reason}",
+            f"agent-lb tags: intent={safe_tag(resolved_tags.get('x-agent-lb-intent', 'none'))} "
+            f"lane={safe_tag(resolved_tags.get('x-agent-lb-lane', 'none'))} reason={tag_reason}",
             file=sys.stderr,
         )
         return
@@ -2367,7 +2367,7 @@ def main() -> None:
         command, claude_session_id = claude_session_args(argv, command)
         sys.exit(run_supervised(
             command, activity_path(session_id, os.getpid()),
-            _env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT),
+            env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT),
             session_id=claude_session_id,
         ))
     os.execvp(command[0], command)
