@@ -1,1 +1,0 @@
-Blocked (seat ran on ax42, key gpt-implementer-filecap-w8-clients-route-1792673305-ca2d): no files changed or commits made. The seat found that a strict move-only split, with no private-name sharing and no import cycles, leaves one dependency group of about 60 KB, which is over the 20,000-byte cap. 
