@@ -196,24 +196,7 @@ async def lifespan(app: FastAPI):
         await federation_mirror_scheduler.start()
         await federation_push_scheduler.start()
         await event_loop_lag_monitor.start()
-    if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
-        import uvicorn
-
-        scrape_registry = make_scrape_registry()
-        prometheus_module = import_module("prometheus_client")
-        make_asgi_app = getattr(prometheus_module, "make_asgi_app")
-        metrics_app = make_asgi_app(registry=scrape_registry)
-        config = uvicorn.Config(
-            metrics_app,
-            host=settings.metrics_host,
-            port=settings.metrics_port,
-            log_level="warning",
-        )
-        metrics_server = uvicorn.Server(config)
-
-        metrics_server_task = asyncio.create_task(serve_metrics(metrics_server, settings.metrics_port))
-    elif settings.metrics_enabled:
-        logger.warning("Metrics endpoint enabled but prometheus-client is not installed")
+    metrics_server, metrics_server_task = start_metrics_server(settings)
 
     async def _complete_bridge_registration(svc: RingMembershipService, iid: str) -> None:
         if bridge_endpoint_base_url is None:
@@ -374,6 +357,31 @@ async def lifespan(app: FastAPI):
                 shutdown_state.reset()
                 mark_process_dead()
                 await close_db()
+
+
+def start_metrics_server(settings):
+    metrics_server = None
+    metrics_server_task = None
+    if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
+        import uvicorn
+
+        scrape_registry = make_scrape_registry()
+        prometheus_module = import_module("prometheus_client")
+        make_asgi_app = getattr(prometheus_module, "make_asgi_app")
+        metrics_app = make_asgi_app(registry=scrape_registry)
+        config = uvicorn.Config(
+            metrics_app,
+            host=settings.metrics_host,
+            port=settings.metrics_port,
+            log_level="warning",
+        )
+        metrics_server = uvicorn.Server(config)
+
+        metrics_server_task = asyncio.create_task(serve_metrics(metrics_server, settings.metrics_port))
+    elif settings.metrics_enabled:
+        logger.warning("Metrics endpoint enabled but prometheus-client is not installed")
+
+    return metrics_server, metrics_server_task
 
 
 def create_app() -> FastAPI:
