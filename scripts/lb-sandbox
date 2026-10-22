@@ -24,6 +24,7 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
@@ -39,7 +40,7 @@ LIVE_FRONT_STATE = LB_HOME / "state" / "front.json"
 LIVE_FRONT_PORT = 2455
 LIVE_PRIMARY_PORT = 2457
 LIVE_PEER_URL = "http://127.0.0.1:2455"
-LIVE_KEY_DIR_LEGACY = REAL_HOME / ".codex-lb"
+LIVE_OLD_KEY_DIR = REAL_HOME / ".codex-lb"
 MANAGED_ROUTING = LB_HOME / "managed" / "coding-agents"
 LABEL_PREFIX = "com.agent-lb.drill."
 FORBIDDEN_PORTS = frozenset({1455, 2455, 2457, 2459})
@@ -77,15 +78,19 @@ DISABLED_SCHEDULERS = (
     "AUTH_GUARDIAN",
 )
 
+
 class Refused(Exception):
     pass
+
 
 class Unhealthy(Exception):
     pass
 
+
 RESERVED_RUN_IDS = frozenset(
     {"state", "data", "bin", "runtime", "logs", "sandboxes", "managed", "backups", "shims", "tls", "team", "seats"}
 )
+
 
 def check_run_id(run_id: str) -> str:
     if not isinstance(run_id, str) or not RUN_ID_RE.match(run_id):
@@ -96,11 +101,13 @@ def check_run_id(run_id: str) -> str:
         raise Refused(f"run id {run_id!r} names a live agent-lb directory")
     return run_id
 
+
 def check_label(label: str) -> str:
     suffix = label.removeprefix(LABEL_PREFIX)
     if not label.startswith(LABEL_PREFIX) or not suffix or not suffix.replace("-", "").isalnum():
         raise Refused(f"label {label!r} is not a {LABEL_PREFIX}* drill label")
     return label
+
 
 def check_ports(ports: list[int]) -> list[int]:
     for port in ports:
@@ -112,8 +119,10 @@ def check_ports(ports: list[int]) -> list[int]:
         raise Refused("sandbox ports repeat")
     return ports
 
-def _lexical(path: Path) -> Path:
+
+def lexical(path: Path) -> Path:
     return Path(os.path.normpath(str(path)))
+
 
 def _refuse_linked_dirs(what: str, path: Path) -> os.stat_result:
     if not path.is_absolute():
@@ -129,6 +138,7 @@ def _refuse_linked_dirs(what: str, path: Path) -> os.stat_result:
             raise Refused(f"{what} {path}: {prefix} is a link or not a directory")
     assert info is not None
     return info
+
 
 def check_root(root: Path, sandboxes: Path | None = None) -> Path:
     base = Path(os.path.normpath(os.path.abspath(sandboxes or SANDBOXES)))
@@ -150,8 +160,10 @@ def check_root(root: Path, sandboxes: Path | None = None) -> Path:
         raise Refused(f"sandbox root {path} is a link or not a directory")
     return path
 
+
 def interpreter_for(root: Path) -> Path:
-    return _lexical(Path(root)).parent.parent / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
+    return lexical(Path(root)).parent.parent / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
+
 
 NATIVE_MAGIC = (
     (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf")
@@ -160,9 +172,11 @@ NATIVE_MAGIC = (
 )
 BASE_INTERPRETER_NAME = re.compile(r"^python(3(\.[0-9]+)?)?$")
 
+
 def _trusted_file(what: str, path: Path, info: os.stat_result) -> None:
     if info.st_uid not in (os.getuid(), 0) or info.st_mode & 0o022:
         raise Refused(f"{what} {path} is one another user could write")
+
 
 def venv_base_dir(python: Path) -> Path:
     cfg = python.parent.parent / "pyvenv.cfg"
@@ -192,9 +206,10 @@ def venv_base_dir(python: Path) -> Path:
         raise Refused(f"venv home {home} is missing") from None
     return base
 
+
 def check_interpreter(python: Path, root: Path) -> None:
-    python = _lexical(python)
-    sandboxes = _lexical(Path(root)).parent
+    python = lexical(python)
+    sandboxes = lexical(Path(root)).parent
     if python != interpreter_for(root) or sandboxes in python.parents:
         raise Refused(f"interpreter {python} is not the installed runtime's venv python")
     _refuse_linked_dirs("interpreter", python.parent)
@@ -217,12 +232,14 @@ def check_interpreter(python: Path, root: Path) -> None:
         raise Refused(f"interpreter {python} does not lead to a native executable (a script or shim?)")
     _trusted_file("interpreter", target, info)
 
+
 def bootstrap_script() -> Path:
     return Path(__file__).resolve().with_name("lb-sandbox")
 
+
 def check_bootstrap(script: Path, root: Path) -> None:
-    script = _lexical(script)
-    sandboxes = _lexical(Path(root)).parent
+    script = lexical(script)
+    sandboxes = lexical(Path(root)).parent
     if script == sandboxes or sandboxes in script.parents:
         raise Refused(f"bootstrap {script} is inside the sandboxes dir")
     _refuse_linked_dirs("bootstrap", script.parent)
@@ -234,28 +251,36 @@ def check_bootstrap(script: Path, root: Path) -> None:
         raise Refused(f"bootstrap {script} is not a single-link regular file")
     _trusted_file("bootstrap", script, info)
 
+
 def check_launchctl() -> None:
     found = shutil.which("launchctl")
     if found != "/bin/launchctl":
         raise Refused(f"launchctl resolves to {found}, not /bin/launchctl")
+
 
 def labels_for(run_id: str) -> tuple[str, str]:
     check_run_id(run_id)
     label = check_label(f"{LABEL_PREFIX}sbx-{run_id}")
     return label, check_label(f"{label}-aux")
 
+
 def root_for(run_id: str) -> Path:
     return SANDBOXES / check_run_id(run_id)
+
 
 def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
 
 class Confinement(OSError):
     pass
 
+
 _PINNED: dict[str, tuple[int, tuple[int, int]]] = {}
+
 
 def _open_dir_no_links(text: str) -> int:
     nofollow_any = getattr(os, "O_NOFOLLOW_ANY", 0)
@@ -271,6 +296,7 @@ def _open_dir_no_links(text: str) -> int:
     except BaseException:
         os.close(fd)
         raise
+
 
 def sandboxes_fd(base: Path | None = None, create: bool = False) -> int:
     text = os.path.normpath(os.path.abspath(base or SANDBOXES))
@@ -288,15 +314,19 @@ def sandboxes_fd(base: Path | None = None, create: bool = False) -> int:
     _PINNED[text] = (fd, (info.st_dev, info.st_ino))
     return fd
 
+
 def sandboxes_id(base: Path | None = None) -> tuple[int, int]:
     sandboxes_fd(base)
     return _PINNED[os.path.normpath(os.path.abspath(base or SANDBOXES))][1]
 
+
 def fd_path(fd: int) -> str:
     if sys.platform == "darwin":
         import fcntl
+
         return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0])
     return os.readlink(f"/proc/self/fd/{fd}")
+
 
 PRIVATE_PREFIX = ".lbsbx."
 PRIVATE_NAME_RE = re.compile(r"^\.lbsbx\.[0-9a-f]{24}\.[0-9a-f]{32}$")
@@ -311,6 +341,7 @@ BIRTH_SLACK_S = 0.01
 
 MADE_DIR_MODE = 0o700
 
+
 def identity(info: os.stat_result) -> list[int]:
     birth = getattr(info, "st_birthtime_ns", None)
     if birth is None:
@@ -318,11 +349,14 @@ def identity(info: os.stat_result) -> list[int]:
         birth = round(seconds * 1e9) if seconds is not None else 0
     return [info.st_dev, info.st_ino, int(birth)]
 
+
 def born(info: os.stat_result) -> float:
     return getattr(info, "st_birthtime", info.st_ctime)
 
+
 def rename_excl(src_dir: int, src: str, dst_dir: int, dst: str) -> None:
     import ctypes
+
     if sys.platform == "darwin":
         fn = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True).renameatx_np
         flags = RENAME_EXCL
@@ -334,6 +368,7 @@ def rename_excl(src_dir: int, src: str, dst_dir: int, dst: str) -> None:
     if fn(src_dir, os.fsencode(src), dst_dir, os.fsencode(dst), flags) != 0:
         err = ctypes.get_errno()
         raise OSError(err, os.strerror(err), dst)
+
 
 def private_prefix(run_id: str) -> str:
 
@@ -359,8 +394,6 @@ def fresh_dir(fd: int, parent_fd: int, made_after: float, what: str) -> os.stat_
 
 
 class Private:
-
-
     def __init__(self, sb: int, name: str, fd: int, ident: list[int], ids: dict, record_id: list[int]) -> None:
         self.sb, self.name, self.fd, self.ident, self.ids, self.record_id = sb, name, fd, ident, ids, record_id
         self.record_fd: int | None = None
@@ -605,7 +638,6 @@ def open_in_root(root: Path, rel: str | Path, flags: int, mode: int = 0o600, cre
     rel = Path(rel)
     dir_fd = open_dir(root, rel.parent, create=create_dirs)
     try:
-
         fd = os.open(rel.name, (flags & ~os.O_TRUNC) | os.O_NOFOLLOW | os.O_NONBLOCK, mode, dir_fd=dir_fd)
     finally:
         os.close(dir_fd)
@@ -697,7 +729,6 @@ def read_root_text(root: Path, rel: str | Path, limit: int) -> str:
 
 def seatbelt_profile(root: Path, reads: bool) -> str:
 
-
     def q(path: Path | str, resolve: bool = True) -> str:
         text = os.path.realpath(path) if resolve else str(path)
         if '"' in text or "\\" in text:
@@ -716,22 +747,17 @@ def seatbelt_profile(root: Path, reads: bool) -> str:
         except OSError:
             envs = []
         private = " ".join([f"(subpath {q(runtime / '.codex-lb')})"] + [f"(literal {q(runtime / n)})" for n in envs])
-        custody = f"(subpath {q(LB_HOME)}) (subpath {q(LIVE_KEY_DIR_LEGACY)}) (literal {q(LIVE_PLIST)})"
+        custody = f"(subpath {q(LB_HOME)}) (subpath {q(LIVE_OLD_KEY_DIR)}) (literal {q(LIVE_PLIST)})"
         rules += [
-
             f"(deny file-read-data {custody})",
-
             f"(allow file-read-data (subpath {q(runtime)}))",
             f"(deny file-read-data {private})",
         ]
 
-
-    if os.path.realpath(Path(root).parent) != str(_lexical(Path(root).parent)):
+    if os.path.realpath(Path(root).parent) != str(lexical(Path(root).parent)):
         raise Refused(f"sandbox root {root} sits under a linked directory")
     own = Path(fd_path(sandboxes_fd(Path(root).parent))) / Path(root).name
     if reads:
-
-
         rules.append(f"(allow file-read-data (literal {q(own.parent, resolve=False)}))")
 
     rules.append(f"(allow file-read* file-read-data file-write* (subpath {q(own, resolve=False)}))")
@@ -829,7 +855,7 @@ def check_own_volume(root: Path) -> None:
         raise Refused(f"sandbox root {root} is not its own volume; refusing to work in it")
 
 
-def _statfs_from(fd: int) -> str | None:
+def statfs_from(fd: int) -> str | None:
 
     if sys.platform != "darwin":
         return None
@@ -874,7 +900,7 @@ def volume_device(root: Path) -> str | None:
     try:
         if os.fstat(fd).st_dev == os.fstat(sb).st_dev:
             return None
-        return _statfs_from(fd)
+        return statfs_from(fd)
     finally:
         os.close(fd)
 
@@ -901,8 +927,7 @@ def image_exists(run_id: str) -> bool:
 IMAGE_MAGIC = b"encrcdsa"
 
 
-def _in_dir(fd: int):
-
+def in_dir(fd: int):
 
     def enter() -> None:
         os.umask(0o077)
@@ -962,7 +987,7 @@ def attach_volume(root: Path, run_id: str, priv: Private, root_ident: list[int])
         capture_output=True,
         timeout=180,
         check=False,
-        preexec_fn=_in_dir(priv.fd),
+        preexec_fn=in_dir(priv.fd),
     )
     if create.returncode != 0:
         raise Unhealthy(f"hdiutil create failed (exit {create.returncode})")
@@ -987,7 +1012,7 @@ def attach_volume(root: Path, run_id: str, priv: Private, root_ident: list[int])
         capture_output=True,
         timeout=120,
         check=False,
-        preexec_fn=_in_dir(priv.fd),
+        preexec_fn=in_dir(priv.fd),
     )
     del passphrase
     if attach.returncode != 0:
@@ -999,8 +1024,7 @@ def attach_volume(root: Path, run_id: str, priv: Private, root_ident: list[int])
     fd = open_root(root)
     try:
         info = os.fstat(fd)
-        if info.st_dev == os.fstat(priv.sb).st_dev or _statfs_from(fd) != device:
-
+        if info.st_dev == os.fstat(priv.sb).st_dev or statfs_from(fd) != device:
             raise Refused(f"sandbox root {root} is not the volume just attached; not used")
         priv.record("volume", {"st_dev": info.st_dev, "device": device})
         os.fchmod(fd, 0o700)
@@ -1251,7 +1275,7 @@ def live_federation_token(plist: Path | None = None) -> str | None:
     return str(value) if value else None
 
 
-def _fernet(root: Path):
+def make_fernet(root: Path):
     from cryptography.fernet import Fernet
 
     key = read_key(root)
@@ -1366,14 +1390,13 @@ def read_accounts(root: Path, *, with_tokens: bool = False, strict: bool = False
             raise Refused("sandbox store missing; its account tokens cannot be scanned for")
         return []
     try:
-
         rows = run_confined(root, lambda: store_rows(root), reads=True, timeout_s=60)
     except (Refused, Unhealthy, sqlite3.Error):
         if strict:
             raise
         return []
     rows = [tuple(base64.b64decode(v["b64"]) if isinstance(v, dict) else v for v in row) for row in rows]
-    fernet = _fernet(root) if rows else None
+    fernet = fernet(root) if rows else None
     now = time.time()
     accounts = []
 
@@ -1539,8 +1562,6 @@ def plausible_plaintext(block: bytes) -> bool:
 
 
 class Detector:
-
-
     def __init__(self, secrets: list[str], keys: list[str] | None = None) -> None:
         self.patterns = sorted({p for s in secrets if s for p in secret_patterns(s)})
         self.decryptors = []
@@ -1589,7 +1610,6 @@ class Detector:
         if not self.decryptors:
             return False
 
-
         for view in (buf,) if joined is None else (buf, joined):
             if self.keyed(view) or any(self.keyed(decoded) for decoded in base64_decodings(view)):
                 return True
@@ -1632,7 +1652,7 @@ def volume_top(dir_fd: int) -> bool:
         return False
 
 
-def _under(path: str, base: str) -> bool:
+def under(path: str, base: str) -> bool:
     return path == base or path.startswith(base + os.sep)
 
 
@@ -1647,12 +1667,10 @@ def root_text(root: Path) -> str:
 
 def live_trees() -> list[str]:
 
-    return [os.path.abspath(LB_HOME), os.path.abspath(LIVE_KEY_DIR_LEGACY)]
+    return [os.path.abspath(LB_HOME), os.path.abspath(LIVE_OLD_KEY_DIR)]
 
 
 class LiveInodes:
-
-
     def __init__(self) -> None:
         self.ids: set[tuple[int, int]] = set()
         self.dirs: dict[str, tuple[int, int, int]] = {}
@@ -1746,7 +1764,7 @@ def system_links_resolved(text: str) -> str:
     return done
 
 
-def _open_top(top: Path, root: Path | None) -> tuple[int, str]:
+def open_top(top: Path, root: Path | None) -> tuple[int, str]:
 
     text = os.path.abspath(top)
     parent, name = os.path.split(text)
@@ -1754,7 +1772,7 @@ def _open_top(top: Path, root: Path | None) -> tuple[int, str]:
     if root is not None:
         base = root_text(root)
         for candidate in (text, resolved):
-            if _under(candidate, base):
+            if under(candidate, base):
                 rel = Path(os.path.relpath(candidate, base))
                 if rel == Path("."):
                     return open_root(root), base
@@ -1786,11 +1804,10 @@ def walk_files(
     base = root_text(root) if root is not None else None
     trees = live_trees()
 
-
     live = LiveInodes()
 
     def is_excluded(path: str) -> bool:
-        return any(_under(path, e) for e in excluded)
+        return any(under(path, e) for e in excluded)
 
     def checked_file(fd: int, path: str, expect: tuple[int, int] | None):
         info = os.fstat(fd)
@@ -1798,7 +1815,7 @@ def walk_files(
             unreadable.append(path)
             return None
         if info.st_nlink != 1:
-            if (base is not None and _under(path, base)) or any(_under(path, t) for t in trees):
+            if (base is not None and under(path, base)) or any(under(path, t) for t in trees):
                 unreadable.append(path)
                 return None
             ident = (info.st_dev, info.st_ino)
@@ -1825,7 +1842,6 @@ def walk_files(
     def walk(dir_fd: int, path: str):
         try:
             with os.scandir(dir_fd) as listing:
-
                 entries = sorted((e.name, e.is_symlink(), e.is_dir(follow_symlinks=False)) for e in listing)
         except FileNotFoundError:
             return
@@ -1873,7 +1889,7 @@ def walk_files(
         if is_excluded(os.path.realpath(top)) or is_excluded(os.path.abspath(top)):
             continue
         try:
-            fd, text = _open_top(Path(top), root)
+            fd, text = open_top(Path(top), root)
         except FileNotFoundError:
             continue
         except OSError:
@@ -2031,7 +2047,6 @@ def scan_processes(root: Path, run_id: str, secrets: list[str]) -> dict:
             hits.append(pid)
         shown = shown_for(pid, argv_text, text)
 
-
         deadline = time.monotonic() + PROCESS_SETTLE_S
         while not shown and pid_alive(pid) and time.monotonic() < deadline:
             time.sleep(0.1)
@@ -2146,7 +2161,6 @@ def export_logs(root: Path, dest: Path, scanned_files: list[str], detector: Dete
                         os.close(parent_fd)
                         parent_fd = child
 
-
                     target_fd = os.open(
                         rel.name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent_fd
                     )
@@ -2157,7 +2171,6 @@ def export_logs(root: Path, dest: Path, scanned_files: list[str], detector: Dete
                             out.flush()
                             os.ftruncate(out.fileno(), 0)
                     if leaked:
-
                         remove_recorded(parent_fd, rel.name, made, "file")
                         raise LeakFound(f"log {rel} holds a secret; its copy was emptied and removed")
                 finally:
@@ -2188,13 +2201,9 @@ def sandbox_env(root: Path, ports: dict[str, int], run_id: str, transport: str) 
         "AGENT_LB_UPSTREAM_BASE_URL": f"http://127.0.0.1:{ports['edge_openai']}",
         "AGENT_LB_ANTHROPIC_UPSTREAM_BASE_URL": f"http://127.0.0.1:{ports['edge_anthropic']}",
         "AGENT_LB_UPSTREAM_STREAM_TRANSPORT": transport,
-
-
         "AGENT_LB_DASHBOARD_AUTH_MODE": "trusted_header",
         "AGENT_LB_FIREWALL_TRUST_PROXY_HEADERS": "true",
         "AGENT_LB_FIREWALL_TRUSTED_PROXY_CIDRS": "192.0.2.1/32",
-
-
         "FORWARDED_ALLOW_IPS": "",
         "AGENT_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS": "127.0.0.1/32",
         "AGENT_LB_CONVERSATION_ARCHIVE_DIR": str(root / "data" / "conversation-archive"),
@@ -2245,7 +2254,6 @@ def plist_bodies(
         "KeepAlive": False,
         "ExitTimeOut": 20,
     }
-
 
     return primary, aux
 
@@ -2502,7 +2510,6 @@ def cmd_start(args) -> int:  # noqa: C901 - one sequence, each step torn down on
     if not LIVE_PLIST.is_file() or not (LIVE_RUNTIME / "app").is_dir() or not (LIVE_VENV / "bin" / "python").exists():
         raise Unhealthy("live runtime, venv or plist missing")
 
-
     tree = None
     runtime_source: dict = {"kind": "live", "path": str(LIVE_RUNTIME)}
     if args.from_ref:
@@ -2535,8 +2542,6 @@ def cmd_start(args) -> int:  # noqa: C901 - one sequence, each step torn down on
     priv: Private | None = None
     published = False
     try:
-
-
         try:
             sandboxes_fd(create=True)
         except OSError as exc:
@@ -2560,7 +2565,6 @@ def cmd_start(args) -> int:  # noqa: C901 - one sequence, each step torn down on
             "transport": args.transport,
             "node": find_node(),
             "runtime": runtime_source,
-
             "sandboxes_id": list(sandboxes_id()),
         }
         source = str(bootstrap_script())
@@ -2573,7 +2577,6 @@ def cmd_start(args) -> int:  # noqa: C901 - one sequence, each step torn down on
             timeout_s=300,
         )
         create_run_key(root, priv)
-
 
         primary_job, aux_job = plist_bodies(root, run_id, ports, args.transport, Path(source))
         out["live"] = live_identity()
@@ -2667,7 +2670,6 @@ def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[s
         raise Refused(f"sandbox store key is missing or redirected ({exc.__class__.__name__})") from None
     os.close(key_fd)
 
-
     try:
         data_fd = open_data_dir(root)
     except OSError as exc:
@@ -2681,7 +2683,6 @@ def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[s
     if os.environ.get("LB_SANDBOX_ROOT") != str(root):
         raise Refused("LB_SANDBOX_ROOT does not match the sandbox root")
 
-
     env = sandbox_env(root, meta["ports"], root.name, meta.get("transport", "http"))
     env.update({k: os.environ[k] for k in ("USER", "LOGNAME", "TMPDIR", "LANG") if k in os.environ})
     token = live_federation_token()
@@ -2691,7 +2692,6 @@ def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[s
     check_interpreter(Path(python), root)
     script = bootstrap_script()
     check_bootstrap(script, root)
-
 
     args = [
         python,
@@ -2796,11 +2796,9 @@ def enter_data_dir(root: Path, data_id: str) -> None:
 
 def boot_app(root: Path, argv: list[str]) -> None:
 
-
-    sandboxes = _lexical(Path(root)).parent
+    sandboxes = lexical(Path(root)).parent
     check_bootstrap(bootstrap_script(), Path(root))
     root = check_root(root, sandboxes=sandboxes)
-
 
     check_own_volume(root)
     confine(root, reads=True)
@@ -2887,8 +2885,6 @@ def auth_hash12(headers) -> str:
 
 
 class FaultState:
-
-
     def __init__(self, root: Path, rel: str) -> None:
         self.root, self.rel = root, rel
         self.path = root / rel
@@ -2900,7 +2896,6 @@ class FaultState:
         self.consumed = False
 
     def refresh(self) -> None:
-
 
         try:
             info = os.stat(self.path, follow_symlinks=False)
@@ -3077,7 +3072,6 @@ def make_edge_handler(edge: str, base: str, fault: FaultState, session, counters
             log({**record, "status": status, "bytes": len(payload), "fault": "account_429"})
             return web.Response(status=status, body=payload, headers=headers)
 
-
         armed = fault.fault in ("hold_stream", "cut_after_bytes") and not fault.consumed
         parsed = request_json(body, request.headers) if armed else {}
         streamed = armed and wants_stream(request.method, request.path, parsed)
@@ -3108,7 +3102,6 @@ def make_edge_handler(edge: str, base: str, fault: FaultState, session, counters
         response: web.StreamResponse | None = None
 
         def drop_downstream() -> None:
-
 
             if request.transport is not None:
                 request.transport.close()
@@ -3143,13 +3136,10 @@ def make_edge_handler(edge: str, base: str, fault: FaultState, session, counters
                     else:
                         await response.write_eof()
                 except ConnectionResetError:
-
                     downstream_closed = True
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             error = exc.__class__.__name__
             if response is not None and response.prepared:
-
-
                 drop_downstream()
         ms = int((time.monotonic() - started) * 1000)
         entry = {**record, "status": status, "bytes": sent, "fault": applied, "ms": ms}
@@ -3300,7 +3290,6 @@ def cmd_aux(root_arg: str) -> int:  # noqa: C901 - one event loop with three lis
         }
         front_log = append_in_root(root, "logs/front.log")
         front_proc["proc"] = subprocess.Popen(
-
             [meta["node"], str(root / "runtime" / "scripts" / "agent-lb-front.mjs"), str(root)],
             env=front_env,
             stdout=front_log,
@@ -3375,7 +3364,6 @@ def cmd_status(args) -> int:
         "primary_pid": primary_pid,
         "aux_pid": aux.get("pid"),
         "front_pid": aux.get("front_pid"),
-
         "own_volume": on_own_volume(root),
         "confined": {
             "primary": is_confined(primary_pid),
@@ -3387,7 +3375,6 @@ def cmd_status(args) -> int:
         "gate": aux.get("gate", {"forwarded": [], "refused": 0}),
         "edge": {k: v for k, v in aux.get("edge", {}).items() if k != "log"},
         "edge_log": str(root / "logs" / "edge.jsonl"),
-
         "request_log_store": str(root / "data" / "store.db"),
         "ports": ports,
     }
@@ -3470,16 +3457,23 @@ def cmd_restart(args) -> int:
     check_launchctl()
     root, _ = load_meta(args.run_id)
 
-
     check_own_volume(root)
     lb_restart = Path(__file__).resolve().parent / "lb-restart"
     if not lb_restart.is_file():
         raise Unhealthy(f"{lb_restart} missing")
     log_path = root / "logs" / "lb-restart.log"
 
-
     argv = isolated_python(
-        sys.executable, lb_restart, ["--sandbox", str(root / "lb-restart.json"), "--skip-exchange-wait", "--skip-exit-timeout-gate", "--reason", args.reason]
+        sys.executable,
+        lb_restart,
+        [
+            "--sandbox",
+            str(root / "lb-restart.json"),
+            "--skip-exchange-wait",
+            "--skip-exit-timeout-gate",
+            "--reason",
+            args.reason,
+        ],
     )
     started = time.monotonic()
 
@@ -3631,7 +3625,6 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
 
     root = root_for(run_id)
 
-
     entry = entry_of(root)
     pin_error = "the sandboxes dir is a link or not private" if entry == "unknown" else None
     real_root = entry == "dir"
@@ -3679,7 +3672,6 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
         refused = "no sandbox.json stamped with this run id: nothing was signalled, scanned or deleted"
     logs: dict = {"copied": False}
     if owned and real_root:
-
         scanned = scan_paths([root], secrets, skip_exact=custody_paths(root), keys=keys, root=root)
         logs["scan_found"] = scanned["found"]
         logs["scan_complete"] = scanned["complete"]
@@ -3693,7 +3685,6 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
                 logs_base = os.path.join(root_text(root), "logs")
                 log_files = [f for f in scanned["_files"] if f.startswith(logs_base + os.sep)]
                 try:
-
                     exported = export_logs(root, logs_to, log_files, Detector(secrets, keys))
                     logs.update(
                         {
@@ -3720,8 +3711,6 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
     custody: dict = {"key_unlinked": None}
     volume: dict = {}
     if owned:
-
-
         priv, priv_error = (CREATED.get(run_id), None) if created else (None, None)
         if priv is None:
             try:
@@ -3822,7 +3811,6 @@ def cmd_gc(args) -> int:
         meta = stamped_meta(root, run_id)
         created = meta.get("created_epoch")
         if not meta or isinstance(created, bool) or not isinstance(created, (int, float)):
-
             skipped.append({"run_id": run_id, "reason": "no sandbox.json stamped with this run id"})
             continue
         if now - float(created) > args.older_than and not pid_alive(meta.get("caller_pid")):
@@ -3833,7 +3821,9 @@ def cmd_gc(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="lb-sandbox", description='lb-sandbox: a throwaway agent-lb instance on Studio that mirrors the live account pool.', formatter_class=argparse.RawTextHelpFormatter
+        prog="lb-sandbox",
+        description="lb-sandbox: a throwaway agent-lb instance on Studio that mirrors the live account pool.",
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -3947,15 +3937,11 @@ def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
     marker = run_marker(args)
     if marker is not None:
-
-
         os.environ["LB_SANDBOX_ROOT"] = marker
     if not os.environ.get("LB_SANDBOX_NO_REEXEC"):
         python = LIVE_VENV / "bin" / "python"
         reexec = (not in_live_venv() and python.exists()) or (marker is not None and marker != EXEC_ENV_MARKER)
         if reexec:
-
-
             target = str(python) if python.exists() and not in_live_venv() else sys.executable
             os.execve(target, isolated_python(target, Path(__file__).resolve(), argv), isolated_env(dict(os.environ)))
     try:
