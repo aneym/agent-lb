@@ -277,8 +277,8 @@ def reconcile_settings(
             ]
             if present:
                 for existing in present:
-                    if hook.get("async"):
-                        existing["async"] = True
+                    existing.pop("async", None)
+                    existing.update(hook.get("async") and {"async": True} or {})
                 continue
             if matcher in ("Agent", "Workflow"):
                 group = next((group for group in event_groups if group.get("matcher") == matcher), None)

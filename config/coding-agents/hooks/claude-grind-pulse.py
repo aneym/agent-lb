@@ -21,15 +21,12 @@ def main():
         return
 
     import math
-    import signal
     import urllib.parse
     import urllib.request
     from collections import deque
     from datetime import datetime, timezone
     from pathlib import Path
 
-    signal.signal(signal.SIGALRM, timeout)
-    signal.setitimer(signal.ITIMER_REAL, 2)
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
     Path(checked_file).touch()
@@ -39,7 +36,7 @@ def main():
     base = os.environ.get("AGENT_LB_URL") or "http://127.0.0.1:2455"
     url = f"{base.rstrip('/')}/api/sessions/{urllib.parse.quote(session)}/analytics?windowMinutes=60"
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(url, timeout=2) as response:
+    with opener.open(url, timeout=1.5) as response:
         analytics = json.load(response)
     claude = other = cost = 0.0
     for seat in analytics["seats"]:
@@ -80,10 +77,6 @@ def main():
         return
     fired.touch()
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}))
-
-
-def timeout(signum, frame):
-    raise TimeoutError
 
 
 if __name__ == "__main__":
