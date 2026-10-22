@@ -1,0 +1,3829 @@
+diff --git a/app/core/audit/service.py b/app/core/audit/service.py
+index 2a70689c..60a1f93c 100644
+--- a/app/core/audit/service.py
++++ b/app/core/audit/service.py
+@@ -6,8 +6,8 @@ import logging
+ from collections.abc import Mapping, Sequence
+ 
+ from app.core.utils.request_id import get_request_id
+-from app.db.models import AuditLog
+ from app.db.session import get_session
++from app.db.settings_models import AuditLog
+ 
+ logger = logging.getLogger(__name__)
+ 
+diff --git a/app/core/cache/invalidation.py b/app/core/cache/invalidation.py
+index 9da75513..ce91f4bb 100644
+--- a/app/core/cache/invalidation.py
++++ b/app/core/cache/invalidation.py
+@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
+ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import CacheInvalidation
++from app.db.settings_models import CacheInvalidation
+ 
+ if TYPE_CHECKING:
+     pass
+diff --git a/app/core/config/settings_cache.py b/app/core/config/settings_cache.py
+index 609237b3..fb6c7a83 100644
+--- a/app/core/config/settings_cache.py
++++ b/app/core/config/settings_cache.py
+@@ -4,8 +4,8 @@ import time
+ 
+ import anyio
+ 
+-from app.db.models import DashboardSettings
+ from app.db.session import SessionLocal
++from app.db.settings_models import DashboardSettings
+ from app.modules.settings.repository import SettingsRepository
+ 
+ 
+diff --git a/app/core/identity.py b/app/core/identity.py
+index 3728c355..7576f8f4 100644
+--- a/app/core/identity.py
++++ b/app/core/identity.py
+@@ -16,7 +16,7 @@ from sqlalchemy import select
+ 
+ from app.core.config.settings import Settings, get_settings, identity_handle
+ from app.core.request_locality import parse_trusted_proxy_networks, resolve_connection_client_ip
+-from app.db.models import TeamMember
++from app.db.access_models import TeamMember
+ from app.db.session import get_background_session
+ 
+ logger = logging.getLogger(__name__)
+diff --git a/app/core/rate_limiter/db_rate_limiter.py b/app/core/rate_limiter/db_rate_limiter.py
+index 18c80acb..572f6b9f 100644
+--- a/app/core/rate_limiter/db_rate_limiter.py
++++ b/app/core/rate_limiter/db_rate_limiter.py
+@@ -6,7 +6,7 @@ from sqlalchemy import delete, func, insert, literal, select, text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.exceptions import DashboardRateLimitError
+-from app.db.models import RateLimitAttempt
++from app.db.access_models import RateLimitAttempt
+ 
+ 
+ class DatabaseRateLimiter:
+diff --git a/app/core/scheduling/leader_election.py b/app/core/scheduling/leader_election.py
+index bd4ada4a..277cf69f 100644
+--- a/app/core/scheduling/leader_election.py
++++ b/app/core/scheduling/leader_election.py
+@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
+ from sqlalchemy import select, text
+ 
+ from app.core.config.settings import get_settings
+-from app.db.models import SchedulerLeader
+ from app.db.session import get_session
++from app.db.settings_models import SchedulerLeader
+ 
+ logger = logging.getLogger(__name__)
+ 
+diff --git a/app/core/upstream_proxy/resolver.py b/app/core/upstream_proxy/resolver.py
+index c63b5e20..3c5e4ec0 100644
+--- a/app/core/upstream_proxy/resolver.py
++++ b/app/core/upstream_proxy/resolver.py
+@@ -8,7 +8,8 @@ from sqlalchemy.orm import selectinload
+ 
+ from app.core.crypto import TokenEncryptor
+ from app.core.upstream_proxy.types import ResolvedProxyEndpoint, ResolvedUpstreamRoute
+-from app.db.models import AccountProxyBinding, DashboardSettings, ProxyEndpoint, ProxyPool, ProxyPoolMember
++from app.db.models import AccountProxyBinding, ProxyEndpoint, ProxyPool, ProxyPoolMember
++from app.db.settings_models import DashboardSettings
+ 
+ _ACCOUNT_BOUND_MODE = "account_bound"
+ _DEFAULT_POOL_MODE = "default_pool"
+diff --git a/app/core/usage/refresh_scheduler.py b/app/core/usage/refresh_scheduler.py
+index a2ae7561..62af5074 100644
+--- a/app/core/usage/refresh_scheduler.py
++++ b/app/core/usage/refresh_scheduler.py
+@@ -16,8 +16,9 @@ from app.core.crypto import TokenEncryptor
+ from app.core.providers import ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME, OPENAI_PROVIDER_NAME
+ from app.core.usage import capacity_for_plan
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountStatus, UsageHistory
++from app.db.models import Account, AccountStatus
+ from app.db.session import get_background_session
++from app.db.usage_models import UsageHistory
+ from app.modules.accounts.auth_manager import (
+     AuthManager,
+     _exchange_timeout_seconds,
+diff --git a/app/db/__init__.py b/app/db/__init__.py
+index e69de29b..57ad1b47 100644
+--- a/app/db/__init__.py
++++ b/app/db/__init__.py
+@@ -0,0 +1,9 @@
++import app.db.access_models  # noqa: F401
++import app.db.account_state_models  # noqa: F401
++import app.db.federation_models  # noqa: F401
++import app.db.model_indexes  # noqa: F401
++import app.db.models  # noqa: F401
++import app.db.quota_models  # noqa: F401
++import app.db.session_models  # noqa: F401
++import app.db.settings_models  # noqa: F401
++import app.db.usage_models  # noqa: F401
+diff --git a/app/db/access_models.py b/app/db/access_models.py
+new file mode 100644
+index 00000000..4190076a
+--- /dev/null
++++ b/app/db/access_models.py
+@@ -0,0 +1,136 @@
++from __future__ import annotations
++
++from datetime import datetime
++from enum import Enum
++
++from sqlalchemy import (
++    BigInteger,
++    DateTime,
++    ForeignKey,
++    Integer,
++    Numeric,
++    String,
++    Text,
++    UniqueConstraint,
++    func,
++    text,
++)
++from sqlalchemy import Enum as SqlEnum
++from sqlalchemy.orm import Mapped, mapped_column, relationship
++
++from app.db.base import Base, enum_values
++from app.db.models import ApiKeyLimit
++
++
++class TeamMemberStatus(str, Enum):
++    ACTIVE = "active"
++    SUSPENDED = "suspended"
++
++
++class TeamMember(Base):
++    __tablename__ = "team_members"
++
++    id: Mapped[str] = mapped_column(String, primary_key=True)
++    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
++    email: Mapped[str | None] = mapped_column(String, nullable=True)
++    status: Mapped[TeamMemberStatus] = mapped_column(
++        SqlEnum(
++            TeamMemberStatus,
++            name="team_member_status",
++            validate_strings=True,
++            values_callable=enum_values,
++        ),
++        default=TeamMemberStatus.ACTIVE,
++        server_default=text("'active'"),
++        nullable=False,
++    )
++    cost_cap_day_usd: Mapped[float | None] = mapped_column(Numeric(12, 4, asdecimal=False), nullable=True)
++    cost_cap_week_usd: Mapped[float | None] = mapped_column(Numeric(12, 4, asdecimal=False), nullable=True)
++    cost_cap_month_usd: Mapped[float | None] = mapped_column(Numeric(12, 4, asdecimal=False), nullable=True)
++    token_cap_day: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
++    token_cap_week: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
++    token_cap_month: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
++    pool_share_percent: Mapped[float | None] = mapped_column(Numeric(6, 3, asdecimal=False), nullable=True)
++    allowed_models: Mapped[str | None] = mapped_column(Text, nullable=True)
++    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        onupdate=func.now(),
++        nullable=False,
++    )
++
++
++class ApiKeyUsageReservation(Base):
++    __tablename__ = "api_key_usage_reservations"
++
++    id: Mapped[str] = mapped_column(String, primary_key=True)
++    api_key_id: Mapped[str] = mapped_column(
++        String,
++        ForeignKey("api_keys.id", ondelete="CASCADE"),
++        nullable=False,
++    )
++    model: Mapped[str] = mapped_column(String, nullable=False)
++    status: Mapped[str] = mapped_column(String, nullable=False, default="reserved")
++    input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
++    output_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
++    cached_input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
++    cost_microdollars: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        onupdate=func.now(),
++        nullable=False,
++    )
++
++    items: Mapped[list["ApiKeyUsageReservationItem"]] = relationship(
++        "ApiKeyUsageReservationItem",
++        back_populates="reservation",
++        cascade="all, delete-orphan",
++        lazy="selectin",
++    )
++
++
++class ApiKeyUsageReservationItem(Base):
++    __tablename__ = "api_key_usage_reservation_items"
++    __table_args__ = (UniqueConstraint("reservation_id", "limit_id", name="uq_reservation_limit"),)
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    reservation_id: Mapped[str] = mapped_column(
++        String,
++        ForeignKey("api_key_usage_reservations.id", ondelete="CASCADE"),
++        nullable=False,
++    )
++    limit_id: Mapped[int] = mapped_column(
++        Integer,
++        ForeignKey("api_key_limits.id", ondelete="CASCADE"),
++        nullable=False,
++    )
++    limit_type: Mapped[str] = mapped_column(String, nullable=False)
++    reserved_delta: Mapped[int] = mapped_column(BigInteger, nullable=False)
++    actual_delta: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
++    expected_reset_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        onupdate=func.now(),
++        nullable=False,
++    )
++
++    reservation: Mapped[ApiKeyUsageReservation] = relationship(
++        "ApiKeyUsageReservation",
++        back_populates="items",
++    )
++    limit: Mapped[ApiKeyLimit] = relationship("ApiKeyLimit")
++
++
++class RateLimitAttempt(Base):
++    __tablename__ = "rate_limit_attempts"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
++    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False)
++    type: Mapped[str] = mapped_column(String(50), nullable=False)
+diff --git a/app/db/account_state_models.py b/app/db/account_state_models.py
+new file mode 100644
+index 00000000..442610e8
+--- /dev/null
++++ b/app/db/account_state_models.py
+@@ -0,0 +1,53 @@
++from __future__ import annotations
++
++from datetime import datetime
++
++from sqlalchemy import (
++    Boolean,
++    DateTime,
++    ForeignKey,
++    Integer,
++    SmallInteger,
++    String,
++    false,
++    func,
++)
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class AccountExchangeIntent(Base):
++    __tablename__ = "account_exchange_intents"
++
++    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
++    refresh_token_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
++    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
++    replay: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
++    reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
++    auto_resets: Mapped[int] = mapped_column(SmallInteger, default=0, server_default="0", nullable=False)
++
++
++class AccountResumeSchedule(Base):
++    __tablename__ = "account_resume_schedules"
++
++    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
++    resume_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++
++
++class ResetCreditAttempt(Base):
++    __tablename__ = "reset_credit_attempts"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True)
++    active_slot: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
++    account_id: Mapped[str] = mapped_column(String, nullable=False)
++    credit_id: Mapped[str | None] = mapped_column(String, nullable=True)
++    trigger: Mapped[str] = mapped_column(String(20), nullable=False)
++    state: Mapped[str] = mapped_column(String(20), nullable=False)
++    result_code: Mapped[str | None] = mapped_column(String(30), nullable=True)
++    windows_reset: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
++    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
++    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    lease_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
++    lease_owner: Mapped[str] = mapped_column(String(36), nullable=False)
+diff --git a/app/db/alembic/env.py b/app/db/alembic/env.py
+index fd3c81f0..7e91a774 100644
+--- a/app/db/alembic/env.py
++++ b/app/db/alembic/env.py
+@@ -6,8 +6,8 @@ from alembic import context
+ from sqlalchemy import engine_from_config, pool
+ 
+ from app.core.config.settings import get_settings
++from app.db.base import Base
+ from app.db.migration_url import to_sync_database_url
+-from app.db.models import Base
+ from app.db.models_trace import RequestContextParts
+ 
+ assert RequestContextParts.metadata is Base.metadata
+diff --git a/app/db/base.py b/app/db/base.py
+new file mode 100644
+index 00000000..e6e6f01c
+--- /dev/null
++++ b/app/db/base.py
+@@ -0,0 +1,13 @@
++from __future__ import annotations
++
++from enum import Enum
++
++from sqlalchemy.orm import DeclarativeBase
++
++
++class Base(DeclarativeBase):
++    pass
++
++
++def enum_values(enum_cls: type[Enum]) -> list[str]:
++    return [str(member.value) for member in enum_cls]
+diff --git a/app/db/federation_models.py b/app/db/federation_models.py
+new file mode 100644
+index 00000000..ee414238
+--- /dev/null
++++ b/app/db/federation_models.py
+@@ -0,0 +1,102 @@
++from __future__ import annotations
++
++import uuid
++from datetime import date, datetime
++from enum import Enum
++
++from sqlalchemy import (
++    BigInteger,
++    Date,
++    DateTime,
++    Float,
++    ForeignKey,
++    Index,
++    String,
++    Text,
++    func,
++    text,
++)
++from sqlalchemy import Enum as SqlEnum
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base, enum_values
++
++
++class AccountTransferDirection(str, Enum):
++    CHECKOUT = "checkout"
++    CHECKIN = "checkin"
++
++
++class AccountTransferState(str, Enum):
++    PENDING = "pending"
++    ABORTING = "aborting"
++    SETTLED = "settled"
++    ABORTED = "aborted"
++
++
++class FederationUsageDaily(Base):
++    __tablename__ = "federation_usage_daily"
++
++    instance_id: Mapped[str] = mapped_column(String, primary_key=True)
++    account_id: Mapped[str] = mapped_column(String, primary_key=True)
++    provider: Mapped[str] = mapped_column(String, nullable=False)
++    day: Mapped[date] = mapped_column(Date, primary_key=True)
++    requests: Mapped[int] = mapped_column(BigInteger, nullable=False)
++    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
++    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
++    cache_read_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
++    cost: Mapped[float] = mapped_column(Float, nullable=False)
++    session_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
++    last_request_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
++    reported_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
++
++
++class AccountTransfer(Base):
++    __tablename__ = "account_transfers"
++
++    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
++    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
++    nonce: Mapped[str] = mapped_column(String, nullable=False, unique=True)
++    direction: Mapped[AccountTransferDirection] = mapped_column(
++        SqlEnum(
++            AccountTransferDirection,
++            name="account_transfer_direction",
++            validate_strings=True,
++            values_callable=enum_values,
++        ),
++        nullable=False,
++    )
++
++    counterparty_instance_id: Mapped[str] = mapped_column(String, nullable=False)
++    state: Mapped[AccountTransferState] = mapped_column(
++        SqlEnum(
++            AccountTransferState,
++            name="account_transfer_state",
++            validate_strings=True,
++            values_callable=enum_values,
++        ),
++        default=AccountTransferState.PENDING,
++        server_default=text("'pending'"),
++        nullable=False,
++    )
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    settled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
++
++    __table_args__ = (
++        Index(
++            "idx_account_transfers_account_direction_state",
++            "account_id",
++            "direction",
++            "state",
++        ),
++    )
++
++
++class BridgeRingMember(Base):
++    __tablename__ = "bridge_ring_members"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
++    instance_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
++    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=func.now())
++    last_heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=func.now())
++    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+diff --git a/app/db/model_indexes.py b/app/db/model_indexes.py
+new file mode 100644
+index 00000000..bc880a1a
+--- /dev/null
++++ b/app/db/model_indexes.py
+@@ -0,0 +1,292 @@
++from __future__ import annotations
++
++from sqlalchemy import (
++    Index,
++    func,
++    literal_column,
++)
++
++from app.db.access_models import (
++    ApiKeyUsageReservation,
++    ApiKeyUsageReservationItem,
++    RateLimitAttempt,
++)
++from app.db.models import Account, AccountLimitWarmup, ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, RequestLog
++from app.db.quota_models import QuotaPlannerDecision, QuotaWindowObservation
++from app.db.session_models import HttpBridgeSessionAlias, HttpBridgeSessionRecord, StickySession
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
++
++_PRIMARY_WINDOW_INDEX_EXPR = func.coalesce(UsageHistory.window, literal_column("'primary'"))
++
++
++Index("idx_usage_recorded_at", UsageHistory.recorded_at)
++
++
++Index("idx_usage_account_time", UsageHistory.account_id, UsageHistory.recorded_at)
++
++
++Index(
++    "idx_usage_window_account_time",
++    _PRIMARY_WINDOW_INDEX_EXPR,
++    UsageHistory.account_id,
++    UsageHistory.recorded_at,
++)
++
++
++Index(
++    "idx_usage_window_account_latest",
++    _PRIMARY_WINDOW_INDEX_EXPR,
++    UsageHistory.account_id,
++    UsageHistory.recorded_at.desc(),
++    UsageHistory.id.desc(),
++)
++
++
++Index(
++    "idx_usage_window_raw_account_latest",
++    UsageHistory.window,
++    UsageHistory.account_id,
++    UsageHistory.recorded_at.desc(),
++    UsageHistory.id.desc(),
++)
++
++
++Index("idx_accounts_email", Account.email)
++
++
++Index("idx_api_keys_name", ApiKey.name)
++
++
++Index("idx_logs_account_time", RequestLog.account_id, RequestLog.requested_at)
++
++
++Index("idx_logs_api_key_time", RequestLog.api_key_id, RequestLog.requested_at.desc(), RequestLog.id.desc())
++
++
++Index("idx_logs_api_key_time_account", RequestLog.api_key_id, RequestLog.requested_at.desc(), RequestLog.account_id)
++
++
++Index("idx_logs_request_kind_time", RequestLog.request_kind, RequestLog.requested_at.desc(), RequestLog.id.desc())
++
++
++Index("idx_logs_requested_at", RequestLog.requested_at)
++
++
++Index("idx_logs_source_requested_at", RequestLog.source, RequestLog.requested_at.desc())
++
++
++Index("idx_logs_session_time", RequestLog.session_id, RequestLog.requested_at.desc())
++
++
++Index(
++    "idx_logs_job_time",
++    RequestLog.job_id,
++    RequestLog.requested_at.desc(),
++    postgresql_where=RequestLog.job_id.is_not(None),
++).ddl_if(dialect="postgresql")
++
++
++Index("idx_logs_requested_at_id", RequestLog.requested_at.desc(), RequestLog.id.desc())
++
++
++Index(
++    "idx_logs_deleted_at_requested_at_id",
++    RequestLog.deleted_at,
++    RequestLog.requested_at.desc(),
++    RequestLog.id.desc(),
++)
++
++
++Index(
++    "idx_logs_requested_at_model_tier",
++    RequestLog.requested_at.desc(),
++    RequestLog.model,
++    RequestLog.service_tier,
++)
++
++
++Index(
++    "idx_logs_model_effort_time",
++    RequestLog.model,
++    RequestLog.reasoning_effort,
++    RequestLog.requested_at.desc(),
++    RequestLog.id.desc(),
++)
++
++
++Index(
++    "idx_logs_status_error_time",
++    RequestLog.status,
++    RequestLog.error_code,
++    RequestLog.requested_at.desc(),
++    RequestLog.id.desc(),
++)
++
++
++Index(
++    "idx_logs_request_status_api_key_time",
++    RequestLog.request_id,
++    RequestLog.status,
++    RequestLog.api_key_id,
++    RequestLog.requested_at.desc(),
++    RequestLog.id.desc(),
++)
++
++
++Index(
++    "idx_logs_request_status_api_key_session_time",
++    RequestLog.request_id,
++    RequestLog.status,
++    RequestLog.api_key_id,
++    RequestLog.session_id,
++    RequestLog.requested_at.desc(),
++    RequestLog.id.desc(),
++)
++
++
++Index("idx_sticky_account", StickySession.account_id)
++
++
++Index("idx_sticky_kind_updated_at", StickySession.kind, StickySession.updated_at.desc())
++
++
++Index("idx_api_keys_hash", ApiKey.key_hash)
++
++
++Index(
++    "idx_account_limit_warmups_account_attempted", AccountLimitWarmup.account_id, AccountLimitWarmup.attempted_at.desc()
++)
++
++
++Index("idx_account_limit_warmups_status_attempted", AccountLimitWarmup.status, AccountLimitWarmup.attempted_at.desc())
++
++
++Index("idx_api_key_accounts_account_id", ApiKeyAccountAssignment.account_id)
++
++
++Index("idx_api_key_limits_key_id", ApiKeyLimit.api_key_id)
++
++
++Index("idx_api_key_limits_reset_at", ApiKeyLimit.reset_at)
++
++
++Index("idx_api_key_usage_reservations_key_id", ApiKeyUsageReservation.api_key_id)
++
++
++Index("idx_api_key_usage_reservations_status", ApiKeyUsageReservation.status)
++
++
++Index(
++    "idx_api_key_usage_reservations_status_updated_at", ApiKeyUsageReservation.status, ApiKeyUsageReservation.updated_at
++)
++
++
++Index("idx_api_key_usage_res_items_reservation_id", ApiKeyUsageReservationItem.reservation_id)
++
++
++Index("idx_quota_planner_decisions_status_created", QuotaPlannerDecision.status, QuotaPlannerDecision.created_at.desc())
++
++
++Index(
++    "idx_quota_planner_decisions_account_created",
++    QuotaPlannerDecision.account_id,
++    QuotaPlannerDecision.created_at.desc(),
++)
++
++
++Index(
++    "idx_quota_window_observations_account_time",
++    QuotaWindowObservation.account_id,
++    QuotaWindowObservation.observed_at.desc(),
++)
++
++
++Index("idx_http_bridge_sessions_owner_state", HttpBridgeSessionRecord.owner_instance_id, HttpBridgeSessionRecord.state)
++
++
++Index("idx_http_bridge_sessions_lease", HttpBridgeSessionRecord.lease_expires_at)
++
++
++Index("idx_http_bridge_sessions_last_seen", HttpBridgeSessionRecord.last_seen_at.desc())
++
++
++Index(
++    "idx_http_bridge_sessions_latest_turn_scope_state_seen",
++    HttpBridgeSessionRecord.latest_turn_state,
++    HttpBridgeSessionRecord.api_key_scope,
++    HttpBridgeSessionRecord.state,
++    HttpBridgeSessionRecord.last_seen_at.desc(),
++    HttpBridgeSessionRecord.updated_at.desc(),
++)
++
++
++Index(
++    "idx_http_bridge_sessions_latest_response_scope_state_seen",
++    HttpBridgeSessionRecord.latest_response_id,
++    HttpBridgeSessionRecord.api_key_scope,
++    HttpBridgeSessionRecord.state,
++    HttpBridgeSessionRecord.last_seen_at.desc(),
++    HttpBridgeSessionRecord.updated_at.desc(),
++)
++
++
++Index(
++    "idx_http_bridge_session_aliases_session_id",
++    HttpBridgeSessionAlias.session_id,
++)
++
++
++Index(
++    "idx_http_bridge_session_aliases_alias_kind_hash_scope",
++    HttpBridgeSessionAlias.alias_kind,
++    HttpBridgeSessionAlias.alias_hash,
++    HttpBridgeSessionAlias.api_key_scope,
++)
++
++
++Index("ix_additional_usage_history_account_id", AdditionalUsageHistory.account_id)
++
++
++Index("ix_additional_usage_history_recorded_at", AdditionalUsageHistory.recorded_at)
++
++
++Index(
++    "ix_rate_limit_attempts_type_key_attempted_at",
++    RateLimitAttempt.type,
++    RateLimitAttempt.key,
++    RateLimitAttempt.attempted_at,
++)
++
++
++Index(
++    "ix_additional_usage_history_composite",
++    AdditionalUsageHistory.account_id,
++    AdditionalUsageHistory.quota_key,
++    AdditionalUsageHistory.window,
++    AdditionalUsageHistory.recorded_at,
++)
++
++
++Index(
++    "ix_additional_usage_quota_window",
++    AdditionalUsageHistory.quota_key,
++    AdditionalUsageHistory.window,
++    AdditionalUsageHistory.account_id,
++    AdditionalUsageHistory.recorded_at,
++)
++
++
++for _quota_column, _quota_suffix in (
++    (AdditionalUsageHistory.quota_key, "key"),
++    (func.lower(AdditionalUsageHistory.limit_name), "limit"),
++    (func.lower(AdditionalUsageHistory.metered_feature), "feature"),
++):
++    Index(
++        f"ix_additional_latest_{_quota_suffix}",
++        AdditionalUsageHistory.account_id,
++        AdditionalUsageHistory.window,
++        _quota_column,
++        AdditionalUsageHistory.recorded_at.desc(),
++        AdditionalUsageHistory.used_percent.desc(),
++        AdditionalUsageHistory.id.desc(),
++    ).ddl_if(dialect="sqlite")
+diff --git a/app/db/models.py b/app/db/models.py
+index 00b8c4b8..5ad567e4 100644
+--- a/app/db/models.py
++++ b/app/db/models.py
+@@ -1,41 +1,31 @@
+ from __future__ import annotations
+ 
+ import uuid
+-from datetime import date, datetime
++from datetime import datetime
+ from enum import Enum
+ 
+ from sqlalchemy import (
+     JSON,
+     BigInteger,
+     Boolean,
+-    Date,
+     DateTime,
+     Float,
+     ForeignKey,
+     Index,
+     Integer,
+     LargeBinary,
+-    Numeric,
+-    SmallInteger,
+     String,
+     Text,
+     UniqueConstraint,
+     false,
+     func,
+-    literal_column,
+     text,
+     true,
+ )
+ from sqlalchemy import Enum as SqlEnum
+-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
++from sqlalchemy.orm import Mapped, mapped_column, relationship
+ 
+-
+-class Base(DeclarativeBase):
+-    pass
+-
+-
+-def _enum_values(enum_cls: type[Enum]) -> list[str]:
+-    return [str(member.value) for member in enum_cls]
++from app.db.base import Base, enum_values
+ 
+ 
+ class AccountStatus(str, Enum):
+@@ -54,29 +44,11 @@ class AccountRoutingPolicy(str, Enum):
+     PRESERVE = "preserve"
+ 
+ 
+-class StickySessionKind(str, Enum):
+-    CODEX_SESSION = "codex_session"
+-    STICKY_THREAD = "sticky_thread"
+-    PROMPT_CACHE = "prompt_cache"
+-
+-
+ class RequestKind(str, Enum):
+     NORMAL = "normal"
+     WARMUP = "warmup"
+ 
+ 
+-class AccountTransferDirection(str, Enum):
+-    CHECKOUT = "checkout"
+-    CHECKIN = "checkin"
+-
+-
+-class AccountTransferState(str, Enum):
+-    PENDING = "pending"
+-    ABORTING = "aborting"
+-    SETTLED = "settled"
+-    ABORTED = "aborted"
+-
+-
+ class Account(Base):
+     __tablename__ = "accounts"
+ 
+@@ -106,7 +78,7 @@ class Account(Base):
+             AccountStatus,
+             name="account_status",
+             validate_strings=True,
+-            values_callable=_enum_values,
++            values_callable=enum_values,
+         ),
+         default=AccountStatus.ACTIVE,
+         nullable=False,
+@@ -147,77 +119,6 @@ class Account(Base):
+     )
+ 
+ 
+-class AccountExchangeIntent(Base):
+-    __tablename__ = "account_exchange_intents"
+-
+-    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+-    refresh_token_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+-    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+-    replay: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+-    reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+-    auto_resets: Mapped[int] = mapped_column(SmallInteger, default=0, server_default="0", nullable=False)
+-
+-
+-class AccountResumeSchedule(Base):
+-    __tablename__ = "account_resume_schedules"
+-
+-    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+-    resume_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-
+-
+-class UsageHistory(Base):
+-    __tablename__ = "usage_history"
+-
+-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+-    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+-    provider: Mapped[str] = mapped_column(String, default="openai", server_default=text("'openai'"), nullable=False)
+-    recorded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    window: Mapped[str | None] = mapped_column(String, nullable=True)
+-    used_percent: Mapped[float] = mapped_column(Float, nullable=False)
+-    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+-    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+-    reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+-    window_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+-    credits_has: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+-    credits_unlimited: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+-    credits_balance: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    credits_cap: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    credits_spent: Mapped[float | None] = mapped_column(Float, nullable=True)
+-
+-
+-class AdditionalUsageHistory(Base):
+-    __tablename__ = "additional_usage_history"
+-
+-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+-    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+-    quota_key: Mapped[str] = mapped_column(String, nullable=False)
+-    limit_name: Mapped[str] = mapped_column(String, nullable=False)
+-    metered_feature: Mapped[str] = mapped_column(String, nullable=False)
+-    window: Mapped[str] = mapped_column(String, nullable=False)
+-    used_percent: Mapped[float] = mapped_column(Float, nullable=False)
+-    reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+-    window_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+-    recorded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-
+-
+-class FederationUsageDaily(Base):
+-    __tablename__ = "federation_usage_daily"
+-
+-    instance_id: Mapped[str] = mapped_column(String, primary_key=True)
+-    account_id: Mapped[str] = mapped_column(String, primary_key=True)
+-    provider: Mapped[str] = mapped_column(String, nullable=False)
+-    day: Mapped[date] = mapped_column(Date, primary_key=True)
+-    requests: Mapped[int] = mapped_column(BigInteger, nullable=False)
+-    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+-    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+-    cache_read_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+-    cost: Mapped[float] = mapped_column(Float, nullable=False)
+-    session_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+-    last_request_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+-    reported_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+-
+-
+ class RequestLog(Base):
+     __tablename__ = "request_logs"
+     __table_args__ = (Index("idx_logs_useragent_group", "useragent_group"),)
+@@ -420,345 +321,6 @@ class AccountLimitWarmup(Base):
+     )
+ 
+ 
+-class AccountTransfer(Base):
+-    __tablename__ = "account_transfers"
+-
+-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+-    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+-    nonce: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+-    direction: Mapped[AccountTransferDirection] = mapped_column(
+-        SqlEnum(
+-            AccountTransferDirection,
+-            name="account_transfer_direction",
+-            validate_strings=True,
+-            values_callable=_enum_values,
+-        ),
+-        nullable=False,
+-    )
+-
+-    counterparty_instance_id: Mapped[str] = mapped_column(String, nullable=False)
+-    state: Mapped[AccountTransferState] = mapped_column(
+-        SqlEnum(
+-            AccountTransferState,
+-            name="account_transfer_state",
+-            validate_strings=True,
+-            values_callable=_enum_values,
+-        ),
+-        default=AccountTransferState.PENDING,
+-        server_default=text("'pending'"),
+-        nullable=False,
+-    )
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    settled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+-
+-    __table_args__ = (
+-        Index(
+-            "idx_account_transfers_account_direction_state",
+-            "account_id",
+-            "direction",
+-            "state",
+-        ),
+-    )
+-
+-
+-class AuditLog(Base):
+-    __tablename__ = "audit_logs"
+-
+-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False, index=True)
+-    action: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+-    actor_ip: Mapped[str | None] = mapped_column(String(50), nullable=True)
+-    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    request_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+-
+-
+-class ResetCreditAttempt(Base):
+-    __tablename__ = "reset_credit_attempts"
+-
+-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+-    active_slot: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
+-    account_id: Mapped[str] = mapped_column(String, nullable=False)
+-    credit_id: Mapped[str | None] = mapped_column(String, nullable=True)
+-    trigger: Mapped[str] = mapped_column(String(20), nullable=False)
+-    state: Mapped[str] = mapped_column(String(20), nullable=False)
+-    result_code: Mapped[str | None] = mapped_column(String(30), nullable=True)
+-    windows_reset: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+-    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+-    lease_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+-    lease_owner: Mapped[str] = mapped_column(String(36), nullable=False)
+-
+-
+-class SchedulerLeader(Base):
+-    __tablename__ = "scheduler_leader"
+-
+-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+-    leader_id: Mapped[str] = mapped_column(String(100), nullable=False)
+-    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+-
+-
+-class StickySession(Base):
+-    __tablename__ = "sticky_sessions"
+-
+-    key: Mapped[str] = mapped_column(String, primary_key=True)
+-    kind: Mapped[StickySessionKind] = mapped_column(
+-        SqlEnum(
+-            StickySessionKind,
+-            name="sticky_session_kind",
+-            validate_strings=True,
+-            values_callable=_enum_values,
+-        ),
+-        primary_key=True,
+-        default=StickySessionKind.STICKY_THREAD,
+-        server_default=text("'sticky_thread'"),
+-        nullable=False,
+-    )
+-    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    updated_at: Mapped[datetime] = mapped_column(
+-        DateTime,
+-        server_default=func.now(),
+-        onupdate=func.now(),
+-        nullable=False,
+-    )
+-
+-
+-class DashboardSettings(Base):
+-    __tablename__ = "dashboard_settings"
+-
+-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+-    sticky_threads_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+-    upstream_stream_transport: Mapped[str] = mapped_column(
+-        String,
+-        default="default",
+-        server_default=text("'default'"),
+-        nullable=False,
+-    )
+-    prefer_earlier_reset_accounts: Mapped[bool] = mapped_column(
+-        Boolean, default=True, server_default=true(), nullable=False
+-    )
+-    prefer_earlier_reset_window: Mapped[str] = mapped_column(
+-        String,
+-        default="secondary",
+-        server_default=text("'secondary'"),
+-        nullable=False,
+-    )
+-    routing_strategy: Mapped[str] = mapped_column(
+-        String,
+-        default="capacity_weighted",
+-        server_default=text("'capacity_weighted'"),
+-        nullable=False,
+-    )
+-    relative_availability_power: Mapped[float] = mapped_column(
+-        Float,
+-        default=2.0,
+-        server_default=text("2.0"),
+-        nullable=False,
+-    )
+-    relative_availability_top_k: Mapped[int] = mapped_column(
+-        Integer,
+-        default=5,
+-        server_default=text("5"),
+-        nullable=False,
+-    )
+-    single_account_id: Mapped[str | None] = mapped_column(String, nullable=True)
+-    openai_cache_affinity_max_age_seconds: Mapped[int] = mapped_column(
+-        Integer,
+-        default=1800,
+-        server_default=text("1800"),
+-        nullable=False,
+-    )
+-    dashboard_session_ttl_seconds: Mapped[int] = mapped_column(
+-        Integer,
+-        default=43200,
+-        server_default=text("43200"),
+-        nullable=False,
+-    )
+-    import_without_overwrite: Mapped[bool] = mapped_column(
+-        Boolean,
+-        default=True,
+-        server_default=true(),
+-        nullable=False,
+-    )
+-    totp_required_on_login: Mapped[bool] = mapped_column(
+-        Boolean,
+-        default=False,
+-        nullable=False,
+-    )
+-    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    bootstrap_token_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+-    bootstrap_token_hash: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+-    api_key_auth_enabled: Mapped[bool] = mapped_column(
+-        Boolean,
+-        default=False,
+-        nullable=False,
+-    )
+-    team_mode_enabled: Mapped[bool] = mapped_column(
+-        Boolean,
+-        default=False,
+-        server_default=false(),
+-        nullable=False,
+-    )
+-    team_public_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
+-    totp_secret_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+-    totp_last_verified_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
+-    http_responses_session_bridge_prompt_cache_idle_ttl_seconds: Mapped[int] = mapped_column(
+-        Integer,
+-        default=3600,
+-        server_default=text("3600"),
+-        nullable=False,
+-    )
+-    http_responses_session_bridge_gateway_safe_mode: Mapped[bool] = mapped_column(
+-        Boolean,
+-        default=False,
+-        server_default=false(),
+-        nullable=False,
+-    )
+-    upstream_proxy_routing_enabled: Mapped[bool] = mapped_column(
+-        Boolean,
+-        default=False,
+-        server_default=false(),
+-        nullable=False,
+-    )
+-    upstream_proxy_default_pool_id: Mapped[str | None] = mapped_column(
+-        String,
+-        ForeignKey("proxy_pools.id", ondelete="SET NULL"),
+-        nullable=True,
+-    )
+-    sticky_reallocation_budget_threshold_pct: Mapped[float] = mapped_column(
+-        Float,
+-        default=95.0,
+-        server_default=text("95.0"),
+-        nullable=False,
+-    )
+-    sticky_reallocation_primary_budget_threshold_pct: Mapped[float] = mapped_column(
+-        Float,
+-        default=95.0,
+-        server_default=text("95.0"),
+-        nullable=False,
+-    )
+-    sticky_reallocation_secondary_budget_threshold_pct: Mapped[float] = mapped_column(
+-        Float,
+-        default=100.0,
+-        server_default=text("100.0"),
+-        nullable=False,
+-    )
+-    additional_quota_routing_policies_json: Mapped[str] = mapped_column(
+-        Text,
+-        default="{}",
+-        server_default=text("'{}'"),
+-        nullable=False,
+-    )
+-    limit_warmup_enabled: Mapped[bool] = mapped_column(
+-        Boolean,
+-        default=False,
+-        server_default=false(),
+-        nullable=False,
+-    )
+-    limit_warmup_windows: Mapped[str] = mapped_column(
+-        String,
+-        default="both",
+-        server_default=text("'both'"),
+-        nullable=False,
+-    )
+-    limit_warmup_model: Mapped[str] = mapped_column(
+-        String,
+-        default="auto",
+-        server_default=text("'auto'"),
+-        nullable=False,
+-    )
+-    limit_warmup_prompt: Mapped[str] = mapped_column(
+-        Text,
+-        default="Say OK.",
+-        server_default=text("'Say OK.'"),
+-        nullable=False,
+-    )
+-    limit_warmup_cooldown_seconds: Mapped[int] = mapped_column(
+-        Integer,
+-        default=3600,
+-        server_default=text("3600"),
+-        nullable=False,
+-    )
+-    limit_warmup_min_available_percent: Mapped[float] = mapped_column(
+-        Float,
+-        default=100.0,
+-        server_default=text("100.0"),
+-    )
+-    weekly_pace_working_days: Mapped[str] = mapped_column(
+-        String,
+-        default="0,1,2,3,4,5,6",
+-        server_default=text("'0,1,2,3,4,5,6'"),
+-        nullable=False,
+-    )
+-    warmup_model: Mapped[str] = mapped_column(
+-        String,
+-        default="gpt-5.4-mini",
+-        server_default=text("'gpt-5.4-mini'"),
+-        nullable=False,
+-    )
+-    additional_quota_routing_policies_json: Mapped[str] = mapped_column(
+-        Text,
+-        default="{}",
+-        server_default=text("'{}'"),
+-        nullable=False,
+-    )
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    updated_at: Mapped[datetime] = mapped_column(
+-        DateTime,
+-        server_default=func.now(),
+-        onupdate=func.now(),
+-        nullable=False,
+-    )
+-
+-
+-class ApiFirewallAllowlist(Base):
+-    __tablename__ = "api_firewall_allowlist"
+-
+-    ip_address: Mapped[str] = mapped_column(String, primary_key=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-
+-
+-class TeamMemberStatus(str, Enum):
+-    ACTIVE = "active"
+-    SUSPENDED = "suspended"
+-
+-
+-class TeamMember(Base):
+-    __tablename__ = "team_members"
+-
+-    id: Mapped[str] = mapped_column(String, primary_key=True)
+-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+-    email: Mapped[str | None] = mapped_column(String, nullable=True)
+-    status: Mapped[TeamMemberStatus] = mapped_column(
+-        SqlEnum(
+-            TeamMemberStatus,
+-            name="team_member_status",
+-            validate_strings=True,
+-            values_callable=_enum_values,
+-        ),
+-        default=TeamMemberStatus.ACTIVE,
+-        server_default=text("'active'"),
+-        nullable=False,
+-    )
+-    cost_cap_day_usd: Mapped[float | None] = mapped_column(Numeric(12, 4, asdecimal=False), nullable=True)
+-    cost_cap_week_usd: Mapped[float | None] = mapped_column(Numeric(12, 4, asdecimal=False), nullable=True)
+-    cost_cap_month_usd: Mapped[float | None] = mapped_column(Numeric(12, 4, asdecimal=False), nullable=True)
+-    token_cap_day: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+-    token_cap_week: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+-    token_cap_month: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+-    pool_share_percent: Mapped[float | None] = mapped_column(Numeric(6, 3, asdecimal=False), nullable=True)
+-    allowed_models: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    updated_at: Mapped[datetime] = mapped_column(
+-        DateTime,
+-        server_default=func.now(),
+-        onupdate=func.now(),
+-        nullable=False,
+-    )
+-
+-
+ class ApiKey(Base):
+     __tablename__ = "api_keys"
+     __table_args__ = (Index("idx_api_keys_member_id", "member_id"),)
+@@ -862,7 +424,7 @@ class ApiKeyLimit(Base):
+             LimitType,
+             name="limit_type",
+             validate_strings=True,
+-            values_callable=_enum_values,
++            values_callable=enum_values,
+         ),
+         nullable=False,
+     )
+@@ -871,7 +433,7 @@ class ApiKeyLimit(Base):
+             LimitWindow,
+             name="limit_window",
+             validate_strings=True,
+-            values_callable=_enum_values,
++            values_callable=enum_values,
+         ),
+         nullable=False,
+     )
+@@ -881,504 +443,3 @@ class ApiKeyLimit(Base):
+     reset_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+ 
+     api_key: Mapped["ApiKey"] = relationship("ApiKey", back_populates="limits")
+-
+-
+-class ApiKeyUsageReservation(Base):
+-    __tablename__ = "api_key_usage_reservations"
+-
+-    id: Mapped[str] = mapped_column(String, primary_key=True)
+-    api_key_id: Mapped[str] = mapped_column(
+-        String,
+-        ForeignKey("api_keys.id", ondelete="CASCADE"),
+-        nullable=False,
+-    )
+-    model: Mapped[str] = mapped_column(String, nullable=False)
+-    status: Mapped[str] = mapped_column(String, nullable=False, default="reserved")
+-    input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+-    output_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+-    cached_input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+-    cost_microdollars: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    updated_at: Mapped[datetime] = mapped_column(
+-        DateTime,
+-        server_default=func.now(),
+-        onupdate=func.now(),
+-        nullable=False,
+-    )
+-
+-    items: Mapped[list["ApiKeyUsageReservationItem"]] = relationship(
+-        "ApiKeyUsageReservationItem",
+-        back_populates="reservation",
+-        cascade="all, delete-orphan",
+-        lazy="selectin",
+-    )
+-
+-
+-class ApiKeyUsageReservationItem(Base):
+-    __tablename__ = "api_key_usage_reservation_items"
+-    __table_args__ = (UniqueConstraint("reservation_id", "limit_id", name="uq_reservation_limit"),)
+-
+-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+-    reservation_id: Mapped[str] = mapped_column(
+-        String,
+-        ForeignKey("api_key_usage_reservations.id", ondelete="CASCADE"),
+-        nullable=False,
+-    )
+-    limit_id: Mapped[int] = mapped_column(
+-        Integer,
+-        ForeignKey("api_key_limits.id", ondelete="CASCADE"),
+-        nullable=False,
+-    )
+-    limit_type: Mapped[str] = mapped_column(String, nullable=False)
+-    reserved_delta: Mapped[int] = mapped_column(BigInteger, nullable=False)
+-    actual_delta: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+-    expected_reset_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    updated_at: Mapped[datetime] = mapped_column(
+-        DateTime,
+-        server_default=func.now(),
+-        onupdate=func.now(),
+-        nullable=False,
+-    )
+-
+-    reservation: Mapped[ApiKeyUsageReservation] = relationship(
+-        "ApiKeyUsageReservation",
+-        back_populates="items",
+-    )
+-    limit: Mapped[ApiKeyLimit] = relationship("ApiKeyLimit")
+-
+-
+-class RateLimitAttempt(Base):
+-    __tablename__ = "rate_limit_attempts"
+-
+-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+-    key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+-    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False)
+-    type: Mapped[str] = mapped_column(String(50), nullable=False)
+-
+-
+-class QuotaPlannerSettings(Base):
+-    __tablename__ = "quota_planner_settings"
+-
+-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+-    mode: Mapped[str] = mapped_column(String, default="shadow", server_default=text("'shadow'"), nullable=False)
+-    timezone: Mapped[str] = mapped_column(String, default="UTC", server_default=text("'UTC'"), nullable=False)
+-    working_days_json: Mapped[str] = mapped_column(
+-        Text,
+-        default="[0,1,2,3,4]",
+-        server_default=text("'[0,1,2,3,4]'"),
+-        nullable=False,
+-    )
+-    working_hours_start: Mapped[str] = mapped_column(
+-        String,
+-        default="09:00",
+-        server_default=text("'09:00'"),
+-        nullable=False,
+-    )
+-    working_hours_end: Mapped[str] = mapped_column(
+-        String,
+-        default="18:00",
+-        server_default=text("'18:00'"),
+-        nullable=False,
+-    )
+-    prewarm_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+-    prewarm_lead_minutes: Mapped[int] = mapped_column(Integer, default=300, server_default=text("300"), nullable=False)
+-
+-    seed_target_offset_minutes: Mapped[int] = mapped_column(
+-        Integer,
+-        default=120,
+-        server_default=text("120"),
+-        nullable=False,
+-    )
+-    max_warmups_per_day: Mapped[int] = mapped_column(Integer, default=3, server_default=text("3"), nullable=False)
+-    max_warmup_credits_per_day: Mapped[float] = mapped_column(
+-        Float,
+-        default=0.0,
+-        server_default=text("0.0"),
+-        nullable=False,
+-    )
+-    min_expected_gain: Mapped[float] = mapped_column(Float, default=1.0, server_default=text("1.0"), nullable=False)
+-    forecast_quantile: Mapped[str] = mapped_column(String, default="p75", server_default=text("'p75'"), nullable=False)
+-    allow_synthetic_traffic: Mapped[bool] = mapped_column(
+-        Boolean,
+-        default=False,
+-        server_default=false(),
+-        nullable=False,
+-    )
+-    warmup_model_preference: Mapped[str | None] = mapped_column(String, nullable=True)
+-    dry_run: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    updated_at: Mapped[datetime] = mapped_column(
+-        DateTime,
+-        server_default=func.now(),
+-        onupdate=func.now(),
+-        nullable=False,
+-    )
+-
+-
+-class QuotaPlannerDecision(Base):
+-    __tablename__ = "quota_planner_decisions"
+-
+-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    mode: Mapped[str] = mapped_column(String, nullable=False)
+-    account_id: Mapped[str | None] = mapped_column(
+-        String,
+-        ForeignKey("accounts.id", ondelete="SET NULL"),
+-        nullable=True,
+-    )
+-    action: Mapped[str] = mapped_column(String, nullable=False)
+-    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+-    executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+-    score: Mapped[float] = mapped_column(Float, default=0.0, server_default=text("0.0"), nullable=False)
+-    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    forecast_snapshot_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+-    state_before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    state_after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    status: Mapped[str] = mapped_column(String, default="planned", server_default=text("'planned'"), nullable=False)
+-    idempotency_key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+-
+-
+-class QuotaWindowObservation(Base):
+-    __tablename__ = "quota_window_observations"
+-
+-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+-    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+-    observed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    model: Mapped[str | None] = mapped_column(String, nullable=True)
+-    primary_remaining_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    primary_reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+-    secondary_remaining_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+-    secondary_reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+-    source: Mapped[str] = mapped_column(String, nullable=False)
+-    confidence: Mapped[str] = mapped_column(String, default="unknown", server_default=text("'unknown'"), nullable=False)
+-
+-
+-class CacheInvalidation(Base):
+-    __tablename__ = "cache_invalidation"
+-
+-    namespace: Mapped[str] = mapped_column(String(50), primary_key=True)
+-    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+-
+-
+-class BridgeRingMember(Base):
+-    __tablename__ = "bridge_ring_members"
+-
+-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+-    instance_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+-    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=func.now())
+-    last_heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=func.now())
+-    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+-
+-
+-class HttpBridgeSessionState(str, Enum):
+-    ACTIVE = "active"
+-    DRAINING = "draining"
+-    CLOSED = "closed"
+-
+-
+-class HttpBridgeSessionRecord(Base):
+-    __tablename__ = "http_bridge_sessions"
+-
+-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+-    session_key_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+-    session_key_value: Mapped[str] = mapped_column(Text, nullable=False)
+-    session_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+-    api_key_scope: Mapped[str] = mapped_column(String(255), nullable=False)
+-    owner_instance_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+-    owner_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+-    state: Mapped[HttpBridgeSessionState] = mapped_column(
+-        SqlEnum(
+-            HttpBridgeSessionState,
+-            name="http_bridge_session_state",
+-            validate_strings=True,
+-            values_callable=_enum_values,
+-        ),
+-        default=HttpBridgeSessionState.ACTIVE,
+-        server_default=text("'active'"),
+-        nullable=False,
+-    )
+-    account_id: Mapped[str | None] = mapped_column(
+-        String, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+-    )
+-    model: Mapped[str | None] = mapped_column(String, nullable=True)
+-    service_tier: Mapped[str | None] = mapped_column(String, nullable=True)
+-    latest_turn_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    latest_response_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    latest_input_item_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+-    latest_input_full_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(
+-        DateTime(timezone=True),
+-        nullable=False,
+-        default=func.now(),
+-        server_default=func.now(),
+-    )
+-    updated_at: Mapped[datetime] = mapped_column(
+-        DateTime(timezone=True),
+-        nullable=False,
+-        default=func.now(),
+-        server_default=func.now(),
+-        onupdate=func.now(),
+-    )
+-    last_seen_at: Mapped[datetime] = mapped_column(
+-        DateTime(timezone=True),
+-        nullable=False,
+-        default=func.now(),
+-        server_default=func.now(),
+-    )
+-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+-
+-    aliases: Mapped[list["HttpBridgeSessionAlias"]] = relationship(
+-        "HttpBridgeSessionAlias",
+-        back_populates="session",
+-        cascade="all, delete-orphan",
+-    )
+-
+-    __table_args__ = (
+-        UniqueConstraint(
+-            "session_key_kind",
+-            "session_key_hash",
+-            "api_key_scope",
+-            name="uq_http_bridge_sessions_session_key",
+-        ),
+-    )
+-
+-
+-class HttpBridgeSessionAlias(Base):
+-    __tablename__ = "http_bridge_session_aliases"
+-
+-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+-    session_id: Mapped[str] = mapped_column(
+-        String(36),
+-        ForeignKey("http_bridge_sessions.id", ondelete="CASCADE"),
+-        nullable=False,
+-    )
+-    alias_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+-    alias_value: Mapped[str] = mapped_column(Text, nullable=False)
+-    alias_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+-    api_key_scope: Mapped[str] = mapped_column(String(255), nullable=False)
+-    created_at: Mapped[datetime] = mapped_column(
+-        DateTime(timezone=True),
+-        nullable=False,
+-        default=func.now(),
+-        server_default=func.now(),
+-    )
+-    updated_at: Mapped[datetime] = mapped_column(
+-        DateTime(timezone=True),
+-        nullable=False,
+-        default=func.now(),
+-        server_default=func.now(),
+-        onupdate=func.now(),
+-    )
+-
+-    session: Mapped[HttpBridgeSessionRecord] = relationship(
+-        "HttpBridgeSessionRecord",
+-        back_populates="aliases",
+-    )
+-
+-    __table_args__ = (
+-        UniqueConstraint(
+-            "alias_kind",
+-            "alias_hash",
+-            "api_key_scope",
+-            name="uq_http_bridge_session_aliases_alias",
+-        ),
+-    )
+-
+-
+-_PRIMARY_WINDOW_INDEX_EXPR = func.coalesce(UsageHistory.window, literal_column("'primary'"))
+-
+-Index("idx_usage_recorded_at", UsageHistory.recorded_at)
+-Index("idx_usage_account_time", UsageHistory.account_id, UsageHistory.recorded_at)
+-Index(
+-    "idx_usage_window_account_time",
+-    _PRIMARY_WINDOW_INDEX_EXPR,
+-    UsageHistory.account_id,
+-    UsageHistory.recorded_at,
+-)
+-Index(
+-    "idx_usage_window_account_latest",
+-    _PRIMARY_WINDOW_INDEX_EXPR,
+-    UsageHistory.account_id,
+-    UsageHistory.recorded_at.desc(),
+-    UsageHistory.id.desc(),
+-)
+-Index(
+-    "idx_usage_window_raw_account_latest",
+-    UsageHistory.window,
+-    UsageHistory.account_id,
+-    UsageHistory.recorded_at.desc(),
+-    UsageHistory.id.desc(),
+-)
+-Index("idx_accounts_email", Account.email)
+-Index("idx_api_keys_name", ApiKey.name)
+-Index("idx_logs_account_time", RequestLog.account_id, RequestLog.requested_at)
+-Index("idx_logs_api_key_time", RequestLog.api_key_id, RequestLog.requested_at.desc(), RequestLog.id.desc())
+-Index("idx_logs_api_key_time_account", RequestLog.api_key_id, RequestLog.requested_at.desc(), RequestLog.account_id)
+-Index("idx_logs_request_kind_time", RequestLog.request_kind, RequestLog.requested_at.desc(), RequestLog.id.desc())
+-Index("idx_logs_requested_at", RequestLog.requested_at)
+-Index("idx_logs_source_requested_at", RequestLog.source, RequestLog.requested_at.desc())
+-Index("idx_logs_session_time", RequestLog.session_id, RequestLog.requested_at.desc())
+-Index(
+-    "idx_logs_job_time",
+-    RequestLog.job_id,
+-    RequestLog.requested_at.desc(),
+-    postgresql_where=RequestLog.job_id.is_not(None),
+-).ddl_if(dialect="postgresql")
+-Index("idx_logs_requested_at_id", RequestLog.requested_at.desc(), RequestLog.id.desc())
+-Index(
+-    "idx_logs_deleted_at_requested_at_id",
+-    RequestLog.deleted_at,
+-    RequestLog.requested_at.desc(),
+-    RequestLog.id.desc(),
+-)
+-Index(
+-    "idx_logs_requested_at_model_tier",
+-    RequestLog.requested_at.desc(),
+-    RequestLog.model,
+-    RequestLog.service_tier,
+-)
+-Index(
+-    "idx_logs_model_effort_time",
+-    RequestLog.model,
+-    RequestLog.reasoning_effort,
+-    RequestLog.requested_at.desc(),
+-    RequestLog.id.desc(),
+-)
+-Index(
+-    "idx_logs_status_error_time",
+-    RequestLog.status,
+-    RequestLog.error_code,
+-    RequestLog.requested_at.desc(),
+-    RequestLog.id.desc(),
+-)
+-Index(
+-    "idx_logs_request_status_api_key_time",
+-    RequestLog.request_id,
+-    RequestLog.status,
+-    RequestLog.api_key_id,
+-    RequestLog.requested_at.desc(),
+-    RequestLog.id.desc(),
+-)
+-Index(
+-    "idx_logs_request_status_api_key_session_time",
+-    RequestLog.request_id,
+-    RequestLog.status,
+-    RequestLog.api_key_id,
+-    RequestLog.session_id,
+-    RequestLog.requested_at.desc(),
+-    RequestLog.id.desc(),
+-)
+-Index("idx_sticky_account", StickySession.account_id)
+-Index("idx_sticky_kind_updated_at", StickySession.kind, StickySession.updated_at.desc())
+-Index("idx_api_keys_hash", ApiKey.key_hash)
+-Index(
+-    "idx_account_limit_warmups_account_attempted", AccountLimitWarmup.account_id, AccountLimitWarmup.attempted_at.desc()
+-)
+-Index("idx_account_limit_warmups_status_attempted", AccountLimitWarmup.status, AccountLimitWarmup.attempted_at.desc())
+-Index("idx_api_key_accounts_account_id", ApiKeyAccountAssignment.account_id)
+-Index("idx_api_key_limits_key_id", ApiKeyLimit.api_key_id)
+-Index("idx_api_key_limits_reset_at", ApiKeyLimit.reset_at)
+-Index("idx_api_key_usage_reservations_key_id", ApiKeyUsageReservation.api_key_id)
+-Index("idx_api_key_usage_reservations_status", ApiKeyUsageReservation.status)
+-Index(
+-    "idx_api_key_usage_reservations_status_updated_at", ApiKeyUsageReservation.status, ApiKeyUsageReservation.updated_at
+-)
+-Index("idx_api_key_usage_res_items_reservation_id", ApiKeyUsageReservationItem.reservation_id)
+-Index("idx_quota_planner_decisions_status_created", QuotaPlannerDecision.status, QuotaPlannerDecision.created_at.desc())
+-Index(
+-    "idx_quota_planner_decisions_account_created",
+-    QuotaPlannerDecision.account_id,
+-    QuotaPlannerDecision.created_at.desc(),
+-)
+-Index(
+-    "idx_quota_window_observations_account_time",
+-    QuotaWindowObservation.account_id,
+-    QuotaWindowObservation.observed_at.desc(),
+-)
+-Index("idx_http_bridge_sessions_owner_state", HttpBridgeSessionRecord.owner_instance_id, HttpBridgeSessionRecord.state)
+-Index("idx_http_bridge_sessions_lease", HttpBridgeSessionRecord.lease_expires_at)
+-Index("idx_http_bridge_sessions_last_seen", HttpBridgeSessionRecord.last_seen_at.desc())
+-Index(
+-    "idx_http_bridge_sessions_latest_turn_scope_state_seen",
+-    HttpBridgeSessionRecord.latest_turn_state,
+-    HttpBridgeSessionRecord.api_key_scope,
+-    HttpBridgeSessionRecord.state,
+-    HttpBridgeSessionRecord.last_seen_at.desc(),
+-    HttpBridgeSessionRecord.updated_at.desc(),
+-)
+-Index(
+-    "idx_http_bridge_sessions_latest_response_scope_state_seen",
+-    HttpBridgeSessionRecord.latest_response_id,
+-    HttpBridgeSessionRecord.api_key_scope,
+-    HttpBridgeSessionRecord.state,
+-    HttpBridgeSessionRecord.last_seen_at.desc(),
+-    HttpBridgeSessionRecord.updated_at.desc(),
+-)
+-Index(
+-    "idx_http_bridge_session_aliases_session_id",
+-    HttpBridgeSessionAlias.session_id,
+-)
+-Index(
+-    "idx_http_bridge_session_aliases_alias_kind_hash_scope",
+-    HttpBridgeSessionAlias.alias_kind,
+-    HttpBridgeSessionAlias.alias_hash,
+-    HttpBridgeSessionAlias.api_key_scope,
+-)
+-Index("ix_additional_usage_history_account_id", AdditionalUsageHistory.account_id)
+-Index("ix_additional_usage_history_recorded_at", AdditionalUsageHistory.recorded_at)
+-Index(
+-    "ix_rate_limit_attempts_type_key_attempted_at",
+-    RateLimitAttempt.type,
+-    RateLimitAttempt.key,
+-    RateLimitAttempt.attempted_at,
+-)
+-Index(
+-    "ix_additional_usage_history_composite",
+-    AdditionalUsageHistory.account_id,
+-    AdditionalUsageHistory.quota_key,
+-    AdditionalUsageHistory.window,
+-    AdditionalUsageHistory.recorded_at,
+-)
+-Index(
+-    "ix_additional_usage_quota_window",
+-    AdditionalUsageHistory.quota_key,
+-    AdditionalUsageHistory.window,
+-    AdditionalUsageHistory.account_id,
+-    AdditionalUsageHistory.recorded_at,
+-)
+-
+-
+-for _quota_column, _quota_suffix in (
+-    (AdditionalUsageHistory.quota_key, "key"),
+-    (func.lower(AdditionalUsageHistory.limit_name), "limit"),
+-    (func.lower(AdditionalUsageHistory.metered_feature), "feature"),
+-):
+-    Index(
+-        f"ix_additional_latest_{_quota_suffix}",
+-        AdditionalUsageHistory.account_id,
+-        AdditionalUsageHistory.window,
+-        _quota_column,
+-        AdditionalUsageHistory.recorded_at.desc(),
+-        AdditionalUsageHistory.used_percent.desc(),
+-        AdditionalUsageHistory.id.desc(),
+-    ).ddl_if(dialect="sqlite")
+-
+-
+-class RoutingPolicyVersion(Base):
+-    __tablename__ = "routing_policy_versions"
+-
+-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+-    version: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+-    state: Mapped[str] = mapped_column(String, nullable=False)
+-    source: Mapped[str] = mapped_column(String, nullable=False)
+-    summary: Mapped[str] = mapped_column(Text, nullable=False)
+-    routing_table_json: Mapped[str] = mapped_column(Text, nullable=False)
+-    decider_json: Mapped[str] = mapped_column(Text, nullable=False)
+-    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+-    created_by: Mapped[str] = mapped_column(String, nullable=False)
+-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+-    approved_by: Mapped[str | None] = mapped_column(String, nullable=True)
+-    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+-    replay_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+diff --git a/app/db/models_trace.py b/app/db/models_trace.py
+index 12e0b4ce..1f202c15 100644
+--- a/app/db/models_trace.py
++++ b/app/db/models_trace.py
+@@ -3,7 +3,7 @@ from datetime import datetime
+ from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
+ from sqlalchemy.orm import Mapped, mapped_column
+ 
+-from app.db.models import Base
++from app.db.base import Base
+ 
+ 
+ class RequestContextParts(Base):
+diff --git a/app/db/quota_models.py b/app/db/quota_models.py
+new file mode 100644
+index 00000000..c73dbfeb
+--- /dev/null
++++ b/app/db/quota_models.py
+@@ -0,0 +1,118 @@
++from __future__ import annotations
++
++import uuid
++from datetime import datetime
++
++from sqlalchemy import (
++    Boolean,
++    DateTime,
++    Float,
++    ForeignKey,
++    Integer,
++    String,
++    Text,
++    false,
++    func,
++    text,
++    true,
++)
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class QuotaPlannerSettings(Base):
++    __tablename__ = "quota_planner_settings"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
++    mode: Mapped[str] = mapped_column(String, default="shadow", server_default=text("'shadow'"), nullable=False)
++    timezone: Mapped[str] = mapped_column(String, default="UTC", server_default=text("'UTC'"), nullable=False)
++    working_days_json: Mapped[str] = mapped_column(
++        Text,
++        default="[0,1,2,3,4]",
++        server_default=text("'[0,1,2,3,4]'"),
++        nullable=False,
++    )
++    working_hours_start: Mapped[str] = mapped_column(
++        String,
++        default="09:00",
++        server_default=text("'09:00'"),
++        nullable=False,
++    )
++    working_hours_end: Mapped[str] = mapped_column(
++        String,
++        default="18:00",
++        server_default=text("'18:00'"),
++        nullable=False,
++    )
++    prewarm_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
++    prewarm_lead_minutes: Mapped[int] = mapped_column(Integer, default=300, server_default=text("300"), nullable=False)
++
++    seed_target_offset_minutes: Mapped[int] = mapped_column(
++        Integer,
++        default=120,
++        server_default=text("120"),
++        nullable=False,
++    )
++    max_warmups_per_day: Mapped[int] = mapped_column(Integer, default=3, server_default=text("3"), nullable=False)
++    max_warmup_credits_per_day: Mapped[float] = mapped_column(
++        Float,
++        default=0.0,
++        server_default=text("0.0"),
++        nullable=False,
++    )
++    min_expected_gain: Mapped[float] = mapped_column(Float, default=1.0, server_default=text("1.0"), nullable=False)
++    forecast_quantile: Mapped[str] = mapped_column(String, default="p75", server_default=text("'p75'"), nullable=False)
++    allow_synthetic_traffic: Mapped[bool] = mapped_column(
++        Boolean,
++        default=False,
++        server_default=false(),
++        nullable=False,
++    )
++    warmup_model_preference: Mapped[str | None] = mapped_column(String, nullable=True)
++    dry_run: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        onupdate=func.now(),
++        nullable=False,
++    )
++
++
++class QuotaPlannerDecision(Base):
++    __tablename__ = "quota_planner_decisions"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    mode: Mapped[str] = mapped_column(String, nullable=False)
++    account_id: Mapped[str | None] = mapped_column(
++        String,
++        ForeignKey("accounts.id", ondelete="SET NULL"),
++        nullable=True,
++    )
++    action: Mapped[str] = mapped_column(String, nullable=False)
++    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
++    executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
++    score: Mapped[float] = mapped_column(Float, default=0.0, server_default=text("0.0"), nullable=False)
++    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
++    forecast_snapshot_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
++    state_before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
++    state_after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
++    status: Mapped[str] = mapped_column(String, default="planned", server_default=text("'planned'"), nullable=False)
++    idempotency_key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
++
++
++class QuotaWindowObservation(Base):
++    __tablename__ = "quota_window_observations"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
++    observed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    model: Mapped[str | None] = mapped_column(String, nullable=True)
++    primary_remaining_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
++    primary_reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    secondary_remaining_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
++    secondary_reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    source: Mapped[str] = mapped_column(String, nullable=False)
++    confidence: Mapped[str] = mapped_column(String, default="unknown", server_default=text("'unknown'"), nullable=False)
+diff --git a/app/db/schema_drift.py b/app/db/schema_drift.py
+index 9ff543c9..5261154d 100644
+--- a/app/db/schema_drift.py
++++ b/app/db/schema_drift.py
+@@ -7,7 +7,7 @@ from alembic.migration import MigrationContext
+ from sqlalchemy import inspect, text
+ from sqlalchemy.engine import Connection
+ 
+-from app.db.models import Base
++from app.db.base import Base
+ from app.db.models_trace import RequestContextParts
+ 
+ assert RequestContextParts.metadata is Base.metadata
+diff --git a/app/db/session_models.py b/app/db/session_models.py
+new file mode 100644
+index 00000000..17e25f88
+--- /dev/null
++++ b/app/db/session_models.py
+@@ -0,0 +1,168 @@
++from __future__ import annotations
++
++import uuid
++from datetime import datetime
++from enum import Enum
++
++from sqlalchemy import (
++    DateTime,
++    ForeignKey,
++    Integer,
++    String,
++    Text,
++    UniqueConstraint,
++    func,
++    text,
++)
++from sqlalchemy import Enum as SqlEnum
++from sqlalchemy.orm import Mapped, mapped_column, relationship
++
++from app.db.base import Base, enum_values
++
++
++class StickySessionKind(str, Enum):
++    CODEX_SESSION = "codex_session"
++    STICKY_THREAD = "sticky_thread"
++    PROMPT_CACHE = "prompt_cache"
++
++
++class StickySession(Base):
++    __tablename__ = "sticky_sessions"
++
++    key: Mapped[str] = mapped_column(String, primary_key=True)
++    kind: Mapped[StickySessionKind] = mapped_column(
++        SqlEnum(
++            StickySessionKind,
++            name="sticky_session_kind",
++            validate_strings=True,
++            values_callable=enum_values,
++        ),
++        primary_key=True,
++        default=StickySessionKind.STICKY_THREAD,
++        server_default=text("'sticky_thread'"),
++        nullable=False,
++    )
++    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        onupdate=func.now(),
++        nullable=False,
++    )
++
++
++class HttpBridgeSessionState(str, Enum):
++    ACTIVE = "active"
++    DRAINING = "draining"
++    CLOSED = "closed"
++
++
++class HttpBridgeSessionRecord(Base):
++    __tablename__ = "http_bridge_sessions"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
++    session_key_kind: Mapped[str] = mapped_column(String(64), nullable=False)
++    session_key_value: Mapped[str] = mapped_column(Text, nullable=False)
++    session_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
++    api_key_scope: Mapped[str] = mapped_column(String(255), nullable=False)
++    owner_instance_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
++    owner_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
++    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    state: Mapped[HttpBridgeSessionState] = mapped_column(
++        SqlEnum(
++            HttpBridgeSessionState,
++            name="http_bridge_session_state",
++            validate_strings=True,
++            values_callable=enum_values,
++        ),
++        default=HttpBridgeSessionState.ACTIVE,
++        server_default=text("'active'"),
++        nullable=False,
++    )
++    account_id: Mapped[str | None] = mapped_column(
++        String, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
++    )
++    model: Mapped[str | None] = mapped_column(String, nullable=True)
++    service_tier: Mapped[str | None] = mapped_column(String, nullable=True)
++    latest_turn_state: Mapped[str | None] = mapped_column(Text, nullable=True)
++    latest_response_id: Mapped[str | None] = mapped_column(Text, nullable=True)
++    latest_input_item_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    latest_input_full_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True),
++        nullable=False,
++        default=func.now(),
++        server_default=func.now(),
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True),
++        nullable=False,
++        default=func.now(),
++        server_default=func.now(),
++        onupdate=func.now(),
++    )
++    last_seen_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True),
++        nullable=False,
++        default=func.now(),
++        server_default=func.now(),
++    )
++    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++
++    aliases: Mapped[list["HttpBridgeSessionAlias"]] = relationship(
++        "HttpBridgeSessionAlias",
++        back_populates="session",
++        cascade="all, delete-orphan",
++    )
++
++    __table_args__ = (
++        UniqueConstraint(
++            "session_key_kind",
++            "session_key_hash",
++            "api_key_scope",
++            name="uq_http_bridge_sessions_session_key",
++        ),
++    )
++
++
++class HttpBridgeSessionAlias(Base):
++    __tablename__ = "http_bridge_session_aliases"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
++    session_id: Mapped[str] = mapped_column(
++        String(36),
++        ForeignKey("http_bridge_sessions.id", ondelete="CASCADE"),
++        nullable=False,
++    )
++    alias_kind: Mapped[str] = mapped_column(String(64), nullable=False)
++    alias_value: Mapped[str] = mapped_column(Text, nullable=False)
++    alias_hash: Mapped[str] = mapped_column(String(64), nullable=False)
++    api_key_scope: Mapped[str] = mapped_column(String(255), nullable=False)
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True),
++        nullable=False,
++        default=func.now(),
++        server_default=func.now(),
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True),
++        nullable=False,
++        default=func.now(),
++        server_default=func.now(),
++        onupdate=func.now(),
++    )
++
++    session: Mapped[HttpBridgeSessionRecord] = relationship(
++        "HttpBridgeSessionRecord",
++        back_populates="aliases",
++    )
++
++    __table_args__ = (
++        UniqueConstraint(
++            "alias_kind",
++            "alias_hash",
++            "api_key_scope",
++            name="uq_http_bridge_session_aliases_alias",
++        ),
++    )
+diff --git a/app/db/settings_models.py b/app/db/settings_models.py
+new file mode 100644
+index 00000000..a99db26b
+--- /dev/null
++++ b/app/db/settings_models.py
+@@ -0,0 +1,261 @@
++from __future__ import annotations
++
++from datetime import datetime
++
++from sqlalchemy import (
++    Boolean,
++    DateTime,
++    Float,
++    ForeignKey,
++    Integer,
++    LargeBinary,
++    String,
++    Text,
++    false,
++    func,
++    text,
++    true,
++)
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class AuditLog(Base):
++    __tablename__ = "audit_logs"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), nullable=False, index=True)
++    action: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
++    actor_ip: Mapped[str | None] = mapped_column(String(50), nullable=True)
++    details: Mapped[str | None] = mapped_column(Text, nullable=True)
++    request_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
++
++
++class SchedulerLeader(Base):
++    __tablename__ = "scheduler_leader"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
++    leader_id: Mapped[str] = mapped_column(String(100), nullable=False)
++    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
++    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
++
++
++class DashboardSettings(Base):
++    __tablename__ = "dashboard_settings"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
++    sticky_threads_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
++    upstream_stream_transport: Mapped[str] = mapped_column(
++        String,
++        default="default",
++        server_default=text("'default'"),
++        nullable=False,
++    )
++    prefer_earlier_reset_accounts: Mapped[bool] = mapped_column(
++        Boolean, default=True, server_default=true(), nullable=False
++    )
++    prefer_earlier_reset_window: Mapped[str] = mapped_column(
++        String,
++        default="secondary",
++        server_default=text("'secondary'"),
++        nullable=False,
++    )
++    routing_strategy: Mapped[str] = mapped_column(
++        String,
++        default="capacity_weighted",
++        server_default=text("'capacity_weighted'"),
++        nullable=False,
++    )
++    relative_availability_power: Mapped[float] = mapped_column(
++        Float,
++        default=2.0,
++        server_default=text("2.0"),
++        nullable=False,
++    )
++    relative_availability_top_k: Mapped[int] = mapped_column(
++        Integer,
++        default=5,
++        server_default=text("5"),
++        nullable=False,
++    )
++    single_account_id: Mapped[str | None] = mapped_column(String, nullable=True)
++    openai_cache_affinity_max_age_seconds: Mapped[int] = mapped_column(
++        Integer,
++        default=1800,
++        server_default=text("1800"),
++        nullable=False,
++    )
++    dashboard_session_ttl_seconds: Mapped[int] = mapped_column(
++        Integer,
++        default=43200,
++        server_default=text("43200"),
++        nullable=False,
++    )
++    import_without_overwrite: Mapped[bool] = mapped_column(
++        Boolean,
++        default=True,
++        server_default=true(),
++        nullable=False,
++    )
++    totp_required_on_login: Mapped[bool] = mapped_column(
++        Boolean,
++        default=False,
++        nullable=False,
++    )
++    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
++    bootstrap_token_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
++    bootstrap_token_hash: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
++    api_key_auth_enabled: Mapped[bool] = mapped_column(
++        Boolean,
++        default=False,
++        nullable=False,
++    )
++    team_mode_enabled: Mapped[bool] = mapped_column(
++        Boolean,
++        default=False,
++        server_default=false(),
++        nullable=False,
++    )
++    team_public_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
++    totp_secret_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
++    totp_last_verified_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    http_responses_session_bridge_prompt_cache_idle_ttl_seconds: Mapped[int] = mapped_column(
++        Integer,
++        default=3600,
++        server_default=text("3600"),
++        nullable=False,
++    )
++    http_responses_session_bridge_gateway_safe_mode: Mapped[bool] = mapped_column(
++        Boolean,
++        default=False,
++        server_default=false(),
++        nullable=False,
++    )
++    upstream_proxy_routing_enabled: Mapped[bool] = mapped_column(
++        Boolean,
++        default=False,
++        server_default=false(),
++        nullable=False,
++    )
++    upstream_proxy_default_pool_id: Mapped[str | None] = mapped_column(
++        String,
++        ForeignKey("proxy_pools.id", ondelete="SET NULL"),
++        nullable=True,
++    )
++    sticky_reallocation_budget_threshold_pct: Mapped[float] = mapped_column(
++        Float,
++        default=95.0,
++        server_default=text("95.0"),
++        nullable=False,
++    )
++    sticky_reallocation_primary_budget_threshold_pct: Mapped[float] = mapped_column(
++        Float,
++        default=95.0,
++        server_default=text("95.0"),
++        nullable=False,
++    )
++    sticky_reallocation_secondary_budget_threshold_pct: Mapped[float] = mapped_column(
++        Float,
++        default=100.0,
++        server_default=text("100.0"),
++        nullable=False,
++    )
++    additional_quota_routing_policies_json: Mapped[str] = mapped_column(
++        Text,
++        default="{}",
++        server_default=text("'{}'"),
++        nullable=False,
++    )
++    limit_warmup_enabled: Mapped[bool] = mapped_column(
++        Boolean,
++        default=False,
++        server_default=false(),
++        nullable=False,
++    )
++    limit_warmup_windows: Mapped[str] = mapped_column(
++        String,
++        default="both",
++        server_default=text("'both'"),
++        nullable=False,
++    )
++    limit_warmup_model: Mapped[str] = mapped_column(
++        String,
++        default="auto",
++        server_default=text("'auto'"),
++        nullable=False,
++    )
++    limit_warmup_prompt: Mapped[str] = mapped_column(
++        Text,
++        default="Say OK.",
++        server_default=text("'Say OK.'"),
++        nullable=False,
++    )
++    limit_warmup_cooldown_seconds: Mapped[int] = mapped_column(
++        Integer,
++        default=3600,
++        server_default=text("3600"),
++        nullable=False,
++    )
++    limit_warmup_min_available_percent: Mapped[float] = mapped_column(
++        Float,
++        default=100.0,
++        server_default=text("100.0"),
++    )
++    weekly_pace_working_days: Mapped[str] = mapped_column(
++        String,
++        default="0,1,2,3,4,5,6",
++        server_default=text("'0,1,2,3,4,5,6'"),
++        nullable=False,
++    )
++    warmup_model: Mapped[str] = mapped_column(
++        String,
++        default="gpt-5.4-mini",
++        server_default=text("'gpt-5.4-mini'"),
++        nullable=False,
++    )
++    additional_quota_routing_policies_json: Mapped[str] = mapped_column(
++        Text,
++        default="{}",
++        server_default=text("'{}'"),
++        nullable=False,
++    )
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime,
++        server_default=func.now(),
++        onupdate=func.now(),
++        nullable=False,
++    )
++
++
++class ApiFirewallAllowlist(Base):
++    __tablename__ = "api_firewall_allowlist"
++
++    ip_address: Mapped[str] = mapped_column(String, primary_key=True)
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++
++
++class CacheInvalidation(Base):
++    __tablename__ = "cache_invalidation"
++
++    namespace: Mapped[str] = mapped_column(String(50), primary_key=True)
++    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
++
++
++class RoutingPolicyVersion(Base):
++    __tablename__ = "routing_policy_versions"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    version: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
++    state: Mapped[str] = mapped_column(String, nullable=False)
++    source: Mapped[str] = mapped_column(String, nullable=False)
++    summary: Mapped[str] = mapped_column(Text, nullable=False)
++    routing_table_json: Mapped[str] = mapped_column(Text, nullable=False)
++    decider_json: Mapped[str] = mapped_column(Text, nullable=False)
++    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
++    created_by: Mapped[str] = mapped_column(String, nullable=False)
++    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    approved_by: Mapped[str | None] = mapped_column(String, nullable=True)
++    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
++    replay_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+diff --git a/app/db/usage_models.py b/app/db/usage_models.py
+new file mode 100644
+index 00000000..895ac736
+--- /dev/null
++++ b/app/db/usage_models.py
+@@ -0,0 +1,52 @@
++from __future__ import annotations
++
++from datetime import datetime
++
++from sqlalchemy import (
++    Boolean,
++    DateTime,
++    Float,
++    ForeignKey,
++    Integer,
++    String,
++    func,
++    text,
++)
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class UsageHistory(Base):
++    __tablename__ = "usage_history"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
++    provider: Mapped[str] = mapped_column(String, default="openai", server_default=text("'openai'"), nullable=False)
++    recorded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
++    window: Mapped[str | None] = mapped_column(String, nullable=True)
++    used_percent: Mapped[float] = mapped_column(Float, nullable=False)
++    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    window_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    credits_has: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
++    credits_unlimited: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
++    credits_balance: Mapped[float | None] = mapped_column(Float, nullable=True)
++    credits_cap: Mapped[float | None] = mapped_column(Float, nullable=True)
++    credits_spent: Mapped[float | None] = mapped_column(Float, nullable=True)
++
++
++class AdditionalUsageHistory(Base):
++    __tablename__ = "additional_usage_history"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
++    quota_key: Mapped[str] = mapped_column(String, nullable=False)
++    limit_name: Mapped[str] = mapped_column(String, nullable=False)
++    metered_feature: Mapped[str] = mapped_column(String, nullable=False)
++    window: Mapped[str] = mapped_column(String, nullable=False)
++    used_percent: Mapped[float] = mapped_column(Float, nullable=False)
++    reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    window_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    recorded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+diff --git a/app/modules/account_schedule/repository.py b/app/modules/account_schedule/repository.py
+index e091744b..80cae28b 100644
+--- a/app/modules/account_schedule/repository.py
++++ b/app/modules/account_schedule/repository.py
+@@ -5,7 +5,8 @@ from datetime import datetime
+ from sqlalchemy import delete, select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import Account, AccountResumeSchedule
++from app.db.account_state_models import AccountResumeSchedule
++from app.db.models import Account
+ 
+ 
+ class AccountScheduleRepository:
+diff --git a/app/modules/accounts/credits.py b/app/modules/accounts/credits.py
+index 898b5a5b..0cb3445f 100644
+--- a/app/modules/accounts/credits.py
++++ b/app/modules/accounts/credits.py
+@@ -6,7 +6,7 @@ from dataclasses import dataclass
+ import aiohttp
+ 
+ from app.core.providers import openrouter as openrouter_provider
+-from app.db.models import UsageHistory
++from app.db.usage_models import UsageHistory
+ 
+ OPENROUTER_CREDITS_URL = openrouter_provider.OPENROUTER_CREDITS_URL
+ OPENROUTER_PROVIDER_NAME = openrouter_provider.OPENROUTER_PROVIDER_NAME
+diff --git a/app/modules/accounts/health.py b/app/modules/accounts/health.py
+index 27818bff..ce832ad4 100644
+--- a/app/modules/accounts/health.py
++++ b/app/modules/accounts/health.py
+@@ -6,7 +6,8 @@ from app.core.balancer import ACCOUNT_ON_HOLD_REASON
+ from app.core.browser_profiles import profile_for
+ from app.core.config.settings import get_settings
+ from app.core.subscriptions import subscription_for
+-from app.db.models import Account, AccountStatus, UsageHistory
++from app.db.models import Account, AccountStatus
++from app.db.usage_models import UsageHistory
+ from app.modules.accounts.schemas import AccountProblem
+ 
+ 
+diff --git a/app/modules/accounts/identity_repository.py b/app/modules/accounts/identity_repository.py
+index 3b645fe8..19214bf6 100644
+--- a/app/modules/accounts/identity_repository.py
++++ b/app/modules/accounts/identity_repository.py
+@@ -8,18 +8,10 @@ from sqlalchemy.exc import OperationalError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.providers import normalize_provider_name
+-from app.db.models import (
+-    Account,
+-    AccountLimitWarmup,
+-    AccountStatus,
+-    AdditionalUsageHistory,
+-    ApiKeyAccountAssignment,
+-    DashboardSettings,
+-    HttpBridgeSessionRecord,
+-    RequestLog,
+-    StickySession,
+-    UsageHistory,
+-)
++from app.db.models import Account, AccountLimitWarmup, AccountStatus, ApiKeyAccountAssignment, RequestLog
++from app.db.session_models import HttpBridgeSessionRecord, StickySession
++from app.db.settings_models import DashboardSettings
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
+ 
+ _SETTINGS_ROW_ID = 1
+ _DUPLICATE_ACCOUNT_SUFFIX = "__copy"
+diff --git a/app/modules/accounts/mappers.py b/app/modules/accounts/mappers.py
+index bf37cae0..f89882ed 100644
+--- a/app/modules/accounts/mappers.py
++++ b/app/modules/accounts/mappers.py
+@@ -10,7 +10,8 @@ from app.core.plan_types import coerce_account_plan_type
+ from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
+ from app.core.usage.types import UsageTrendBucket, UsageWindowRow
+ from app.core.utils.time import from_epoch_seconds, utcnow
+-from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory
++from app.db.models import Account, AccountLimitWarmup, AccountStatus
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
+ from app.modules.accounts import reset_credit_cache
+ from app.modules.accounts.auth_manager import is_locally_owned
+ from app.modules.accounts.credits import (
+diff --git a/app/modules/accounts/queries.py b/app/modules/accounts/queries.py
+index 9b8556d9..a6f54de8 100644
+--- a/app/modules/accounts/queries.py
++++ b/app/modules/accounts/queries.py
+@@ -14,8 +14,9 @@ from app.core.providers import (
+     normalize_provider_name,
+ )
+ from app.core.utils.time import naive_utc_to_epoch, utcnow
+-from app.db.models import AccountStatus, AdditionalUsageHistory
++from app.db.models import AccountStatus
+ from app.db.session import get_background_session
++from app.db.usage_models import AdditionalUsageHistory
+ from app.modules.accounts import probes
+ from app.modules.accounts.auth_manager import AuthManager
+ from app.modules.accounts.credits import CREDITS_USAGE_WINDOW
+diff --git a/app/modules/accounts/repository.py b/app/modules/accounts/repository.py
+index 83031871..6dcae502 100644
+--- a/app/modules/accounts/repository.py
++++ b/app/modules/accounts/repository.py
+@@ -9,14 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.config.settings import get_settings
+ from app.core.utils.time import utcnow
+-from app.db.models import (
+-    Account,
+-    AccountExchangeIntent,
+-    AccountStatus,
+-    RequestLog,
+-    StickySession,
+-    UsageHistory,
+-)
++from app.db.account_state_models import AccountExchangeIntent
++from app.db.models import Account, AccountStatus, RequestLog
++from app.db.session_models import StickySession
++from app.db.usage_models import UsageHistory
+ from app.modules.accounts.identity_repository import AccountIdentityRepository, _slot_lock_keys
+ from app.modules.accounts.state_repository import AccountStateRepository
+ from app.modules.accounts.usage_repository import AccountUsageRepository
+diff --git a/app/modules/accounts/reset_credit_attempts.py b/app/modules/accounts/reset_credit_attempts.py
+index 6078fb81..6a6f7e1f 100644
+--- a/app/modules/accounts/reset_credit_attempts.py
++++ b/app/modules/accounts/reset_credit_attempts.py
+@@ -8,7 +8,8 @@ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, ResetCreditAttempt
++from app.db.account_state_models import ResetCreditAttempt
++from app.db.models import Account
+ from app.db.session import sqlite_writer_section
+ 
+ RESET_ATTEMPT_LEASE_SECONDS = 120
+diff --git a/app/modules/accounts/state_repository.py b/app/modules/accounts/state_repository.py
+index 58040073..dbc64a13 100644
+--- a/app/modules/accounts/state_repository.py
++++ b/app/modules/accounts/state_repository.py
+@@ -6,7 +6,8 @@ from datetime import datetime
+ from sqlalchemy import update
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import Account, AccountStatus, DashboardSettings
++from app.db.models import Account, AccountStatus
++from app.db.settings_models import DashboardSettings
+ from app.modules.usage.additional_quota_keys import normalize_additional_quota_routing_policy_overrides
+ 
+ _SETTINGS_ROW_ID = 1
+diff --git a/app/modules/accounts/summary_state.py b/app/modules/accounts/summary_state.py
+index ddb000fe..d7066619 100644
+--- a/app/modules/accounts/summary_state.py
++++ b/app/modules/accounts/summary_state.py
+@@ -9,7 +9,8 @@ from app.core.crypto import TokenEncryptor
+ from app.core.providers import ANTHROPIC_PROVIDER_NAME
+ from app.core.usage.quota import apply_usage_quota
+ from app.core.utils.time import from_epoch_seconds, utcnow
+-from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory
++from app.db.models import Account, AccountLimitWarmup, AccountStatus
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
+ from app.modules.accounts.credits import (
+     OPENROUTER_CREDITS_QUOTA_KEY,
+ )
+diff --git a/app/modules/api_keys/api.py b/app/modules/api_keys/api.py
+index e81354a3..daf600c8 100644
+--- a/app/modules/api_keys/api.py
++++ b/app/modules/api_keys/api.py
+@@ -6,7 +6,7 @@ from sqlalchemy import select
+ from app.core.audit.service import AuditService
+ from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
+ from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
+-from app.db.models import TeamMember
++from app.db.access_models import TeamMember
+ from app.dependencies import ApiKeysContext, get_api_keys_context
+ from app.modules.api_keys.schemas import (
+     ApiKeyAccountCostResponse,
+diff --git a/app/modules/api_keys/repository.py b/app/modules/api_keys/repository.py
+index 4fc03886..bc8664d6 100644
+--- a/app/modules/api_keys/repository.py
++++ b/app/modules/api_keys/repository.py
+@@ -7,17 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy.orm import load_only, selectinload
+ 
+ from app.core.utils.time import utcnow
+-from app.db.models import (
+-    Account,
+-    AccountStatus,
+-    ApiKey,
+-    ApiKeyAccountAssignment,
+-    ApiKeyLimit,
+-    ApiKeyUsageReservation,
+-    ApiKeyUsageReservationItem,
+-    LimitType,
+-    LimitWindow,
+-)
++from app.db.access_models import ApiKeyUsageReservation, ApiKeyUsageReservationItem
++from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType, LimitWindow
+ from app.db.session import sqlite_writer_section
+ from app.modules.api_keys.limit_windows import advance_limit_reset
+ from app.modules.api_keys.repository_data import (
+diff --git a/app/modules/api_keys/reservation_repository.py b/app/modules/api_keys/reservation_repository.py
+index 77bc92ee..54dca539 100644
+--- a/app/modules/api_keys/reservation_repository.py
++++ b/app/modules/api_keys/reservation_repository.py
+@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy.orm import selectinload
+ 
+ from app.core.utils.time import utcnow
+-from app.db.models import ApiKeyLimit, ApiKeyUsageReservation, ApiKeyUsageReservationItem, LimitType
++from app.db.access_models import ApiKeyUsageReservation, ApiKeyUsageReservationItem
++from app.db.models import ApiKeyLimit, LimitType
+ from app.modules.api_keys.repository_data import (
+     ReservationResult,
+     UsageReservationData,
+diff --git a/app/modules/api_keys/usage_calculations.py b/app/modules/api_keys/usage_calculations.py
+index 71e9bda7..c4d2dbe1 100644
+--- a/app/modules/api_keys/usage_calculations.py
++++ b/app/modules/api_keys/usage_calculations.py
+@@ -3,7 +3,8 @@ from __future__ import annotations
+ from datetime import datetime, timedelta, timezone
+ 
+ from app.core.usage.types import UsageWindowRow
+-from app.db.models import Account, AccountStatus, UsageHistory
++from app.db.models import Account, AccountStatus
++from app.db.usage_models import UsageHistory
+ from app.modules.api_keys.repository_data import ApiKeyTrendBucket
+ from app.modules.api_keys.service_data import ApiKeyTrendsData, ApiKeyTrendsPoint, PooledCreditData
+ 
+diff --git a/app/modules/audit/repository.py b/app/modules/audit/repository.py
+index f5ca8fed..ef4a0901 100644
+--- a/app/modules/audit/repository.py
++++ b/app/modules/audit/repository.py
+@@ -3,7 +3,7 @@ from __future__ import annotations
+ from sqlalchemy import select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import AuditLog
++from app.db.settings_models import AuditLog
+ 
+ 
+ class AuditRepository:
+diff --git a/app/modules/audit/service.py b/app/modules/audit/service.py
+index 59bea9ad..75b64829 100644
+--- a/app/modules/audit/service.py
++++ b/app/modules/audit/service.py
+@@ -6,7 +6,7 @@ from dataclasses import dataclass
+ from datetime import datetime
+ from typing import cast
+ 
+-from app.db.models import AuditLog
++from app.db.settings_models import AuditLog
+ from app.modules.audit.repository import AuditRepository
+ 
+ type AuditDetailScalar = str | int | float | bool | None
+diff --git a/app/modules/dashboard/repository.py b/app/modules/dashboard/repository.py
+index 2a2aa753..b63cafba 100644
+--- a/app/modules/dashboard/repository.py
++++ b/app/modules/dashboard/repository.py
+@@ -6,14 +6,9 @@ from datetime import datetime
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate
+-from app.db.models import (
+-    Account,
+-    AccountLimitWarmup,
+-    AdditionalUsageHistory,
+-    DashboardSettings,
+-    RequestLog,
+-    UsageHistory,
+-)
++from app.db.models import Account, AccountLimitWarmup, RequestLog
++from app.db.settings_models import DashboardSettings
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
+ from app.modules.accounts.repository import AccountsRepository
+ from app.modules.limit_warmup.repository import LimitWarmupRepository
+ from app.modules.request_logs.repository import RequestLogsRepository
+diff --git a/app/modules/dashboard/service.py b/app/modules/dashboard/service.py
+index 2b408106..08835eb8 100644
+--- a/app/modules/dashboard/service.py
++++ b/app/modules/dashboard/service.py
+@@ -8,7 +8,7 @@ from app.core.crypto import TokenEncryptor
+ from app.core.providers import normalize_provider_name
+ from app.core.usage.types import UsageWindowRow
+ from app.core.utils.time import utcnow
+-from app.db.models import AdditionalUsageHistory, UsageHistory
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
+ from app.modules.accounts.mappers import build_account_summaries
+ from app.modules.accounts.subscription_status import subscription_usable_accounts
+ from app.modules.dashboard.builders import (
+diff --git a/app/modules/dashboard/weekly_pace.py b/app/modules/dashboard/weekly_pace.py
+index db982be7..24511853 100644
+--- a/app/modules/dashboard/weekly_pace.py
++++ b/app/modules/dashboard/weekly_pace.py
+@@ -7,7 +7,8 @@ from typing import Literal
+ 
+ from app.core.usage.depletion import EWMAState, ewma_update
+ from app.core.utils.time import naive_utc_to_epoch
+-from app.db.models import Account, AccountStatus, UsageHistory
++from app.db.models import Account, AccountStatus
++from app.db.usage_models import UsageHistory
+ from app.modules.accounts.schemas import AccountSummary
+ from app.modules.dashboard.schemas import WeeklyCreditPaceResponse, WeeklyCreditPaceStatus
+ 
+diff --git a/app/modules/dashboard_auth/repository.py b/app/modules/dashboard_auth/repository.py
+index 168d14f1..31644b99 100644
+--- a/app/modules/dashboard_auth/repository.py
++++ b/app/modules/dashboard_auth/repository.py
+@@ -3,7 +3,7 @@ from __future__ import annotations
+ from sqlalchemy import or_, update
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import DashboardSettings
++from app.db.settings_models import DashboardSettings
+ from app.modules.settings.repository import SettingsRepository
+ 
+ _SETTINGS_ID = 1
+diff --git a/app/modules/federation/repository.py b/app/modules/federation/repository.py
+index ee390b2c..2d7d2b3e 100644
+--- a/app/modules/federation/repository.py
++++ b/app/modules/federation/repository.py
+@@ -7,13 +7,8 @@ from sqlalchemy import and_, func, or_, select, update
+ 
+ from app.core.crypto import TokenEncryptor
+ from app.core.utils.time import utcnow
+-from app.db.models import (
+-    Account,
+-    AccountStatus,
+-    AccountTransfer,
+-    AccountTransferDirection,
+-    AccountTransferState,
+-)
++from app.db.federation_models import AccountTransfer, AccountTransferDirection, AccountTransferState
++from app.db.models import Account, AccountStatus
+ from app.modules.federation.repository_transfers import FederationTransferRepository
+ from app.modules.federation.repository_usage import FederationUsageRepository
+ from app.modules.federation.schemas import FederationAuthPayload
+diff --git a/app/modules/federation/repository_transfers.py b/app/modules/federation/repository_transfers.py
+index d5580ea0..577fc986 100644
+--- a/app/modules/federation/repository_transfers.py
++++ b/app/modules/federation/repository_transfers.py
+@@ -7,13 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.crypto import TokenEncryptor
+ from app.core.utils.time import utcnow
+-from app.db.models import (
+-    Account,
+-    AccountExchangeIntent,
+-    AccountTransfer,
+-    AccountTransferDirection,
+-    AccountTransferState,
+-)
++from app.db.account_state_models import AccountExchangeIntent
++from app.db.federation_models import AccountTransfer, AccountTransferDirection, AccountTransferState
++from app.db.models import Account
+ 
+ 
+ class FederationTransferRepository:
+diff --git a/app/modules/federation/repository_usage.py b/app/modules/federation/repository_usage.py
+index 8f5097e1..368bfb42 100644
+--- a/app/modules/federation/repository_usage.py
++++ b/app/modules/federation/repository_usage.py
+@@ -8,7 +8,8 @@ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.utils.time import to_utc_naive, utcnow
+-from app.db.models import Account, FederationUsageDaily, RequestLog
++from app.db.federation_models import FederationUsageDaily
++from app.db.models import Account, RequestLog
+ from app.modules.federation.schemas import FederationRequestLogRow, FederationUsageDayRollup
+ from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
+ 
+diff --git a/app/modules/federation/service.py b/app/modules/federation/service.py
+index 78fdfe66..e02d2446 100644
+--- a/app/modules/federation/service.py
++++ b/app/modules/federation/service.py
+@@ -8,7 +8,8 @@ from app.core.auth import token_expiry_epoch_ms
+ from app.core.config.settings import Settings, get_settings
+ from app.core.crypto import TokenEncryptor
+ from app.core.utils.time import naive_utc_to_epoch, utcnow
+-from app.db.models import Account, AccountTransferDirection, AccountTransferState
++from app.db.federation_models import AccountTransferDirection, AccountTransferState
++from app.db.models import Account
+ from app.modules.accounts.refresh_lock import _cross_process_refresh_lock
+ from app.modules.federation.exceptions import (
+     FederationConflictError,
+diff --git a/app/modules/firewall/repository.py b/app/modules/firewall/repository.py
+index 655b2e37..eb5ce1da 100644
+--- a/app/modules/firewall/repository.py
++++ b/app/modules/firewall/repository.py
+@@ -6,7 +6,7 @@ from sqlalchemy import select
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import ApiFirewallAllowlist
++from app.db.settings_models import ApiFirewallAllowlist
+ 
+ 
+ class FirewallRepositoryConflictError(ValueError):
+diff --git a/app/modules/health/api.py b/app/modules/health/api.py
+index ec8ae1ba..d9db4e0a 100644
+--- a/app/modules/health/api.py
++++ b/app/modules/health/api.py
+@@ -13,7 +13,7 @@ from app.core.config.settings import get_settings
+ from app.core.config.settings_cache import get_settings_cache
+ from app.core.request_locality import is_trusted_client
+ from app.core.utils.time import utcnow
+-from app.db.models import BridgeRingMember
++from app.db.federation_models import BridgeRingMember
+ from app.db.session import get_session
+ from app.modules.health.schemas import BridgeRingInfo, HealthCheckResponse, HealthResponse
+ from app.modules.proxy.ring_membership import RING_STALE_THRESHOLD_SECONDS
+diff --git a/app/modules/limit_warmup/completion.py b/app/modules/limit_warmup/completion.py
+index 2a555132..6b3ee76b 100644
+--- a/app/modules/limit_warmup/completion.py
++++ b/app/modules/limit_warmup/completion.py
+@@ -6,10 +6,7 @@ from typing import Awaitable, Callable
+ 
+ from app.core.identity import internal_identity
+ from app.core.utils.time import utcnow
+-from app.db.models import (
+-    Account,
+-    AccountLimitWarmup,
+-)
++from app.db.models import Account, AccountLimitWarmup
+ from app.modules.limit_warmup.constants import (
+     _ANTHROPIC_CONTINUOUS_WINDOW,
+     _OPENAI_CONTINUOUS_WINDOW,
+diff --git a/app/modules/limit_warmup/contracts.py b/app/modules/limit_warmup/contracts.py
+index 99fb76ed..c7cec624 100644
+--- a/app/modules/limit_warmup/contracts.py
++++ b/app/modules/limit_warmup/contracts.py
+@@ -6,10 +6,7 @@ from typing import Protocol
+ 
+ from app.core.identity import RequestIdentity
+ from app.core.openai.models import ResponseUsage
+-from app.db.models import (
+-    Account,
+-    AccountLimitWarmup,
+-)
++from app.db.models import Account, AccountLimitWarmup
+ from app.modules.limit_warmup.constants import _ANTHROPIC_CONTINUOUS_WINDOW
+ 
+ 
+diff --git a/app/modules/limit_warmup/dispatch.py b/app/modules/limit_warmup/dispatch.py
+index a416e594..0c041f9a 100644
+--- a/app/modules/limit_warmup/dispatch.py
++++ b/app/modules/limit_warmup/dispatch.py
+@@ -9,11 +9,8 @@ from app.core.plan_types import account_plan_matches_allowed
+ from app.core.providers import ANTHROPIC_PROVIDER_NAME
+ from app.core.usage.pricing import get_pricing_for_model
+ from app.core.utils.time import to_utc_naive, utcnow
+-from app.db.models import (
+-    Account,
+-    AccountLimitWarmup,
+-    DashboardSettings,
+-)
++from app.db.models import Account, AccountLimitWarmup
++from app.db.settings_models import DashboardSettings
+ from app.modules.limit_warmup.constants import (
+     _ANTHROPIC_CONTINUOUS_WINDOW,
+     _ANTHROPIC_PRIMER_PROMPT,
+diff --git a/app/modules/limit_warmup/policy.py b/app/modules/limit_warmup/policy.py
+index 9434e0c3..ebaf3615 100644
+--- a/app/modules/limit_warmup/policy.py
++++ b/app/modules/limit_warmup/policy.py
+@@ -5,13 +5,8 @@ from datetime import datetime, timedelta, timezone
+ 
+ from app.core import usage as usage_core
+ from app.core.utils.time import utcnow
+-from app.db.models import (
+-    Account,
+-    AccountLimitWarmup,
+-    AccountStatus,
+-    AdditionalUsageHistory,
+-    UsageHistory,
+-)
++from app.db.models import Account, AccountLimitWarmup, AccountStatus
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
+ from app.modules.accounts.subscription_status import is_subscription_usable
+ from app.modules.limit_warmup.constants import (
+     _ANTHROPIC_CONTINUOUS_WINDOW,
+diff --git a/app/modules/limit_warmup/service.py b/app/modules/limit_warmup/service.py
+index bee9fa50..0e406b3b 100644
+--- a/app/modules/limit_warmup/service.py
++++ b/app/modules/limit_warmup/service.py
+@@ -17,14 +17,9 @@ from app.core.openai.requests import ResponsesRequest
+ from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
+ from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
+ from app.core.utils.time import utcnow
+-from app.db.models import (
+-    Account,
+-    AccountLimitWarmup,
+-    AccountStatus,
+-    AdditionalUsageHistory,
+-    DashboardSettings,
+-    UsageHistory,
+-)
++from app.db.models import Account, AccountLimitWarmup, AccountStatus
++from app.db.settings_models import DashboardSettings
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
+ from app.modules.accounts.auth_manager import AuthManager, is_locally_owned
+ from app.modules.accounts.repository import AccountsRepository
+ from app.modules.limit_warmup.anthropic_primer import send_anthropic_primer
+diff --git a/app/modules/proxy/_service/compact.py b/app/modules/proxy/_service/compact.py
+index 330f88a3..57031a50 100644
+--- a/app/modules/proxy/_service/compact.py
++++ b/app/modules/proxy/_service/compact.py
+@@ -28,7 +28,9 @@ from app.core.types import JsonValue
+ from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError
+ from app.core.utils.request_id import ensure_request_id, get_request_id
+ from app.core.utils.retry import backoff_seconds
+-from app.db.models import Account, DashboardSettings, StickySessionKind
++from app.db.models import Account
++from app.db.session_models import StickySessionKind
++from app.db.settings_models import DashboardSettings
+ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyRequestUsageBudget, ApiKeyUsageReservationData
+ from app.modules.proxy._service.support import _request_log_useragent_fields, _RequestLogFailureMetadata
+ from app.modules.proxy.affinity import (
+diff --git a/app/modules/proxy/_service/http_bridge/helpers.py b/app/modules/proxy/_service/http_bridge/helpers.py
+index ec54ee2f..0a6e5fae 100644
+--- a/app/modules/proxy/_service/http_bridge/helpers.py
++++ b/app/modules/proxy/_service/http_bridge/helpers.py
+@@ -58,11 +58,8 @@ from app.core.types import JsonValue
+ from app.core.utils.request_id import get_request_id
+ from app.core.utils.sse import format_sse_event, parse_sse_data_json
+ from app.core.utils.time import to_utc_naive, utcnow
+-from app.db.models import (
+-    DashboardSettings,
+-    HttpBridgeSessionState,
+-    StickySessionKind,
+-)
++from app.db.session_models import HttpBridgeSessionState, StickySessionKind
++from app.db.settings_models import DashboardSettings
+ from app.modules.api_keys.service_data import ApiKeyData
+ from app.modules.proxy._service.api_key_usage import (
+     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
+diff --git a/app/modules/proxy/_service/http_bridge/mixin.py b/app/modules/proxy/_service/http_bridge/mixin.py
+index 18224d08..9fc13d49 100644
+--- a/app/modules/proxy/_service/http_bridge/mixin.py
++++ b/app/modules/proxy/_service/http_bridge/mixin.py
+@@ -50,10 +50,8 @@ from app.core.metrics.prometheus import (
+     bridge_soft_local_rebind_total,
+ )
+ from app.core.resilience.overload import local_overload_error
+-from app.db.models import (
+-    AccountStatus,
+-    StickySessionKind,
+-)
++from app.db.models import AccountStatus
++from app.db.session_models import StickySessionKind
+ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyRequestUsageBudget
+ from app.modules.proxy._service.api_key_usage import (
+     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
+diff --git a/app/modules/proxy/_service/http_bridge/owner_forwarding.py b/app/modules/proxy/_service/http_bridge/owner_forwarding.py
+index 9626beaa..54b10954 100644
+--- a/app/modules/proxy/_service/http_bridge/owner_forwarding.py
++++ b/app/modules/proxy/_service/http_bridge/owner_forwarding.py
+@@ -43,9 +43,7 @@ from app.core.openai.requests import (
+ )
+ from app.core.utils.request_id import get_request_id
+ from app.core.utils.sse import format_sse_event, parse_sse_data_json
+-from app.db.models import (
+-    AccountStatus,
+-)
++from app.db.models import AccountStatus
+ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
+ from app.modules.proxy._service.api_key_usage import (
+     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
+diff --git a/app/modules/proxy/_service/http_bridge/service_stubs.py b/app/modules/proxy/_service/http_bridge/service_stubs.py
+index 44a61e63..a3f57bcb 100644
+--- a/app/modules/proxy/_service/http_bridge/service_stubs.py
++++ b/app/modules/proxy/_service/http_bridge/service_stubs.py
+@@ -22,7 +22,8 @@ from app.core.config.settings_cache import get_settings_cache
+ from app.core.openai.requests import ResponsesRequest
+ from app.core.types import JsonValue
+ from app.core.utils.sse import CODEX_KEEPALIVE_FRAME
+-from app.db.models import Account, DashboardSettings
++from app.db.models import Account
++from app.db.settings_models import DashboardSettings
+ from app.modules.proxy._service.support import _RequestLogFailureMetadata
+ 
+ T = TypeVar("T")
+diff --git a/app/modules/proxy/_service/http_bridge/streaming.py b/app/modules/proxy/_service/http_bridge/streaming.py
+index be56e3a8..57e3ba1f 100644
+--- a/app/modules/proxy/_service/http_bridge/streaming.py
++++ b/app/modules/proxy/_service/http_bridge/streaming.py
+@@ -54,9 +54,7 @@ from app.core.openai.requests import (
+ from app.core.types import JsonValue
+ from app.core.utils.request_id import ensure_request_id
+ from app.core.utils.sse import format_sse_event, parse_sse_data_json
+-from app.db.models import (
+-    StickySessionKind,
+-)
++from app.db.session_models import StickySessionKind
+ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
+ from app.modules.proxy._service.api_key_usage import (
+     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
+diff --git a/app/modules/proxy/_service/rate_limit.py b/app/modules/proxy/_service/rate_limit.py
+index 0b80564b..bc76da8a 100644
+--- a/app/modules/proxy/_service/rate_limit.py
++++ b/app/modules/proxy/_service/rate_limit.py
+@@ -7,7 +7,8 @@ from typing import Protocol, cast
+ 
+ from app.core import usage as usage_core
+ from app.core.usage.types import UsageWindowRow
+-from app.db.models import Account, UsageHistory
++from app.db.models import Account
++from app.db.usage_models import UsageHistory
+ from app.modules.proxy.helpers import (
+     _credits_headers,
+     _credits_snapshot,
+diff --git a/app/modules/proxy/_service/streaming/mixin.py b/app/modules/proxy/_service/streaming/mixin.py
+index a46920d4..a44c4c24 100644
+--- a/app/modules/proxy/_service/streaming/mixin.py
++++ b/app/modules/proxy/_service/streaming/mixin.py
+@@ -54,10 +54,7 @@ from app.core.utils.request_id import get_request_id
+ from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
+ from app.core.utils.sse import format_sse_event, parse_sse_data_json
+ from app.core.utils.time import utcnow as utcnow
+-from app.db.models import (
+-    Account,
+-    AccountStatus,  # noqa: F401
+-)
++from app.db.models import Account
+ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
+ from app.modules.proxy._service.api_key_usage import (
+     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
+diff --git a/app/modules/proxy/_service/streaming/retry.py b/app/modules/proxy/_service/streaming/retry.py
+index a52548ab..2861d167 100644
+--- a/app/modules/proxy/_service/streaming/retry.py
++++ b/app/modules/proxy/_service/streaming/retry.py
+@@ -19,7 +19,7 @@ from app.core.upstream_proxy import UpstreamProxyRouteError
+ from app.core.utils.request_id import ensure_request_id
+ from app.core.utils.retry import backoff_seconds
+ from app.core.utils.sse import format_sse_event, parse_sse_data_json
+-from app.db.models import StickySessionKind
++from app.db.session_models import StickySessionKind
+ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
+ from app.modules.proxy._service.observability import (
+     _maybe_log_proxy_request_shape,
+diff --git a/app/modules/proxy/_service/websocket/mixin.py b/app/modules/proxy/_service/websocket/mixin.py
+index 384e63ae..ce17d5ba 100644
+--- a/app/modules/proxy/_service/websocket/mixin.py
++++ b/app/modules/proxy/_service/websocket/mixin.py
+@@ -68,11 +68,8 @@ from app.core.utils.request_id import get_request_id
+ from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
+ from app.core.utils.sse import format_sse_event, parse_sse_data_json
+ from app.core.utils.time import utcnow as utcnow
+-from app.db.models import (
+-    Account,
+-    AccountStatus,  # noqa: F401
+-    StickySessionKind,
+-)
++from app.db.models import Account
++from app.db.session_models import StickySessionKind
+ from app.modules.api_keys.service import ApiKeysService
+ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyInvalidError
+ from app.modules.proxy._service.api_key_usage import (
+diff --git a/app/modules/proxy/affinity.py b/app/modules/proxy/affinity.py
+index 53f7d116..ce5002f8 100644
+--- a/app/modules/proxy/affinity.py
++++ b/app/modules/proxy/affinity.py
+@@ -10,7 +10,7 @@ from uuid import uuid4
+ 
+ from app.core.config.settings import get_settings
+ from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
+-from app.db.models import StickySessionKind
++from app.db.session_models import StickySessionKind
+ from app.modules.api_keys.service_data import ApiKeyData
+ 
+ 
+diff --git a/app/modules/proxy/anthropic_service.py b/app/modules/proxy/anthropic_service.py
+index 84716a06..0b3c015b 100644
+--- a/app/modules/proxy/anthropic_service.py
++++ b/app/modules/proxy/anthropic_service.py
+@@ -49,7 +49,8 @@ from app.core.providers.openrouter import is_deepseek_model, map_deepseek_body
+ from app.core.utils.client_session import get_dispatch_id
+ from app.core.utils.request_id import ensure_request_id
+ from app.core.utils.time import naive_utc_to_epoch
+-from app.db.models import Account, AccountStatus, StickySessionKind
++from app.db.models import Account, AccountStatus
++from app.db.session_models import StickySessionKind
+ from app.modules.accounts.auth_manager import AccountNotOwnedError, AuthManager, is_locally_owned
+ from app.modules.accounts.credits import (
+     CREDITS_USAGE_WINDOW,
+diff --git a/app/modules/proxy/durable_bridge_coordinator.py b/app/modules/proxy/durable_bridge_coordinator.py
+index fe742ef1..80ed3451 100644
+--- a/app/modules/proxy/durable_bridge_coordinator.py
++++ b/app/modules/proxy/durable_bridge_coordinator.py
+@@ -7,7 +7,7 @@ from datetime import datetime
+ 
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import HttpBridgeSessionState
++from app.db.session_models import HttpBridgeSessionState
+ from app.modules.proxy.durable_bridge_repository import (
+     DurableBridgeRepository,
+     DurableBridgeSessionSnapshot,
+diff --git a/app/modules/proxy/durable_bridge_repository.py b/app/modules/proxy/durable_bridge_repository.py
+index 2ce4814b..e2dfc93d 100644
+--- a/app/modules/proxy/durable_bridge_repository.py
++++ b/app/modules/proxy/durable_bridge_repository.py
+@@ -10,8 +10,8 @@ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.utils.time import to_utc_naive, utcnow
+-from app.db.models import HttpBridgeSessionAlias, HttpBridgeSessionRecord, HttpBridgeSessionState
+ from app.db.session import sqlite_writer_section
++from app.db.session_models import HttpBridgeSessionAlias, HttpBridgeSessionRecord, HttpBridgeSessionState
+ from app.modules.proxy.durable_bridge_snapshot import DurableBridgeSessionSnapshot, _to_snapshot, _to_snapshot_required
+ 
+ _ANONYMOUS_API_KEY_SCOPE = "__anonymous__"
+diff --git a/app/modules/proxy/durable_bridge_snapshot.py b/app/modules/proxy/durable_bridge_snapshot.py
+index 0486de88..8bc5aab7 100644
+--- a/app/modules/proxy/durable_bridge_snapshot.py
++++ b/app/modules/proxy/durable_bridge_snapshot.py
+@@ -3,7 +3,7 @@ from __future__ import annotations
+ from dataclasses import dataclass
+ from datetime import datetime
+ 
+-from app.db.models import HttpBridgeSessionRecord, HttpBridgeSessionState
++from app.db.session_models import HttpBridgeSessionRecord, HttpBridgeSessionState
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+diff --git a/app/modules/proxy/helpers.py b/app/modules/proxy/helpers.py
+index 337bf40a..cee55088 100644
+--- a/app/modules/proxy/helpers.py
++++ b/app/modules/proxy/helpers.py
+@@ -11,7 +11,8 @@ from app.core.openai.models import OpenAIError
+ from app.core.plan_types import normalize_rate_limit_plan_type
+ from app.core.types import JsonValue
+ from app.core.usage.types import UsageWindowRow, UsageWindowSummary
+-from app.db.models import Account, AccountStatus, UsageHistory
++from app.db.models import Account, AccountStatus
++from app.db.usage_models import UsageHistory
+ from app.modules.proxy.types import (
+     CreditStatusDetailsData,
+     RateLimitStatusDetailsData,
+diff --git a/app/modules/proxy/load_balancer.py b/app/modules/proxy/load_balancer.py
+index ae7c6ed0..c9b1cb33 100644
+--- a/app/modules/proxy/load_balancer.py
++++ b/app/modules/proxy/load_balancer.py
+@@ -60,7 +60,9 @@ from app.core.resilience.degradation import set_degraded, set_normal
+ from app.core.usage.quota import _has_usable_credits, apply_usage_quota
+ from app.core.utils.request_id import get_request_id
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
++from app.db.models import Account, AccountStatus
++from app.db.session_models import StickySessionKind
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
+ from app.modules.accounts.auth_manager import access_token_hard_expired, is_locally_owned
+ from app.modules.accounts.subscription_status import is_subscription_usable
+ from app.modules.proxy.account_cache import get_account_selection_cache
+diff --git a/app/modules/proxy/ring_membership.py b/app/modules/proxy/ring_membership.py
+index ac8ab53b..7028d37f 100644
+--- a/app/modules/proxy/ring_membership.py
++++ b/app/modules/proxy/ring_membership.py
+@@ -13,7 +13,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.utils.time import utcnow
+-from app.db.models import BridgeRingMember
++from app.db.federation_models import BridgeRingMember
+ 
+ if TYPE_CHECKING:
+     from collections.abc import Callable
+diff --git a/app/modules/proxy/service.py b/app/modules/proxy/service.py
+index 8661953a..6b5517ac 100644
+--- a/app/modules/proxy/service.py
++++ b/app/modules/proxy/service.py
+@@ -91,13 +91,10 @@ from app.core.utils.request_id import ensure_request_id, get_request_id
+ from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
+ from app.core.utils.sse import format_sse_event, parse_sse_data_json  # noqa: F401
+ from app.core.utils.time import utcnow as utcnow
+-from app.db.models import (
+-    Account,
+-    AccountStatus,  # noqa: F401
+-    DashboardSettings,
+-    StickySessionKind,
+-)
++from app.db.models import Account
+ from app.db.session import SessionLocal as SessionLocal
++from app.db.session_models import StickySessionKind
++from app.db.settings_models import DashboardSettings
+ from app.modules.accounts.auth_manager import (
+     AccountNotOwnedError,
+     AccountsRepositoryPort,
+diff --git a/app/modules/proxy/sticky_repository.py b/app/modules/proxy/sticky_repository.py
+index b0c9a4c8..dbd7c7e8 100644
+--- a/app/modules/proxy/sticky_repository.py
++++ b/app/modules/proxy/sticky_repository.py
+@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy.sql import Insert
+ 
+ from app.core.utils.time import to_utc_naive, utcnow
+-from app.db.models import Account, StickySession, StickySessionKind
++from app.db.models import Account
+ from app.db.session import sqlite_writer_section
++from app.db.session_models import StickySession, StickySessionKind
+ from app.modules.sticky_sessions.schemas import StickySessionSortBy, StickySessionSortDir
+ 
+ logger = logging.getLogger(__name__)
+diff --git a/app/modules/quota_planner/repository.py b/app/modules/quota_planner/repository.py
+index c9d134c1..fb3af2a4 100644
+--- a/app/modules/quota_planner/repository.py
++++ b/app/modules/quota_planner/repository.py
+@@ -8,13 +8,8 @@ from sqlalchemy import Integer, and_, cast, func, literal, select, update
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.utils.time import to_utc_naive, utcnow
+-from app.db.models import (
+-    Account,
+-    QuotaPlannerDecision,
+-    QuotaPlannerSettings,
+-    QuotaWindowObservation,
+-    RequestLog,
+-)
++from app.db.models import Account, RequestLog
++from app.db.quota_models import QuotaPlannerDecision, QuotaPlannerSettings, QuotaWindowObservation
+ from app.db.session import analytics_work_mem, sqlite_writer_section
+ from app.modules.quota_planner.calendar import encode_working_days, parse_working_days
+ from app.modules.quota_planner.logic import PlannerSettings
+diff --git a/app/modules/quota_planner/warmup.py b/app/modules/quota_planner/warmup.py
+index 45271524..e1102f18 100644
+--- a/app/modules/quota_planner/warmup.py
++++ b/app/modules/quota_planner/warmup.py
+@@ -15,7 +15,8 @@ from app.core.identity import internal_identity
+ from app.core.openai.parsing import parse_sse_event
+ from app.core.openai.requests import ResponsesRequest
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountStatus, QuotaPlannerDecision
++from app.db.models import Account, AccountStatus
++from app.db.quota_models import QuotaPlannerDecision
+ from app.modules.accounts.repository import AccountsRepository
+ from app.modules.api_keys.repository import ApiKeysRepository
+ from app.modules.api_keys.service import ApiKeysService
+diff --git a/app/modules/routing_policy/api.py b/app/modules/routing_policy/api.py
+index 04a0783e..ffceaea3 100644
+--- a/app/modules/routing_policy/api.py
++++ b/app/modules/routing_policy/api.py
+@@ -5,8 +5,8 @@ import json
+ from fastapi import APIRouter, Depends, HTTPException, Response
+ 
+ from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
+-from app.db.models import RoutingPolicyVersion
+ from app.db.session import SessionLocal
++from app.db.settings_models import RoutingPolicyVersion
+ from app.modules.routing_policy.repository import RoutingPolicyRepository
+ from app.modules.routing_policy.schemas import DraftCreate, DraftPatch, PolicyDetail, PolicyVersions
+ from app.modules.routing_policy.service import _digest, _serialize, detail, observe, require_draft, summary
+diff --git a/app/modules/routing_policy/repository.py b/app/modules/routing_policy/repository.py
+index dbe0c05e..3532da21 100644
+--- a/app/modules/routing_policy/repository.py
++++ b/app/modules/routing_policy/repository.py
+@@ -3,7 +3,7 @@ from __future__ import annotations
+ from sqlalchemy import func, select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import RoutingPolicyVersion
++from app.db.settings_models import RoutingPolicyVersion
+ 
+ 
+ class RoutingPolicyRepository:
+diff --git a/app/modules/routing_policy/service.py b/app/modules/routing_policy/service.py
+index d14bc16d..f3a238c9 100644
+--- a/app/modules/routing_policy/service.py
++++ b/app/modules/routing_policy/service.py
+@@ -9,7 +9,7 @@ from typing import Any
+ from fastapi import HTTPException
+ 
+ from app.core.routing_table import routing_table_path
+-from app.db.models import RoutingPolicyVersion
++from app.db.settings_models import RoutingPolicyVersion
+ from app.modules.routing_policy.repository import RoutingPolicyRepository
+ from app.modules.routing_policy.schemas import PolicyCounts, PolicyDetail, PolicyDiff, PolicySummary
+ 
+diff --git a/app/modules/settings/repository.py b/app/modules/settings/repository.py
+index e4b5b660..c6b07d44 100644
+--- a/app/modules/settings/repository.py
++++ b/app/modules/settings/repository.py
+@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.config.settings import get_settings
+-from app.db.models import DashboardSettings
++from app.db.settings_models import DashboardSettings
+ 
+ _SETTINGS_ID = 1
+ 
+diff --git a/app/modules/sticky_sessions/api.py b/app/modules/sticky_sessions/api.py
+index af240b12..05df6162 100644
+--- a/app/modules/sticky_sessions/api.py
++++ b/app/modules/sticky_sessions/api.py
+@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, Query
+ 
+ from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
+ from app.core.exceptions import DashboardNotFoundError
+-from app.db.models import StickySessionKind
++from app.db.session_models import StickySessionKind
+ from app.dependencies import StickySessionsContext, get_sticky_sessions_context
+ from app.modules.sticky_sessions.schemas import (
+     StickySessionDeleteFailure,
+diff --git a/app/modules/sticky_sessions/schemas.py b/app/modules/sticky_sessions/schemas.py
+index ba18a0af..eb9275e6 100644
+--- a/app/modules/sticky_sessions/schemas.py
++++ b/app/modules/sticky_sessions/schemas.py
+@@ -5,7 +5,7 @@ from typing import Literal
+ 
+ from pydantic import Field, model_validator
+ 
+-from app.db.models import StickySessionKind
++from app.db.session_models import StickySessionKind
+ from app.modules.shared.schemas import DashboardModel
+ 
+ StickySessionSortBy = Literal["updated_at", "created_at", "account", "key"]
+diff --git a/app/modules/sticky_sessions/service.py b/app/modules/sticky_sessions/service.py
+index 0c167e31..f7e2eb59 100644
+--- a/app/modules/sticky_sessions/service.py
++++ b/app/modules/sticky_sessions/service.py
+@@ -5,7 +5,7 @@ from dataclasses import dataclass
+ from datetime import datetime, timedelta
+ 
+ from app.core.utils.time import to_utc_naive, utcnow
+-from app.db.models import StickySessionKind
++from app.db.session_models import StickySessionKind
+ from app.modules.proxy.sticky_repository import StickySessionListEntryRecord, StickySessionsRepository
+ from app.modules.settings.repository import SettingsRepository
+ from app.modules.sticky_sessions.schemas import StickySessionSortBy, StickySessionSortDir
+diff --git a/app/modules/team/member_policy.py b/app/modules/team/member_policy.py
+index 5e33a122..15223f92 100644
+--- a/app/modules/team/member_policy.py
++++ b/app/modules/team/member_policy.py
+@@ -2,7 +2,7 @@ from __future__ import annotations
+ 
+ import re
+ 
+-from app.db.models import TeamMember, TeamMemberStatus
++from app.db.access_models import TeamMember, TeamMemberStatus
+ from app.modules.proxy.request_policy import resolve_model_alias, strip_model_alias_suffix
+ from app.modules.team.pool_share import PoolWindow
+ from app.modules.team.repository import TeamUsageTotals
+diff --git a/app/modules/team/pool_share.py b/app/modules/team/pool_share.py
+index f2695f32..d1d9bf1e 100644
+--- a/app/modules/team/pool_share.py
++++ b/app/modules/team/pool_share.py
+@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
+ from sqlalchemy import DateTime, Integer, String, and_, case, column, func, select, values
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, RequestLog, UsageHistory
++from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, RequestLog
++from app.db.usage_models import UsageHistory
+ from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
+ 
+ _CACHE_SECONDS = 5.0
+diff --git a/app/modules/team/repository.py b/app/modules/team/repository.py
+index 4fd07e88..1e5e2c98 100644
+--- a/app/modules/team/repository.py
++++ b/app/modules/team/repository.py
+@@ -6,7 +6,8 @@ from datetime import date, datetime
+ from sqlalchemy import func, select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import ApiKey, RequestLog, TeamMember
++from app.db.access_models import TeamMember
++from app.db.models import ApiKey, RequestLog
+ from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
+ 
+ 
+diff --git a/app/modules/team/service.py b/app/modules/team/service.py
+index 87c0f6a9..6e439397 100644
+--- a/app/modules/team/service.py
++++ b/app/modules/team/service.py
+@@ -15,7 +15,8 @@ from app.core.exceptions import (
+     TeamModelNotAllowedError,
+ )
+ from app.core.utils.time import to_utc_naive, utcnow
+-from app.db.models import ApiKey, TeamMember, TeamMemberStatus
++from app.db.access_models import TeamMember, TeamMemberStatus
++from app.db.models import ApiKey
+ from app.modules.api_keys.service_data import ApiKeyData
+ from app.modules.team.member_policy import GATE_OK, cap_for, compute_gate, model_is_allowed, status_value
+ from app.modules.team.pool_share import PoolWindow, pool_share_windows, reset_pool_share_cache
+diff --git a/app/modules/usage/account_sync.py b/app/modules/usage/account_sync.py
+index 9883f9bd..0028c3f2 100644
+--- a/app/modules/usage/account_sync.py
++++ b/app/modules/usage/account_sync.py
+@@ -14,7 +14,8 @@ from app.core.crypto import TokenEncryptor
+ from app.core.plan_types import coerce_account_plan_type
+ from app.core.usage.models import UsagePayload, UsageWindow
+ from app.core.utils.request_id import get_request_id
+-from app.db.models import Account, AccountStatus, UsageHistory
++from app.db.models import Account, AccountStatus
++from app.db.usage_models import UsageHistory
+ from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager
+ from app.modules.usage.refresh_ports import (
+     AccountsRepositoryWithStatusComparePort,
+diff --git a/app/modules/usage/additional_usage_reads.py b/app/modules/usage/additional_usage_reads.py
+index 34dfdb06..5f433944 100644
+--- a/app/modules/usage/additional_usage_reads.py
++++ b/app/modules/usage/additional_usage_reads.py
+@@ -6,7 +6,8 @@ from datetime import datetime
+ from sqlalchemy import func, literal, or_, select, true, union_all
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.db.models import Account, AdditionalUsageHistory
++from app.db.models import Account
++from app.db.usage_models import AdditionalUsageHistory
+ from app.modules.usage.additional_quota_keys import (
+     AdditionalQuotaQueryScope,
+     canonicalize_additional_quota_key,
+diff --git a/app/modules/usage/builders.py b/app/modules/usage/builders.py
+index 8b52e2e6..8dcfcf74 100644
+--- a/app/modules/usage/builders.py
++++ b/app/modules/usage/builders.py
+@@ -18,7 +18,8 @@ from app.core.usage.types import (
+     UsageWindowSnapshot,
+ )
+ from app.core.utils.time import from_epoch_seconds
+-from app.db.models import Account, AdditionalUsageHistory, RequestLog
++from app.db.models import Account, RequestLog
++from app.db.usage_models import AdditionalUsageHistory
+ from app.modules.usage.schemas import (
+     MetricsTrends,
+     TrendPoint,
+diff --git a/app/modules/usage/history_trends.py b/app/modules/usage/history_trends.py
+index eb0094fe..2185ec5c 100644
+--- a/app/modules/usage/history_trends.py
++++ b/app/modules/usage/history_trends.py
+@@ -6,7 +6,7 @@ from sqlalchemy import Integer, and_, cast, func, literal_column, select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.usage.types import UsageTrendBucket
+-from app.db.models import UsageHistory
++from app.db.usage_models import UsageHistory
+ 
+ _PRIMARY_WINDOW_LITERAL = literal_column("'primary'")
+ 
+diff --git a/app/modules/usage/mappers.py b/app/modules/usage/mappers.py
+index ea03292b..5af6cb5a 100644
+--- a/app/modules/usage/mappers.py
++++ b/app/modules/usage/mappers.py
+@@ -1,7 +1,7 @@
+ from __future__ import annotations
+ 
+ from app.core.usage.types import UsageWindowRow
+-from app.db.models import AdditionalUsageHistory, UsageHistory
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
+ 
+ 
+ def usage_history_to_window_row(entry: UsageHistory | AdditionalUsageHistory) -> UsageWindowRow:
+diff --git a/app/modules/usage/refresh_ports.py b/app/modules/usage/refresh_ports.py
+index cf7ae4a4..6bb8d817 100644
+--- a/app/modules/usage/refresh_ports.py
++++ b/app/modules/usage/refresh_ports.py
+@@ -5,7 +5,8 @@ from dataclasses import dataclass
+ from datetime import datetime
+ from typing import Protocol
+ 
+-from app.db.models import AccountStatus, UsageHistory
++from app.db.models import AccountStatus
++from app.db.usage_models import UsageHistory
+ from app.modules.accounts.auth_manager import AccountsRepositoryPort
+ 
+ 
+diff --git a/app/modules/usage/refresh_rules.py b/app/modules/usage/refresh_rules.py
+index d4d08184..66f9a68c 100644
+--- a/app/modules/usage/refresh_rules.py
++++ b/app/modules/usage/refresh_rules.py
+@@ -20,8 +20,9 @@ from app.core.upstream_proxy import ResolvedUpstreamRoute, resolve_upstream_rout
+ from app.core.usage.models import AdditionalRateLimitPayload, UsagePayload, UsageWindow
+ from app.core.utils.request_id import get_request_id
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountStatus, UsageHistory
++from app.db.models import Account, AccountStatus
+ from app.db.session import get_background_session
++from app.db.usage_models import UsageHistory
+ from app.modules.usage.additional_quota_keys import canonicalize_additional_quota_key
+ from app.modules.usage.refresh_ports import AccountRefreshResult, AdditionalUsageRepositoryPort
+ from app.modules.usage.repository import AdditionalUsageRepository
+diff --git a/app/modules/usage/repository.py b/app/modules/usage/repository.py
+index aa07b404..fc8a3d29 100644
+--- a/app/modules/usage/repository.py
++++ b/app/modules/usage/repository.py
+@@ -10,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.core.config.settings import get_settings
+ from app.core.usage.types import UsageAggregateRow
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AdditionalUsageHistory, UsageHistory
++from app.db.models import Account
+ from app.db.session import sqlite_writer_section
+ from app.db.sqlite_utils import sqlite_db_path_from_url
++from app.db.usage_models import AdditionalUsageHistory, UsageHistory
+ from app.modules.usage.additional_quota_keys import (
+     canonicalize_additional_quota_key,
+ )
+diff --git a/app/modules/usage/sqlite_history.py b/app/modules/usage/sqlite_history.py
+index 26db454f..ebac5679 100644
+--- a/app/modules/usage/sqlite_history.py
++++ b/app/modules/usage/sqlite_history.py
+@@ -6,7 +6,7 @@ from datetime import datetime
+ from hashlib import sha256
+ from threading import RLock
+ 
+-from app.db.models import UsageHistory
++from app.db.usage_models import UsageHistory
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+diff --git a/app/modules/usage/updater.py b/app/modules/usage/updater.py
+index f8e47544..0670b106 100644
+--- a/app/modules/usage/updater.py
++++ b/app/modules/usage/updater.py
+@@ -6,7 +6,8 @@ from typing import Mapping
+ from app.core.config.settings import get_settings
+ from app.core.utils.request_id import get_request_id
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountStatus, UsageHistory
++from app.db.models import Account, AccountStatus
++from app.db.usage_models import UsageHistory
+ from app.modules.accounts.subscription_status import is_subscription_usable
+ from app.modules.usage.account_usage_refresh import UsageAccountRefresh
+ from app.modules.usage.refresh_ports import AccountRefreshResult
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 25b23f72..07cd78d7 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -48,7 +48,7 @@ for _name in ("cursor-agent", "agent", "devin", "muse"):
+     _stub.chmod(0o755)
+ os.environ["PATH"] = f"{VENDOR_CLI_STUBS}{os.pathsep}{os.environ.get('PATH', '')}"
+ 
+-from app.db.models import Base  # noqa: E402
++from app.db.base import Base  # noqa: E402
+ from app.db.session import engine  # noqa: E402
+ from app.main import create_app  # noqa: E402
+ 
+diff --git a/tests/floor/anthropic_proxy_support.py b/tests/floor/anthropic_proxy_support.py
+index 80523e46..7a27135c 100644
+--- a/tests/floor/anthropic_proxy_support.py
++++ b/tests/floor/anthropic_proxy_support.py
+@@ -12,8 +12,10 @@ from app.core.anthropic.models import AnthropicMessageRequest
+ from app.core.auth.dependencies import validate_proxy_api_key
+ from app.core.crypto import TokenEncryptor
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySession, StickySessionKind
++from app.db.models import Account, AccountStatus
+ from app.db.session import SessionLocal
++from app.db.session_models import StickySession, StickySessionKind
++from app.db.usage_models import AdditionalUsageHistory
+ from app.modules.api_keys.service_data import ApiKeyData
+ 
+ ANTHROPIC_SSE_BYTES = (
+@@ -188,7 +190,7 @@ async def _insert_weekly_usage(
+     used_percent: float,
+     reset_at: int | None = None,
+ ) -> None:
+-    from app.db.models import UsageHistory
++    from app.db.usage_models import UsageHistory
+ 
+     effective_reset_at = reset_at or int((utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp())
+     async with SessionLocal() as session:
+@@ -261,7 +263,7 @@ async def _insert_primary_usage(
+     credits_unlimited: bool | None = None,
+     credits_balance: float | None = None,
+ ) -> None:
+-    from app.db.models import UsageHistory
++    from app.db.usage_models import UsageHistory
+ 
+     effective_reset = (
+         reset_at
+diff --git a/tests/floor/api_keys_service_support.py b/tests/floor/api_keys_service_support.py
+index 40b6598f..5e8ba795 100644
+--- a/tests/floor/api_keys_service_support.py
++++ b/tests/floor/api_keys_service_support.py
+@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType, UsageHistory
++from app.db.models import Account, ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType
++from app.db.usage_models import UsageHistory
+ from app.modules.api_keys.repository_data import (
+     _UNSET,
+     ApiKeyUsageSummary,
+diff --git a/tests/floor/federation_custody_races_support.py b/tests/floor/federation_custody_races_support.py
+index b4de7cb5..c75a2bb9 100644
+--- a/tests/floor/federation_custody_races_support.py
++++ b/tests/floor/federation_custody_races_support.py
+@@ -4,7 +4,8 @@ from sqlalchemy import select
+ 
+ from app.core.crypto import TokenEncryptor
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountStatus, AccountTransfer, AccountTransferState
++from app.db.federation_models import AccountTransfer, AccountTransferState
++from app.db.models import Account, AccountStatus
+ from app.db.session import SessionLocal
+ from app.modules.federation.schemas import FederationAuthPayload
+ 
+diff --git a/tests/floor/test_account_opencode_auth_export.py b/tests/floor/test_account_opencode_auth_export.py
+index 6691e401..46d0eb7c 100644
+--- a/tests/floor/test_account_opencode_auth_export.py
++++ b/tests/floor/test_account_opencode_auth_export.py
+@@ -10,8 +10,8 @@ import pytest
+ from sqlalchemy import select
+ 
+ from app.core.auth import generate_unique_account_id
+-from app.db.models import AuditLog
+ from app.db.session import SessionLocal
++from app.db.settings_models import AuditLog
+ 
+ pytestmark = pytest.mark.integration
+ 
+diff --git a/tests/floor/test_anthropic_billing_guard.py b/tests/floor/test_anthropic_billing_guard.py
+index 5bc2c0cd..1459c9f4 100644
+--- a/tests/floor/test_anthropic_billing_guard.py
++++ b/tests/floor/test_anthropic_billing_guard.py
+@@ -8,8 +8,9 @@ from sqlalchemy import select
+ import app.modules.proxy.anthropic_service as anthropic_proxy_module
+ from app.core.anthropic.models import AnthropicMessageRequest
+ from app.core.utils.time import utcnow
+-from app.db.models import AdditionalUsageHistory, StickySession, StickySessionKind
+ from app.db.session import SessionLocal
++from app.db.session_models import StickySession, StickySessionKind
++from app.db.usage_models import AdditionalUsageHistory
+ from tests.floor.anthropic_proxy_support import (
+     _ALLOWED_BODY,
+     _BILLED_BODY,
+diff --git a/tests/floor/test_anthropic_count_tokens.py b/tests/floor/test_anthropic_count_tokens.py
+index 6e476af6..fb303d06 100644
+--- a/tests/floor/test_anthropic_count_tokens.py
++++ b/tests/floor/test_anthropic_count_tokens.py
+@@ -6,8 +6,9 @@ import pytest
+ from sqlalchemy import select
+ 
+ import app.modules.proxy.anthropic_service as anthropic_proxy_module
+-from app.db.models import Account, AccountStatus, AdditionalUsageHistory, RequestLog
++from app.db.models import Account, AccountStatus, RequestLog
+ from app.db.session import SessionLocal
++from app.db.usage_models import AdditionalUsageHistory
+ from tests.floor.anthropic_proxy_support import (
+     ANTHROPIC_JSON_BYTES,
+     ANTHROPIC_SSE_BYTES,
+diff --git a/tests/floor/test_anthropic_overage_delivery.py b/tests/floor/test_anthropic_overage_delivery.py
+index 286daeb8..08c73809 100644
+--- a/tests/floor/test_anthropic_overage_delivery.py
++++ b/tests/floor/test_anthropic_overage_delivery.py
+@@ -7,8 +7,9 @@ from sqlalchemy import select
+ 
+ import app.modules.proxy.anthropic_service as anthropic_proxy_module
+ from app.core.utils.time import utcnow
+-from app.db.models import AdditionalUsageHistory, RequestLog
++from app.db.models import RequestLog
+ from app.db.session import SessionLocal
++from app.db.usage_models import AdditionalUsageHistory
+ from app.dependencies import _proxy_repo_context
+ from tests.floor.anthropic_proxy_support import (
+     _ALLOWED_BODY,
+diff --git a/tests/floor/test_anthropic_reset_recovery.py b/tests/floor/test_anthropic_reset_recovery.py
+index 6c7e2534..cf563508 100644
+--- a/tests/floor/test_anthropic_reset_recovery.py
++++ b/tests/floor/test_anthropic_reset_recovery.py
+@@ -7,7 +7,8 @@ from sqlalchemy import select, update
+ from app.core.clients import anthropic_resets
+ from app.core.crypto import TokenEncryptor
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountStatus, ResetCreditAttempt
++from app.db.account_state_models import ResetCreditAttempt
++from app.db.models import Account, AccountStatus
+ from app.db.session import SessionLocal
+ from app.modules.accounts import api as accounts_api
+ from app.modules.accounts import service as service_module
+diff --git a/tests/floor/test_federation_custody_reclaim.py b/tests/floor/test_federation_custody_reclaim.py
+index 842b6172..2a5e95ac 100644
+--- a/tests/floor/test_federation_custody_reclaim.py
++++ b/tests/floor/test_federation_custody_reclaim.py
+@@ -6,7 +6,7 @@ import pytest
+ 
+ from app.core.config.settings import Settings, get_settings
+ from app.core.crypto import TokenEncryptor
+-from app.db.models import AccountTransferDirection, AccountTransferState
++from app.db.federation_models import AccountTransferDirection, AccountTransferState
+ from app.db.session import SessionLocal
+ from app.modules.federation.repository import FederationRepository
+ from tests.floor.federation_custody_races_support import (
+diff --git a/tests/floor/test_federation_custody_validation.py b/tests/floor/test_federation_custody_validation.py
+index dfba3288..6e0bdb98 100644
+--- a/tests/floor/test_federation_custody_validation.py
++++ b/tests/floor/test_federation_custody_validation.py
+@@ -7,7 +7,8 @@ import pytest
+ from app.core.config.settings import Settings, get_settings
+ from app.core.crypto import TokenEncryptor
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountTransferDirection, AccountTransferState
++from app.db.federation_models import AccountTransferDirection, AccountTransferState
++from app.db.models import Account
+ from app.db.session import SessionLocal
+ from app.modules.federation.repository import FederationRepository
+ from tests.floor.federation_custody_races_support import (
+@@ -232,7 +233,7 @@ async def test_abort_mismatch_does_not_change_pending_checkout(async_client, mon
+ @pytest.mark.asyncio
+ async def test_checkout_and_checkin_refuse_live_exchange_intent(db_setup: bool) -> None:
+     del db_setup
+-    from app.db.models import AccountExchangeIntent
++    from app.db.account_state_models import AccountExchangeIntent
+     from app.modules.federation.exceptions import FederationConflictError
+     from app.modules.federation.service import FederationService
+ 
+diff --git a/tests/floor/test_reset_credit_recovery.py b/tests/floor/test_reset_credit_recovery.py
+index 056d16d0..75315cf2 100644
+--- a/tests/floor/test_reset_credit_recovery.py
++++ b/tests/floor/test_reset_credit_recovery.py
+@@ -11,7 +11,8 @@ from app.core.clients import rate_limit_resets
+ from app.core.clients.rate_limit_resets import ConsumeResetCreditPayload, ResetCreditDetails, ResetCreditsPayload
+ from app.core.crypto import TokenEncryptor
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountStatus, ResetCreditAttempt
++from app.db.account_state_models import ResetCreditAttempt
++from app.db.models import Account, AccountStatus
+ from app.db.session import SessionLocal
+ from app.modules.accounts import reset_credit_scheduler as scheduler_module
+ from app.modules.accounts import service as service_module
+diff --git a/tests/floor/test_team_pool_share.py b/tests/floor/test_team_pool_share.py
+index 504c78b2..f0a33c7f 100644
+--- a/tests/floor/test_team_pool_share.py
++++ b/tests/floor/test_team_pool_share.py
+@@ -9,8 +9,9 @@ from sqlalchemy import delete, event, select
+ from starlette.testclient import WebSocketDenialResponse
+ 
+ from app.core.utils.time import utcnow
+-from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, RequestLog, UsageHistory
++from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, RequestLog
+ from app.db.session import SessionLocal, engine
++from app.db.usage_models import UsageHistory
+ from app.modules.team.pool_share import pool_share_windows, reset_pool_share_cache
+ from app.modules.team.service import invalidate_team_member_caches, reset_team_usage_cache
+ 
+@@ -72,7 +73,7 @@ async def test_pool_share_cost_math_imputation_rolled_and_cache(db_setup, monkey
+         await _seed_account(session, "legacy", now, reset=now - timedelta(days=80), window="secondary")
+         session.add(ApiKey(id="key", name="member", member_id=None, key_hash="keyhash", key_prefix="sk-clb-key"))
+         await session.flush()
+-        from app.db.models import TeamMember
++        from app.db.access_models import TeamMember
+ 
+         session.add(TeamMember(id="member", name="Ada", pool_share_percent=6))
+         await session.flush()
+@@ -110,7 +111,7 @@ async def test_pool_share_scoped_reachability_rolled_and_token_fallback(db_setup
+     del db_setup
+     now = utcnow().replace(microsecond=0)
+     async with SessionLocal() as session:
+-        from app.db.models import TeamMember
++        from app.db.access_models import TeamMember
+ 
+         session.add(TeamMember(id="member", name="Ada", pool_share_percent=30))
+         await session.flush()
+@@ -150,7 +151,7 @@ async def test_pool_share_scoped_reachability_rolled_and_token_fallback(db_setup
+ async def test_pool_share_window_start_and_invalidation(db_setup):
+     del db_setup
+     now = utcnow().replace(microsecond=0)
+-    from app.db.models import TeamMember
++    from app.db.access_models import TeamMember
+ 
+     async with SessionLocal() as session:
+         session.add(TeamMember(id="member", name="Ada", pool_share_percent=20))
+@@ -277,7 +278,7 @@ async def test_pool_share_existing_websocket_emits_over_cap_on_next_turn(async_c
+ async def test_pool_share_idle_rolled_window_has_future_advisory_reset_and_uses_cache(db_setup, monkeypatch):
+     del db_setup
+     import app.modules.team.pool_share as pool_module
+-    from app.db.models import TeamMember
++    from app.db.access_models import TeamMember
+ 
+     now = utcnow().replace(microsecond=0)
+     clock = [1000.0]
+@@ -312,7 +313,7 @@ async def test_pool_share_idle_rolled_window_has_future_advisory_reset_and_uses_
+ async def test_pool_share_zero_usage_and_unpriced_tokens(db_setup):
+     del db_setup
+     now = utcnow().replace(microsecond=0)
+-    from app.db.models import TeamMember
++    from app.db.access_models import TeamMember
+ 
+     async with SessionLocal() as session:
+         session.add(TeamMember(id="member", name="Ada", pool_share_percent=25))
