@@ -7,6 +7,9 @@ mkdir -p "$bindir"
 tmp=$(mktemp "$bindir/.lb-spend-cap-check.XXXXXX")
 trap 'rm -f "$tmp"' EXIT HUP INT TERM
 git -C "$repo" show origin/main:scripts/lb-spend-cap-check > "$tmp"
+for module in lb_spend_cap_sandbox.py lb_spend_cap_upstream.py; do
+    git -C "$repo" show "origin/main:scripts/$module" > "$bindir/$module"
+done
 chmod 755 "$tmp"
 mv -f "$tmp" "$bindir/lb-spend-cap-check"
 echo "Installed spend-cap check from agent-lb origin/main (no restart)"

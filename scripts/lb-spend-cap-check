@@ -19,6 +19,8 @@ import time
 import uuid
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from lb_spend_cap_sandbox import Check, InfraError, SEED_ACCOUNT, copy_tree, export_app, free_port, guard_port, listener_addresses, listener_pids, sandbox_env, scrub_dotenv
 from lb_spend_cap_upstream import CACHE_READ_TOKENS, CAP_MICRODOLLARS, INPUT_TOKENS, OUTPUT_TOKENS, FakeAnthropic, sse_body
 
