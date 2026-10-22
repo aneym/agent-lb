@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -51,6 +52,8 @@ def run_parity(source: Path, home: Path, registry: dict[str, Any], overlays: dic
                     ],
                     "--lock-held",
                     "--no-process-count",
+                    "--jobs",
+                    str(min(16, os.cpu_count() or 4)),
                 ],
                 capture_output=True,
                 text=True,
