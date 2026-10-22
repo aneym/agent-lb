@@ -7,7 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path("/Volumes/StudioExt/repos")
 WRITES = re.compile(
     r">|\b(?:tee|cp|mv|rm|touch|install|truncate|patch|apply_patch)\b|"
     r"\bsed\s+[^\n;]*-[^\s]*i|\bperl\s+[^\n;]*-[^\s]*i|"
@@ -17,13 +16,29 @@ WRITES = re.compile(
 
 def tracked_main(path):
     path = path.expanduser().resolve()
+    if path.is_dir():
+        return None
+    common = subprocess.run(
+        ["git", "-C", str(path.parent), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if common.returncode:
+        return None
+    repo = Path(common.stdout.strip()).parent
+    root = (
+        Path(os.environ.get("REPOS_ROOT") or os.environ.get("GIT_GUARD_REPOS_ROOT") or repo.parent)
+        .expanduser()
+        .resolve()
+    )
     try:
-        parts = path.relative_to(ROOT).parts
+        parts = path.relative_to(root).parts
     except ValueError:
         return None
-    if len(parts) < 2 or parts[0].endswith("-wt") or path.is_dir():
+    if len(parts) < 2 or parts[0].endswith("-wt") or root / parts[0] != repo:
         return None
-    repo = ROOT / parts[0]
     if not (repo / ".git").is_dir():
         return None
     branch = subprocess.run(
