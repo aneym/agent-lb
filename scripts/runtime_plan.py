@@ -32,7 +32,6 @@ LIVE_TOP = (
     "atoms.toml",
     ".atoms-unowned.json",
     ".filecap.json",
-    ".filecap-baseline.json",
     ".factory-lint.toml",
     ".gitignore",
     ".dockerignore",

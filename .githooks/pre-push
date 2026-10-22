@@ -1,13 +1,9 @@
 #!/bin/sh
 set -eu
+zero=0000000000000000000000000000000000000000
 while read -r local_ref local_sha remote_ref remote_sha; do
-    case "$local_sha" in
-        *[!0]*) ;;
-        *) continue ;;
-    esac
-    case "$remote_sha" in
-        *[!0]*) git cat-file -e "$remote_sha^{commit}" 2>/dev/null && base=$remote_sha || base=$(git merge-base origin/main "$local_sha") ;;
-        *) base=$(git merge-base origin/main "$local_sha") ;;
-    esac
-    filecap check --rev "$local_sha" --base "$base"
+    [ -n "$local_ref" ] || continue
+    [ "$local_sha" != "$zero" ] || continue
+    case "$remote_ref" in refs/seat-in/*) continue ;; esac
+    "$HOME/.agent-rails/factory-runtime/bin/gate-precheck" --rev "$local_sha" --fast
 done

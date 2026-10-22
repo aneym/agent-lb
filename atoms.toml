@@ -1,7 +1,7 @@
 version = 1
 [defaults]
 always = ["AGENTS.md", "products.json", "Makefile"]
-meta = [".github", ".githooks", ".filecap.json", ".filecap-baseline.json", "check", "atoms.toml", ".atoms-unowned.json", "uv.lock", "pyproject.toml", "frontend/bun.lock", "frontend/package.json"]
+meta = [".github", ".githooks", ".filecap.json", "check", "atoms.toml", ".atoms-unowned.json", "uv.lock", "pyproject.toml", "frontend/bun.lock", "frontend/package.json"]
 unowned_baseline = ".atoms-unowned.json"
 full = "./check --full"
 
