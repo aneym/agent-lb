@@ -16,7 +16,9 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import (
+    Any,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -151,7 +153,7 @@ def load_table(*, apply_default: bool = True) -> dict[str, Any]:
         fail(f"routing table not found at {path}")
     except (OSError, json.JSONDecodeError) as error:
         fail(f"routing table at {path} is unreadable: {error}")
-    if not isinstance(value, dict):
+    if not isinstance(value, dict):  # pyrefly: ignore [unbound-name]
         fail(f"routing table at {path} is not an object")
     value = load_quota_policy(value, path)
     return apply_implement_default(value) if apply_default else value
@@ -167,7 +169,7 @@ def apply_implement_default(table: dict[str, Any]) -> dict[str, Any]:
         chain = spec.get("chain") if isinstance(spec, dict) else None
         if isinstance(chain, list):
             lead = [entry for entry in chain if isinstance(entry, dict) and entry.get("seat") == seat]
-            spec["chain"] = lead + [entry for entry in chain if not any(entry is item for item in lead)]
+            spec["chain"] = lead + [entry for entry in chain if not any(entry is item for item in lead)]  # pyrefly: ignore [unsupported-operation]
     return table
 
 def fail(message: str) -> Any:
@@ -194,8 +196,9 @@ def policy_git(clone: Path, *args: str, binary: bool = False) -> subprocess.Comp
     import subprocess
 
     try:
-        result = subprocess.run(["git", "-C", str(clone), *args], capture_output=True,
-                                text=not binary, timeout=30, check=False)
+        result = subprocess.run(
+            ["git", "-C", str(clone), *args], capture_output=True, text=not binary, timeout=30, check=False
+        )
     except (OSError, subprocess.TimeoutExpired):
         return None
     return result if result.returncode == 0 else None
@@ -205,8 +208,11 @@ def applied_record(path: Path) -> dict[str, Any] | None:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return (value if isinstance(value, dict) and isinstance(value.get("commit"), str)
-            and FULL_COMMIT.fullmatch(value["commit"]) else None)
+    return (
+        value
+        if isinstance(value, dict) and isinstance(value.get("commit"), str) and FULL_COMMIT.fullmatch(value["commit"])
+        else None
+    )
 
 def versioned_rules(pin: str | None, as_json: bool) -> tuple[dict[str, Any], dict[str, Any], Path]:
     clone, applied_path, installed_path = policy_paths()
@@ -215,15 +221,16 @@ def versioned_rules(pin: str | None, as_json: bool) -> tuple[dict[str, Any], dic
     commit = None
     if pin is not None:
         if not git_ready:
-            setup_error("no_rules",
-                        f"no policy clone {clone}; APPLIED {applied_path}; installed {installed_path}", as_json)
+            setup_error(
+                "no_rules", f"no policy clone {clone}; APPLIED {applied_path}; installed {installed_path}", as_json
+            )
         if not COMMIT_NAME.fullmatch(pin):
             setup_error("unknown_rules", f"invalid rules commit {pin!r}", as_json)
         source = "pinned"
         revision = policy_git(clone, "rev-parse", "--verify", "--quiet", f"{pin}^{{commit}}")
         if revision is None:
             setup_error("unknown_rules", f"unknown rules commit {pin}", as_json)
-        commit = revision.stdout.strip()
+        commit = revision.stdout.strip()  # pyrefly: ignore [missing-attribute]
     elif git_ready:
         applied = applied_record(applied_path)
         if applied:
@@ -235,22 +242,31 @@ def versioned_rules(pin: str | None, as_json: bool) -> tuple[dict[str, Any], dic
         result = policy_git(clone, "show", f"{commit}:config/coding-agents/routing-table.json", binary=True)
         if result is None:
             setup_error("unknown_rules", f"routing table missing at commit {commit}", as_json)
-        data = result.stdout
+        data = result.stdout  # pyrefly: ignore [missing-attribute]
     else:
         try:
             data = installed_path.read_bytes()
         except OSError:
-            setup_error("no_rules",
-                        f"no policy clone/APPLIED {clone}, {applied_path} or installed table {installed_path}", as_json)
+            setup_error(
+                "no_rules",
+                f"no policy clone/APPLIED {clone}, {applied_path} or installed table {installed_path}",
+                as_json,
+            )
     try:
-        table = json.loads(data)
+        table = json.loads(data)  # pyrefly: ignore [unbound-name]
     except (UnicodeError, ValueError):
         table = None
-    if (not isinstance(table, dict) or not isinstance(table.get("classes"), dict)
-            or not isinstance(table.get("seats"), dict)):
+    if (
+        not isinstance(table, dict)
+        or not isinstance(table.get("classes"), dict)
+        or not isinstance(table.get("seats"), dict)
+    ):
         setup_error("unknown_rules", f"invalid routing table at {commit or installed_path}", as_json)
-    return (apply_implement_default(table),
-            {"commit": commit, "source": source, "table_sha256": hashlib.sha256(data).hexdigest()}, clone)
+    return (
+        apply_implement_default(table),  # pyrefly: ignore [bad-argument-type]
+        {"commit": commit, "source": source, "table_sha256": hashlib.sha256(data).hexdigest()},
+        clone,
+    )
 
 def class_seat_entries(classes: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     entries = []
@@ -262,8 +278,11 @@ def class_seat_entries(classes: dict[str, Any]) -> list[tuple[str, dict[str, Any
         audit = spec.get("audit", {})
         if isinstance(audit, dict) and isinstance(audit.get("by_author_vendor"), dict):
             candidates.extend(audit["by_author_vendor"].values())
-        entries.extend((task_class, entry) for entry in candidates
-                       if isinstance(entry, dict) and isinstance(entry.get("seat"), str))
+        entries.extend(
+            (task_class, entry)
+            for entry in candidates
+            if isinstance(entry, dict) and isinstance(entry.get("seat"), str)
+        )
     return entries
 
 def command_seat(args: argparse.Namespace) -> int:
@@ -272,8 +291,7 @@ def command_seat(args: argparse.Namespace) -> int:
     name = args.name
     if not SEAT_NAME.fullmatch(name) or name not in seats:
         setup_error("unknown_seat", f"unknown seat {name!r}", args.json)
-    named = [(task_class, entry) for task_class, entry in class_seat_entries(table["classes"])
-             if entry["seat"] == name]
+    named = [(task_class, entry) for task_class, entry in class_seat_entries(table["classes"]) if entry["seat"] == name]
     rung = None
     ladder = ladder_entries(table, args.task_class) if args.task_class is not None else None
     if ladder is not None:
@@ -285,7 +303,7 @@ def command_seat(args: argparse.Namespace) -> int:
             entry = next((item for task, item in named if task == args.task_class), None)
             if entry is None or (name not in fallback and name != escalation):
                 setup_error("unknown_class", f"class {args.task_class!r} does not name seat {name}", args.json)
-        rung = entry.get("id")
+        rung = entry.get("id")  # pyrefly: ignore [missing-attribute]
         named = [(args.task_class, entry)]
     if args.task_class is not None:
         if args.task_class not in table["classes"]:
@@ -296,21 +314,24 @@ def command_seat(args: argparse.Namespace) -> int:
     else:
         chosen = named
     if chosen:
-        if len({(entry.get("model"), entry.get("effort")) for _, entry in chosen}) != 1:
-            setup_error("ambiguous_class",
-                        f"seat {name} disagrees across classes {', '.join(dict.fromkeys(c for c, _ in chosen))}",
-                        args.json)
-        task_class = ("implement" if any(c == "implement" for c, _ in chosen) else chosen[0][0])
+        if len({(entry.get("model"), entry.get("effort")) for _, entry in chosen}) != 1:  # pyrefly: ignore [missing-attribute]
+            setup_error(
+                "ambiguous_class",
+                f"seat {name} disagrees across classes {', '.join(dict.fromkeys(c for c, _ in chosen))}",  # pyrefly: ignore [no-matching-overload]
+                args.json,
+            )
+        task_class = "implement" if any(c == "implement" for c, _ in chosen) else chosen[0][0]
         entry = next(entry for c, entry in chosen if c == task_class)
-        model_alias, effort = entry.get("model"), entry.get("effort")
+        model_alias, effort = entry.get("model"), entry.get("effort")  # pyrefly: ignore [missing-attribute]
     else:
         task_class = None
         model_alias, effort = seats[name].get("model"), seats[name].get("effort")
         if not isinstance(model_alias, str):
             setup_error("unknown_rules", f"seat {name} has no model in seats map", args.json)
     served = ServedModels().get() if family_alias(table, model_alias) in table.get("aliases", {}) else []
-    model, reason = (rung_model(table, entry, ServedModels()) if rung
-                     else resolve_alias(table, model_alias, served, name))
+    model, reason = (
+        rung_model(table, entry, ServedModels()) if rung else resolve_alias(table, model_alias, served, name)  # pyrefly: ignore [unbound-name]
+    )
     if model is None:
         setup_error("unresolved_model", f"alias {model_alias}: {reason}", args.json)
     if rules["commit"]:
@@ -325,9 +346,17 @@ def command_seat(args: argparse.Namespace) -> int:
         except OSError:
             setup_error("unknown_rules", f"missing installed definition {definition_path}", args.json)
     seat = seats[name]
-    answer = {"seat": name, "class": task_class, "vendor": seat["vendor"], "box": seat["box"],
-              "model_alias": model_alias, "model": model, "effort": effort,
-              "definition_sha256": hashlib.sha256(definition).hexdigest(), "rules": rules}
+    answer = {
+        "seat": name,
+        "class": task_class,
+        "vendor": seat["vendor"],
+        "box": seat["box"],
+        "model_alias": model_alias,
+        "model": model,
+        "effort": effort,
+        "definition_sha256": hashlib.sha256(definition).hexdigest(),  # pyrefly: ignore [unbound-name]
+        "rules": rules,
+    }
     if rung:
         answer["rung"] = rung
     if args.json:
@@ -335,8 +364,10 @@ def command_seat(args: argparse.Namespace) -> int:
     else:
         box = seat["box"]["adapter"] if isinstance(seat["box"], dict) else "studio only"
         revision = rules["commit"][:12] if rules["commit"] else "installed:" + rules["table_sha256"][:12]
-        print(f"{name}: {model} ({model_alias}), effort {effort or '-'}, "
-              f"vendor {seat['vendor']}, box {box}, rules {revision}")
+        print(
+            f"{name}: {model} ({model_alias}), effort {effort or '-'}, "
+            f"vendor {seat['vendor']}, box {box}, rules {revision}"
+        )
     return EXIT_OK
 
 def reduced_entry(entry: dict[str, Any], table: dict[str, Any]) -> dict[str, Any]:
@@ -352,26 +383,37 @@ def command_seats(args: argparse.Namespace) -> int:
     ladder_entries(table, "verify")
     for name in table.get("ladders", {}):
         ladder_entries({**table, "ladder": name}, "verify")
-    classes = {name: {"chain": [reduced_entry(entry, table) for entry in spec["chain"] if isinstance(entry, dict)]}
-               for name, spec in table["classes"].items()
-               if isinstance(spec, dict) and isinstance(spec.get("chain"), list)}
+    classes = {
+        name: {"chain": [reduced_entry(entry, table) for entry in spec["chain"] if isinstance(entry, dict)]}
+        for name, spec in table["classes"].items()
+        if isinstance(spec, dict) and isinstance(spec.get("chain"), list)
+    }
     implement = table["classes"].get("implement", {})
     audit = implement.get("audit", {}).get("by_author_vendor", {})
     escalation = implement.get("escalation")
-    if (not isinstance(escalation, dict) or not isinstance(escalation.get("seat"), str)
-            or type(escalation.get("at_fix_round")) is not int):
+    if (
+        not isinstance(escalation, dict)
+        or not isinstance(escalation.get("seat"), str)
+        or type(escalation.get("at_fix_round")) is not int
+    ):
         setup_error("unknown_rules", f"invalid classes.implement.escalation: {escalation!r}", args.json)
-    answer = {"rules": rules, "seats": table["seats"], "classes": classes,
-              "audit": {"by_author_vendor": {name: reduced_entry(entry, table) for name, entry in audit.items()}},
-              "escalation": {"implement": {"seat": escalation["seat"], "at_fix_round": escalation["at_fix_round"]}}}
+    answer = {
+        "rules": rules,
+        "seats": table["seats"],
+        "classes": classes,
+        "audit": {"by_author_vendor": {name: reduced_entry(entry, table) for name, entry in audit.items()}},
+        "escalation": {"implement": {"seat": escalation["seat"], "at_fix_round": escalation["at_fix_round"]}},
+    }
     if "ladders" in table:
         answer["ladder"] = table.get("ladder")
         answer["ladders"] = json.loads(json.dumps(table["ladders"]))
         for ladder in answer["ladders"].values():
             verify = ladder.get("verify")
             if isinstance(verify, dict):
-                verify["by_author_maker"] = {maker: [{"id": ref[1:], **verify["rungs"][ref[1:]]}
-                    for ref in refs] for maker, refs in verify["by_author_maker"].items()}
+                verify["by_author_maker"] = {
+                    maker: [{"id": ref[1:], **verify["rungs"][ref[1:]]} for ref in refs]
+                    for maker, refs in verify["by_author_maker"].items()
+                }
     if args.json:
         print(json.dumps(answer))
     else:
@@ -382,8 +424,15 @@ def command_seats(args: argparse.Namespace) -> int:
 
 def rules_status() -> dict[str, Any]:
     clone, applied_path, _ = policy_paths()
-    state: dict[str, Any] = {"applied": None, "applied_at": None, "result": None,
-                             "origin": None, "behind": None, "diverged": None, "error": "no_rules"}
+    state: dict[str, Any] = {
+        "applied": None,
+        "applied_at": None,
+        "result": None,
+        "origin": None,
+        "behind": None,
+        "diverged": None,
+        "error": "no_rules",
+    }
     applied = applied_record(applied_path) if clone.is_dir() and policy_git(clone, "rev-parse", "--git-dir") else None
     if not applied:
         return state
@@ -403,10 +452,18 @@ def rules_status() -> dict[str, Any]:
         state["behind"] = int(count.stdout.strip()) if count else None
     return state
 
-def request(method: str, path: str, *, payload: dict[str, Any] | None, timeout: float,
-             fixture: bool = True) -> HttpResult:
-    return route_cache.request(method, path, payload=payload, timeout=timeout,
-                               fixture=fixture, url=base_url(), cache_dir=models_cache_path().parent)
+def request(
+    method: str, path: str, *, payload: dict[str, Any] | None, timeout: float, fixture: bool = True
+) -> HttpResult:
+    return route_cache.request(
+        method,
+        path,
+        payload=payload,
+        timeout=timeout,
+        fixture=fixture,
+        url=base_url(),
+        cache_dir=models_cache_path().parent,
+    )
 
 def http_get(path: str, *, timeout: float = READ_TIMEOUT_SECONDS) -> HttpResult:
     return request("GET", path, payload=None, timeout=timeout)
@@ -429,7 +486,10 @@ def remaining(account: dict[str, Any]) -> float:
         return 0.0
     usage = account.get("usage")
 
-    return min(route_heal.window(usage, "secondaryRemainingPercent", 0.0), route_heal.window(usage, "primaryRemainingPercent", 100.0))
+    return min(
+        route_heal.window(usage, "secondaryRemainingPercent", 0.0),
+        route_heal.window(usage, "primaryRemainingPercent", 100.0),
+    )
 
 
 ROUTABLE_STATUSES = frozenset({"active", "rate_limited", "quota_exceeded"})
@@ -473,7 +533,6 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
 
     pools = []
     for pool_id, members in sorted(grouped.items()):
-
         routable = [account for account in members if account.get("status") in ROUTABLE_STATUSES]
         usable = [account for account in routable if remaining(account) > 0.0]
         headroom = max((remaining(account) for account in usable), default=0.0)
@@ -497,16 +556,22 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
                 "aggregateRemainingPercent": round(aggregate, 1),
                 "resetAt": resets[0] if resets else None,
                 "status": route_heal.pool_status(headroom),
-                **({"unavailableReason": "no balance"} if not routable and any(
-                    account.get("status") == "paused"
-                    and str(account.get("deactivationReason") or "").startswith("balance_exhausted:")
-                    for account in members
-                ) else {}),
+                **(
+                    {"unavailableReason": "no balance"}
+                    if not routable
+                    and any(
+                        account.get("status") == "paused"
+                        and str(account.get("deactivationReason") or "").startswith("balance_exhausted:")
+                        for account in members
+                    )
+                    else {}
+                ),
                 "source": "accounts_fallback",
                 "weeklyRemainingPercent": (
                     round(
                         statistics.fmean(
-                            route_heal.window(a.get("usage"), "secondaryRemainingPercent", 100.0) for a in weekly_members
+                            route_heal.window(a.get("usage"), "secondaryRemainingPercent", 100.0)
+                            for a in weekly_members
                         ),
                         1,
                     )
@@ -552,8 +617,14 @@ def add_pool_refills(document: dict[str, Any], body: Any) -> None:
             if remaining < 10 and stamp > now:
                 low_resets.append(stamp)
         if "refills" not in pool:
-            pool["refills"] = [{"at": stamp.isoformat().replace("+00:00", "Z"), "accounts": count,
-                                "remainingPercent": round(remaining, 1)} for stamp, count, remaining in cohorts]
+            pool["refills"] = [
+                {
+                    "at": stamp.isoformat().replace("+00:00", "Z"),
+                    "accounts": count,
+                    "remainingPercent": round(remaining, 1),
+                }
+                for stamp, count, remaining in cohorts
+            ]
         if low_resets:
             pool.setdefault("pace", {})["next_refill_h"] = (min(low_resets) - now).total_seconds() / 3600
 
@@ -567,15 +638,20 @@ def cached_pool_snapshot() -> dict[str, Any] | None:
         record = json.loads(pool_snapshot_path().read_text(encoding="utf-8"))
         age = time.time() - record["savedAt"]
         document = record["document"]
-        if (record["baseUrl"] != base_url() or not 0 <= age < 60
-                or not isinstance(document, dict) or not isinstance(document.get("pools"), list)):
+        if (
+            record["baseUrl"] != base_url()
+            or not 0 <= age < 60
+            or not isinstance(document, dict)
+            or not isinstance(document.get("pools"), list)
+        ):
             return None
         return {**document, "source": "cache", "cacheAgeSeconds": age}
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
-def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS,
-                accounts: HttpResult | None = None, refills: bool = False) -> tuple[dict[str, Any] | None, str | None]:
+def fetch_pools(
+    *, timeout: float = READ_TIMEOUT_SECONDS, accounts: HttpResult | None = None, refills: bool = False
+) -> tuple[dict[str, Any] | None, str | None]:
     deadline = time.monotonic() + timeout
 
     def read_accounts() -> HttpResult:
@@ -591,8 +667,10 @@ def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS,
         document.setdefault("source", "lb")
         if not direct.from_cache and fixture_file("/api/pools") is None:
             try:
-                atomic_write(pool_snapshot_path(), json.dumps({
-                    "baseUrl": base_url(), "savedAt": time.time(), "document": document}))
+                atomic_write(
+                    pool_snapshot_path(),
+                    json.dumps({"baseUrl": base_url(), "savedAt": time.time(), "document": document}),
+                )
             except OSError:
                 pass
         if not refills:
@@ -669,7 +747,6 @@ def pools_by_id(document: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
 
 def pool_pace(pool: dict[str, Any], cycle_hours: float) -> float | None:
 
-
     pace = pool.get("weeklyPacePercent")
     if isinstance(pace, (int, float)) and not isinstance(pace, bool):
         return float(pace)
@@ -701,8 +778,12 @@ def load_pool_history(now: datetime) -> list[dict]:
             if not isinstance(row, dict):
                 continue
             stamp = pace_timestamp(row.get("ts"))
-            if (stamp is not None and now - timedelta(hours=72) <= stamp <= now
-                    and isinstance(row.get("pool"), str) and pace_number(row.get("remaining")) is not None):
+            if (
+                stamp is not None
+                and now - timedelta(hours=72) <= stamp <= now
+                and isinstance(row.get("pool"), str)
+                and pace_number(row.get("remaining")) is not None
+            ):
                 rows.append(row)
     except (OSError, UnicodeError):
         pass
@@ -735,16 +816,25 @@ def record_pool_history(document: dict, now: datetime) -> None:
         pass
 
 def pace_state(pool: dict, history: list[dict], policy: dict, now: datetime) -> dict:
-    result = dict(state="unknown", remaining=None, hours_left=None, burn_per_hour=None,
-                  empties_in_h=None, leftover=None, basis="none", next_refill_h=None)
+    result = dict(
+        state="unknown",
+        remaining=None,
+        hours_left=None,
+        burn_per_hour=None,
+        empties_in_h=None,
+        leftover=None,
+        basis="none",
+        next_refill_h=None,
+    )
     result["next_refill_h"] = pool.get("pace", {}).get("next_refill_h")
     if pool.get("status") == "exhausted":
         result["state"] = "exhausted"
         return result
     monthly = pool.get("windowLabel") == "month"
     remaining = pool_remaining(pool)
-    reset = (pace_timestamp(pool.get("cycleResetAt" if monthly else "weeklyResetAt"))
-             or pace_timestamp(pool.get("resetAt")))
+    reset = pace_timestamp(pool.get("cycleResetAt" if monthly else "weeklyResetAt")) or pace_timestamp(
+        pool.get("resetAt")
+    )
     hours_left = (reset - now).total_seconds() / 3600 if reset is not None else None
     if hours_left is not None and hours_left <= 0:
         hours_left = None
@@ -760,15 +850,16 @@ def pace_state(pool: dict, history: list[dict], policy: dict, now: datetime) -> 
             if stamp is not None and stamp <= now and value is not None:
                 samples.append((stamp, value))
         samples.sort()
-        baseline = next((sample for sample in samples
-                         if now - timedelta(hours=28) <= sample[0] <= now - timedelta(hours=20)), None)
+        baseline = next(
+            (sample for sample in samples if now - timedelta(hours=28) <= sample[0] <= now - timedelta(hours=20)), None
+        )
         if baseline is not None:
             later = [sample for sample in samples if sample[0] > baseline[0]]
             values = [baseline[1], *(sample[1] for sample in later), remaining]
             if not any(current > previous + 5 for previous, current in zip(values, values[1:])):
                 elapsed = (now - baseline[0]).total_seconds() / 3600
                 burn = max(0.0, (baseline[1] - remaining) / elapsed)
-    result.update(remaining=remaining, hours_left=hours_left, burn_per_hour=burn)
+    result.update(remaining=remaining, hours_left=hours_left, burn_per_hour=burn)  # pyrefly: ignore [bad-argument-type]
     pace_policy = policy.get("pace") if isinstance(policy, dict) else None
     pace_policy = pace_policy if isinstance(pace_policy, dict) else {}
     thresholds = {}
@@ -779,14 +870,18 @@ def pace_state(pool: dict, history: list[dict], policy: dict, now: datetime) -> 
         empties = remaining / burn if burn != 0 else None
         leftover = remaining - burn * hours_left
         rich_leftover = thresholds["rich_leftover"]
-        state = "low" if empties is not None and empties < hours_left else (
-            "rich" if leftover >= rich_leftover else "on_pace")
+        state = (
+            "low"
+            if empties is not None and empties < hours_left
+            else ("rich" if leftover >= rich_leftover else "on_pace")
+        )
         result.update(state=state, empties_in_h=empties, leftover=leftover, basis="burn_24h")
     elif burn is None:
         pace = pace_number(pool.get("monthlyPacePercent" if monthly else "weeklyPacePercent"))
         if pace is not None:
-            state = "low" if pace < thresholds["behind_lt"] else (
-                "rich" if pace > thresholds["ahead_gt"] else "on_pace")
+            state = (
+                "low" if pace < thresholds["behind_lt"] else ("rich" if pace > thresholds["ahead_gt"] else "on_pace")
+            )
             result.update(state=state, basis="pace")
     return result
 
@@ -829,9 +924,13 @@ def command_pools(args: argparse.Namespace) -> int:
     print("-" * len(header))
     for pool in document.get("pools", []):
         usable = f"{pool.get('eligibleAccounts')}/{pool.get('accounts')}"
-        pace_label = {"low": "running low", "rich": "running rich", "on_pace": "on pace",
-                      "exhausted": "empty", "unknown": "unknown"}.get(
-                          pool.get("pace", {}).get("state", "unknown"), "unknown")
+        pace_label = {
+            "low": "running low",
+            "rich": "running rich",
+            "on_pace": "on pace",
+            "exhausted": "empty",
+            "unknown": "unknown",
+        }.get(pool.get("pace", {}).get("state", "unknown"), "unknown")
         print(
             f"{pool.get('id', '?'):<20} {pool.get('unavailableReason') or pool.get('status', '?'):<10} "
             f"{pace_label:<12} "
@@ -864,14 +963,17 @@ def command_plan(args: argparse.Namespace) -> int:
     print(plan["why"])
     for account in plan["accounts"]:
         unit = "plan" if account["pool"] == "cursor" else "account"
-        print(f"{account['label']}, {account['count']} {unit}{'' if account['count'] == 1 else 's'} "
-              f"[{account['change']}, delta {account['delta']:+d}] — {account['reason']}")
+        print(
+            f"{account['label']}, {account['count']} {unit}{'' if account['count'] == 1 else 's'} "
+            f"[{account['change']}, delta {account['delta']:+d}] — {account['reason']}"
+        )
     labels = {"implement": "Write code", "mechanical": "Small edits", "explore": "Read and explore", "review": "Review"}
     for job, rungs in plan["ladders"].items():
-        names = {"opus-every-piece": "Claude Opus on every piece",
-                 "sol-claude-work": "GPT-6.1 Sol for Claude work"}
-        print(f"{labels[job]}: " + " → ".join(
-            names.get(rung["id"], f"{rung['model']} ({rung['harness']})") for rung in rungs))
+        names = {"opus-every-piece": "Claude Opus on every piece", "sol-claude-work": "GPT-6.1 Sol for Claude work"}
+        print(
+            f"{labels[job]}: "
+            + " → ".join(names.get(rung["id"], f"{rung['model']} ({rung['harness']})") for rung in rungs)
+        )
     print(plan["risk"])
     return EXIT_OK
 
@@ -953,8 +1055,11 @@ def anthropic_models() -> tuple[list[str], str]:
         return ModelState.ANTHROPIC_MODELS
     cache = models_cache_path().with_name("route-anthropic-models.json")
     result = http_get("/api/models/anthropic", timeout=10.0)
-    ids = model_ids({"models": [{"id": value} for value in result.body.get("models", [])]}) if (
-        result.ok and isinstance(result.body, dict) and isinstance(result.body.get("models"), list)) else []
+    ids = (
+        model_ids({"models": [{"id": value} for value in result.body.get("models", [])]})
+        if (result.ok and isinstance(result.body, dict) and isinstance(result.body.get("models"), list))
+        else []
+    )
     if ids:
         try:
             if not result.from_cache and fixture_file("/api/models/anthropic") is None:
@@ -972,9 +1077,15 @@ def anthropic_models() -> tuple[list[str], str]:
     if stamp is not None and stamp.tzinfo is None:
         stamp = None
     listed = cached.get("models") if isinstance(cached, dict) else None
-    if stamp is not None and isinstance(listed, list) and (
-            datetime.now(timezone.utc) - stamp).total_seconds() <= MODELS_CACHE_MAX_AGE_SECONDS:
-        ModelState.ANTHROPIC_MODELS = ([value for value in listed if isinstance(value, str)], "cache (LB list unavailable)")
+    if (
+        stamp is not None
+        and isinstance(listed, list)
+        and (datetime.now(timezone.utc) - stamp).total_seconds() <= MODELS_CACHE_MAX_AGE_SECONDS
+    ):
+        ModelState.ANTHROPIC_MODELS = (
+            [value for value in listed if isinstance(value, str)],
+            "cache (LB list unavailable)",
+        )
     return ModelState.ANTHROPIC_MODELS
 
 def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tuple[str | None, str]:
@@ -991,7 +1102,6 @@ def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tup
         if candidates:
             return max(candidates)[1], f"newest listed {family} ({source})"
         if listed and spec.get("fallback"):
-
             return None, f"no listed {family} ({source})"
     pinned = spec.get("pinned")
     if isinstance(pinned, str) and pinned and not is_retired(pinned, retired):
@@ -1054,8 +1164,11 @@ def fetch_cursor_models() -> list[str]:
     try:
         cached = json.loads(cache.read_text(encoding="utf-8"))
         stamp = parse_ts(cached.get("ts"))
-        if (stamp and stamp.tzinfo
-                and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS):
+        if (
+            stamp
+            and stamp.tzinfo
+            and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS
+        ):
             return [value for value in cached.get("models", []) if isinstance(value, str)]
     except (FileNotFoundError, OSError, json.JSONDecodeError, AttributeError):
         pass
@@ -1082,8 +1195,14 @@ def run_listing(command: list[str], timeout: float) -> str:
     import subprocess
 
     try:
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            start_new_session=True,
+        )
     except (OSError, ValueError):
         return ""
     try:
@@ -1147,8 +1266,11 @@ def fetch_devin_models() -> list[str]:
     try:
         cached = json.loads(cache.read_text(encoding="utf-8"))
         stamp = parse_ts(cached.get("ts"))
-        if (stamp and stamp.tzinfo
-                and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS):
+        if (
+            stamp
+            and stamp.tzinfo
+            and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS
+        ):
             return [value for value in cached.get("models", []) if isinstance(value, str)]
     except (FileNotFoundError, OSError, json.JSONDecodeError, AttributeError):
         pass
@@ -1178,13 +1300,18 @@ def family_alias(table: dict[str, Any], name: str) -> str:
         return base
     return name
 
-def resolve_alias(table: dict[str, Any], name: str, served: list[str],
-                  seat: str | None = None) -> tuple[str | None, str]:
+def resolve_alias(
+    table: dict[str, Any], name: str, served: list[str], seat: str | None = None
+) -> tuple[str | None, str]:
 
     name = family_alias(table, name)
     model, reason = resolve_one(table, name, served, seat)
-    if route_cache.MODEL_CACHE_HITS and (not model or "pinned" in reason or "Claude Code alias" in reason
-                                       or (reason == "not an alias" and model not in served)):
+    if route_cache.MODEL_CACHE_HITS and (
+        not model
+        or "pinned" in reason
+        or "Claude Code alias" in reason
+        or (reason == "not an alias" and model not in served)
+    ):
         route_cache.FORCE_MODELS = True
         route_cache.MODEL_CACHE_HITS.clear()
         ModelState.ANTHROPIC_MODELS = None
@@ -1195,14 +1322,18 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str],
             route_cache.FORCE_MODELS = False
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
     fallback = (aliases.get(name) or {}).get("fallback") if isinstance(aliases.get(name), dict) else None
-    if (model or not isinstance(fallback, str) or fallback == name or reason.startswith(f"{name} is readmitted for")
-            or reason.startswith("pending: ")):
+    if (
+        model
+        or not isinstance(fallback, str)
+        or fallback == name
+        or reason.startswith(f"{name} is readmitted for")
+        or reason.startswith("pending: ")
+    ):
         return model, reason
     model, why = resolve_one(table, fallback, served, seat)
     return model, f"{reason}; fallback {fallback}: {why}"
 
-def resolve_one(table: dict[str, Any], name: str, served: list[str],
-                seat: str | None = None) -> tuple[str | None, str]:
+def resolve_one(table: dict[str, Any], name: str, served: list[str], seat: str | None = None) -> tuple[str | None, str]:
 
     retired = retired_patterns(table)
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
@@ -1225,8 +1356,6 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
         if is_retired(name, retired):
             return None, f"{name} is retired"
         if "*" in name or "?" in name:
-
-
             return None, f"{name} is a wildcard, not a served model"
         return name, "not an alias"
     if spec.get("vendor") == "anthropic" or (spec.get("harness") and not spec.get("family")):
@@ -1244,7 +1373,6 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
             return None, f"{pinned} is retired or blocked"
         return pinned, f"pinned {family}; account eligibility is checked at dispatch"
     if spec.get("vendor") == "cursor":
-
         variant = spec.get("variant")
         suffix = "-" + re.escape(variant) if variant else ""
         version = r"\d+(?:-\d{1,2})?" if family.startswith("claude-") else r"\d+(?:\.\d+)*"
@@ -1255,7 +1383,6 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
                 return None, model_list_pending("cursor")
             return None, "Cursor model list unavailable (cursor-agent --list-models)"
     elif spec.get("vendor") == "devin":
-
         variant = spec.get("variant") or "high"
         pattern = re.compile(rf"^{re.escape(family)}-(\d+)-{re.escape(variant)}$")
         served = devin_models()
@@ -1293,9 +1420,12 @@ def record_explicit_model(model: str, source: str) -> None:
 
 def command_quota_mode(args: argparse.Namespace) -> int:
     state = quota_swap_state(load_table(), fetch_pools, api_request_logs, append_ledger)
-    print(json.dumps(state, sort_keys=True) if args.json else
-          f"{state['mode']} remaining={state['remaining_fraction']} "
-          f"last_flip={state['last_flip_at']} cause={state['last_flip_cause']}")
+    print(
+        json.dumps(state, sort_keys=True)
+        if args.json
+        else f"{state['mode']} remaining={state['remaining_fraction']} "
+        f"last_flip={state['last_flip_at']} cause={state['last_flip_cause']}"
+    )
     return EXIT_OK
 
 def command_resolve(args: argparse.Namespace) -> int:
@@ -1305,27 +1435,36 @@ def command_resolve(args: argparse.Namespace) -> int:
     unknown = []
     for name in args.aliases:
         if name in (table.get("standards") or {}):
-            standard = swapped_standard(table, name, dispatch_standard(table, name, None),
-                                        quota_swap_state(table, fetch_pools, api_request_logs, append_ledger))
+            standard = swapped_standard(
+                table,
+                name,
+                dispatch_standard(table, name, None),
+                quota_swap_state(table, fetch_pools, api_request_logs, append_ledger),
+            )
             model, reason = resolve_alias(table, standard["model"], served, standard["seat"])
             if model:
-                result = {"alias": name, "model": model, "resolved_alias": standard["model"],
-                          "seat": standard["seat"], "effort": standard.get("effort"), "reason": reason}
+                result = {
+                    "alias": name,
+                    "model": model,
+                    "resolved_alias": standard["model"],
+                    "seat": standard["seat"],
+                    "effort": standard.get("effort"),
+                    "reason": reason,
+                }
                 print(json.dumps(result, sort_keys=True) if args.json else model)
                 return EXIT_OK
             reasons.append(reason)
             continue
         model, reason = resolve_alias(table, name, served)
         if not model and reason == f"{name} is retired":
-
-
             model = name
             record_explicit_model(name, "route resolve")
         if model:
             result = {"alias": name, "model": model, "reason": reason}
             if name in ("opus-latest", "sonnet-latest"):
-                degrade_alias(result, table, served, fetch_pools, pool_for_model,
-                              http_get, resolve_alias, append_ledger)
+                degrade_alias(
+                    result, table, served, fetch_pools, pool_for_model, http_get, resolve_alias, append_ledger
+                )
             print(json.dumps(result, sort_keys=True) if args.json else result["model"])
             return EXIT_OK
         if reason == f"unknown alias {name}":
@@ -1424,8 +1563,6 @@ def apply_overrides(chain: list[dict[str, Any]], overrides: Any, class_name: str
 
 
 class ServedModels:
-
-
     def __init__(self) -> None:
         self._models: list[str] | None = None
 
@@ -1434,9 +1571,7 @@ class ServedModels:
             self._models, _ = served_models()
         return self._models
 
-def reserve_state(
-    table: dict[str, Any], pools: dict[str, dict[str, Any]], class_name: str
-) -> dict[str, Any] | None:
+def reserve_state(table: dict[str, Any], pools: dict[str, dict[str, Any]], class_name: str) -> dict[str, Any] | None:
     policy = table.get("policy")
     reserve = policy.get("reserve") if isinstance(policy, dict) else None
     if not isinstance(reserve, dict):
@@ -1453,10 +1588,10 @@ def reserve_state(
     eligible = pool_doc.get("eligibleAccounts")
     headroom = pool_doc.get("headroomPercent")
     why = None
-    if isinstance(eligible, (int, float)) and not isinstance(eligible, bool) and eligible < min_eligible:
+    if isinstance(eligible, (int, float)) and not isinstance(eligible, bool) and eligible < min_eligible:  # pyrefly: ignore [unsupported-operation]
         noun = "account" if eligible == 1 else "accounts"
         why = f"{eligible:g} eligible {noun} (keep {min_eligible:g})"
-    elif isinstance(headroom, (int, float)) and not isinstance(headroom, bool) and headroom < min_headroom:
+    elif isinstance(headroom, (int, float)) and not isinstance(headroom, bool) and headroom < min_headroom:  # pyrefly: ignore [unsupported-operation]
         why = f"headroom {headroom:g}% (keep {min_headroom:g}%)"
     return {
         "pool": pool,
@@ -1521,8 +1656,6 @@ def class_candidates(
             continue
         min_pace = entry.get("min_pace")
         if isinstance(min_pace, (int, float)) and not isinstance(min_pace, bool):
-
-
             pace = pool_pace(pool_doc, cycle_hours) if pool_doc else None
             if pace is None and pool_doc and pool:
                 pace = accounts_pace(pool)
@@ -1531,7 +1664,6 @@ def class_candidates(
                 continue
             eligible = pool_doc.get("eligibleAccounts")
             if isinstance(eligible, int) and eligible <= LOW_BAND_MAX_ELIGIBLE:
-
                 band = "critical" if eligible <= 1 else "low"
                 skip(seat, alias, f"pool {pool} {band}: {eligible} eligible account(s)")
                 continue
@@ -1542,10 +1674,14 @@ def class_candidates(
 
         codex_pool = pools.get("openai-codex", {})
         codex_eligible = codex_pool.get("eligibleAccounts")
-        if (spec.get("codex_empty_fallback") and vendor == "anthropic"
-                and (pool_exhausted(codex_pool) or (
-                    isinstance(codex_eligible, int) and not isinstance(codex_eligible, bool)
-                    and codex_eligible <= 1))):
+        if (
+            spec.get("codex_empty_fallback")
+            and vendor == "anthropic"
+            and (
+                pool_exhausted(codex_pool)
+                or (isinstance(codex_eligible, int) and not isinstance(codex_eligible, bool) and codex_eligible <= 1)
+            )
+        ):
             band = "exhausted" if pool_exhausted(codex_pool) else f"critical: {codex_eligible} eligible"
             skip(seat, alias, f"Codex stand-in admission: its auditor's pool openai-codex is {band}")
             continue
@@ -1561,12 +1697,14 @@ def class_candidates(
                 audit_alias = audit_entry["model"]
                 audit_models = served.get() if family_alias(table, audit_alias) in aliases else []
                 audit_model, audit_why = resolve_alias(
-                    table, audit_alias, audit_models, str(audit_entry.get("seat") or ""))
+                    table, audit_alias, audit_models, str(audit_entry.get("seat") or "")
+                )
                 if audit_model is None:
                     return None, f"its auditor {audit_entry['model']} is unavailable: {audit_why}"
                 audit_pool = pool_for_model(table, audit_entry["model"])
                 audit_lease_reason = lease_unavailable(
-                    table, {"seat": audit_entry["seat"], "pool": audit_pool}, pools, leases)
+                    table, {"seat": audit_entry["seat"], "pool": audit_pool}, pools, leases
+                )
                 audit_seat = str(audit_entry.get("seat") or "")
                 audit_pool_doc = pools.get(audit_pool, {}) if audit_pool else {}
                 audit_eligible = audit_pool_doc.get("eligibleAccounts")
@@ -1594,8 +1732,9 @@ def class_candidates(
                             not alternate_doc
                             or pool_exhausted(alternate_doc)
                             or critical
-                            or lease_unavailable(table, {"seat": "cursor-seat", "pool": alternate["pool"]},
-                                                 pools, leases)
+                            or lease_unavailable(
+                                table, {"seat": "cursor-seat", "pool": alternate["pool"]}, pools, leases
+                            )
                             or not seat_is_up(seats, "cursor-seat")
                             or alternate["model"] not in cursor_models()
                         ):
@@ -1610,13 +1749,15 @@ def class_candidates(
                     return None, f"its auditor seat {audit_seat} is down per routing-state.json"
                 auditor = {**audit_entry, "alias": audit_entry["model"], "model": audit_model, "reason": audit_why}
                 if alternate is not None:
-                    auditor.update({
-                        "seat": audit_seat,
-                        "via": alternate["vendor"],
-                        "pool": alternate["pool"],
-                        "model": alternate["model"],
-                        "reason": f"{audit_unavailable}; auditor via {alternate['vendor']} pool {alternate['pool']}",
-                    })
+                    auditor.update(
+                        {
+                            "seat": audit_seat,
+                            "via": alternate["vendor"],
+                            "pool": alternate["pool"],
+                            "model": alternate["model"],
+                            "reason": f"{audit_unavailable}; auditor via {alternate['vendor']} pool {alternate['pool']}",
+                        }
+                    )
             return auditor, None
 
         auditor, audit_gap = resolve_auditor()
@@ -1651,8 +1792,10 @@ def class_candidates(
 def ladder_entries(table: dict[str, Any], class_name: str, author: str | None = None) -> list[dict] | None:
     ladders = table.get("ladders", {})
     name = table.get("ladder")
+
     def invalid(message: str) -> Any:
         setup_error("invalid_ladder", message, "--json" in sys.argv)
+
     if not isinstance(ladders, dict):
         invalid("ladders must be an object")
     if name is not None and (not isinstance(name, str) or name not in ladders):
@@ -1669,8 +1812,9 @@ def ladder_entries(table: dict[str, Any], class_name: str, author: str | None = 
             if not isinstance(rungs, dict) or not rungs or not isinstance(authors, dict):
                 invalid("verify ladder requires rungs and by_author_maker")
             for refs in authors.values():
-                if not isinstance(refs, list) or any(not isinstance(ref, str) or not ref.startswith("@")
-                                                    or ref[1:] not in rungs for ref in refs):
+                if not isinstance(refs, list) or any(
+                    not isinstance(ref, str) or not ref.startswith("@") or ref[1:] not in rungs for ref in refs
+                ):
                     invalid("invalid verify rung reference")
             values = list(rungs.values())
         else:
@@ -1678,9 +1822,11 @@ def ladder_entries(table: dict[str, Any], class_name: str, author: str | None = 
                 invalid(f"{task} ladder must be a list")
             values = definition
         for entry in values:
-            if not isinstance(entry, dict) or any(not isinstance(entry.get(key), str)
-                    for key in ("seat", "model", "maker")) or (
-                        task != "verify" and not isinstance(entry.get("id"), str)):
+            if (
+                not isinstance(entry, dict)
+                or any(not isinstance(entry.get(key), str) for key in ("seat", "model", "maker"))
+                or (task != "verify" and not isinstance(entry.get("id"), str))
+            ):
                 invalid(f"malformed rung in {task}")
             if "gate" in entry and not isinstance(entry["gate"], dict):
                 invalid(f"gate in {task} must be an object")
@@ -1727,27 +1873,42 @@ def same_model(wanted: str, *names: str | None) -> bool:
     base = EFFORT_SUFFIX.sub("", wanted)
     return any(name and (wanted == name or base == EFFORT_SUFFIX.sub("", name)) for name in names)
 
-def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: ServedModels,
-                history: list[dict], now: datetime, author: str | None = None,
-                skip_ids: list[str] | None = None, prefer: str | None = None, model: str | None = None,
-                leases: dict | None = None) -> dict:
+def ladder_walk(
+    table: dict,
+    class_name: str,
+    pools: dict,
+    seats: Any,
+    served: ServedModels,
+    history: list[dict],
+    now: datetime,
+    author: str | None = None,
+    skip_ids: list[str] | None = None,
+    prefer: str | None = None,
+    model: str | None = None,
+    leases: dict | None = None,
+) -> dict:
 
     wanted = model
     author = "cognition" if author == "devin" else author
-    entries = apply_overrides(ladder_entries(table, class_name, author) or [],
-                              table.get("overrides"), class_name)
+    entries = apply_overrides(ladder_entries(table, class_name, author) or [], table.get("overrides"), class_name)
     policy = table.get("policy") or {}
     guarded_pools = (policy.get("pace") or {}).get("guarded_pools")
-    pace = {pool: pace_state(pools.get(pool, {}), history, policy, now)
-            for entry in entries if (pool := rung_pool(table, entry, pools))}
+    pace = {
+        pool: pace_state(pools.get(pool, {}), history, policy, now)
+        for entry in entries
+        if (pool := rung_pool(table, entry, pools))
+    }
     for pool in pace:
         if pool_exhausted(pools.get(pool, {})):
             pace[pool]["state"] = "exhausted"
     reserve = reserve_state(table, pools, class_name)
-    ordered = [entry for entry in entries if (
-        entry["id"] != "sonnet-cursor-high" or (reserve and reserve["active"]))
-        and entry.get("promote") == pace.get(
-        rung_pool(table, entry, pools), {}).get("state") and entry.get("promote")]
+    ordered = [
+        entry
+        for entry in entries
+        if (entry["id"] != "sonnet-cursor-high" or (reserve and reserve["active"]))
+        and entry.get("promote") == pace.get(rung_pool(table, entry, pools), {}).get("state")
+        and entry.get("promote")
+    ]
     ordered += [entry for entry in entries if entry not in ordered]
     rows, opened, soft, skipped = [], [], [], []
     intended = None
@@ -1762,15 +1923,19 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
             reason = f"when {entry['when']}: {pool} is {state}"
         if intended is None and reason is None:
             intended = entry["id"]
-        if reason is None and entry["id"] == "sonnet-cursor-high" and not (
-                reserve and reserve["active"]):
+        if reason is None and entry["id"] == "sonnet-cursor-high" and not (reserve and reserve["active"]):
             reason = "review adapter only while Claude is short"
-        if (reason is None and entry.get("reserve_hard") and reserve and reserve["active"]
-                and not reserve["admitted"] and pool == reserve["pool"]):
+        if (
+            reason is None
+            and entry.get("reserve_hard")
+            and reserve
+            and reserve["active"]
+            and not reserve["admitted"]
+            and pool == reserve["pool"]
+        ):
             reason = f"reserved for orchestrators: {reserve['why']}"
         if reason is None and entry.get("stand_in_only"):
-            unavailable = all(row["status"] == "skipped" for row in rows
-                              if not row.get("stand_in_only"))
+            unavailable = all(row["status"] == "skipped" for row in rows if not row.get("stand_in_only"))
             if not unavailable:
                 reason = "stand-in only when the default is unavailable"
         waived = None
@@ -1792,8 +1957,12 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
         if reason is None and not seat_is_up(seats, entry["seat"]):
             record = seats.get(entry["seat"], {}) if isinstance(seats, dict) else {}
             reason = f"seat down: {record.get('error') or 'routing-state.json'}"
-        if (reason is None and class_name == "verify" and entry["maker"] == author
-                and not entry.get("same_vendor_fallback")):
+        if (
+            reason is None
+            and class_name == "verify"
+            and entry["maker"] == author
+            and not entry.get("same_vendor_fallback")
+        ):
             reason = f"same maker {author}"
         audit = None
         audit_gap = None
@@ -1804,30 +1973,50 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
             primary = pools.get("anthropic-general", {})
             eligible = primary.get("eligibleAccounts")
             critical = pool_exhausted(primary) or (
-                isinstance(eligible, int) and not isinstance(eligible, bool) and eligible <= 1)
+                isinstance(eligible, int) and not isinstance(eligible, bool) and eligible <= 1
+            )
             if audit is None and entry["maker"] != "anthropic" and critical:
-
                 legacy = table["classes"].get(class_name, {}).get("audit", {})
-                candidate = {**entry, "vendor": {"xai": "cursor", "cognition": "devin"}.get(
-                    entry["maker"], entry["maker"])}
+                candidate = {
+                    **entry,
+                    "vendor": {"xai": "cursor", "cognition": "devin"}.get(entry["maker"], entry["maker"]),
+                }
                 available, rejected, _ = class_candidates(
-                    table, class_name, {"chain": [candidate], "audit": legacy},
-                    author_vendor=None, pools=pools, seats=seats, served=served, leases=leases)
+                    table,
+                    class_name,
+                    {"chain": [candidate], "audit": legacy},
+                    author_vendor=None,
+                    pools=pools,
+                    seats=seats,
+                    served=served,
+                    leases=leases,
+                )
                 audit = available[0]["auditor"] if available else None
                 if audit is not None:
                     audit.update(rung=None, maker="anthropic" if audit.get("via") else audit.get("vendor"))
                 if audit is None:
-                    audit_gap = (available[0].get("audit_gap") if available else
-                                 rejected[0]["reason"] if rejected else None)
+                    audit_gap = (
+                        available[0].get("audit_gap") if available else rejected[0]["reason"] if rejected else None
+                    )
             if audit is None:
                 gaps = "; ".join(f"{row['rung']}: {row['reason']}" for row in review["skipped"])
                 audit_gap = audit_gap or f"no open reviewer for {entry['maker']}: {gaps}"
-        row = {"rung": entry["id"], "seat": entry["seat"], "model": model,
-               "alias": entry["model"], "effort": entry.get("effort"), "maker": entry["maker"],
-               "vendor": entry["maker"], "stand_in_only": bool(entry.get("stand_in_only")),
-               "pool": pool, "same_vendor": class_name == "verify" and entry["maker"] == author,
-               "audit": audit, "auditor": audit, "audit_gap": audit_gap,
-               "read_only": bool(entry.get("read_only"))}
+        row = {
+            "rung": entry["id"],
+            "seat": entry["seat"],
+            "model": model,
+            "alias": entry["model"],
+            "effort": entry.get("effort"),
+            "maker": entry["maker"],
+            "vendor": entry["maker"],
+            "stand_in_only": bool(entry.get("stand_in_only")),
+            "pool": pool,
+            "same_vendor": class_name == "verify" and entry["maker"] == author,
+            "audit": audit,
+            "auditor": audit,
+            "audit_gap": audit_gap,
+            "read_only": bool(entry.get("read_only")),
+        }
         if pending:
             row["model_pending"] = True
         if waived:
@@ -1839,14 +2028,18 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
             if state == "low" and (guarded_pools is None or pool in guarded_pools):
                 facts = pace[pool]
                 empties, reset = facts.get("empties_in_h"), facts.get("hours_left")
-                reasons.append(f"running low: empties in {empties:.3g} h, resets in {reset:.3g} h"
-                               if empties is not None and reset is not None else "running low: pace below policy")
+                reasons.append(
+                    f"running low: empties in {empties:.3g} h, resets in {reset:.3g} h"
+                    if empties is not None and reset is not None
+                    else "running low: pace below policy"
+                )
             if reserve and reserve["active"] and not reserve["admitted"] and pool == reserve["pool"]:
                 reasons.append(f"reserved for orchestrators: {reserve['why']}")
             if entry.get("same_vendor_fallback"):
                 reasons.append(f"same maker {entry['maker']}")
-            row.update(status="soft" if reasons else "open",
-                       reason="; ".join(reasons) if reasons else "first open rung")
+            row.update(
+                status="soft" if reasons else "open", reason="; ".join(reasons) if reasons else "first open rung"
+            )
             (soft if reasons else opened).append(row)
         rows.append(row)
         if row["status"] != "open":
@@ -1855,33 +2048,45 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
     if chosen is not None and not opened:
         chosen = {**chosen, "reason": chosen["reason"] + "; no other rung open"}
 
-
-    default = chosen if prefer is None else ladder_walk(
-        table, class_name, pools, seats, served, history, now, author, skip_ids, leases=leases)["chosen"]
+    default = (
+        chosen
+        if prefer is None
+        else ladder_walk(table, class_name, pools, seats, served, history, now, author, skip_ids, leases=leases)[
+            "chosen"
+        ]
+    )
     refused = None
     if prefer is not None:
         preferred = [row for row in opened + soft if prefer in (row["rung"], row["seat"])]
         if wanted is not None and preferred:
             runs = sorted({row["alias"] for row in preferred})
-            preferred = ([row for row in preferred if same_model(wanted, row["model"], row["alias"])]
-                         or [row for row in preferred if row.get("model_pending")])
+            preferred = [row for row in preferred if same_model(wanted, row["model"], row["alias"])] or [
+                row for row in preferred if row.get("model_pending")
+            ]
             if not preferred:
-                refused = (f"no open {prefer} rung on the {class_name} ladder runs {wanted}; "
-                           f"it runs {', '.join(runs)}")
+                refused = f"no open {prefer} rung on the {class_name} ladder runs {wanted}; it runs {', '.join(runs)}"
         chosen = next(iter(preferred), None)
         if chosen is not None and chosen["same_vendor"] and default is not None and not default["same_vendor"]:
-
             refused = f"same maker {author} while {default['rung']} can review"
             chosen = None
         if chosen is not None:
-            chosen = {**chosen, "reason": f"preferred by caller over {default['rung'] if default else 'none'}"
-                      + (f"; {chosen['reason']}" if chosen["status"] == "soft" else "")
-                      + (f"; waived {chosen['waived']}" if chosen.get("waived") else "")}
-    return {"chosen": chosen, "default": default["rung"] if default else None, "refused": refused,
-            "rungs": rows, "routable": opened + soft,
-            "fallbacks": [row for row in opened + soft if chosen is None or row["rung"] != chosen["rung"]],
-            "skipped": skipped,
-            "intended": intended, "pace": pace}
+            chosen = {
+                **chosen,
+                "reason": f"preferred by caller over {default['rung'] if default else 'none'}"
+                + (f"; {chosen['reason']}" if chosen["status"] == "soft" else "")
+                + (f"; waived {chosen['waived']}" if chosen.get("waived") else ""),
+            }
+    return {
+        "chosen": chosen,
+        "default": default["rung"] if default else None,
+        "refused": refused,
+        "rungs": rows,
+        "routable": opened + soft,
+        "fallbacks": [row for row in opened + soft if chosen is None or row["rung"] != chosen["rung"]],
+        "skipped": skipped,
+        "intended": intended,
+        "pace": pace,
+    }
 
 def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
     if args.task_class == "verify" and not args.author_vendor:
@@ -1898,16 +2103,28 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
         document = state["pools"]
     pools = pools_by_id(document)
     leases = pick_leases()
-    walk = ladder_walk(table, args.task_class, pools, None if stale else state.get("seats"),
-                       ServedModels(), history, now, args.author_vendor, args.skip, args.prefer, leases=leases)
+    walk = ladder_walk(
+        table,
+        args.task_class,
+        pools,
+        None if stale else state.get("seats"),
+        ServedModels(),
+        history,
+        now,
+        args.author_vendor,
+        args.skip,
+        args.prefer,
+        leases=leases,
+    )
     walk["lease_availability"] = "known" if leases is not None else "unknown"
     chosen = walk.pop("chosen")
     refused = walk.pop("refused")
     rungs = walk.pop("rungs")
     walk.pop("routable")
     if args.prefer and not any(args.prefer in (row["rung"], row["seat"]) for row in rungs):
-        setup_error("unknown_rung", f"--prefer {args.prefer!r} is not a rung or seat on the {args.task_class} ladder",
-                    args.json)
+        setup_error(
+            "unknown_rung", f"--prefer {args.prefer!r} is not a rung or seat on the {args.task_class} ladder", args.json
+        )
     if chosen is None:
         message = f"nothing routable for class {args.task_class!r}"
         if args.prefer:
@@ -1921,25 +2138,35 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
                 print(f"  skipped {entry['rung']}: {entry['reason']}", file=sys.stderr)
         return EXIT_UNROUTABLE
     chosen.pop("status")
-    result = {"class": args.task_class, "ladder": table["ladder"],
-              "state_age_s": None if age is None else round(age, 1),
-              "reserve": reserve_state(table, pools, args.task_class), **chosen, **walk}
+    result = {
+        "class": args.task_class,
+        "ladder": table["ladder"],
+        "state_age_s": None if age is None else round(age, 1),
+        "reserve": reserve_state(table, pools, args.task_class),
+        **chosen,
+        **walk,
+    }
     fields = ("session_id", "lane", "intended", "running", "since", "expected_return")
     result["standing_in"] = [{key: record.get(key) for key in fields} for record in fetch_stand_ins()["active"]]
     if error:
-        result["reason"] += f"; pool status unknown ({error})"
+        result["reason"] += f"; pool status unknown ({error})"  # pyrefly: ignore [unsupported-operation]
     record_caller_choice(args, result)
     if args.json:
         print(json.dumps(result))
     else:
-        for pool, facts in result["pace"].items():
+        for pool, facts in result["pace"].items():  # pyrefly: ignore [missing-attribute]
             label = pool.replace("-general", "").replace("-codex", "")
             label = "cursor" if pool in ("cursor-models", "cursor-other") else label
-            words = {"low": "running low", "rich": "running rich", "on_pace": "on pace",
-                     "exhausted": "empty", "unknown": "unknown"}[facts["state"]]
+            words = {
+                "low": "running low",
+                "rich": "running rich",
+                "on_pace": "on pace",
+                "exhausted": "empty",
+                "unknown": "unknown",
+            }[facts["state"]]
             detail = f"remaining {percent(facts['remaining'])}"
             print(f"{label:<12}{words:<14}{detail}")
-        for entry in result["skipped"]:
+        for entry in result["skipped"]:  # pyrefly: ignore [not-iterable]
             print(f"  skipped {entry['rung']}: {entry['reason']}")
         auditor = result.get("audit")
         if auditor and auditor.get("via"):
@@ -1959,28 +2186,54 @@ def record_caller_choice(args: argparse.Namespace, result: dict) -> None:
         result["effort"] = effort
         result["reason"] = f"{result.get('reason')}; effort {effort} by caller"
     result["caller_choice"] = {"prefer": prefer, "effort": effort, "why": args.reason}
-    append_ledger({"event": "route_override", "class": args.task_class, "prefer": prefer, "effort": effort,
-                   "why": args.reason, "rung": result.get("rung"), "seat": result.get("seat"),
-                   "model": result.get("model"), "default": result.get("default"),
-                   "effort_default": result.get("effort_default")})
+    append_ledger(
+        {
+            "event": "route_override",
+            "class": args.task_class,
+            "prefer": prefer,
+            "effort": effort,
+            "why": args.reason,
+            "rung": result.get("rung"),
+            "seat": result.get("seat"),
+            "model": result.get("model"),
+            "default": result.get("default"),
+            "effort_default": result.get("effort_default"),
+        }
+    )
 
 def reservation_capacity(row: dict, pools: dict, policy: dict) -> tuple[str, int]:
     pool = row.get("pool")
     facts = pools.get(pool, {})
     provider = facts.get("provider")
-    key = provider if isinstance(provider, str) and provider.strip() else (
-        pool.split("-", 1)[0] if pool else f"seat:{row['seat']}")
-    eligible = next((facts[field] for field in ("eligibleAccounts", "usableAccounts")
-                     if isinstance(facts.get(field), int) and not isinstance(facts[field], bool)), 1)
+    key = (
+        provider
+        if isinstance(provider, str) and provider.strip()
+        else (pool.split("-", 1)[0] if pool else f"seat:{row['seat']}")
+    )
+    eligible = next(
+        (
+            facts[field]
+            for field in ("eligibleAccounts", "usableAccounts")
+            if isinstance(facts.get(field), int) and not isinstance(facts[field], bool)
+        ),
+        1,
+    )
     multiplier = (policy.get("per_account") or {}).get(key, policy.get("default", 2))
     return key, max(0, eligible) * multiplier
 
 def pick_leases() -> dict | None:
     code, snapshot = reservation_request("GET", "", timeout=3.0, fixture=True)
     rows = snapshot.get("live")
-    if (code == EXIT_OK and isinstance(rows, list) and all(
-            isinstance(row, dict) and isinstance(row.get("capacity_key"), str)
-            and isinstance(row.get("expires_at"), str) for row in rows)):
+    if (
+        code == EXIT_OK
+        and isinstance(rows, list)
+        and all(
+            isinstance(row, dict)
+            and isinstance(row.get("capacity_key"), str)
+            and isinstance(row.get("expires_at"), str)
+            for row in rows
+        )
+    ):
         return snapshot
     print("route: reservation availability unknown; reserve remains the admission gate", file=sys.stderr)
     return None
@@ -1991,29 +2244,38 @@ def lease_unavailable(table: dict, row: dict, pools: dict, leases: dict | None) 
     policy = (table.get("policy") or {}).get("concurrency") or {}
     key, capacity = reservation_capacity(row, pools, policy)
     stamp = now_iso()
-    live = sum(1 for held in leases["live"] if held.get("capacity_key") == key
-               and held.get("expires_at", "") > stamp)
+    live = sum(1 for held in leases["live"] if held.get("capacity_key") == key and held.get("expires_at", "") > stamp)
     if live < capacity:
         return None
     reason = f"lease capacity reserved: {key} ({live}/{capacity}); all candidate capacity is reserved"
-    append_ledger({"event": "route_pick_lease_skip", "seat": row["seat"], "capacity_key": key,
-                   "live": live, "capacity": capacity, "reason": reason})
+    append_ledger(
+        {
+            "event": "route_pick_lease_skip",
+            "seat": row["seat"],
+            "capacity_key": key,
+            "live": live,
+            "capacity": capacity,
+            "reason": reason,
+        }
+    )
     return reason
 
-def reservation_request(method: str, path: str, payload: dict | None = None,
-                         timeout: float = READ_TIMEOUT_SECONDS, *, fixture: bool = False) -> tuple[int, dict]:
+def reservation_request(
+    method: str, path: str, payload: dict | None = None, timeout: float = READ_TIMEOUT_SECONDS, *, fixture: bool = False
+) -> tuple[int, dict]:
     response = request(method, "/api/pools/reservations" + path, payload=payload, timeout=timeout, fixture=fixture)
     if response.ok and isinstance(response.body, dict):
         return EXIT_OK, response.body
     if response.status in (404, 410) and path:
         return EXIT_UNROUTABLE, {**(response.body if isinstance(response.body, dict) else {}), "status": "gone"}
-    return EXIT_DEGRADED, {"status": "error", "error": "reservations_unavailable",
-                           "message": response.error or "invalid reservation response"}
+    return EXIT_DEGRADED, {
+        "status": "error",
+        "error": "reservations_unavailable",
+        "message": response.error or "invalid reservation response",
+    }
 
 
 class ReserveStopped(Exception):
-
-
     def __init__(self, signum: int) -> None:
         super().__init__(signum)
         self.signum = signum
@@ -2044,8 +2306,12 @@ def release_job_hold(job: str, until: float) -> str | None:
                 left = until - time.monotonic()
                 if left < 0.2:
                     return why
-                _code, body = reservation_request("POST", f"/{row['reservation_id']}/release",
-                                                   {"outcome": "cancelled"}, timeout=min(READ_TIMEOUT_SECONDS, left))
+                _code, body = reservation_request(
+                    "POST",
+                    f"/{row['reservation_id']}/release",
+                    {"outcome": "cancelled"},
+                    timeout=min(READ_TIMEOUT_SECONDS, left),
+                )
                 why = f"releasing {row['reservation_id']} failed: {body.get('message') or body.get('status')}"
         time.sleep(max(0.0, min(0.5, until - time.monotonic() - 0.2)))
 
@@ -2070,23 +2336,28 @@ def command_reserve(args: argparse.Namespace) -> int:
         reason = f"cancelled by signal {signal.Signals(stop.signum).name}"
         status = "cancelled"
         if UNDRAINED:
-
-
             reason = f"{reason}; {'; '.join(UNDRAINED)}, released anyway"
             print(f"route: {'; '.join(UNDRAINED)}; releasing the hold anyway", file=sys.stderr)
         left = release_job_hold(args.job, until=stop.at + STOP_BUDGET_SECONDS)
         if left is not None:
             status, reason = "error", f"{reason}; the hold may still be live until its TTL: {left}"
-        append_ledger({"event": "route_reserve", "class": args.task_class, "job": args.job,
-                       "status": status, "reason": reason})
+        append_ledger(
+            {"event": "route_reserve", "class": args.task_class, "job": args.job, "status": status, "reason": reason}
+        )
         print(json.dumps({"status": status, "reason": reason}))
         return 128 + stop.signum
     finally:
         for each, handler in previous.items():
             signal.signal(each, handler)
     record_caller_choice(args, result)
-    append_ledger({"event": "route_reserve", "class": args.task_class, "job": args.job,
-                   **{key: result.get(key) for key in ("status", "rung", "seat", "reservation_id", "reason")}})
+    append_ledger(
+        {
+            "event": "route_reserve",
+            "class": args.task_class,
+            "job": args.job,
+            **{key: result.get(key) for key in ("status", "rung", "seat", "reservation_id", "reason")},
+        }
+    )
     print(json.dumps(result))
     return code
 
@@ -2106,8 +2377,11 @@ def settle_pending(table: dict, row: dict, wanted: str | None) -> tuple[dict | N
         if isinstance(audit, dict) and audit.get("model_pending"):
             model, why = rung_model(table, {"model": audit["alias"], "seat": audit["seat"]}, ServedModels())
             if not model:
-                resolved.update(audit=None, auditor=None,
-                                audit_gap=f"{row['rung']}'s reviewer {audit['rung']} unresolvable once held: {why}")
+                resolved.update(
+                    audit=None,
+                    auditor=None,
+                    audit_gap=f"{row['rung']}'s reviewer {audit['rung']} unresolvable once held: {why}",
+                )
             else:
                 resolved["audit"] = {**{k: v for k, v in audit.items() if k != "model_pending"}, "model": model}
                 resolved["auditor"] = resolved["audit"]
@@ -2134,77 +2408,125 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
     pools = pools_by_id(document)
     policy = (table.get("policy") or {}).get("concurrency") or {}
 
-
     defer_discovery()
     skip = list(args.skip)
     released: str | None = None
     while True:
-        walk = ladder_walk(table, args.task_class, pools, None if stale else state.get("seats"),
-                           ServedModels(), history, now, args.author_vendor, skip, args.prefer, args.model)
+        walk = ladder_walk(
+            table,
+            args.task_class,
+            pools,
+            None if stale else state.get("seats"),
+            ServedModels(),
+            history,
+            now,
+            args.author_vendor,
+            skip,
+            args.prefer,
+            args.model,
+        )
         if args.prefer and not any(args.prefer in (row["rung"], row["seat"]) for row in walk["rungs"]):
-            setup_error("unknown_rung",
-                        f"--prefer {args.prefer!r} is not a rung or seat on the {args.task_class} ladder", args.json)
+            setup_error(
+                "unknown_rung",
+                f"--prefer {args.prefer!r} is not a rung or seat on the {args.task_class} ladder",
+                args.json,
+            )
         chosen = walk["chosen"]
         if chosen is None:
-            reason = released or walk["refused"] or (next(row.get("reason") for row in walk["rungs"]
-                      if args.prefer in (row["rung"], row["seat"])) if args.prefer else
-                      f"nothing routable for class {args.task_class!r}")
+            reason = (
+                released
+                or walk["refused"]
+                or (
+                    next(row.get("reason") for row in walk["rungs"] if args.prefer in (row["rung"], row["seat"]))
+                    if args.prefer
+                    else f"nothing routable for class {args.task_class!r}"
+                )
+            )
             return EXIT_UNROUTABLE, {"status": "refused", "reason": reason}
         rows = [chosen] if args.prefer else walk["routable"]
         candidates = []
         for row in rows:
             key, capacity = reservation_capacity(row, pools, policy)
-            candidates.append({**{field: row.get(field) for field in ("rung", "seat", "model", "pool")},
-                               "capacity_key": key, "capacity": capacity})
-        code, result = route_heal.reserve_candidates(reservation_request, {"job": args.job, "class": args.task_class,
-            "host": os.environ.get("ROUTE_HOST") or socket.gethostname(),
-            "ttl_s": args.ttl if args.ttl is not None else policy.get("ttl_s", 120),
-            "pinned": bool(args.prefer), "candidates": candidates})
+            candidates.append(
+                {
+                    **{field: row.get(field) for field in ("rung", "seat", "model", "pool")},
+                    "capacity_key": key,
+                    "capacity": capacity,
+                }
+            )
+        code, result = route_heal.reserve_candidates(
+            reservation_request,
+            {
+                "job": args.job,
+                "class": args.task_class,
+                "host": os.environ.get("ROUTE_HOST") or socket.gethostname(),
+                "ttl_s": args.ttl if args.ttl is not None else policy.get("ttl_s", 120),
+                "pinned": bool(args.prefer),
+                "candidates": candidates,
+            },
+        )
         if code == EXIT_OK and result.get("status") == "wait":
             code = 75
         if code != EXIT_OK or result.get("status") != "reserved":
             return code, result
         row = next((row for row in walk["rungs"] if row["rung"] == result.get("rung")), chosen)
-        result.update(alias=row.get("alias"), effort=row.get("effort"), audit=row.get("audit"),
-                      reason=row.get("reason"), heartbeat_s=policy.get("heartbeat_s", 30))
+        result.update(
+            alias=row.get("alias"),
+            effort=row.get("effort"),
+            audit=row.get("audit"),
+            reason=row.get("reason"),
+            heartbeat_s=policy.get("heartbeat_s", 30),
+        )
         audit = row.get("audit")
         if not row.get("model_pending") and not (isinstance(audit, dict) and audit.get("model_pending")):
             return code, result
         resolved, released = settle_pending(table, row, args.model)
         lost = False
         if resolved is not None:
-
-
-            beat, body = reservation_request("POST", f"/{result['reservation_id']}/heartbeat",
-                                              {"model": resolved.get("model", result.get("model"))})
+            beat, body = reservation_request(
+                "POST", f"/{result['reservation_id']}/heartbeat", {"model": resolved.get("model", result.get("model"))}
+            )
             if beat == EXIT_OK and body.get("status") == "reserved":
                 result.update(resolved)
                 result["expires_at"] = body.get("expires_at", result.get("expires_at"))
                 return code, result
             lost = beat == EXIT_UNROUTABLE
 
-
-            released = (f"{row['rung']} hold was lost while its models were listed" if lost else
-                        f"{row['rung']} hold could not be renewed after its models were listed: "
-                        f"{body.get('message') or body.get('status')}")
+            released = (
+                f"{row['rung']} hold was lost while its models were listed"
+                if lost
+                else f"{row['rung']} hold could not be renewed after its models were listed: "
+                f"{body.get('message') or body.get('status')}"
+            )
         if not lost:
-
-
             for _attempt in range(2):
-                _freed, body = reservation_request("POST", f"/{result['reservation_id']}/release",
-                                                    {"outcome": "failed"})
+                _freed, body = reservation_request(
+                    "POST", f"/{result['reservation_id']}/release", {"outcome": "failed"}
+                )
                 if body.get("status") in ("released", "gone"):
                     break
             else:
-                return EXIT_DEGRADED, {"status": "error", "reason": f"{released}; and releasing "
-                                       f"{result['reservation_id']} failed: {body.get('reason') or body.get('status')}"}
-        append_ledger({"event": "route_reserve_released", "class": args.task_class, "job": args.job,
-                       "rung": row["rung"], "reservation_id": result["reservation_id"], "reason": released})
+                return EXIT_DEGRADED, {
+                    "status": "error",
+                    "reason": f"{released}; and releasing "
+                    f"{result['reservation_id']} failed: {body.get('reason') or body.get('status')}",  # pyrefly: ignore [unbound-name]
+                }
+        append_ledger(
+            {
+                "event": "route_reserve_released",
+                "class": args.task_class,
+                "job": args.job,
+                "rung": row["rung"],
+                "reservation_id": result["reservation_id"],
+                "reason": released,
+            }
+        )
         skip.append(row["rung"])
 
 def command_heartbeat(args: argparse.Namespace) -> int:
-    code, result = reservation_request("POST", f"/{args.reservation_id}/heartbeat",
-                                        {"ttl_s": args.ttl} if args.ttl is not None else {})
+    code, result = reservation_request(
+        "POST", f"/{args.reservation_id}/heartbeat", {"ttl_s": args.ttl} if args.ttl is not None else {}
+    )
     print(json.dumps(result))
     return code
 
@@ -2223,15 +2545,16 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
     for key in ("prefer", "effort", "reason"):
         setattr(args, key, getattr(args, key, None))
     if (args.prefer or args.effort) and not args.reason:
-        setup_error("missing_reason", "--prefer and --effort need --reason <why>; it goes to the routing ledger",
-                    args.json)
+        setup_error(
+            "missing_reason", "--prefer and --effort need --reason <why>; it goes to the routing ledger", args.json
+        )
     classes = table.get("classes")
     if not isinstance(classes, dict) or args.task_class not in classes:
         known = ", ".join(sorted(classes)) if isinstance(classes, dict) else "none"
         fail(f"unknown class {args.task_class!r}; known classes: {known}")
     if ladder_entries(table, args.task_class) is not None:
         return command_ladder_pick(args, table)
-    spec = classes[args.task_class]
+    spec = classes[args.task_class]  # pyrefly: ignore [unsupported-operation]
     if not isinstance(spec, dict):
         fail(f"class {args.task_class!r} is malformed")
 
@@ -2337,14 +2660,22 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
         "reason": "; ".join(reasons),
         "fallbacks": [
             {"seat": entry["seat"], "model": entry["model"], "pool": entry["pool"]}
-            for entry in routable if entry is not chosen
+            for entry in routable
+            if entry is not chosen
         ],
     }
     if args.prefer or args.effort:
         result["default"] = routable[0]["seat"]
-        result["effort"] = next((entry.get("effort") for entry in chain if isinstance(entry, dict)
-                                 and entry.get("seat") == chosen["seat"] and entry.get("model") == chosen["alias"]),
-                                None)
+        result["effort"] = next(
+            (
+                entry.get("effort")
+                for entry in chain
+                if isinstance(entry, dict)
+                and entry.get("seat") == chosen["seat"]
+                and entry.get("model") == chosen["alias"]
+            ),
+            None,
+        )
     record_caller_choice(args, result)
     print_pick(result, as_json=args.json)
     return EXIT_OK
@@ -2406,20 +2737,25 @@ def build_menu(class_names: list[str] | None = None) -> dict[str, Any]:
         spec = classes.get(class_name)
         if not isinstance(spec, dict):
             fail(f"unknown class {class_name!r}; known classes: {', '.join(sorted(classes))}")
-        if spec.get("driver"):
+        if spec.get("driver"):  # pyrefly: ignore [missing-attribute]
             menu_classes[class_name] = {"driver": True, "crossVendor": False, "seats": [], "excluded": []}
             continue
         if ladder_entries(table, class_name) is not None:
             walk = ladder_walk(table, class_name, pools, seats, served, history, now)
             used_pools.update(walk["pace"])
-            menu_classes[class_name] = {"driver": False, "crossVendor": class_name == "verify",
-                                        "rungs": walk["rungs"],
-                                        "seats": [{"id": f"{row['seat']}.{row['model']}", **row}
-                                                  for row in walk["routable"]],
-                                        "excluded": [{key: row.get(key)
-                                                      for key in ("seat", "model", "alias", "rung", "reason")}
-                                                     for row in walk["rungs"] if row["status"] != "open"],
-                                        "paced": [], "ladder": table["ladder"]}
+            menu_classes[class_name] = {
+                "driver": False,
+                "crossVendor": class_name == "verify",
+                "rungs": walk["rungs"],
+                "seats": [{"id": f"{row['seat']}.{row['model']}", **row} for row in walk["routable"]],
+                "excluded": [
+                    {key: row.get(key) for key in ("seat", "model", "alias", "rung", "reason")}
+                    for row in walk["rungs"]
+                    if row["status"] != "open"
+                ],
+                "paced": [],
+                "ladder": table["ladder"],
+            }
             continue
         routable, skipped, paced = class_candidates(
             table, class_name, spec, author_vendor=None, pools=pools, seats=seats, served=served
@@ -2431,7 +2767,7 @@ def build_menu(class_names: list[str] | None = None) -> dict[str, Any]:
                 used_pools.add(entry["pool"])
         menu_classes[class_name] = {
             "driver": False,
-            "crossVendor": bool(spec.get("cross_vendor")),
+            "crossVendor": bool(spec.get("cross_vendor")),  # pyrefly: ignore [missing-attribute]
             "seats": entries,
             "excluded": skipped,
             "paced": paced,
@@ -2461,9 +2797,12 @@ def command_menu(args: argparse.Namespace) -> int:
         print(f"menu at {menu['generatedAt']} (pools: {menu['poolsSource'] or menu['poolsError']})")
         for pool_id, pool in menu["pools"].items():
             if pool.get("refills"):
-                print(f"{pool_id} refills: " + ", ".join(
-                    f"{parse_ts(row['at']):%m-%d %H:%MZ} +{row['accounts']} accounts"
-                    for row in pool["refills"]))
+                print(
+                    f"{pool_id} refills: "
+                    + ", ".join(
+                        f"{parse_ts(row['at']):%m-%d %H:%MZ} +{row['accounts']} accounts" for row in pool["refills"]
+                    )
+                )
         for class_name, entry in menu["classes"].items():
             if entry["driver"]:
                 print(f"{class_name:<11} driver session")
@@ -2523,9 +2862,11 @@ def chain_effort(table: dict[str, Any], class_name: str, seat: str) -> str | Non
     return None
 
 def finish_text() -> str:
-    for path in (Path(__file__).resolve().parent.parent / "config/coding-agents/FINISH.md",
-                 Path.home() / ".agents/policy/coding-agents/FINISH.md",
-                 Path.home() / ".agent-lb/managed/coding-agents/FINISH.md"):
+    for path in (
+        Path(__file__).resolve().parent.parent / "config/coding-agents/FINISH.md",
+        Path.home() / ".agents/policy/coding-agents/FINISH.md",
+        Path.home() / ".agent-lb/managed/coding-agents/FINISH.md",
+    ):
         try:
             return path.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
@@ -2578,8 +2919,9 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
     return out
 
 def pick_json(table: dict[str, Any], class_name: str, author_vendor: str | None) -> dict[str, Any]:
-    args = argparse.Namespace(task_class=class_name, author_vendor=author_vendor, skip=[], json=True,
-                              prefer=None, effort=None, reason=None)
+    args = argparse.Namespace(
+        task_class=class_name, author_vendor=author_vendor, skip=[], json=True, prefer=None, effort=None, reason=None
+    )
     buffer, errors = io.StringIO(), io.StringIO()
     code = EXIT_OK
     try:
@@ -2617,46 +2959,67 @@ def workflow_pick(table: dict[str, Any], class_name: str, author_vendor: str | N
 def workflow_quota():
     import tomllib
 
-    path = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'open-factory/quota.toml'
+    path = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "open-factory/quota.toml"
     try:
-        mode = tomllib.loads(path.read_text()).get('mode', 'tight')
+        mode = tomllib.loads(path.read_text()).get("mode", "tight")
     except FileNotFoundError:
-        mode = 'tight'
-    if mode not in ('tight', 'normal'):
-        raise ValueError('invalid factory quota mode')
-    return {'mode': mode,
-            'default_model': 'sol-latest', 'opus_stages': list(WORKFLOW_OPUS_STAGES), 'opus_effort': 'medium',
-            'excluded_work': ['status', 'wake', 'polling', 'single-file'],
-            'maintenance_model': 'sol-latest', 'auto_tighten_used_percent': 70}
+        mode = "tight"
+    if mode not in ("tight", "normal"):
+        raise ValueError("invalid factory quota mode")
+    return {
+        "mode": mode,
+        "default_model": "sol-latest",
+        "opus_stages": list(WORKFLOW_OPUS_STAGES),
+        "opus_effort": "medium",
+        "excluded_work": ["status", "wake", "polling", "single-file"],
+        "maintenance_model": "sol-latest",
+        "auto_tighten_used_percent": 70,
+    }
 
 def workflow_table(table):
-    for name, spec in table['classes'].items():
-        if name == 'verify' or name in WORKFLOW_OPUS_STAGES or spec.get('driver'):
+    for name, spec in table["classes"].items():
+        if name == "verify" or name in WORKFLOW_OPUS_STAGES or spec.get("driver"):
             continue
-        entries = ladder_entries(table, name) or spec.get('chain', [])
-        sol = [dict(entry) for entry in entries if str(entry.get('model', '')).startswith('sol-latest')]
+        entries = ladder_entries(table, name) or spec.get("chain", [])
+        sol = [dict(entry) for entry in entries if str(entry.get("model", "")).startswith("sol-latest")]
         if not sol:
-            seat = 'gpt-explorer' if name == 'explore' else 'sol-consult' if name == 'plan' else 'gpt-implementer'
-            sol = [{'seat': seat, 'model': 'sol-latest', 'pool': 'openai-codex',
-                    'effort': 'high' if name == 'plan' else 'medium'}]
-        spec['chain'] = sol
-        if table.get('ladder'):
-            table['ladders'][table['ladder']][name] = [
-                dict(entry, id=entry.get('id', 'sol-default'), maker='openai') for entry in sol]
+            seat = "gpt-explorer" if name == "explore" else "sol-consult" if name == "plan" else "gpt-implementer"
+            sol = [
+                {
+                    "seat": seat,
+                    "model": "sol-latest",
+                    "pool": "openai-codex",
+                    "effort": "high" if name == "plan" else "medium",
+                }
+            ]
+        spec["chain"] = sol
+        if table.get("ladder"):
+            table["ladders"][table["ladder"]][name] = [
+                dict(entry, id=entry.get("id", "sol-default"), maker="openai") for entry in sol
+            ]
     return table
 
 def workflow_opus_stage(table: dict[str, Any], stage: str) -> dict[str, Any]:
     standard = (table.get("standards") or {}).get(stage)
     seat = standard.get("seat") if isinstance(standard, dict) and standard.get("seat") else "general-purpose"
     model, _ = resolve_alias(table, "opus-latest", [], seat)
-    entry = {"seat": seat, "model": model or pinned_model(table, "opus-latest"), "alias": "opus-latest",
-             "vendor": "anthropic", "pool": "anthropic-general", "effort": "medium"}
+    entry = {
+        "seat": seat,
+        "model": model or pinned_model(table, "opus-latest"),
+        "alias": "opus-latest",
+        "vendor": "anthropic",
+        "pool": "anthropic-general",
+        "effort": "medium",
+    }
     return workflow_seat(table, stage, entry)
 
 def workflow_stage_effort(table: dict[str, Any]) -> dict[str, Any]:
     standards = table.get("standards") if isinstance(table.get("standards"), dict) else {}
-    efforts = {name: spec["effort"] for name, spec in standards.items()
-               if isinstance(spec, dict) and spec.get("effort") in EFFORTS}
+    efforts = {
+        name: spec["effort"]
+        for name, spec in standards.items()
+        if isinstance(spec, dict) and spec.get("effort") in EFFORTS
+    }
     if "verify" in efforts:
         efforts["facts"] = efforts["verify"]
     bands = ((table.get("policy") or {}).get("stage_effort") or {}).get("bands") or {}
@@ -2670,8 +3033,13 @@ def workflow_relay_seat(table: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("no relay standard")
     alias = standard.get("wrapper_model") or standard.get("model")
     model = pinned_model(table, alias) or alias
-    entry = {"seat": standard["seat"], "model": model, "alias": alias, "effort": standard.get("effort") or "low",
-             "vendor": alias_vendor(table, alias) or "anthropic"}
+    entry = {
+        "seat": standard["seat"],
+        "model": model,
+        "alias": alias,
+        "effort": standard.get("effort") or "low",
+        "vendor": alias_vendor(table, alias) or "anthropic",
+    }
     return workflow_seat(table, "relay", entry)
 
 def command_workflow_args(args: argparse.Namespace) -> int:
@@ -2844,14 +3212,16 @@ def arm_block(ctx: DispatchContext, arm: dict[str, Any]) -> str | None:
 
 def arm_cap_block(ctx: DispatchContext, arm: dict[str, Any], today: list[dict[str, Any]]) -> str | None:
     explore = ctx.table.get("explore") or {}
-    arm_jobs = {row.get("job_id") for row in today
-                if row.get("class") == ctx.class_name and row.get("arm_id") == arm.get("id")}
+    arm_jobs = {
+        row.get("job_id") for row in today if row.get("class") == ctx.class_name and row.get("arm_id") == arm.get("id")
+    }
     cap = explore.get("daily_cap_per_arm")
     if isinstance(cap, int) and len(arm_jobs) >= cap:
         return f"daily cap {cap} jobs reached"
     if alias_vendor(ctx.table, arm.get("model")) == "anthropic":
-        claude_jobs = {row.get("job_id") for row in today
-                       if alias_vendor(ctx.table, row.get("model_alias")) == "anthropic"}
+        claude_jobs = {
+            row.get("job_id") for row in today if alias_vendor(ctx.table, row.get("model_alias")) == "anthropic"
+        }
         claude_cap = explore.get("claude_daily_cap_jobs")
         if isinstance(claude_cap, int) and len(claude_jobs) >= claude_cap:
             return f"Claude explore cap {claude_cap} jobs reached"
@@ -2880,15 +3250,20 @@ def command_dispatch(args: argparse.Namespace) -> int:
     if args.pools_file and not args.dry_run:
         setup_error("pools_file", "--pools-file needs --dry-run", args.json)
     pools_doc = json.loads(Path(args.pools_file).read_text()) if args.pools_file else fetch_pools()[0]
-    mode_state = ({"mode": pools_doc.get("quotaMode", "anthropic")} if args.pools_file
-                  else quota_swap_state(table, fetch_pools, api_request_logs, append_ledger))
+    mode_state = (
+        {"mode": pools_doc.get("quotaMode", "anthropic")}
+        if args.pools_file
+        else quota_swap_state(table, fetch_pools, api_request_logs, append_ledger)
+    )
     explicit = any(value is not None for value in (args.seat, args.model, args.effort))
     if not explicit:
         standard = authority_fallback(standard, mode_state) or standard
     if not prior and not explicit:
         standard = swapped_standard(table, class_name, standard, mode_state)
     ctx = DispatchContext(table, class_name, args.author_vendor)
-    choice, eligible, sticky = route_heal.select(sys.modules[__name__], args, table, standard, ctx, prior, history, mode_state, pools_doc, job_id)
+    choice, eligible, sticky = route_heal.select(
+        sys.modules[__name__], args, table, standard, ctx, prior, history, mode_state, pools_doc, job_id
+    )
     if choice is None:
         return dispatch_wait("all dispatch seats excluded or unavailable", class_name, job_id, args.json)
     seat, model_alias = choice["seat"], choice["model_alias"]
@@ -2944,13 +3319,14 @@ def command_dispatch(args: argparse.Namespace) -> int:
         print(f"{class_name} -> {seat} {model or model_alias} {effort or ''} ({row['arm']}:{row['arm_id']})".rstrip())
     return EXIT_OK
 
-def snapshot_resolved_models(table: dict[str, Any], standards: dict[str, Any],
-                             seats: dict[str, dict[str, Any]], background: Any) -> dict[str, str]:
+def snapshot_resolved_models(
+    table: dict[str, Any], standards: dict[str, Any], seats: dict[str, dict[str, Any]], background: Any
+) -> dict[str, str]:
     wanted = {"opus-latest", "sonnet-latest", "haiku-latest", "sol-latest"}
-    wanted.update(spec.get("model") for spec in seats.values())
+    wanted.update(spec.get("model") for spec in seats.values())  # pyrefly: ignore [bad-argument-type]
     for spec in standards.values():
         if isinstance(spec, dict):
-            wanted.update((spec.get("model"), spec.get("wrapper_model")))
+            wanted.update((spec.get("model"), spec.get("wrapper_model")))  # pyrefly: ignore [bad-argument-type]
     wanted.add(background)
     served: list[str] | None = None
     resolved: dict[str, str] = {}
@@ -2970,12 +3346,18 @@ def policy_snapshot(table: dict[str, Any]) -> dict[str, Any]:
     for spec in standards.values():
         seat = spec.get("seat")
         if seat and seat not in seats:
-            seats[seat] = {"model": spec.get("model"), "model_id": pinned_model(table, spec.get("model")),
-                           "effort": spec.get("effort")}
+            seats[seat] = {
+                "model": spec.get("model"),
+                "model_id": pinned_model(table, spec.get("model")),
+                "effort": spec.get("effort"),
+            }
     for seat, spec in (table.get("seats") or {}).items():
         if seat not in seats and isinstance(spec, dict) and spec.get("model"):
-            seats[seat] = {"model": spec.get("model"), "model_id": pinned_model(table, spec.get("model")),
-                           "effort": spec.get("effort")}
+            seats[seat] = {
+                "model": spec.get("model"),
+                "model_id": pinned_model(table, spec.get("model")),
+                "effort": spec.get("effort"),
+            }
     background = table.get("background_model")
     return {
         "resolved_models": snapshot_resolved_models(table, standards, seats, background),
@@ -2995,8 +3377,10 @@ def command_policy(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(snapshot, indent=2, sort_keys=True))
     else:
-        print(f"policy {snapshot['policy_rev']} table {snapshot['table_sha256'][:12]} "
-              f"background {snapshot['background_model']}")
+        print(
+            f"policy {snapshot['policy_rev']} table {snapshot['table_sha256'][:12]} "
+            f"background {snapshot['background_model']}"
+        )
         for seat, spec in snapshot["seats"].items():
             print(f"  {seat}: {spec['model']} {spec['effort'] or ''}".rstrip())
     return EXIT_OK
@@ -3008,8 +3392,22 @@ METRIC_CLASSES = frozenset({"decide"})
 REPAIR_WINDOW = timedelta(hours=72)
 REDISPATCH_WINDOW = timedelta(hours=2)
 SUBSCRIPTION_VENDORS = frozenset({"muse", "devin", "cognition"})
-CLOSEOUT_DATA_KEYS = ("ok", "error", "subagent_type", "worker_model", "worker_effort", "wrapper_model", "fallback",
-                      "session_ids", "pool_pct", "exit_code", "infra_reason", "wall_s", "tokens_in", "tokens_out")
+CLOSEOUT_DATA_KEYS = (
+    "ok",
+    "error",
+    "subagent_type",
+    "worker_model",
+    "worker_effort",
+    "wrapper_model",
+    "fallback",
+    "session_ids",
+    "pool_pct",
+    "exit_code",
+    "infra_reason",
+    "wall_s",
+    "tokens_in",
+    "tokens_out",
+)
 REVERT_LINE = re.compile(r"This reverts commit ([0-9a-f]{7,40})")
 MERGE_REFUSED = frozenset({"refused", "conflict", "failed", "error", "rejected"})
 
@@ -3063,9 +3461,17 @@ def number_or_none(value: Any) -> float | None:
 
 
 class OutcomeSources:
-    def __init__(self, *, decisions: list[dict[str, Any]], ledger: list[dict[str, Any]],
-                 receipts: list[dict[str, Any]], reverts: list[dict[str, Any]],
-                 request_logs: list[dict[str, Any]], seeds: list[dict[str, Any]], now: datetime) -> None:
+    def __init__(
+        self,
+        *,
+        decisions: list[dict[str, Any]],
+        ledger: list[dict[str, Any]],
+        receipts: list[dict[str, Any]],
+        reverts: list[dict[str, Any]],
+        request_logs: list[dict[str, Any]],
+        seeds: list[dict[str, Any]],
+        now: datetime,
+    ) -> None:
         self.decisions = [row for row in decisions if row.get("v") == 1 and row.get("decision_id")]
         self.ledger = ledger
         self.receipts = receipts
@@ -3079,7 +3485,6 @@ def outcomes_now() -> datetime:
     return configured if configured else datetime.now(timezone.utc)
 
 def git_reverts(receipts: list[dict[str, Any]], since: datetime) -> list[dict[str, Any]]:
-    import subprocess
 
     repos = sorted({str(row.get("repo")) for row in receipts if isinstance(row.get("repo"), str)})
     reverts = []
@@ -3088,9 +3493,21 @@ def git_reverts(receipts: list[dict[str, Any]], since: datetime) -> list[dict[st
             continue
         try:
             result = subprocess.run(
-                ["git", "-C", str(Path(repo).expanduser()), "log", "--all", f"--since={utc_stamp(since)}",
-                 "--grep=This reverts commit", "--format=%H%x1f%cI%x1f%B%x1e"],
-                capture_output=True, text=True, timeout=20, check=False)
+                [
+                    "git",
+                    "-C",
+                    str(Path(repo).expanduser()),
+                    "log",
+                    "--all",
+                    f"--since={utc_stamp(since)}",
+                    "--grep=This reverts commit",
+                    "--format=%H%x1f%cI%x1f%B%x1e",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
         except (OSError, subprocess.SubprocessError):
             continue
         for chunk in result.stdout.split("\x1e"):
@@ -3140,8 +3557,15 @@ def replay_sources(directory: Path) -> OutcomeSources:
         now=now or datetime.now(timezone.utc),
     )
 
-def outcome_event(kind: str, source: str, key: str, ts: datetime, decision: dict[str, Any],
-                  data: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
+def outcome_event(
+    kind: str,
+    source: str,
+    key: str,
+    ts: datetime,
+    decision: dict[str, Any],
+    data: dict[str, Any],
+    job_id: str | None = None,
+) -> dict[str, Any]:
     return {
         "v": 1,
         "event_id": outcome_event_id(source, key),
@@ -3201,19 +3625,32 @@ def closeout_events(src: OutcomeSources, index: DecisionIndex, start: datetime) 
         if row.get("event") == "closeout":
             key = f"{row.get('session_id')}|{row.get('agent_id') or row.get('name')}|{row.get('ts')}"
             data = {name: row.get(name) for name in CLOSEOUT_DATA_KEYS if name in row}
-            event = outcome_event("infra" if row.get("infra_reason") else "closeout", "subagent-closeout",
-                                  key, ts, decision, data)
+            event = outcome_event(
+                "infra" if row.get("infra_reason") else "closeout", "subagent-closeout", key, ts, decision, data
+            )
             if isinstance(row.get("event_id"), str) and re.fullmatch(r"evt_[0-9a-f]{32}", row["event_id"]):
                 event["event_id"] = row["event_id"]
             events.append(event)
         elif row.get("event") == "route_fallback" or isinstance(row.get("fallback"), dict):
             fallback = row.get("fallback") if isinstance(row.get("fallback"), dict) else row
-            data = {"fallback": {"seat": fallback.get("seat"), "model": fallback.get("model"),
-                                 "reason": fallback.get("reason")},
-                    "pool_pct": number_or_none(row.get("pool_pct"))}
-            events.append(outcome_event("infra", "route-fallback",
-                                        f"{row.get('decision_id')}|{row.get('ts')}|{fallback.get('seat')}",
-                                        ts, decision, data))
+            data = {
+                "fallback": {
+                    "seat": fallback.get("seat"),
+                    "model": fallback.get("model"),
+                    "reason": fallback.get("reason"),
+                },
+                "pool_pct": number_or_none(row.get("pool_pct")),
+            }
+            events.append(
+                outcome_event(
+                    "infra",
+                    "route-fallback",
+                    f"{row.get('decision_id')}|{row.get('ts')}|{fallback.get('seat')}",
+                    ts,
+                    decision,
+                    data,
+                )
+            )
     return events
 
 def merge_events(src: OutcomeSources, index: DecisionIndex, start: datetime) -> list[dict[str, Any]]:
@@ -3235,14 +3672,20 @@ def merge_events(src: OutcomeSources, index: DecisionIndex, start: datetime) -> 
                 decision = index.lookup(ref)
                 if decision is None:
                     continue
-                data = {"merge_sha": merge_sha, "commit_sha": commit_sha, "branch": receipt.get("branch"),
-                        "repo": receipt.get("repo")}
-                events.append(outcome_event("merge", "studio-merge", f"{merge_sha}|{commit_sha}|{ref}",
-                                            ts, decision, data))
+                data = {
+                    "merge_sha": merge_sha,
+                    "commit_sha": commit_sha,
+                    "branch": receipt.get("branch"),
+                    "repo": receipt.get("repo"),
+                }
+                events.append(
+                    outcome_event("merge", "studio-merge", f"{merge_sha}|{commit_sha}|{ref}", ts, decision, data)
+                )
     return events
 
-def revert_events(src: OutcomeSources, merges: list[dict[str, Any]], index: DecisionIndex,
-                  start: datetime) -> list[dict[str, Any]]:
+def revert_events(
+    src: OutcomeSources, merges: list[dict[str, Any]], index: DecisionIndex, start: datetime
+) -> list[dict[str, Any]]:
     events = []
     for row in src.reverts:
         ts = row_time(row)
@@ -3252,13 +3695,27 @@ def revert_events(src: OutcomeSources, merges: list[dict[str, Any]], index: Deci
             continue
         for merge in merges:
             shas = (merge["data"].get("merge_sha") or "", merge["data"].get("commit_sha") or "")
-            hit = next((target for target in targets if any(sha.startswith(target) or target.startswith(sha)
-                                                              for sha in shas if sha)), None)
+            hit = next(
+                (
+                    target
+                    for target in targets
+                    if any(sha.startswith(target) or target.startswith(sha) for sha in shas if sha)
+                ),
+                None,
+            )
             if hit is None:
                 continue
             decision = index.lookup(merge.get("decision_id")) or {}
-            events.append(outcome_event("revert", "git-revert", f"{row.get('sha')}|{merge['job_id']}", ts, decision,
-                                        {"revert_sha": row.get("sha"), "reverted_sha": hit}))
+            events.append(
+                outcome_event(
+                    "revert",
+                    "git-revert",
+                    f"{row.get('sha')}|{merge['job_id']}",
+                    ts,
+                    decision,
+                    {"revert_sha": row.get("sha"), "reverted_sha": hit},
+                )
+            )
     return events
 
 def repair_events(index: DecisionIndex, start: datetime) -> list[dict[str, Any]]:
@@ -3271,11 +3728,26 @@ def repair_events(index: DecisionIndex, start: datetime) -> list[dict[str, Any]]
         if parent is None:
             continue
         root = index.root(row)
-        kind = "repair" if row.get("seat") == parent.get("seat") and row.get("class") == parent.get("class") \
+        kind = (
+            "repair"
+            if row.get("seat") == parent.get("seat") and row.get("class") == parent.get("class")
             else "escalation"
-        events.append(outcome_event(kind, "route-decisions", str(row["decision_id"]), ts, row,
-                                    {"child_job": row.get("job_id"), "parent_job": parent.get("job_id"),
-                                     "root_decision": root.get("decision_id")}, job_id=str(root.get("job_id"))))
+        )
+        events.append(
+            outcome_event(
+                kind,
+                "route-decisions",
+                str(row["decision_id"]),
+                ts,
+                row,
+                {
+                    "child_job": row.get("job_id"),
+                    "parent_job": parent.get("job_id"),
+                    "root_decision": root.get("decision_id"),
+                },
+                job_id=str(root.get("job_id")),
+            )
+        )
     return events
 
 def collect_outcome_events(src: OutcomeSources, since: timedelta | None) -> list[dict[str, Any]]:
@@ -3283,8 +3755,13 @@ def collect_outcome_events(src: OutcomeSources, since: timedelta | None) -> list
     index = DecisionIndex(src.decisions)
     merges = merge_events(src, index, start)
     seeds = [row for row in src.seeds if row.get("v") == 1 and isinstance(row.get("event_id"), str)]
-    return (closeout_events(src, index, start) + merges + revert_events(src, merges, index, start)
-            + repair_events(index, start) + seeds)
+    return (
+        closeout_events(src, index, start)
+        + merges
+        + revert_events(src, merges, index, start)
+        + repair_events(index, start)
+        + seeds
+    )
 
 def worker_cost_source(table: dict[str, Any], seat: str | None, model: str | None) -> str:
     seat = (seat or "").lower()
@@ -3311,11 +3788,12 @@ def summed_part(part: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
         cost = number_or_none(log_value(row, "cost_usd", "costUsd"))
         tokens = number_or_none(row.get("tokens")) or sum(
             number_or_none(log_value(row, *keys)) or 0
-            for keys in (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens")))
+            for keys in (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"))
+        )
         costs.append(None if cost == 0 and tokens > 0 else cost)
     if not rows or any(cost is None for cost in costs):
         return {"part": part, "source": "unknown", "usd": None}
-    return {"part": part, "source": "request_logs", "usd": round(sum(costs), 6)}
+    return {"part": part, "source": "request_logs", "usd": round(sum(costs), 6)}  # pyrefly: ignore [no-matching-overload]
 
 def pool_part(part: str, source: str, pool_pct: float | None) -> dict[str, Any]:
     entry: dict[str, Any] = {"part": part, "source": source, "usd": None}
@@ -3363,7 +3841,7 @@ class JobView:
         return sorted(found)
 
 def eval_seat_id(decision_id: str) -> str:
-    return "eval." + decision_id[len("dcn_"):].lower()
+    return "eval." + decision_id[len("dcn_") :].lower()
 
 def command_eval_seat(args: argparse.Namespace) -> int:
     print(eval_seat_id(args.decision_id))
@@ -3382,11 +3860,13 @@ def job_own_parts(table: dict[str, Any], view: JobView, logs: list[dict[str, Any
     for decision in view.decisions:
         decision_id = decision.get("decision_id")
         sessions = set(view.session_ids(decision_id))
-        rows = [row for row in logs
-                if log_value(row, "caller_seat", "callerSeat") in (decision_id, eval_seat_id(decision_id))
-                or (sessions and log_value(row, "session_id", "sessionId") in sessions)]
-        wrapper_rows = [row for row in rows if has_wrapper
-                        and str(log_value(row, "model") or "").startswith("claude-")]
+        rows = [
+            row
+            for row in logs
+            if log_value(row, "caller_seat", "callerSeat") in (decision_id, eval_seat_id(decision_id))
+            or (sessions and log_value(row, "session_id", "sessionId") in sessions)
+        ]
+        wrapper_rows = [row for row in rows if has_wrapper and str(log_value(row, "model") or "").startswith("claude-")]
         worker_rows = [row for row in rows if not any(row is other for other in wrapper_rows)]
         if (decision.get("attempt") or 1) > 1:
             if source == "request_logs":
@@ -3396,8 +3876,9 @@ def job_own_parts(table: dict[str, Any], view: JobView, logs: list[dict[str, Any
                 if has_wrapper:
                     parts.append(summed_part("retry", wrapper_rows))
             continue
-        parts.append(summed_part("worker", worker_rows) if source == "request_logs"
-                     else pool_part("worker", source, pool_pct))
+        parts.append(
+            summed_part("worker", worker_rows) if source == "request_logs" else pool_part("worker", source, pool_pct)
+        )
         if has_wrapper:
             parts.append(summed_part("wrapper", wrapper_rows))
     return parts
@@ -3411,8 +3892,15 @@ def job_status(view: JobView, index: DecisionIndex, now: datetime) -> tuple[str,
     closeouts = view.kind("closeout")
     merges = view.kind("merge")
     failures = [event for event in view.kind("infra") if event["data"].get("infra_reason")]
-    rule = ("merged_no_repair_72h" if cls in MERGE_CLASSES else "verdict_matches" if cls in VERDICT_CLASSES
-            else "metric_moved" if cls in METRIC_CLASSES else "closeout_ok_no_redispatch_2h")
+    rule = (
+        "merged_no_repair_72h"
+        if cls in MERGE_CLASSES
+        else "verdict_matches"
+        if cls in VERDICT_CLASSES
+        else "metric_moved"
+        if cls in METRIC_CLASSES
+        else "closeout_ok_no_redispatch_2h"
+    )
     if not closeouts and not merges:
         return ("infra_failure" if failures else "pending"), rule
     last_attempt = max((decision.get("attempt") or 1) for decision in view.decisions)
@@ -3422,12 +3910,15 @@ def job_status(view: JobView, index: DecisionIndex, now: datetime) -> tuple[str,
     if rule == "merged_no_repair_72h":
         merged_at = parse_ts(merges[0]["ts"]) if merges else None
         horizon = merged_at + REPAIR_WINDOW if merged_at else None
-        trouble = [event for event in view.kind("repair", "escalation", "revert")
-                   if horizon is None or parse_ts(event["ts"]) <= horizon]
+        trouble = [
+            event
+            for event in view.kind("repair", "escalation", "revert")
+            if horizon is None or parse_ts(event["ts"]) <= horizon
+        ]
         if trouble:
             return "rejected", rule
         if merged_at is not None:
-            return ("accepted" if now >= horizon else "pending"), rule
+            return ("accepted" if now >= horizon else "pending"), rule  # pyrefly: ignore [unsupported-operation]
         return ("rejected" if failed else "pending"), rule
     if view.kind("repair", "escalation"):
         return "rejected", rule
@@ -3435,8 +3926,11 @@ def job_status(view: JobView, index: DecisionIndex, now: datetime) -> tuple[str,
         verdicts = view.kind("verdict")
         if verdicts:
             data = verdicts[-1]["data"]
-            matches = data["matches"] if isinstance(data.get("matches"), bool) else (
-                data.get("verdict") is not None and data.get("verdict") == data.get("expected"))
+            matches = (
+                data["matches"]
+                if isinstance(data.get("matches"), bool)
+                else (data.get("verdict") is not None and data.get("verdict") == data.get("expected"))
+            )
             return ("accepted" if matches else "rejected"), rule
         return ("rejected" if failed else "pending"), rule
     if rule == "metric_moved":
@@ -3447,8 +3941,13 @@ def job_status(view: JobView, index: DecisionIndex, now: datetime) -> tuple[str,
             if delta is None and number_or_none(data.get("before")) is not None:
                 after = number_or_none(data.get("after"))
                 delta = after - float(data["before"]) if after is not None else None
-            moved = delta is not None and ((delta > 0) if data.get("direction") == "up" else (delta < 0)
-                                           if data.get("direction") == "down" else False)
+            moved = delta is not None and (
+                (delta > 0)
+                if data.get("direction") == "up"
+                else (delta < 0)
+                if data.get("direction") == "down"
+                else False
+            )
             return ("accepted" if moved else "rejected"), rule
         return ("rejected" if failed else "pending"), rule
     if failed:
@@ -3461,14 +3960,23 @@ def job_status(view: JobView, index: DecisionIndex, now: datetime) -> tuple[str,
         for rows in index.by_job.values():
             other = rows[0]
             stamp = row_time(other)
-            if (other.get("job_id") != view.job_id and other.get("caller") == caller
-                    and other.get("class") == cls and stamp is not None
-                    and closed_at < stamp <= closed_at + REDISPATCH_WINDOW):
+            if (
+                other.get("job_id") != view.job_id
+                and other.get("caller") == caller
+                and other.get("class") == cls
+                and stamp is not None
+                and closed_at < stamp <= closed_at + REDISPATCH_WINDOW
+            ):
                 return "rejected", rule
     return ("accepted" if now >= closed_at + REDISPATCH_WINDOW else "pending"), rule
 
-def build_outcomes(table: dict[str, Any], events: list[dict[str, Any]], decisions: list[dict[str, Any]],
-                   logs: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
+def build_outcomes(
+    table: dict[str, Any],
+    events: list[dict[str, Any]],
+    decisions: list[dict[str, Any]],
+    logs: list[dict[str, Any]],
+    now: datetime,
+) -> list[dict[str, Any]]:
     index = DecisionIndex([row for row in decisions if row.get("v") == 1 and row.get("decision_id")])
     unique: dict[str, dict[str, Any]] = {}
     for event in events:
@@ -3490,14 +3998,17 @@ def build_outcomes(table: dict[str, Any], events: list[dict[str, Any]], decision
         parts = list(own[job])
         for child in sorted(set(children.get(job, []))):
             child_cost, _ = parts_total(own[child])
-            parts.append({"part": "repair", "source": "request_logs" if child_cost is not None else "unknown",
-                          "usd": child_cost})
+            parts.append(
+                {"part": "repair", "source": "request_logs" if child_cost is not None else "unknown", "usd": child_cost}
+            )
         cost, known = parts_total(parts)
         fallback = view.fallback()
         walls = [number_or_none(event["data"].get("wall_s")) for event in view.kind("closeout", "infra")]
         walls = [wall for wall in walls if wall is not None]
-        infra = [event["data"].get("infra_reason") or (event["data"].get("fallback") or {}).get("reason")
-                 for event in view.kind("infra")]
+        infra = [
+            event["data"].get("infra_reason") or (event["data"].get("fallback") or {}).get("reason")
+            for event in view.kind("infra")
+        ]
         infra = [reason for reason in infra if reason]
         settled = {event.get("decision_id") for event in view.kind("closeout", "infra")}
         first = view.first
@@ -3529,8 +4040,8 @@ def build_outcomes(table: dict[str, Any], events: list[dict[str, Any]], decision
             "cost_known_usd": known,
             "cost_known": cost is not None,
             "cost_parts": parts,
-            "attribution_complete": cost is not None and all(
-                decision.get("decision_id") in settled for decision in view.decisions),
+            "attribution_complete": cost is not None
+            and all(decision.get("decision_id") in settled for decision in view.decisions),
             "wall_s": round(sum(walls), 1) if walls else None,
             "session_ids": view.session_ids(),
             "evidence": [event["event_id"] for event in view.events],
@@ -3556,8 +4067,14 @@ def write_atomic(path: Path, text: str) -> None:
 def stored_events(path: Path) -> list[dict[str, Any]]:
     return [row for row in read_jsonl(path) if row.get("v") == 1 and isinstance(row.get("event_id"), str)]
 
-def ingest_outcomes(table: dict[str, Any], src: OutcomeSources, since: timedelta | None, events_file: Path,
-                    outcomes_file: Path, write: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def ingest_outcomes(
+    table: dict[str, Any],
+    src: OutcomeSources,
+    since: timedelta | None,
+    events_file: Path,
+    outcomes_file: Path,
+    write: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     existing = stored_events(events_file)
     seen = {row["event_id"] for row in existing}
     fresh = []
@@ -3606,9 +4123,14 @@ def command_outcomes(args: argparse.Namespace) -> int:
             second_new, outcomes = ingest_outcomes(table, src, None, events_file, outcomes_file, True)
             idempotent = outcomes_file.read_text(encoding="utf-8") == first_text and not second_new
             events = stored_events(events_file)
-        document = {"now": utc_stamp(src.now), "idempotent": idempotent, "events": events,
-                    "new_events": [len(first_new), len(second_new)], "outcomes": outcomes,
-                    "summary": outcome_summary(outcomes)}
+        document = {
+            "now": utc_stamp(src.now),
+            "idempotent": idempotent,
+            "events": events,
+            "new_events": [len(first_new), len(second_new)],
+            "outcomes": outcomes,
+            "summary": outcome_summary(outcomes),
+        }
         print_outcomes(document, args.json)
         return EXIT_OK if idempotent else EXIT_DEGRADED
     if args.directory:
@@ -3622,11 +4144,14 @@ def command_outcomes(args: argparse.Namespace) -> int:
     src = live_sources(since)
     if args.action == "ingest":
         fresh, outcomes = ingest_outcomes(table, src, since, outcome_events_path(), outcomes_path(), args.write)
-        document = {"new_events": len(fresh), "written": args.write, "outcomes": outcomes,
-                    "summary": outcome_summary(outcomes)}
+        document = {
+            "new_events": len(fresh),
+            "written": args.write,
+            "outcomes": outcomes,
+            "summary": outcome_summary(outcomes),
+        }
     else:
-        outcomes = build_outcomes(table, stored_events(outcome_events_path()), src.decisions, src.request_logs,
-                                  src.now)
+        outcomes = build_outcomes(table, stored_events(outcome_events_path()), src.decisions, src.request_logs, src.now)
         if args.write:
             write_atomic(outcomes_path(), outcome_lines(outcomes))
         document = {"written": args.write, "outcomes": outcomes, "summary": outcome_summary(outcomes)}
@@ -3643,7 +4168,6 @@ LB_HEALTH_ATTEMPTS = 3
 LB_HEALTH_RETRY_SECONDS = 5.0
 
 def probe_lb_health() -> dict[str, Any]:
-
 
     started = time.monotonic()
     for attempt in range(LB_HEALTH_ATTEMPTS):
@@ -3673,7 +4197,6 @@ def probe_pools() -> tuple[dict[str, Any], dict[str, Any] | None]:
     return record, document
 
 def probe_command(name: str, command: list[str], timeout: float) -> dict[str, Any]:
-    import subprocess
 
     started = time.monotonic()
     if not command:
@@ -4061,7 +4584,6 @@ def aggregate(dispatches: list[dict[str, Any]], closeouts: list[dict[str, Any]])
             merged.setdefault("task_class", origin.get("task_class"))
             merged.setdefault("subagent_type", origin.get("subagent_type"))
 
-
         requested = merged.get("dispatch_model") or (origin or {}).get("model")
         if requested or "dispatch_model" in merged:
             merged["model"] = requested
@@ -4196,7 +4718,6 @@ def print_implement_report(since: datetime, days: int) -> None:
         print("No implement_result rows yet (`route record` writes them).")
         return
 
-
     tasks: dict[tuple[str, str, str], dict[str, Any]] = {}
     for record in results:
         key = (str(record.get("seat")), str(record.get("model")), str(record.get("task")))
@@ -4234,7 +4755,7 @@ def learning_window(value: str) -> tuple[datetime, datetime]:
     if not match:
         fail("--since must be a positive number of days, for example 30d")
     until = datetime.now(timezone.utc)
-    return until - timedelta(days=int(match[1])), until
+    return until - timedelta(days=int(match[1])), until  # pyrefly: ignore [unsupported-operation]
 
 def learning_outcomes(since: datetime, until: datetime, source: str = "prod") -> list[dict[str, Any]]:
     try:
@@ -4295,44 +4816,70 @@ def learning_metrics(rows: list[dict[str, Any]], total: int) -> dict[str, Any]:
     weight = sum(1 / row["propensity"] for row in rows)
     accepted_weight = sum(1 / row["propensity"] for row in rows if row["outcome"] == "accepted")
     rate = accepted_weight / weight if weight else 0.0
-    known = [row for row in rows if isinstance(row.get("cost_usd"), (float, int))
-             and not isinstance(row["cost_usd"], bool) and math.isfinite(row["cost_usd"])
-             and row["cost_usd"] >= 0]
+    known = [
+        row
+        for row in rows
+        if isinstance(row.get("cost_usd"), (float, int))
+        and not isinstance(row["cost_usd"], bool)
+        and math.isfinite(row["cost_usd"])
+        and row["cost_usd"] >= 0
+    ]
     known_weight = sum(1 / row["propensity"] for row in known)
     known_accepted = sum(1 / row["propensity"] for row in known if row["outcome"] == "accepted")
-    walls = [row["wall_s"] for row in rows if isinstance(row.get("wall_s"), (float, int))
-             and not isinstance(row["wall_s"], bool) and math.isfinite(row["wall_s"]) and row["wall_s"] >= 0]
+    walls = [
+        row["wall_s"]
+        for row in rows
+        if isinstance(row.get("wall_s"), (float, int))
+        and not isinstance(row["wall_s"], bool)
+        and math.isfinite(row["wall_s"])
+        and row["wall_s"] >= 0
+    ]
     coverage = len(known) / len(rows) if rows else 0.0
-    cost = (sum(row["cost_usd"] / row["propensity"] for row in known) / known_accepted
-            if known_accepted and coverage >= 0.8 and known_weight / weight >= 0.8 else None)
+    cost = (
+        sum(row["cost_usd"] / row["propensity"] for row in known) / known_accepted
+        if known_accepted and coverage >= 0.8 and known_weight / weight >= 0.8
+        else None
+    )
     return {
-        "n": len(rows), "accepted": sum(row["outcome"] == "accepted" for row in rows),
+        "n": len(rows),
+        "accepted": sum(row["outcome"] == "accepted" for row in rows),
         "attributed_share": len(rows) / total if total else 0.0,
-        "weighted_n": weight, "accept_rate": rate if rows else None,
-        "interval": wilson_interval(rate, weight), "cost_known_share": coverage,
-        "cost_per_accepted": cost, "median_wall_s": statistics.median(walls) if walls else None,
+        "weighted_n": weight,
+        "accept_rate": rate if rows else None,
+        "interval": wilson_interval(rate, weight),
+        "cost_known_share": coverage,
+        "cost_per_accepted": cost,
+        "median_wall_s": statistics.median(walls) if walls else None,
     }
 
 def v2_override(entry: Any) -> bool:
     if not isinstance(entry, dict):
         return False
     evidence = entry.get("evidence")
-    return (isinstance(evidence, dict)
-            and {"n", "accepted", "lower_bound", "cost_per_accepted", "window", "policy_rev"} <= evidence.keys()
-            and {"class", "action", "arm_id", "reason", "ts", "id"} <= entry.keys())
+    return (
+        isinstance(evidence, dict)
+        and {"n", "accepted", "lower_bound", "cost_per_accepted", "window", "policy_rev"} <= evidence.keys()
+        and {"class", "action", "arm_id", "reason", "ts", "id"} <= entry.keys()
+    )
 
 def arm_paused(table: dict[str, Any], class_name: str, arm_id: str) -> bool:
-    return any(entry.get("class") == class_name and entry.get("arm_id") == arm_id
-               and entry.get("action") == "pause" and not entry.get("reverted_at")
-               for entry in table.get("overrides", []) if isinstance(entry, dict))
+    return any(
+        entry.get("class") == class_name
+        and entry.get("arm_id") == arm_id
+        and entry.get("action") == "pause"
+        and not entry.get("reverted_at")
+        for entry in table.get("overrides", [])
+        if isinstance(entry, dict)
+    )
 
 
 EVAL_MDD = "MDD ~30pp per-trial at 30 trials/arm (alpha .1 one-sided, power .8)"
 EVAL_ARM_MAP = {"sol-med": "implement standard", "sol-low": "mechanical standard"}
 
 def eval_standings_path() -> Path:
-    return Path(os.environ.get("ROUTE_EVAL_STANDINGS")
-                or Path.home() / ".agent-lb/audits/routing/eval-standings.json").expanduser()
+    return Path(
+        os.environ.get("ROUTE_EVAL_STANDINGS") or Path.home() / ".agent-lb/audits/routing/eval-standings.json"
+    ).expanduser()
 
 def load_eval_standings() -> dict[str, Any]:
     try:
@@ -4356,36 +4903,52 @@ def eval_arm(standings: dict[str, Any], class_name: str, arm_id: str, default_ar
         passes = sum(int(task.get("passes") or 0) for task in tasks.values() if isinstance(task, dict))
         if not runs:
             continue
-        rate = entry.get("per_trial_rate")
+        rate = entry.get("per_trial_rate")  # pyrefly: ignore [missing-attribute]
         if not isinstance(rate, (float, int)) or isinstance(rate, bool):
             rate = passes / runs
-        return {"eval_arm": name, "task_version_set": sorted(entry.get("task_version_set") or []),
-                "trials": runs, "passes": passes, "per_trial_rate": rate,
-                "upper_bound": wilson_interval(rate, runs)[1],
-                "solved_all3": int(entry.get("solved_all3") or 0)}
+        return {
+            "eval_arm": name,
+            "task_version_set": sorted(entry.get("task_version_set") or []),  # pyrefly: ignore [missing-attribute]
+            "trials": runs,
+            "passes": passes,
+            "per_trial_rate": rate,
+            "upper_bound": wilson_interval(rate, runs)[1],
+            "solved_all3": int(entry.get("solved_all3") or 0),  # pyrefly: ignore [missing-attribute]
+        }
     return None
 
-def eval_gate(class_name: str, candidate_arm: str, default_arm: str,
-              standings: dict[str, Any] | None = None) -> dict[str, Any]:
+def eval_gate(
+    class_name: str, candidate_arm: str, default_arm: str, standings: dict[str, Any] | None = None
+) -> dict[str, Any]:
     standings = load_eval_standings() if standings is None else standings
     candidate = eval_arm(standings, class_name, candidate_arm, default_arm)
     default = eval_arm(standings, class_name, default_arm, default_arm)
     evidence = {"candidate": candidate, "default": default}
-    if (candidate is None or default is None or not candidate["task_version_set"]
-            or candidate["task_version_set"] != default["task_version_set"]):
+    if (
+        candidate is None
+        or default is None
+        or not candidate["task_version_set"]
+        or candidate["task_version_set"] != default["task_version_set"]
+    ):
         return {"veto": False, "reason": "no-eval-evidence", "evidence": evidence}
     if candidate["upper_bound"] < default["per_trial_rate"]:
-        return {"veto": True, "evidence": evidence,
-                "reason": f"eval per-trial upper bound {candidate['upper_bound']:.1%} is below "
-                          f"default {default['per_trial_rate']:.1%}"}
+        return {
+            "veto": True,
+            "evidence": evidence,
+            "reason": f"eval per-trial upper bound {candidate['upper_bound']:.1%} is below "
+            f"default {default['per_trial_rate']:.1%}",
+        }
     if candidate["solved_all3"] < default["solved_all3"] - 1:
-        return {"veto": True, "evidence": evidence,
-                "reason": f"eval solved_all3 {candidate['solved_all3']} is below "
-                          f"default {default['solved_all3']} - 1"}
+        return {
+            "veto": True,
+            "evidence": evidence,
+            "reason": f"eval solved_all3 {candidate['solved_all3']} is below default {default['solved_all3']} - 1",
+        }
     return {"veto": False, "reason": "eval-ok", "evidence": evidence}
 
-def learning_report(table: dict[str, Any], window: str, only: str | None = None,
-                    source: str = "prod") -> dict[str, Any]:
+def learning_report(
+    table: dict[str, Any], window: str, only: str | None = None, source: str = "prod"
+) -> dict[str, Any]:
     since, until = learning_window(window)
     outcomes = learning_outcomes(since, until, source)
     standings = load_eval_standings()
@@ -4407,49 +4970,89 @@ def learning_report(table: dict[str, Any], window: str, only: str | None = None,
             arm_id = arm_key(arm)
             if not arm_id or any(item["arm_id"] == arm_id for item in arms):
                 continue
-            eligible = [row for row in valid if default_id in row.get("eligible_arms", [])
-                        and arm_id in row.get("eligible_arms", [])]
+            eligible = [
+                row
+                for row in valid
+                if default_id in row.get("eligible_arms", []) and arm_id in row.get("eligible_arms", [])
+            ]
             selected = [row for row in eligible if row.get("arm_id") == arm_id]
             total = sum(row.get("arm_id") == arm_id for row in class_rows)
             metrics = learning_metrics(selected, total)
             paused = arm_paused(table, class_name, arm_id) or arm.get("paused", False)
             gate = None if arm_id == default_id else eval_gate(class_name, arm_id, default_id, standings)
-            arms.append({"arm_id": arm_id, "default": arm_id == default_id,
-                         **metrics, "paused": bool(paused), "eval_gate": gate})
+            arms.append(
+                {
+                    "arm_id": arm_id,
+                    "default": arm_id == default_id,
+                    **metrics,
+                    "paused": bool(paused),
+                    "eval_gate": gate,
+                }
+            )
             if arm_id == default_id:
                 continue
-            baseline = learning_metrics([row for row in eligible if row.get("arm_id") == default_id],
-                                        len(eligible))
-            if (source == "prod" and metrics["n"] >= minimum and baseline["n"] >= minimum
-                    and metrics["interval"][0] >= baseline["accept_rate"] - 0.05
-                    and metrics["cost_per_accepted"] is not None
-                    and baseline["cost_per_accepted"] is not None
-                    and metrics["cost_per_accepted"] < baseline["cost_per_accepted"]
-                    and not paused):
-                proposal = {"class": class_name, "action": "promote", "arm_id": arm_id,
-                            "evidence": learning_evidence(metrics, window, table), "eval_gate": gate}
-                (vetoed if gate["veto"] else proposals).append(proposal)
+            baseline = learning_metrics([row for row in eligible if row.get("arm_id") == default_id], len(eligible))
+            if (
+                source == "prod"
+                and metrics["n"] >= minimum
+                and baseline["n"] >= minimum
+                and metrics["interval"][0] >= baseline["accept_rate"] - 0.05
+                and metrics["cost_per_accepted"] is not None
+                and baseline["cost_per_accepted"] is not None
+                and metrics["cost_per_accepted"] < baseline["cost_per_accepted"]
+                and not paused
+            ):
+                proposal = {
+                    "class": class_name,
+                    "action": "promote",
+                    "arm_id": arm_id,
+                    "evidence": learning_evidence(metrics, window, table),
+                    "eval_gate": gate,
+                }
+                (vetoed if gate["veto"] else proposals).append(proposal)  # pyrefly: ignore [unsupported-operation]
         classes[class_name] = {"default": default_id, "arms": arms}
-    report = {"window": window, "source": source, "policy_rev": table.get("policy_rev"), "classes": classes,
-              "proposals": proposals, "vetoed": vetoed,
-            "pending_alex": [entry for entry in table.get("overrides", [])
-                             if isinstance(entry, dict) and entry.get("pending_alex")
-                             and not entry.get("reverted_at") and (not only or entry.get("class") == only)]}
+    report = {
+        "window": window,
+        "source": source,
+        "policy_rev": table.get("policy_rev"),
+        "classes": classes,
+        "proposals": proposals,
+        "vetoed": vetoed,
+        "pending_alex": [
+            entry
+            for entry in table.get("overrides", [])
+            if isinstance(entry, dict)
+            and entry.get("pending_alex")
+            and not entry.get("reverted_at")
+            and (not only or entry.get("class") == only)
+        ],
+    }
     if source != "prod":
         report["mdd"] = EVAL_MDD
     return report
 
 def learning_evidence(metrics: dict[str, Any], window: str, table: dict[str, Any]) -> dict[str, Any]:
-    return {"n": metrics["n"], "accepted": metrics["accepted"], "lower_bound": metrics["interval"][0],
-            "cost_per_accepted": metrics["cost_per_accepted"], "window": window,
-            "policy_rev": table.get("policy_rev")}
+    return {
+        "n": metrics["n"],
+        "accepted": metrics["accepted"],
+        "lower_bound": metrics["interval"][0],
+        "cost_per_accepted": metrics["cost_per_accepted"],
+        "window": window,
+        "policy_rev": table.get("policy_rev"),
+    }
 
-def learning_entry(class_name: str, action: str, arm_id: str, evidence: dict[str, Any],
-                   reason: str) -> dict[str, Any]:
+def learning_entry(class_name: str, action: str, arm_id: str, evidence: dict[str, Any], reason: str) -> dict[str, Any]:
     import secrets
 
-    return {"class": class_name, "action": action, "arm_id": arm_id, "evidence": evidence,
-            "reason": reason, "ts": ledger_now_iso(), "id": secrets.token_hex(12)}
+    return {
+        "class": class_name,
+        "action": action,
+        "arm_id": arm_id,
+        "evidence": evidence,
+        "reason": reason,
+        "ts": ledger_now_iso(),
+        "id": secrets.token_hex(12),
+    }
 
 def write_learning_table(table: dict[str, Any]) -> None:
     canonical = Path(__file__).resolve().parent.parent / "config/coding-agents/routing-table.json"
@@ -4552,26 +5155,35 @@ def command_learn(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 def learning_text(report: dict[str, Any]) -> str:
-    lines = ['---', 'title: "Routing standings"', '---', "", "# Routing standings", ""]
+    lines = ["---", 'title: "Routing standings"', "---", "", "# Routing standings", ""]
     for class_name, data in report["classes"].items():
-        lines.extend([f"## {class_name}", "",
-                      "| Arm | Default | n | Attributed share | Acceptance (90% interval) | "
-                      "$/accepted | Median wall s | Paused |",
-                      "|---|---|---:|---:|---|---:|---:|---|"])
+        lines.extend(
+            [
+                f"## {class_name}",
+                "",
+                "| Arm | Default | n | Attributed share | Acceptance (90% interval) | "
+                "$/accepted | Median wall s | Paused |",
+                "|---|---|---:|---:|---|---:|---:|---|",
+            ]
+        )
         for arm in data["arms"]:
             cost = arm["cost_per_accepted"]
             rate = arm["accept_rate"]
             low, high = arm["interval"]
             acceptance = f"{rate:.1%} ({low:.1%} to {high:.1%})" if rate is not None else "unknown"
             price = f"{cost:.4f}" if cost is not None else "cost unknown"
-            lines.append(f"| {arm['arm_id']} | {arm['default']} | {arm['n']} | {arm['attributed_share']:.1%} | "
-                         f"{acceptance} | {price} | {arm['median_wall_s']} | {arm['paused']} |")
+            lines.append(
+                f"| {arm['arm_id']} | {arm['default']} | {arm['n']} | {arm['attributed_share']:.1%} | "
+                f"{acceptance} | {price} | {arm['median_wall_s']} | {arm['paused']} |"
+            )
         lines.append("")
     for proposal in report["proposals"]:
         lines.append(f"Propose promoting {proposal['arm_id']} for {proposal['class']}.")
     for proposal in report.get("vetoed", []):
-        lines.append(f"Eval gate vetoed promoting {proposal['arm_id']} for {proposal['class']}: "
-                     f"{proposal['eval_gate']['reason']}.")
+        lines.append(
+            f"Eval gate vetoed promoting {proposal['arm_id']} for {proposal['class']}: "
+            f"{proposal['eval_gate']['reason']}."
+        )
     if report.get("mdd"):
         lines.append(report["mdd"])
     for entry in report["pending_alex"]:
