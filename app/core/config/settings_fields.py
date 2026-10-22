@@ -271,11 +271,11 @@ class SettingsFields(BaseSettings):
     drain_secondary_threshold_pct: float = 90.0
     drain_error_window_seconds: float = 60.0
     drain_error_count_threshold: int = 2
-    model_account_exclusions: dict[str, list[str]] = {
-        "gpt-6.1-sol": [
-            "2661c1c1-4689-49c6-88e8-6a342fd039d4_b419c00b",
-            "409a8db4-52d6-4878-b305-7c60f96cdb0c_dbb5c4ac",
-        ]
+    model_account_exclusions: dict[str, dict[str, float]] = {
+        "gpt-6.1-sol": {
+            "2661c1c1-4689-49c6-88e8-6a342fd039d4_b419c00b": 1792680000,
+            "409a8db4-52d6-4878-b305-7c60f96cdb0c_dbb5c4ac": 1792680000,
+        }
     }
     probe_quiet_seconds: float = 60.0
     probe_success_streak_required: int = 3

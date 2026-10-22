@@ -255,3 +255,20 @@ Every definition has one seat entry naming its vendor, box adapter or local-only
 ## guard-trim (2026-10-08): accidental commands, not an adversarial boundary
 
 M3: deliberately forged alex-* records are outside this posture; reject symlinked records cheaply, but do not build provenance enforcement. M7: no-chrome and desktop are not kept floors; timeout fail-open is correct. xargs-fed deletion and SQL comment obfuscation (DROP/**/TABLE) remain accepted residuals, tracked with xfail boundary cases. Only actual floor guards belong in dispatcher fail-closed lists.
+
+## ADR-0006: Time-boxed per-model account exclusions
+
+- **Date:** 2026-10-22
+- **Status:** Accepted
+- **Scope:** `model_account_exclusions` in `app/core/config/settings_fields.py`, applied by `app/core/balancer/exclusions.py`
+
+`model_account_exclusions` maps a model to `{account_id: until_epoch}`. Until that time the account is not selected
+for that model; it still serves every other model, and if the rule would leave no account the full list is used.
+An exclusion always carries an expiry; there are no permanent ones. When it expires the account rejoins, and the
+windowed error drain (19cd985a) moves traffic off it again if it keeps failing. To extend an exclusion, a new
+expiry has to be set on evidence: its overload rate stays well above the other accounts' for the same model.
+
+First use: Codex accounts 2661c1c1 and 409a8db4 returned every `server_is_overloaded` on gpt-6.1-sol in the 01Z hour
+of 2026-10-22 (391; the other three had none), which made prod chat first tokens 9-25 s. They are excluded from
+gpt-6.1-sol until 2026-10-22T14:40Z (area-ship ruling b-20261022022947).
+
