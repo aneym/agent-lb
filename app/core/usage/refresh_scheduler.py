@@ -18,11 +18,10 @@ from app.core.usage import capacity_for_plan
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
+from app.modules.accounts.auth_exchange import exchange_timeout_seconds, refresh_token_material_fingerprint
 from app.modules.accounts.auth_manager import (
     AuthManager,
-    exchange_timeout_seconds,
     is_locally_owned,
-    refresh_token_material_fingerprint,
 )
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import is_subscription_usable
