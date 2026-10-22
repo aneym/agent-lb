@@ -113,6 +113,7 @@ def select_account(
     current = now or time.time()
     available: list[AccountState] = []
     in_error_backoff: list[AccountState] = []
+    cooled: list[AccountState] = []
     all_states = list(states)
     bypass_account_ids = None if bypass_quota_exceeded_account_ids is None else set(bypass_quota_exceeded_account_ids)
 
@@ -145,6 +146,7 @@ def select_account(
             if state.blocked_at is None:
                 state.error_count = 0
         if state.cooldown_until and current < state.cooldown_until:
+            cooled.append(state)
             continue
         if state.error_count >= 3 and state.blocked_at is None:
             backoff = min(300, 30 * (2 ** (state.error_count - 3)))
@@ -163,26 +165,8 @@ def select_account(
         available = opportunistic_available
 
     if not available:
-        in_error_backoff_ids = {state.account_id for state in in_error_backoff}
-        hard_blocked_exists = any(
-            state.status
-            in (
-                AccountStatus.PAUSED,
-                AccountStatus.REAUTH_REQUIRED,
-                AccountStatus.DEACTIVATED,
-                AccountStatus.RATE_LIMITED,
-                AccountStatus.QUOTA_EXCEEDED,
-            )
-            and state.account_id not in in_error_backoff_ids
-            for state in all_states
-        )
-        if allow_backoff_fallback and (len(in_error_backoff) > 1 or (in_error_backoff and hard_blocked_exists)):
-
-            def _backoff_expires_at(s: AccountState) -> float:
-                backoff = min(300, 30 * (2 ** (s.error_count - 3)))
-                return (s.last_error_at or 0.0) + backoff
-
-            available.append(min(in_error_backoff, key=_backoff_expires_at))
+        if allow_backoff_fallback and (in_error_backoff or cooled):
+            available.append(min(in_error_backoff + cooled, key=lambda s: (s.error_count, s.last_error_at or 0.0)))
             if traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC:
                 opportunistic_available, reason = _filter_opportunistic_candidates(available, current)
                 if not opportunistic_available:

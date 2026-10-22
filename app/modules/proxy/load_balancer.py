@@ -31,6 +31,7 @@ from app.core.balancer import (
     RoutingStrategy,
     SelectionResult,
     TrafficClass,
+    drop_excluded,
     evaluate_health_tier,
     handle_permanent_failure,
     handle_quota_exceeded,
@@ -919,6 +920,7 @@ class LoadBalancer:
             pre_model_filter_accounts = accounts
             if model and _mapped_model_has_registry_entry(model):
                 accounts = _filter_accounts_for_model(pre_model_filter_accounts, model)
+            accounts = drop_excluded(accounts, model)
             if model and not accounts:
                 if not all_accounts:
                     selection_inputs = _SelectionInputs(
@@ -1279,8 +1281,7 @@ class LoadBalancer:
         selected: bool = False,
         expected_version: int | None = None,
     ) -> bool:
-        lock = await self._get_account_lock(account.id)
-        async with lock:
+        async with await self._get_account_lock(account.id):
             return self._sync_runtime_state(
                 account,
                 state,
@@ -1557,7 +1558,6 @@ class LoadBalancer:
         new_account_id: str,
         reason: str,
     ) -> None:
-
         try:
             key_hash = hashlib.sha256(sticky_key.encode("utf-8")).hexdigest()
             AuditService.log_async(
@@ -2232,7 +2232,6 @@ def _state_from_account(
 
 
 def _bounded_retry_at(reset_at: float | None, blocked_at: float) -> float:
-
     if reset_at is None or int(reset_at) > int(blocked_at) + 3600:
         return blocked_at + 60.0
     return reset_at
@@ -2244,7 +2243,6 @@ def background_recovery_state_from_account(
     primary_entry: UsageHistory | None,
     secondary_entry: UsageHistory | None,
 ) -> AccountState:
-
     runtime = RuntimeState()
     blocked_at = float(account.blocked_at) if account.blocked_at is not None else None
     reset_at = float(account.reset_at) if account.reset_at is not None else None
@@ -2392,7 +2390,6 @@ def _filter_accounts_for_model(accounts: list[Account], model: str) -> list[Acco
 
 
 def selectable_accounts(accounts: list[Account]) -> list[Account]:
-
     return [
         account
         for account in accounts
@@ -2521,7 +2518,6 @@ def _additional_quota_eligibility(
     fresh_primary: dict[str, AdditionalUsageHistory],
     fresh_secondary: dict[str, AdditionalUsageHistory],
 ) -> str:
-
     return "eligible"
 
 

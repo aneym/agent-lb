@@ -15,6 +15,7 @@ from app.core.balancer.failures import (
     handle_rate_limit,
     permanent_failure_reason,
 )
+from app.core.balancer.exclusions import drop_excluded
 from app.core.balancer.logic import select_account
 from app.core.balancer.state import (
     HEALTH_TIER_DRAINING,
@@ -61,6 +62,7 @@ __all__ = [
     "UsageWeightedOrder",
     "account_status_for_permanent_failure",
     "canonical_permanent_failure_code",
+    "drop_excluded",
     "evaluate_health_tier",
     "failover_decision",
     "handle_permanent_failure",
