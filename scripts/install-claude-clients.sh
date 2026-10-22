@@ -31,7 +31,7 @@ esac
 
 
 CLIENT_NAMES=(cc fable opus claude-lb-launch agent-defs-doctor)
-BUNDLE_NAMES=("${CLIENT_NAMES[@]}" opus-runtime-doctor)
+BUNDLE_NAMES=("${CLIENT_NAMES[@]}" opus-runtime-doctor opus_stream_analysis.py)
 POLICY_SOURCE="$REPO_DIR/config/coding-agents"
 POLICY_INSTALLER="$POLICY_SOURCE/install-policy.py"
 HOOK_TARGET="$USER_HOME/.claude/hooks/ccdex-gpt-only.sh"
