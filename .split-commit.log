@@ -1,0 +1,27 @@
+{"findings": [], "count": 0}
+{
+  "cycles": [
+    "app",
+    "bin",
+    "clients",
+    "config",
+    "deploy",
+    "docs",
+    "features",
+    "frontend",
+    "openspec",
+    "patches",
+    "scripts",
+    "tests"
+  ],
+  "errors": [],
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+filecap: 0.191 s
+modcheck: 0.609 s
+comments: 0.371 s
+freeze: 0.122 s
+comments: no-new-comments: blocked (5 violations). scripts/lb_sandbox_paths.py:51: new marker that keeps retired code alive (shim, alias or retired flag); delete the old code in this change instead (rules/code.md hard-remove rule, Alex 2026-10-21)
+gate-precheck: 1 findings in 1.295 s
