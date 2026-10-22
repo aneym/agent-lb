@@ -1,0 +1,15 @@
+filecap cutover-check: refused, 13 lines are not a pure move.
+  added_unmatched app/modules/proxy/anthropic_errors.py:48: )
+  added_unmatched app/modules/proxy/anthropic_errors.py:76: )
+  added_unmatched app/modules/proxy/anthropic_errors.py:124: )
+  added_unmatched app/modules/proxy/anthropic_routes.py:88: )
+  added_unmatched app/modules/proxy/anthropic_routes.py:105: )
+  added_unmatched app/modules/proxy/anthropic_routes.py:118: )
+  added_unmatched app/modules/proxy/anthropic_routes.py:130: )
+  added_unmatched app/modules/proxy/anthropic_routes.py:136: )
+  added_unmatched app/modules/proxy/anthropic_routes.py:164: )
+  added_unmatched app/modules/proxy/anthropic_routes.py:176: )
+  added_unmatched app/modules/proxy/anthropic_routes.py:188: )
+  added_unmatched app/modules/proxy/anthropic_routes.py:237: )
+  added_unmatched app/modules/proxy/response_errors.py:56: logger,
+A cutover commit only moves lines; extra lines may be imports, exports or declarations. Land behavior changes in their own commit.
