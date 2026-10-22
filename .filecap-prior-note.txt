@@ -1,0 +1,1 @@
+Blocked: the seat made no commits. Callers reach service.py names dynamically through _facade() and sys.modules lookups, and the direct-import cutover would have to edit callers that are themselves over 20,000 bytes. Those are streaming/retry.py (77282), streaming/mixin.py (51990), websocket/mixin.p
