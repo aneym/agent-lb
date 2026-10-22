@@ -1,0 +1,31 @@
+{"findings": [], "count": 0}
+{
+  "cycles": [
+    "app",
+    "bin",
+    "clients",
+    "config",
+    "deploy",
+    "docs",
+    "features",
+    "frontend",
+    "openspec",
+    "patches",
+    "scripts",
+    "tests"
+  ],
+  "errors": [],
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+filecap: 0.174 s
+modcheck: 0.358 s
+comments: 0.290 s
+freeze: 0.131 s
+gate-precheck: clean in 0.958 s
+factory-lint check --changed
+app/modules/proxy/api.py:1089:13 pyrefly/bad-argument-type Argument `AsyncIterable[Content]` is not assignable to parameter `source` with type `AsyncIterator[bytes | str]` in function `app.modules.proxy.claude_codex_response.responses_to_claude_events`
+fail: 1 new, 13 existing, 0 files fixed (1550 ms)
+make: *** [Makefile:32: lint] Error 1
+make lint: 2 s
