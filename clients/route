@@ -1262,7 +1262,7 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
         return None, f"no non-retired {family} model is served"
     return max(candidates)[1], f"newest served {family}"
 
-def now_iso() -> str:
+def ledger_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def append_ledger(record: dict[str, Any]) -> None:
@@ -1271,7 +1271,7 @@ def append_ledger(record: dict[str, Any]) -> None:
         path = ledger_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"ts": now_iso(), **record, "cwd": os.getcwd()}, sort_keys=True) + "\n")
+            handle.write(json.dumps({"ts": ledger_now_iso(), **record, "cwd": os.getcwd()}, sort_keys=True) + "\n")
     except OSError:
         pass
 
@@ -2898,7 +2898,7 @@ def command_dispatch(args: argparse.Namespace) -> int:
     row = {
         "v": 1,
         "decision_id": f"dcn_{new_ulid()}",
-        "ts": now_iso(),
+        "ts": ledger_now_iso(),
         "class": class_name,
         "job_id": job_id,
         "attempt": attempt,
@@ -3949,7 +3949,7 @@ def command_doctor(args: argparse.Namespace) -> int:
     seats = seat_states(table, by_name, models)
     apply_cli_seat_holds(seats, read_state())
     state = {
-        "ts": now_iso(),
+        "ts": ledger_now_iso(),
         "seats": seats,
         "pools": pools_document,
         "probes": probes,
@@ -4131,7 +4131,7 @@ AUDIT_VERDICTS = ("pass", "fix-needed")
 def command_record(args: argparse.Namespace) -> int:
 
     record = {
-        "ts": now_iso(),
+        "ts": ledger_now_iso(),
         "event": IMPLEMENT_EVENT,
         "class": args.task_class,
         "task": args.task,
@@ -4437,7 +4437,7 @@ def learning_entry(class_name: str, action: str, arm_id: str, evidence: dict[str
     import secrets
 
     return {"class": class_name, "action": action, "arm_id": arm_id, "evidence": evidence,
-            "reason": reason, "ts": now_iso(), "id": secrets.token_hex(12)}
+            "reason": reason, "ts": ledger_now_iso(), "id": secrets.token_hex(12)}
 
 def write_learning_table(table: dict[str, Any]) -> None:
     canonical = Path(__file__).resolve().parent.parent / "config/coding-agents/routing-table.json"
