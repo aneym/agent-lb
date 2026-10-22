@@ -82,20 +82,25 @@ async def test_binary_response_create_is_refused_for_unpriced_model_under_cost_c
     monkeypatch.setattr(websocket_client_module, "websocket_connect", fake_websocket_connect)
     priced = {"type": "response.create", "model": "gpt-5.1", "input": "hi", "stream": True}
     unpriced = {"type": "response.create", "model": UNPRICED_MODEL, "input": "hi", "stream": True}
-    with TestClient(app_instance) as client:
-        with client.websocket_connect(
-            "/backend-api/codex/responses", headers={"Authorization": f"Bearer {key}"}
-        ) as websocket:
-            websocket.send_json(priced)
-            assert websocket.receive_json()["type"] == "response.created"
-            assert websocket.receive_json()["type"] == "response.completed"
 
-            websocket.send_bytes(json.dumps(unpriced).encode())
-            refusal = websocket.receive_json()
+    def exchange() -> dict:
+        with TestClient(app_instance) as client:
+            with client.websocket_connect(
+                "/backend-api/codex/responses", headers={"Authorization": f"Bearer {key}"}
+            ) as websocket:
+                websocket.send_json(priced)
+                assert websocket.receive_json()["type"] == "response.created"
+                assert websocket.receive_json()["type"] == "response.completed"
 
-            websocket.send_bytes(json.dumps(priced).encode())
-            assert websocket.receive_json()["type"] == "response.created"
-            assert websocket.receive_json()["type"] == "response.completed"
+                websocket.send_bytes(json.dumps(unpriced).encode())
+                refusal = websocket.receive_json()
+
+                websocket.send_bytes(json.dumps(priced).encode())
+                assert websocket.receive_json()["type"] == "response.created"
+                assert websocket.receive_json()["type"] == "response.completed"
+        return refusal
+
+    refusal = await asyncio.to_thread(exchange)
 
     assert len(upstream_frames) == 2, upstream_frames
     assert upstream_frames[1] == upstream_frames[0]
