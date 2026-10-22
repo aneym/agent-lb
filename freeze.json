@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T18:55:47Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-clients-lb-cache",
-   "path": "clients/lb-cache",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T17:25:47Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -90,6 +80,15 @@
    "path": "clients/agent-defs-doctor",
    "sha": "3db3b531081b27fd5608116e6ee7697583cc04ee",
    "until": "2026-10-29T17:25:41Z"
+  },
+  {
+   "into": [
+    "clients/lb_cache_quota.py"
+   ],
+   "note": "clients/lb-cache split at 7e685c2d0f. Reapply your diff onto the new module that now holds the code. Map: clients/lb_cache_quota.py: utc, sql_time, query, quota_receipts, quota_report, quota_display",
+   "path": "clients/lb-cache",
+   "sha": "7e685c2d0f8f7ad707e7625b559d8bfe6f2044e6",
+   "until": "2026-10-29T17:26:09Z"
   }
  ]
 }
