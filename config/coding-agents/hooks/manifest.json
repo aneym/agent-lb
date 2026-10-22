@@ -3,6 +3,16 @@
   "hooks": [
     {
       "event": "PreToolUse",
+      "matcher": "SendMessage",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/idle-agents.py\" pre",
+        "timeout": 5
+      },
+      "needs_source": false
+    },
+    {
+      "event": "PreToolUse",
       "matcher": "Bash",
       "hook": {
         "type": "command",
