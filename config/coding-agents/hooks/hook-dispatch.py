@@ -15,9 +15,22 @@ import time
 import types
 
 sys.path[:0] = [os.path.dirname(os.path.abspath(__file__)), os.path.dirname(os.path.realpath(__file__))]
-from hook_failure_recovery import answer_problem, deny_reason, parse_json  # type: ignore[missing-import]
-from hook_output import cap_context, merge_objects  # type: ignore[missing-import]
-from hook_prefilters import COMMAND_PREFILTERS, SCRIPT_NEEDS, SCRIPT_PREFILTERS, escapes_in_input, never  # type: ignore[missing-import]
+try:
+    from hook_failure_recovery import answer_problem, deny_reason, parse_json  # type: ignore[missing-import]
+    from hook_output import cap_context, merge_objects  # type: ignore[missing-import]
+    from hook_prefilters import COMMAND_PREFILTERS, SCRIPT_NEEDS, SCRIPT_PREFILTERS, escapes_in_input, never  # type: ignore[missing-import]
+except ImportError as missing:
+    pre = sys.argv[1:2] == ["PreToolUse"]
+    why = (
+        "hook-dispatch: a helper beside it is missing (%s); its guards did not run%s. Restore the per-hook config: "
+        "python3 ~/.agents/policy/coding-agents/install-policy.py --hook-dispatcher off\n"
+        % (missing, ", so this call is refused" if pre else "")
+    )
+    sys.stderr.write(why)
+    if pre:
+        verdict = {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": why.strip()}
+        sys.stdout.write(json.dumps({"hookSpecificOutput": verdict}))
+    sys.exit(2 if pre else 1)
 
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DEFAULT_TIMEOUT = 600.0
