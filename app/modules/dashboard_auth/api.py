@@ -62,11 +62,11 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 
-def _session_client_key(request: Request, *, prefix: str) -> str:
+def session_client_key(request: Request, *, prefix: str) -> str:
     return f"{prefix}:{request.client.host if request.client else 'unknown'}"
 
 
-async def _create_dashboard_session(*, password_verified: bool, totp_verified: bool) -> tuple[str, int]:
+async def create_dashboard_session(*, password_verified: bool, totp_verified: bool) -> tuple[str, int]:
     settings = await get_settings_cache().get()
     ttl_seconds = settings.dashboard_session_ttl_seconds
     session_id = get_dashboard_session_store().create(
@@ -77,7 +77,7 @@ async def _create_dashboard_session(*, password_verified: bool, totp_verified: b
     return session_id, ttl_seconds
 
 
-def _decorate_session_response(
+def decorate_session_response(
     response: DashboardAuthSessionResponse,
     *,
     request: Request,
@@ -120,7 +120,7 @@ def _decorate_session_response(
     )
 
 
-async def _has_active_password_session(request: Request, context: DashboardAuthContext) -> bool:
+async def has_active_password_session(request: Request, context: DashboardAuthContext) -> bool:
     settings = await context.repository.get_settings()
     if settings.password_hash is None:
         return False
@@ -128,8 +128,8 @@ async def _has_active_password_session(request: Request, context: DashboardAuthC
     return get_dashboard_session_store().is_password_verified(session_id)
 
 
-async def _validate_password_management_session(request: Request) -> None:
-    _ensure_password_management_enabled(request)
+async def validate_password_management_session(request: Request) -> None:
+    ensure_password_management_enabled(request)
 
     session_id = request.cookies.get(DASHBOARD_SESSION_COOKIE)
     session_state = get_dashboard_session_store().get(session_id)
@@ -144,7 +144,7 @@ async def _validate_password_management_session(request: Request) -> None:
         )
 
 
-def _ensure_password_management_enabled(request: Request) -> None:
+def ensure_password_management_enabled(request: Request) -> None:
     request_auth = get_dashboard_request_auth(request)
     if request_auth is not None and not password_management_enabled(request_auth.mode):
         raise DashboardBadRequestError(
@@ -153,15 +153,15 @@ def _ensure_password_management_enabled(request: Request) -> None:
         )
 
 
-_MAX_PASSWORD_BYTES = 72
+MAX_PASSWORD_BYTES = 72
 
 
-def _validate_password_length(password: str) -> None:
+def validate_password_length(password: str) -> None:
     if len(password) < 8:
         raise DashboardValidationError("Password must be at least 8 characters")
-    if len(password.encode("utf-8")) > _MAX_PASSWORD_BYTES:
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
         raise DashboardValidationError(
-            f"Password must be at most {_MAX_PASSWORD_BYTES} bytes when encoded as UTF-8. "
+            f"Password must be at most {MAX_PASSWORD_BYTES} bytes when encoded as UTF-8. "
             "Note that multi-byte characters (e.g. emoji, non-ASCII letters) count for more than one byte.",
             code="password_too_long",
         )
@@ -174,7 +174,7 @@ async def get_dashboard_auth_session(
 ) -> DashboardAuthSessionResponse:
     session_id = request.cookies.get(DASHBOARD_SESSION_COOKIE)
     response = await context.service.get_session_state(session_id)
-    decorated = _decorate_session_response(response, request=request, force_authenticated=True)
+    decorated = decorate_session_response(response, request=request, force_authenticated=True)
     if decorated.auth_mode != DashboardAuthMode.STANDARD:
         return decorated
     if decorated.password_required or is_local_request(request):
@@ -226,21 +226,21 @@ async def setup_password(
         if validation_status != "valid":
             raise DashboardAuthError("Invalid dashboard bootstrap token.", code="invalid_bootstrap_token")
     password = payload.password.strip()
-    _validate_password_length(password)
+    validate_password_length(password)
     try:
         await context.service.setup_password(password)
     except PasswordAlreadyConfiguredError as exc:
         raise DashboardConflictError(str(exc), code="password_already_configured") from exc
 
     await get_settings_cache().invalidate()
-    session_id, session_ttl_seconds = await _create_dashboard_session(password_verified=True, totp_verified=False)
-    response = _decorate_session_response(
+    session_id, session_ttl_seconds = await create_dashboard_session(password_verified=True, totp_verified=False)
+    response = decorate_session_response(
         await context.service.get_session_state(session_id),
         request=request,
         password_session_id=session_id,
     )
     json_response = JSONResponse(status_code=200, content=response.model_dump(by_alias=True))
-    _set_session_cookie(json_response, session_id, request, max_age_seconds=session_ttl_seconds)
+    set_session_cookie(json_response, session_id, request, max_age_seconds=session_ttl_seconds)
     return json_response
 
 
@@ -261,7 +261,7 @@ async def login_password(
         raise DashboardBadRequestError("Password is not configured", code="password_not_configured")
 
     limiter = get_password_rate_limiter()
-    rate_key = _session_client_key(request, prefix="password_login")
+    rate_key = session_client_key(request, prefix="password_login")
     try:
         await limiter.check_and_increment(rate_key, context.session)
     except DashboardRateLimitError as exc:
@@ -283,14 +283,14 @@ async def login_password(
 
     await limiter.clear_for_key(rate_key, context.session)
 
-    session_id, session_ttl_seconds = await _create_dashboard_session(password_verified=True, totp_verified=False)
-    response = _decorate_session_response(
+    session_id, session_ttl_seconds = await create_dashboard_session(password_verified=True, totp_verified=False)
+    response = decorate_session_response(
         await context.service.get_session_state(session_id),
         request=request,
         password_session_id=session_id,
     )
     json_response = JSONResponse(status_code=200, content=response.model_dump(by_alias=True))
-    _set_session_cookie(json_response, session_id, request, max_age_seconds=session_ttl_seconds)
+    set_session_cookie(json_response, session_id, request, max_age_seconds=session_ttl_seconds)
     return json_response
 
 
@@ -300,10 +300,10 @@ async def change_password(
     payload: PasswordChangeRequest = Body(...),
     context: DashboardAuthContext = Depends(get_dashboard_auth_context),
 ) -> JSONResponse:
-    await _validate_password_management_session(request)
+    await validate_password_management_session(request)
 
     new_password = payload.new_password.strip()
-    _validate_password_length(new_password)
+    validate_password_length(new_password)
 
     try:
         await context.service.change_password(payload.current_password, new_password)
@@ -322,7 +322,7 @@ async def remove_password(
     payload: PasswordRemoveRequest = Body(...),
     context: DashboardAuthContext = Depends(get_dashboard_auth_context),
 ) -> JSONResponse:
-    await _validate_password_management_session(request)
+    await validate_password_management_session(request)
 
     try:
         await context.service.remove_password(payload.password)
@@ -345,8 +345,8 @@ async def start_totp_setup(
     request: Request,
     context: DashboardAuthContext = Depends(get_dashboard_auth_context),
 ) -> TotpSetupStartResponse:
-    _ensure_password_management_enabled(request)
-    if not await _has_active_password_session(request, context):
+    ensure_password_management_enabled(request)
+    if not await has_active_password_session(request, context):
         raise DashboardAuthError("Authentication is required")
     session_id = request.cookies.get(DASHBOARD_SESSION_COOKIE)
     try:
@@ -363,12 +363,12 @@ async def confirm_totp_setup(
     payload: TotpSetupConfirmRequest = Body(...),
     context: DashboardAuthContext = Depends(get_dashboard_auth_context),
 ) -> JSONResponse:
-    _ensure_password_management_enabled(request)
-    if not await _has_active_password_session(request, context):
+    ensure_password_management_enabled(request)
+    if not await has_active_password_session(request, context):
         raise DashboardAuthError("Authentication is required")
 
     limiter = get_totp_rate_limiter()
-    rate_key = _session_client_key(request, prefix="totp_setup_confirm")
+    rate_key = session_client_key(request, prefix="totp_setup_confirm")
     try:
         await limiter.check_and_increment(rate_key, context.session)
     except DashboardRateLimitError as exc:
@@ -406,9 +406,9 @@ async def verify_totp(
     payload: TotpVerifyRequest = Body(...),
     context: DashboardAuthContext = Depends(get_dashboard_auth_context),
 ) -> DashboardAuthSessionResponse | JSONResponse:
-    _ensure_password_management_enabled(request)
+    ensure_password_management_enabled(request)
     limiter = get_totp_rate_limiter()
-    rate_key = _session_client_key(request, prefix="totp_verify")
+    rate_key = session_client_key(request, prefix="totp_verify")
     current_session_id = request.cookies.get(DASHBOARD_SESSION_COOKIE)
     try:
         await context.service.ensure_active_password_session(current_session_id)
@@ -438,13 +438,13 @@ async def verify_totp(
         raise DashboardBadRequestError(str(exc), code="invalid_totp_code") from exc
 
     await limiter.clear_for_key(rate_key, context.session)
-    response = _decorate_session_response(
+    response = decorate_session_response(
         await context.service.get_session_state(session_id),
         request=request,
         password_session_id=session_id,
     )
     json_response = JSONResponse(status_code=200, content=response.model_dump(by_alias=True))
-    _set_session_cookie(json_response, session_id, request, max_age_seconds=applied_ttl_seconds)
+    set_session_cookie(json_response, session_id, request, max_age_seconds=applied_ttl_seconds)
     return json_response
 
 
@@ -454,9 +454,9 @@ async def disable_totp(
     payload: TotpVerifyRequest = Body(...),
     context: DashboardAuthContext = Depends(get_dashboard_auth_context),
 ) -> JSONResponse:
-    _ensure_password_management_enabled(request)
+    ensure_password_management_enabled(request)
     limiter = get_totp_rate_limiter()
-    rate_key = _session_client_key(request, prefix="totp_disable")
+    rate_key = session_client_key(request, prefix="totp_disable")
     session_id = request.cookies.get(DASHBOARD_SESSION_COOKIE)
     try:
         await context.service.ensure_totp_verified_session(session_id)
@@ -500,7 +500,7 @@ async def logout_dashboard(
     return response
 
 
-def _set_session_cookie(response: JSONResponse, session_id: str, request: Request, *, max_age_seconds: int) -> None:
+def set_session_cookie(response: JSONResponse, session_id: str, request: Request, *, max_age_seconds: int) -> None:
     response.set_cookie(
         key=DASHBOARD_SESSION_COOKIE,
         value=session_id,
