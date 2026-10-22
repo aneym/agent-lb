@@ -46,7 +46,7 @@ def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
                 {
                     "type": "command",
                     "command": f"{DISPATCH_INSTALLED} PreToolUse 'Bash' {registry['rev']}",
-                    "timeout": 1265,
+                    "timeout": 60,
                 }
             ],
         }

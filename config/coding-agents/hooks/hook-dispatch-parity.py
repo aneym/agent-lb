@@ -16,11 +16,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from parity_presentation import expected_presentation, same_effect  # type: ignore[missing-import]
-
-DESCRIPTION = (
-    "Parity fixture for hook-dispatch.py: the per-hook config and the dispatcher give Claude Code the same answers."
-)
 
 DEFAULT_TIMEOUT = 600.0
 PATH_REF = re.compile(r'(?:\$HOME|~)/([^\s"\'$`\\;&|<>(){}]+)')
@@ -1460,7 +1457,7 @@ def build_registry(per_hook, inproc):
             hooks = entries[event][key]
             entry = {
                 "type": "command",
-                "command": "python3 \"$HOME/.claude/hooks/hook-dispatch.py\" %s '%s'" % (event, key),
+                "command": "exec python3 \"$HOME/.claude/hooks/hook-dispatch.py\" %s '%s'" % (event, key),
                 "timeout": int(sum(hook_timeout(h) for h in hooks) + 5),
             }
             group = {"hooks": [entry]}
@@ -1514,7 +1511,7 @@ def timing_only(case):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=DESCRIPTION)
+    parser = argparse.ArgumentParser(description="hook-dispatch.py parity fixture")
     parser.add_argument("--home", default=os.path.expanduser("~"))
     parser.add_argument("--registry")
     parser.add_argument("--dispatcher")

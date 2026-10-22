@@ -341,14 +341,18 @@ async def test_member_header_websocket_bearer_is_not_upstream_or_persisted(
 
     monkeypatch.setattr(websocket_client_module, "websocket_connect", fake_websocket_connect)
     sentinel = "chatgpt-WS-SENTINEL-abc123"
-    with TestClient(app_instance) as client:
-        with client.websocket_connect(
-            "/backend-api/codex/responses",
-            headers={"Authorization": f"Bearer {sentinel}", "x-api-key": key["key"]},
-        ) as websocket:
-            websocket.send_json({"type": "response.create", "model": "gpt-5.1", "input": "hi", "stream": True})
-            assert websocket.receive_json()["type"] == "response.created"
-            assert websocket.receive_json()["type"] == "response.completed"
+
+    def exchange() -> None:
+        with TestClient(app_instance) as client:
+            with client.websocket_connect(
+                "/backend-api/codex/responses",
+                headers={"Authorization": f"Bearer {sentinel}", "x-api-key": key["key"]},
+            ) as websocket:
+                websocket.send_json({"type": "response.create", "model": "gpt-5.1", "input": "hi", "stream": True})
+                assert websocket.receive_json()["type"] == "response.created"
+                assert websocket.receive_json()["type"] == "response.completed"
+
+    await asyncio.to_thread(exchange)
 
     assert len(captured_headers) == 1
     assert captured_headers[0]["Authorization"] == "Bearer lb-account-token"
