@@ -67,7 +67,7 @@ def codex_changes(home: Path, model: str | None) -> dict[Path, str]:
     if config and model and reconcile_codex_config(config[1], model) != config[1]:
         changes[config[0]] = reconcile_codex_config(config[1], model)
     hooks = home_file(home, "hooks.json")
-    if hooks is None and model and (home / ".codex").is_dir():
+    if hooks is None and model:
         hooks = (home / ".codex" / "hooks.json", "")
     if hooks:
         try:
