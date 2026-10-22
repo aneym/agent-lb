@@ -41,7 +41,7 @@ def lb_healthy(base_url: str) -> bool:
 
 def main(argv: list[str]) -> None:
     muse = shutil.which("muse") or os.path.expanduser("~/.local/bin/muse")
-    if os.environ.get("MUSE_LB_DISABLE") == "1":
+    if os.environ.get("MUSE_LB_DISABLE") == "1" or argv[:1] in (["--version"], ["-V"], ["--help"], ["-h"]):
         os.execvp(muse, [muse, *argv])
     base_url = os.environ.get("MUSE_LB_BASE_URL", DEFAULT_BASE_URL)
     if not lb_healthy(base_url):
@@ -50,18 +50,15 @@ def main(argv: list[str]) -> None:
             file=sys.stderr,
         )
         os.execvp(muse, [muse, *argv])
-    flags = [
-        "--provider", "meta",
-        "--base-url", base_url,
-        "--model", resolve_model(),
-    ]
+    flags = ["--provider", "meta", "--base-url", base_url]
+    if "--model" not in argv:
+        flags += ["--model", resolve_model()]
     subcommands = {
         "resume", "exec", "config", "export", "trace", "model-profile",
         "skills", "voice", "plugins", "sandbox", "schema", "serve",
         "session-message", "mcp", "auth", "login", "logout", "init",
     }
     if argv and argv[0] in subcommands:
-
         command = [muse, argv[0], *flags, *argv[1:]]
     else:
         command = [muse, *flags, *argv]

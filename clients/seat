@@ -40,10 +40,8 @@ MUSE_MIN = (1, 4, 9)
 
 def muse_version_ok(text: str) -> bool:
     found = re.search(r"Muse Code (\d+)\.(\d+)\.(\d+)", text)
-    if not found:
-        return False
-    version = tuple(int(part) for part in found.groups())
-    return version[0] == MUSE_MIN[0] and version >= MUSE_MIN
+    version = tuple(map(int, found.groups())) if found else ()
+    return MUSE_MIN <= version < (MUSE_MIN[0] + 1,)
 SEAT_FOR_VENDOR = {"cursor": "cursor-seat", "devin": "devin-seat", "muse": "muse-seat-local"}
 
 EXIT_OK = 0
@@ -106,7 +104,8 @@ def ledger_path() -> Path:
 
 
 def cli_bin(vendor: str) -> str:
-    binaries = {"cursor": "cursor-agent", "devin": "devin", "muse": "muse"}
+    lb = Path.home() / ".agent-lb/bin/muse-lb-launch"
+    binaries = {"cursor": "cursor-agent", "devin": "devin", "muse": str(lb) if lb.is_file() else "muse"}
     return os.environ.get(f"SEAT_{vendor.upper()}_BIN") or binaries[vendor]
 
 
@@ -1102,7 +1101,6 @@ def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_
                 "--no-foreign-personal-context", *([] if mode == "ask" else ["--disable-sandbox"]),
                 "--prompt-file", str(prompt_file)]
 
-
     permission = "smart" if mode == "ask" else "dangerous"
     return [
         cli_bin("devin"),
@@ -1164,10 +1162,8 @@ def parse_outcome(vendor: str, completed: subprocess.CompletedProcess[str], expo
                 continue
             if event_id:
                 seen.add(event_id)
-            payload = event.get("payload")
-            payload = payload if isinstance(payload, dict) else {}
-            stream = event.get("stream")
-            stream = stream if isinstance(stream, dict) else {}
+            payload = payload if isinstance(payload := event.get("payload"), dict) else {}
+            stream = stream if isinstance(stream := event.get("stream"), dict) else {}
             if stream.get("kind") == "session":
                 outcome["session_id"] = stream.get("id")
             if event.get("payload_type", "").startswith("run.terminal."):
@@ -1208,7 +1204,7 @@ def parse_outcome(vendor: str, completed: subprocess.CompletedProcess[str], expo
             )[:ERROR_CHARS]
         return outcome
     export = read_json(export_file, {}) if export_file.is_file() else {}
-    metrics = export.get("final_metrics") if isinstance(export, dict) else None
+    metrics = isinstance(export, dict) and export.get("final_metrics")
     metrics = metrics if isinstance(metrics, dict) else {}
     outcome.update(
         result=completed.stdout.strip(),
