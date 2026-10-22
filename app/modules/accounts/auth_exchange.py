@@ -37,13 +37,13 @@ from app.modules.accounts.auth_contracts import (
 )
 from app.modules.accounts.auth_singleflight import logger
 from app.modules.accounts.auth_tokens import (
-    _call_with_supported_optional_kwargs,
-    _clean_optional,
-    _exchange_timeout_seconds,
-    _refresh_token_material_changed,
-    _refresh_token_material_fingerprint,
-    _snapshot,
+    call_with_supported_optional_kwargs,
+    clean_optional,
+    exchange_timeout_seconds,
     expiry_datetime,
+    refresh_token_material_changed,
+    refresh_token_material_fingerprint,
+    snapshot,
 )
 from app.modules.accounts.exchange_persist import (
     dedicated_accounts_repo,
@@ -55,7 +55,7 @@ from app.modules.accounts.repository import EXCHANGE_RESET_REASONS
 from app.modules.proxy.account_cache import get_account_selection_cache
 
 
-class AuthManager:
+class AuthExchange:
     def __init__(
         self,
         repo: AccountsRepositoryPort,
@@ -80,13 +80,13 @@ class AuthManager:
     async def _refresh_account_locked(self, account: Account, provider: Provider) -> Account:
         expected_refresh_token_encrypted = account.refresh_token_encrypted
         latest = await self._repo.reload_by_id(account.id)
-        if latest is not None and _refresh_token_material_changed(
+        if latest is not None and refresh_token_material_changed(
             self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
         ):
             if not is_locally_owned(latest, get_settings()):
                 raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
 
-            return _snapshot(self._repo, latest)
+            return snapshot(self._repo, latest)
         if latest is None:
             if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
                 raise RefreshError("account_missing", "Account no longer exists", False)
@@ -96,12 +96,12 @@ class AuthManager:
         account = latest
         account_id = account.id
         expected_refresh_token_encrypted = latest.refresh_token_encrypted
-        token_hash = _refresh_token_material_fingerprint(self._encryptor, expected_refresh_token_encrypted)
+        token_hash = refresh_token_material_fingerprint(self._encryptor, expected_refresh_token_encrypted)
         intent_supported = isinstance(getattr(self._repo, "session", None), db_session.AsyncSession)
         persist_repo = dedicated_accounts_repo if intent_supported else lambda: nullcontext(self._repo)
         replay = False
         if intent_supported:
-            timeout = _exchange_timeout_seconds()
+            timeout = exchange_timeout_seconds()
             intent = await self._repo.exchange_intent_window(account.id, timeout)
             if intent is not None and intent.token_hash != token_hash:
                 if account.status != AccountStatus.EXCHANGE_UNCERTAIN and await self._repo.drop_stale_exchange_intent(
@@ -137,10 +137,10 @@ class AuthManager:
                 latest = await self._repo.reload_by_id(account_id)
                 if latest is not None and not is_locally_owned(latest, get_settings()):
                     raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
-                if latest is not None and _refresh_token_material_changed(
+                if latest is not None and refresh_token_material_changed(
                     self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
                 ):
-                    return _snapshot(self._repo, latest)
+                    return snapshot(self._repo, latest)
                 if await self._repo.exchange_intent_hash(account_id) == token_hash:
                     await self._repo.mark_exchange_uncertain(account_id, token_hash, expected_refresh_token_encrypted)
                     get_account_selection_cache().invalidate()
@@ -206,12 +206,12 @@ class AuthManager:
             if is_permanent:
                 exc.is_permanent = True
                 latest = await self._repo.reload_by_id(account.id)
-                if latest is not None and _refresh_token_material_changed(
+                if latest is not None and refresh_token_material_changed(
                     self._encryptor,
                     latest.refresh_token_encrypted,
                     expected_refresh_token_encrypted,
                 ):
-                    return _snapshot(self._repo, latest)
+                    return snapshot(self._repo, latest)
                 reason = permanent_failure_reason(exc.code)
                 status = account_status_for_permanent_failure(exc.code)
                 status_updated = await self._repo.update_status(
@@ -224,12 +224,12 @@ class AuthManager:
                 )
                 if not status_updated:
                     current = await self._repo.reload_by_id(account.id)
-                    if current is not None and _refresh_token_material_changed(
+                    if current is not None and refresh_token_material_changed(
                         self._encryptor,
                         current.refresh_token_encrypted,
                         expected_refresh_token_encrypted,
                     ):
-                        return _snapshot(self._repo, current)
+                        return snapshot(self._repo, current)
                     raise
                 account.status = status
                 account.deactivation_reason = reason
@@ -269,8 +269,8 @@ class AuthManager:
             account.plan_type = DEFAULT_PLAN
         if result.email:
             account.email = result.email
-        incoming_workspace_id = _clean_optional(result.workspace_id)
-        current_workspace_id = _clean_optional(account.workspace_id)
+        incoming_workspace_id = clean_optional(result.workspace_id)
+        current_workspace_id = clean_optional(account.workspace_id)
         next_workspace_id = current_workspace_id
         if incoming_workspace_id and current_workspace_id and current_workspace_id != incoming_workspace_id:
             logger.warning(
@@ -333,10 +333,10 @@ class AuthManager:
             tokens_updated = None
         if tokens_updated is False:
             latest = await self._repo.reload_by_id(account.id)
-            if latest is not None and _refresh_token_material_changed(
+            if latest is not None and refresh_token_material_changed(
                 self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
             ):
-                return _snapshot(self._repo, latest)
+                return snapshot(self._repo, latest)
         if not tokens_updated:
             if intent_supported:
                 await mark_exchange_unsaved(
@@ -350,7 +350,7 @@ class AuthManager:
             stored = await self._repo.reload_by_id(account.id)
             if stored is not None:
                 account = stored
-        return _snapshot(self._repo, account)
+        return snapshot(self._repo, account)
 
     async def _refresh_tokens(
         self,
@@ -369,7 +369,7 @@ class AuthManager:
                     on_exchange_start()
                 return await provider.refresh_access_token(refresh_token)
             if provider.name != OPENAI_PROVIDER_NAME:
-                return await _call_with_supported_optional_kwargs(
+                return await call_with_supported_optional_kwargs(
                     provider.refresh_access_token,
                     refresh_token,
                     optional_kwargs={"on_exchange_start": on_exchange_start},
@@ -391,7 +391,7 @@ class AuthManager:
                         transport_error=True,
                         upstream_proxy_fail_closed_reason=exc.reason,
                     ) from exc
-            return await _call_with_supported_optional_kwargs(
+            return await call_with_supported_optional_kwargs(
                 refresh_access_token,
                 refresh_token,
                 optional_kwargs={

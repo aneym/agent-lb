@@ -12,7 +12,7 @@ from app.core.auth.refresh import (
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.db.models import Account
-from app.modules.accounts.auth_tokens import _refresh_token_material_fingerprint
+from app.modules.accounts.auth_tokens import refresh_token_material_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _RefreshSingleflightKey: TypeAlias = tuple[str, str]
 
 
-class _RefreshSingleflight:
+class RefreshSingleflight:
     def __init__(self) -> None:
         self._inflight: dict[_RefreshSingleflightKey, asyncio.Task[Account]] = {}
         self._recent_failures: dict[_RefreshSingleflightKey, tuple[float, tuple[str, str, bool]]] = {}
@@ -96,12 +96,12 @@ class _RefreshSingleflight:
         self._recent_failures.clear()
 
 
-_REFRESH_SINGLEFLIGHT = _RefreshSingleflight()
+REFRESH_SINGLEFLIGHT = RefreshSingleflight()
 
 
-def _refresh_singleflight_key(encryptor: TokenEncryptor, account: Account) -> _RefreshSingleflightKey:
-    return (account.id, _refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted))
+def refresh_singleflight_key(encryptor: TokenEncryptor, account: Account) -> _RefreshSingleflightKey:
+    return (account.id, refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted))
 
 
-def _clear_refresh_singleflight_state() -> None:
-    _REFRESH_SINGLEFLIGHT.clear()
+def clear_refresh_singleflight_state() -> None:
+    REFRESH_SINGLEFLIGHT.clear()

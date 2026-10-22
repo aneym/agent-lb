@@ -50,7 +50,8 @@ from app.core.utils.client_session import get_dispatch_id
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, AccountStatus, StickySessionKind
-from app.modules.accounts.auth_manager import AccountNotOwnedError, AuthManager, is_locally_owned
+from app.modules.accounts.auth_contracts import AccountNotOwnedError, is_locally_owned
+from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
     OPENROUTER_CREDITS_QUOTA_KEY,

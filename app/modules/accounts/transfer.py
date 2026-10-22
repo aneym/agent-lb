@@ -18,7 +18,7 @@ from app.core.providers import OPENAI_PROVIDER_NAME, get_anthropic_compat_profil
 from app.core.providers.openrouter import OPENROUTER_PROVIDER_NAME
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
-from app.modules.accounts.auth_manager import expiry_datetime
+from app.modules.accounts.auth_tokens import expiry_datetime
 from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
     credits_exhausted,

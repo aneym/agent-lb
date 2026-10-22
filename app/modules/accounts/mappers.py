@@ -12,7 +12,7 @@ from app.core.usage.types import UsageTrendBucket, UsageWindowRow
 from app.core.utils.time import from_epoch_seconds, utcnow
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory
 from app.modules.accounts import reset_credit_cache
-from app.modules.accounts.auth_manager import is_locally_owned
+from app.modules.accounts.auth_contracts import is_locally_owned
 from app.modules.accounts.credits import (
     OPENROUTER_PROVIDER_NAME,
     credits_exhausted,

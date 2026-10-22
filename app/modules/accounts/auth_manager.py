@@ -8,14 +8,14 @@ from app.core.providers import (
 from app.db import session as db_session
 from app.db.models import Account, AccountStatus
 from app.modules.accounts.auth_contracts import AccountNotOwnedError, is_locally_owned
-from app.modules.accounts.auth_exchange import AuthManager as AuthExchange
-from app.modules.accounts.auth_singleflight import _REFRESH_SINGLEFLIGHT, _refresh_singleflight_key, logger
+from app.modules.accounts.auth_exchange import AuthExchange
+from app.modules.accounts.auth_singleflight import REFRESH_SINGLEFLIGHT, logger, refresh_singleflight_key
 from app.modules.accounts.auth_tokens import (
-    _account_needs_refresh,
-    _exchange_timeout_seconds,
-    _refresh_token_material_fingerprint,
-    _snapshot,
     access_token_hard_expired,
+    account_needs_refresh,
+    exchange_timeout_seconds,
+    refresh_token_material_fingerprint,
+    snapshot,
 )
 from app.modules.accounts.repository import EXCHANGE_RESET_REASONS
 
@@ -28,7 +28,7 @@ class AuthManager(AuthExchange):
         if latest is not None:
             account = latest
 
-        account = _snapshot(self._repo, account)
+        account = snapshot(self._repo, account)
         if not is_locally_owned(account, settings):
             if force or access_token_hard_expired(self._encryptor, account):
                 raise AccountNotOwnedError(account.id, account.owner_instance, settings.local_instance_id)
@@ -36,11 +36,11 @@ class AuthManager(AuthExchange):
         recover_exchange = False
         if account.status == AccountStatus.EXCHANGE_UNCERTAIN:
             if recover_uncertain and isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
-                intent = await self._repo.exchange_intent_window(account.id, _exchange_timeout_seconds())
+                intent = await self._repo.exchange_intent_window(account.id, exchange_timeout_seconds())
                 recover_exchange = (
                     intent is not None
                     and intent.token_hash
-                    == _refresh_token_material_fingerprint(self._encryptor, account.refresh_token_encrypted)
+                    == refresh_token_material_fingerprint(self._encryptor, account.refresh_token_encrypted)
                     and intent.ready
                     and (
                         intent.reason in EXCHANGE_RESET_REASONS
@@ -49,9 +49,9 @@ class AuthManager(AuthExchange):
                 )
             if not force and not recover_exchange and not access_token_hard_expired(self._encryptor, account):
                 return await self._ensure_chatgpt_account_id(account)
-        if force or recover_exchange or _account_needs_refresh(self._encryptor, account):
-            account = await _REFRESH_SINGLEFLIGHT.run(
-                _refresh_singleflight_key(self._encryptor, account),
+        if force or recover_exchange or account_needs_refresh(self._encryptor, account):
+            account = await REFRESH_SINGLEFLIGHT.run(
+                refresh_singleflight_key(self._encryptor, account),
                 lambda: self._run_refresh(account),
             )
         return await self._ensure_chatgpt_account_id(account)
@@ -97,7 +97,7 @@ class AuthManager(AuthExchange):
             if not updated:
                 latest = await self._repo.reload_by_id(account.id)
                 if latest is not None:
-                    return _snapshot(self._repo, latest)
+                    return snapshot(self._repo, latest)
         except Exception:
             logger.warning("Failed to persist chatgpt_account_id account_id=%s", account.id, exc_info=True)
         return account

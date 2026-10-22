@@ -61,7 +61,8 @@ from app.core.usage.quota import _has_usable_credits, apply_usage_quota
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
-from app.modules.accounts.auth_manager import access_token_hard_expired, is_locally_owned
+from app.modules.accounts.auth_contracts import is_locally_owned
+from app.modules.accounts.auth_tokens import access_token_hard_expired
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id

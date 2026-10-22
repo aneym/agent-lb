@@ -25,23 +25,23 @@ _ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 300
 _ACCESS_TOKEN_SERVING_MARGIN_SECONDS = 300
 
 
-def _exchange_timeout_seconds() -> float:
+def exchange_timeout_seconds() -> float:
     settings = get_settings()
     return max(settings.oauth_timeout_seconds, settings.token_refresh_timeout_seconds, 30.0)
 
 
-def _chatgpt_account_id_from_id_token(id_token: str) -> str | None:
+def chatgpt_account_id_from_id_token(id_token: str) -> str | None:
     return get_provider(OPENAI_PROVIDER_NAME).account_metadata_from_id_token(id_token).account_id
 
 
-def _expires_within(expires_ms: int, *, margin_seconds: float, now: datetime | None = None) -> bool:
+def expires_within(expires_ms: int, *, margin_seconds: float, now: datetime | None = None) -> bool:
 
     current = to_utc_naive(now) if now is not None else utcnow()
     threshold_ms = naive_utc_to_epoch(current) * 1000 + (margin_seconds * 1000)
     return expires_ms <= threshold_ms
 
 
-def _access_token_needs_refresh(
+def access_token_needs_refresh(
     encryptor: TokenEncryptor,
     account: Account,
     *,
@@ -51,10 +51,10 @@ def _access_token_needs_refresh(
         access_token = encryptor.decrypt(account.access_token_encrypted)
     except Exception:
         return False
-    expires_ms = _stored_expiry_ms(account, access_token)
+    expires_ms = stored_expiry_ms(account, access_token)
     if expires_ms is None:
         return False
-    return _expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_REFRESH_MARGIN_SECONDS, now=now)
+    return expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_REFRESH_MARGIN_SECONDS, now=now)
 
 
 def access_token_hard_expired(
@@ -70,15 +70,15 @@ def access_token_hard_expired(
         access_token = encryptor.decrypt(account.access_token_encrypted)
     except Exception:
         return True
-    expires_ms = _stored_expiry_ms(account, access_token)
+    expires_ms = stored_expiry_ms(account, access_token)
     if expires_ms is None:
         return False
-    return _expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_SERVING_MARGIN_SECONDS, now=now)
+    return expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_SERVING_MARGIN_SECONDS, now=now)
 
 
-def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: datetime | None = None) -> bool:
+def account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: datetime | None = None) -> bool:
     current = to_utc_naive(now) if now is not None else utcnow()
-    if _access_token_needs_refresh(encryptor, account, now=current):
+    if access_token_needs_refresh(encryptor, account, now=current):
         return True
     try:
         provider = get_provider(account.provider)
@@ -91,28 +91,28 @@ def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: 
     return should_refresh(account.last_refresh, now=current)
 
 
-def _snapshot(repo: object, account: Account) -> Account:
+def snapshot(repo: object, account: Account) -> Account:
 
     if not hasattr(repo, "session"):
         return account
     return Account(**{column.key: getattr(account, column.key) for column in Account.__table__.columns})
 
 
-def _refresh_token_material_changed(
+def refresh_token_material_changed(
     encryptor: TokenEncryptor,
     latest_refresh_token_encrypted: bytes,
     current_refresh_token_encrypted: bytes,
 ) -> bool:
-    return _refresh_token_material_fingerprint(
+    return refresh_token_material_fingerprint(
         encryptor,
         latest_refresh_token_encrypted,
-    ) != _refresh_token_material_fingerprint(
+    ) != refresh_token_material_fingerprint(
         encryptor,
         current_refresh_token_encrypted,
     )
 
 
-def _refresh_token_material_fingerprint(encryptor: TokenEncryptor, refresh_token_encrypted: bytes) -> str:
+def refresh_token_material_fingerprint(encryptor: TokenEncryptor, refresh_token_encrypted: bytes) -> str:
     try:
         material = encryptor.decrypt(refresh_token_encrypted).encode("utf-8")
     except Exception:
@@ -120,14 +120,14 @@ def _refresh_token_material_fingerprint(encryptor: TokenEncryptor, refresh_token
     return sha256(material).hexdigest()
 
 
-def _clean_optional(value: str | None) -> str | None:
+def clean_optional(value: str | None) -> str | None:
     if not isinstance(value, str):
         return None
     cleaned = value.strip()
     return cleaned or None
 
 
-async def _call_with_supported_optional_kwargs(
+async def call_with_supported_optional_kwargs(
     func: Callable[..., Awaitable[Any]],
     /,
     *args: Any,
@@ -161,7 +161,7 @@ def expiry_datetime(
     return None
 
 
-def _stored_expiry_ms(account: Account, access_token: str) -> int | None:
+def stored_expiry_ms(account: Account, access_token: str) -> int | None:
     if account.access_expires_at is not None:
         return naive_utc_to_epoch(to_utc_naive(account.access_expires_at)) * 1000
     return token_expiry_epoch_ms(access_token)

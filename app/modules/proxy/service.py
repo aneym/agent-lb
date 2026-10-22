@@ -98,12 +98,8 @@ from app.db.models import (
     StickySessionKind,
 )
 from app.db.session import SessionLocal as SessionLocal
-from app.modules.accounts.auth_manager import (
-    AccountNotOwnedError,
-    AccountsRepositoryPort,
-    AuthManager,
-    is_locally_owned,
-)
+from app.modules.accounts.auth_contracts import AccountNotOwnedError, AccountsRepositoryPort, is_locally_owned
+from app.modules.accounts.auth_manager import AuthManager
 from app.modules.api_keys.service_data import (
     API_KEY_USAGE_RESERVATION_DEFAULT_INPUT_TOKENS,
     API_KEY_USAGE_RESERVATION_DEFAULT_OUTPUT_TOKENS,
@@ -2151,7 +2147,7 @@ def _routing_strategy(settings: DashboardSettings) -> RoutingStrategy:
     return "capacity_weighted"
 
 
-async def _call_with_supported_optional_kwargs(
+async def call_with_supported_optional_kwargs(
     func: Callable[..., Awaitable[Any]],
     /,
     *args: Any,

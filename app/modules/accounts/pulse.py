@@ -23,7 +23,7 @@ from app.core.providers import (
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.modules.accounts import probes
-from app.modules.accounts.auth_manager import is_locally_owned
+from app.modules.accounts.auth_contracts import is_locally_owned
 from app.modules.accounts.pulse_backend import (
     AnthropicQuotaCooldown,
     _AccountsRepositoryLike,

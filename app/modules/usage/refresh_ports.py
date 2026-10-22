@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Protocol
 
 from app.db.models import AccountStatus, UsageHistory
-from app.modules.accounts.auth_manager import AccountsRepositoryPort
+from app.modules.accounts.auth_contracts import AccountsRepositoryPort
 
 
 class UsageRepositoryPort(Protocol):

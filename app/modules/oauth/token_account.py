@@ -13,7 +13,7 @@ from app.core.plan_types import coerce_account_plan_type
 from app.core.providers import OPENAI_PROVIDER_NAME, get_provider
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
-from app.modules.accounts.auth_manager import expiry_datetime
+from app.modules.accounts.auth_tokens import expiry_datetime
 
 
 def account_from_tokens(tokens: OAuthTokens, provider_name: str, encryptor: TokenEncryptor) -> Account:

@@ -18,12 +18,9 @@ from app.core.usage import capacity_for_plan
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
-from app.modules.accounts.auth_manager import (
-    AuthManager,
-    _exchange_timeout_seconds,
-    _refresh_token_material_fingerprint,
-    is_locally_owned,
-)
+from app.modules.accounts.auth_contracts import is_locally_owned
+from app.modules.accounts.auth_manager import AuthManager
+from app.modules.accounts.auth_tokens import exchange_timeout_seconds, refresh_token_material_fingerprint
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.limit_warmup.repository import LimitWarmupRepository
@@ -138,8 +135,8 @@ class UsageRefreshScheduler:
                                 if account.provider in settings.exchange_auto_reset_providers:
                                     result = await accounts_repo.auto_reset_exchange_intent(
                                         account.id,
-                                        _refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted),
-                                        timeout_seconds=_exchange_timeout_seconds(),
+                                        refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted),
+                                        timeout_seconds=exchange_timeout_seconds(),
                                         base_seconds=settings.exchange_auto_reset_base_seconds,
                                         max_attempts=settings.exchange_auto_reset_max_attempts,
                                     )

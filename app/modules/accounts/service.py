@@ -9,7 +9,7 @@ from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, no
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
 from app.modules.accounts import reset_credit_cache
-from app.modules.accounts.auth_manager import is_locally_owned
+from app.modules.accounts.auth_contracts import is_locally_owned
 from app.modules.accounts.lifecycle import AccountsLifecycle
 from app.modules.accounts.reset_credit_attempts import ResetCreditAttemptsRepository
 from app.modules.accounts.reset_credit_recovery import refresh_standard_capacity

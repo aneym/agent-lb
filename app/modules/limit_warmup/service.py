@@ -25,7 +25,8 @@ from app.db.models import (
     DashboardSettings,
     UsageHistory,
 )
-from app.modules.accounts.auth_manager import AuthManager, is_locally_owned
+from app.modules.accounts.auth_contracts import is_locally_owned
+from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.limit_warmup.anthropic_primer import send_anthropic_primer
 from app.modules.limit_warmup.constants import (
