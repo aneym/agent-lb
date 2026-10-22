@@ -10,6 +10,7 @@ from tests.floor.hook_dispatcher_support import (
     DENY_ALL,
     DENY_MERGE,
     DISPATCH,
+    DISPATCH_INSTALLED,
     FLAKY,
     MERGE_GUARD,
     SOURCE,
@@ -43,7 +44,11 @@ def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
         {
             "matcher": "Bash",
             "hooks": [
-                {"type": "command", "command": f"{DISPATCH} PreToolUse 'Bash' {registry['rev']}", "timeout": 1245}
+                {
+                    "type": "command",
+                    "command": f"{DISPATCH_INSTALLED} PreToolUse 'Bash' {registry['rev']}",
+                    "timeout": 1265,
+                }
             ],
         }
     ]

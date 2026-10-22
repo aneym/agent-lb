@@ -17,6 +17,10 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "config/coding-agents"
 
 DISPATCH = 'python3 "$HOME/.claude/hooks/hook-dispatch.py"'
+DISPATCH_INSTALLED = (
+    'P="$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14"; [ -x "$P" ] || P=python3; '
+    'exec "$P" -I -S "$HOME/.claude/hooks/hook-dispatch.py"'
+)
 
 MERGE_GUARD = """import json, sys
 data = json.load(sys.stdin)
@@ -183,6 +187,8 @@ def dispatcher_home(tmp_path: Path, entry: Any) -> tuple[Path, dict]:
     home = tmp_path / "home"
     (home / ".claude/hooks/dispatch").mkdir(parents=True)
     shutil.copy(SOURCE / "hooks/hook-dispatch.py", home / ".claude/hooks/hook-dispatch.py")
+    for helper in (SOURCE / "hooks").glob("hook_*.py"):
+        shutil.copy(helper, home / ".claude/hooks" / helper.name)
     shutil.copy(LINK_GUARD, home / ".claude/hooks/link-cli-guard.sh")
     (home / "g").mkdir()
     (home / "g/merge.py").write_text(MERGE_GUARD)
@@ -237,6 +243,8 @@ def bash_groups(hooks: dict) -> list[dict]:
 def parity_module():
     import importlib.util
 
+    if str(SOURCE / "hooks") not in sys.path:
+        sys.path.insert(0, str(SOURCE / "hooks"))
     spec = importlib.util.spec_from_file_location("hook_dispatch_parity", SOURCE / "hooks/hook-dispatch-parity.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -329,6 +337,8 @@ FLAKY = "import sys, time\nsys.stdin.read()\nprint(time.time_ns())\n"
 def policy_module():
     import importlib.util
 
+    if str(SOURCE) not in sys.path:
+        sys.path.insert(0, str(SOURCE))
     spec = importlib.util.spec_from_file_location("install_policy", SOURCE / "install-policy.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
