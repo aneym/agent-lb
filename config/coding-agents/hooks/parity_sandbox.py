@@ -54,6 +54,14 @@ class Sandbox(object):
                         )
                     else:
                         os.symlink(source, target)
+        helpers = os.path.join(real_home, ".claude", "hooks")
+        for name in sorted(os.listdir(helpers)) if os.path.isdir(helpers) else []:
+            rel = os.path.join(".claude", "hooks", name)
+            target = os.path.join(home, rel)
+            source = OVERLAY.get(rel) or os.path.join(helpers, name)
+            if name.endswith(".py") and os.path.isfile(source) and not os.path.lexists(target):
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                os.symlink(source, target)
         for rel in CONFIG_COPIES:
             source = os.path.join(real_home, rel)
             target = os.path.join(home, rel)

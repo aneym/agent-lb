@@ -157,7 +157,7 @@ def subagent_only(case, mismatch):
         return True
     if "raw" not in case or mismatch.get("what") != "effect":
         return False
-    updated = old.get("updatedInput") or case["input"]
+    updated = old.get("updatedInput") or case.get("input") or {}
     if not isinstance(updated.get("command"), str):
         return False
     old["updatedInput"] = dict(updated, command=OWNER_PREFIX + updated["command"])
