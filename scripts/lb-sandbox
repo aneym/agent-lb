@@ -24,6 +24,8 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 LB_HOME = REAL_HOME / ".agent-lb"
 SANDBOXES = LB_HOME / "sandboxes"
@@ -216,7 +218,7 @@ def check_interpreter(python: Path, root: Path) -> None:
     _trusted_file("interpreter", target, info)
 
 def bootstrap_script() -> Path:
-    return Path(__file__).resolve()
+    return Path(__file__).resolve().with_name("lb-sandbox")
 
 def check_bootstrap(script: Path, root: Path) -> None:
     script = _lexical(script)
