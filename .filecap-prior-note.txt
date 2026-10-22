@@ -1,0 +1,1 @@
+Blocked: the seat found 172 definitions in app/modules/proxy/api.py (146,025 bytes) connected through private names. A move-only split under 20,000 bytes per file would either need renames (not move-only) or cross-module use of _private names (banned). No commits made. Seat key gpt-implementer-filec
