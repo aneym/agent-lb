@@ -37,8 +37,9 @@ from app.modules.usage.additional_quota_keys import (
     get_additional_quota_routing_policy,
     list_additional_quota_definitions,
 )
+from app.modules.usage.refresh_ports import AdditionalUsageRepositoryPort
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
-from app.modules.usage.updater import AdditionalUsageRepositoryPort, UsageUpdater
+from app.modules.usage.updater import UsageUpdater
 
 _SPARKLINE_DAYS = 7
 

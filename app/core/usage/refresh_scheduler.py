@@ -34,8 +34,9 @@ from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.quota_planner.repository import QuotaPlannerRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.settings.repository import SettingsRepository
+from app.modules.usage.refresh_rules import USAGE_REFRESH_SINGLEFLIGHT
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
-from app.modules.usage.updater import USAGE_REFRESH_SINGLEFLIGHT, UsageUpdater
+from app.modules.usage.updater import UsageUpdater
 
 logger = logging.getLogger(__name__)
 
