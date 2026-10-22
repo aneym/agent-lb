@@ -1,6 +1,16 @@
 {
  "claims": [],
- "freezes": [],
+ "freezes": [
+  {
+   "by": "aneyman@alexs-Mac-Studio",
+   "expires": "2026-10-22T14:58:44Z",
+   "lane": "filecap-council",
+   "owner_branch": "probe-other",
+   "path": "scripts/lb-spend-cap-check",
+   "reason": "probe freeze-check fallback",
+   "since": "2026-10-22T14:53:44Z"
+  }
+ ],
  "moved": [
   {
    "into": [
