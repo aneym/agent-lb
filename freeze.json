@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T18:55:29Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-clients-agent-defs-doctor",
-   "path": "clients/agent-defs-doctor",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T17:25:29Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -81,6 +71,15 @@
    "path": "app/modules/proxy/claude_codex_bridge.py",
    "sha": "2ca080375e8bb97810655969ab2e419c7b947cd6",
    "until": "2026-10-29T17:25:25Z"
+  },
+  {
+   "into": [
+    "clients/agent_defs_models.py"
+   ],
+   "note": "clients/agent-defs-doctor split at 3db3b53108. Reapply your diff onto the new module that now holds the code. Map: clients/agent_defs_models.py: load_models",
+   "path": "clients/agent-defs-doctor",
+   "sha": "3db3b531081b27fd5608116e6ee7697583cc04ee",
+   "until": "2026-10-29T17:25:41Z"
   }
  ]
 }
