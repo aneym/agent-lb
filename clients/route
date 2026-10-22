@@ -62,6 +62,14 @@ CLI_SEAT_HOLD_SECONDS = 600
 
 ANALYTICS_SESSION_CAP = 20
 
+class ModelState:
+    ANTHROPIC_MODELS: tuple[list[str], str] | None = None
+    CURSOR_MODELS: list[str] | None = None
+    DEFER_DISCOVERY = False
+    DEFERRED_DISCOVERY: set[str] = set()
+    DEVIN_MODELS: list[str] | None = None
+
+
 def base_url() -> str:
     url = os.environ.get("AGENT_LB_URL") or client_env_url() or DEFAULT_BASE_URL
     return url.rstrip("/")
@@ -923,13 +931,11 @@ def served_models() -> tuple[list[str], str]:
     return [value for value in ids if isinstance(value, str)], "cache (LB unreachable)"
 
 
-ANTHROPIC_MODELS: tuple[list[str], str] | None = None
 
 def anthropic_models() -> tuple[list[str], str]:
 
-    global ANTHROPIC_MODELS
-    if ANTHROPIC_MODELS is not None:
-        return ANTHROPIC_MODELS
+    if ModelState.ANTHROPIC_MODELS is not None:
+        return ModelState.ANTHROPIC_MODELS
     cache = models_cache_path().with_name("route-anthropic-models.json")
     result = http_get("/api/models/anthropic", timeout=10.0)
     ids = model_ids({"models": [{"id": value} for value in result.body.get("models", [])]}) if (
@@ -940,21 +946,21 @@ def anthropic_models() -> tuple[list[str], str]:
                 atomic_write(cache, json.dumps({"ts": now_iso(), "models": ids}))
         except OSError:
             pass
-        ANTHROPIC_MODELS = (ids, "lb /api/models/anthropic")
-        return ANTHROPIC_MODELS
-    ANTHROPIC_MODELS = ([], "no Anthropic model list from the LB and no cache")
+        ModelState.ANTHROPIC_MODELS = (ids, "lb /api/models/anthropic")
+        return ModelState.ANTHROPIC_MODELS
+    ModelState.ANTHROPIC_MODELS = ([], "no Anthropic model list from the LB and no cache")
     try:
         cached = json.loads(cache.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return ANTHROPIC_MODELS
+        return ModelState.ANTHROPIC_MODELS
     stamp = _parse_ts(cached.get("ts")) if isinstance(cached, dict) else None
     if stamp is not None and stamp.tzinfo is None:
         stamp = None
     listed = cached.get("models") if isinstance(cached, dict) else None
     if stamp is not None and isinstance(listed, list) and (
             datetime.now(timezone.utc) - stamp).total_seconds() <= MODELS_CACHE_MAX_AGE_SECONDS:
-        ANTHROPIC_MODELS = ([value for value in listed if isinstance(value, str)], "cache (LB list unavailable)")
-    return ANTHROPIC_MODELS
+        ModelState.ANTHROPIC_MODELS = ([value for value in listed if isinstance(value, str)], "cache (LB list unavailable)")
+    return ModelState.ANTHROPIC_MODELS
 
 def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tuple[str | None, str]:
 
@@ -981,35 +987,29 @@ def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tup
     return None, f"alias for {family} has no model list, pin or harness"
 
 
-CURSOR_MODELS: list[str] | None = None
 
 
-DEFER_DISCOVERY = False
-DEFERRED_DISCOVERY: set[str] = set()
 
 def model_list_pending(vendor: str) -> str:
     return f"pending: the {vendor} model list is listed once capacity is held"
 
 def defer_discovery() -> None:
-    global DEFER_DISCOVERY
-    DEFER_DISCOVERY = True
+    ModelState.DEFER_DISCOVERY = True
 
 def allow_discovery() -> None:
 
-    global DEFER_DISCOVERY, CURSOR_MODELS, DEVIN_MODELS
-    DEFER_DISCOVERY = False
-    if "cursor" in DEFERRED_DISCOVERY:
-        CURSOR_MODELS = None
-    if "devin" in DEFERRED_DISCOVERY:
-        DEVIN_MODELS = None
-    DEFERRED_DISCOVERY.clear()
+    ModelState.DEFER_DISCOVERY = False
+    if "cursor" in ModelState.DEFERRED_DISCOVERY:
+        ModelState.CURSOR_MODELS = None
+    if "devin" in ModelState.DEFERRED_DISCOVERY:
+        ModelState.DEVIN_MODELS = None
+    ModelState.DEFERRED_DISCOVERY.clear()
 
 def cursor_models() -> list[str]:
 
-    global CURSOR_MODELS
-    if CURSOR_MODELS is None:
-        CURSOR_MODELS = fetch_cursor_models()
-    return CURSOR_MODELS
+    if ModelState.CURSOR_MODELS is None:
+        ModelState.CURSOR_MODELS = fetch_cursor_models()
+    return ModelState.CURSOR_MODELS
 
 def model_list_failed_recently(cache: Path) -> bool:
     failure = cache.with_suffix(".failed.json")
@@ -1046,8 +1046,8 @@ def fetch_cursor_models() -> list[str]:
         pass
     if model_list_failed_recently(cache):
         return []
-    if DEFER_DISCOVERY:
-        DEFERRED_DISCOVERY.add("cursor")
+    if ModelState.DEFER_DISCOVERY:
+        ModelState.DEFERRED_DISCOVERY.add("cursor")
         return []
     command = shlex.split(os.environ.get("ROUTE_CURSOR_MODELS_CMD") or "cursor-agent --list-models")
     output = run_listing(command, timeout=10)
@@ -1118,14 +1118,12 @@ def end_group(process: subprocess.Popen, within: float) -> bool:
         time.sleep(0.05)
 
 
-DEVIN_MODELS: list[str] | None = None
 
 def devin_models() -> list[str]:
 
-    global DEVIN_MODELS
-    if DEVIN_MODELS is None:
-        DEVIN_MODELS = fetch_devin_models()
-    return DEVIN_MODELS
+    if ModelState.DEVIN_MODELS is None:
+        ModelState.DEVIN_MODELS = fetch_devin_models()
+    return ModelState.DEVIN_MODELS
 
 def fetch_devin_models() -> list[str]:
     import shlex
@@ -1141,8 +1139,8 @@ def fetch_devin_models() -> list[str]:
         pass
     if model_list_failed_recently(cache):
         return []
-    if DEFER_DISCOVERY:
-        DEFERRED_DISCOVERY.add("devin")
+    if ModelState.DEFER_DISCOVERY:
+        ModelState.DEFERRED_DISCOVERY.add("devin")
         return []
     command = shlex.split(os.environ.get("ROUTE_DEVIN_MODELS_CMD") or "devin models list")
     output = run_listing(command, timeout=10)
@@ -1172,10 +1170,9 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str],
     model, reason = resolve_one(table, name, served, seat)
     if route_cache.MODEL_CACHE_HITS and (not model or "pinned" in reason or "Claude Code alias" in reason
                                        or (reason == "not an alias" and model not in served)):
-        global ANTHROPIC_MODELS
         route_cache.FORCE_MODELS = True
         route_cache.MODEL_CACHE_HITS.clear()
-        ANTHROPIC_MODELS = None
+        ModelState.ANTHROPIC_MODELS = None
         try:
             served[:] = served_models()[0]
             model, reason = resolve_one(table, name, served, seat)
@@ -1239,7 +1236,7 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
         pattern = re.compile(rf"^(?:cursor-)?{re.escape(family)}-({version}){suffix}$")
         served = cursor_models()
         if not served:
-            if "cursor" in DEFERRED_DISCOVERY:
+            if "cursor" in ModelState.DEFERRED_DISCOVERY:
                 return None, model_list_pending("cursor")
             return None, "Cursor model list unavailable (cursor-agent --list-models)"
     elif spec.get("vendor") == "devin":
@@ -1248,7 +1245,7 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
         pattern = re.compile(rf"^{re.escape(family)}-(\d+)-{re.escape(variant)}$")
         served = devin_models()
         if not served:
-            if "devin" in DEFERRED_DISCOVERY:
+            if "devin" in ModelState.DEFERRED_DISCOVERY:
                 return None, model_list_pending("devin")
             return None, "Devin model list unavailable (devin models list)"
     else:
@@ -1701,7 +1698,7 @@ def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | No
     if model and family_alias(table, alias) not in table.get("aliases", {}):
         vendor = {"cursor-seat": "cursor", "devin-seat": "devin", "muse-seat-local": "muse"}.get(entry["seat"])
         listed = cursor_models() if vendor == "cursor" else (devin_models() if vendor == "devin" else [])
-        if not listed and vendor in DEFERRED_DISCOVERY:
+        if not listed and vendor in ModelState.DEFERRED_DISCOVERY:
             return model, model_list_pending(vendor)
         if listed and model not in listed:
             return None, f"{model} is not listed for {entry['seat']}"
