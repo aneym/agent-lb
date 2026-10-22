@@ -6,7 +6,9 @@ import logging
 from dataclasses import dataclass, field
 
 from app.core.config.settings import get_settings
-from app.modules.accounts.service import AccountsService, cancel_account_cache_refreshes, with_background_service
+from app.modules.accounts.queries import with_background_service
+from app.modules.accounts.service import AccountsService
+from app.modules.accounts.service_caches import cancel_account_cache_refreshes
 
 logger = logging.getLogger(__name__)
 

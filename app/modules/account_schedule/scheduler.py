@@ -11,7 +11,7 @@ from app.db.models import AccountStatus
 from app.db.session import get_background_session
 from app.dependencies import get_accounts_context
 from app.modules.account_schedule.repository import AccountScheduleRepository
-from app.modules.accounts.service import AccountStateTransitionError
+from app.modules.accounts.errors import AccountStateTransitionError
 
 logger = logging.getLogger(__name__)
 

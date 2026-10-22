@@ -11,7 +11,7 @@ from app.core.auth.dependencies import set_dashboard_error_format, validate_dash
 from app.core.config.settings_cache import get_settings_cache
 from app.core.exceptions import DashboardBadRequestError
 from app.dependencies import SettingsContext, get_settings_context
-from app.modules.accounts.service import invalidate_additional_quotas_cache
+from app.modules.accounts.service_caches import invalidate_additional_quotas_cache
 from app.modules.settings.schemas import (
     AdditionalQuotaPolicy,
     DashboardSettingsResponse,

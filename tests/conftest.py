@@ -114,7 +114,7 @@ async def async_client(app_instance):
 @pytest.fixture(autouse=True)
 def _clear_account_read_caches():
 
-    from app.modules.accounts.service import clear_account_caches
+    from app.modules.accounts.service_caches import clear_account_caches
 
     clear_account_caches()
     yield
