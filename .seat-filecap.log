@@ -1,0 +1,1 @@
+[{"base": 120061, "bytes": 120526, "fail": true, "kind": "text", "limit": 20000, "over": 100526, "path": "app/modules/proxy/_service/http_bridge/mixin.py", "reason": "grew", "tokens": 30132}]
