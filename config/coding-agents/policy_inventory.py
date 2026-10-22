@@ -79,6 +79,10 @@ MANAGED_HOOKS = (
     "merge-gate-guard.py",
     "main-checkout-write-warn.py",
     "hook-dispatch.py",
+    "hook_dispatch_answers.py",
+    "hook_dispatch_planning.py",
+    "hook_dispatch_processes.py",
+    "hook_dispatch_registry.py",
     "hook-dispatch-parity.py",
 )
 
