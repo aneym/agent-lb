@@ -52,7 +52,14 @@ try:
     )
     from hook_dispatch_registry import load_entry  # type: ignore[missing-import]
     from hook_failure_recovery import deny_reason, parse_json  # type: ignore[missing-import]
-    from hook_prefilters import COMMAND_PREFILTERS, SCRIPT_NEEDS, SCRIPT_PREFILTERS, escapes_in_input, never  # type: ignore[missing-import]
+    from hook_prefilters import (  # type: ignore[missing-import]
+        COMMAND_PREFILTERS,
+        INPROC_PREFILTERS,
+        SCRIPT_NEEDS,
+        SCRIPT_PREFILTERS,
+        escapes_in_input,
+        never,
+    )
 except ImportError as missing:
     pre = sys.argv[1:2] == ["PreToolUse"]
     why = (
@@ -253,6 +260,7 @@ def plan_hook(hook, inproc_names, script_pins=None):
         return plan
     plan.script, plan.interp, plan.source = script, interp, source
     plan.argv = [script] + match.group("args").split()
+    plan.prefilter = INPROC_PREFILTERS.get(name)
     plan.kind = "inproc"
     plan.reason = "same interpreter" if same_interpreter(interp) else "other interpreter"
     return plan
@@ -289,6 +297,9 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
                 )
                 results[index].floor_failure = plan.opaque
                 continue
+            if plan.kind == "inproc" and plan.prefilter is not None and not plan.prefilter(payload_obj):
+                plan.kind = "skipped"
+                results[index] = Result(0, b"", b"", False, "skipped")
             if plan.kind == "filtered":
                 try:
                     needed = escapes_in_input(payload_obj) or plan.prefilter(payload_obj)

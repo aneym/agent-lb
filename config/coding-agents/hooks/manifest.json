@@ -206,6 +206,16 @@
         "statusMessage": "Compact checkpoint"
       },
       "needs_source": false
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/poll-loop-warn.py\"",
+        "timeout": 5
+      },
+      "needs_source": true
     }
   ]
 }
