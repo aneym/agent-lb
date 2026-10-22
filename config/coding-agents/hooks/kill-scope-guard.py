@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
+import ctypes
 import json
 import os
 import re
 import shlex
-import subprocess
 import sys
 
 FLOOR = "floor: other agents' running work (a kill must stay inside this session)"
@@ -267,19 +267,108 @@ def kills(text, depth=0):
 
 
 TTY_PIDS = set()
+NODEV = 0xFFFFFFFF
+
+
+class BsdInfo(ctypes.Structure):
+    _fields_ = [
+        ("flags", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("xstatus", ctypes.c_uint32),
+        ("pid", ctypes.c_uint32),
+        ("ppid", ctypes.c_uint32),
+        ("ids", ctypes.c_uint32 * 7),
+        ("comm", ctypes.c_char * 16),
+        ("name", ctypes.c_char * 32),
+        ("nfiles", ctypes.c_uint32),
+        ("pgid", ctypes.c_uint32),
+        ("pjobc", ctypes.c_uint32),
+        ("tdev", ctypes.c_uint32),
+        ("tpgid", ctypes.c_uint32),
+        ("nice", ctypes.c_int32),
+        ("start", ctypes.c_uint64 * 2),
+    ]
+
+
+class ShortInfo(ctypes.Structure):
+    _fields_ = [
+        ("pid", ctypes.c_uint32),
+        ("ppid", ctypes.c_uint32),
+        ("pgid", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("comm", ctypes.c_char * 16),
+        ("rest", ctypes.c_uint32 * 8),
+    ]
+
+
+def command_of(libc, pid):
+    mib = (ctypes.c_int * 3)(1, 49, pid)
+    size = ctypes.c_size_t(0)
+    if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) or size.value <= 4:
+        return None
+    raw = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, raw, ctypes.byref(size), None, 0):
+        return None
+    data = raw.raw[: size.value]
+    argc, rest = int.from_bytes(data[:4], sys.byteorder), data[4:]
+    rest = rest[max(rest.find(b"\0"), 0) :].lstrip(b"\0")
+    words = rest.split(b"\0")[:argc]
+    return " ".join(word.decode(errors="replace") for word in words) or None
+
+
+def linux_table():
+    table = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", "rb") as handle:
+                stat = handle.read().decode(errors="replace")
+            with open(f"/proc/{entry}/cmdline", "rb") as handle:
+                argv = handle.read().rstrip(b"\0").replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        fields = stat[stat.rfind(")") + 2 :].split()
+        if int(fields[4]):
+            TTY_PIDS.add(int(entry))
+        table[int(entry)] = (int(fields[1]), argv or stat[stat.find("(") + 1 : stat.rfind(")")])
+    return table
 
 
 def process_table():
-    out = subprocess.run(
-        ["/bin/ps", "-axo", "pid=,ppid=,tty=,command="], capture_output=True, text=True, timeout=3, check=True
-    )
+    if sys.platform == "linux":
+        return linux_table()
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    libc = ctypes.CDLL("/usr/lib/libc.dylib", use_errno=True)
+    libc.sysctl.argtypes = [
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    count = libproc.proc_listallpids(None, 0)
+    if count <= 0:
+        raise OSError("proc_listallpids failed")
+    pids = (ctypes.c_int * (count + 512))()
+    count = libproc.proc_listallpids(pids, ctypes.sizeof(pids))
+    if count <= 0:
+        raise OSError("proc_listallpids failed")
     table = {}
-    for line in out.stdout.splitlines():
-        parts = line.split(None, 3)
-        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-            table[int(parts[0])] = (int(parts[1]), parts[3] if len(parts) > 3 else "")
-            if len(parts) > 2 and parts[2] not in {"?", "??", "-"}:
-                TTY_PIDS.add(int(parts[0]))
+    for pid in pids[:count]:
+        if pid <= 0:
+            continue
+        info, short = BsdInfo(), ShortInfo()
+        if libproc.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) == ctypes.sizeof(info):
+            ppid, comm = info.ppid, info.comm
+            if info.tdev != NODEV:
+                TTY_PIDS.add(pid)
+        elif libproc.proc_pidinfo(pid, 13, 0, ctypes.byref(short), ctypes.sizeof(short)) == ctypes.sizeof(short):
+            ppid, comm = short.ppid, short.comm
+        else:
+            continue
+        table[pid] = (ppid, command_of(libc, pid) or comm.decode(errors="replace"))
     return table
 
 
@@ -353,7 +442,7 @@ def main():
         return 2
     try:
         table = process_table()
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, AttributeError, ValueError):
         print("BLOCKED (floor: live sessions and Alex's desktop): process discovery failed.", file=sys.stderr)
         return 2
     start = os.getppid()
