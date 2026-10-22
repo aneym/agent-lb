@@ -58,11 +58,8 @@ from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.core.utils.time import to_utc_naive, utcnow
-from app.db.models import (
-    DashboardSettings,
-    HttpBridgeSessionState,
-    StickySessionKind,
-)
+from app.db.session_models import HttpBridgeSessionState, StickySessionKind
+from app.db.settings_models import DashboardSettings
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,

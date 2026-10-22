@@ -48,7 +48,7 @@ for _name in ("cursor-agent", "agent", "devin", "muse"):
     _stub.chmod(0o755)
 os.environ["PATH"] = f"{VENDOR_CLI_STUBS}{os.pathsep}{os.environ.get('PATH', '')}"
 
-from app.db.models import Base  # noqa: E402
+from app.db.base import Base  # noqa: E402
 from app.db.session import engine  # noqa: E402
 from app.main import create_app  # noqa: E402
 

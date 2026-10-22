@@ -9,8 +9,9 @@ from sqlalchemy import delete, event, select
 from starlette.testclient import WebSocketDenialResponse
 
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, RequestLog, UsageHistory
+from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, RequestLog
 from app.db.session import SessionLocal, engine
+from app.db.usage_models import UsageHistory
 from app.modules.team.pool_share import pool_share_windows, reset_pool_share_cache
 from app.modules.team.service import invalidate_team_member_caches, reset_team_usage_cache
 
@@ -72,7 +73,7 @@ async def test_pool_share_cost_math_imputation_rolled_and_cache(db_setup, monkey
         await _seed_account(session, "legacy", now, reset=now - timedelta(days=80), window="secondary")
         session.add(ApiKey(id="key", name="member", member_id=None, key_hash="keyhash", key_prefix="sk-clb-key"))
         await session.flush()
-        from app.db.models import TeamMember
+        from app.db.access_models import TeamMember
 
         session.add(TeamMember(id="member", name="Ada", pool_share_percent=6))
         await session.flush()
@@ -110,7 +111,7 @@ async def test_pool_share_scoped_reachability_rolled_and_token_fallback(db_setup
     del db_setup
     now = utcnow().replace(microsecond=0)
     async with SessionLocal() as session:
-        from app.db.models import TeamMember
+        from app.db.access_models import TeamMember
 
         session.add(TeamMember(id="member", name="Ada", pool_share_percent=30))
         await session.flush()
@@ -150,7 +151,7 @@ async def test_pool_share_scoped_reachability_rolled_and_token_fallback(db_setup
 async def test_pool_share_window_start_and_invalidation(db_setup):
     del db_setup
     now = utcnow().replace(microsecond=0)
-    from app.db.models import TeamMember
+    from app.db.access_models import TeamMember
 
     async with SessionLocal() as session:
         session.add(TeamMember(id="member", name="Ada", pool_share_percent=20))
@@ -277,7 +278,7 @@ async def test_pool_share_existing_websocket_emits_over_cap_on_next_turn(async_c
 async def test_pool_share_idle_rolled_window_has_future_advisory_reset_and_uses_cache(db_setup, monkeypatch):
     del db_setup
     import app.modules.team.pool_share as pool_module
-    from app.db.models import TeamMember
+    from app.db.access_models import TeamMember
 
     now = utcnow().replace(microsecond=0)
     clock = [1000.0]
@@ -312,7 +313,7 @@ async def test_pool_share_idle_rolled_window_has_future_advisory_reset_and_uses_
 async def test_pool_share_zero_usage_and_unpriced_tokens(db_setup):
     del db_setup
     now = utcnow().replace(microsecond=0)
-    from app.db.models import TeamMember
+    from app.db.access_models import TeamMember
 
     async with SessionLocal() as session:
         session.add(TeamMember(id="member", name="Ada", pool_share_percent=25))

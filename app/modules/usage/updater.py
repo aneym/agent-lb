@@ -6,7 +6,8 @@ from typing import Mapping
 from app.core.config.settings import get_settings
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus
+from app.db.usage_models import UsageHistory
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.usage.account_usage_refresh import UsageAccountRefresh
 from app.modules.usage.refresh_ports import AccountRefreshResult

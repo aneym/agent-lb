@@ -8,7 +8,8 @@ from app.core.auth import token_expiry_epoch_ms
 from app.core.config.settings import Settings, get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import naive_utc_to_epoch, utcnow
-from app.db.models import Account, AccountTransferDirection, AccountTransferState
+from app.db.federation_models import AccountTransferDirection, AccountTransferState
+from app.db.models import Account
 from app.modules.accounts.refresh_lock import _cross_process_refresh_lock
 from app.modules.federation.exceptions import (
     FederationConflictError,

@@ -7,7 +7,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import HttpBridgeSessionState
+from app.db.session_models import HttpBridgeSessionState
 from app.modules.proxy.durable_bridge_repository import (
     DurableBridgeRepository,
     DurableBridgeSessionSnapshot,

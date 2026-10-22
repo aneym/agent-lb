@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.core.routing_table import routing_table_path
-from app.db.models import RoutingPolicyVersion
+from app.db.settings_models import RoutingPolicyVersion
 from app.modules.routing_policy.repository import RoutingPolicyRepository
 from app.modules.routing_policy.schemas import PolicyCounts, PolicyDetail, PolicyDiff, PolicySummary
 

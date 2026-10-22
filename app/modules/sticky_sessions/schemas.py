@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from app.db.models import StickySessionKind
+from app.db.session_models import StickySessionKind
 from app.modules.shared.schemas import DashboardModel
 
 StickySessionSortBy = Literal["updated_at", "created_at", "account", "key"]

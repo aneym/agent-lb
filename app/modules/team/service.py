@@ -15,7 +15,8 @@ from app.core.exceptions import (
     TeamModelNotAllowedError,
 )
 from app.core.utils.time import to_utc_naive, utcnow
-from app.db.models import ApiKey, TeamMember, TeamMemberStatus
+from app.db.access_models import TeamMember, TeamMemberStatus
+from app.db.models import ApiKey
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.team.member_policy import GATE_OK, cap_for, compute_gate, model_is_allowed, status_value
 from app.modules.team.pool_share import PoolWindow, pool_share_windows, reset_pool_share_cache

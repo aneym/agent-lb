@@ -10,8 +10,8 @@ import pytest
 from sqlalchemy import select
 
 from app.core.auth import generate_unique_account_id
-from app.db.models import AuditLog
 from app.db.session import SessionLocal
+from app.db.settings_models import AuditLog
 
 pytestmark = pytest.mark.integration
 

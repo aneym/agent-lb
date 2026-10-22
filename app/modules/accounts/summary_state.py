@@ -9,7 +9,8 @@ from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME
 from app.core.usage.quota import apply_usage_quota
 from app.core.utils.time import from_epoch_seconds, utcnow
-from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory
+from app.db.models import Account, AccountLimitWarmup, AccountStatus
+from app.db.usage_models import AdditionalUsageHistory, UsageHistory
 from app.modules.accounts.credits import (
     OPENROUTER_CREDITS_QUOTA_KEY,
 )

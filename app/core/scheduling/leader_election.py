@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, text
 
 from app.core.config.settings import get_settings
-from app.db.models import SchedulerLeader
 from app.db.session import get_session
+from app.db.settings_models import SchedulerLeader
 
 logger = logging.getLogger(__name__)
 

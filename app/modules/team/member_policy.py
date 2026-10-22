@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.db.models import TeamMember, TeamMemberStatus
+from app.db.access_models import TeamMember, TeamMemberStatus
 from app.modules.proxy.request_policy import resolve_model_alias, strip_model_alias_suffix
 from app.modules.team.pool_share import PoolWindow
 from app.modules.team.repository import TeamUsageTotals

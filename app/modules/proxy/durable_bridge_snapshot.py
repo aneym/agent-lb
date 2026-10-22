@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from app.db.models import HttpBridgeSessionRecord, HttpBridgeSessionState
+from app.db.session_models import HttpBridgeSessionRecord, HttpBridgeSessionState
 
 
 @dataclass(frozen=True, slots=True)

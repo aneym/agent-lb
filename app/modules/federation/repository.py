@@ -7,13 +7,8 @@ from sqlalchemy import and_, func, or_, select, update
 
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import (
-    Account,
-    AccountStatus,
-    AccountTransfer,
-    AccountTransferDirection,
-    AccountTransferState,
-)
+from app.db.federation_models import AccountTransfer, AccountTransferDirection, AccountTransferState
+from app.db.models import Account, AccountStatus
 from app.modules.federation.repository_transfers import FederationTransferRepository
 from app.modules.federation.repository_usage import FederationUsageRepository
 from app.modules.federation.schemas import FederationAuthPayload

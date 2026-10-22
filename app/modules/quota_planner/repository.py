@@ -8,13 +8,8 @@ from sqlalchemy import Integer, and_, cast, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import to_utc_naive, utcnow
-from app.db.models import (
-    Account,
-    QuotaPlannerDecision,
-    QuotaPlannerSettings,
-    QuotaWindowObservation,
-    RequestLog,
-)
+from app.db.models import Account, RequestLog
+from app.db.quota_models import QuotaPlannerDecision, QuotaPlannerSettings, QuotaWindowObservation
 from app.db.session import analytics_work_mem, sqlite_writer_section
 from app.modules.quota_planner.calendar import encode_working_days, parse_working_days
 from app.modules.quota_planner.logic import PlannerSettings

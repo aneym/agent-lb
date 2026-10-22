@@ -14,8 +14,9 @@ from app.core.providers import (
     normalize_provider_name,
 )
 from app.core.utils.time import naive_utc_to_epoch, utcnow
-from app.db.models import AccountStatus, AdditionalUsageHistory
+from app.db.models import AccountStatus
 from app.db.session import get_background_session
+from app.db.usage_models import AdditionalUsageHistory
 from app.modules.accounts import probes
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.credits import CREDITS_USAGE_WINDOW

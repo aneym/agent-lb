@@ -5,13 +5,8 @@ from datetime import datetime, timedelta, timezone
 
 from app.core import usage as usage_core
 from app.core.utils.time import utcnow
-from app.db.models import (
-    Account,
-    AccountLimitWarmup,
-    AccountStatus,
-    AdditionalUsageHistory,
-    UsageHistory,
-)
+from app.db.models import Account, AccountLimitWarmup, AccountStatus
+from app.db.usage_models import AdditionalUsageHistory, UsageHistory
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.limit_warmup.constants import (
     _ANTHROPIC_CONTINUOUS_WINDOW,

@@ -9,14 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.settings import get_settings
 from app.core.utils.time import utcnow
-from app.db.models import (
-    Account,
-    AccountExchangeIntent,
-    AccountStatus,
-    RequestLog,
-    StickySession,
-    UsageHistory,
-)
+from app.db.account_state_models import AccountExchangeIntent
+from app.db.models import Account, AccountStatus, RequestLog
+from app.db.session_models import StickySession
+from app.db.usage_models import UsageHistory
 from app.modules.accounts.identity_repository import AccountIdentityRepository, _slot_lock_keys
 from app.modules.accounts.state_repository import AccountStateRepository
 from app.modules.accounts.usage_repository import AccountUsageRepository

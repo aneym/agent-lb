@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Insert
 
 from app.core.utils.time import to_utc_naive, utcnow
-from app.db.models import Account, StickySession, StickySessionKind
+from app.db.models import Account
 from app.db.session import sqlite_writer_section
+from app.db.session_models import StickySession, StickySessionKind
 from app.modules.sticky_sessions.schemas import StickySessionSortBy, StickySessionSortDir
 
 logger = logging.getLogger(__name__)

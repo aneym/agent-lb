@@ -6,7 +6,8 @@ from datetime import datetime
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, AccountStatus, DashboardSettings
+from app.db.models import Account, AccountStatus
+from app.db.settings_models import DashboardSettings
 from app.modules.usage.additional_quota_keys import normalize_additional_quota_routing_policy_overrides
 
 _SETTINGS_ROW_ID = 1

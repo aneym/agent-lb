@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.core.usage.types import UsageWindowRow
-from app.db.models import AdditionalUsageHistory, UsageHistory
+from app.db.usage_models import AdditionalUsageHistory, UsageHistory
 
 
 def usage_history_to_window_row(entry: UsageHistory | AdditionalUsageHistory) -> UsageWindowRow:

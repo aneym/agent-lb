@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.settings import get_settings
-from app.db.models import DashboardSettings
+from app.db.settings_models import DashboardSettings
 
 _SETTINGS_ID = 1
 

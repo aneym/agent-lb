@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import DashboardSettings
+from app.db.settings_models import DashboardSettings
 from app.modules.settings.repository import SettingsRepository
 
 _SETTINGS_ID = 1

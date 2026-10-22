@@ -10,7 +10,8 @@ from app.core.plan_types import coerce_account_plan_type
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
 from app.core.utils.time import from_epoch_seconds, utcnow
-from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory
+from app.db.models import Account, AccountLimitWarmup, AccountStatus
+from app.db.usage_models import AdditionalUsageHistory, UsageHistory
 from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.auth_manager import is_locally_owned
 from app.modules.accounts.credits import (

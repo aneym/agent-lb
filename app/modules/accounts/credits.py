@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import aiohttp
 
 from app.core.providers import openrouter as openrouter_provider
-from app.db.models import UsageHistory
+from app.db.usage_models import UsageHistory
 
 OPENROUTER_CREDITS_URL = openrouter_provider.OPENROUTER_CREDITS_URL
 OPENROUTER_PROVIDER_NAME = openrouter_provider.OPENROUTER_PROVIDER_NAME

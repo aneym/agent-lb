@@ -6,7 +6,7 @@ from sqlalchemy import Integer, and_, cast, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.usage.types import UsageTrendBucket
-from app.db.models import UsageHistory
+from app.db.usage_models import UsageHistory
 
 _PRIMARY_WINDOW_LITERAL = literal_column("'primary'")
 

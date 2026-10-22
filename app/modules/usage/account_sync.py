@@ -14,7 +14,8 @@ from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
 from app.core.usage.models import UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus
+from app.db.usage_models import UsageHistory
 from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager
 from app.modules.usage.refresh_ports import (
     AccountsRepositoryWithStatusComparePort,

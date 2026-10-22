@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import utcnow
-from app.db.models import Account, ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType, UsageHistory
+from app.db.models import Account, ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType
+from app.db.usage_models import UsageHistory
 from app.modules.api_keys.repository_data import (
     _UNSET,
     ApiKeyUsageSummary,

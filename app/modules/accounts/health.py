@@ -6,7 +6,8 @@ from app.core.balancer import ACCOUNT_ON_HOLD_REASON
 from app.core.browser_profiles import profile_for
 from app.core.config.settings import get_settings
 from app.core.subscriptions import subscription_for
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus
+from app.db.usage_models import UsageHistory
 from app.modules.accounts.schemas import AccountProblem
 
 

@@ -10,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config.settings import get_settings
 from app.core.usage.types import UsageAggregateRow
 from app.core.utils.time import utcnow
-from app.db.models import Account, AdditionalUsageHistory, UsageHistory
+from app.db.models import Account
 from app.db.session import sqlite_writer_section
 from app.db.sqlite_utils import sqlite_db_path_from_url
+from app.db.usage_models import AdditionalUsageHistory, UsageHistory
 from app.modules.usage.additional_quota_keys import (
     canonicalize_additional_quota_key,
 )

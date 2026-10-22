@@ -7,7 +7,8 @@ from typing import Literal
 
 from app.core.usage.depletion import EWMAState, ewma_update
 from app.core.utils.time import naive_utc_to_epoch
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus
+from app.db.usage_models import UsageHistory
 from app.modules.accounts.schemas import AccountSummary
 from app.modules.dashboard.schemas import WeeklyCreditPaceResponse, WeeklyCreditPaceStatus
 

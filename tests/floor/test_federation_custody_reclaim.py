@@ -6,7 +6,7 @@ import pytest
 
 from app.core.config.settings import Settings, get_settings
 from app.core.crypto import TokenEncryptor
-from app.db.models import AccountTransferDirection, AccountTransferState
+from app.db.federation_models import AccountTransferDirection, AccountTransferState
 from app.db.session import SessionLocal
 from app.modules.federation.repository import FederationRepository
 from tests.floor.federation_custody_races_support import (

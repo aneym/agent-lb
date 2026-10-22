@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from app.db.models import AccountStatus, UsageHistory
+from app.db.models import AccountStatus
+from app.db.usage_models import UsageHistory
 from app.modules.accounts.auth_manager import AccountsRepositoryPort
 
 

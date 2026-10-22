@@ -4,8 +4,8 @@ import time
 
 import anyio
 
-from app.db.models import DashboardSettings
 from app.db.session import SessionLocal
+from app.db.settings_models import DashboardSettings
 from app.modules.settings.repository import SettingsRepository
 
 

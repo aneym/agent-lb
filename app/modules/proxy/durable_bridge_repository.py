@@ -10,8 +10,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import to_utc_naive, utcnow
-from app.db.models import HttpBridgeSessionAlias, HttpBridgeSessionRecord, HttpBridgeSessionState
 from app.db.session import sqlite_writer_section
+from app.db.session_models import HttpBridgeSessionAlias, HttpBridgeSessionRecord, HttpBridgeSessionState
 from app.modules.proxy.durable_bridge_snapshot import DurableBridgeSessionSnapshot, _to_snapshot, _to_snapshot_required
 
 _ANONYMOUS_API_KEY_SCOPE = "__anonymous__"

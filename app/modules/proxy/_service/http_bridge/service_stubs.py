@@ -22,7 +22,8 @@ from app.core.config.settings_cache import get_settings_cache
 from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME
-from app.db.models import Account, DashboardSettings
+from app.db.models import Account
+from app.db.settings_models import DashboardSettings
 from app.modules.proxy._service.support import _RequestLogFailureMetadata
 
 T = TypeVar("T")

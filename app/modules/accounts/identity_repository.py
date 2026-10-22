@@ -8,18 +8,10 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.providers import normalize_provider_name
-from app.db.models import (
-    Account,
-    AccountLimitWarmup,
-    AccountStatus,
-    AdditionalUsageHistory,
-    ApiKeyAccountAssignment,
-    DashboardSettings,
-    HttpBridgeSessionRecord,
-    RequestLog,
-    StickySession,
-    UsageHistory,
-)
+from app.db.models import Account, AccountLimitWarmup, AccountStatus, ApiKeyAccountAssignment, RequestLog
+from app.db.session_models import HttpBridgeSessionRecord, StickySession
+from app.db.settings_models import DashboardSettings
+from app.db.usage_models import AdditionalUsageHistory, UsageHistory
 
 _SETTINGS_ROW_ID = 1
 _DUPLICATE_ACCOUNT_SUFFIX = "__copy"

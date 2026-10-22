@@ -8,7 +8,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.providers import normalize_provider_name
 from app.core.usage.types import UsageWindowRow
 from app.core.utils.time import utcnow
-from app.db.models import AdditionalUsageHistory, UsageHistory
+from app.db.usage_models import AdditionalUsageHistory, UsageHistory
 from app.modules.accounts.mappers import build_account_summaries
 from app.modules.accounts.subscription_status import subscription_usable_accounts
 from app.modules.dashboard.builders import (

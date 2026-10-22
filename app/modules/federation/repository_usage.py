@@ -8,7 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import to_utc_naive, utcnow
-from app.db.models import Account, FederationUsageDaily, RequestLog
+from app.db.federation_models import FederationUsageDaily
+from app.db.models import Account, RequestLog
 from app.modules.federation.schemas import FederationRequestLogRow, FederationUsageDayRollup
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 

@@ -20,8 +20,9 @@ from app.core.upstream_proxy import ResolvedUpstreamRoute, resolve_upstream_rout
 from app.core.usage.models import AdditionalRateLimitPayload, UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
+from app.db.usage_models import UsageHistory
 from app.modules.usage.additional_quota_keys import canonicalize_additional_quota_key
 from app.modules.usage.refresh_ports import AccountRefreshResult, AdditionalUsageRepositoryPort
 from app.modules.usage.repository import AdditionalUsageRepository

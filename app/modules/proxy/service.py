@@ -91,13 +91,10 @@ from app.core.utils.request_id import ensure_request_id, get_request_id
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
 from app.core.utils.sse import format_sse_event, parse_sse_data_json  # noqa: F401
 from app.core.utils.time import utcnow as utcnow
-from app.db.models import (
-    Account,
-    AccountStatus,  # noqa: F401
-    DashboardSettings,
-    StickySessionKind,
-)
+from app.db.models import Account
 from app.db.session import SessionLocal as SessionLocal
+from app.db.session_models import StickySessionKind
+from app.db.settings_models import DashboardSettings
 from app.modules.accounts.auth_manager import (
     AccountNotOwnedError,
     AccountsRepositoryPort,

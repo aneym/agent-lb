@@ -6,10 +6,7 @@ from typing import Awaitable, Callable
 
 from app.core.identity import internal_identity
 from app.core.utils.time import utcnow
-from app.db.models import (
-    Account,
-    AccountLimitWarmup,
-)
+from app.db.models import Account, AccountLimitWarmup
 from app.modules.limit_warmup.constants import (
     _ANTHROPIC_CONTINUOUS_WINDOW,
     _OPENAI_CONTINUOUS_WINDOW,

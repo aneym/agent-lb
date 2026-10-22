@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from app.core.utils.time import to_utc_naive, utcnow
-from app.db.models import StickySessionKind
+from app.db.session_models import StickySessionKind
 from app.modules.proxy.sticky_repository import StickySessionListEntryRecord, StickySessionsRepository
 from app.modules.settings.repository import SettingsRepository
 from app.modules.sticky_sessions.schemas import StickySessionSortBy, StickySessionSortDir

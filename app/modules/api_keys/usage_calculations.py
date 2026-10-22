@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from app.core.usage.types import UsageWindowRow
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus
+from app.db.usage_models import UsageHistory
 from app.modules.api_keys.repository_data import ApiKeyTrendBucket
 from app.modules.api_keys.service_data import ApiKeyTrendsData, ApiKeyTrendsPoint, PooledCreditData
 

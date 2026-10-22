@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.utils.time import utcnow
-from app.db.models import ApiKeyLimit, ApiKeyUsageReservation, ApiKeyUsageReservationItem, LimitType
+from app.db.access_models import ApiKeyUsageReservation, ApiKeyUsageReservationItem
+from app.db.models import ApiKeyLimit, LimitType
 from app.modules.api_keys.repository_data import (
     ReservationResult,
     UsageReservationData,

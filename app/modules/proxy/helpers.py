@@ -11,7 +11,8 @@ from app.core.openai.models import OpenAIError
 from app.core.plan_types import normalize_rate_limit_plan_type
 from app.core.types import JsonValue
 from app.core.usage.types import UsageWindowRow, UsageWindowSummary
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus
+from app.db.usage_models import UsageHistory
 from app.modules.proxy.types import (
     CreditStatusDetailsData,
     RateLimitStatusDetailsData,

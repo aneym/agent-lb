@@ -6,7 +6,7 @@ from datetime import datetime
 from hashlib import sha256
 from threading import RLock
 
-from app.db.models import UsageHistory
+from app.db.usage_models import UsageHistory
 
 
 @dataclass(frozen=True, slots=True)

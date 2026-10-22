@@ -60,7 +60,9 @@ from app.core.resilience.degradation import set_degraded, set_normal
 from app.core.usage.quota import _has_usable_credits, apply_usage_quota
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
+from app.db.models import Account, AccountStatus
+from app.db.session_models import StickySessionKind
+from app.db.usage_models import AdditionalUsageHistory, UsageHistory
 from app.modules.accounts.auth_manager import access_token_hard_expired, is_locally_owned
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.proxy.account_cache import get_account_selection_cache

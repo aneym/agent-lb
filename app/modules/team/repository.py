@@ -6,7 +6,8 @@ from datetime import date, datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ApiKey, RequestLog, TeamMember
+from app.db.access_models import TeamMember
+from app.db.models import ApiKey, RequestLog
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 

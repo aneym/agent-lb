@@ -12,8 +12,10 @@ from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.auth.dependencies import validate_proxy_api_key
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySession, StickySessionKind
+from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal
+from app.db.session_models import StickySession, StickySessionKind
+from app.db.usage_models import AdditionalUsageHistory
 from app.modules.api_keys.service_data import ApiKeyData
 
 ANTHROPIC_SSE_BYTES = (
@@ -188,7 +190,7 @@ async def _insert_weekly_usage(
     used_percent: float,
     reset_at: int | None = None,
 ) -> None:
-    from app.db.models import UsageHistory
+    from app.db.usage_models import UsageHistory
 
     effective_reset_at = reset_at or int((utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp())
     async with SessionLocal() as session:
@@ -261,7 +263,7 @@ async def _insert_primary_usage(
     credits_unlimited: bool | None = None,
     credits_balance: float | None = None,
 ) -> None:
-    from app.db.models import UsageHistory
+    from app.db.usage_models import UsageHistory
 
     effective_reset = (
         reset_at

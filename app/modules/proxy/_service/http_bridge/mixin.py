@@ -50,10 +50,8 @@ from app.core.metrics.prometheus import (
     bridge_soft_local_rebind_total,
 )
 from app.core.resilience.overload import local_overload_error
-from app.db.models import (
-    AccountStatus,
-    StickySessionKind,
-)
+from app.db.models import AccountStatus
+from app.db.session_models import StickySessionKind
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyRequestUsageBudget
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,

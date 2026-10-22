@@ -7,7 +7,8 @@ from typing import Protocol, cast
 
 from app.core import usage as usage_core
 from app.core.usage.types import UsageWindowRow
-from app.db.models import Account, UsageHistory
+from app.db.models import Account
+from app.db.usage_models import UsageHistory
 from app.modules.proxy.helpers import (
     _credits_headers,
     _credits_snapshot,

@@ -7,7 +7,7 @@ from alembic.migration import MigrationContext
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 
-from app.db.models import Base
+from app.db.base import Base
 from app.db.models_trace import RequestContextParts
 
 assert RequestContextParts.metadata is Base.metadata

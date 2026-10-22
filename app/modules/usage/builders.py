@@ -18,7 +18,8 @@ from app.core.usage.types import (
     UsageWindowSnapshot,
 )
 from app.core.utils.time import from_epoch_seconds
-from app.db.models import Account, AdditionalUsageHistory, RequestLog
+from app.db.models import Account, RequestLog
+from app.db.usage_models import AdditionalUsageHistory
 from app.modules.usage.schemas import (
     MetricsTrends,
     TrendPoint,

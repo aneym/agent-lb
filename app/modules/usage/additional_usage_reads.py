@@ -6,7 +6,8 @@ from datetime import datetime
 from sqlalchemy import func, literal, or_, select, true, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, AdditionalUsageHistory
+from app.db.models import Account
+from app.db.usage_models import AdditionalUsageHistory
 from app.modules.usage.additional_quota_keys import (
     AdditionalQuotaQueryScope,
     canonicalize_additional_quota_key,

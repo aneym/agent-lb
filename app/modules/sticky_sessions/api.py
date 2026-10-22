@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, Query
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.exceptions import DashboardNotFoundError
-from app.db.models import StickySessionKind
+from app.db.session_models import StickySessionKind
 from app.dependencies import StickySessionsContext, get_sticky_sessions_context
 from app.modules.sticky_sessions.schemas import (
     StickySessionDeleteFailure,

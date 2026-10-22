@@ -16,8 +16,9 @@ from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.usage import capacity_for_plan
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
+from app.db.usage_models import UsageHistory
 from app.modules.accounts.auth_manager import (
     AuthManager,
     _exchange_timeout_seconds,
