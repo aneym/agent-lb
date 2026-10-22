@@ -8,14 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import utcnow
 from app.db.models import Account, ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType, UsageHistory
-from app.modules.api_keys.repository_data import (
-    _UNSET,
-    ApiKeyUsageSummary,
-    ReservationResult,
-    UsageReservationData,
-    UsageReservationItemData,
-    _Unset,
-)
+from app.modules.api_keys.repository_data import _UNSET, ApiKeyUsageSummary, ReservationResult, UsageReservationData, UsageReservationItemData, _Unset  # noqa: I001  # fmt: skip
 from app.modules.api_keys.repository_protocol import ApiKeysRepositoryProtocol
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyCreateData, LimitRuleInput

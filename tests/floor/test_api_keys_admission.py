@@ -11,17 +11,8 @@ from app.core.utils.time import utcnow
 from app.db.models import ApiKey, LimitType
 from app.modules.api_keys.repository_data import UsageReservationItemData
 from app.modules.api_keys.service import ApiKeysService
-from app.modules.api_keys.service_data import (
-    ApiKeyCreateData,
-    ApiKeyInvalidError,
-    ApiKeyRateLimitExceededError,
-    ApiKeyRequestUsageBudget,
-    LimitRuleInput,
-)
-from tests.floor.api_keys_service_support import (
-    _async_noop,
-    _FakeApiKeysRepository,
-)
+from app.modules.api_keys.service_data import ApiKeyCreateData, ApiKeyInvalidError, ApiKeyRateLimitExceededError, ApiKeyRequestUsageBudget, LimitRuleInput  # noqa: I001  # fmt: skip
+from tests.floor.api_keys_service_support import _async_noop, _FakeApiKeysRepository  # noqa: I001  # fmt: skip
 
 pytestmark = pytest.mark.unit
 

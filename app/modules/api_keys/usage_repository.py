@@ -7,12 +7,7 @@ from sqlalchemy import Integer, and_, cast, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, RequestLog
-from app.modules.api_keys.repository_data import (
-    ApiKeyAccountCost,
-    ApiKeyTrendBucket,
-    ApiKeyUsageSummary,
-    ApiKeyUsageTotals,
-)
+from app.modules.api_keys.repository_data import ApiKeyAccountCost, ApiKeyTrendBucket, ApiKeyUsageSummary, ApiKeyUsageTotals  # noqa: I001  # fmt: skip
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 

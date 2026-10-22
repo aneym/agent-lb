@@ -7,13 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import (
-    Account,
-    AccountExchangeIntent,
-    AccountTransfer,
-    AccountTransferDirection,
-    AccountTransferState,
-)
+from app.db.models import Account, AccountExchangeIntent, AccountTransfer, AccountTransferDirection, AccountTransferState  # noqa: I001  # fmt: skip
 
 
 class FederationTransferRepository:

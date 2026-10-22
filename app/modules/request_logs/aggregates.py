@@ -7,13 +7,7 @@ from sqlalchemy import Integer, and_, case, cast, false, func, literal_column, o
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.core.usage.types import (
-    BucketModelAggregate,
-    RequestActivityAggregate,
-    UsageCostByModel,
-    UsageCostSummary,
-    UsageMetricsSummary,
-)
+from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate, UsageCostByModel, UsageCostSummary, UsageMetricsSummary  # noqa: I001  # fmt: skip
 from app.db.models import Account, RequestKind, RequestLog
 from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS
 

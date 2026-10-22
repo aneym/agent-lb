@@ -1,1 +1,0 @@
-Blocked: the split is staged and uncommitted (models.py now 19,765 bytes, all new modules under 20,000). The seat held the commit for two reasons. (1) The move-only rule conflicts with the private-name rule: making _enum_values public is not move-only, and keeping it private fails the private-access

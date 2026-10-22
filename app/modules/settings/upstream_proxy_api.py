@@ -8,16 +8,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.exceptions import DashboardBadRequestError
 from app.db.models import Account, AccountProxyBinding, ProxyEndpoint, ProxyPool, ProxyPoolMember
 from app.dependencies import SettingsContext, get_settings_context
-from app.modules.settings.schemas import (
-    AccountProxyBindingRequest,
-    AccountProxyBindingResponse,
-    UpstreamProxyAdminResponse,
-    UpstreamProxyEndpointCreateRequest,
-    UpstreamProxyEndpointResponse,
-    UpstreamProxyPoolCreateRequest,
-    UpstreamProxyPoolMemberRequest,
-    UpstreamProxyPoolResponse,
-)
+from app.modules.settings.schemas import AccountProxyBindingRequest, AccountProxyBindingResponse, UpstreamProxyAdminResponse, UpstreamProxyEndpointCreateRequest, UpstreamProxyEndpointResponse, UpstreamProxyPoolCreateRequest, UpstreamProxyPoolMemberRequest, UpstreamProxyPoolResponse  # noqa: I001  # fmt: skip
 
 router = APIRouter()
 

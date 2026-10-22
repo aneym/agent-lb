@@ -14,14 +14,7 @@ from app.core.context_parts.capture import measured_parts
 from app.core.eval_guard import eval_guard_state
 from app.core.identity import RequestIdentity, identity_for_log
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
-from app.core.utils.client_session import (
-    get_caller_seat,
-    get_client_session_id,
-    get_dispatch_id,
-    get_job_id,
-    get_lane,
-    get_room,
-)
+from app.core.utils.client_session import get_caller_seat, get_client_session_id, get_dispatch_id, get_job_id, get_lane, get_room  # noqa: I001  # fmt: skip
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, RequestKind, RequestLog

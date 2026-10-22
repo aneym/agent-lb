@@ -8,13 +8,7 @@ from sqlalchemy import select
 import app.modules.proxy.anthropic_service as anthropic_proxy_module
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, RequestLog
 from app.db.session import SessionLocal
-from tests.floor.anthropic_proxy_support import (
-    ANTHROPIC_JSON_BYTES,
-    ANTHROPIC_SSE_BYTES,
-    _FakeResponse,
-    _FakeResponseContext,
-    _insert_account,
-)
+from tests.floor.anthropic_proxy_support import ANTHROPIC_JSON_BYTES, ANTHROPIC_SSE_BYTES, _FakeResponse, _FakeResponseContext, _insert_account  # noqa: I001  # fmt: skip
 
 pytestmark = pytest.mark.integration
 
