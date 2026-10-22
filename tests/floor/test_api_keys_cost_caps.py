@@ -10,10 +10,7 @@ from app.modules.api_keys.repository_data import ApiKeyTrendBucket
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyRequestUsageBudget
 from app.modules.api_keys.usage_calculations import _build_api_key_trends
-from tests.floor.api_keys_service_support import (
-    _cost_capped_key,
-    _FakeApiKeysRepository,
-)
+from tests.floor.api_keys_service_support import _cost_capped_key, _FakeApiKeysRepository  # noqa: I001  # fmt: skip
 
 pytestmark = pytest.mark.unit
 

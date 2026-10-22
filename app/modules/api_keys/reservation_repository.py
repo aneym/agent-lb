@@ -8,11 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.utils.time import utcnow
 from app.db.models import ApiKeyLimit, ApiKeyUsageReservation, ApiKeyUsageReservationItem, LimitType
-from app.modules.api_keys.repository_data import (
-    ReservationResult,
-    UsageReservationData,
-    UsageReservationItemData,
-)
+from app.modules.api_keys.repository_data import ReservationResult, UsageReservationData, UsageReservationItemData  # noqa: I001  # fmt: skip
 
 
 class ApiKeyReservations:

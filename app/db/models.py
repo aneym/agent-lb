@@ -4,28 +4,7 @@ import uuid
 from datetime import date, datetime
 from enum import Enum
 
-from sqlalchemy import (
-    JSON,
-    BigInteger,
-    Boolean,
-    Date,
-    DateTime,
-    Float,
-    ForeignKey,
-    Index,
-    Integer,
-    LargeBinary,
-    Numeric,
-    SmallInteger,
-    String,
-    Text,
-    UniqueConstraint,
-    false,
-    func,
-    literal_column,
-    text,
-    true,
-)
+from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, Numeric, SmallInteger, String, Text, UniqueConstraint, false, func, literal_column, text, true  # noqa: I001  # fmt: skip
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -34,7 +13,7 @@ class Base(DeclarativeBase):
     pass
 
 
-def _enum_values(enum_cls: type[Enum]) -> list[str]:
+def enum_values(enum_cls: type[Enum]) -> list[str]:
     return [str(member.value) for member in enum_cls]
 
 
@@ -106,7 +85,7 @@ class Account(Base):
             AccountStatus,
             name="account_status",
             validate_strings=True,
-            values_callable=_enum_values,
+            values_callable=enum_values,
         ),
         default=AccountStatus.ACTIVE,
         nullable=False,
@@ -128,18 +107,18 @@ class Account(Base):
 
     owner_instance: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
-    api_key_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(
+    api_key_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(  # type: ignore[unknown-name]  # noqa: F821
         "ApiKeyAccountAssignment",
         back_populates="account",
         cascade="all, delete-orphan",
     )
-    request_logs: Mapped[list["RequestLog"]] = relationship("RequestLog", back_populates="account")
-    limit_warmups: Mapped[list["AccountLimitWarmup"]] = relationship(
+    request_logs: Mapped[list["RequestLog"]] = relationship("RequestLog", back_populates="account")  # type: ignore[unknown-name]  # noqa: F821
+    limit_warmups: Mapped[list["AccountLimitWarmup"]] = relationship(  # type: ignore[unknown-name]  # noqa: F821
         "AccountLimitWarmup",
         back_populates="account",
         cascade="all, delete-orphan",
     )
-    proxy_binding: Mapped["AccountProxyBinding | None"] = relationship(
+    proxy_binding: Mapped["AccountProxyBinding | None"] = relationship(  # type: ignore[unknown-name]  # noqa: F821
         "AccountProxyBinding",
         back_populates="account",
         cascade="all, delete-orphan",
@@ -284,7 +263,7 @@ class RequestLog(Base):
     upstream_proxy_endpoint_id: Mapped[str | None] = mapped_column(String, nullable=True)
     upstream_proxy_fallback_used: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     upstream_proxy_fail_closed_reason: Mapped[str | None] = mapped_column(String, nullable=True)
-    account: Mapped[Account | None] = relationship("Account", back_populates="request_logs")
+    account: Mapped[Account | None] = relationship("Account", back_populates="request_logs")  # type: ignore[unknown-name]  # noqa: F821
 
 
 class ProxyEndpoint(Base):
@@ -332,7 +311,7 @@ class ProxyPool(Base):
         back_populates="pool",
         cascade="all, delete-orphan",
     )
-    account_bindings: Mapped[list["AccountProxyBinding"]] = relationship(
+    account_bindings: Mapped[list["AccountProxyBinding"]] = relationship(  # type: ignore[unknown-name]  # noqa: F821
         "AccountProxyBinding",
         back_populates="pool",
     )
@@ -377,7 +356,7 @@ class AccountProxyBinding(Base):
         nullable=False,
     )
 
-    account: Mapped[Account] = relationship("Account", back_populates="proxy_binding")
+    account: Mapped[Account] = relationship("Account", back_populates="proxy_binding")  # type: ignore[unknown-name]  # noqa: F821
     pool: Mapped[ProxyPool] = relationship("ProxyPool", back_populates="account_bindings")
 
     __table_args__ = (UniqueConstraint("account_id", name="uq_account_proxy_bindings_account"),)
@@ -405,7 +384,7 @@ class AccountLimitWarmup(Base):
         nullable=False,
     )
 
-    account: Mapped[Account] = relationship(
+    account: Mapped[Account] = relationship(  # type: ignore[unknown-name]  # noqa: F821
         "Account",
         back_populates="limit_warmups",
     )
@@ -431,7 +410,7 @@ class AccountTransfer(Base):
             AccountTransferDirection,
             name="account_transfer_direction",
             validate_strings=True,
-            values_callable=_enum_values,
+            values_callable=enum_values,
         ),
         nullable=False,
     )
@@ -442,7 +421,7 @@ class AccountTransfer(Base):
             AccountTransferState,
             name="account_transfer_state",
             validate_strings=True,
-            values_callable=_enum_values,
+            values_callable=enum_values,
         ),
         default=AccountTransferState.PENDING,
         server_default=text("'pending'"),
@@ -507,7 +486,7 @@ class StickySession(Base):
             StickySessionKind,
             name="sticky_session_kind",
             validate_strings=True,
-            values_callable=_enum_values,
+            values_callable=enum_values,
         ),
         primary_key=True,
         default=StickySessionKind.STICKY_THREAD,
@@ -735,7 +714,7 @@ class TeamMember(Base):
             TeamMemberStatus,
             name="team_member_status",
             validate_strings=True,
-            values_callable=_enum_values,
+            values_callable=enum_values,
         ),
         default=TeamMemberStatus.ACTIVE,
         server_default=text("'active'"),
@@ -799,13 +778,13 @@ class ApiKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    limits: Mapped[list["ApiKeyLimit"]] = relationship(
+    limits: Mapped[list["ApiKeyLimit"]] = relationship(  # type: ignore[unknown-name]  # noqa: F821
         "ApiKeyLimit",
         back_populates="api_key",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    account_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(
+    account_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(  # type: ignore[unknown-name]  # noqa: F821
         "ApiKeyAccountAssignment",
         back_populates="api_key",
         cascade="all, delete-orphan",
@@ -829,7 +808,7 @@ class ApiKeyAccountAssignment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     api_key: Mapped["ApiKey"] = relationship("ApiKey", back_populates="account_assignments")
-    account: Mapped["Account"] = relationship("Account", back_populates="api_key_assignments")
+    account: Mapped["Account"] = relationship("Account", back_populates="api_key_assignments")  # type: ignore[unknown-name]  # noqa: F821
 
 
 class LimitType(str, Enum):
@@ -862,7 +841,7 @@ class ApiKeyLimit(Base):
             LimitType,
             name="limit_type",
             validate_strings=True,
-            values_callable=_enum_values,
+            values_callable=enum_values,
         ),
         nullable=False,
     )
@@ -871,7 +850,7 @@ class ApiKeyLimit(Base):
             LimitWindow,
             name="limit_window",
             validate_strings=True,
-            values_callable=_enum_values,
+            values_callable=enum_values,
         ),
         nullable=False,
     )
@@ -945,7 +924,7 @@ class ApiKeyUsageReservationItem(Base):
         "ApiKeyUsageReservation",
         back_populates="items",
     )
-    limit: Mapped[ApiKeyLimit] = relationship("ApiKeyLimit")
+    limit: Mapped[ApiKeyLimit] = relationship("ApiKeyLimit")  # type: ignore[unknown-name]  # noqa: F821
 
 
 class RateLimitAttempt(Base):
@@ -1093,7 +1072,7 @@ class HttpBridgeSessionRecord(Base):
             HttpBridgeSessionState,
             name="http_bridge_session_state",
             validate_strings=True,
-            values_callable=_enum_values,
+            values_callable=enum_values,
         ),
         default=HttpBridgeSessionState.ACTIVE,
         server_default=text("'active'"),

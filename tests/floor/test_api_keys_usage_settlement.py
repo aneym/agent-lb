@@ -7,10 +7,7 @@ from app.db.models import LimitType
 from app.modules.api_keys.repository_data import UsageReservationData
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyCreateData, LimitRuleInput
-from tests.floor.api_keys_service_support import (
-    _async_noop,
-    _FakeApiKeysRepository,
-)
+from tests.floor.api_keys_service_support import _async_noop, _FakeApiKeysRepository  # noqa: I001  # fmt: skip
 
 pytestmark = pytest.mark.unit
 

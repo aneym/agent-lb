@@ -19,13 +19,7 @@ from app.db.models import Account, AccountStatus, QuotaPlannerDecision
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeysService
-from app.modules.api_keys.service_data import (
-    ApiKeyInvalidError,
-    ApiKeyNotFoundError,
-    ApiKeyRateLimitExceededError,
-    ApiKeyRequestUsageBudget,
-    ApiKeyUnpricedModelError,
-)
+from app.modules.api_keys.service_data import ApiKeyInvalidError, ApiKeyNotFoundError, ApiKeyRateLimitExceededError, ApiKeyRequestUsageBudget, ApiKeyUnpricedModelError  # noqa: I001  # fmt: skip
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.repository import UsageRepository
 from app.modules.usage.updater import UsageUpdater

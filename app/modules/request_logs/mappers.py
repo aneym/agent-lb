@@ -2,13 +2,7 @@ from __future__ import annotations
 
 from typing import cast as typing_cast
 
-from app.core.usage.logs import (
-    RequestLogLike,
-    cached_input_tokens_from_log,
-    cost_breakdown_from_log,
-    output_tokens_from_log,
-    total_tokens_from_log,
-)
+from app.core.usage.logs import RequestLogLike, cached_input_tokens_from_log, cost_breakdown_from_log, output_tokens_from_log, total_tokens_from_log  # noqa: I001  # fmt: skip
 from app.db.models import RequestLog
 from app.modules.request_logs.schemas import RequestLogCostBreakdown, RequestLogEntry
 

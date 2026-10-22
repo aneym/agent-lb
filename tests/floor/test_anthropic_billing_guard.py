@@ -10,20 +10,7 @@ from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.utils.time import utcnow
 from app.db.models import AdditionalUsageHistory, StickySession, StickySessionKind
 from app.db.session import SessionLocal
-from tests.floor.anthropic_proxy_support import (
-    _ALLOWED_BODY,
-    _BILLED_BODY,
-    _OVERAGE_BILLING_HEADERS,
-    ANTHROPIC_SSE_BYTES,
-    _FakeResponse,
-    _FakeResponseContext,
-    _insert_account,
-    _insert_primary_usage,
-    _insert_quota_cooldown,
-    _insert_weekly_usage,
-    _messages_payload,
-    _pin_sticky,
-)
+from tests.floor.anthropic_proxy_support import _ALLOWED_BODY, _BILLED_BODY, _OVERAGE_BILLING_HEADERS, ANTHROPIC_SSE_BYTES, _FakeResponse, _FakeResponseContext, _insert_account, _insert_primary_usage, _insert_quota_cooldown, _insert_weekly_usage, _messages_payload, _pin_sticky  # noqa: I001  # fmt: skip
 
 pytestmark = pytest.mark.integration
 

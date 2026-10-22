@@ -10,18 +10,8 @@ from app.core.providers import ANTHROPIC_PROVIDER_NAME
 from app.core.usage.quota import apply_usage_quota
 from app.core.utils.time import from_epoch_seconds, utcnow
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory
-from app.modules.accounts.credits import (
-    OPENROUTER_CREDITS_QUOTA_KEY,
-)
-from app.modules.accounts.schemas import (
-    AccountAdditionalQuota,
-    AccountAuthStatus,
-    AccountFableScopedWeekly,
-    AccountIdentityMismatch,
-    AccountLimitWarmupStatus,
-    AccountSubscriptionLedger,
-    AccountTokenStatus,
-)
+from app.modules.accounts.credits import OPENROUTER_CREDITS_QUOTA_KEY  # noqa: I001  # fmt: skip
+from app.modules.accounts.schemas import AccountAdditionalQuota, AccountAuthStatus, AccountFableScopedWeekly, AccountIdentityMismatch, AccountLimitWarmupStatus, AccountSubscriptionLedger, AccountTokenStatus  # noqa: I001  # fmt: skip
 from app.modules.accounts.subscription_status import is_subscription_usable, normalize_subscription_status
 from app.modules.usage.additional_quota_keys import raw_model_ids_for_quota_key
 from app.modules.usage.identity_mismatch import get_identity_mismatch

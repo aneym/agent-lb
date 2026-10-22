@@ -11,16 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.utils.time import utcnow
 from app.db.models import RequestLog
-from app.modules.public_usage.schemas import (
-    PublicUsageByModel,
-    PublicUsageByProvider,
-    PublicUsageDaily,
-    PublicUsagePeriod,
-    PublicUsageProviderEntry,
-    PublicUsageResponse,
-    PublicUsageTotals,
-    PublicUsageTrend,
-)
+from app.modules.public_usage.schemas import PublicUsageByModel, PublicUsageByProvider, PublicUsageDaily, PublicUsagePeriod, PublicUsageProviderEntry, PublicUsageResponse, PublicUsageTotals, PublicUsageTrend  # noqa: I001  # fmt: skip
 
 _INTERNAL_LIMIT_WARMUP_SOURCE = "limit_warmup"
 _WARMUP_REQUEST_KINDS = ("warmup", "limit_warmup")
