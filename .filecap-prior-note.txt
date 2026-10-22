@@ -1,1 +1,0 @@
-Blocked: stream_messages is about 39.6 KB after dedenting, and its nested body generator is about 34.9 KB. A move-only split cannot get either under 20,000 bytes, so the split needs the function body itself restructured. No files were changed and nothing was committed. The checkout was also on a det
