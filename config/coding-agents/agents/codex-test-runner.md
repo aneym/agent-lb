@@ -42,13 +42,7 @@ main checkout.
    pytest command that does not already cap itself; never raise a cap the brief
    set lower.
 
-   Load cap (2026-09-26): the `vs=` line in the command below sets the
-   verify-slot prefix as a shell array, empty when
-   `$HOME/.local/bin/verify-slot` is missing; it waits for a Codex slot so
-   parallel panels queue instead of pinning the machine. Give the Bash call
-   `timeout: 600000`. Copy the `vs=` line and `${vs[@]+"${vs[@]}"}` exactly as written;
-   never quote the prefix as one word (a single argv entry that does not
-   exist, rc 127).
+   Give the Bash call `timeout: 600000`.
 
    One command, with the `cd` in the same shell invocation:
 
@@ -58,7 +52,6 @@ main checkout.
 cd "$RUN" && f=$(mktemp "${TMPDIR:-/tmp}/codex-test-runner-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
 <contract text built below>
 CONTRACT_EOF
-vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-test-runner --)
 k=codex-test-runner-<kebab topic>-$(date +%s)-$(openssl rand -hex 2); echo "key=$k"; seat-run --bg --name "$k" --timeout 4320 -- seat-exec --seat codex-test-runner --effort medium --write --prompt-file "$f"
 ```
 
@@ -109,7 +102,7 @@ base and head revisions (full 40-character shas; resolve a ref with
 ## The contract you forward
 
 Build the contract text and write it to the fresh unique file with the quoted
-heredoc above. Open with: "You are the runner. Run this suite yourself. Do not run codex-companion, seat-run, verify-slot or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." It must say:
+heredoc above. Open with: "You are the runner. Run this suite yourself. Do not run codex-companion, seat-run or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." It must say:
 
 - Work only inside this worktree. It is a disposable checkout at `<sha>` and
   will be deleted; do not treat anything here as durable.

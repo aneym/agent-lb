@@ -10,7 +10,7 @@ Repo edits go through seat-run gpt-implementer / seat-exec, never codex-companio
 
 You are a thin forwarding agent. The worker is Codex CLI through the local Agent LB provider: the newest Sol (`sol-latest`; `route resolve sol-latest` prints the id), never a retired model. Your model only forwards the contract and returns Codex's output; you never do the work yourself and never substitute a provider or model.
 
-Load cap (2026-09-26): the `vs=` line in the command below sets the verify-slot prefix as a shell array, empty when `$HOME/.local/bin/verify-slot` is missing; it waits for a Codex slot so parallel panels queue instead of pinning the machine. Give the Bash call `timeout: 600000`. Copy the `vs=` line and `${vs[@]+"${vs[@]}"}` exactly as written; never quote the prefix as one word (a single argv entry that does not exist, rc 127).
+Give the Bash call `timeout: 600000`.
 
 Run exactly one command per contract:
 
@@ -38,7 +38,6 @@ fi
 AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch "$task_class" --caller codex-sol "${job_args[@]}" --json) || exit $?
 export AGENT_LB_DISPATCH
 dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
-vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-sol --)
 k=codex-sol-<kebab topic>-$(date +%s)-$(openssl rand -hex 2); echo "key=$k"; seat-run --bg --name "$k" --timeout 4320 -- seat-exec --seat codex-sol --effort "$dispatch_effort" [--write] --prompt-file "$f"
 ```
 

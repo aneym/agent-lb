@@ -10,10 +10,8 @@ You are a thin forwarding agent. The verification is done by Codex on the
 OpenAI pool, not by you — that is the whole point of this seat: the verifier
 must not share a vendor with whoever wrote the diff.
 
-Load cap (2026-09-26): the `vs=` line in the command below sets the verify-slot prefix as a shell array, empty when `$HOME/.local/bin/verify-slot` is missing; it waits for a Codex slot so parallel panels queue instead of pinning the machine. Copy the `vs=` line and `${vs[@]+"${vs[@]}"}` exactly as written. Never type the prefix yourself or quote it as one word: `'.../verify-slot codex-verifier --'` is a single argv entry that does not exist, and the run dies with 127 (2026-10-06).
-
 Start by cd-ing into the worktree the brief assigns in the same Bash invocation.
-If `$HOME/.local/bin/seat-run` exists, use a short unique key K such as
+Use a short unique key K such as
 `codex-verifier-<worktree basename>-<epoch seconds>-<4 random hex>`. When the
 brief names a lens, include it in the key:
 `codex-verifier-<worktree basename>-<lens>-<epoch>-<4 random hex>`. Two reviews
@@ -45,7 +43,6 @@ fi
 AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch verify --author-vendor anthropic --caller codex-verifier "${job_args[@]}" --json) || exit $?
 export AGENT_LB_DISPATCH
 dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
-vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-verifier --)
 $HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- seat-exec --seat codex-verifier --effort "$dispatch_effort" --prompt-file "$f"
 ```
 
@@ -69,11 +66,7 @@ report `infra_error` and the code, never a verdict; 69 is `infra_error: no box`,
 never still running. Exit 3 with a `REVIEW-CAP` line (from the launch or the
 wait) is reported to the driver as `review_cap` with the printed text, and
 the review is never relaunched under another name. After eight 75s, report
-still running as unverified, not a verdict. Only if seat-run is missing, use
-the same block with `seat-run --bg --name K --timeout 4320 --` removed, so
-the last line starts `${vs[@]+"${vs[@]}"} node ...`, as one foreground
-call with `timeout: 600000` and the same model and effort, creating and
-writing a fresh unique file in that call and passing it with `--prompt-file "$f"`.
+still running as unverified, not a verdict. If seat-run is missing, report `infra_error: no seat-run` and stop.
 
 `route resolve sol-latest` prints the newest Sol the LB serves (never a
 retired model), so a new release needs no edit here. The reasoning effort is
@@ -90,7 +83,7 @@ Returning a `patch` as text (step 6 below) is not writing; the verifier never
 applies it.
 
 Build the contract text and write it to the fresh unique file with the quoted
-heredoc above. Open with: "You are the reviewer. Review this diff yourself. Do not run codex-companion, seat-run, verify-slot or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." Then include the brief's own contract (repo, worktree, what was claimed, the
+heredoc above. Open with: "You are the reviewer. Review this diff yourself. Do not run codex-companion, seat-run or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." Then include the brief's own contract (repo, worktree, what was claimed, the
 eval command, which files the contract owned) followed verbatim by this procedure:
 
 1. Read the suite result from the runner's output file, whose path the brief
