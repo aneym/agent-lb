@@ -344,9 +344,7 @@ class PoolsService:
         seats = read_seat_accounts()
         seat_pools = cli_seat_pools(seats)
         if any(pool.id == "muse" for pool in seat_pools):
-            muse_tokens = await self._request_logs.provider_tokens_since(
-                "muse", response.generated_at - timedelta(hours=24)
-            )
+            muse_tokens = await self._request_logs.provider_tokens_since("muse", utcnow() - timedelta(hours=24))
             seat_pools = [
                 pool.model_copy(update={"observed_tokens": muse_tokens}) if pool.id == "muse" else pool
                 for pool in seat_pools
