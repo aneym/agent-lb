@@ -9,6 +9,7 @@ LABEL=com.aneyman.agent-lb-cache-watch
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 install -m 755 "$CLIENTS/cache-watch" "$BIN"
 install -m 755 "$CLIENTS/lb-cache" "$HOME/.agent-lb/bin/lb-cache"
+install -m 644 "$CLIENTS/lb_cache_quota.py" "$HOME/.agent-lb/bin/lb_cache_quota.py"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$HOME/.agent-lb/bin/lb-cache" "$HOME/.local/bin/lb-cache"
 cat > "$PLIST" <<PL
