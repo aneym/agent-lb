@@ -1,0 +1,22 @@
+- app/core/config/settings.py 393             if not _bridge_advertise_hostname_is_replica_specific(
++ app/core/config/settings.py 393             if not bridge_advertise_hostname_is_replica_specific(
+- app/core/config/settings.py 437 def _bridge_advertise_hostname_is_replica_specific(
++ app/core/config/settings.py 437 def bridge_advertise_hostname_is_replica_specific(
+- app/core/startup.py 16 _startup_complete: bool = False
++ app/core/startup.py 16 startup_complete: bool = False
++ app/lifecycle.py 52 logger = logging.getLogger(__name__)
++ app/lifecycle.py 76     startup_module.startup_complete = False
++ app/lifecycle.py 231     startup_module.startup_complete = True
++ app/lifecycle.py 442     if not bridge_advertise_hostname_is_replica_specific(hostname, instance_id=instance_id):
+- app/main.py 136     startup_module._startup_complete = False
+- app/main.py 291     startup_module._startup_complete = True
+- app/main.py 509 def _log_runtime_diagnostic_fingerprint(settings, *, bridge_durable_schema_ready: bool | None) -> None:
+- app/main.py 728     if not _bridge_advertise_hostname_is_replica_specific(hostname, instance_id=instance_id):
+- app/modules/health/api.py 219     if startup_module._startup_complete:
++ app/modules/health/api.py 219     if startup_module.startup_complete:
++ app/runtime_diagnostics.py 13 def log_runtime_diagnostic_fingerprint(settings, *, bridge_durable_schema_ready: bool | None) -> None:
+- tests/conftest.py 89     monkeypatch.setattr(main_module, "init_db", _noop_init_db)
++ tests/conftest.py 89     monkeypatch.setattr(lifecycle_module, "init_db", _noop_init_db)
+- tests/e2e/conftest.py 75     monkeypatch.setattr(main_module, "init_db", _noop_init_db)
++ tests/e2e/conftest.py 75     monkeypatch.setattr(lifecycle_module, "init_db", _noop_init_db)
+Unmatched non-import lines: 21

@@ -13,7 +13,7 @@ from typing import AsyncIterator, Callable
 
 logger = logging.getLogger(__name__)
 
-_startup_complete: bool = False
+startup_complete: bool = False
 _bridge_registration_complete: bool = False
 _bridge_durable_schema_ready: bool = False
 _bridge_registration_event: asyncio.Event | None = None
