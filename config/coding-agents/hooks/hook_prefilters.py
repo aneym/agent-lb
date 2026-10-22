@@ -228,6 +228,21 @@ def pf_wide_scan_parse(payload):
     return False
 
 
+def pf_poll_loop(payload):
+    if not isinstance(payload, dict):
+        return False
+    data = payload.get("tool_input")
+    if not isinstance(data, dict) or data.get("run_in_background") is True:
+        return False
+    command = data.get("command")
+    return (
+        isinstance(command, str) and "sleep" in command and re.search(r"\b(?:while|until|for)\b", command) is not None
+    )
+
+
+INPROC_PREFILTERS = {"poll-loop-warn.py": pf_poll_loop}
+
+
 def pf_display_wake(payload):
     if not isinstance(payload, dict):
         return True

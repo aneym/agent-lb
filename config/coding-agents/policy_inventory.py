@@ -83,6 +83,7 @@ MANAGED_HOOKS = (
     "gh-write-guard.py",
     "merge-gate-guard.py",
     "main-checkout-write-warn.py",
+    "poll-loop-warn.py",
     "hook-dispatch.py",
     "hook_dispatch_answers.py",
     "hook_dispatch_planning.py",
@@ -111,5 +112,6 @@ DISPATCH_INPROC = (
     "idle-agents.py",
     "merge-gate-guard.py",
     "main-checkout-write-warn.py",
+    "poll-loop-warn.py",
     "claude-bash-hands-nudge.py",
 )
