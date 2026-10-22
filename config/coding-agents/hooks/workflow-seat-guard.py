@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import fnmatch
 import json
 import os
@@ -10,7 +11,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from seat_hands import hands_target  # type: ignore[missing-import]
+from seat_hands import EXCEPTION, SEATS, hands_target  # type: ignore[missing-import]
 
 AGENT_MODEL = re.compile(r"^model:\s*(\S+)\s*$", re.MULTILINE)
 
@@ -75,11 +76,12 @@ def literal_end(script: str, start: int, interpolations: list[str] | None = None
     raise ParseError(f"unterminated string at {start}")
 
 
-def tokens(script: str, interpolations: list[str]) -> list[tuple[str, str]]:
+def tokens(script: str, interpolations: list[str], spans: list | None = None) -> list[tuple[str, str]]:
 
     result: list[tuple[str, str]] = []
     i = 0
     while i < len(script):
+        start = i
         c = script[i]
         if c.isspace():
             i += 1
@@ -99,6 +101,8 @@ def tokens(script: str, interpolations: list[str]) -> list[tuple[str, str]]:
             i = literal_end(script, start, interpolations)
             raw = script[start + 1 : i - 1]
 
+            if spans is not None:
+                spans.append((start, i))
             result.append(("string" if quote != "`" and "\\" not in raw else "opaque", raw))
             continue
         if c == "/" and (
@@ -122,6 +126,8 @@ def tokens(script: str, interpolations: list[str]) -> list[tuple[str, str]]:
                 i += 1
             else:
                 raise ParseError("unterminated regex")
+            if spans is not None:
+                spans.append((start, i))
             result.append(("opaque", "regex"))
             continue
         match = re.match(r"[A-Za-z_$][\w$]*|\.\.\.|=>|&&|\|\|", script[i:])
@@ -129,9 +135,13 @@ def tokens(script: str, interpolations: list[str]) -> list[tuple[str, str]]:
             word = match.group()
             result.append(("word", word))
             i += len(word)
+            if spans is not None:
+                spans.append((start, i))
         else:
             result.append(("punct", c))
             i += 1
+            if spans is not None:
+                spans.append((start, i))
     return result
 
 
@@ -272,11 +282,14 @@ def retired_in_args(value, table: dict, path: str = "args") -> str | None:
     return None
 
 
-def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str | None, bool]:
+def inspect(
+    script: str, table: dict, explicit: list | None = None, edits: list | None = None
+) -> tuple[str | None, bool]:
 
     explicit = [] if explicit is None else explicit
     interpolations: list[str] = []
-    items = tokens(script, interpolations)
+    spans: list = []
+    items = tokens(script, interpolations, spans)
     pairs = brackets(items)
     reasons = []
     warning = False
@@ -292,6 +305,7 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
             continue
         if len(args) < 2 or args[1][0] == args[1][1]:
             reasons.append("agent() without agentType: pass agentType (models.md, Workflows)")
+            warning = True
             continue
         start, end = args[1]
         if items[start] != ("punct", "{") or pairs.get(start) != end - 1:
@@ -302,6 +316,7 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
             warning = True
             continue
         keys = {}
+        values = {}
         uncertain = False
         for a, b in fields:
             if a == b:
@@ -314,6 +329,7 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
                 keys[key] = None
             elif items[a + 1] == ("punct", ":"):
                 keys[key] = items[a + 2] if a + 3 == b else None
+                values[key] = a + 2
             else:
                 uncertain = True
         if uncertain:
@@ -329,16 +345,45 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
             if prompt_end == prompt_start + 1 and items[prompt_start][0] in ("string", "opaque")
             else ""
         )
-        if (
-            seat
-            and "OPUS-REASON" not in prompt
-            and (seat in {"general-purpose", "claude", "effort-low", "effort-xhigh"} or seat.startswith("opus-seat"))
-        ):
-            target = hands_target("general-purpose", prompt)
-            if target:
-                reasons.append(
-                    f"agent() sends hands work to {seat!r}: use {target[0]} via seat-run and keep Opus for decisions (models.md, Teams and workflows)."
-                )
+        if os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") != "1":
+            if seat is None:
+                warning = True
+            elif seat.lower() in SEATS:
+                if prompt_end != prompt_start + 1 or items[prompt_start][0] not in ("string", "opaque"):
+                    warning = True
+                else:
+                    left, right = spans[prompt_start]
+                    raw = script[left:right]
+                    try:
+                        prompt = ast.literal_eval(raw) if raw[0] != "`" else raw[1:-1]
+                    except (ValueError, SyntaxError):
+                        warning = True
+                        continue
+                    if raw[0] == "`" and ("${" in raw or "\\" in raw):
+                        warning = True
+                        continue
+                    target = hands_target(seat.lower(), prompt)
+                    if target and not EXCEPTION.search(prompt):
+                        if edits is None or (
+                            "model" in keys
+                            and keys["model"] not in (("word", "null"), ("word", "undefined"))
+                            and (keys["model"] is None or keys["model"][0] != "string")
+                        ):
+                            warning = True
+                            continue
+                        left, right = spans[values["agentType"]]
+                        edits.append((left, right, json.dumps(target[0])))
+                        model_token = keys.get("model")
+                        if (
+                            model_token
+                            and model_token[0] == "string"
+                            and any(
+                                name in model_token[1].lower()
+                                for name in ("opus", "sonnet", "haiku", "claude", "fable")
+                            )
+                        ):
+                            left, right = spans[values["model"]]
+                            edits.append((left, right, "undefined"))
         model = keys.get("model")
         if model in (("word", "undefined"), ("word", "null")):
             keys.pop("model")
@@ -370,7 +415,7 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
 
 
 def main() -> None:
-    output = {"hookEventName": "PreToolUse"}
+    output: dict[str, object] = {"hookEventName": "PreToolUse"}
 
     try:
         payload = json.load(sys.stdin)
@@ -389,8 +434,26 @@ def main() -> None:
         reason = retired_in_args(tool_input.get("args"), table)
         warning = False
         explicit: list = []
-        if not reason:
-            reason, warning = inspect(script, table, explicit)
+        edits: list = []
+        hands_reason, warning = inspect(script, table, explicit, edits)
+        reason = reason or hands_reason
+        if warning and os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") != "1":
+            output.update(
+                permissionDecision="deny",
+                permissionDecisionReason=(
+                    "workflow-seat-guard: dynamic agent() options or brief cannot be checked; "
+                    "use literal agentType and brief so Claude hands work can route to Codex, "
+                    "or supply a checked OPUS-REASON exemption."
+                ),
+            )
+        elif edits:
+            for start, end, replacement in sorted(set(edits), reverse=True):
+                script = script[:start] + replacement + script[end:]
+            updated = dict(tool_input, script=script)
+            updated.pop("scriptPath", None)
+            output.update(permissionDecision="allow", updatedInput=updated)
+            output["additionalContext"] = "workflow-seat-guard: Claude hands calls rewritten to Codex."
+
         if reason:
             output["additionalContext"] = "workflow-seat-guard (warn only, not blocked): " + reason
         elif explicit:
@@ -406,10 +469,14 @@ def main() -> None:
             )
     except Exception as error:
         output.pop("additionalContext", None)
-        output["additionalContext"] = (
-            "workflow-seat-guard (warn only, not blocked): the hook input, script or routing table could not be "
-            "read or parsed (%s); check ~/.agent-lb/managed/coding-agents/routing-table.json." % type(error).__name__
+        message = (
+            "workflow-seat-guard: cannot check workflow (%s); use literal agent options and a readable script."
+            % type(error).__name__
         )
+        if os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") != "1":
+            output.update(permissionDecision="deny", permissionDecisionReason=message)
+        else:
+            output["additionalContext"] = message
     print(json.dumps({"hookSpecificOutput": output}))
 
 
