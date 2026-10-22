@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+sys.path = [str(Path(__file__).resolve().parent), *sys.path]
+
 PROBE_INTERVAL_SECONDS = 6 * 60 * 60
 PROBE_TIMEOUT_SECONDS = 180
 EXPECTED_MODEL_DEFAULT = "claude-opus-5-5"
