@@ -1,6 +1,7 @@
 {
+  "class_aliases": {"implementation": "implement", "fix": "implement", "fix-forward": "implement", "migration": "implement", "sweep": "mechanical", "probe": "mechanical", "test-run": "mechanical", "investigation": "explore", "exploration": "explore"},
   "version": 2,
-  "policy_rev": "2026-10-20.2",
+  "policy_rev": "2026-10-22.1",
   "mission_critical": ["plan", "lane", "scope", "spec", "contract", "architecture", "design", "review", "verdict", "judge", "audit", "plan-review", "synthesis", "orchestrator", "lane-tab", "ui-critical", "trust-boundary", "money-path"],
   "spread": {"note": "AA 2026-10-20 TerminalBench: Sol 56%, Grok high 25%, low 16%; Grok $0 marginal", "min_headroom_percent": 15, "classes": {
       "implement": [{"seat": "gpt-implementer", "model": "sol-latest", "effort": "medium", "pool": "openai-codex", "strength": 1.0}, {"seat": "grok-implementer", "model": "grok-latest", "effort": "high", "pool": "grok", "strength": 0.35}],
@@ -186,16 +187,7 @@
           }
         }
       ],
-      "explore": [
-        {
-          "id": "haiku-explore",
-          "seat": "Explore",
-          "model": "haiku-latest",
-          "effort": "low",
-          "share": 0.2,
-          "pool": "anthropic-general"
-        }
-      ],
+      "explore": [],
       "decide": [
         {
           "id": "haiku-decide",
@@ -237,21 +229,12 @@
           "author_vendor": "anthropic"
         }
       ],
-      "research": [
-        {
-          "id": "sonnet-explore",
-          "seat": "Explore",
-          "model": "sonnet-latest",
-          "effort": "medium",
-          "share": 0.1,
-          "pool": "anthropic-general"
-        }
-      ]
+      "research": []
     },
     "note": "2026-10-16 routing standard phase 1: exploration ships off. Arms open in phase 3 only after Opus turns enabled on; promotion is manual on dated evidence (ROUTING.md)."
   },
   "implement_default": "gpt-implementer",
-  "implement_default_note": "The default implementer switch (2026-09-28): route moves this seat to the head of the implement and mechanical chains. gpt-implementer (Sol medium) by E12; sonnet-implementer is the Codex-empty fallback, not the default.",
+  "implement_default_note": "The default implementer switch (2026-09-28): route moves this seat to the head of the implement and mechanical chains. gpt-implementer (Sol medium) by E12; Codex-empty hands try eligible Grok or wait.",
     "ladder": "interim",
     "ladder_note": "2026-09-30 (Alex approved 02:35Z): the interim ladder. Set baseline to get the class chains below back on the next pick. A closed gate opens only on eval evidence (DECISIONS T2, T3).",
     "ladders": {

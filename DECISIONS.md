@@ -272,3 +272,13 @@ First use: Codex accounts 2661c1c1 and 409a8db4 returned every `server_is_overlo
 of 2026-10-22 (391; the other three had none), which made prod chat first tokens 9-25 s. They are excluded from
 gpt-6.1-sol until 2026-10-22T14:40Z (area-ship ruling b-20261022022947).
 
+
+## Hands dispatch stays off Claude (2026-10-22)
+
+Team-lead restated Alex's decision: Opus supplies architecture and Codex executes.
+Implementation, fix, fix-forward and migration resolve to implement; sweep, probe
+and test-run to mechanical; investigation and exploration to explore. Dispatch
+records both names. Fix retains its never-explore and Grok exclusion rules.
+Implement, mechanical, explore and research default to Sol. On exhaustion they
+try eligible non-Claude table arms, then wait; this supersedes the cross-vendor
+Claude fallback for those classes. Opus authority classes retain their policy.

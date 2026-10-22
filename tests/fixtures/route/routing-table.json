@@ -1,4 +1,5 @@
 {
+  "class_aliases": {"implementation": "implement", "fix": "implement", "fix-forward": "implement", "migration": "implement", "sweep": "mechanical", "probe": "mechanical", "test-run": "mechanical", "investigation": "explore", "exploration": "explore"},
   "version": 1,
   "classes": {
     "plan": {"driver": true},
