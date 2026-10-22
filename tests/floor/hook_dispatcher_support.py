@@ -15,6 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 SOURCE = ROOT / "config/coding-agents"
+sys.path.insert(0, str(SOURCE / "hooks"))
 
 DISPATCH = 'python3 "$HOME/.claude/hooks/hook-dispatch.py"'
 DISPATCH_INSTALLED = (
@@ -238,17 +239,6 @@ def bash_groups(hooks: dict) -> list[dict]:
         for group in hooks["PreToolUse"]
         if group.get("matcher") in (None, "", "*") or "Bash" in group["matcher"].split("|")
     ]
-
-
-def parity_module():
-    import importlib.util
-
-    if str(SOURCE / "hooks") not in sys.path:
-        sys.path.insert(0, str(SOURCE / "hooks"))
-    spec = importlib.util.spec_from_file_location("hook_dispatch_parity", SOURCE / "hooks/hook-dispatch-parity.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def as_result(command: str, done: subprocess.CompletedProcess) -> dict:

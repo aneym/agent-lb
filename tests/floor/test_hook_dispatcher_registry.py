@@ -26,7 +26,6 @@ from tests.floor.hook_dispatcher_support import (
     dispatcher_home,
     installer,
     make_home,
-    parity_module,
     per_hook,
     rev_of,
     run_hook,
@@ -163,7 +162,7 @@ def test_a_crash_notice_survives_beside_a_json_answer(tmp_path: Path) -> None:
     }
     _home, env = dispatcher_home(tmp_path, [crash, context])
     call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
-    parity = parity_module()
+    import parity_execution as parity
     old = parity.effect(
         "PreToolUse", [as_result(h["command"], run_hook(h["command"], call, env)) for h in (crash, context)]
     )

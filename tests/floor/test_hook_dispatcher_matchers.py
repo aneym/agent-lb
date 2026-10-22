@@ -13,7 +13,6 @@ from tests.floor.hook_dispatcher_support import (
     hooks_of,
     installer,
     make_home,
-    parity_module,
     run_hook,
 )
 from tests.floor.hook_dispatcher_support import kill_spawned_hooks as kill_spawned_hooks
@@ -76,7 +75,9 @@ def test_a_fold_keeps_config_order_across_overlapping_matchers(tmp_path: Path) -
 )
 def test_the_fixture_matches_tools_as_claude_code_does(matcher: Any, tool: Any, event: str, expected: bool) -> None:
 
-    assert parity_module().matches(matcher, tool, event) is expected
+    from parity_registry import matches
+
+    assert matches(matcher, tool, event) is expected
 
 
 @pytest.mark.parametrize(
@@ -113,7 +114,7 @@ def test_a_fold_keeps_order_past_a_name_list_matcher(tmp_path: Path, first: str,
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install, env = installer(tmp_path, home)
     call = {"tool_name": tool, "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
-    parity = parity_module()
+    import parity_registry as parity
 
     def last_rewrite() -> str | None:
         last = None
@@ -149,7 +150,7 @@ def test_a_command_shared_with_a_per_hook_group_runs_once_per_call(tmp_path: Pat
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install, env = installer(tmp_path, home)
     call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
-    parity = parity_module()
+    import parity_registry as parity
 
     def runs_per_call() -> int:
         counter.write_text("")

@@ -15,10 +15,8 @@ from tests.floor.hook_dispatcher_support import (
     DISPATCH_BASH,
     FAKE_RTK,
     QUIET_RTK,
-    SOURCE,
     TIMER_RTK,
     dispatcher_home,
-    parity_module,
     processes_naming,
     rewriter_home,
     run_hook,
@@ -53,7 +51,7 @@ def test_the_execd_rewriter_is_bounded_by_its_own_timeout_and_a_late_rewrite_nev
 @pytest.mark.skipif(sys.platform != "darwin", reason="the observer uses kqueue and libproc")
 def test_the_process_watch_counts_whole_trees(tmp_path: Path) -> None:
 
-    parity = parity_module()
+    import parity_processes as parity
 
     def observe(*args: Any) -> dict:
 
@@ -114,15 +112,14 @@ def test_the_rewriter_beside_another_hook_is_the_rtk_on_the_callers_path(tmp_pat
 
 def test_a_hook_child_left_running_or_stopped_is_killed_after_the_parity_run(tmp_path: Path) -> None:
 
-    from importlib.machinery import SourceFileLoader
+    from parity_execution import run_shell
 
-    parity = SourceFileLoader("hook_dispatch_parity", str(SOURCE / "hooks/hook-dispatch-parity.py")).load_module()
     marker = str(tmp_path / "leftover-marker")
     command = (
         f"sh -c 'kill -STOP $$; sleep 300 # {marker}' </dev/null >/dev/null 2>&1 & "
         f"sleep 300 {marker} </dev/null >/dev/null 2>&1 & exit 0"
     )
-    result = parity.run_shell(command, b"{}", dict(os.environ), str(tmp_path), 30)
+    result = run_shell(command, b"{}", dict(os.environ), str(tmp_path), 30)
     assert result["code"] == 0 and not result["timed_out"]
     deadline = time.monotonic() + 5
     while processes_naming(marker) and time.monotonic() < deadline:
