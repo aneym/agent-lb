@@ -95,6 +95,36 @@
     },
     {
       "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Edit|Write",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
       "matcher": "Read",
       "hook": {
         "type": "command",
