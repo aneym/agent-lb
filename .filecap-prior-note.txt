@@ -1,0 +1,1 @@
+Seat (ax42, alloc a4df2274) reports blocked: cutover checker rejects the trailer arrow as a missing path and the private-to-public rename (_catalog to load_models) as unmatched lines. Entry is 19610 bytes, new module 2086 bytes, and the importers scripts/install-claude-clients.sh and scripts/cut-cli
