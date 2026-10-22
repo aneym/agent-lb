@@ -36,6 +36,7 @@ MANAGED_SEATS = (
 )
 ADOPTED_KEEP_NAMES = (
     "wide-scan-guard.sh",
+    "hook_wide_scan_shell.py",
     "railway-vars-guard.sh",
     "agent-lb-bootout-guard.sh",
     "dangerous-command-guard.sh",
@@ -67,6 +68,7 @@ MANAGED_HOOKS = (
     "factory-context.py",
     "compact-checkpoint.py",
     "wide-scan-guard.sh",
+    "hook_wide_scan_shell.py",
     "agent-lb-bootout-guard.sh",
     "railway-vars-guard.sh",
     "dangerous-command-guard.sh",
