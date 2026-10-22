@@ -6,6 +6,7 @@ import subprocess
 import time
 
 REPO = "parityrepo"
+LANE = "parity-lane"
 BOX = "parity-box"
 OWNER_PREFIX = "export FACTORY_OWNER_PANE=none; "
 SUBAGENT = {"agent_id": "hook-parity-subagent", "agent_type": "general-purpose", "session_id": "hook-parity"}
@@ -104,6 +105,9 @@ def setup(case, run):
         handle.write("[offload]\nroots = %s\nmain = %s\n" % (json.dumps(roots), json.dumps(os.path.join(run, "main"))))
     with open(os.path.join(root, "mode"), "w") as handle:
         handle.write(variant["mode"] + "\n")
+    os.makedirs(os.path.join(root, "optin"), exist_ok=True)
+    with open(os.path.join(root, "optin", LANE + ".json"), "w") as handle:
+        json.dump({"lane": LANE, "mode": variant["mode"], "until": time.time() + 3600}, handle)
     node = dict(
         name=BOX,
         eligible=True,
@@ -123,7 +127,11 @@ def setup(case, run):
 def env(case, run):
     if case.get("setup") != "offload":
         return {}
-    return {"OF_ROOT": os.path.join(run, "of"), "OF_FACTORY_FILE": os.path.join(run, "of", "factory.toml")}
+    return {
+        "OF_ROOT": os.path.join(run, "of"),
+        "OF_FACTORY_FILE": os.path.join(run, "of", "factory.toml"),
+        "FACTORY_LANE": LANE,
+    }
 
 
 def tab_command(updated, subagent):
