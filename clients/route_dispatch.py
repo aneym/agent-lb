@@ -182,13 +182,17 @@ def arm_cap_block(ctx: DispatchContext, arm: dict[str, Any], today: list[dict[st
 def command_dispatch(args: argparse.Namespace) -> int:
     table = load_table()
     standards = table.get("standards") if isinstance(table.get("standards"), dict) else {}
-    if args.task_class not in standards:
+    requested_class = args.task_class
+    class_name = (table.get("class_aliases") or {}).get(requested_class, requested_class)
+    if class_name not in standards:
         print(f"route: unknown dispatch class {args.task_class!r}; known: {', '.join(standards)}", file=sys.stderr)
         return EXIT_UNROUTABLE
     if args.effort is not None and args.effort not in EFFORTS:
         print(f"route: unknown effort {args.effort!r}", file=sys.stderr)
         return EXIT_UNROUTABLE
-    class_name = args.task_class
+    args.task_class = class_name
+    if requested_class == "fix" and "fix" not in args.tag:
+        args.tag = [*args.tag, "fix"]
     job_id = args.job or f"job_{new_ulid()}"
     history = read_decisions()
     prior = [row for row in history if row.get("job_id") == job_id]
@@ -208,6 +212,7 @@ def command_dispatch(args: argparse.Namespace) -> int:
     if not prior and not explicit:
         standard = swapped_standard(table, class_name, standard, mode_state)
     ctx = DispatchContext(table, class_name, args.author_vendor)
+    ctx.requested_class = requested_class
     choice, eligible, sticky = route_heal.select(
         sys.modules[__name__], args, table, standard, ctx, prior, history, mode_state, pools_doc, job_id
     )
@@ -234,6 +239,7 @@ def command_dispatch(args: argparse.Namespace) -> int:
         "decision_id": f"dcn_{new_ulid()}",
         "ts": ledger_now_iso(),
         "class": class_name,
+        "requested_class": requested_class,
         "job_id": job_id,
         "attempt": attempt,
         "parent_id": args.parent,
