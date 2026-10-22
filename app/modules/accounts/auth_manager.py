@@ -293,6 +293,7 @@ class AuthManager:
                 AccountNotOwnedError,
                 expiry_datetime,
                 logger,
+                lambda: get_account_selection_cache().invalidate(),
             )
 
     async def _refresh_tokens(
@@ -396,6 +397,7 @@ async def refresh_account_locked(
     account_not_owned_error: type[Exception],
     expiry_datetime: Callable[..., datetime | None],
     logger: logging.Logger,
+    invalidate_account_cache: Callable[[], None],
 ) -> Account:
     expected_refresh_token_encrypted = account.refresh_token_encrypted
     latest = await repo.reload_by_id(account.id)
@@ -439,7 +441,7 @@ async def refresh_account_locked(
             ):
                 if account.status != AccountStatus.EXCHANGE_UNCERTAIN:
                     await repo.mark_exchange_uncertain(account.id, token_hash, expected_refresh_token_encrypted)
-                    get_account_selection_cache().invalidate()
+                    invalidate_account_cache()
                 raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
             replay = True
         elif account.status == AccountStatus.EXCHANGE_UNCERTAIN:
@@ -460,7 +462,7 @@ async def refresh_account_locked(
                 return snapshot(repo, latest)
             if await repo.exchange_intent_hash(account_id) == token_hash:
                 await repo.mark_exchange_uncertain(account_id, token_hash, expected_refresh_token_encrypted)
-                get_account_selection_cache().invalidate()
+                invalidate_account_cache()
             raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
     elif account.status == AccountStatus.EXCHANGE_UNCERTAIN:
         raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
@@ -515,7 +517,7 @@ async def refresh_account_locked(
                 )
             else:
                 await repo.mark_exchange_uncertain(account.id, token_hash, expected_refresh_token_encrypted)
-            get_account_selection_cache().invalidate()
+            invalidate_account_cache()
             raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False) from exc
         if not isinstance(exc, RefreshError):
             raise
@@ -662,7 +664,7 @@ async def refresh_account_locked(
         raise RefreshError("refresh_unsaved", "Refreshed tokens could not be stored", False)
     if replay:
         logger.info("Refresh exchange resolved account_id=%s outcome=active", account.id)
-    get_account_selection_cache().invalidate()
+    invalidate_account_cache()
     if hasattr(repo, "session"):
         stored = await repo.reload_by_id(account.id)
         if stored is not None:
