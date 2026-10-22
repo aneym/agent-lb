@@ -67,7 +67,7 @@ OBLIGATIONS = {
 def installer():
     if str(SOURCE) not in sys.path:
         sys.path.insert(0, str(SOURCE))
-    spec = importlib.util.spec_from_file_location("install_policy", SOURCE / "install-policy.py")
+    spec = importlib.util.spec_from_file_location("install_policy", SOURCE / "policy_layout.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

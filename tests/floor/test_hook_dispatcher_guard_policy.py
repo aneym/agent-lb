@@ -42,7 +42,7 @@ def test_the_pinned_wide_scan_guard_is_skipped_only_where_it_cannot_act(tmp_path
     installed = home / ".claude/hooks/wide-scan-guard.sh"
     shutil.copy(WIDE_SCAN, installed)
     installed.chmod(0o755)
-    pins = policy_module().script_pins(SOURCE)
+    pins = policy_module("policy_hook_install").script_pins(SOURCE)
     assert pins["wide-scan-guard.sh"] == hashlib.sha256(installed.read_bytes()).hexdigest()
     registry_path = home / ".claude/hooks/dispatch/registry.json"
     registry_path.write_text(json.dumps(dict(json.loads(registry_path.read_text()), script_sha=pins)))
@@ -113,7 +113,12 @@ def test_a_guard_missing_a_tool_it_needs_is_never_skipped(tmp_path: Path) -> Non
     home, env, hook = guard_home(tmp_path, "wide-scan-guard.sh", WIDE_SCAN)
     registry_path = home / ".claude/hooks/dispatch/registry.json"
     registry_path.write_text(
-        json.dumps(dict(json.loads(registry_path.read_text()), script_sha=policy_module().script_pins(SOURCE)))
+        json.dumps(
+            dict(
+                json.loads(registry_path.read_text()),
+                script_sha=policy_module("policy_hook_install").script_pins(SOURCE),
+            )
+        )
     )
     tools = tmp_path / "tools"
     tools.mkdir()
@@ -221,7 +226,12 @@ def test_the_pinned_railway_guard_is_skipped_only_where_it_cannot_act(tmp_path: 
     home, env, _hook = guard_home(tmp_path, "railway-vars-guard.sh", RAILWAY)
     registry_path = home / ".claude/hooks/dispatch/registry.json"
     registry_path.write_text(
-        json.dumps(dict(json.loads(registry_path.read_text()), script_sha=policy_module().script_pins(SOURCE)))
+        json.dumps(
+            dict(
+                json.loads(registry_path.read_text()),
+                script_sha=policy_module("policy_hook_install").script_pins(SOURCE),
+            )
+        )
     )
     trace = tmp_path / "trace.jsonl"
     differ, skipped = [], set()
