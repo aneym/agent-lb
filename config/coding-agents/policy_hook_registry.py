@@ -99,7 +99,7 @@ def fold_hooks(
         if only is not None:
             allowed = only.get(event, [])
             eligible = [good and group in allowed for group, good in zip(groups, eligible)]
-        eligible = keep_config_order(groups, eligible)
+        eligible = keep_config_order(groups, eligible, event)
         if worth is not None:
             by_key: dict[str, list[Any]] = {}
             for group, good in zip(groups, eligible):
@@ -108,9 +108,9 @@ def fold_hooks(
             unworthy = {key for key, key_hooks in by_key.items() if not worth(key_hooks)}
             eligible = [good and matcher_key(group) not in unworthy for group, good in zip(groups, eligible)]
 
-            eligible = keep_config_order(groups, eligible)
+            eligible = keep_config_order(groups, eligible, event)
         while True:
-            settled = keep_config_order(groups, unfold_shared(groups, eligible))
+            settled = keep_config_order(groups, unfold_shared(groups, eligible), event)
             if settled == eligible:
                 break
             eligible = settled

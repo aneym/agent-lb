@@ -84,6 +84,9 @@ def keys_overlap(first: str, second: str) -> bool:
     return first == "*" or second == "*" or bool(tool_names(first) & tool_names(second))
 
 
+ORDER_FREE_EVENTS = {"PostToolUse"}
+
+
 def foldable_groups(groups: list[Any], event: str) -> list[bool]:
 
     ok = []
@@ -172,9 +175,11 @@ def group_overlaps(group: Any, key: str) -> bool:
     return any(pattern.search(name) for name in names)
 
 
-def keep_config_order(groups: list[Any], eligible: list[bool]) -> list[bool]:
+def keep_config_order(groups: list[Any], eligible: list[bool], event: str) -> list[bool]:
 
     eligible = list(eligible)
+    if event in ORDER_FREE_EVENTS:
+        return eligible
     changed = True
     while changed:
         changed = False

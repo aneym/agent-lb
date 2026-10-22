@@ -167,16 +167,6 @@
     },
     {
       "event": "PostToolUse",
-      "matcher": "Workflow",
-      "hook": {
-        "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-readback.py\"",
-        "timeout": 5
-      },
-      "needs_source": false
-    },
-    {
-      "event": "PostToolUse",
       "matcher": null,
       "hook": {
         "type": "command",
@@ -184,6 +174,16 @@
         "timeout": 2
       },
       "needs_source": true
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Workflow",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-readback.py\"",
+        "timeout": 5
+      },
+      "needs_source": false
     },
     {
       "event": "SessionStart",
