@@ -26,7 +26,7 @@ os.environ["AGENT_LB_QUOTA_PLANNER_SCHEDULER_ENABLED"] = "false"
 os.environ["AGENT_LB_ACCOUNTS_CACHE_WARMER_ENABLED"] = "false"
 
 _PIN = subprocess.run(
-    ["git", "-C", str(Path(__file__).resolve().parents[1]), "rev-parse", "--verify", "-q", "origin/main"],
+    ["git", "-C", str(Path(__file__).resolve().parents[1]), "merge-base", "HEAD", "origin/main"],
     capture_output=True,
     text=True,
     timeout=60,
