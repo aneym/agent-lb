@@ -68,7 +68,7 @@ else:
             "RAILS_TEST_ENV_HOME",
         ):
             self.env.pop(key, None)
-        self.brief = self.root / "brief.txt"
+        self.brief = self.root / "parity.contract.brief"
 
     def script(self, name, body):
         path = self.tools / name

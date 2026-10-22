@@ -46,21 +46,22 @@ main checkout.
 
    One command, with the `cd` in the same shell invocation:
 
-   Create and write a fresh unique contract file in that same Bash call:
+   Have the launcher create a fresh job-key-bound contract file in that same Bash call:
 
 ```sh
-cd "$RUN" && f=$(mktemp "${TMPDIR:-/tmp}/codex-test-runner-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
+cd "$RUN" || exit $?
+k=codex-test-runner-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
+python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- seat-run --bg --name "$k" --timeout 4320 -- seat-exec --seat codex-test-runner --effort medium --write --prompt-file @contract <<'CONTRACT_EOF'
 <contract text built below>
 CONTRACT_EOF
-k=codex-test-runner-<kebab topic>-$(date +%s)-$(openssl rand -hex 2); echo "key=$k"; seat-run --bg --name "$k" --timeout 4320 -- seat-exec --seat codex-test-runner --effort medium --write --prompt-file "$f"
 ```
 
-Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it as a Nomad job on a linux box unless the contract names a Mac-only tool. Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). After `NAME-COLLISION` relaunch once at once with a new key and the same contract; after `NO-SERVER` retry once, then report blocked; after `SUBMIT-REFUSED` report blocked with that line. A seat that is not Mac-only never runs on Studio, so never fall back to a `-local` seat. Studio-only work (a Mac app, Aside, herdr, simulators) uses `codex-test-runner-local` instead.
+Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it as a Nomad job on a linux box unless the contract names a Mac-only tool. Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). After NAME-COLLISION or NO-SERVER, retry once through forward-contract.py with the printed key and contract path, `--retry`, and the same command; wait on its printed name; after another refusal report blocked; after `SUBMIT-REFUSED` report blocked with that line. A seat that is not Mac-only never runs on Studio, so never fall back to a `-local` seat. Studio-only work (a Mac app, Aside, herdr, simulators) uses `codex-test-runner-local` instead.
 
    Run those lines exactly as shown, starting at column 0: bash ends the contract only at a line that is exactly `CONTRACT_EOF`, so an indented closer swallows the `node` line.
 
-   Never write the contract to a fixed or reused path (the scratchpad is shared
-   by parallel agents), and never pass it inline.
+   The launcher owns contract creation. Reuse only its printed `contract=` path
+   on a retry; never choose, list or glob a contract file.
 
    The `cd` is not optional: Codex's sandbox is rooted at the cwd you launch
    from, and each Bash call starts back in the session cwd. `--write` is here
@@ -101,7 +102,7 @@ base and head revisions (full 40-character shas; resolve a ref with
 
 ## The contract you forward
 
-Build the contract text and write it to the fresh unique file with the quoted
+Build the contract text and send it to the launcher with the quoted
 heredoc above. Open with: "You are the runner. Run this suite yourself. Do not run codex-companion, seat-run or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." It must say:
 
 - Work only inside this worktree. It is a disposable checkout at `<sha>` and

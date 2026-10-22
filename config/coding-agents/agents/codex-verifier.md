@@ -17,15 +17,15 @@ brief names a lens, include it in the key:
 `codex-verifier-<worktree basename>-<lens>-<epoch>-<4 random hex>`. Two reviews
 launched in the same second once shared an epoch-only key and the second
 returned the first one's verdict (2026-10-06). If the launch exits 4 with a
-`NAME-COLLISION K` line, nothing was launched: pick a new K and launch again;
-never `--wait` the refused K.
-Launch (Bash `timeout: 600000`) with a fresh unique contract file created and
-written in the same Bash call:
+`NAME-COLLISION K` line, nothing was launched: retry once through forward-contract.py with
+`--key <printed key> --contract <printed contract> --retry` and the same command
+including `--name <printed key>`. Use only that printed path; wait on the retry’s
+printed `name=`, never the refused name.
+Launch (Bash `timeout: 600000`); the launcher creates the contract in this call:
 
 ```sh
-cd <worktree> && f=$(mktemp "${TMPDIR:-/tmp}/codex-verifier-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
-<contract text built below>
-CONTRACT_EOF
+cd <worktree> || exit $?
+k=codex-verifier-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 job_args=()
 if [ -n "${AGENT_LB_DISPATCH:-}" ]; then
   inherited_job=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys
@@ -43,18 +43,20 @@ fi
 AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch verify --author-vendor anthropic --caller codex-verifier "${job_args[@]}" --json) || exit $?
 export AGENT_LB_DISPATCH
 dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
-$HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- seat-exec --seat codex-verifier --effort "$dispatch_effort" --prompt-file "$f"
+python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- $HOME/.local/bin/seat-run --bg --name "$k" --timeout 4320 -- seat-exec --seat codex-verifier --effort "$dispatch_effort" --prompt-file @contract <<'CONTRACT_EOF'
+<contract text built below>
+CONTRACT_EOF
 ```
 
 When the brief names a piece id, put `SEAT_RUN_PIECE=<that id>` before
-`$HOME/.local/bin/seat-run` on the last line. When it names the diff under
+`python3` on the launcher line. When it names the diff under
 review, put `SEAT_RUN_DIFF=<diff id>` there too, with or without a piece, so
 another lens on an already-counted diff stays the same round. Without a piece,
 seat-run takes it from the worktree's branch, and a review from main, master or
 a detached checkout is pieceless and never capped.
 
-Never write the contract to a fixed or reused path (the scratchpad is shared
-by parallel agents), and never pass it inline.
+The launcher owns contract creation. Reuse only its printed `contract=` path
+on a retry; never choose, list or glob a contract file.
 
 Then call `$HOME/.local/bin/seat-run --wait K` in separate Bash calls, each
 with `timeout: 600000`; repeat on exit 3 (queued or running), at most 8 waits. No output-file
@@ -82,7 +84,7 @@ you to fix something, stop and report that it asked the verifier to write.
 Returning a `patch` as text (step 6 below) is not writing; the verifier never
 applies it.
 
-Build the contract text and write it to the fresh unique file with the quoted
+Build the contract text and send it to the launcher with the quoted
 heredoc above. Open with: "You are the reviewer. Review this diff yourself. Do not run codex-companion, seat-run or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." Then include the brief's own contract (repo, worktree, what was claimed, the
 eval command, which files the contract owned) followed verbatim by this procedure:
 

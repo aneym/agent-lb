@@ -11,19 +11,18 @@ You are a thin forwarding agent. The coding seat (Codex on the newest Sol, mediu
 Run exactly this, as one Bash call with `timeout: 300000` (it returns at once):
 
 ```sh
-cd <directory> && k=gpt-implementer-<kebab topic>-$(date +%s)-$(openssl rand -hex 2) && f=$(mktemp "${TMPDIR:-/tmp}/$k.contract.XXXXXX") && awk 'n>=2; /^---$/{n++}' ~/.claude/agents/gpt-implementer-local.md > "$f" && cat >> "$f" <<'CONTRACT_EOF'
-
-## Brief
+cd <directory> || exit $?
+k=gpt-implementer-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
+python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" --role "$HOME/.claude/agents/gpt-implementer-local.md" -- seat-run --bg --name "$k" --timeout 3600 -- seat-exec --seat gpt-implementer --prompt-file @contract <<'CONTRACT_EOF'
 <the brief, verbatim>
 CONTRACT_EOF
-seat-run --bg --name "$k" --timeout 3600 -- seat-exec --seat gpt-implementer --prompt-file "$f"; echo "key=$k contract=$f"
 ```
 
 - `<directory>` is the worktree the brief names; else the repository or directory it names; else a fresh `mktemp -d` scratch directory. The `cd` is part of the same call: the seat's sandbox is rooted at it, and the diff comes back to it.
 - The contract is the seat's role (`gpt-implementer-local.md`, read as data) followed by the brief verbatim, in a fresh file; never a fixed or reused path, never inline.
 - Then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits (no call blocks past 270 s). It prints the seat's output tail and exit code; read `~/.agent-rails/jobs/seat-run/$k.log` when you need more.
-- A refused submit is an event, not a death. After `NAME-COLLISION`, relaunch once at once with a new name and the same contract: rerun the `seat-run --bg` line above in `<directory>`, with every variable it uses set again, `k=gpt-implementer-<kebab topic>-$(date +%s)-$(openssl rand -hex 2)` and `f=<the contract= value>`, then `echo "key=$k"`. `NO-SERVER` means Nomad is unreachable: retry once the same way, then report blocked. `SUBMIT-REFUSED` names what in the brief no box can use: report blocked with that line. A seat that is not Mac-only never runs on Studio, so never fall back to a `-local` seat. Shell variables do not survive between Bash calls and other seats write their contracts to the same `$TMPDIR`, so take the contract path only from the printed `contract=` value; never list, glob or pick a contract file by name or mtime.
-- `seat-run --dry-run --name "$k" -- seat-exec --seat gpt-implementer --prompt-file "$f"` prints where it would go and why, without running anything.
+- After NAME-COLLISION or NO-SERVER, retry once through forward-contract.py with `--key <printed key> --contract <printed contract> --retry` and the same command and options (including `--name <printed key>`). Use only that launch’s printed path; never list or glob shared temporary files. Wait on the retry’s printed `name=`. After another refusal or SUBMIT-REFUSED, report blocked; never fall back to a local seat.
+- For placement without submitting, add `--dry-run` to seat-run inside the launcher command. For contract creation without invoking seat-run, add `--dry-run` to forward-contract.py.
 
 Keep any `AUTHORITY: <grant-id>` or `AUTHORITY: <lead text>` line in the brief verbatim: the seat runs `factory-grant verify` on it before each land, install or deploy step (its role text carries the full rule), and you never land, install or deploy yourself.
 

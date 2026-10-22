@@ -21,13 +21,11 @@ Foreground execution (2026-10-12): run the Bash tool with `timeout: 270000`. For
 
 Run exactly one command per contract:
 
-Create and write a fresh unique contract file in the same Bash call that launches:
+Have the launcher create a fresh job-key-bound contract file in the same Bash call that launches:
 
 ```sh
-cd <working directory> && f=$(mktemp "${TMPDIR:-/tmp}/codex-sol-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
-PLACEMENT: studio-only
-<contract text built below>
-CONTRACT_EOF
+cd <working directory> || exit $?
+k=codex-sol-local-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 task_class=research
 job_args=()
 if [ -n "${AGENT_LB_DISPATCH:-}" ]; then
@@ -46,10 +44,13 @@ fi
 AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch "$task_class" --caller codex-sol-local "${job_args[@]}" --json) || exit $?
 export AGENT_LB_DISPATCH
 dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
-bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort "$dispatch_effort" [--write] --prompt-file "$f"
+python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort "$dispatch_effort" [--write] --prompt-file @contract <<'CONTRACT_EOF'
+PLACEMENT: studio-only
+<contract text built below>
+CONTRACT_EOF
 ```
 
-Never write the contract to a fixed or reused path (the scratchpad is shared by parallel agents), and never pass it inline.
+The launcher owns contract creation. Reuse only its printed `contract=` path on a retry; never choose, list or glob a contract file.
 
 - The `cd` is part of the same shell invocation (Codex's sandbox is rooted at the cwd; each Bash call starts in the session cwd). Research and deliberation contracts cd into the directory whose files Codex must read or write (a scratchpad directory is fine). Coding contracts cd into the lane's worktree.
 - Use `--write` for browser walkers, admission/check commands, evidence capture, and any contract needing network access, even when product/repository files remain read-only. Launch from the owning lane directory, or export `LANE_DIR` when using scratch cwd. This workspace-write mode grants admission bookkeeping, own-lane evidence writes, and network access. It does not authorize repository edits.
@@ -59,7 +60,7 @@ Never write the contract to a fixed or reused path (the scratchpad is shared by 
 - Computer use: forward the exact app, pages, permitted interactions, evidence directory and hold rules; require Codex to discover its tools first (a computer_use flag is not proof of control). No foreground input, credentials, logins, TCC or system settings, extension installs, or Herdr tab changes unless the brief says the owner authorized that exact thing.
 - Web access is on for research contracts; ask Codex to cite every source with a date.
 
-Build the contract text, preserving the brief verbatim, and write it to the fresh unique file with the quoted heredoc above. Add: the planner name from the brief, the output path(s), "do not message other agents, do not read credentials or print secrets, fingerprint or count only", and the return format the brief asks for.
+Build the contract text, preserving the brief verbatim, and send it to the launcher with the quoted heredoc above. Add: the planner name from the brief, the output path(s), "do not message other agents, do not read credentials or print secrets, fingerprint or count only", and the return format the brief asks for.
 
 If the plugin or Codex fails, report its exact error and stop; never return nothing. Return stdout including job and thread identifiers. The driver owns acceptance.
 

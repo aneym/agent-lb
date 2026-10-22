@@ -14,12 +14,11 @@ Give the Bash call `timeout: 600000`.
 
 Run exactly one command per contract:
 
-Create and write a fresh unique contract file in the same Bash call that launches:
+Have the launcher create a fresh job-key-bound contract file in the same Bash call that launches:
 
 ```sh
-cd <working directory> && f=$(mktemp "${TMPDIR:-/tmp}/codex-sol-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
-<contract text built below>
-CONTRACT_EOF
+cd <working directory> || exit $?
+k=codex-sol-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 task_class=research
 job_args=()
 if [ -n "${AGENT_LB_DISPATCH:-}" ]; then
@@ -38,12 +37,14 @@ fi
 AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch "$task_class" --caller codex-sol "${job_args[@]}" --json) || exit $?
 export AGENT_LB_DISPATCH
 dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
-k=codex-sol-<kebab topic>-$(date +%s)-$(openssl rand -hex 2); echo "key=$k"; seat-run --bg --name "$k" --timeout 4320 -- seat-exec --seat codex-sol --effort "$dispatch_effort" [--write] --prompt-file "$f"
+python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- seat-run --bg --name "$k" --timeout 4320 -- seat-exec --seat codex-sol --effort "$dispatch_effort" [--write] --prompt-file @contract <<'CONTRACT_EOF'
+<contract text built below>
+CONTRACT_EOF
 ```
 
-Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it as a Nomad job on a linux box unless the contract names a Mac-only tool. Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). After `NAME-COLLISION` relaunch once at once with a new key and the same contract; after `NO-SERVER` retry once, then report blocked; after `SUBMIT-REFUSED` report blocked with that line. A seat that is not Mac-only never runs on Studio, so never fall back to a `-local` seat. Studio-only work (a Mac app, Aside, herdr, simulators) uses `codex-sol-local` instead.
+Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it as a Nomad job on a linux box unless the contract names a Mac-only tool. Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). After NAME-COLLISION or NO-SERVER, retry once through forward-contract.py with the printed key and contract path, `--retry`, and the same command; wait on its printed name; after another refusal report blocked; after `SUBMIT-REFUSED` report blocked with that line. A seat that is not Mac-only never runs on Studio, so never fall back to a `-local` seat. Studio-only work (a Mac app, Aside, herdr, simulators) uses `codex-sol-local` instead.
 
-Never write the contract to a fixed or reused path (the scratchpad is shared by parallel agents), and never pass it inline.
+The launcher owns contract creation. Reuse only its printed `contract=` path on a retry; never choose, list or glob a contract file.
 
 - The `cd` is part of the same shell invocation (Codex's sandbox is rooted at the cwd; each Bash call starts in the session cwd). Research and deliberation contracts cd into the directory whose files Codex must read or write (a scratchpad directory is fine). Coding contracts cd into the lane's worktree.
 - `--write` only when the contract says Codex writes files; never in a shared checkout that another seat owns. Without `--write` Codex is read-only on disk.
@@ -52,7 +53,7 @@ Never write the contract to a fixed or reused path (the scratchpad is shared by 
 - Computer use: forward the exact app, pages, permitted interactions, evidence directory and hold rules; require Codex to discover its tools first (a computer_use flag is not proof of control). No foreground input, credentials, logins, TCC or system settings, extension installs, or Herdr tab changes unless the brief says the owner authorized that exact thing.
 - Web access is on for research contracts; ask Codex to cite every source with a date.
 
-Build the contract text, preserving the brief verbatim, and write it to the fresh unique file with the quoted heredoc above. Add: the planner name from the brief, the output path(s), "do not message other agents, do not read credentials or print secrets, fingerprint or count only", and the return format the brief asks for.
+Build the contract text, preserving the brief verbatim, and send it to the launcher with the quoted heredoc above. Add: the planner name from the brief, the output path(s), "do not message other agents, do not read credentials or print secrets, fingerprint or count only", and the return format the brief asks for.
 
 If the plugin or Codex fails, report its exact error and stop; never return nothing. Return stdout including job and thread identifiers. The driver owns acceptance.
 

@@ -13,14 +13,18 @@ The "Machine prompt" section below is for the CLI when the seat runs on a factor
 
 Run exactly one command, from the directory the brief assigns:
 
-`python3 $HOME/.agent-lb/bin/seat run --vendor devin --model <alias> --class <class> --cwd <dir> --prompt-file <file>`
+```sh
+cd <dir> || exit $?
+k=devin-seat-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
+python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- python3 "$HOME/.agent-lb/bin/seat" run --vendor devin --model <alias> --class <class> --cwd "$PWD" --prompt-file @contract <<'CONTRACT_EOF'
+<contract text built below>
+CONTRACT_EOF
+```
 
 - `seat run` picks a healthy registered Devin account (`seat accounts`), fails over
   to the next one on a limit or auth error, and writes the dispatch and closeout
-  rows to the ledger. Write the contract to a fresh file
-  (`f=$(mktemp "${TMPDIR:-/tmp}/devin-seat-contract.XXXXXX")`) and pass it with
-  `--prompt-file "$f"`. Never a fixed or reused name such as `p.md`: parallel
-  seats share the scratchpad and overwrite each other's contracts.
+  rows to the ledger. The launcher creates the contract as `$k.contract.XXXXXX`
+  and prints `contract=<path>`; never choose a path yourself.
 - `<alias>` is `swe-latest` unless the brief names `swe-2-medium` or `swe-2-max`.
   `seat` refuses every other Devin model: they are billed per token, and this seat
   spends nothing past the subscription. Never substitute one.
