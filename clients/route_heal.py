@@ -32,12 +32,9 @@ def seat_block(api: Any, ctx: Any, arm: dict, excluded: set[str]) -> str | None:
         pool = ctx.pools.get(pool_id, {})
         headroom = pool.get("headroomPercent")
         if (
-            not isinstance(headroom, (int, float))
-            or isinstance(headroom, bool)
-            or not math.isfinite(headroom)
-            or headroom <= 0
-            or pool.get("eligibleAccounts", 0) <= 0
-            or pool.get("status") in ("exhausted", "empty", "stale")
+            (isinstance(headroom, (int, float)) and not isinstance(headroom, bool) and headroom <= 0)
+            or pool.get("eligibleAccounts") == 0
+            or pool.get("status") in ("exhausted", "empty")
         ):
             return "pool unavailable"
         if arm.get("seat") == "grok-implementer" and ctx.grok_choice is None:

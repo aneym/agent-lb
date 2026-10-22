@@ -37,7 +37,9 @@ def main() -> None:
         )
         calls = 0
 
-        def dispatch(name: str, codex: int = 5, grok: int = 0, *flags: str) -> tuple[int, dict]:
+        def dispatch(
+            name: str, codex: int = 5, grok: int = 0, *flags: str, codex_pool: dict | None = None
+        ) -> tuple[int, dict]:
             nonlocal calls
             calls += 1
             table_path.write_text(json.dumps(table))
@@ -52,6 +54,8 @@ def main() -> None:
                     for pool, count in (("openai-codex", codex), ("grok", grok), ("anthropic-general", 5))
                 ]
             }
+            if codex_pool is not None:
+                pools["pools"][0] = {"id": "openai-codex", **codex_pool}
             pool_path = work / "pools.json"
             pool_path.write_text(json.dumps(pools))
             result = subprocess.run(
@@ -74,6 +78,15 @@ def main() -> None:
             assert result.returncode in (0, 2, 3), (result.stdout, result.stderr)
             return result.returncode, json.loads(result.stdout) if result.stdout else {}
 
+        failures = []
+        for pool in (
+            {"status": "stale", "headroomPercent": 80, "eligibleAccounts": 5},
+            {"status": "ok", "eligibleAccounts": 5},
+        ):
+            rc, row = dispatch("implement", codex_pool=pool)
+            if not (rc == 0 and row["seat"] == "gpt-implementer" and row["model_alias"] == "sol-latest"):
+                failures.append((pool, rc, row))
+        assert not failures, failures
         for name, resolved in ALIASES.items():
             rc, row = dispatch(name)
             assert rc == 0 and row["model_alias"] == "sol-latest", (name, rc, row)
