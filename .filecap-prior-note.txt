@@ -1,0 +1,1 @@
+Blocked: the seat made no change and no commits. compact_responses alone is 30,125 bytes (27,969 after dedenting), so a move-only split cannot get it under 20,000. Meeting the cap would mean extracting logic into helpers, which the move-only rule forbids. The checkout was a detached HEAD at b36a6635
