@@ -1,6 +1,16 @@
 {
  "claims": [],
- "freezes": [],
+ "freezes": [
+  {
+   "by": "aneyman@alexs-Mac-Studio",
+   "expires": "2026-10-22T20:14:33Z",
+   "lane": "filecap-council",
+   "owner_branch": "filecap-w8-lb-clients-claude-lb-launch",
+   "path": "clients/claude-lb-launch",
+   "reason": "filecap-council move-only split",
+   "since": "2026-10-22T18:44:33Z"
+  }
+ ],
  "moved": [
   {
    "into": [
