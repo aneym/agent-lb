@@ -171,8 +171,7 @@
       "hook": {
         "type": "command",
         "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claude-grind-pulse.py\"",
-        "timeout": 2,
-        "async": true
+        "timeout": 2
       },
       "needs_source": true
     },
