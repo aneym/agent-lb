@@ -1,0 +1,1 @@
+{"checked": true, "entry": ["app/main.py"], "findings": [{"line": 51, "path": "app/bridge_startup.py", "rule": "added_unmatched", "text": ")"}]}
