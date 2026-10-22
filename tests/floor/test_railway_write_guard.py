@@ -40,6 +40,9 @@ def test_login_only_writes_are_refused(command):
         "RAILWAY_TOKEN=x railway variables --set PORT=8080",
         "railway status",
         "railway logs",
+        "railway run npm test",
+        "railway run pnpm dev",
+        "railway run ./scripts/migrate.sh",
         "railway environment",
         "echo ordinary",
         "cmp config/coding-agents/hooks/railway-vars-guard.sh ~/.claude/hooks/railway-vars-guard.sh",
@@ -74,10 +77,10 @@ def test_exported_custody_token_allows_write(token):
         'env RAILWAY_TOKEN=x sh -c "railway variables --set API_TOKEN=synthetic"',
     ],
 )
-def test_secret_shaped_argv_warns_even_with_custody(command):
+def test_secret_shaped_argv_blocks_even_with_custody(command):
     result = invoke(command)
-    assert result.returncode == 0
-    assert "WARNING:" in result.stderr
+    assert result.returncode == 2
+    assert "BLOCKED:" in result.stderr
     assert len(result.stderr.splitlines()) == 1
     assert "synthetic" not in result.stderr
 
@@ -93,10 +96,10 @@ def test_secret_shaped_argv_warns_even_with_custody(command):
         ("RAILWAY_TOKEN=x railway run -s api -- env", "railway run printenv/env prints every secret"),
     ],
 )
-def test_reads_that_print_secret_values_warn_even_with_custody(command, denial):
+def test_reads_that_print_secret_values_block_even_with_custody(command, denial):
     result = invoke(command)
-    assert result.returncode == 0, result.stderr
-    assert "WARNING:" in result.stderr
+    assert result.returncode == 2, result.stderr
+    assert "BLOCKED:" in result.stderr
     assert denial in result.stderr
     assert "secret floor" in result.stderr
 
@@ -110,13 +113,13 @@ def test_reads_that_print_secret_values_warn_even_with_custody(command, denial):
         ],
         ('eval "railway up"', {}, 0),
         ('env -S "railway up"', {}, 0),
-        ("RAILWAY_TOKEN=x npx @railway/cli variables --set API_TOKEN=synthetic", {}, 0),
-        ('RAILWAY_TOKEN=x eval "railway variables --set API_TOKEN=synthetic"', {}, 0),
-        ('RAILWAY_TOKEN=x env -S "railway variables --set API_TOKEN=synthetic"', {}, 0),
+        ("RAILWAY_TOKEN=x npx @railway/cli variables --set API_TOKEN=synthetic", {}, 2),
+        ('RAILWAY_TOKEN=x eval "railway variables --set API_TOKEN=synthetic"', {}, 2),
+        ('RAILWAY_TOKEN=x env -S "railway variables --set API_TOKEN=synthetic"', {}, 2),
         ("echo \"$(railway up --service 'api(staging)')\"", {}, 0),
         ("echo \"`railway up --service 'api(staging)'`\"", {}, 0),
         ("railway variables < /dev/null --set PORT=8080", {}, 0),
-        ("RAILWAY_TOKEN=x railway variables --set < /dev/null API_TOKEN=synthetic", {}, 0),
+        ("RAILWAY_TOKEN=x railway variables --set < /dev/null API_TOKEN=synthetic", {}, 2),
         ('RAILWAY_TOKEN="$MISSING" railway up', {}, 0),
         ('RAILWAY_TOKEN="" railway up', {}, 0),
         ('RAILWAY_TOKEN="$CUSTODY" railway up', {"CUSTODY": "synthetic"}, 0),
@@ -148,15 +151,15 @@ def test_review_counterexamples(command, tokens, expected):
 @pytest.mark.parametrize(
     "command,tokens,expected",
     [
-        ("RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 > /dev/null", {}, 0),
-        ("RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 2 > /dev/null", {}, 0),
+        ("RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 > /dev/null", {}, 2),
+        ("RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 2 > /dev/null", {}, 2),
         ("railway status 2>/dev/null", {}, 0),
         ("RAILWAY_TOKEN=$() railway up", {}, 0),
         ("RAILWAY_TOKEN=\"$(printf '')\" railway up", {}, 0),
         ('RAILWAY_API_TOKEN="$(unknown)" railway up', {}, 0),
         ('RAILWAY_TOKEN="$(unknown)" railway up', {"RAILWAY_TOKEN": "synthetic"}, 0),
         *[
-            (f"RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic", {}, 0)
+            (f"RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic", {}, 2)
             for options in ["-n", "-u USER", "-E", "--", "-n -u USER -E --", "--user USER"]
         ],
         ("sudo -n railway up", {}, 0),
@@ -166,8 +169,8 @@ def test_review_counterexamples(command, tokens, expected):
         ('echo "<<EOF"\nrailway up\n', {}, 0),
         ("cat <<EOF\n'$(railway up)'\nEOF\n", {}, 0),
         ("cat <<EOF\n'`railway up`'\nEOF\n", {}, 0),
-        ("cat <<EOF\n'$(RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic)'\nEOF\n", {}, 0),
-        ("cat <<EOF\n'`RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic`'\nEOF\n", {}, 0),
+        ("cat <<EOF\n'$(RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic)'\nEOF\n", {}, 2),
+        ("cat <<EOF\n'`RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic`'\nEOF\n", {}, 2),
         ("cat <<'EOF'\n'$(railway up)'\nEOF\n", {}, 0),
     ],
 )
@@ -196,7 +199,7 @@ def test_r3_counterexamples(command, tokens, expected):
         ],
         *[(f"sudo {options} railway status", {}, 0) for options in ["-nu USER", "-Eu USER"]],
         *[
-            (f"RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic", {}, 0)
+            (f"RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic", {}, 2)
             for options in ["-nu USER", "-Eu USER"]
         ],
         ("sudo -nu USER railway up", {"RAILWAY_TOKEN": "synthetic"}, 0),
@@ -225,6 +228,21 @@ def test_deep_check_exception_is_denied():
         "railway variables --json",
         "railway variables get FOO",
         "railway run printenv",
+        "railway shell",
+        "railway shell --service web",
+        "railway run -- python3 -c 'import os; print(dict(os.environ))'",
+        "railway run -- node -e 'console.log(process.env)'",
+        "railway run bash -c 'echo $DATABASE_URL'",
+        "railway run -- python3 - <<'EOF'\nimport os;print(os.environ)\nEOF",
+        "railway run python3 <<'EOF'\nimport os;print(os.environ)\nEOF",
+        "railway run ruby -e 'puts ENV'",
+        "railway run perl -e 'print %ENV'",
+        "railway run bun -e 'console.log(process.env)'",
+        "railway run deno eval 'console.log(Deno.env.toObject())'",
+        "railway run python3 -c 'unknown()'",
+        "railway run set",
+        "railway run export -p",
+        "railway run declare -x",
         "railway ssh env",
         "railway variables --set API_TOKEN=synthetic",
         'railway run -- sh -c "echo okay; env"',
