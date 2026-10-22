@@ -153,8 +153,11 @@ def run(args):
     try:
         since, until = window(args)
         dimensions = args.by.split(",")
-        if any(dim not in DIMS for dim in dimensions) or args.top < 1:
-            raise ValueError("Invalid --by dimension or --top (must be positive)")
+        for dim in dimensions:
+            if dim not in DIMS:
+                raise AuditUsageError(f"unknown --by dimension {dim!r}; known: {', '.join(DIMS)}")
+        if args.top < 1:
+            raise AuditUsageError("--top must be positive")
         panes, notes = pane_maps()
         if args.snapshot_panes_only:
             print("Pane snapshot complete. " + " ".join(notes))
@@ -218,7 +221,7 @@ def run(args):
             print(f"Wrote token audit: {args.out}")
         else:
             print(output, end="")
-    except AuditUsageError as exc:
+    except ValueError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from None
     except Exception as exc:

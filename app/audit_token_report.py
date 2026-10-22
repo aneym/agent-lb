@@ -10,7 +10,7 @@ from app.audit_allocation import allocate, empty, merge
 from app.audit_pricing import CLASSES, input_cost, price_row, token_classes
 from app.audit_transcripts import classify, event_time, lane_source, safe_label
 
-DIMS = ("account", "purpose", "lane", "seat", "kind", "model", "effort", "provider", "useragent", "pane")
+DIMS = ("account", "purpose", "lane", "seat", "kind", "model", "effort", "provider", "useragent", "pane", "session")
 
 
 CACHE_KINDS = ("first_write", "ttl_expiry", "account_switch", "bust", "growth", "other_miss")
@@ -74,6 +74,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
     agents_by_session, preexisting = agents_by_session or {}, preexisting or set()
     totals, priced = empty(), Counter()
     groups = {dim: defaultdict(empty) for dim in DIMS}
+    session_models = defaultdict(lambda: defaultdict(empty))
     sessions, tree = {}, {"name": "all", **empty(), "children": {}}
     detectors = (*DETECTORS, "compaction", "coordinator")
     wastes = {
@@ -174,6 +175,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
         }
         priced[provenance] += count
         merge(totals, value)
+        merge(session_models[sid][row["model"] or "unknown"], value)
         key = tuple(
             row.get(k)
             for k in (
@@ -231,6 +233,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
                     kind = "other"
             labels = dict(
                 account=account,
+                session=sid,
                 provider=row["provider"],
                 purpose=agent_purpose,
                 lane=lane,
@@ -347,6 +350,12 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
         dim: sorted(({"name": name, **v} for name, v in groups[dim].items()), key=lambda v: v["usd"], reverse=True)
         for dim in dict.fromkeys([*dimensions, "purpose", "seat"])
     }
+    for entry in by.get("session", []):
+        entry["by_model"] = sorted(
+            ({"name": model, **value} for model, value in session_models[entry["name"]].items()),
+            key=lambda value: value["usd"],
+            reverse=True,
+        )
     account_shares = []
     for provider in tree["children"].values():
         for account in provider["children"].values():
