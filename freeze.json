@@ -1,6 +1,16 @@
 {
  "claims": [],
- "freezes": [],
+ "freezes": [
+  {
+   "by": "aneyman@alexs-Mac-Studio",
+   "expires": "2026-10-22T18:55:08Z",
+   "lane": "filecap-council",
+   "owner_branch": "filecap-w8-lb-app-modules-proxy-claude-codex-bridge",
+   "path": "app/modules/proxy/claude_codex_bridge.py",
+   "reason": "filecap-council move-only split",
+   "since": "2026-10-22T17:25:08Z"
+  }
+ ],
  "moved": [
   {
    "into": [
