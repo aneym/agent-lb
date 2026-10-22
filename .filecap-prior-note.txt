@@ -1,1 +1,0 @@
-Blocked: the seat split clients/seat into 18 modules (largest 11,656 bytes) and left them staged and uncommitted. The pre-commit ./check --staged fails with 62 ruff-format and pyrefly findings in the moved code, and fixing them would break the move-only rule. HEAD is unchanged at b36a6635. The 12 ex
