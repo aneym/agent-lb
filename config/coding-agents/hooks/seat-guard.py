@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from seat_guard_advisory import first_snapshot_advisory, snapshot_advisory  # type: ignore[missing-import]
-from seat_hands import EXCEPTION, hands_target, hands_warning, local_warning, preserve_seat, steer_input  # type: ignore[missing-import]
+from seat_hands import EXCEPTION, hands_target, hands_warning, local_warning, preserve_seat, steer_input, steer_skipped  # type: ignore[missing-import]
 
 FORWARDER_SEATS = {
     "codex-sol",
@@ -383,6 +383,9 @@ def main(payload) -> None:
         advisories.append(NEEDS_MISSING)
     agents_dir = Path(os.environ.get("SEAT_GUARD_AGENTS_DIR") or Path.home() / ".claude" / "agents")
     pinned = definition_model(subagent, agents_dir)
+    skipped = steer_skipped(subagent, prompt, model or pinned or "")
+    if skipped:
+        record["steer_skipped"] = skipped
     retired = retired_patterns(table, subagent)
     blocked = blocked_patterns(table)
     brief_pins = retired_pins(prompt, retired)

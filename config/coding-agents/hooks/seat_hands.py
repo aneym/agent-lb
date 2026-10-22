@@ -64,12 +64,12 @@ DECIDING = re.compile(
     re.IGNORECASE,
 )
 HANDS = re.compile(
-    r"studio_merge|\bfix-forward\b|\b(?:implement|fix|patch|commit|test|probe|reproduce|install|land|sweep|drain|bulletin)\b"
+    r"studio_merge|\bfix-forward\b|\b(?:implement|fix|patch|commit|test|probe|reproduce|install|land|sweep|prune|drain|bulletin)\b"
     r"|\bedit\s+(?:\S+\s+){0,3}(?:files?|[\w./-]+\.[\w]+)\b|\brun\s+\S+",
     re.IGNORECASE,
 )
 READ = re.compile(r"\b(?:read|find|trace|measure)\b", re.IGNORECASE)
-EDIT = re.compile(r"\b(?:edit|fix|land|commit|implement|patch|install|studio_merge)\b", re.IGNORECASE)
+EDIT = re.compile(r"\b(?:edit|fix|land|commit|implement|patch|prune|install|studio_merge)\b", re.IGNORECASE)
 STUDIO = re.compile(
     r"~/\.agent-rails/|/Users/[^/]+/\.agent-rails|~/\.claude/|/Users/[^/]+/\.claude|~/\.agent-lb"
     r"|studio_merge|127\.0\.0\.1|localhost:|log show|lane-post|agent-test-account|factory-install|plan-publish",
@@ -107,6 +107,8 @@ def brief_header(prompt: str) -> tuple[str, str]:
     for line in prompt.splitlines():
         line = line.strip()
         if not line or line.upper().startswith("NEEDS:"):
+            continue
+        if line.startswith(("You are", "Team:", "Lead:", "Lane:")):
             continue
         match = TAG.match(line)
         if match:
@@ -165,6 +167,19 @@ def hands_target(subagent: str, prompt: str) -> tuple[str, str] | None:
     if STUDIO.search(prompt) or re.search(r"\b(?:xcodebuild|simctl|herdr|aside|keychain|tcc)\b", prompt, re.IGNORECASE):
         target += "-local"
     return target, f"class:{tag}" if tagged else "hands markers without a brains marker"
+
+
+def steer_skipped(subagent: str, prompt: str, model: str) -> str | None:
+    effective_model = model or ("opus" if subagent in {"", "general-purpose", "claude", "fork"} else subagent)
+    if "opus" not in effective_model or EXCEPTION.search(prompt):
+        return None
+    if os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") == "1":
+        return "anthropic override"
+    if subagent == "fork":
+        return "fork dispatch is not rewritten"
+    if preserve_seat(subagent, prompt):
+        return "preserved seat or brains brief"
+    return hands_warning(subagent, prompt) or "seat outside hands steer"
 
 
 def steer_input(tool_input: dict, target: str, prompt: str, anthropic_model: bool) -> dict:
