@@ -50,6 +50,8 @@ MANAGED_HOOKS = (
     "hook_failure_recovery.py",
     "hook_prefilters.py",
     "parity_presentation.py",
+    "parity_cases.py",
+    "parity_offload.py",
     "subagent-closeout.py",
     "seat-guard.py",
     "seat_guard_advisory.py",

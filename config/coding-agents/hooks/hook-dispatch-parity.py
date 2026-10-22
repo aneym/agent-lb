@@ -17,6 +17,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import parity_offload  # type: ignore[missing-import]
+from parity_cases import bash, builtin_cases  # type: ignore[missing-import]
 from parity_presentation import expected_presentation, same_effect  # type: ignore[missing-import]
 
 DEFAULT_TIMEOUT = 600.0
@@ -517,178 +519,6 @@ def files_of(run):
     return found
 
 
-def bash(command, cwd_rel="work", **extra):
-    return dict(event="PreToolUse", tool="Bash", input={"command": command}, cwd_rel=cwd_rel, **extra)
-
-
-def builtin_cases():
-    deny = "deny"
-    cases = [
-        dict(bash("ls -la"), name="allow-ls", expect="allow"),
-        dict(bash("git status"), name="allow-git-status (rtk rewrite)", expect="allow"),
-        dict(bash("echo hello"), name="allow-echo", expect="allow"),
-        dict(bash("python3 -c 'print(1)'"), name="allow-python", expect="allow"),
-        dict(bash("rg -n foo src"), name="allow-rg-scoped", expect="allow"),
-        dict(bash("find . -name '*.py'"), name="allow-find-scoped", expect="allow"),
-        dict(bash("git commit -m 'format permission docs'"), name="allow-rm-substring", expect="allow"),
-        dict(bash("pkill -f kill-guard-test-marker"), name="allow-pkill (kill-guard is a PATH shim)", expect="allow"),
-        dict(bash("DISPLAY_WAKE_SKIP=1 screencapture -x /tmp/x.png"), name="allow-display-skip", expect="allow"),
-        dict(bash("screencapture -x out.png"), name="allow-display-wake-fires", expect="allow"),
-        dict(bash("cd %s && python3 -m pytest -q checks" % HEAVY_DIR), name="allow-box-offload", expect="allow"),
-        dict(bash("cd sub && rm a1 a2"), name="allow-rm-cd-rewrite", expect="allow", setup="rmcd"),
-        dict(bash("open -a Preview out.png"), name="deny-open-other-app", expect=deny),
-        dict(bash("wslview https://x"), name="deny-wslview", expect=deny),
-        dict(bash("flyctl deploy"), name="deny-flyctl", expect=deny),
-        dict(bash("railway variables --json | jq 'keys'"), name="deny-railway-names", expect=deny),
-        dict(
-            bash("link-cli auth status --filter-output authenticated"), name="allow-link-cli-filtered", expect="allow"
-        ),
-        dict(bash("rm -rf /"), name="deny-dangerous-cmd", expect=deny),
-        dict(bash("rm -rf $d"), name="deny-rm-dynamic-deny", expect=deny),
-        dict(bash("launchctl kickstart -k gui/501/com.aneyman.agent-lb"), name="deny-agent-lb-bootout", expect=deny),
-        dict(bash("grep -r needle ~/.agent-rails/x | head -1"), name="deny-wide-scan-fifo", expect=None),
-        dict(bash("grep -r needle ~/.agent-rails/x"), name="rewrite-wide-scan-fifo", expect=None),
-        dict(bash("rg needle /"), name="deny-wide-scan-root", expect=None),
-        dict(bash("rg -l b-123 ~/.agent-rails"), name="deny-wide-scan-lanes", expect=None),
-        dict(bash("link-cli auth status"), name="deny-link-cli-secret", expect=deny),
-        dict(bash("railway variables --kv"), name="deny-railway-kv", expect=deny),
-        dict(bash("railway run printenv"), name="deny-railway-printenv", expect=deny),
-        dict(bash('open -a "Google Chrome" https://example.com'), name="deny-no-chrome", expect=deny),
-        dict(bash("ssh pc 'start " + "chrome chrome://extensions'"), name="deny-no-chrome-pc", expect=deny),
-        dict(bash("ssh pc chr'" + "ome'"), name="deny-no-chrome-pc-quote-split", expect=deny),
-        dict(bash("ssh pc 'dir'"), name="allow-ssh-pc", expect="allow"),
-        dict(bash("gh pr merge 5 --squash"), name="deny-no-direct-merge", expect=None),
-        dict(bash("open -a 'Herdr Shell'"), name="deny-herdr-shell-host", expect=None),
-        dict(bash("cua do click 10 10"), name="deny-desktop-guard", expect=deny),
-        dict(bash("rm -rf / && gh pr merge 1 --squash"), name="deny-two-guards", expect=deny),
-        dict(
-            bash("git stash push -m parity", cwd_rel="work/repo"), name="deny-stash-guard", expect=deny, setup="stash"
-        ),
-        dict(bash("git stash list", cwd_rel="work/repo"), name="allow-stash-list", expect="allow", setup="stash"),
-        dict(bash("cat ~/.agent-rails/rails-host/host.credential"), name="deny-host-credential", expect=deny),
-        dict(bash("ls ~/.agent-rails/rails-host"), name="allow-host-credential-ls", expect="allow"),
-        dict(
-            event="PreToolUse",
-            tool="Bash",
-            raw='{"tool_name":"Bash","tool_input":{"command":"rm -rf $d"',
-            name="malformed-rm (rm-dynamic-deny fails closed)",
-            expect=deny,
-        ),
-        dict(
-            event="PreToolUse",
-            tool="Bash",
-            raw='{"tool_name":"Bash","tool_input":{"command":"cua do click"',
-            name="malformed-cua (desktop-guard fails closed)",
-            expect=deny,
-        ),
-        dict(
-            event="PreToolUse",
-            tool="Bash",
-            raw="not json at all",
-            name="malformed-plain (floor guards refuse)",
-            expect=deny,
-        ),
-        dict(event="PreToolUse", tool="Bash", input={"command": 123}, name="non-string-command", expect=None),
-        dict(
-            event="PreToolUse",
-            tool="Agent",
-            input={"subagent_type": "general-purpose", "model": "gpt-5.4-mini", "prompt": "x", "description": "x"},
-            name="deny-seat-guard-blocked-model",
-            expect=None,
-        ),
-        dict(
-            event="PreToolUse",
-            tool="Agent",
-            input={"subagent_type": "Explore", "prompt": "find files", "description": "explore"},
-            name="allow-seat-guard",
-            expect=None,
-        ),
-        dict(
-            event="PreToolUse",
-            tool="Workflow",
-            input={"script": "agent('do the thing')"},
-            name="deny-relay-guard",
-            expect=None,
-        ),
-        dict(
-            event="PreToolUse",
-            tool="Workflow",
-            input={"script": "// RELAYED-REQUEST-GUARD\nagent('x')"},
-            name="allow-relay-guard",
-            expect=None,
-        ),
-        dict(
-            event="PreToolUse",
-            tool="mcp__aside__repl",
-            input={"code": "await listBrowserTabs()"},
-            name="allow-aside",
-            expect="allow",
-        ),
-        dict(event="PreToolUse", tool="Read", input={"file_path": "/etc/hosts"}, name="allow-read", expect=None),
-        dict(
-            event="PostToolUse",
-            tool="Bash",
-            input={"command": "ls"},
-            response={"stdout": "x"},
-            name="post-bash-bulletin",
-            expect=None,
-            setup="bulletin",
-            pane=True,
-        ),
-        dict(
-            event="PostToolUse",
-            tool="Bash",
-            input={"command": "ls"},
-            response={"stdout": "x"},
-            name="post-bash-quiet",
-            expect=None,
-        ),
-        dict(
-            event="PostToolUse",
-            tool="Edit",
-            input={"file_path": "{run}/work/a.ts"},
-            name="post-edit-no-prettier",
-            expect=None,
-            setup="edit",
-        ),
-        dict(
-            event="PostToolUse",
-            tool="Edit",
-            input={"file_path": "{run}/work/pretty/a.ts"},
-            name="post-edit-prettier-config",
-            expect=None,
-            setup="prettier",
-        ),
-        dict(
-            event="PostToolUse",
-            tool="Agent",
-            input={"subagent_type": "Explore", "prompt": "x"},
-            response={"status": "completed"},
-            name="post-agent-idle",
-            expect=None,
-        ),
-        dict(event="PostToolUse", tool="Skill", input={"skill": "jev"}, name="post-skill-stats", expect=None),
-        dict(
-            event="PostToolUse",
-            tool="mcp__supabase__apply_migration",
-            input={"name": "x"},
-            name="post-supabase",
-            expect=None,
-        ),
-        dict(event="UserPromptSubmit", prompt="parity test prompt", name="ups-quiet", expect=None),
-        dict(
-            event="UserPromptSubmit",
-            prompt="parity test prompt",
-            name="ups-bulletin-and-jev-alert",
-            expect=None,
-            setup="bulletin+jev",
-            pane=True,
-        ),
-        dict(event="Stop", name="stop", expect=None),
-    ]
-    return cases
-
-
 def setup_case(case, run):
     setup = case.get("setup") or ""
     work = os.path.join(run, "work")
@@ -729,6 +559,8 @@ def setup_case(case, run):
         }
         with open(os.path.join(run, "lanes", "bulletin.jsonl"), "w") as handle:
             handle.write(json.dumps(row) + "\n")
+    if "offload" in setup:
+        parity_offload.setup(case, run)
     if "jev" in setup:
         os.makedirs(os.path.join(run, "home", ".jev"), exist_ok=True)
         with open(os.path.join(run, "home", ".jev", "ALERT"), "w") as handle:
@@ -765,6 +597,7 @@ def run_path(sandbox, case, hooks, extra, trace):
     setup_case(case, run)
     payload = payload_for(case, run)
     trace_path = os.path.join(run, "trace.jsonl")
+    extra = dict(extra, **parity_offload.env(case, run))
     env = sandbox.env(run, dict(extra, HOOK_DISPATCH_TRACE=trace_path) if trace else extra)
     cwd = os.path.join(run, case.get("cwd_rel", "work"))
     results = []
@@ -916,6 +749,7 @@ def run_case(sandbox, registry, case):
             r["code"] == 128 + signal.SIGALRM and any(record.get("exec") for record in r["trace"]) for r in new_results
         )
     )
+    outcome["mismatches"] = parity_offload.verdict(case, outcome)
     outcome["result"] = "pass" if not outcome["mismatches"] else "fail"
     return outcome
 
@@ -1524,17 +1358,9 @@ def main():
     parser.add_argument("--only", help="regex: run only cases whose name matches")
     parser.add_argument("--jobs", type=int, default=4, help="cases run at once")
     parser.add_argument("--require-process-count", action="store_true")
-    parser.add_argument(
-        "--no-process-count",
-        action="store_true",
-        help="skip the process count",
-    )
+    parser.add_argument("--no-process-count", action="store_true", help="skip the process count")
     parser.add_argument("--lock-held", action="store_true", help="the caller holds the install lock")
-    parser.add_argument(
-        "--require-expectations",
-        action="store_true",
-        help="also require each expected decision",
-    )
+    parser.add_argument("--require-expectations", action="store_true", help="also require each expected decision")
     args = parser.parse_args()
     home = os.path.abspath(args.home)
     for item in args.overlay:
