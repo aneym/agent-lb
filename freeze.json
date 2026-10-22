@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T18:54:32Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-app-main",
-   "path": "app/main.py",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T17:24:32Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -46,6 +36,18 @@
    "path": "app/db/models.py",
    "sha": "7b6471fddfc142334630cbc914ecf09518fe3af1",
    "until": "2026-10-29T17:24:28Z"
+  },
+  {
+   "into": [
+    "app/bridge_startup.py",
+    "app/metrics_startup.py",
+    "app/runtime_diagnostics.py",
+    "app/static_routes.py"
+   ],
+   "note": "app/main.py split at dd682fef36. Reapply your diff onto the new module that now holds the code. Map: app/bridge_startup.py: _RingMembershipReader, ensure_bridge_durable_schema_ready, wait_for_bridge_advertise_endpoint, _local_api_port, _parse_port_value, _port_from_argv, validate_bridge_advertise_endpoint_for_multi_replica; app/metrics_startup.py: start_metrics_server; app/runtime_diagnostics.py: log_runtime_diagnostic_fingerprint, _runtime_diagnostic_fingerprint, _database_backend, _enum_value, _bridge_schema_status, _cidrs_include_tailnet; app/static_routes.py: resolve_static_asset_path, configure_static_routes",
+   "path": "app/main.py",
+   "sha": "dd682fef3629d9d007eb9cc5f98652d01688d341",
+   "until": "2026-10-29T17:24:46Z"
   }
  ]
 }
