@@ -1,5 +1,18 @@
 # Muse Code research, 2026-10-13
 
+## Status, 2026-10-22
+
+This section supersedes the 2026-10-13 notes below where they disagree. The research below is kept as written.
+
+- **Seat: live, eval-only.** `muse-seat` forwards to Studio-local `muse-seat-local` on `muse-latest`, which resolves to `muse-wonder-1.0`. Real runs go through agent-lb `/muse-api` and land in request logs with caller seat `muse-seat-local` (for example 2026-10-22 13:44Z and 14:16Z, all ok). `route pools` shows the `muse` pool with observed runs and tokens; remaining quota stays null because Muse reports none.
+- **Version.** The seat accepts Muse Code 1.4.x at or above `1.4.9-R6297.1` (`MUSE_MIN`) and runs with `MUSE_NO_AUTO_UPDATE=1`. The Meta launcher still self-updates on any plain `muse` call without that variable; Studio moved to `1.4.12-R6909.1` that way on 2026-10-22. The 1.4.7 pin below is history.
+- **Login.** Studio's CLI login lives in the login keychain. A seat run must start from a Studio-local session; over ssh the CLI fails with "Keychain is locked or requires approval". Boxes have no Muse login by design.
+- **Routing.** Muse is an available seat only (routing 08 and 14). Its explore arms exist but `explore.enabled` is false, so no class ladder picks Muse automatically. A ladder change needs an Opus routing ruling.
+- **Evaluation.** Muse Wonder high vs Sol medium, 2026-10-22 (provisional, 6 pairs): both 6/6 accepted; Sol was about 6x cheaper ($0.135 vs $0.803 per accepted) and about 3x faster (119 s vs 374 s). Decision: Muse stays eval-only. Evidence: `~/.open-factory/erun/muse-wonder-vs-sol-2026-10-22/SUMMARY.md` on Studio.
+- **Provider `/muse/v1`** (Pi and Sunday, change `muse-provider`). Built and deployed. It reads a Meta Model API key from `~/.agent-lb/secrets/muse-credential.json` (mode 0600) and never the keychain. That file does not exist yet, so every call returns 503 `muse_credential_unavailable`. It is waiting on Alex to create the key.
+- **Not done, by decision.** Raise (Muse) was dropped by Alex on 2026-10-16. Box placement stays parked until a scoped credential exists.
+- **Follow-ups.** Muse request-log rows carry no `costUsd`; agent-lb should read Muse's own cost ledger. open-factory `muse-install --check` matches only 1.4.9 exactly. It is never called automatically and downgrades nothing without an explicit `--sha256`.
+
 Meta publishes an official Muse Code CLI. Studio installation and login are complete according to team-lead on 2026-10-13 at about 04:22Z. This continuation runs in a Linux box on ax42. It prepares the account adapter, pool and factory launcher; a real Studio run remains unverified.
 
 All web sources below were accessed on 2026-10-13. Publication dates appear where the publisher supplies one. This document is at the path the brief explicitly requested; implementation requirements remain in `openspec/changes/add-muse-code-seat/`.
