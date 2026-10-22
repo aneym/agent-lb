@@ -792,7 +792,7 @@ def is_confined(pid: int | None) -> bool | None:
     if pid is None or not pid or sys.platform != "darwin":
         return None
     try:
-        return _libsystem().sandbox_check(int(pid), None, 0) == 1
+        return _libsystem().sandbox_check(int(pid), None, 0) == 1  # pyrefly: ignore[bad-argument-type]
     except OSError:
         return None
 
@@ -834,7 +834,7 @@ def run_confined(root: Path, action, reads: bool, timeout_s: int = 120):
     if "ok" in out:
         return out["ok"]
     error_kind = out.get("error")
-    kind = {"Refused": Refused, "Unhealthy": Unhealthy}.get(error_kind, Unhealthy)
+    kind = {"Refused": Refused, "Unhealthy": Unhealthy}.get(error_kind, Unhealthy)  # pyrefly: ignore[no-matching-overload]
     raise kind(f"confined step failed: {out.get('error', 'no result')}: {out.get('message', '')}")
 
 
