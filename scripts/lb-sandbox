@@ -2244,7 +2244,7 @@ def plist_bodies(
     }
     aux = {
         "Label": aux_label,
-        "ProgramArguments": [python, "-I", script, "_aux", str(root)],
+        "ProgramArguments": [python, "-I", script_path, "_aux", str(root)],
         "WorkingDirectory": str(root),
         "EnvironmentVariables": {
             "HOME": str(root / "home"),
