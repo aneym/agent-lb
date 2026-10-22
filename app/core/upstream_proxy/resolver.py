@@ -8,7 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.crypto import TokenEncryptor
 from app.core.upstream_proxy.types import ResolvedProxyEndpoint, ResolvedUpstreamRoute
-from app.db.models import AccountProxyBinding, DashboardSettings, ProxyEndpoint, ProxyPool, ProxyPoolMember
+from app.db.models import DashboardSettings
+from app.db.request_models import AccountProxyBinding, ProxyEndpoint, ProxyPool, ProxyPoolMember
 
 _ACCOUNT_BOUND_MODE = "account_bound"
 _DEFAULT_POOL_MODE = "default_pool"

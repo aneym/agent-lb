@@ -6,7 +6,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AccountLimitWarmup
+from app.db.request_models import AccountLimitWarmup
 from app.db.session import sqlite_writer_section
 
 ANTHROPIC_CONTINUOUS_WINDOW = "anthropic_primary_continuous"

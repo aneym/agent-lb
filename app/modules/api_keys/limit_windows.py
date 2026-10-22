@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from app.db.models import LimitWindow
+from app.db.request_models import LimitWindow
 
 
 def next_limit_reset(now: datetime, window: LimitWindow) -> datetime:

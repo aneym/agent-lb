@@ -8,7 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import utcnow
-from app.db.models import Account, ResetCreditAttempt
+from app.db.account_state_models import ResetCreditAttempt
+from app.db.models import Account
 from app.db.session import sqlite_writer_section
 
 RESET_ATTEMPT_LEASE_SECONDS = 120

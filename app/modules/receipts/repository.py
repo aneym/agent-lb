@@ -7,7 +7,7 @@ from sqlalchemy import Integer, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import to_utc_naive
-from app.db.models import ApiKey, RequestLog
+from app.db.request_models import ApiKey, RequestLog
 
 POOL_IDS = {
     "anthropic": "anthropic-general",

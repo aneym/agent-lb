@@ -11,7 +11,8 @@ import app.modules.proxy.anthropic_service as anthropic_proxy_module
 from app.core.anthropic.pricing import DEFAULT_PRICING_MODELS
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, LimitType
+from app.db.models import Account, AccountStatus
+from app.db.request_models import LimitType
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeysService

@@ -4,7 +4,7 @@ import asyncio
 
 from sqlalchemy.exc import OperationalError
 
-from app.db.models import LimitType
+from app.db.request_models import LimitType
 from app.db.session import sqlite_writer_section
 from app.modules.api_keys.key_validation import _ensure_valid_api_key_row, _lazy_reset_expired_limits
 from app.modules.api_keys.repository_data import UsageReservationItemData

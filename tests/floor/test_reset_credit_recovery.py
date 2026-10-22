@@ -11,7 +11,8 @@ from app.core.clients import rate_limit_resets
 from app.core.clients.rate_limit_resets import ConsumeResetCreditPayload, ResetCreditDetails, ResetCreditsPayload
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, ResetCreditAttempt
+from app.db.account_state_models import ResetCreditAttempt
+from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal
 from app.modules.accounts import reset_credit_scheduler as scheduler_module
 from app.modules.accounts import service as service_module

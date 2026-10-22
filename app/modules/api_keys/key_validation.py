@@ -6,7 +6,7 @@ from datetime import datetime
 from hashlib import sha256
 
 from app.core.utils.time import to_utc_naive
-from app.db.models import ApiKey, ApiKeyLimit, LimitType, LimitWindow
+from app.db.request_models import ApiKey, ApiKeyLimit, LimitType, LimitWindow
 from app.modules.api_keys.limit_windows import advance_limit_reset, next_limit_reset
 from app.modules.api_keys.repository_data import ApiKeyUsageSummary
 from app.modules.api_keys.repository_protocol import ApiKeysRepositoryProtocol

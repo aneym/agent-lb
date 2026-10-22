@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.core.audit.service import AuditService
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
-from app.db.models import TeamMember
+from app.db.access_models import TeamMember
 from app.dependencies import ApiKeysContext, get_api_keys_context
 from app.modules.api_keys.schemas import ApiKeyAccountCostResponse, ApiKeyCreateRequest, ApiKeyCreateResponse, ApiKeyResponse, ApiKeyTrendsResponse, ApiKeyUpdateRequest, ApiKeyUsage7DayResponse, ApiKeyUsageSummaryResponse, LimitRuleResponse  # noqa: I001  # fmt: skip
 from app.modules.api_keys.service_data import ApiKeyCreateData, ApiKeyData, ApiKeyNotFoundError, ApiKeyUpdateData, ApiKeyValidationError, LimitRuleInput, MemberKeyScopeRequiredError  # noqa: I001  # fmt: skip

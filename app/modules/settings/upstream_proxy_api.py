@@ -6,7 +6,8 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.crypto import TokenEncryptor
 from app.core.exceptions import DashboardBadRequestError
-from app.db.models import Account, AccountProxyBinding, ProxyEndpoint, ProxyPool, ProxyPoolMember
+from app.db.models import Account
+from app.db.request_models import AccountProxyBinding, ProxyEndpoint, ProxyPool, ProxyPoolMember
 from app.dependencies import SettingsContext, get_settings_context
 from app.modules.settings.schemas import AccountProxyBindingRequest, AccountProxyBindingResponse, UpstreamProxyAdminResponse, UpstreamProxyEndpointCreateRequest, UpstreamProxyEndpointResponse, UpstreamProxyPoolCreateRequest, UpstreamProxyPoolMemberRequest, UpstreamProxyPoolResponse  # noqa: I001  # fmt: skip
 

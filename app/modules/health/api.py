@@ -13,7 +13,7 @@ from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.request_locality import is_trusted_client
 from app.core.utils.time import utcnow
-from app.db.models import BridgeRingMember
+from app.db.federation_models import BridgeRingMember
 from app.db.session import get_session
 from app.modules.health.schemas import BridgeRingInfo, HealthCheckResponse, HealthResponse
 from app.modules.proxy.ring_membership import RING_STALE_THRESHOLD_SECONDS

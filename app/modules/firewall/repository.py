@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ApiFirewallAllowlist
+from app.db.settings_models import ApiFirewallAllowlist
 
 
 class FirewallRepositoryConflictError(ValueError):

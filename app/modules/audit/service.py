@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
 
-from app.db.models import AuditLog
+from app.db.settings_models import AuditLog
 from app.modules.audit.repository import AuditRepository
 
 type AuditDetailScalar = str | int | float | bool | None

@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 import app.modules.proxy.anthropic_service as anthropic_proxy_module
 from app.core.utils.time import utcnow
-from app.db.models import RequestLog
+from app.db.request_models import RequestLog
 from app.db.session import SessionLocal
 from tests.floor.anthropic_proxy_support import ANTHROPIC_SSE_BYTES, _disable_pool_exhausted_wait, _FakeResponse, _FakeResponseContext, _insert_account  # noqa: I001  # fmt: skip
 

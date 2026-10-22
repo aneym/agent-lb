@@ -6,7 +6,8 @@ from typing import Protocol
 
 from app.core.identity import RequestIdentity
 from app.core.openai.models import ResponseUsage
-from app.db.models import Account, AccountLimitWarmup  # noqa: I001  # fmt: skip
+from app.db.models import Account
+from app.db.request_models import AccountLimitWarmup
 from app.modules.limit_warmup.constants import _ANTHROPIC_CONTINUOUS_WINDOW
 
 

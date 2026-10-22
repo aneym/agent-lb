@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from app.core.config.settings import Settings, get_settings, identity_handle
 from app.core.request_locality import parse_trusted_proxy_networks, resolve_connection_client_ip
-from app.db.models import TeamMember
+from app.db.access_models import TeamMember
 from app.db.session import get_background_session
 
 logger = logging.getLogger(__name__)

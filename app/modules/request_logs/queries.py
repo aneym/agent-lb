@@ -7,7 +7,8 @@ from sqlalchemy import String, and_, cast, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import to_utc_naive
-from app.db.models import Account, ApiKey, RequestLog
+from app.db.models import Account
+from app.db.request_models import ApiKey, RequestLog
 
 
 @dataclass(frozen=True, slots=True)

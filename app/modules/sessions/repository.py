@@ -7,7 +7,7 @@ from sqlalchemy import Integer, and_, case, cast, func, literal, literal_column,
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.db.models import RequestLog
+from app.db.request_models import RequestLog
 
 
 @dataclass(frozen=True, slots=True)

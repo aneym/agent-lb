@@ -7,10 +7,11 @@ import pytest
 from app.core.config.settings import Settings, get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountTransferDirection, AccountTransferState
+from app.db.federation_models import AccountTransferDirection, AccountTransferState
+from app.db.models import Account
 from app.db.session import SessionLocal
 from app.modules.federation.repository import FederationRepository
-from tests.floor.federation_custody_races_support import _account, _auth, _state  # noqa: I001  # fmt: skip
+from tests.floor.federation_custody_races_support import _account, _auth, _state
 
 pytestmark = pytest.mark.integration
 
@@ -228,7 +229,7 @@ async def test_abort_mismatch_does_not_change_pending_checkout(async_client, mon
 @pytest.mark.asyncio
 async def test_checkout_and_checkin_refuse_live_exchange_intent(db_setup: bool) -> None:
     del db_setup
-    from app.db.models import AccountExchangeIntent
+    from app.db.account_state_models import AccountExchangeIntent
     from app.modules.federation.exceptions import FederationConflictError
     from app.modules.federation.service import FederationService
 

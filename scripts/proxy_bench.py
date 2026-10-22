@@ -49,7 +49,8 @@ async def seed():
     from datetime import datetime, timedelta, timezone
 
     from app.core.crypto import TokenEncryptor
-    from app.db.models import Account, AccountProxyBinding, AccountStatus, ProxyEndpoint, ProxyPool, ProxyPoolMember
+    from app.db.models import Account, AccountStatus
+    from app.db.request_models import AccountProxyBinding, ProxyEndpoint, ProxyPool, ProxyPoolMember
     from app.db.session import SessionLocal, close_db, init_db
 
     await init_db()

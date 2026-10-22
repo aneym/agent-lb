@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from app.db.models import LimitType
+from app.db.request_models import LimitType
 
 
 @dataclass(frozen=True, slots=True)

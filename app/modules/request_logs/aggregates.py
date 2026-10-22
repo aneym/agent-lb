@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate, UsageCostByModel, UsageCostSummary, UsageMetricsSummary  # noqa: I001  # fmt: skip
-from app.db.models import Account, RequestKind, RequestLog
+from app.db.models import Account
+from app.db.request_models import RequestKind, RequestLog
 from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS
 
 

@@ -12,8 +12,9 @@ from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.auth.dependencies import validate_proxy_api_key
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySession, StickySessionKind
+from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind
 from app.db.session import SessionLocal
+from app.db.session_models import StickySession
 from app.modules.api_keys.service_data import ApiKeyData
 
 ANTHROPIC_SSE_BYTES = (

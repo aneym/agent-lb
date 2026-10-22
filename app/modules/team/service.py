@@ -9,13 +9,14 @@ from datetime import datetime
 
 from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.cache.invalidation import NAMESPACE_API_KEY, get_cache_invalidation_poller
-from app.core.exceptions import TeamMemberOverCapError, TeamMemberSuspendedError, TeamModelNotAllowedError  # noqa: I001  # fmt: skip
+from app.core.exceptions import TeamMemberOverCapError, TeamMemberSuspendedError, TeamModelNotAllowedError
 from app.core.utils.time import to_utc_naive, utcnow
-from app.db.models import ApiKey, TeamMember, TeamMemberStatus
+from app.db.access_models import TeamMember, TeamMemberStatus
+from app.db.request_models import ApiKey
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.team.member_policy import GATE_OK, cap_for, compute_gate, model_is_allowed, status_value
 from app.modules.team.pool_share import PoolWindow, pool_share_windows, reset_pool_share_cache
-from app.modules.team.repository import TeamRepository, TeamUsageDayRow, TeamUsageModelRow, TeamUsageTotals  # noqa: I001  # fmt: skip
+from app.modules.team.repository import TeamRepository, TeamUsageDayRow, TeamUsageModelRow, TeamUsageTotals
 from app.modules.team.windows import TEAM_WINDOWS, window_end, window_start
 
 logger = logging.getLogger(__name__)

@@ -6,7 +6,8 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate
-from app.db.models import Account, AccountLimitWarmup, AdditionalUsageHistory, DashboardSettings, RequestLog, UsageHistory  # noqa: I001  # fmt: skip
+from app.db.models import Account, AdditionalUsageHistory, DashboardSettings, UsageHistory
+from app.db.request_models import AccountLimitWarmup, RequestLog
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.request_logs.repository import RequestLogsRepository

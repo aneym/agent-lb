@@ -5,7 +5,8 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, AccountResumeSchedule
+from app.db.account_state_models import AccountResumeSchedule
+from app.db.models import Account
 
 
 class AccountScheduleRepository:

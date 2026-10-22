@@ -8,7 +8,8 @@ from sqlalchemy import select
 
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, RequestLog
+from app.db.models import Account, AccountStatus
+from app.db.request_models import RequestLog
 from app.db.session import SessionLocal
 from app.modules.api_keys.service_data import ApiKeyInvalidError, ApiKeyNotFoundError, ApiKeyRateLimitExceededError
 from app.modules.quota_planner.logic import PlannerSettings

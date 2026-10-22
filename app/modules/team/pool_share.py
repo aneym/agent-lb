@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import DateTime, Integer, String, and_, case, column, func, select, values
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, RequestLog, UsageHistory
+from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.request_models import ApiKey, ApiKeyAccountAssignment, RequestLog
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 _CACHE_SECONDS = 5.0

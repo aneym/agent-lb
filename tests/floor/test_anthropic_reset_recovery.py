@@ -7,7 +7,8 @@ from sqlalchemy import select, update
 from app.core.clients import anthropic_resets
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, ResetCreditAttempt
+from app.db.account_state_models import ResetCreditAttempt
+from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal
 from app.modules.accounts import api as accounts_api
 from app.modules.accounts import service as service_module

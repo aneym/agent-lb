@@ -4,7 +4,8 @@ from sqlalchemy import select
 
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, AccountTransfer, AccountTransferState
+from app.db.federation_models import AccountTransfer, AccountTransferState
+from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal
 from app.modules.federation.schemas import FederationAuthPayload
 
