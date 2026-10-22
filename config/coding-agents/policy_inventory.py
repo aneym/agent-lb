@@ -51,6 +51,7 @@ MANAGED_HOOKS = (
     "hook_prefilters.py",
     "parity_presentation.py",
     "subagent-closeout.py",
+    "transcript_navigation.py",
     "seat-guard.py",
     "seat_guard_advisory.py",
     "seat_hands.py",
