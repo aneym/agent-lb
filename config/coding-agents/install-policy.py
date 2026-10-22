@@ -219,111 +219,10 @@ def is_owned_hook(command: Any) -> bool:
     return isinstance(command, str) and "ccdex-gpt-only.sh" in command
 
 
-SEAT_GUARD_HOOK = {
-    "type": "command",
-    "command": '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"',
-    "timeout": 5,
-    "statusMessage": "Seat guard",
-}
-
-WORKFLOW_SEAT_GUARD_HOOK = {
-    **SEAT_GUARD_HOOK,
-    "command": SEAT_GUARD_HOOK["command"].replace("seat-guard", "workflow-seat-guard"),
-    "statusMessage": "Workflow seat guard",
-}
-
-CLOSEOUT_HOOK = {
-    "type": "command",
-    "command": '/usr/bin/python3 "$HOME/.claude/hooks/subagent-closeout.py" 2>/dev/null || true',
-    "timeout": 5,
-    "statusMessage": "Dispatch closeout",
-}
-
-FOCUS_STEAL_HOOK = {
-    "type": "command",
-    "command": '/usr/bin/python3 "$HOME/.agents/policy/coding-agents/hooks/focus-steal-check.py" subagent-stop',
-    "timeout": 15,
-    "statusMessage": "Focus steal check",
-}
-
-FACTORY_CONTEXT_HOOK = {
-    "type": "command",
-    "command": '/usr/bin/python3 "$HOME/.claude/hooks/factory-context.py" 2>/dev/null || true',
-    "timeout": 10,
-    "statusMessage": "Factory context",
-}
-
-COMPACT_CHECKPOINT_HOOK = {
-    "type": "command",
-    "command": '/usr/bin/python3 "$HOME/.claude/hooks/compact-checkpoint.py"',
-    "timeout": 10,
-    "statusMessage": "Compact checkpoint",
-}
-
-DANGEROUS_GUARD_HOOK = {"type": "command", "command": '"$HOME/.claude/hooks/dangerous-command-guard.sh"', "timeout": 10}
-RAILWAY_GUARD_HOOK = {"type": "command", "command": 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"', "timeout": 10}
-KILL_SCOPE_GUARD_HOOK = {
-    "type": "command",
-    "command": '/usr/bin/python3 "$HOME/.claude/hooks/kill-scope-guard.py"',
-    "timeout": 10,
-}
-HOST_CREDENTIAL_HOOK = {
-    "type": "command",
-    "command": '/usr/bin/python3 "$HOME/.claude/hooks/host-credential-guard.py"',
-    "timeout": 10,
-}
-
-SETTINGS_HOOKS = (
-    (
-        "SessionStart",
-        None,
-        {
-            "type": "command",
-            "command": '/usr/bin/python3 "$HOME/.claude/hooks/gh-write-guard.py" --session-env',
-            "timeout": 10,
-        },
-        True,
-    ),
-    (
-        "PreToolUse",
-        "Bash",
-        {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/branch-guard.py"', "timeout": 10},
-        True,
-    ),
-    ("PreToolUse", "Agent", SEAT_GUARD_HOOK, False),
-    ("PreToolUse", "Workflow", WORKFLOW_SEAT_GUARD_HOOK, False),
-    ("PreToolUse", "Bash", RAILWAY_GUARD_HOOK, False),
-    ("PreToolUse", "Bash", DANGEROUS_GUARD_HOOK, True),
-    ("PreToolUse", "Bash", KILL_SCOPE_GUARD_HOOK, True),
-    ("PreToolUse", "Bash", HOST_CREDENTIAL_HOOK, True),
-    (
-        "PreToolUse",
-        "Bash",
-        {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/gh-write-guard.py"', "timeout": 10},
-        True,
-    ),
-    ("PreToolUse", "Read", HOST_CREDENTIAL_HOOK, True),
-    ("SubagentStop", None, CLOSEOUT_HOOK, False),
-    ("SubagentStop", None, FOCUS_STEAL_HOOK, False),
-    (
-        "PostToolUse",
-        "Workflow",
-        {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-readback.py"', "timeout": 5},
-        False,
-    ),
-    (
-        "PostToolUse",
-        None,
-        {
-            "type": "command",
-            "command": '/usr/bin/python3 "$HOME/.claude/hooks/claude-grind-pulse.py"',
-            "timeout": 2,
-            "async": True,
-        },
-        True,
-    ),
-    ("SessionStart", "compact|resume", FACTORY_CONTEXT_HOOK, False),
-    ("PreCompact", None, COMPACT_CHECKPOINT_HOOK, False),
+HOOK_MANIFEST = "hooks/manifest.json"
+SETTINGS_HOOKS = tuple(
+    (entry["event"], entry["matcher"], entry["hook"], entry["needs_source"])
+    for entry in json.loads((Path(__file__).resolve().parent / HOOK_MANIFEST).read_text())["hooks"]
 )
 
 
@@ -335,6 +234,21 @@ OBSERVATIONAL_HOOKS = (
     ("SubagentStop", '/.claude/hooks/idle-agents.py" mark'),
     ("TeammateIdle", '/.claude/hooks/idle-agents.py" mark'),
 )
+
+
+def installed_manifest(source: Path) -> str:
+
+    module = dispatcher_module(source)
+    doc = json.loads((source / HOOK_MANIFEST).read_text())
+    for entry in doc["hooks"]:
+        found = re.search(r'hooks/([^"\s]+)', entry["hook"]["command"])
+        name = found.group(1) if found else ""
+        script = source / "hooks" / name
+        prefilter = module.SCRIPT_PREFILTERS.get(name)
+        entry["floor"] = name in module.FLOOR_SCRIPTS
+        entry["prefilter"] = prefilter[1].__name__ if prefilter else None
+        entry["sha256"] = hashlib.sha256(script.read_bytes()).hexdigest() if script.is_file() else None
+    return json.dumps(doc, indent=2) + "\n"
 
 
 def is_settings_hook(command: Any, hook: dict[str, Any]) -> bool:
@@ -1836,10 +1750,13 @@ def main() -> int:
                 for path in sorted((source / "hooks").glob(pattern))
             ]
             policy_sources += [Path("hooks/local-seat-bin/desktop-guard-focus")]
+            policy_sources += [Path(HOOK_MANIFEST)]
             for relative in policy_sources:
                 wanted = (source / relative).read_text()
                 if relative.parent == Path("agents"):
                     wanted = seat_template(wanted, relative.stem, snapshot)
+                elif relative == Path(HOOK_MANIFEST):
+                    wanted = installed_manifest(source)
 
                 if replace_policy_link or read_text(policy_dir / relative) != wanted:
                     changes[policy_dir / relative] = wanted
