@@ -13,12 +13,12 @@ async def chat_response(
     request: Request, effective_model: str, stream_requested: bool | None, api_key: ApiKeyData | None
 ) -> Response:
     from app.modules.proxy.api import (
-        _collect_anthropic_body,
-        _enforce_request_limits,
-        _estimate_anthropic_request_usage,
-        _logged_error_json_response,
-        _release_reservation,
+        collect_anthropic_body,
+        enforce_request_limits,
+        estimate_anthropic_request_usage,
+        logged_error_json_response,
         openai_error,
+        release_reservation,
         validate_model_access,
     )
 
@@ -33,11 +33,11 @@ async def chat_response(
         messages=[{"role": "user", "content": ""}],
         stream=stream_requested,
     )
-    reservation = await _enforce_request_limits(
+    reservation = await enforce_request_limits(
         api_key,
         request_model=effective_model,
         request_service_tier=None,
-        request_usage_budget=_estimate_anthropic_request_usage(routing_payload, raw_body=await request.body()),
+        request_usage_budget=estimate_anthropic_request_usage(routing_payload, raw_body=await request.body()),
     )
     try:
         stream = await get_anthropic_proxy_context(request).service.stream_messages(
@@ -49,7 +49,7 @@ async def chat_response(
         )
         if stream_requested:
             return StreamingResponse(stream.body, media_type=stream.media_type)
-        return Response(content=await _collect_anthropic_body(stream.body), media_type=stream.media_type)
+        return Response(content=await collect_anthropic_body(stream.body), media_type=stream.media_type)
     except AnthropicProxyError as exc:
-        await _release_reservation(reservation)
-        return _logged_error_json_response(request, exc.status_code, openai_error(exc.code, exc.message))
+        await release_reservation(reservation)
+        return logged_error_json_response(request, exc.status_code, openai_error(exc.code, exc.message))

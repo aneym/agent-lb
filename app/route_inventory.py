@@ -6,6 +6,8 @@ from pathlib import Path
 def main() -> None:
     sources = [
         *Path("app/modules").rglob("api.py"),
+        *Path("app/modules/proxy").glob("*_routes.py"),
+        *Path("app/modules/proxy").glob("compact_requests.py"),
         Path("app/modules/proxy/meta_service.py"),
         Path("app/cli.py"),
         Path("app/db/migrate.py"),
