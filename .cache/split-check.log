@@ -1,0 +1,45 @@
+{"findings": [], "count": 0}
+{
+  "cycles": [
+    "app",
+    "bin",
+    "clients",
+    "config",
+    "deploy",
+    "docs",
+    "features",
+    "frontend",
+    "openspec",
+    "patches",
+    "scripts",
+    "tests"
+  ],
+  "errors": [],
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+filecap: 0.184 s
+modcheck: 0.641 s
+comments: 0.109 s
+freeze: 0.114 s
+warning: freeze (advisory): filecap: freeze check needs a branch name (--branch)
+modcheck: app/modules/accounts/auth_exchange.py:39: private_reach app/modules/accounts/auth_tokens.py:_call_with_supported_optional_kwargs
+app/modules/accounts/auth_exchange.py:39: private_reach app/modules/accounts/auth_tokens.py:_clean_optional
+app/modules/accounts/auth_exchange.py:39: private_reach app/modules/accounts/auth_tokens.py:_exchange_timeout_seconds
+app/modules/accounts/auth_exchange.py:39: private_reach app/modules/accounts/auth_tokens.py:_refresh_token_material_changed
+app/modules/accounts/auth_exchange.py:39: private_reach app/modules/accounts/auth_tokens.py:_refresh_token_material_fingerprint
+app/modules/accounts/auth_exchange.py:39: private_reach app/modules/accounts/auth_tokens.py:_snapshot
+app/modules/accounts/auth_exchange.py:55: cycle app/modules/proxy/account_cache.py
+app/modules/accounts/auth_exchange.py:79: private_reach app/modules/accounts/refresh_lock.py:_cross_process_refresh_lock
+app/modules/accounts/auth_manager.py:13: cycle app/modules/accounts/auth_exchange.py
+app/modules/accounts/auth_manager.py:14: private_reach app/modules/accounts/auth_singleflight.py:_REFRESH_SINGLEFLIGHT
+app/modules/accounts/auth_manager.py:14: private_reach app/modules/accounts/auth_singleflight.py:_refresh_singleflight_key
+app/modules/accounts/auth_manager.py:15: private_reach app/modules/accounts/auth_tokens.py:_account_needs_refresh
+app/modules/accounts/auth_manager.py:15: private_reach app/modules/accounts/auth_tokens.py:_exchange_timeout_seconds
+app/modules/accounts/auth_manager.py:15: private_reach app/modules/accounts/auth_tokens.py:_refresh_token_material_fingerprint
+app/modules/accounts/auth_manager.py:15: private_reach app/modules/accounts/auth_tokens.py:_snapshot
+app/modules/accounts/auth_singleflight.py:15: private_reach app/modules/accounts/auth_tokens.py:_refresh_token_material_fingerprint
+SCC membership: 26 -> 27 modules; 8 -> 8 cyclic SCCs
+modcheck staged: 16 new findings; 7 cycle pairs; 1035 modules
+gate-precheck: 1 findings in 1.056 s

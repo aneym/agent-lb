@@ -1,0 +1,45 @@
+invalid-syntax: Unexpected indentation
+   --> app/modules/accounts/reset_credit_scheduler.py:389:1
+    |
+387 |     from app.dependencies import _accounts_repo_context
+388 | from app.modules.accounts.auth_manager import AuthManager
+389 |     from app.modules.accounts.service import AccountsService
+    | ^^^^
+390 |
+391 |     return AccountsService(
+    |
+
+invalid-syntax: Unexpected indentation
+   --> tests/floor/test_federation_custody_validation.py:252:1
+    |
+250 | from app.modules.accounts.auth_tokens import refresh_token_material_fingerprint
+251 |
+252 |         for account_id in ("intent-checkout", "intent-checkin"):
+    | ^^^^^^^^
+253 |             account = await session.get(Account, account_id)
+254 |             fingerprint = refresh_token_material_fingerprint(TokenEncryptor(), account.refresh_token_encrypted)  # type: ignore
+    |
+
+invalid-syntax: unindent does not match any outer indentation level
+   --> tests/floor/test_federation_custody_validation.py:259:1
+    |
+257 |             )
+258 |         await session.commit()
+259 |     settings = Settings(local_instance_id="studio", federation_taker_instance_ids=["forge"])
+    | ^^^^
+260 |     async with SessionLocal() as session:
+261 |         service = FederationService(FederationRepository(session), settings=settings)
+    |
+
+invalid-syntax: Unexpected indentation
+   --> tests/floor/test_federation_custody_validation.py:260:1
+    |
+258 |         await session.commit()
+259 |     settings = Settings(local_instance_id="studio", federation_taker_instance_ids=["forge"])
+260 |     async with SessionLocal() as session:
+    | ^^^^
+261 |         service = FederationService(FederationRepository(session), settings=settings)
+262 |         with pytest.raises(FederationConflictError):
+    |
+
+Found 11 errors (7 fixed, 4 remaining).
