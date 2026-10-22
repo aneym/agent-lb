@@ -1,6 +1,6 @@
 {
   "prefixes": {
-    ".agents": 116,
+    ".agents": 114,
     ".claude": 1,
     ".dockerignore": 1,
     ".env.example": 1,
