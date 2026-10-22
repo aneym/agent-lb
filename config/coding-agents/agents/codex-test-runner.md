@@ -59,7 +59,7 @@ cd "$RUN" && f=$(mktemp "${TMPDIR:-/tmp}/codex-test-runner-contract.XXXXXX") && 
 <contract text built below>
 CONTRACT_EOF
 vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-test-runner --)
-k=codex-test-runner-<kebab topic>-$(date +%s)-$(openssl rand -hex 2); echo "key=$k"; seat-run --bg --name "$k" --timeout 4320 -- ${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
+k=codex-test-runner-<kebab topic>-$(date +%s)-$(openssl rand -hex 2); echo "key=$k"; seat-run --bg --name "$k" --timeout 4320 -- seat-exec --seat codex-test-runner --effort medium --write --prompt-file "$f"
 ```
 
 Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it as a Nomad job on a linux box unless the contract names a Mac-only tool. Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). After `NAME-COLLISION` relaunch once at once with a new key and the same contract; after `NO-SERVER` retry once, then report blocked; after `SUBMIT-REFUSED` report blocked with that line. A seat that is not Mac-only never runs on Studio, so never fall back to a `-local` seat. Studio-only work (a Mac app, Aside, herdr, simulators) uses `codex-test-runner-local` instead.

@@ -46,7 +46,7 @@ AGENT_LB_DISPATCH=$("$HOME/.agent-lb/bin/route" dispatch verify --author-vendor 
 export AGENT_LB_DISPATCH
 dispatch_effort=$(printf '%s' "$AGENT_LB_DISPATCH" | python3 -c 'import json,sys; print(json.load(sys.stdin)["effort"])') || exit $?
 vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-verifier --)
-$HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- ${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort "$dispatch_effort" --prompt-file "$f"
+$HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- seat-exec --seat codex-verifier --effort "$dispatch_effort" --prompt-file "$f"
 ```
 
 When the brief names a piece id, put `SEAT_RUN_PIECE=<that id>` before
