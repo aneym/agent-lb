@@ -62,7 +62,7 @@ def pf_railway_custody(payload):
 
 
 NO_CHROME_GREP = re.compile(
-    r"safari|chrom|aside|osascript|agent-cdp-launch|remote-debugging|user-data-dir|headless|storage.?state|"
+    r"Library|safari|chrom|aside|osascript|playwright-cli|connectOverCDP|connect_over_cdp|agent-cdp-launch|remote-debugging|user-data-dir|headless|storage.?state|"
     r"puppeteer|persistent.?context|com\.apple\.|com\.google\.|(^|[^A-Za-z0-9_.-])open([^A-Za-z0-9_-]|$)|"
     r"xdg-open|gnome-open|kde-open|wslview|-browser|webbrowser|(^|[^A-Za-z0-9_.-])gio([^A-Za-z0-9_-]|$)|"
     r"firefox|rails\.app|fresh-rails-profile|brave.?browser|microsoft.?edge|vivaldi",
@@ -299,7 +299,7 @@ SCRIPT_PREFILTERS = {
         pf_link_cli,
     ),
     "dangerous-command-guard.sh": ((), pf_dangerous),
-    "no-chrome-guard.sh": ("bdccc53befe25039a4db06eff96b9437ebb0cac4728e656ae73a20b7cd630916", pf_no_chrome),
+    "no-chrome-guard.sh": ("db215a36ee2f80d1a1ee2810128d4dcc61410e5213d0af865cde475a0e76516e", pf_no_chrome),
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
     "route.sh": ("36bbdd44a69543ff7fe2865985443a2a09ab2f540d6bf09df25ec6c978e1d629", pf_jev_alert),
 }
