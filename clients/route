@@ -2499,7 +2499,6 @@ WORKFLOW_FIXED_FORWARDERS = frozenset({"codex-verifier", "codex-test-runner", "c
 WORKFLOW_AUTHOR_VENDORS = ("anthropic", "openai", "xai", "cursor", "cognition", "devin", "glm", "kimi")
 CCGPT_EFFORTS = ("low", "medium", "high", "xhigh")
 
-WORKFLOW_AGENT_CAP = 16
 WORKFLOW_OPUS_STAGES = ("plan", "review", "judge", "synthesis", "orchestrator")
 
 def _chain_effort(table: dict[str, Any], class_name: str, seat: str) -> str | None:
