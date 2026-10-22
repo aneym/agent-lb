@@ -664,7 +664,7 @@
       "vendor": "muse",
       "family": "muse-wonder",
       "pinned": "muse-wonder-1.0",
-      "note": "2026-10-13 official Meta model catalog pin; availability is checked at dispatch. Muse seat integration is pending; no default ladder change."
+      "note": "2026-10-13 Meta catalog pin. Muse seats run through agent-lb /muse-api into request logs and the muse pool; explore arms only."
     },
     "opus-latest": {
       "vendor": "anthropic",

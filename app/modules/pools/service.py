@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
 from app.core.routing_table import read_routing_table
@@ -22,6 +22,7 @@ from app.modules.pools.schemas import (
     PoolsResponse,
     PoolSummary,
 )
+from app.modules.request_logs.repository import RequestLogsRepository
 
 GLM_POOL_PROVIDER = "glm"
 KIMI_POOL_PROVIDER = "kimi"
@@ -331,8 +332,9 @@ def build_pools(summaries: list[AccountSummary], *, generated_at: datetime | Non
 
 
 class PoolsService:
-    def __init__(self, accounts_service: AccountsService) -> None:
+    def __init__(self, accounts_service: AccountsService, request_logs: RequestLogsRepository) -> None:
         self._accounts_service = accounts_service
+        self._request_logs = request_logs
 
     async def get_pools(self) -> PoolsResponse:
 
@@ -341,6 +343,14 @@ class PoolsService:
 
         seats = read_seat_accounts()
         seat_pools = cli_seat_pools(seats)
+        if any(pool.id == "muse" for pool in seat_pools):
+            muse_tokens = await self._request_logs.provider_tokens_since(
+                "muse", response.generated_at - timedelta(hours=24)
+            )
+            seat_pools = [
+                pool.model_copy(update={"observed_tokens": muse_tokens}) if pool.id == "muse" else pool
+                for pool in seat_pools
+            ]
         config = read_routing_table().get("cli_pools", {})
         budget_pools = cursor_budget_pools(seats, config, now=response.generated_at) if isinstance(config, dict) else []
         cursor_config = config.get("cursor") if isinstance(config, dict) else None

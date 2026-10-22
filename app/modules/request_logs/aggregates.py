@@ -50,6 +50,16 @@ class RequestLogAggregates:
         count, incomplete, uncached, creation, read = result.one()
         return int(count), int(incomplete), int(uncached), int(creation), int(read)
 
+    async def provider_tokens_since(self, provider: str, since: datetime) -> int:
+        result = await self._session.execute(
+            select(
+                func.coalesce(
+                    func.sum(func.coalesce(RequestLog.input_tokens, 0) + func.coalesce(RequestLog.output_tokens, 0)), 0
+                )
+            ).where(RequestLog.provider == provider, RequestLog.requested_at >= since)
+        )
+        return int(result.scalar_one())
+
     async def aggregate_by_bucket(
         self,
         since: datetime,

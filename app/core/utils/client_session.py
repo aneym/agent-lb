@@ -54,6 +54,11 @@ def set_caller_seat_from_scope(scope: Scope) -> Token[str | None]:
     return _CALLER_SEAT.set(_caller_seat(scope))
 
 
+def set_caller_seat(value: str) -> Token[str | None]:
+    seat = value.strip().lower()
+    return _CALLER_SEAT.set(seat if _SEAT_RE.fullmatch(seat) else None)
+
+
 def reset_caller_seat(token: Token[str | None]) -> None:
     _CALLER_SEAT.reset(token)
 

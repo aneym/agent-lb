@@ -12,6 +12,7 @@ from app.modules.pools.plan import build_plan, load_plan_inputs
 from app.modules.pools.schemas import PoolsResponse
 from app.modules.pools.service import PoolsService
 from app.modules.proxy.stand_in import snapshot
+from app.modules.request_logs.repository import RequestLogsRepository
 
 router = APIRouter(
     prefix="/api/pools",
@@ -24,13 +25,13 @@ router = APIRouter(
 async def list_pools(
     context: AccountsContext = Depends(get_accounts_context),
 ) -> PoolsResponse:
-    return await PoolsService(context.service).get_pools()
+    return await PoolsService(context.service, RequestLogsRepository(context.session)).get_pools()
 
 
 @router.get("/plan")
 async def account_plan(context: AccountsContext = Depends(get_accounts_context)):
     try:
-        pools = await PoolsService(context.service).get_pools()
+        pools = await PoolsService(context.service, RequestLogsRepository(context.session)).get_pools()
         table, costs = load_plan_inputs()
         return build_plan(pools, table, costs)
     except (OSError, ValueError, TypeError, KeyError, AttributeError):

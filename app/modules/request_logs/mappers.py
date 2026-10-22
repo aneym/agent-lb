@@ -44,6 +44,7 @@ def to_request_log_entry(log: RequestLog, *, api_key_name: str | None = None) ->
         caller_machine=log.caller_machine,
         caller_machine_source=log.caller_machine_source,
         caller_seat=log.caller_seat,
+        provider=log.provider,
         room=log.room,
         unified_5h_utilization=log.unified_5h_utilization,
         unified_7d_utilization=log.unified_7d_utilization,

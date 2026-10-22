@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.routing_table import read_routing_table
+from app.core.utils.client_session import reset_caller_seat, set_caller_seat
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,9 @@ async def _log_call(
     latency_ms: int,
     tail: bytes,
     transport: str = "muse-api",
+    seat: str | None = None,
 ) -> None:
+    seat_token = set_caller_seat(seat) if seat else None
     try:
         from app.db.session import SessionLocal
         from app.modules.request_logs.repository import RequestLogsRepository
@@ -155,10 +158,16 @@ async def _log_call(
             )
     except Exception:
         logger.exception("muse request log failed")
+    finally:
+        if seat_token is not None:
+            reset_caller_seat(seat_token)
 
 
 @router.api_route("/{path:path}", methods=["GET", "POST"], response_model=None)
 async def forward(request: Request, path: str) -> StreamingResponse | JSONResponse:
+    seat = None
+    if path.startswith("seat/"):
+        seat, _, path = path.removeprefix("seat/").partition("/")
     methods = ALLOWED.get(path)
     if methods is None or request.method not in methods:
         return JSONResponse({"error": {"message": "Not Found"}}, status_code=404)
@@ -172,7 +181,7 @@ async def forward(request: Request, path: str) -> StreamingResponse | JSONRespon
         except ValueError:
             model = ""
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_HEADERS}
-    return await _relay(request, path, headers, body, model, "muse-api")
+    return await _relay(request, path, headers, body, model, "muse-api", seat=seat)
 
 
 def _error(status: int, code: str, message: str) -> JSONResponse:
@@ -252,6 +261,7 @@ async def _relay(
     model: str,
     transport: str,
     reauth: Callable[[], Awaitable[str | None]] | None = None,
+    seat: str | None = None,
 ) -> StreamingResponse | JSONResponse:
     started = time.monotonic()
     client = httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=None, write=60.0, pool=15.0))
@@ -280,6 +290,7 @@ async def _relay(
                 latency_ms=int((time.monotonic() - started) * 1000),
                 tail=b"",
                 transport=transport,
+                seat=seat,
             )
         return JSONResponse(
             {"error": {"message": f"muse upstream unreachable: {exc.__class__.__name__}"}},
@@ -312,6 +323,7 @@ async def _relay(
                     latency_ms=int((time.monotonic() - started) * 1000),
                     tail=bytes(tail),
                     transport=transport,
+                    seat=seat,
                 )
 
     return StreamingResponse(

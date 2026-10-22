@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,9 @@ def main(argv: list[str]) -> None:
             file=sys.stderr,
         )
         os.execvp(muse, [muse, *argv])
+    seat = os.environ.get("AGENT_LB_SEAT", "").strip().lower()
+    if re.fullmatch(r"[a-z0-9][a-z0-9@._:-]{0,63}", seat):
+        base_url = f"{base_url.rstrip('/')}/seat/{seat}"
     flags = ["--provider", "meta", "--base-url", base_url]
     if "--model" not in argv:
         flags += ["--model", resolve_model()]
