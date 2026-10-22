@@ -340,7 +340,7 @@ class _CodexControlMixin:
                 output_tokens=observed_usage.output_tokens,
                 cached_input_tokens=observed_usage.cached_input_tokens,
                 reasoning_tokens=observed_usage.reasoning_tokens,
-                request_kind=request_kind,
+                request_kind=request_kind if path.strip("/") == "alpha/search" else "normal",
                 latency_ms=int((_service_time().monotonic() - start) * 1000),
                 status=log_status,
                 error_code=log_error_code,
