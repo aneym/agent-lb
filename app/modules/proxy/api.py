@@ -199,6 +199,16 @@ from app.modules.team.service import MEMBER_CONTACT_LINE, TeamMemberSelfStatus
 from app.modules.usage.mappers import usage_history_to_window_row
 from app.modules.usage.repository import UsageRepository
 
+
+class ProxyApiDependencies:
+    anthropic_request_session_id: Callable[..., Any]
+    is_fable_model: Callable[..., Any]
+    rate_limit_details: Callable[..., Any]
+    parse_trusted_proxy_networks: Callable[..., Any]
+
+
+proxy_dependencies = ProxyApiDependencies()
+
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_SESSION_ROUTE_QUOTA_KEYS: Final[frozenset[str]] = frozenset(
@@ -363,7 +373,7 @@ def default_anthropic_affinity_quota_key(model: str, quota_key: str) -> str:
     else:
         resolved = "anthropic_top_thinking"
 
-    return f"{resolved}_fable" if _is_fable_model(model) else resolved
+    return f"{resolved}_fable" if proxy_dependencies.is_fable_model(model) else resolved
 
 
 def openai_error_type_for_status(status_code: int) -> str:
@@ -830,7 +840,7 @@ async def v1_messages(
         and stand_in.stand_in_model(intent) is not None
     )
     eligible = swap_candidate and not review_lane
-    session_id = _anthropic_request_session_id(payload, request.headers)
+    session_id = proxy_dependencies.anthropic_request_session_id(payload, request.headers)
     resolved_request = await context.service.resolve_message_request(payload)
     payload = resolved_request.payload
     validate_model_access(api_key, payload.model)
@@ -1045,7 +1055,7 @@ async def ccgpt_messages_response(
             "Anthropic-defined tools are not supported by the ccgpt compatibility route",
         )
     locked_model = locked_model or (resolve_ccgpt_model("sol-latest") or (CCGPT_MODEL, None))[0]
-    client_session_id = _anthropic_request_session_id(payload, request.headers)
+    client_session_id = proxy_dependencies.anthropic_request_session_id(payload, request.headers)
     responses_payload = claude_to_responses(payload)
     responses_payload.model = locked_model
     if client_session_id:
@@ -1459,7 +1469,7 @@ async def build_codex_usage_payload_for_api_key(api_key: ApiKeyData) -> RateLimi
 
     return RateLimitStatusPayloadData(
         plan_type="api_key",
-        rate_limit=_rate_limit_details(
+        rate_limit=proxy_dependencies.rate_limit_details(
             codex_usage_window_snapshot(primary_credit_limit),
             codex_usage_window_snapshot(secondary_credit_limit),
             codex_usage_window_snapshot(monthly_credit_limit),
@@ -3533,7 +3543,7 @@ async def websocket_firewall_denial_response(websocket: WebSocket) -> JSONRespon
         websocket.headers,
         websocket.client.host if websocket.client else None,
         trust_proxy_headers=settings.firewall_trust_proxy_headers,
-        trusted_proxy_networks=_parse_trusted_proxy_networks(settings.firewall_trusted_proxy_cidrs),
+        trusted_proxy_networks=proxy_dependencies.parse_trusted_proxy_networks(settings.firewall_trusted_proxy_cidrs),
     )
     async with get_background_session() as session:
         repository = cast(FirewallRepositoryPort, FirewallRepository(session))
@@ -4666,3 +4676,8 @@ v1_router.include_router(chat_routes_v1_router)
 router.include_router(compact_requests_router)
 v1_router.include_router(compact_requests_v1_router)
 usage_router.include_router(usage_routes_usage_router)
+
+proxy_dependencies.anthropic_request_session_id = _anthropic_request_session_id
+proxy_dependencies.is_fable_model = _is_fable_model
+proxy_dependencies.rate_limit_details = _rate_limit_details
+proxy_dependencies.parse_trusted_proxy_networks = _parse_trusted_proxy_networks
