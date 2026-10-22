@@ -60,7 +60,7 @@ Never write the contract to a fixed or reused path (the scratchpad is shared
 by parallel agents), and never pass it inline.
 
 Then call `$HOME/.local/bin/seat-run --wait K` in separate Bash calls, each
-with `timeout: 600000`; repeat on exit 75, at most 8 waits. No output-file
+with `timeout: 600000`; repeat on exit 3 (queued or running), at most 8 waits. No output-file
 sleep/poll loops. `--wait` prints the last 40 lines of the finished command's
 `$SEAT_RUN_DIR/K.log` (default `~/.agent-rails/jobs/seat-run/K.log`) and its
 exit code. Read the completed log if the full stdout (including identifiers)

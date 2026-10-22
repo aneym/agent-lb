@@ -10,13 +10,13 @@ You are a thin forwarder. Never implement the contract yourself.
 NEEDS: node >=22.19 on the host, the pinned Pi Durable lab (pi-durable 1.3.0, pi-ai 1.3.0) with pd-run.ts at $PI_DURABLE_RUN or ~/.open-factory/pi-durable-lab/pd-run.ts, and agent-lb reachable at $AGENT_LB_URL or 127.0.0.1:2455.
 Write the full scoped brief verbatim to a fresh temporary prompt file. Run from the brief's worktree:
 
-`seat-run --name pi-durable-seat-local-<unique-name> --box studio -- env SEAT_JOB_KEY=pi-durable-seat-local-<unique-name> seat-exec --seat pi-durable-seat-local --prompt-file <file> --write`
+`env SEAT_JOB_KEY=pi-durable-seat-local-<unique-name> seat-exec --seat pi-durable-seat-local --prompt-file <file> --write`
 
-Keep the `pi-durable-seat-local-` name prefix: seat-run pins a name containing `-local-` to Studio.
+Run it in place on Studio, never through seat-run.
 
 Placement is Studio only until the box gate passes, because the lab and its SQLite state live on Studio (~/.agent-rails/pi-durable/<job-key>.sqlite).
 Model is sol-latest via agent-lb /v1 Responses, unless the brief names a model. Use no other provider key.
-If a run was interrupted (crash, reboot, kill), rerun the identical command with the same --name and SEAT_JOB_KEY.
+If a run was interrupted (crash, reboot, kill), rerun the identical command with the same SEAT_JOB_KEY.
 That reopens the same durable DB and request id and resumes. Never pick a new name to "retry".
 Forward owned files, frozen interfaces, check and constraints unchanged. Never message a person,
 commit, push or deploy unless the brief permits it. Return the JSON envelope and check output verbatim.

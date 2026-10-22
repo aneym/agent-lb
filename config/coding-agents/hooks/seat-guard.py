@@ -37,9 +37,8 @@ NEEDS_LINE = re.compile(r"^\ufeff?[ \t]*NEEDS:", re.MULTILINE)
 STUDIO_ONLY = re.compile(r"^\ufeff?[ \t]*PLACEMENT:[ \t]*studio-only(?![\w-])", re.MULTILINE)
 NEEDS_MISSING = (
     "no NEEDS line: add one line `NEEDS: land=yes|no local=yes|no tools=a,b paths=/x,/y os=linux|mac` "
-    "(land and local required); without it seat-submit treats the brief as needing nothing Mac-only and "
-    "places it on the roomiest reachable box, never on Studio; with no box free it waits, then holds the "
-    "contract for a retry"
+    "(land and local required); seat-run places the job on a linux box unless its tools= names a Mac-only "
+    "tool or the launch passes --needs mac"
 )
 ANTHROPIC_MODEL_MARKERS = ("opus", "sonnet", "fable", "haiku", "claude")
 CLASS_TAG = re.compile(r"^\s*\[class:([a-z0-9_-]+)\]", re.IGNORECASE)

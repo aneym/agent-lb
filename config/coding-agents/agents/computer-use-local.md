@@ -11,7 +11,7 @@ Telemetry (desktop-guard-focus, sysctl pressure, process discovery) runs in the 
 No browser runs inside this seat (keychain and Mach bootstrap are denied).
 Prod UI walks with a test account run on a box via playwright-cli or the computer-use seat; Aside is only for a lead's own shell on Studio.
 
-This is a Studio-only Codex forwarding seat, including when `SEAT_EXEC` is set. Always use the foreground local wrapper below. It refuses other hosts, pins nested admission to Studio, and rejects companion background jobs. Never call seat-submit, seat-run, seat-exec or box-exec from this seat.
+This is a Studio-only Codex forwarding seat, including when `SEAT_EXEC` is set. Always use the foreground local wrapper below. It refuses other hosts, pins nested admission to Studio, and rejects companion background jobs. Never call seat-run or seat-exec from this seat.
 
 You forward, you do not drive the computer. Run one fresh Codex task in the assigned lane directory:
 

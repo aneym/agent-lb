@@ -100,8 +100,8 @@ JSONL parsing is deferred until a real 1.4.7 transcript establishes the event
 format. The seat ledger is `dispatch.jsonl`, the same dispatch/closeout path as
 Cursor and Devin. This is not yet a verified LB HTTP request-log row.
 
-`muse-seat` and `muse-seat-local` forward the scoped brief through `seat-run
---box studio` and `seat-exec`. Studio registration is `seat add muse-studio
+`muse-seat` and `muse-seat-local` forward the scoped brief to `seat-exec`, run
+in place on Studio. Studio registration is `seat add muse-studio
 --vendor muse`; subsequent runs use `muse-latest`. Muse is optional capacity;
 default class ladders are unchanged. Factory `seat-exec` delegates to agent-lb's
 `seat run`, so account settlement stays in agent-lb. The local seat refuses Linux.
