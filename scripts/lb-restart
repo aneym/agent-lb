@@ -17,14 +17,24 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
-from typing import cast
+from pathlib import (
+    Path,
+)
+from typing import (
+    cast,
+)
 
 source = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(source if (source / "app").is_dir() else Path.home() / ".agent-lb/runtime/agent-lb"))
-from scripts.restart_context import RestartContext, SandboxRefused
-from scripts.restart_paths import check_owned_dir, inside, lexical, open_dir_nofollow, open_sandbox_root, real_home, refuse_links_on, root_on_own_volume, trusted_file
-from scripts.restart_budget import EXCHANGE_SETTLE_S, minimum_exit_timeout, parse_reaper_args, regenerate_plist
+from scripts.restart_context import (
+    RestartContext, SandboxRefused,
+)
+from scripts.restart_paths import (
+    check_owned_dir, inside, lexical, open_dir_nofollow, open_sandbox_root, real_home, refuse_links_on, root_on_own_volume, trusted_file,
+)
+from scripts.restart_budget import (
+    EXCHANGE_SETTLE_S, minimum_exit_timeout, parse_reaper_args, regenerate_plist,
+)
 
 
 
