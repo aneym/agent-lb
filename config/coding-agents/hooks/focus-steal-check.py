@@ -29,7 +29,7 @@ def guard():
     return tool if os.path.exists(tool) else None
 
 
-def steals(since):
+def steals(since, own_pane_only=False):
     tool = guard()
     if not tool or not since:
         return []
@@ -39,13 +39,15 @@ def steals(since):
     except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
         return []
     pane = os.environ.get("HERDR_PANE_ID")
+    if own_pane_only:
+        return [r for r in rows if pane and r.get("pane") == pane]
     return [r for r in rows if not pane or not r.get("pane") or r.get("pane") == pane]
 
 
 def message(name, since, rows):
     tools = ",".join(sorted({str(r.get("tool") or "?") for r in rows}))
     return (
-        f"FOCUS-STEAL {name}: {len(rows)} focus steal(s) on Alex's desktop during this Studio-local run "
+        f"FOCUS-STEAL {name}: {len(rows)} focus steal(s) on Alex's desktop during this run "
         f"({tools}); the run failed (Alex, 2026-10-16). Rows: desktop-guard-focus check --since {since}"
     )
 
@@ -75,11 +77,11 @@ def subagent_stop():
         payload = json.load(sys.stdin)
     except ValueError:
         return 0
-    agent_type = str(payload.get("agent_type") or payload.get("subagent_type") or "")
-    if payload.get("stop_hook_active") or not local_seat(agent_type):
+    agent_type = str(payload.get("agent_type") or payload.get("subagent_type") or "") or "subagent"
+    if payload.get("stop_hook_active"):
         return 0
     since = first_timestamp(str(payload.get("agent_transcript_path") or ""))
-    rows = steals(since)
+    rows = steals(since, own_pane_only=not local_seat(agent_type))
     if rows:
         print(json.dumps({"systemMessage": message(agent_type, since, rows)}))
     return 0
