@@ -66,6 +66,7 @@ from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
+from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.quota_planner.logic import PlannerSettings, build_routing_costs
 from app.modules.usage.additional_quota_keys import (
     canonicalize_additional_quota_key,
@@ -914,13 +915,15 @@ class LoadBalancer:
                 additional_quota_routing_policies,
             )
             accounts = selectable_accounts(all_accounts)
+            pool = accounts
             if account_ids is not None:
                 allowed_account_ids = set(account_ids)
                 accounts = [account for account in accounts if account.id in allowed_account_ids]
             pre_model_filter_accounts = accounts
             if model and _mapped_model_has_registry_entry(model):
                 accounts = _filter_accounts_for_model(pre_model_filter_accounts, model)
-            accounts = drop_excluded(accounts, model)
+                pool = _filter_accounts_for_model(pool, model)
+            accounts = drop_excluded(accounts, pool, resolve_model_alias(model))
             if model and not accounts:
                 if not all_accounts:
                     selection_inputs = _SelectionInputs(
@@ -1272,22 +1275,6 @@ class LoadBalancer:
                 lock = asyncio.Lock()
                 self._account_locks[account_id] = lock
             return lock
-
-    async def _sync_runtime_state_for_account(
-        self,
-        account: Account,
-        state: AccountState,
-        *,
-        selected: bool = False,
-        expected_version: int | None = None,
-    ) -> bool:
-        async with await self._get_account_lock(account.id):
-            return self._sync_runtime_state(
-                account,
-                state,
-                selected=selected,
-                expected_version=expected_version,
-            )
 
     async def _select_with_stickiness(
         self,
@@ -1822,15 +1809,6 @@ class LoadBalancer:
                 account.blocked_at = blocked_at_int
             return updated
         return True
-
-    async def _sync_state(
-        self,
-        accounts_repo: AccountsRepository,
-        account: Account,
-        state: AccountState,
-    ) -> None:
-        self._sync_runtime_state(account, state)
-        await self._persist_state(accounts_repo, account, state)
 
 
 def _build_states(
@@ -2519,26 +2497,6 @@ def _additional_quota_eligibility(
     fresh_secondary: dict[str, AdditionalUsageHistory],
 ) -> str:
     return "eligible"
-
-
-def _additional_quota_applies_to_plan(*, quota_key: str | None, plan_type: str | None) -> bool:
-    definition = get_additional_quota_definition(quota_key)
-    if definition is None or definition.applies_to_plans is None:
-        return True
-    normalized_plan = normalize_account_plan_type(plan_type)
-    if normalized_plan is None:
-        return True
-    if normalized_plan in definition.applies_to_plans:
-        return True
-    return normalized_plan not in _ADDITIONAL_QUOTA_EXEMPT_PLAN_TYPES
-
-
-def _additional_usage_is_exhausted(entry: AdditionalUsageHistory) -> bool:
-    if entry.used_percent is None:
-        return False
-    if entry.reset_at is not None and int(entry.reset_at) <= int(time.time()):
-        return False
-    return float(entry.used_percent) >= 100.0
 
 
 def _state_above_budget_threshold(state: AccountState, budget_threshold_pct: float) -> bool:

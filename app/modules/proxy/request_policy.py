@@ -17,6 +17,7 @@ from app.core.openai.v1_requests import V1ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 from app.modules.api_keys.service_data import ApiKeyData
+from app.modules.proxy.model_families import resolve_ccgpt_model
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +204,8 @@ def _resolve_model_alias_parts(model: str | None) -> tuple[str, str | None, str 
     normalized = model.strip().lower()
     if not normalized:
         return None
+    if "-latest" in normalized and (family := resolve_ccgpt_model(normalized)):
+        return family[0], family[1], None
 
     for base_model in _GPT5_ALIAS_BASE_MODELS:
         prefix = f"{base_model}-"
