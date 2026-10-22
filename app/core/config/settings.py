@@ -390,7 +390,7 @@ class Settings(SettingsFields):
             hostname = urlparse(advertise_base_url).hostname
             if hostname is None:
                 raise ValueError("http_responses_session_bridge_advertise_base_url must include a valid hostname")
-            if not _bridge_advertise_hostname_is_replica_specific(
+            if not bridge_advertise_hostname_is_replica_specific(
                 hostname,
                 instance_id=self.http_responses_session_bridge_instance_id,
                 multi_replica_intent=len(ring) > 1,
@@ -434,7 +434,7 @@ def get_settings() -> Settings:
     return Settings()
 
 
-def _bridge_advertise_hostname_is_replica_specific(
+def bridge_advertise_hostname_is_replica_specific(
     hostname: str,
     *,
     instance_id: str,

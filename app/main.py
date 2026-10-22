@@ -24,7 +24,7 @@ from app.core.auth.guardian import build_auth_guardian_scheduler
 from app.core.bootstrap import ensure_auto_bootstrap_token, log_bootstrap_token
 from app.core.clients.codex_pool import close_codex_pool
 from app.core.clients.http import close_http_client, init_http_client
-from app.core.config.settings import _bridge_advertise_hostname_is_replica_specific, get_settings
+from app.core.config.settings import bridge_advertise_hostname_is_replica_specific, get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.forensics import register_stack_dump_signal
 from app.core.handlers import add_exception_handlers
@@ -99,6 +99,8 @@ from app.modules.usage import api as usage_api
 from app.modules.usage.additional_quota_keys import reload_additional_quota_registry
 
 logger = logging.getLogger(__name__)
+diagnostics_logger = logging.getLogger("app.main")
+bridge_logger = logging.getLogger("app.main")
 
 
 class _RingMembershipReader(Protocol):
@@ -110,7 +112,7 @@ class _RingMembershipReader(Protocol):
     ) -> Awaitable[list[str]]: ...
 
 
-def _resolve_static_asset_path(static_root: Path, requested_path: str) -> Path | None:
+def resolve_static_asset_path(static_root: Path, requested_path: str) -> Path | None:
 
     normalized = PurePosixPath(requested_path)
     if normalized.is_absolute() or ".." in normalized.parts:
@@ -133,7 +135,7 @@ async def lifespan(app: FastAPI):
     heartbeat_task: asyncio.Task[None] | None = None
     instance_id = None
 
-    startup_module._startup_complete = False
+    startup_module.startup_complete = False
     startup_module.reset_bridge_registration()
     shutdown_state.reset()
     async with startup_recorder.phase("settings_and_caches"):
@@ -157,8 +159,8 @@ async def lifespan(app: FastAPI):
     async with startup_recorder.phase("http_client"):
         await init_http_client()
     async with startup_recorder.phase("bridge_schema"):
-        bridge_durable_schema_ready = await _ensure_bridge_durable_schema_ready(settings)
-    _log_runtime_diagnostic_fingerprint(settings, bridge_durable_schema_ready=bridge_durable_schema_ready)
+        bridge_durable_schema_ready = await ensure_bridge_durable_schema_ready(settings)
+    log_runtime_diagnostic_fingerprint(settings, bridge_durable_schema_ready=bridge_durable_schema_ready)
     if bridge_durable_schema_ready:
         startup_module.mark_bridge_durable_schema_ready()
     async with startup_recorder.phase("schedulers"):
@@ -218,14 +220,14 @@ async def lifespan(app: FastAPI):
             await _activate_bridge_membership(svc, iid)
             startup_module.mark_bridge_registration_complete()
             return
-        await _validate_bridge_advertise_endpoint_for_multi_replica(
+        await validate_bridge_advertise_endpoint_for_multi_replica(
             svc=svc,
             settings=settings,
             instance_id=iid,
             endpoint_base_url=bridge_endpoint_base_url,
         )
         await svc.register(iid, endpoint_base_url=None)
-        await _wait_for_bridge_advertise_endpoint(
+        await wait_for_bridge_advertise_endpoint(
             bridge_endpoint_base_url,
             connect_timeout_seconds=settings.upstream_connect_timeout_seconds,
         )
@@ -288,7 +290,7 @@ async def lifespan(app: FastAPI):
     instance_id = settings.http_responses_session_bridge_instance_id
     heartbeat_task = asyncio.create_task(_register_and_heartbeat(ring_service, instance_id))
     await node_cache.start()
-    startup_module._startup_complete = True
+    startup_module.startup_complete = True
     startup_recorder.complete("ok")
 
     try:
@@ -390,6 +392,11 @@ def create_app() -> FastAPI:
         swagger_ui_parameters={"persistAuthorization": True},
     )
 
+    configure_app(app, settings)
+    return app
+
+
+def configure_app(app: FastAPI, settings) -> None:
     app.add_middleware(cast(Any, InFlightMiddleware))
     app.add_middleware(cast(Any, ClientSessionMiddleware))
     app.add_middleware(cast(Any, IdentityMiddleware))
@@ -488,7 +495,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Not Found")
 
         if normalized:
-            candidate = _resolve_static_asset_path(static_root, normalized)
+            candidate = resolve_static_asset_path(static_root, normalized)
             if candidate is not None:
                 return FileResponse(candidate)
             if _is_static_asset_path(normalized):
@@ -503,12 +510,10 @@ def create_app() -> FastAPI:
             headers={"Cache-Control": "no-cache"},
         )
 
-    return app
 
-
-def _log_runtime_diagnostic_fingerprint(settings, *, bridge_durable_schema_ready: bool | None) -> None:
+def log_runtime_diagnostic_fingerprint(settings, *, bridge_durable_schema_ready: bool | None) -> None:
     fingerprint = _runtime_diagnostic_fingerprint(settings, bridge_durable_schema_ready=bridge_durable_schema_ready)
-    logger.info(
+    diagnostics_logger.info(
         (
             "agent_lb_runtime_fingerprint database_backend=%s data_dir=%s dashboard_auth_mode=%s "
             "trusted_proxy_cidrs=%s proxy_unauthenticated_cidrs=%s proxy_tailnet_allowed=%s "
@@ -600,7 +605,7 @@ def _cidrs_include_tailnet(cidrs: list[str]) -> bool:
     return False
 
 
-async def _ensure_bridge_durable_schema_ready(settings) -> bool:
+async def ensure_bridge_durable_schema_ready(settings) -> bool:
     if not settings.http_responses_session_bridge_enabled:
         return False
     session = SessionLocal()
@@ -613,14 +618,14 @@ async def _ensure_bridge_durable_schema_ready(settings) -> bool:
     missing = ", ".join(missing_tables)
     if settings.database_migrations_fail_fast:
         raise RuntimeError(f"HTTP bridge durable schema is missing required tables: {missing}")
-    logger.warning(
+    bridge_logger.warning(
         "HTTP bridge durable schema is missing required tables but startup fail-fast is disabled",
         extra={"missing_tables": missing_tables},
     )
     return False
 
 
-async def _wait_for_bridge_advertise_endpoint(
+async def wait_for_bridge_advertise_endpoint(
     bridge_endpoint_base_url: str | None,
     *,
     connect_timeout_seconds: float,
@@ -651,7 +656,7 @@ async def _wait_for_bridge_advertise_endpoint(
                     if response.status == 200:
                         return
         except Exception:
-            logger.debug(
+            bridge_logger.debug(
                 "Bridge advertise endpoint not yet reachable",
                 extra={"probe_url": probe_url, "attempt": attempt},
                 exc_info=True,
@@ -694,7 +699,7 @@ def _port_from_argv() -> int | None:
     return None
 
 
-async def _validate_bridge_advertise_endpoint_for_multi_replica(
+async def validate_bridge_advertise_endpoint_for_multi_replica(
     svc: _RingMembershipReader,
     *,
     settings,
@@ -725,7 +730,7 @@ async def _validate_bridge_advertise_endpoint_for_multi_replica(
                 "http_responses_session_bridge_advertise_base_url must be replica-specific for bridge routing"
             )
         return
-    if not _bridge_advertise_hostname_is_replica_specific(hostname, instance_id=instance_id):
+    if not bridge_advertise_hostname_is_replica_specific(hostname, instance_id=instance_id):
         raise RuntimeError(
             "http_responses_session_bridge_advertise_base_url must be replica-specific for bridge routing"
         )

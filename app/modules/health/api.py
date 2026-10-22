@@ -216,6 +216,6 @@ async def _get_bridge_ring_info(session: AsyncSession) -> BridgeRingInfo:
 async def health_startup() -> HealthCheckResponse:
     import app.core.startup as startup_module
 
-    if startup_module._startup_complete:
+    if startup_module.startup_complete:
         return HealthCheckResponse(status="ok")
     raise HTTPException(status_code=503, detail="Service is starting")
