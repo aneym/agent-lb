@@ -101,6 +101,7 @@ from app.modules.usage.additional_quota_keys import reload_additional_quota_regi
 logger = logging.getLogger(__name__)
 diagnostics_logger = logging.getLogger("app.main")
 bridge_logger = logging.getLogger("app.main")
+metrics_logger = logging.getLogger("app.main")
 
 
 class _RingMembershipReader(Protocol):
@@ -379,7 +380,7 @@ def start_metrics_server(settings):
 
         metrics_server_task = asyncio.create_task(serve_metrics(metrics_server, settings.metrics_port))
     elif settings.metrics_enabled:
-        logger.warning("Metrics endpoint enabled but prometheus-client is not installed")
+        metrics_logger.warning("Metrics endpoint enabled but prometheus-client is not installed")
 
     return metrics_server, metrics_server_task
 
