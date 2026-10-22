@@ -165,6 +165,7 @@ def run_case(sandbox, registry, case):
 
     outcome["timeouts"] = (
         any(r["timed_out"] for r in old_results + new_results)
+        or any((r.get("raw") or {}).get("timed_out") for r in old_results)
         or any(row.get("timed_out") for r in new_results for record in r["trace"] for row in record.get("hooks", []))
         or any(
             r["code"] == 128 + signal.SIGALRM and any(record.get("exec") for record in r["trace"]) for r in new_results
