@@ -184,7 +184,8 @@ def remote_only_mac() -> bool:
 def default_remote_url() -> str:
     return STUDIO_LB_URL if remote_only_mac() else LOCAL_LB_URL
 
-AGENT_LB_BASE_URL = (os.environ.get("CLAUDE_LB_BASE_URL") or default_remote_url()).rstrip("/")
+class LaunchConfig:
+    base_url = (os.environ.get("CLAUDE_LB_BASE_URL") or default_remote_url()).rstrip("/")
 CCGPT_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
 CCGPT_MODEL = "sol-latest"
 
@@ -1051,7 +1052,7 @@ def start_lb_proxy(session_id: str) -> str:
             path.unlink()
         except OSError:
             pass
-    _spawn_lb_proxy(ready, session_id, parent_pid, AGENT_LB_BASE_URL)
+    _spawn_lb_proxy(ready, session_id, parent_pid, LaunchConfig.base_url)
     deadline = time.monotonic() + _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", SHIM_START_TIMEOUT_DEFAULT)
     while time.monotonic() < deadline:
         try:
@@ -1071,7 +1072,7 @@ def start_lb_proxy(session_id: str) -> str:
 def _spawn_lb_proxy(ready: Path, session_id: str, parent_pid: int, upstream_base_url: str) -> None:
     command = [
         sys.executable,
-        str(Path(__file__).resolve()),
+        str(Path(__file__).resolve().with_name("claude-lb-launch")),
         "--lb-proxy",
         str(ready),
         session_id,
@@ -1161,7 +1162,7 @@ def bypass_anthropic_proxy() -> None:
         os.environ[name] = ",".join(exclusions)
 
 def lb_json(path: str, *, timeout: float = 2.5, base_url: str | None = None) -> dict:
-    request = urllib.request.Request(f"{base_url or AGENT_LB_BASE_URL}{path}", headers={"accept": "application/json"})
+    request = urllib.request.Request(f"{base_url or LaunchConfig.base_url}{path}", headers={"accept": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         body = response.read().decode("utf-8")
     return json.loads(body) if body else {}
@@ -1169,7 +1170,7 @@ def lb_json(path: str, *, timeout: float = 2.5, base_url: str | None = None) -> 
 def lb_post_json(path: str, payload: dict[str, str], *, timeout: float = 4.0, base_url: str | None = None) -> dict:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
-        f"{base_url or AGENT_LB_BASE_URL}{path}",
+        f"{base_url or LaunchConfig.base_url}{path}",
         data=body,
         headers={"accept": "application/json", "content-type": "application/json"},
         method="POST",
@@ -1615,7 +1616,6 @@ def _claim_at_endpoint(
             sys.exit(130)
 
 def print_lb_banner(argv: list[str], session_id: str) -> bool:
-    global AGENT_LB_BASE_URL
     model = requested_model(argv)
     effort = requested_effort(argv)
     quota_key, quota_label = anthropic_quota_key(model, effort)
@@ -1655,7 +1655,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
             print("cc: Claude LB unavailable (no candidates configured)", file=sys.stderr)
         return False
 
-    AGENT_LB_BASE_URL = selected_url
+    LaunchConfig.base_url = selected_url
     endpoint_note = f"via {urllib.parse.urlsplit(selected_url).netloc or selected_url}"
     if selected_label == "local":
         endpoint_note += " (local)"
@@ -1720,7 +1720,6 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
 
 def prepare_interactive_endpoint() -> bool:
 
-    global AGENT_LB_BASE_URL
     failures: list[str] = []
 
 
@@ -1742,7 +1741,7 @@ def prepare_interactive_endpoint() -> bool:
         if state not in {"ready", "busy"}:
             failures.append(f"{label} ({url}): {error}")
             continue
-        AGENT_LB_BASE_URL = url
+        LaunchConfig.base_url = url
         endpoint = urllib.parse.urlsplit(url).netloc or url
         suffix = " (local)" if label == "local" else ""
         note = " · LB busy, routing anyway" if state == "busy" else ""
@@ -1758,7 +1757,6 @@ def prepare_interactive_endpoint() -> bool:
 
 def prepare_ccgpt_endpoint() -> bool:
 
-    global AGENT_LB_BASE_URL
     failures: list[str] = []
     timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
     for label, url in _lb_candidates():
@@ -1769,7 +1767,7 @@ def prepare_ccgpt_endpoint() -> bool:
         if not compatible:
             failures.append(f"{label} ({url}): {capability_error}")
             continue
-        AGENT_LB_BASE_URL = url
+        LaunchConfig.base_url = url
         endpoint = urllib.parse.urlsplit(url).netloc or url
         suffix = " (local)" if label == "local" else ""
         print(
@@ -1871,7 +1869,7 @@ def _without_option(argv: list[str], option: str) -> list[str]:
 
 
 def claude_executable() -> str:
-    own = Path(__file__).resolve()
+    own = Path(__file__).resolve().with_name("claude-lb-launch")
     shadowed = False
     for entry in os.environ.get("PATH", os.defpath).split(os.pathsep):
         candidate = Path(entry or ".") / "claude"
@@ -2201,7 +2199,7 @@ def run_headless_with_resume(
             return returncode
 
 
-        claim, _, retry_at = claim_session_route(session_id, model, quota_key, AGENT_LB_BASE_URL)
+        claim, _, retry_at = claim_session_route(session_id, model, quota_key, LaunchConfig.base_url)
         if claim is not None or not should_wait_for_reset(retry_at, deadline):
             return returncode
         if attempt == RESUME_MAX_ATTEMPTS:
@@ -2243,7 +2241,7 @@ def main() -> None:
         listen_port = int(
             sys.argv[2] if len(sys.argv) >= 3 else os.environ.get("CLAUDE_LB_DESKTOP_PROXY_PORT", "2458")
         )
-        upstream = (sys.argv[3] if len(sys.argv) >= 4 else AGENT_LB_BASE_URL).rstrip("/")
+        upstream = (sys.argv[3] if len(sys.argv) >= 4 else LaunchConfig.base_url).rstrip("/")
         run_lb_proxy(
             str(proxy_ready_path("desktop")),
             "",
