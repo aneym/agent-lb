@@ -1,0 +1,1 @@
+Blocked: the seat staged a move-only split (the entry is 15233 bytes and the new module 10781 bytes) but made no commit. ./check --staged fails factory-lint on the moved code with a ruff-format reformat and two pyrefly nullable-access errors, and fixing them breaks the move-only rule. Installation a
