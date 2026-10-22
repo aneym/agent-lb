@@ -25,7 +25,8 @@ OBLIGATIONS = {
     "guards block only on floors": r"Guards hard-block only kept floors; everything else warns once",
     "no yes needed list": r"No yes needed: merges, deploys, money path, migrations",
     "relayed yes list": r"His yes, relayed: spend past a cap, destructive data with no record, going public",
-    "alex himself": r"Alex himself: his credentials, a click in his own signed-in account, a message to a real person",
+    "alex himself": r"Alex himself: his credentials, a message to a real person\.",
+    "account clicks need his yes": r"A click in his own signed-in account is allowed with his yes, first-hand or relayed with a time\.",
     "cos quote qualification": r"CoS message that quotes Alex first-hand with a time, or points at an `alex-\*` approval record, is his yes; never ask him again",
     "decide after scope": r"After a scope is approved, agents decide and log why",
     "mac clicks scope": r"Click macOS consent and TCC prompts, Privacy & Security toggles, system dialogs and app permission prompts yourself",
@@ -84,6 +85,12 @@ def test_core_keeps_every_obligation() -> None:
     flat = " ".join(core_text().split())
     missing = [name for name, pattern in OBLIGATIONS.items() if not re.search(pattern, flat)]
     assert not missing, missing
+    section = " ".join((SOURCE / "routing/03-who-decides-and-what-goes-to-alex.md").read_text().split())
+    assert re.search(
+        r"\*\*Clicks in his own signed-in accounts:\*\* allowed with Alex's yes, first-hand or relayed with a time\. "
+        r"Never type or read passwords, passkeys or 2FA codes; stop at re-auth\.",
+        section,
+    )
 
 
 def test_core_triggers_resolve_to_full_sections() -> None:
