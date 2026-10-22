@@ -789,7 +789,7 @@ def confine(root: Path, reads: bool = True) -> None:
 
 def is_confined(pid: int | None) -> bool | None:
 
-    if not pid or sys.platform != "darwin":
+    if pid is None or not pid or sys.platform != "darwin":
         return None
     try:
         return _libsystem().sandbox_check(int(pid), None, 0) == 1
@@ -811,7 +811,7 @@ def run_confined(root: Path, action, reads: bool, timeout_s: int = 120):
                 signal.signal(sig, signal.SIG_DFL)
             signal.alarm(timeout_s)
             confine(root, reads)
-            out = {"ok": action()}
+            out: dict = {"ok": action()}
             code = 0
         except BaseException as exc:  # noqa: BLE001 - reported to the parent by class and message
             out = {"error": exc.__class__.__name__, "message": str(exc)}
@@ -833,7 +833,8 @@ def run_confined(root: Path, action, reads: bool, timeout_s: int = 120):
         out = {}
     if "ok" in out:
         return out["ok"]
-    kind = {"Refused": Refused, "Unhealthy": Unhealthy}.get(out.get("error"), Unhealthy)
+    error_kind = out.get("error")
+    kind = {"Refused": Refused, "Unhealthy": Unhealthy}.get(error_kind, Unhealthy)
     raise kind(f"confined step failed: {out.get('error', 'no result')}: {out.get('message', '')}")
 
 
@@ -1396,7 +1397,7 @@ def read_accounts(root: Path, *, with_tokens: bool = False, strict: bool = False
             raise
         return []
     rows = [tuple(base64.b64decode(v["b64"]) if isinstance(v, dict) else v for v in row) for row in rows]
-    fernet = fernet(root) if rows else None
+    fernet = make_fernet(root) if rows else None
     now = time.time()
     accounts = []
 
@@ -2220,13 +2221,13 @@ def plist_bodies(
 
     label, aux_label = labels_for(run_id)
     python = str(interpreter_for(root))
-    script = str(script or bootstrap_script())
+    script_path = str(script or bootstrap_script())
     primary = {
         "Label": label,
         "ProgramArguments": [
             python,
             "-I",
-            script,
+            script_path,
             "_serve",
             str(root),
             "--host",
@@ -2977,7 +2978,7 @@ def sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
 
 
-async def serve_held_stream(request, fault: FaultState, bound: int, nonce, model: str) -> tuple[object, dict]:
+async def serve_held_stream(request, fault: FaultState, bound: int, nonce, model: str):
 
     import asyncio
 
@@ -3646,7 +3647,7 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
         except Exception as exc:
             secrets, keys = [], []
             load_error = exc.__class__.__name__
-    booted = {}
+    booted: dict = {}
     for name in (label, aux_label):
         if not label_loaded(name):
             booted[name] = "not loaded"
@@ -3744,7 +3745,7 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
         for pid, _, cmd in rows
         if (owned_process(cmd, root, run_id) or names_run(cmd, run_id)) and pid not in lineage
     ]
-    result = {
+    result: dict = {
         "labels_loaded": [name for name in (label, aux_label) if label_loaded(name)],
         "listeners": [{"port": port, "pids": pids} for port in ports if (pids := listener_pids(port))],
         "processes": leftover,
