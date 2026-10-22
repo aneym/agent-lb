@@ -37,8 +37,10 @@ def descendant_priority(job: dict) -> int:
         plist = Path(tmp) / f"{PROBE_LABEL}.plist"
         plist.write_bytes(plistlib.dumps(probe))
         subprocess.run(["launchctl", "bootout", f"{domain}/{PROBE_LABEL}"], capture_output=True, timeout=30)
-        subprocess.run(["launchctl", "bootstrap", domain, str(plist)], check=True, capture_output=True, timeout=30)
+        bootstrapped = False
         try:
+            subprocess.run(["launchctl", "bootstrap", domain, str(plist)], check=True, capture_output=True, timeout=30)
+            bootstrapped = True
             deadline = time.monotonic() + 30
             while not (marker.exists() and marker.read_text().strip()):
                 if time.monotonic() > deadline:
@@ -48,7 +50,11 @@ def descendant_priority(job: dict) -> int:
             out = subprocess.run(["ps", "-o", "pri=", "-p", pid], capture_output=True, text=True, check=True)
             return int(out.stdout.strip())
         finally:
-            subprocess.run(["launchctl", "bootout", f"{domain}/{PROBE_LABEL}"], capture_output=True, timeout=30)
+            cleanup = subprocess.run(
+                ["launchctl", "bootout", f"{domain}/{PROBE_LABEL}"], capture_output=True, timeout=30
+            )
+            if bootstrapped or cleanup.returncode != 3:
+                cleanup.check_returncode()
 
 
 def main() -> int:
