@@ -14,54 +14,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from agent_defs_models import DEFAULT_MODELS, load_models as _catalog
+
 VERSION = "1"
 STATE_ENV = "CLAUDE_LB_DOCTOR_STATE_DIR"
-DEFAULT_MODELS = frozenset(
-    {
-        "inherit",
-        "opus",
-        "sonnet",
-        "haiku",
-        "fable",
-        "claude-opus-5-5",
-        "claude-opus-5-5[1m]",
-        "claude-opus-5",
-        "claude-opus-5[1m]",
-        "claude-sonnet-5",
-        "claude-sonnet-5-5",
-        "claude-fable-5",
-        "claude-fable-5[1m]",
-        "claude-fable-5-1",
-        "claude-fable-5-1[1m]",
-        "claude-mythos-5",
-        "claude-planner",
-        "claude-opus-4-6",
-        "claude-opus-4-8",
-        "claude-sonnet-4-5",
-        "claude-sonnet-4-6",
-        "claude-haiku-4-5",
-        "gpt-5.6-sol",
-        "gpt-5.6-sol-medium",
-        "gpt-5.6-sol-high",
-        "gpt-5.6-sol-xhigh",
-        "gpt-5.6-terra",
-        "gpt-5.6-terra-medium",
-        "gpt-5.6-luna",
-        "gpt-6-sol",
-        "gpt-6-sol-low",
-        "gpt-6-sol-medium",
-        "gpt-6-sol-high",
-        "gpt-6-sol-xhigh",
-        "gpt-6.1-sol",
-        "gpt-6.1-sol-low",
-        "gpt-6.1-sol-medium",
-        "gpt-6.1-sol-high",
-        "gpt-6.1-sol-xhigh",
-        "gpt-6-luna",
-        "gpt-6.1-luna",
-        "gpt-6-astra",
-    }
-)
 _FAMILY_ALIAS = re.compile(r"(?:opus|sonnet|haiku|sol|luna|terra|astra|grok|swe)-latest(?:-(?:low|medium|high|xhigh|max))?")
 _KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]*(.*))?$")
 _BLOCK = re.compile(r"^[>|][+-]?(?:[1-9])?(?:[ \t]+#.*)?$")
@@ -359,26 +315,6 @@ def repair_file(path: str | Path, models: set[str] | None = None) -> dict[str, A
     final = inspect_file(source, models)
     final.update({"repaired": True, "backup": backup})
     return final
-
-
-def _catalog(path: str | Path | None) -> tuple[set[str], str]:
-    models = set(DEFAULT_MODELS)
-    if path is None:
-        return models, hashlib.sha256(b"builtin").hexdigest()
-    data = Path(path).read_bytes()
-    decoded = json.loads(data)
-    if isinstance(decoded, list):
-        entries = decoded
-    elif isinstance(decoded, dict) and isinstance(decoded.get("models"), list):
-        entries = decoded["models"]
-    else:
-        raise ValueError("models catalog must be a JSON list or an object with a models list")
-    for entry in entries:
-        model_id = entry.get("id") if isinstance(entry, dict) else entry
-        if not isinstance(model_id, str) or not model_id:
-            raise ValueError("each catalog model must be a string or an object with a string id")
-        models.add(model_id)
-    return models, hashlib.sha256(data).hexdigest()
 
 
 def _definition_paths(cwd: Path, user_root: Path) -> list[Path]:
