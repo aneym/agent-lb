@@ -1,0 +1,85 @@
+.....F
+=================================== FAILURES ===================================
+________________ test_fold_parity_sticky_and_verbatim_rollback _________________
+
+tmp_path = PosixPath('/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-install-policy-split-1792676890-0cbd-b538-35d1680b/.seat-tmp/pytest-of-jobs/pytest-0/test_fold_parity_sticky_and_ve0')
+
+    def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
+        home, _ = make_home(tmp_path)
+        install, env = installer(tmp_path, home)
+        install()
+        per_hook = hooks_of(home)
+        assert not (home / ".claude/hooks/dispatch/registry.json").exists()
+        assert "hook-dispatch.py" not in json.dumps(per_hook)
+    
+        out = install("--hook-dispatcher", "on").stdout
+        assert "hook dispatcher parity passed" in out
+        folded = hooks_of(home)
+        bash = [group for group in folded["PreToolUse"] if group.get("matcher") == "Bash"]
+        registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
+    
+        assert bash == [
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": f"{DISPATCH_INSTALLED} PreToolUse 'Bash' {registry['rev']}",
+                        "timeout": 60,
+                    }
+                ],
+            }
+        ]
+        bash_entry = [hook["command"] for hook in registry["entries"]["PreToolUse"]["Bash"]]
+        assert 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"' in bash_entry
+        assert '"$HOME/.claude/hooks/dangerous-command-guard.sh"' in bash_entry
+    
+        assert json.loads((home / f".claude/hooks/dispatch/registry.{registry['rev']}.json").read_text()) == registry
+    
+        for kept in (
+            {"matcher": "mcp__.*", "hooks": [{"type": "command", "command": "true"}]},
+            {"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "true", "timeout": 5}]},
+        ):
+            assert kept in folded["PreToolUse"]
+        assert folded["SessionStart"] == per_hook["SessionStart"]
+        assert (
+            all(
+                "hook-dispatch.py" in group["hooks"][0]["command"]
+                for event in ("UserPromptSubmit", "Stop")
+                for group in folded[event]
+            )
+            or folded["Stop"] == per_hook["Stop"]
+        )
+        report = json.loads((home / ".claude/hooks/dispatch/parity-last.json").read_text())
+    
+        assert report["parity"] == "pass" and report["floor"] == "pass" and report["floor_replay"]
+    
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "gh pr merge 5"},
+            "cwd": str(tmp_path),
+            "hook_event_name": "PreToolUse",
+        }
+        new = run_hook(bash[0]["hooks"][0]["command"], payload, env)
+        assert new.returncode == 2
+        reason = json.loads(new.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+>       assert reason == (
+            '[python3 "$HOME/.claude/hooks/no-direct-merge.py"]: BLOCKED: merge through the queue\n\n'
+            '[/usr/bin/python3 "$HOME/.claude/hooks/gh-write-guard.py"]: BLOCKED: kept floor "Alex\'s credentials": '
+            "gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, "
+            "or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN).\n"
+        )
+E       assert '[python3 "$H...ll allowed.\n' == '[python3 "$H...HUB_TOKEN).\n'
+E         
+E         Skipping 349 identical leading characters in diff, use -v to show
+E           UB_TOKEN).
+E         + 
+E         + [/usr/bin/python3 "$HOME/.claude/hooks/merge-gate-guard.py"]: BLOCKED: direct `gh pr merge` skips the merge gate. agent-rails lands with `python3 scripts/studio_merge.py merge <branch>`; other repos fast-forward push to origin/main; Open Factory gated repos queue with `of gate queue <pr>`. `gh pr merge <pr> --disable-auto` (dequeue) is still allowed.
+
+tests/floor/test_hook_dispatcher.py:87: AssertionError
+=========================== short test summary info ============================
+FAILED tests/floor/test_hook_dispatcher.py::test_fold_parity_sticky_and_verbatim_rollback
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! KeyboardInterrupt !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+/home/jobs/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/selectors.py:398: KeyboardInterrupt
+(to show a full traceback on KeyboardInterrupt use --full-trace)
+1 failed, 5 passed in 238.38s (0:03:58)
