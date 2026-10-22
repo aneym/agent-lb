@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from dispatch_parity import run_parity  # type: ignore[missing-import]
 from codex_home import codex_changes  # type: ignore[missing-import]
+from dispatch_parity import run_parity  # type: ignore[missing-import]
 from harness_mcp import ensure_harness_mcp
 from hook_inventory import hook_path_problems, validate_hook_changes  # type: ignore[missing-import]
 from policy_hosts import policy_box_hosts  # type: ignore[missing-import]
@@ -61,7 +61,7 @@ def managed(target_dir: str, template: str, name: str | None = None) -> tuple[Pa
     )
 
 
-from policy_inventory import ADOPTED_KEEP_NAMES, DISPATCH_INPROC, MANAGED_HOOKS, MANAGED_SEATS  # type: ignore[missing-import]
+from policy_inventory import ADOPTED_KEEP_NAMES, DERIVED_PINS, DISPATCH_INPROC, MANAGED_HOOKS, MANAGED_SEATS  # type: ignore[missing-import]
 
 MANAGED_AGENTS = (
     managed(".agent-lb/managed/coding-agents", "codex-seat-home.py"),
@@ -792,15 +792,6 @@ def dispatch_worth(source: Path, home: Path) -> Any:
         return plan.kind != "external"
 
     return worth
-
-
-DERIVED_PINS = (
-    "wide-scan-guard.sh",
-    "agent-lb-bootout-guard.sh",
-    "railway-vars-guard.sh",
-    "link-cli-guard.sh",
-    "dangerous-command-guard.sh",
-)
 
 
 def script_pins(source: Path) -> dict[str, str]:

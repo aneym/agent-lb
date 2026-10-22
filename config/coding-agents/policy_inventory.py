@@ -91,4 +91,17 @@ DISPATCH_INPROC = (
     "workflow-relay-guard.py",
     "herdr-tab-autoname.py",
     "idle-agents.py",
+    "main-checkout-write-warn.py",
+    "merge-gate-guard.py",
+    "seat-guard.py",
+    "workflow-seat-guard.py",
+)
+
+DERIVED_PINS = (
+    "wide-scan-guard.sh",
+    "agent-lb-bootout-guard.sh",
+    "railway-vars-guard.sh",
+    "link-cli-guard.sh",
+    "dangerous-command-guard.sh",
+    "kill-scope-guard.py",
 )
