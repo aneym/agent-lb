@@ -1,0 +1,1 @@
+Blocked: split is staged but uncommitted (HEAD unchanged). ./check --staged fails because the comment guard rejects the "# fmt: off" directives in the moved code, and removing them would need formatting changes the move-only brief forbids. Sizes: entry 12746, installation module 8206, factory module
