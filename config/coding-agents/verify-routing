@@ -130,8 +130,8 @@ for name in ("planner", "plan-reviewer", "frontend-designer"):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
     check(model == "opus", f"{name} runs on the newest Opus via `model: opus` (got {model})")
 check(
-    'route resolve sol-latest)" --effort "$dispatch_effort"' in read(SOURCE / "agents" / "codex-verifier.md"),
-    "codex-verifier forwards to the newest Sol at dispatch-selected effort",
+    'seat-exec --seat codex-verifier --effort "$dispatch_effort"' in read(SOURCE / "agents" / "codex-verifier.md"),
+    "codex-verifier forwards to its seat at dispatch-selected effort",
 )
 
 
