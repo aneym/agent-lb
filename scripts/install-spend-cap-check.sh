@@ -6,6 +6,10 @@ bindir=${AGENT_LB_BIN_DIR:-"$HOME/.agent-lb/bin"}
 mkdir -p "$bindir"
 tmp=$(mktemp "$bindir/.lb-spend-cap-check.XXXXXX")
 trap 'rm -f "$tmp"' EXIT HUP INT TERM
+git -C "$repo" show origin/main:scripts/lb_spend_cap_check_support.py > "$tmp"
+chmod 644 "$tmp"
+mv -f "$tmp" "$bindir/lb_spend_cap_check_support.py"
+tmp=$(mktemp "$bindir/.lb-spend-cap-check.XXXXXX")
 git -C "$repo" show origin/main:scripts/lb-spend-cap-check > "$tmp"
 chmod 755 "$tmp"
 mv -f "$tmp" "$bindir/lb-spend-cap-check"
