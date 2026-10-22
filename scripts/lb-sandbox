@@ -24,6 +24,7 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+sys.path = [str(Path(__file__).resolve().parent), *sys.path]
 REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 LB_HOME = REAL_HOME / ".agent-lb"
 SANDBOXES = LB_HOME / "sandboxes"
@@ -37,7 +38,7 @@ LIVE_FRONT_STATE = LB_HOME / "state" / "front.json"
 LIVE_FRONT_PORT = 2455
 LIVE_PRIMARY_PORT = 2457
 LIVE_PEER_URL = "http://127.0.0.1:2455"
-LIVE_KEY_DIR_LEGACY = REAL_HOME / ".codex-lb"
+CODEX_KEY_DIR = REAL_HOME / ".codex-lb"
 MANAGED_ROUTING = LB_HOME / "managed" / "coding-agents"
 LABEL_PREFIX = "com.agent-lb.drill."
 FORBIDDEN_PORTS = frozenset({1455, 2455, 2457, 2459})
@@ -216,7 +217,7 @@ def check_interpreter(python: Path, root: Path) -> None:
     _trusted_file("interpreter", target, info)
 
 def bootstrap_script() -> Path:
-    return Path(__file__).resolve()
+    return Path(__file__).resolve().with_name("lb-sandbox")
 
 def check_bootstrap(script: Path, root: Path) -> None:
     script = _lexical(script)
@@ -714,7 +715,7 @@ def seatbelt_profile(root: Path, reads: bool) -> str:
         except OSError:
             envs = []
         private = " ".join([f"(subpath {q(runtime / '.codex-lb')})"] + [f"(literal {q(runtime / n)})" for n in envs])
-        custody = f"(subpath {q(LB_HOME)}) (subpath {q(LIVE_KEY_DIR_LEGACY)}) (literal {q(LIVE_PLIST)})"
+        custody = f"(subpath {q(LB_HOME)}) (subpath {q(CODEX_KEY_DIR)}) (literal {q(LIVE_PLIST)})"
         rules += [
 
             f"(deny file-read-data {custody})",
@@ -1645,7 +1646,7 @@ def root_text(root: Path) -> str:
 
 def live_trees() -> list[str]:
 
-    return [os.path.abspath(LB_HOME), os.path.abspath(LIVE_KEY_DIR_LEGACY)]
+    return [os.path.abspath(LB_HOME), os.path.abspath(CODEX_KEY_DIR)]
 
 
 class LiveInodes:
