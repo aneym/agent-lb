@@ -15,6 +15,7 @@ BOX_RUN = re.compile(
 )
 ROUTED = re.compile(r"(?:^|\s)(?:offload-run|seat-run)\s")
 DECISION = re.compile(r"--decision [0-9a-f]+")
+LOAD_BANDS = 10
 VARIANTS = {
     "offload-local": dict(mode="auto", local=8.0, box=900.0),
     "offload-box": dict(mode="auto", local=150.0, box=20.0),
@@ -54,12 +55,20 @@ def write_rows(root, key, rows):
 
 
 def seed(root, local, box):
-    load1, cores = os.getloadavg()[0], os.cpu_count()
+    cores = os.cpu_count() or 1
     now = time.time()
-    studio = {"studio_load1": load1, "studio_cores": cores, "rc": 0, "status": "done"}
+    studio = {"studio_load1": 1.5 * cores, "studio_cores": cores, "rc": 0, "status": "done"}
     rows = [
-        dict(studio, at=now - 600 + i, where="local", wall_s=local * (1 + i / 50.0), input_sha="0" * 40)
-        for i in range(6)
+        dict(
+            studio,
+            studio_load1=1.5 * 2**band * cores,
+            at=now - 600 + 3 * band + i,
+            where="local",
+            wall_s=local * (1 + i / 50.0),
+            input_sha="0" * 40,
+        )
+        for band in range(LOAD_BANDS)
+        for i in range(3)
     ]
     rows += [
         dict(
