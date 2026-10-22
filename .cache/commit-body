@@ -1,0 +1,6 @@
+refactor(accounts): move refresh exchange below file cap
+
+Move the locked refresh exchange and its helpers to their defining module; update scheduler and custody imports.
+
+filecap-cutover: app/modules/accounts/auth_manager.py
+check: TMPDIR="$PWD/.cache/tmp" AGENT_LB_DATA_DIR="$PWD/.cache/test-data" .venv/bin/python -c 'from pathlib import Path; import app.core.forensics as f; f.register_stack_dump_signal.__defaults__ = (Path(".cache/test-forensics"),); import pytest; raise SystemExit(pytest.main(["-q", "tests/floor/test_federation_custody_validation.py", "tests/floor/test_proxy_transcriptions.py"]))'
