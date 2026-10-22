@@ -85,6 +85,12 @@ def test_core_keeps_every_obligation() -> None:
     flat = " ".join(core_text().split())
     missing = [name for name, pattern in OBLIGATIONS.items() if not re.search(pattern, flat)]
     assert not missing, missing
+    section = " ".join((SOURCE / "routing/03-who-decides-and-what-goes-to-alex.md").read_text().split())
+    assert re.search(
+        r"\*\*Clicks in his own signed-in accounts:\*\* allowed with Alex's yes, first-hand or relayed with a time\. "
+        r"Never type or read passwords, passkeys or 2FA codes; stop at re-auth\.",
+        section,
+    )
 
 
 def test_core_triggers_resolve_to_full_sections() -> None:
