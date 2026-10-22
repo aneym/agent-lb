@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T21:08:34Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-scripts-lb-sandbox",
-   "path": "scripts/lb-sandbox",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T19:38:34Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -244,6 +234,25 @@
    "path": "clients/route",
    "sha": "13dd602f59b0784a865357b7c6760664e9b7fff9",
    "until": "2026-10-29T19:38:29Z"
+  },
+  {
+   "into": [
+    "scripts/lb_sandbox_cli.py",
+    "scripts/lb_sandbox_commands.py",
+    "scripts/lb_sandbox_custody.py",
+    "scripts/lb_sandbox_edge.py",
+    "scripts/lb_sandbox_filesystem.py",
+    "scripts/lb_sandbox_guards.py",
+    "scripts/lb_sandbox_lifecycle.py",
+    "scripts/lb_sandbox_main.py",
+    "scripts/lb_sandbox_runtime.py",
+    "scripts/lb_sandbox_scan.py",
+    "scripts/lb_sandbox_system.py"
+   ],
+   "note": "scripts/lb-sandbox split at 4adbadb8ab. Reapply your diff onto the new module that now holds the code. Map: scripts/lb_sandbox_cli.py: cmd_stop, cmd_gc, build_parser, run_marker, in_live_venv, isolated_env, isolated_python, cmd_restart; scripts/lb_sandbox_commands.py: load_secrets, load_key, cmd_aux, cmd_status, cmd_client_env, parse_fault, cmd_fault, cmd_scan, stop_pid, entry_of; scripts/lb_sandbox_custody.py: read_accounts, create_key, create_run_key, custody_paths, secret_patterns, wrapped_span, base64_decodings, plausible_plaintext, Detector, scan_stream, volume_top, under; scripts/lb_sandbox_edge.py: boot_app, rate_limit_response, auth_hash12, FaultState, request_json, wants_stream, sse, serve_held_stream, make_edge_handler; scripts/lb_sandbox_filesystem.py: open_private, remove_recorded, remove_private, root_stage, make_root, root_entry, open_root, open_dir, single_link, open_in_root, write_in_root, append_in_root; scripts/lb_sandbox_guards.py: Refused, Unhealthy, check_run_id, check_label, check_ports, lexical, _refuse_linked_dirs, check_root, interpreter_for, _trusted_file, venv_base_dir, check_interpreter; scripts/lb_sandbox_lifecycle.py: cmd_start, unlink_key, has_dir, remove_root, command_ref, teardown, private_left; scripts/lb_sandbox_main.py: main; scripts/lb_sandbox_runtime.py: plist_bodies, write_plists, find_node, live_identity, sm_job_submit, own_job_loaded, submit_job, label_names_root, bootout, usable_counts, log_failure_classes, plist_paths; scripts/lb_san",
+   "path": "scripts/lb-sandbox",
+   "sha": "4adbadb8ab9652d8ea0249226fd253c2d227d054",
+   "until": "2026-10-29T19:39:09Z"
   }
  ]
 }
