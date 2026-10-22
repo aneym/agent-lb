@@ -112,26 +112,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--preserve-claude-md",
         action="store_true",
-        help="Do not read, validate, checkpoint or write personal Claude instructions",
+        help="Preserve personal instructions",
     )
     parser.add_argument("--uninstall", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--autocompact-only", action="store_true")
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--no-box-sync", action="store_true", help="Skip syncing routing policy to factory boxes")
+    parser.add_argument("--no-box-sync", action="store_true", help="Skip box sync")
     parser.add_argument("--reason", help="Logged reason for forcing installation from a stale revision")
     parser.add_argument(
         "--hook-dispatcher",
         choices=("on", "off"),
-        help="on: fold the PreToolUse, PostToolUse, UserPromptSubmit and Stop hooks into hooks/hook-dispatch.py "
-        "after the parity fixture passes against this home's guards; off: restore the per-hook config verbatim. "
-        "Absent: keep the current state (a folded config stays folded, over the guards it was checked on).",
+        help="on: fold after parity; off: unfold; absent: keep mode",
     )
     parser.add_argument(
         "--check-hook-paths",
         action="store_true",
-        help="write nothing; exit 1 when a hook the live settings run (through the dispatcher registry when folded) "
-        "names a release-scoped path, or a PreToolUse guard names a path that is missing",
+        help="Check folded and direct hook paths",
     )
     return parser.parse_args()
 
@@ -379,7 +376,6 @@ DISPATCH_REGISTRY = Path(".claude/hooks/dispatch/registry.json")
 DISPATCH_SKIP_MATCHERS = ("AskUserQuestion",)
 DISPATCH_HOOK_KEYS = {"type", "command", "timeout", "statusMessage"}
 SIMPLE_MATCHER = re.compile(r"[A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*")
-DEFAULT_HOOK_TIMEOUT = 600
 
 NAME_LIST = re.compile(r"[a-zA-Z0-9_|, -]+")
 TOOL_ALIASES = {
@@ -551,7 +547,9 @@ def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 name = None
                 if isinstance(command, str):
                     name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
-                    name = name or next((n for n in RETIRED_HOOKS if f"hooks/{n}" in command), None)
+                    name = name or next((n for n in (*RETIRED_HOOKS, "routing-pulse.py") if n in command), None)
+                    if event == "PostToolUse" and "factory-lint-hook" in command:
+                        name = "factory-lint-hook"
                 if name:
                     dropped.append(f"{event} {group.get('matcher') or '*'}: {name}")
                 else:
@@ -620,7 +618,7 @@ def registry_rev(entries: dict[str, Any]) -> str:
 
 
 def dispatch_group(event: str, key: str, matcher_field: Any, hooks: list[dict[str, Any]], rev: str) -> dict[str, Any]:
-    timeout = sum(hook.get("timeout") or DEFAULT_HOOK_TIMEOUT for hook in hooks) + 5
+    timeout = 60
     entry: dict[str, Any] = {
         "type": "command",
         "command": f'P={DISPATCH_PYTHON}; [ -x "$P" ] || P=python3; '
@@ -697,8 +695,6 @@ def fold_hooks(
         folded[event] = out
     registry = {
         "schema": 1,
-        "about": "hook-dispatch.py registry, written by agent-lb install-policy.py --hook-dispatcher on; "
-        "per_hook is the config it replaced (restore: install-policy.py --hook-dispatcher off)",
         "rev": rev,
         "per_hook": per_hook,
         "dispatch": dispatch,
@@ -1123,6 +1119,24 @@ def reconcile_settings(
         for line in dropped:
             print(f"dropped {line}")
         updated["hooks"] = hooks
+    if not uninstall:
+        for event, groups in hooks.items():
+            for group in groups:
+                for hook in group["hooks"]:
+                    command = hook.get("command", "")
+                    if "skill-stats" in command:
+                        hook["timeout"] = 3
+                    if "CACHE_ALERT" in command:
+                        hook["command"] = (
+                            'f="$HOME/.agent-lb/CACHE_ALERT"; [ ! -f "$f" ] || '
+                            '{ printf "agent-lb CACHE ALERT (tell Alex): "; '
+                            'LC_ALL=C head -c 980 "$f" | tr "\\r\\n" "  "; printf "\\n"; }'
+                        )
+                    if event == "PostToolUse" and "idle-agents.py" in command:
+                        matcher = group.get("matcher", "*")
+                        if matcher != "*" and "TaskStop" not in matcher.split("|"):
+                            group["matcher"] = matcher + "|TaskStop"
+            hooks[event] = [g for g in groups if g["hooks"]]
     if not uninstall and source is not None and isinstance(hooks, dict):
         for line in rewrite_floor_commands(hooks, source):
             print(f"hook policy: floor guard registered as a direct exec: {line}")
@@ -1199,10 +1213,10 @@ def reconcile_settings(
                 if group is not None:
                     group.setdefault("hooks", []).insert(0, dict(hook))
                     continue
-            group = dict[str, Any](hooks=[dict(hook)])
+            new_group: dict[str, Any] = {"hooks": [dict(hook)]}
             if matcher is not None:
-                group["matcher"] = matcher
-            event_groups.append(group)
+                new_group["matcher"] = matcher
+            event_groups.append(new_group)
     if not uninstall and source is not None:
         internal_hook_commands(updated.get("hooks", {}), source)
     dedupe_hooks(updated.get("hooks"))
@@ -1449,8 +1463,7 @@ def main() -> int:
             settings = {**settings, "hooks": unfold_hooks(settings["hooks"], old_registry)}
         except ValueError as exc:
             raise SystemExit(
-                f"error: {exc}. The dispatcher refuses PreToolUse calls until this is fixed: restore {registry_path} "
-                "from the newest checkpoint under ~/.agent-lb/config-checkpoints/coding-agents/"
+                f"error: {exc}. Restore {registry_path} from ~/.agent-lb/config-checkpoints/coding-agents/"
             ) from exc
 
     try:
@@ -1486,9 +1499,8 @@ def main() -> int:
         opaque = opaque_floor_commands(nxt["hooks"], source)
         if opaque:
             raise SystemExit(
-                "error: hook dispatcher not installed, nothing written: a floor guard must be registered as a direct "
-                "exec of its own script (`[python3|bash] <script> [args]`, S44), and the dispatcher refuses every call "
-                "these would guard: " + "; ".join(opaque)
+                "error: nothing written: floor guards require direct exec (`[python3|bash] <script> [args]`, S44): "
+                + "; ".join(opaque)
             )
     new_registry: dict[str, Any] | None = None
     keep_fold = False
@@ -1540,10 +1552,7 @@ def main() -> int:
                     keep_fold = True
                     print(f"WARNING hook dispatcher: parity failed twice ({summary}); keeping installed fold")
                 else:
-                    print(
-                        f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
-                        f"({summary}); restoring the per-hook config"
-                    )
+                    print(f"WARNING hook dispatcher: parity failed ({summary}); restoring per-hook config")
             if new_registry is not None:
                 nxt = {**nxt, "hooks": folded_hooks}
             elif keep_fold:
@@ -1755,6 +1764,10 @@ def main() -> int:
             stub = args.home / ".claude/hooks" / name
             if read_text(stub) != "import sys; sys.stdin.read()\n":
                 changes[stub] = "import sys; sys.stdin.read()\n"
+            for relative in (POLICY_DIR / "hooks" / name, MANAGED_DIR / Path(name).stem):
+                target = args.home / relative
+                if target.is_file() and not target.is_symlink():
+                    changes[target] = None
         for name in RETIRED_AGENTS:
             for relative in (
                 Path(".claude/agents") / f"{name}.md",

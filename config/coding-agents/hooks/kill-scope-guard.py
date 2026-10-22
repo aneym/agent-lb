@@ -535,4 +535,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    if code == 0 and os.environ.get("HOOK_FLOOR_RECEIPT"):
+        print("floor-ok kill-scope-guard.py")
+    sys.exit(code)

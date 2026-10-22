@@ -239,6 +239,7 @@ FLOOR_NAMES = (
     "no-chrome-guard.sh",
     "host-credential-guard.py",
     "gh-write-guard.py",
+    "kill-scope-guard.py",
 )
 FLOOR_INLINE = "BLOCKED: Dangerous command"
 FLOOR_MESSAGE = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard [^\n]*(?:\n.*)?$", re.S)
