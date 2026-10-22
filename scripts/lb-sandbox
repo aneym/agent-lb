@@ -3944,7 +3944,7 @@ def main(argv: list[str]) -> int:
         reexec = (not in_live_venv() and python.exists()) or (marker is not None and marker != EXEC_ENV_MARKER)
         if reexec:
             target = str(python) if python.exists() and not in_live_venv() else sys.executable
-            os.execve(target, isolated_python(target, Path(__file__).resolve(), argv), isolated_env(dict(os.environ)))
+            os.execve(target, isolated_python(target, bootstrap_script(), argv), isolated_env(dict(os.environ)))
     try:
         return COMMANDS[args.command](args)
     except Refused as exc:
