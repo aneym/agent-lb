@@ -132,7 +132,7 @@ This repo uses **OpenSpec as the primary workflow and SSOT** for change-driven d
 ## Documentation & Release Notes
 
 - **Do not add/update feature or behavior documentation under `docs/`**. Use OpenSpec context docs under `openspec/specs/<capability>/context.md` (or change-level context under `openspec/changes/<change>/context.md`) as the SSOT.
-- **Do not edit `CHANGELOG.md` directly.** Leave changelog updates to the release process; record change notes in OpenSpec artifacts instead.
+- Record change notes in OpenSpec artifacts.
 
 ### Documentation Model (Spec + Context)
 

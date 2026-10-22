@@ -104,8 +104,6 @@ The typical flow:
 If you're unsure whether your PR needs an OpenSpec change, open it as draft
 and ask — a maintainer will tell you.
 
-**Do not** hand-edit `CHANGELOG.md`.
-
 ## Coding conventions
 
 - **Python**: 3.13+. Run `factory-lint check --changed` for lint, format
