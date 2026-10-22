@@ -1,0 +1,1798 @@
+diff --git a/scripts/lb-sandbox-check b/scripts/lb-sandbox-check
+index 553a0d45..6b98500b 100755
+--- a/scripts/lb-sandbox-check
++++ b/scripts/lb-sandbox-check
+@@ -1,848 +1,18 @@
+ #!/usr/bin/env python3
+ 
+-
+ from __future__ import annotations
+ 
++from pathlib import Path
+ import argparse
+-import datetime as dt
+-import http.client
+ import json
+ import os
+-import re
+ import shutil
+ import socket
+-import stat
+-import subprocess
+ import sys
+-import threading
+-import time
+-from pathlib import Path
+-
+-HOME = Path.home()
+-LIVE_LABEL = "com.aneyman.agent-lb"
+-LIVE_FRONT_LABEL = "com.aneyman.agent-lb-front"
+-LIVE_FRONT_STATE = HOME / ".agent-lb" / "state" / "front.json"
+-
+-LIVE_SYNC_LOG = HOME / ".agent-lb" / "runtime" / "sync.log"
+-LIVE_RESTART_LOCK = HOME / ".agent-lb" / "runtime" / "lb-restart.lock"
+-SYNC_RESTART_RE = re.compile(r"^\S+ lb-restart (ok|FAILED)\b")
+-GATE_ALLOWED = {("GET", "/api/federation/mirror"), ("GET", "/api/federation/status")}
+-
+-
+-HOLD_S = 120
+-CUTOVER_WAIT_S = 60
+-CUTOVER_RE = re.compile(r"front -> :(\d+); primary pid (\d+) had (-?\d+|None) in flight")
+-RESTART_MARKS = {
+-    "standby_boot": "standby healthy on",
+-    "front_switch": "front -> :",
+-    "drain": "old primary exited",
+-    "restore": "new primary healthy",
+-    "standby_stopped": "stopped listening",
+-}
+-
+-
+-def utc() -> str:
+-    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+-
+-
+-class Check:
+-    def __init__(self, out: Path, lb_sandbox: Path) -> None:
+-        self.out = out
+-        self.lb_sandbox = lb_sandbox
+-        self.n = 0
+-        self.lock = threading.Lock()
+-        self.steps: list[dict] = []
+-        self.env_infra: str | None = None
+-        self.unverified = [
+-            "Other hosts: Studio only; boxes use their own follower agent-lb.",
+-            "OAuth refresh in the sandbox: mirrored accounts carry access tokens only; refresh is refused in code.",
+-            "Websocket upstream: the sandbox forces http so the edge can see and cut streams.",
+-            "The live restart: only the sandbox restarts; the live service is read, never restarted.",
+-        ]
+-
+-    def step(self, name: str, ok: bool, detail: str, evidence: list[str]) -> bool:
+-        self.steps.append({"name": name, "result": "pass" if ok else "fail", "detail": detail, "evidence": evidence})
+-        print(f"[{utc()}] {'PASS' if ok else 'FAIL'} {name}: {detail}", flush=True)
+-        return ok
+-
+-    def sb(self, name: str, *args: str, timeout: float = 600) -> tuple[int, dict, Path]:
+-
+-        with self.lock:
+-            self.n += 1
+-            stem = self.out / f"{self.n:02d}-{name}"
+-        argv = [str(self.lb_sandbox), *args, "--json"]
+-        with open(f"{stem}.out", "w") as so, open(f"{stem}.err", "w") as se:
+-            try:
+-                rc = subprocess.run(argv, stdout=so, stderr=se, timeout=timeout, check=False).returncode
+-            except subprocess.TimeoutExpired:
+-                rc = 124
+-        try:
+-            data = json.loads(Path(f"{stem}.out").read_text() or "{}")
+-        except ValueError:
+-            data = {}
+-        return rc, data, Path(f"{stem}.out")
+-
+-
+-def sh(*argv: str) -> str:
+-    return subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False).stdout
+-
+-
+-def launchd_pid(label: str) -> int | None:
+-
+-    for line in sh("/bin/launchctl", "list").splitlines()[1:]:
+-        parts = line.split("\t")
+-        if len(parts) == 3 and parts[2] == label:
+-            return int(parts[0]) if parts[0].isdigit() else None
+-    return None
+-
+-
+-def listener_pids(port: int) -> list[int]:
+-    return sorted({int(p) for p in sh("/usr/sbin/lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t").split()})
+-
+-
+-def live_identity() -> dict:
+-    try:
+-        preferred = json.loads(LIVE_FRONT_STATE.read_text()).get("preferred")
+-    except (OSError, ValueError):
+-        preferred = None
+-    return {
+-        "primary_pid": launchd_pid(LIVE_LABEL),
+-        "front_pid": launchd_pid(LIVE_FRONT_LABEL),
+-        "listeners_2455": listener_pids(2455),
+-        "listeners_2457": listener_pids(2457),
+-        "preferred_port": preferred,
+-    }
+-
+-
+-def sync_log_size() -> int:
+-
+-    try:
+-        return LIVE_SYNC_LOG.stat().st_size
+-    except OSError:
+-        return 0
+-
+-
+-def live_restarts_since(offset: int) -> list[str]:
+-
+-    try:
+-        with open(LIVE_SYNC_LOG, "rb") as fh:
+-            fh.seek(offset)
+-            text = fh.read(1 << 20).decode("utf-8", "replace")
+-    except OSError:
+-        return []
+-    return [line[:300] for line in text.splitlines() if SYNC_RESTART_RE.match(line)]
+-
+-
+-def live_restart_holder() -> str | None:
+-
+-    try:
+-        text = LIVE_RESTART_LOCK.read_text(errors="replace").strip()
+-    except OSError:
+-        return None
+-    return text[:300] or None
+-
+-
+-def live_untouched(before: dict, after: dict, restarts: list[str], holders: list[str]) -> tuple[str, str]:
+-
+-    if after == before:
+-        return "pass", f"before {before}; after {after}"
+-    named = [f"logged: {line}" for line in restarts] + [f"in progress: {line}" for line in holders]
+-    if named:
+-        return "infra_error", (
+-            f"live agent-lb restarted by another lane during the run ({'; '.join(named)}); "
+-            f"before {before}; after {after}"
+-        )
+-    return "fail", f"live identity changed with no live lb-restart logged or running: before {before}; after {after}"
+-
+-
+-def resolve_model(alias: str, fallback: str) -> str:
+-    route = shutil.which("route")
+-    if route:
+-        value = sh(route, "resolve", alias).strip().splitlines()
+-        if value and value[0].strip():
+-            return value[0].strip()
+-    return fallback
+-
+-
+-MAX_TURN_BYTES = 256 << 10
+-MAX_TURN_TEXT = 200
+-TURN_DEADLINE = 120.0
+-
+-
+-class TurnBudgetExceeded(Exception):
+-    pass
+-
+-
+-def post(port: int, path: str, body: dict, headers: dict, text_of=None) -> tuple[int, bytes]:
+-
+-    deadline = time.monotonic() + TURN_DEADLINE
+-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+-    try:
+-        conn.request("POST", path, body=json.dumps(body), headers={"content-type": "application/json", **headers})
+-        resp = conn.getresponse()
+-        raw = b""
+-        while True:
+-            if time.monotonic() > deadline:
+-                raise TurnBudgetExceeded("deadline")
+-            chunk = resp.read1(16384)
+-            if not chunk:
+-                return resp.status, raw
+-            raw += chunk
+-            if len(raw) > MAX_TURN_BYTES:
+-                raise TurnBudgetExceeded("bytes")
+-            if text_of is not None and len(text_of(raw)) > MAX_TURN_TEXT:
+-                raise TurnBudgetExceeded("output text")
+-    finally:
+-        conn.close()
+-
+-
+-def sse_events(raw: bytes):
+-    for line in raw.decode(errors="replace").splitlines():
+-        if line.startswith("data:"):
+-            try:
+-                event = json.loads(line[5:])
+-            except ValueError:
+-                continue
+-            if isinstance(event, dict):
+-                yield event
+-
+-
+-def anthropic_text(raw: bytes) -> str:
+-    return "".join(
+-        e.get("delta", {}).get("text", "") for e in sse_events(raw) if e.get("type") == "content_block_delta"
+-    )
+-
+-
+-def codex_text(raw: bytes) -> str:
+-    return "".join(e.get("delta", "") for e in sse_events(raw) if e.get("type") == "response.output_text.delta")
+-
+-
+-def anthropic_turn(port: int, model: str, stream: bool = False) -> dict:
+-    body = {
+-        "model": model,
+-        "max_tokens": 48 if stream else 16,
+-        "messages": [
+-            {"role": "user", "content": "Count from 1 to 15, comma separated." if stream else "Reply with exactly: OK"}
+-        ],
+-    }
+-    if stream:
+-        body["stream"] = True
+-    started = time.monotonic()
+-    try:
+-        status, raw = post(
+-            port, "/v1/messages", body, {"anthropic-version": "2023-06-01"}, anthropic_text if stream else None
+-        )
+-    except TurnBudgetExceeded as exc:
+-        return {"status": 0, "error": f"budget: {exc}", "text": "", "complete": False}
+-    except (OSError, http.client.HTTPException) as exc:
+-        return {"status": 0, "error": exc.__class__.__name__, "text": "", "complete": False}
+-    text = ""
+-    if stream:
+-        text = anthropic_text(raw)
+-        complete = b"message_stop" in raw
+-    else:
+-        try:
+-            text = "".join(c.get("text", "") for c in json.loads(raw).get("content", []))
+-        except (ValueError, AttributeError):
+-            text = ""
+-        complete = bool(text)
+-    return {"status": status, "text": text[:200], "complete": complete, "seconds": round(time.monotonic() - started, 2)}
+-
+-
+-def codex_turn(port: int, model: str) -> dict:
+-    body = {
+-        "model": model,
+-        "instructions": "You are a terse test responder.",
+-        "input": [
+-            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Reply with exactly: OK"}]}
+-        ],
+-        "stream": True,
+-        "store": False,
+-        "reasoning": {"effort": "low"},
+-    }
+-    started = time.monotonic()
+-    try:
+-        status, raw = post(port, "/backend-api/codex/responses", body, {}, codex_text)
+-    except TurnBudgetExceeded as exc:
+-        return {"status": 0, "error": f"budget: {exc}", "text": "", "complete": False, "output_tokens": None}
+-    except (OSError, http.client.HTTPException) as exc:
+-        return {"status": 0, "error": exc.__class__.__name__, "text": "", "complete": False, "output_tokens": None}
+-    text = codex_text(raw)
+-    usage = {}
+-    for event in sse_events(raw):
+-        if event.get("type") == "response.completed":
+-            usage = (event.get("response") or {}).get("usage") or {}
+-    complete = b"response.completed" in raw
+-    return {
+-        "status": status,
+-        "text": text[:200],
+-        "complete": complete,
+-        "output_tokens": usage.get("output_tokens"),
+-        "seconds": round(time.monotonic() - started, 2),
+-    }
+-
+-
+-def within_budget(edge: str, turn: dict) -> bool:
+-
+-    if edge != "openai":
+-        return True
+-    tokens = turn.get("output_tokens")
+-    return isinstance(tokens, int) and not isinstance(tokens, bool) and tokens < 50
+-
+-
+-def edge_lines(path: Path, skip: int) -> list[dict]:
+-    try:
+-        lines = path.read_text().splitlines()[skip:]
+-    except OSError:
+-        return []
+-    out = []
+-    for line in lines:
+-        try:
+-            out.append(json.loads(line))
+-        except ValueError:
+-            pass
+-    return out
+-
+-
+-def count_lines(path: Path) -> int:
+-    try:
+-        return len(path.read_text().splitlines())
+-    except OSError:
+-        return 0
+-
+-
+-def dashboard_export_status(port: int, forged_user: str | None = None) -> int:
+-
+-    headers = {"content-type": "application/json"}
+-    if forged_user:
+-        headers["Remote-User"] = forged_user
+-        headers["X-Forwarded-For"] = "192.0.2.1"
+-    try:
+-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+-        conn.request("POST", "/api/accounts/lbsbx-probe/export/auth", body=b"{}", headers=headers)
+-        status = conn.getresponse().status
+-        conn.close()
+-        return status
+-    except (OSError, http.client.HTTPException):
+-        return 0
+-
+-
+-def in_flight(port: int) -> int:
+-    try:
+-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+-        conn.request("GET", "/internal/drain/status")
+-        data = json.loads(conn.getresponse().read())
+-        conn.close()
+-        return int(data["checks"]["in_flight"])
+-    except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
+-        return -1
++sys.path = [str(Path(__file__).resolve().parent.parent), *sys.path]
+ 
+-
+-def parse_cutover(log_text: str) -> dict | None:
+-
+-    match = CUTOVER_RE.search(log_text)
+-    if not match:
+-        return None
+-    flight = match.group(3)
+-    return {
+-        "standby_port": int(match.group(1)),
+-        "old_pid": int(match.group(2)),
+-        "in_flight": int(flight) if flight.lstrip("-").isdigit() else None,
+-    }
+-
+-
+-def restart_problems(
+-    cutover: dict | None,
+-    hold: dict | None,
+-    released_after_cutover: bool,
+-    rc: int | None,
+-    restart: dict,
+-    marks: dict,
+-    switched: bool,
+-    stream: dict,
+-    stream_done: bool,
+-) -> list[str]:
+-    problems = []
+-    if not cutover:
+-        problems.append("no cutover line in the lb-restart log")
+-    elif not isinstance(cutover.get("in_flight"), int) or cutover["in_flight"] < 1:
+-        problems.append(f"{cutover.get('in_flight')} in flight on the primary at cutover (need >= 1)")
+-    if not hold:
+-        problems.append("the edge served no held stream")
+-    elif hold.get("released_by") != "clear":
+-        problems.append(f"the held stream ended by {hold.get('released_by')}, not by the check's release")
+-    if not released_after_cutover:
+-        problems.append("the check did not release the hold after the cutover")
+-    if rc != 0 or restart.get("lb_restart_exit") != 0:
+-        problems.append(f"lb-sandbox restart exit {rc}, lb-restart exit {restart.get('lb_restart_exit')}")
+-    missing = sorted(name for name, seen in marks.items() if not seen)
+-    if not marks or missing:
+-        problems.append(f"lb-restart log lacks {missing or 'every mark'}")
+-    if not switched:
+-        problems.append("the front did not switch to the standby and back")
+-    if not stream_done:
+-        problems.append("the held stream was still open after the restart")
+-    if stream.get("status") != 200 or stream.get("complete") is not True:
+-        problems.append(f"stream status {stream.get('status')} complete {stream.get('complete')}")
+-    return problems
+-
+-
+-def scan_problems(name: str, rc: int | None, scan: dict, min_secrets: int = 2, keyed: bool = False) -> list[str]:
+-
+-    problems = []
+-    if keyed and scan.get("ciphertext_keys") != 1:
+-        problems.append(f"{name}: scanned without the store key ({scan.get('ciphertext_keys')})")
+-    if rc != 0:
+-        problems.append(f"{name}: exit {rc}")
+-    if scan.get("found") is not False:
+-        problems.append(f"{name}: found {scan.get('found')} hits {scan.get('hits')}")
+-    if scan.get("complete") is not True:
+-        problems.append(f"{name}: incomplete ({scan.get('unreadable')} unreadable)")
+-    if not isinstance(scan.get("secrets_loaded"), int) or scan["secrets_loaded"] < min_secrets:
+-        problems.append(f"{name}: {scan.get('secrets_loaded')} secrets loaded (need >= {min_secrets})")
+-    return problems
+-
+-
+-def process_scan_problems(rc: int | None, scan: dict, must_see: dict[str, int | None]) -> list[str]:
+-
+-    procs = scan.get("processes") or {}
+-    problems = scan_problems("process scan", rc, scan)
+-    if procs.get("found") is not False or procs.get("complete") is not True:
+-        problems.append(f"process scan: found {procs.get('found')} complete {procs.get('complete')}")
+-    visible = set(procs.get("visible_pids") or [])
+-    unseen = sorted(set(procs.get("pids") or []) - visible) + list(procs.get("invisible_pids") or [])
+-    if unseen:
+-
+-        problems.append(f"process scan did not read the environment of pids {sorted(set(unseen))}")
+-    for role, pid in must_see.items():
+-        if not isinstance(pid, int) or pid not in visible:
+-            problems.append(f"process scan did not read the environment of the {role} (pid {pid})")
+-    return problems
+-
+-
+-def stop_problems(rc: int | None, stop: dict, leftover: list[str], labels: str, run_id: str) -> list[str]:
+-    logs = stop.get("logs") or {}
+-    custody = stop.get("custody") or {}
+-    problems = []
+-    if rc != 0 or stop.get("clean") is not True:
+-        problems.append(f"stop exit {rc} clean {stop.get('clean')}")
+-    if leftover:
+-        problems.append(f"processes naming the run remain: {leftover}")
+-    if f"sbx-{run_id}" in labels:
+-        problems.append("a run label is still loaded")
+-    if logs.get("scan_scope") != "root":
+-        problems.append(f"teardown scanned {logs.get('scan_scope')}, not the whole sandbox root")
+-    if logs.get("scan_found") is not False or logs.get("scan_complete") is not True:
+-        problems.append(f"teardown scan found {logs.get('scan_found')} complete {logs.get('scan_complete')}")
+-    if logs.get("secret_load_error") or logs.get("copy_error") or logs.get("copied") is not True:
+-        problems.append(f"log export: {logs}")
+-    if logs.get("export_found") or logs.get("export_scanned") is not True or not logs.get("files_copied"):
+-        problems.append(
+-            f"log export not scanned byte for byte: export_scanned {logs.get('export_scanned')} "
+-            f"found {logs.get('export_found')} files {logs.get('files_copied')}"
+-        )
+-    if logs.get("ciphertext_keys") != 1:
+-        problems.append(f"teardown scan ran without the store key ({logs.get('ciphertext_keys')})")
+-    if custody.get("key_unlinked") is not True:
+-        problems.append(f"store key unlinked: {custody.get('key_unlinked')}")
+-    return problems
+-
+-
+-def custody_problems(sandboxes: Path, root: Path) -> list[str]:
+-
+-    problems = []
+-    for path, want in ((sandboxes, 0o700), (root, 0o700)):
+-        try:
+-            info = path.lstat()
+-        except OSError as exc:
+-            problems.append(f"{path}: {exc.__class__.__name__}")
+-            continue
+-        if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != want:
+-            problems.append(f"{path} mode {oct(stat.S_IMODE(info.st_mode))} (want {oct(want)}, a real directory)")
+-    key = root / "data" / "encryption.key"
+-    try:
+-        info = key.lstat()
+-    except OSError as exc:
+-        return [*problems, f"key: {exc.__class__.__name__}"]
+-    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
+-        problems.append(f"key mode {oct(stat.S_IMODE(info.st_mode))} links {info.st_nlink} (want 0o600, 1)")
+-    return problems
+-
+-
+-def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in order
+-    out = c.out
+-    run_id = f"lbsbx-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dt%H%M%Sz')}-{os.getpid()}"
+-    c.run_id = run_id
+-    anthropic_model = resolve_model("sonnet-latest", "claude-sonnet-5-5")
+-    codex_model = resolve_model("sol-latest", "gpt-6.1-sol")
+-
+-
+-    marker = out / "marker"
+-    marker.write_text(f"{run_id} {utc()}\n")
+-    time.sleep(1.1)
+-    sync_mark = sync_log_size()
+-    holder_before = live_restart_holder()
+-    before = live_identity()
+-    (out / "live-before.json").write_text(json.dumps(before, indent=1))
+-    c.step(
+-        "live-identity-before",
+-        bool(before["primary_pid"] and before["front_pid"] and before["listeners_2455"]),
+-        f"live primary pid {before['primary_pid']}, front pid {before['front_pid']}, "
+-        f"2455 {before['listeners_2455']}, 2457 {before['listeners_2457']}, preferred {before['preferred_port']}",
+-        [str(out / "live-before.json"), str(marker)],
+-    )
+-
+-
+-    source = ["--from-ref", args.from_ref] if args.from_ref else ["--from-live"]
+-    rc, start, start_out = c.sb("start", "start", *source, "--run-id", run_id, timeout=300)
+-    c.started = rc == 0 or (HOME / ".agent-lb" / "sandboxes" / run_id).exists()
+-    if not c.step(
+-        "start",
+-        rc == 0 and bool(start.get("front_port")),
+-        f"lb-sandbox start exit {rc}; front {start.get('front_port')}, primary {start.get('primary_port')}, "
+-        f"standby {start.get('standby_port')}, gate {start.get('gate_port')}, edges {start.get('edge_ports')}; "
+-        f"usable accounts {start.get('accounts_per_vendor')}; ready in {start.get('ready_s')} s; "
+-        f"runtime {start.get('runtime')}" + (f"; error {start.get('error')}" if rc else ""),
+-        [str(start_out), str(start_out.with_suffix(".err"))],
+-    ):
+-        c.infra = f"sandbox never got healthy: {start.get('error')}"
+-        return
+-    front, primary = start["front_port"], start["primary_port"]
+-    root = Path(start["root"])
+-
+-
+-    rc, status, status_out = c.sb("status", "status", "--run-id", run_id)
+-    counts = status.get("accounts_per_vendor", {})
+-    ports = status.get("ports", {})
+-    pids = sorted({p for port in ports.values() for p in listener_pids(port)})
+-    listen = sh("/usr/sbin/lsof", "-nP", "-a", "-p", ",".join(map(str, pids)), "-iTCP", "-sTCP:LISTEN") if pids else ""
+-    addresses = [line.split()[8] for line in listen.splitlines()[1:] if len(line.split()) >= 9]
+-    (out / "sandbox-listeners.txt").write_text(listen)
+-
+-    export_status = dashboard_export_status(front)
+-    forged_status = dashboard_export_status(front, forged_user="admin")
+-    c.step(
+-        "status-accounts-and-listeners",
+-        rc == 0
+-        and counts.get("anthropic", 0) >= 2
+-        and counts.get("openai", 0) >= 2
+-        and bool(addresses)
+-        and all(a.startswith("127.0.0.1:") for a in addresses)
+-        and export_status == 401
+-        and forged_status == 401,
+-        f"healthy {status.get('healthy')}; usable per vendor {counts}; run pids {pids} listen on {addresses}; "
+-        f"account export API answered {export_status}, with forged Remote-User and X-Forwarded-For "
+-        f"{forged_status} (want 401, 401)",
+-        [str(status_out), str(out / "sandbox-listeners.txt")],
+-    )
+-
+-
+-    problems = custody_problems(root.parent, root)
+-
+-
+-    if status.get("own_volume") is not True:
+-        problems.append(f"root on its own volume: {status.get('own_volume')}")
+-    confined = status.get("confined") or {}
+-    if any(confined.get(role) is not True for role in ("primary", "aux", "front")):
+-        problems.append(f"confined: {confined}")
+-    c.step(
+-        "custody-parity",
+-        not problems,
+-        f"sandboxes dir and root 0700, store key 0600 with one link, root its own volume, primary/aux/front "
+-        f"confined {confined}: {problems or 'yes'}",
+-        [str(status_out)],
+-    )
+-
+-
+-    rc_p, procs, procs_out = c.sb("scan-processes", "scan", "--run-id", run_id, "--processes")
+-    must_see = {"primary": status.get("primary_pid"), "aux": status.get("aux_pid"), "front": status.get("front_pid")}
+-    problems = process_scan_problems(rc_p, procs, must_see)
+-    p = procs.get("processes") or {}
+-    c.step(
+-        "process-env-scan",
+-        not problems,
+-        f"ps eww of {p.get('processes_scanned')} run processes {p.get('pids')}: environments read "
+-        f"{p.get('visible_pids')}, hits {p.get('hits')}; must read {must_see}: {problems or 'ok'}",
+-        [str(procs_out)],
+-    )
+-
+-
+-    a = anthropic_turn(front, anthropic_model)
+-    x = codex_turn(front, codex_model)
+-    (out / "turns-baseline.json").write_text(json.dumps({"anthropic": a, "codex": x}, indent=1))
+-    c.step(
+-        "baseline-turns",
+-        a["status"] == 200
+-        and bool(a["text"])
+-        and x["status"] == 200
+-        and bool(x["text"])
+-        and x["complete"]
+-        and within_budget("openai", x),
+-        f"Anthropic {anthropic_model}: {a['status']} {a['text']!r}; Codex {codex_model}: {x['status']} {x['text']!r} "
+-        f"output_tokens {x.get('output_tokens')}",
+-        [str(out / "turns-baseline.json")],
+-    )
+-
+-
+-    edge_log = root / "logs" / "edge.jsonl"
+-    for edge, turn in (
+-        ("anthropic", lambda: anthropic_turn(front, anthropic_model)),
+-        ("openai", lambda: codex_turn(front, codex_model)),
+-    ):
+-        skip = count_lines(edge_log)
+-        rc_arm, _, arm_out = c.sb(f"fault-{edge}", "fault", "--run-id", run_id, "--edge", edge, "--arm", "account_429")
+-        result = turn()
+-        time.sleep(1.5)
+-        lines = [ln for ln in edge_lines(edge_log, skip) if ln.get("edge") == edge]
+-        failed = [ln for ln in lines if ln.get("status") == 429 and ln.get("fault") == "account_429"]
+-        h1 = failed[0]["auth_hash12"] if failed else None
+-        served = [ln for ln in lines if ln.get("status") == 200 and ln.get("auth_hash12") not in (None, "", h1)]
+-        rc_st, st, st_out = c.sb(f"status-after-429-{edge}", "status", "--run-id", run_id)
+-        cooled = [acc for acc in st.get("accounts", []) if acc.get("auth_hash12") == h1]
+-        acct = cooled[0] if cooled else {}
+-        rc_clr, _, clr_out = c.sb(f"fault-clear-{edge}", "fault", "--run-id", run_id, "--edge", edge, "--clear")
+-        (out / f"turn-429-{edge}.json").write_text(json.dumps({"turn": result, "edge_lines": lines}, indent=1))
+-        c.step(
+-            f"account-429-{edge}",
+-            rc_arm == 0
+-            and result["status"] == 200
+-            and bool(result["text"])
+-            and bool(h1)
+-            and bool(served)
+-            and bool(acct.get("in_cooldown"))
+-            and rc_clr == 0
+-            and within_budget(edge, result),
+-            f"turn {result['status']} {result['text']!r} output_tokens {result.get('output_tokens')}; "
+-            f"edge 429 on hash {h1}, then 200 on "
+-            f"{served[0]['auth_hash12'] if served else None}; account {acct.get('id')} status {acct.get('status')} "
+-            f"in_cooldown {acct.get('in_cooldown')} until {acct.get('cooldown_until')}",
+-            [str(arm_out), str(out / f"turn-429-{edge}.json"), str(st_out), str(clr_out), str(edge_log)],
+-        )
+-
+-
+-    rc_hold, _, hold_out = c.sb(
+-        "fault-hold", "fault", "--run-id", run_id, "--edge", "anthropic", "--arm", f"hold_stream:{HOLD_S}"
+-    )
+-    hold_deadline = time.monotonic() + HOLD_S
+-    skip = count_lines(edge_log)
+-    restart_log = root / "logs" / "lb-restart.log"
+-    log_start = restart_log.stat().st_size if restart_log.exists() else 0
+-    holder: dict = {}
+-    stream_thread = threading.Thread(
+-        target=lambda: holder.update(anthropic_turn(front, anthropic_model, stream=True)), daemon=True
+-    )
+-    stream_thread.start()
+-    seen, deadline = -1, time.monotonic() + 20
+-    while time.monotonic() < deadline and stream_thread.is_alive():
+-        seen = in_flight(primary)
+-        if seen >= 1:
+-            break
+-        time.sleep(0.05)
+-    rc_flight, flight, flight_out = c.sb("status-in-flight", "status", "--run-id", run_id)
+-    restarted: dict = {}
+-
+-    def do_restart() -> None:
+-        rc, data, path = c.sb("restart", "restart", "--run-id", run_id, "--reason", f"lb-sandbox-check {run_id}")
+-        restarted.update({"rc": rc, "data": data, "out": path})
+-
+-    restart_thread = threading.Thread(target=do_restart, daemon=True)
+-    restart_thread.start()
+-    cutover, deadline = None, time.monotonic() + CUTOVER_WAIT_S
+-    while cutover is None and time.monotonic() < deadline and restart_thread.is_alive():
+-        try:
+-            with restart_log.open("rb") as fh:
+-                fh.seek(log_start)
+-                cutover = parse_cutover(fh.read().decode(errors="replace"))
+-        except OSError:
+-            pass
+-        if cutover is None:
+-            time.sleep(0.1)
+-
+-
+-    procs_mid, rc_pm, pm_out = {}, None, None
+-    if cutover is not None:
+-        scan_bound = max(5.0, hold_deadline - time.monotonic() - 10)
+-        rc_pm, procs_mid, pm_out = c.sb(
+-            "scan-processes-at-cutover", "scan", "--run-id", run_id, "--processes", timeout=scan_bound
+-        )
+-
+-    rc_rel, _, rel_out = c.sb("release-hold", "fault", "--run-id", run_id, "--edge", "anthropic", "--clear")
+-    released_after_cutover = cutover is not None and rc_rel == 0
+-    restart_thread.join(timeout=300)
+-    stream_thread.join(timeout=60)
+-    restart = restarted.get("data", {})
+-    restart_out = restarted.get("out", out / "restart-missing")
+-    log_text = ""
+-    try:
+-        with restart_log.open("rb") as fh:
+-            fh.seek(log_start)
+-            log_text = fh.read().decode(errors="replace")
+-    except OSError:
+-        pass
+-    (out / "lb-restart.log").write_text(log_text)
+-    marks = {name: needle in log_text for name, needle in RESTART_MARKS.items()}
+-    standby = re.search(r"standby healthy on :\d+ in [0-9.]+s \(pid (\d+)\)", log_text)
+-    front_log = ""
+-    try:
+-        front_log = (root / "logs" / "front.log").read_text()
+-    except OSError:
+-        pass
+-    to_standby = front_log.rfind(f"preferred upstream now :{start['standby_port']}")
+-    switched = to_standby >= 0 and front_log.find(f"preferred upstream now :{primary}", to_standby) > to_standby
+-    (out / "front.log").write_text(front_log)
+-    holds = [ln for ln in edge_lines(edge_log, skip) if ln.get("fault") == "hold_stream"]
+-    hold = holds[0] if len(holds) == 1 else None
+-    (out / "turn-restart.json").write_text(
+-        json.dumps({"stream": holder, "in_flight_seen": seen, "cutover": cutover, "hold": holds}, indent=1)
+-    )
+-    problems = restart_problems(
+-        cutover,
+-        hold,
+-        released_after_cutover and rc_hold == 0,
+-        restarted.get("rc"),
+-        restart,
+-        marks,
+-        switched,
+-        holder,
+-        not stream_thread.is_alive(),
+-    )
+-    c.step(
+-        "restart-with-stream",
+-        not problems,
+-        f"cutover {cutover}; in_flight_primary {seen} (status call: {flight.get('in_flight_primary')}) before "
+-        f"restart; held stream {hold}; lb-restart exit {restart.get('lb_restart_exit')} in "
+-        f"{restart.get('seconds')} s; log marks {marks}; front switched to :{start['standby_port']} and back to "
+-        f":{primary}: {switched}; stream {holder.get('status')} complete {holder.get('complete')} "
+-        f"{holder.get('text', '')[:40]!r}; problems {problems or 'none'}",
+-        [
+-            str(hold_out),
+-            str(flight_out),
+-            str(restart_out),
+-            str(rel_out),
+-            str(out / "lb-restart.log"),
+-            str(out / "front.log"),
+-            str(out / "turn-restart.json"),
+-            str(edge_log),
+-        ],
+-    )
+-    must_see = {
+-        "draining old primary": cutover.get("old_pid") if cutover else None,
+-        "standby": int(standby.group(1)) if standby else None,
+-        "aux": status.get("aux_pid"),
+-        "front": status.get("front_pid"),
+-    }
+-    problems = process_scan_problems(rc_pm, procs_mid, must_see) if cutover else ["no cutover, no scan"]
+-    p = procs_mid.get("processes") or {}
+-    c.step(
+-        "process-env-scan-at-cutover",
+-        not problems,
+-        f"ps eww of {p.get('processes_scanned')} run processes {p.get('pids')} during the drain: environments "
+-        f"read {p.get('visible_pids')}, hits {p.get('hits')}; must read {must_see}: {problems or 'ok'}",
+-        [str(pm_out)] if pm_out else [],
+-    )
+-
+-
+-    rc_g, gate_status, gate_out = c.sb("status-gate", "status", "--run-id", run_id)
+-    gate = gate_status.get("gate", {})
+-    forwarded = [(f.get("method"), f.get("path")) for f in gate.get("forwarded", [])]
+-    c.step(
+-        "gate-read-only",
+-        bool(forwarded) and all(f in GATE_ALLOWED for f in forwarded),
+-        f"forwarded {gate.get('forwarded')}; refused {gate.get('refused')} {gate.get('refused_by')}",
+-        [str(gate_out)],
+-    )
+-
+-
+-    rc_s0, scan_root, s0_out = c.sb("scan-root", "scan", "--run-id", run_id, str(root))
+-    rc_s1, scan_out_dir, s1_out = c.sb("scan-out", "scan", "--run-id", run_id, str(out))
+-    tmpdir = os.environ.get("TMPDIR") or "/tmp"
+-    rc_s2, scan_new, s2_out = c.sb(
+-        "scan-newer",
+-        "scan",
+-        "--run-id",
+-        run_id,
+-        "--newer-than",
+-        str(marker),
+-        "--exclude",
+-        str(root),
+-        str(HOME / ".agent-rails"),
+-        str(HOME / "Library" / "LaunchAgents"),
+-        tmpdir,
+-        str(HOME / ".agent-lb"),
+-        timeout=1500,
+-    )
+-    problems = (
+-        scan_problems("sandbox root", rc_s0, scan_root, keyed=True)
+-        + scan_problems("--out", rc_s1, scan_out_dir, keyed=True)
+-        + scan_problems("shared trees", rc_s2, scan_new, keyed=True)
+-    )
+-    if not scan_root.get("files_scanned"):
+-        problems.append("the sandbox root scan read no file")
+-    c.step(
+-        "scan",
+-        not problems,
+-        f"sandbox root (store and key at their own paths excepted): found {scan_root.get('found')} in "
+-        f"{scan_root.get('files_scanned')} files; --out: found {scan_out_dir.get('found')} in "
+-        f"{scan_out_dir.get('files_scanned')} files; newer than marker under ~/.agent-rails, ~/Library/LaunchAgents, "
+-        f"$TMPDIR, ~/.agent-lb: found {scan_new.get('found')} in {scan_new.get('files_scanned')} files; unreadable "
+-        f"{scan_root.get('unreadable')}+{scan_out_dir.get('unreadable')}+{scan_new.get('unreadable')} "
+-        f"{scan_new.get('unreadable_paths', [])[:5]}; secrets (tokens, key, ciphertexts) held by lb-sandbox "
+-        f"{scan_out_dir.get('secrets_loaded')}; problems {problems or 'none'}",
+-        [str(s0_out), str(s1_out), str(s2_out)],
+-    )
+-
+-
+-    stop_and_verify(c, run_id)
+-
+-
+-    after = live_identity()
+-    holders = sorted({h for h in (holder_before, live_restart_holder()) if h})
+-    restarts = live_restarts_since(sync_mark)
+-    (out / "live-after.json").write_text(json.dumps(after, indent=1))
+-    (out / "live-restarts.json").write_text(
+-        json.dumps({"sync_log": str(LIVE_SYNC_LOG), "offset": sync_mark, "logged": restarts, "lock_holders": holders})
+-    )
+-    verdict, detail = live_untouched(before, after, restarts, holders)
+-    evidence = [str(out / "live-before.json"), str(out / "live-after.json"), str(out / "live-restarts.json")]
+-    if verdict == "infra_error":
+-
+-        c.env_infra = detail
+-        c.unverified.append(f"Live agent-lb untouched: not provable this run; {detail}")
+-        c.steps.append({"name": "live-untouched", "result": "unverified", "detail": detail, "evidence": evidence})
+-        print(f"[{utc()}] INFRA live-untouched: {detail}", flush=True)
+-    else:
+-        c.step("live-untouched", verdict == "pass", detail, evidence)
+-
+-
+-def stop_and_verify(c: Check, run_id: str) -> None:
+-    rc, stop, stop_out = c.sb("stop", "stop", "--run-id", run_id, "--logs-to", str(c.out / "logs"))
+-    c.stopped = True
+-    leftover = leftover_pids(run_id)
+-    labels = sh("/bin/launchctl", "list")
+-    problems = stop_problems(rc, stop, leftover, labels, run_id)
+-
+-    rc_x, exported, x_out = c.sb("scan-exported-logs", "scan", "--run-id", run_id, str(c.out / "logs"))
+-    problems += scan_problems("exported logs after stop", rc_x, exported, min_secrets=1)
+-    c.step(
+-        "stop-clean",
+-        not problems,
+-        f"stop exit {rc} clean {stop.get('clean')}: labels {stop.get('labels_loaded')}, listeners "
+-        f"{stop.get('listeners')}, processes {stop.get('processes')}, root exists {stop.get('root_exists')}; "
+-        f"logs {stop.get('logs')}; custody {stop.get('custody')}; independent ps leftover pids {leftover}; "
+-        f"exported logs rescanned for the live token: found {exported.get('found')} in "
+-        f"{exported.get('files_scanned')} files; problems {problems or 'none'}",
+-        [str(stop_out), str(x_out), str(c.out / "logs")],
+-    )
+-
+-
+-def leftover_pids(run_id: str) -> list[int]:
+-
+-    leftover = []
+-    for row in sh("/bin/ps", "-axww", "-o", "pid=,command=").splitlines():
+-        parts = row.strip().split(None, 1)
+-        if len(parts) == 2 and parts[0].isdigit() and int(parts[0]) != os.getpid() and run_id in parts[1]:
+-            leftover.append(int(parts[0]))
+-    return leftover
++from scripts.lb_sandbox_check_runtime import (Check, HOME, utc)
++from scripts.lb_sandbox_check_scenario import (run_check, stop_and_verify)
+ 
+ 
+ def run_verdict(steps: list[dict], infra: str | None, env_infra: str | None) -> str:
+@@ -858,9 +28,11 @@ def run_verdict(steps: list[dict], infra: str | None, env_infra: str | None) ->
+     return "fail"
+ 
+ 
++
+ OUT_CLAIM = ".lb-sandbox-check.claim"
+ 
+ 
++
+ def claim_out(out: Path) -> str | None:
+ 
+     try:
+@@ -879,6 +51,7 @@ def claim_out(out: Path) -> str | None:
+     return None
+ 
+ 
++
+ def main() -> int:
+     parser = argparse.ArgumentParser(description='lb-sandbox-check: the live check for scripts/lb-sandbox (Studio only).', formatter_class=argparse.RawDescriptionHelpFormatter)
+     parser.add_argument("--out", type=Path, required=True)
+@@ -942,5 +115,6 @@ def main() -> int:
+     return {"pass": 0, "fail": 1}.get(verdict, 2)
+ 
+ 
++
+ if __name__ == "__main__":
+     sys.exit(main())
+diff --git a/scripts/lb_sandbox_check_runtime.py b/scripts/lb_sandbox_check_runtime.py
+new file mode 100644
+index 00000000..6fdff137
+--- /dev/null
++++ b/scripts/lb_sandbox_check_runtime.py
+@@ -0,0 +1,168 @@
++from __future__ import annotations
++
++import datetime as dt
++import json
++import os
++import re
++import shutil
++import subprocess
++import threading
++from pathlib import Path
++
++HOME = Path.home()
++
++
++LIVE_LABEL = "com.aneyman.agent-lb"
++
++
++LIVE_FRONT_LABEL = "com.aneyman.agent-lb-front"
++
++
++LIVE_FRONT_STATE = HOME / ".agent-lb" / "state" / "front.json"
++
++
++LIVE_SYNC_LOG = HOME / ".agent-lb" / "runtime" / "sync.log"
++
++
++LIVE_RESTART_LOCK = HOME / ".agent-lb" / "runtime" / "lb-restart.lock"
++
++
++SYNC_RESTART_RE = re.compile(r"^\S+ lb-restart (ok|FAILED)\b")
++
++
++def utc() -> str:
++    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
++
++
++class Check:
++    run_id: str | None
++    started: bool
++    stopped: bool
++    infra: str | None
++
++    def __init__(self, out: Path, lb_sandbox: Path) -> None:
++        self.out = out
++        self.lb_sandbox = lb_sandbox
++        self.n = 0
++        self.lock = threading.Lock()
++        self.steps: list[dict] = []
++        self.env_infra: str | None = None
++        self.unverified = [
++            "Other hosts: Studio only; boxes use their own follower agent-lb.",
++            "OAuth refresh in the sandbox: mirrored accounts carry access tokens only; refresh is refused in code.",
++            "Websocket upstream: the sandbox forces http so the edge can see and cut streams.",
++            "The live restart: only the sandbox restarts; the live service is read, never restarted.",
++        ]
++
++    def step(self, name: str, ok: bool, detail: str, evidence: list[str]) -> bool:
++        self.steps.append({"name": name, "result": "pass" if ok else "fail", "detail": detail, "evidence": evidence})
++        print(f"[{utc()}] {'PASS' if ok else 'FAIL'} {name}: {detail}", flush=True)
++        return ok
++
++    def sb(self, name: str, *args: str, timeout: float = 600) -> tuple[int, dict, Path]:
++
++        with self.lock:
++            self.n += 1
++            stem = self.out / f"{self.n:02d}-{name}"
++        argv = [str(self.lb_sandbox), *args, "--json"]
++        with open(f"{stem}.out", "w") as so, open(f"{stem}.err", "w") as se:
++            try:
++                rc = subprocess.run(argv, stdout=so, stderr=se, timeout=timeout, check=False).returncode
++            except subprocess.TimeoutExpired:
++                rc = 124
++        try:
++            data = json.loads(Path(f"{stem}.out").read_text() or "{}")
++        except ValueError:
++            data = {}
++        return rc, data, Path(f"{stem}.out")
++
++
++def sh(*argv: str) -> str:
++    return subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False).stdout
++
++
++def launchd_pid(label: str) -> int | None:
++
++    for line in sh("/bin/launchctl", "list").splitlines()[1:]:
++        parts = line.split("\t")
++        if len(parts) == 3 and parts[2] == label:
++            return int(parts[0]) if parts[0].isdigit() else None
++    return None
++
++
++def listener_pids(port: int) -> list[int]:
++    return sorted({int(p) for p in sh("/usr/sbin/lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t").split()})
++
++
++def live_identity() -> dict:
++    try:
++        preferred = json.loads(LIVE_FRONT_STATE.read_text()).get("preferred")
++    except (OSError, ValueError):
++        preferred = None
++    return {
++        "primary_pid": launchd_pid(LIVE_LABEL),
++        "front_pid": launchd_pid(LIVE_FRONT_LABEL),
++        "listeners_2455": listener_pids(2455),
++        "listeners_2457": listener_pids(2457),
++        "preferred_port": preferred,
++    }
++
++
++def sync_log_size() -> int:
++
++    try:
++        return LIVE_SYNC_LOG.stat().st_size
++    except OSError:
++        return 0
++
++
++def live_restarts_since(offset: int) -> list[str]:
++
++    try:
++        with open(LIVE_SYNC_LOG, "rb") as fh:
++            fh.seek(offset)
++            text = fh.read(1 << 20).decode("utf-8", "replace")
++    except OSError:
++        return []
++    return [line[:300] for line in text.splitlines() if SYNC_RESTART_RE.match(line)]
++
++
++def live_restart_holder() -> str | None:
++
++    try:
++        text = LIVE_RESTART_LOCK.read_text(errors="replace").strip()
++    except OSError:
++        return None
++    return text[:300] or None
++
++
++def live_untouched(before: dict, after: dict, restarts: list[str], holders: list[str]) -> tuple[str, str]:
++
++    if after == before:
++        return "pass", f"before {before}; after {after}"
++    named = [f"logged: {line}" for line in restarts] + [f"in progress: {line}" for line in holders]
++    if named:
++        return "infra_error", (
++            f"live agent-lb restarted by another lane during the run ({'; '.join(named)}); "
++            f"before {before}; after {after}"
++        )
++    return "fail", f"live identity changed with no live lb-restart logged or running: before {before}; after {after}"
++
++
++def resolve_model(alias: str, fallback: str) -> str:
++    route = shutil.which("route")
++    if route:
++        value = sh(route, "resolve", alias).strip().splitlines()
++        if value and value[0].strip():
++            return value[0].strip()
++    return fallback
++
++
++def leftover_pids(run_id: str) -> list[int]:
++
++    leftover = []
++    for row in sh("/bin/ps", "-axww", "-o", "pid=,command=").splitlines():
++        parts = row.strip().split(None, 1)
++        if len(parts) == 2 and parts[0].isdigit() and int(parts[0]) != os.getpid() and run_id in parts[1]:
++            leftover.append(int(parts[0]))
++    return leftover
+diff --git a/scripts/lb_sandbox_check_scenario.py b/scripts/lb_sandbox_check_scenario.py
+new file mode 100644
+index 00000000..657135a9
+--- /dev/null
++++ b/scripts/lb_sandbox_check_scenario.py
+@@ -0,0 +1,424 @@
++from __future__ import annotations
++
++import datetime as dt
++import json
++import os
++import re
++import threading
++import time
++from pathlib import Path
++
++from scripts.lb_sandbox_check_runtime import (
++    HOME,
++    LIVE_SYNC_LOG,
++    Check,
++    leftover_pids,
++    listener_pids,
++    live_identity,
++    live_restart_holder,
++    live_restarts_since,
++    live_untouched,
++    resolve_model,
++    sh,
++    sync_log_size,
++    utc,
++)
++from scripts.lb_sandbox_check_turns import anthropic_turn, codex_turn, dashboard_export_status, in_flight, within_budget
++from scripts.lb_sandbox_check_validation import (
++    custody_problems,
++    parse_cutover,
++    process_scan_problems,
++    restart_problems,
++    scan_problems,
++    stop_problems,
++)
++
++GATE_ALLOWED = {("GET", "/api/federation/mirror"), ("GET", "/api/federation/status")}
++
++
++HOLD_S = 120
++
++
++CUTOVER_WAIT_S = 60
++
++
++RESTART_MARKS = {
++    "standby_boot": "standby healthy on",
++    "front_switch": "front -> :",
++    "drain": "old primary exited",
++    "restore": "new primary healthy",
++    "standby_stopped": "stopped listening",
++}
++
++
++def edge_lines(path: Path, skip: int) -> list[dict]:
++    try:
++        lines = path.read_text().splitlines()[skip:]
++    except OSError:
++        return []
++    out = []
++    for line in lines:
++        try:
++            out.append(json.loads(line))
++        except ValueError:
++            pass
++    return out
++
++
++def count_lines(path: Path) -> int:
++    try:
++        return len(path.read_text().splitlines())
++    except OSError:
++        return 0
++
++
++def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in order
++    out = c.out
++    run_id = f"lbsbx-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dt%H%M%Sz')}-{os.getpid()}"
++    c.run_id = run_id
++    anthropic_model = resolve_model("sonnet-latest", "claude-sonnet-5-5")
++    codex_model = resolve_model("sol-latest", "gpt-6.1-sol")
++
++    marker = out / "marker"
++    marker.write_text(f"{run_id} {utc()}\n")
++    time.sleep(1.1)
++    sync_mark = sync_log_size()
++    holder_before = live_restart_holder()
++    before = live_identity()
++    (out / "live-before.json").write_text(json.dumps(before, indent=1))
++    c.step(
++        "live-identity-before",
++        bool(before["primary_pid"] and before["front_pid"] and before["listeners_2455"]),
++        f"live primary pid {before['primary_pid']}, front pid {before['front_pid']}, "
++        f"2455 {before['listeners_2455']}, 2457 {before['listeners_2457']}, preferred {before['preferred_port']}",
++        [str(out / "live-before.json"), str(marker)],
++    )
++
++    source = ["--from-ref", args.from_ref] if args.from_ref else ["--from-live"]
++    rc, start, start_out = c.sb("start", "start", *source, "--run-id", run_id, timeout=300)
++    c.started = rc == 0 or (HOME / ".agent-lb" / "sandboxes" / run_id).exists()
++    if not c.step(
++        "start",
++        rc == 0 and bool(start.get("front_port")),
++        f"lb-sandbox start exit {rc}; front {start.get('front_port')}, primary {start.get('primary_port')}, "
++        f"standby {start.get('standby_port')}, gate {start.get('gate_port')}, edges {start.get('edge_ports')}; "
++        f"usable accounts {start.get('accounts_per_vendor')}; ready in {start.get('ready_s')} s; "
++        f"runtime {start.get('runtime')}" + (f"; error {start.get('error')}" if rc else ""),
++        [str(start_out), str(start_out.with_suffix(".err"))],
++    ):
++        c.infra = f"sandbox never got healthy: {start.get('error')}"
++        return
++    front, primary = start["front_port"], start["primary_port"]
++    root = Path(start["root"])
++
++    rc, status, status_out = c.sb("status", "status", "--run-id", run_id)
++    counts = status.get("accounts_per_vendor", {})
++    ports = status.get("ports", {})
++    pids = sorted({p for port in ports.values() for p in listener_pids(port)})
++    listen = sh("/usr/sbin/lsof", "-nP", "-a", "-p", ",".join(map(str, pids)), "-iTCP", "-sTCP:LISTEN") if pids else ""
++    addresses = [line.split()[8] for line in listen.splitlines()[1:] if len(line.split()) >= 9]
++    (out / "sandbox-listeners.txt").write_text(listen)
++
++    export_status = dashboard_export_status(front)
++    forged_status = dashboard_export_status(front, forged_user="admin")
++    c.step(
++        "status-accounts-and-listeners",
++        rc == 0
++        and counts.get("anthropic", 0) >= 2
++        and counts.get("openai", 0) >= 2
++        and bool(addresses)
++        and all(a.startswith("127.0.0.1:") for a in addresses)
++        and export_status == 401
++        and forged_status == 401,
++        f"healthy {status.get('healthy')}; usable per vendor {counts}; run pids {pids} listen on {addresses}; "
++        f"account export API answered {export_status}, with forged Remote-User and X-Forwarded-For "
++        f"{forged_status} (want 401, 401)",
++        [str(status_out), str(out / "sandbox-listeners.txt")],
++    )
++
++    problems = custody_problems(root.parent, root)
++
++    if status.get("own_volume") is not True:
++        problems.append(f"root on its own volume: {status.get('own_volume')}")
++    confined = status.get("confined") or {}
++    if any(confined.get(role) is not True for role in ("primary", "aux", "front")):
++        problems.append(f"confined: {confined}")
++    c.step(
++        "custody-parity",
++        not problems,
++        f"sandboxes dir and root 0700, store key 0600 with one link, root its own volume, primary/aux/front "
++        f"confined {confined}: {problems or 'yes'}",
++        [str(status_out)],
++    )
++
++    rc_p, procs, procs_out = c.sb("scan-processes", "scan", "--run-id", run_id, "--processes")
++    must_see = {"primary": status.get("primary_pid"), "aux": status.get("aux_pid"), "front": status.get("front_pid")}
++    problems = process_scan_problems(rc_p, procs, must_see)
++    p = procs.get("processes") or {}
++    c.step(
++        "process-env-scan",
++        not problems,
++        f"ps eww of {p.get('processes_scanned')} run processes {p.get('pids')}: environments read "
++        f"{p.get('visible_pids')}, hits {p.get('hits')}; must read {must_see}: {problems or 'ok'}",
++        [str(procs_out)],
++    )
++
++    a = anthropic_turn(front, anthropic_model)
++    x = codex_turn(front, codex_model)
++    (out / "turns-baseline.json").write_text(json.dumps({"anthropic": a, "codex": x}, indent=1))
++    c.step(
++        "baseline-turns",
++        a["status"] == 200
++        and bool(a["text"])
++        and x["status"] == 200
++        and bool(x["text"])
++        and x["complete"]
++        and within_budget("openai", x),
++        f"Anthropic {anthropic_model}: {a['status']} {a['text']!r}; Codex {codex_model}: {x['status']} {x['text']!r} "
++        f"output_tokens {x.get('output_tokens')}",
++        [str(out / "turns-baseline.json")],
++    )
++
++    edge_log = root / "logs" / "edge.jsonl"
++    for edge, turn in (
++        ("anthropic", lambda: anthropic_turn(front, anthropic_model)),
++        ("openai", lambda: codex_turn(front, codex_model)),
++    ):
++        skip = count_lines(edge_log)
++        rc_arm, _, arm_out = c.sb(f"fault-{edge}", "fault", "--run-id", run_id, "--edge", edge, "--arm", "account_429")
++        result = turn()
++        time.sleep(1.5)
++        lines = [ln for ln in edge_lines(edge_log, skip) if ln.get("edge") == edge]
++        failed = [ln for ln in lines if ln.get("status") == 429 and ln.get("fault") == "account_429"]
++        h1 = failed[0]["auth_hash12"] if failed else None
++        served = [ln for ln in lines if ln.get("status") == 200 and ln.get("auth_hash12") not in (None, "", h1)]
++        rc_st, st, st_out = c.sb(f"status-after-429-{edge}", "status", "--run-id", run_id)
++        cooled = [acc for acc in st.get("accounts", []) if acc.get("auth_hash12") == h1]
++        acct = cooled[0] if cooled else {}
++        rc_clr, _, clr_out = c.sb(f"fault-clear-{edge}", "fault", "--run-id", run_id, "--edge", edge, "--clear")
++        (out / f"turn-429-{edge}.json").write_text(json.dumps({"turn": result, "edge_lines": lines}, indent=1))
++        c.step(
++            f"account-429-{edge}",
++            rc_arm == 0
++            and result["status"] == 200
++            and bool(result["text"])
++            and bool(h1)
++            and bool(served)
++            and bool(acct.get("in_cooldown"))
++            and rc_clr == 0
++            and within_budget(edge, result),
++            f"turn {result['status']} {result['text']!r} output_tokens {result.get('output_tokens')}; "
++            f"edge 429 on hash {h1}, then 200 on "
++            f"{served[0]['auth_hash12'] if served else None}; account {acct.get('id')} status {acct.get('status')} "
++            f"in_cooldown {acct.get('in_cooldown')} until {acct.get('cooldown_until')}",
++            [str(arm_out), str(out / f"turn-429-{edge}.json"), str(st_out), str(clr_out), str(edge_log)],
++        )
++
++    rc_hold, _, hold_out = c.sb(
++        "fault-hold", "fault", "--run-id", run_id, "--edge", "anthropic", "--arm", f"hold_stream:{HOLD_S}"
++    )
++    hold_deadline = time.monotonic() + HOLD_S
++    skip = count_lines(edge_log)
++    restart_log = root / "logs" / "lb-restart.log"
++    log_start = restart_log.stat().st_size if restart_log.exists() else 0
++    holder: dict = {}
++    stream_thread = threading.Thread(
++        target=lambda: holder.update(anthropic_turn(front, anthropic_model, stream=True)), daemon=True
++    )
++    stream_thread.start()
++    seen, deadline = -1, time.monotonic() + 20
++    while time.monotonic() < deadline and stream_thread.is_alive():
++        seen = in_flight(primary)
++        if seen >= 1:
++            break
++        time.sleep(0.05)
++    rc_flight, flight, flight_out = c.sb("status-in-flight", "status", "--run-id", run_id)
++    restarted: dict = {}
++
++    def do_restart() -> None:
++        rc, data, path = c.sb("restart", "restart", "--run-id", run_id, "--reason", f"lb-sandbox-check {run_id}")
++        restarted.update({"rc": rc, "data": data, "out": path})
++
++    restart_thread = threading.Thread(target=do_restart, daemon=True)
++    restart_thread.start()
++    cutover, deadline = None, time.monotonic() + CUTOVER_WAIT_S
++    while cutover is None and time.monotonic() < deadline and restart_thread.is_alive():
++        try:
++            with restart_log.open("rb") as fh:
++                fh.seek(log_start)
++                cutover = parse_cutover(fh.read().decode(errors="replace"))
++        except OSError:
++            pass
++        if cutover is None:
++            time.sleep(0.1)
++
++    procs_mid, rc_pm, pm_out = {}, None, None
++    if cutover is not None:
++        scan_bound = max(5.0, hold_deadline - time.monotonic() - 10)
++        rc_pm, procs_mid, pm_out = c.sb(
++            "scan-processes-at-cutover", "scan", "--run-id", run_id, "--processes", timeout=scan_bound
++        )
++
++    rc_rel, _, rel_out = c.sb("release-hold", "fault", "--run-id", run_id, "--edge", "anthropic", "--clear")
++    released_after_cutover = cutover is not None and rc_rel == 0
++    restart_thread.join(timeout=300)
++    stream_thread.join(timeout=60)
++    restart = restarted.get("data", {})
++    restart_out = restarted.get("out", out / "restart-missing")
++    log_text = ""
++    try:
++        with restart_log.open("rb") as fh:
++            fh.seek(log_start)
++            log_text = fh.read().decode(errors="replace")
++    except OSError:
++        pass
++    (out / "lb-restart.log").write_text(log_text)
++    marks = {name: needle in log_text for name, needle in RESTART_MARKS.items()}
++    standby = re.search(r"standby healthy on :\d+ in [0-9.]+s \(pid (\d+)\)", log_text)
++    front_log = ""
++    try:
++        front_log = (root / "logs" / "front.log").read_text()
++    except OSError:
++        pass
++    to_standby = front_log.rfind(f"preferred upstream now :{start['standby_port']}")
++    switched = to_standby >= 0 and front_log.find(f"preferred upstream now :{primary}", to_standby) > to_standby
++    (out / "front.log").write_text(front_log)
++    holds = [ln for ln in edge_lines(edge_log, skip) if ln.get("fault") == "hold_stream"]
++    hold = holds[0] if len(holds) == 1 else None
++    (out / "turn-restart.json").write_text(
++        json.dumps({"stream": holder, "in_flight_seen": seen, "cutover": cutover, "hold": holds}, indent=1)
++    )
++    problems = restart_problems(
++        cutover,
++        hold,
++        released_after_cutover and rc_hold == 0,
++        restarted.get("rc"),
++        restart,
++        marks,
++        switched,
++        holder,
++        not stream_thread.is_alive(),
++    )
++    c.step(
++        "restart-with-stream",
++        not problems,
++        f"cutover {cutover}; in_flight_primary {seen} (status call: {flight.get('in_flight_primary')}) before "
++        f"restart; held stream {hold}; lb-restart exit {restart.get('lb_restart_exit')} in "
++        f"{restart.get('seconds')} s; log marks {marks}; front switched to :{start['standby_port']} and back to "
++        f":{primary}: {switched}; stream {holder.get('status')} complete {holder.get('complete')} "
++        f"{holder.get('text', '')[:40]!r}; problems {problems or 'none'}",
++        [
++            str(hold_out),
++            str(flight_out),
++            str(restart_out),
++            str(rel_out),
++            str(out / "lb-restart.log"),
++            str(out / "front.log"),
++            str(out / "turn-restart.json"),
++            str(edge_log),
++        ],
++    )
++    must_see = {
++        "draining old primary": cutover.get("old_pid") if cutover else None,
++        "standby": int(standby.group(1)) if standby else None,
++        "aux": status.get("aux_pid"),
++        "front": status.get("front_pid"),
++    }
++    problems = process_scan_problems(rc_pm, procs_mid, must_see) if cutover else ["no cutover, no scan"]
++    p = procs_mid.get("processes") or {}
++    c.step(
++        "process-env-scan-at-cutover",
++        not problems,
++        f"ps eww of {p.get('processes_scanned')} run processes {p.get('pids')} during the drain: environments "
++        f"read {p.get('visible_pids')}, hits {p.get('hits')}; must read {must_see}: {problems or 'ok'}",
++        [str(pm_out)] if pm_out else [],
++    )
++
++    rc_g, gate_status, gate_out = c.sb("status-gate", "status", "--run-id", run_id)
++    gate = gate_status.get("gate", {})
++    forwarded = [(f.get("method"), f.get("path")) for f in gate.get("forwarded", [])]
++    c.step(
++        "gate-read-only",
++        bool(forwarded) and all(f in GATE_ALLOWED for f in forwarded),
++        f"forwarded {gate.get('forwarded')}; refused {gate.get('refused')} {gate.get('refused_by')}",
++        [str(gate_out)],
++    )
++
++    rc_s0, scan_root, s0_out = c.sb("scan-root", "scan", "--run-id", run_id, str(root))
++    rc_s1, scan_out_dir, s1_out = c.sb("scan-out", "scan", "--run-id", run_id, str(out))
++    tmpdir = os.environ.get("TMPDIR") or "/tmp"
++    rc_s2, scan_new, s2_out = c.sb(
++        "scan-newer",
++        "scan",
++        "--run-id",
++        run_id,
++        "--newer-than",
++        str(marker),
++        "--exclude",
++        str(root),
++        str(HOME / ".agent-rails"),
++        str(HOME / "Library" / "LaunchAgents"),
++        tmpdir,
++        str(HOME / ".agent-lb"),
++        timeout=1500,
++    )
++    problems = (
++        scan_problems("sandbox root", rc_s0, scan_root, keyed=True)
++        + scan_problems("--out", rc_s1, scan_out_dir, keyed=True)
++        + scan_problems("shared trees", rc_s2, scan_new, keyed=True)
++    )
++    if not scan_root.get("files_scanned"):
++        problems.append("the sandbox root scan read no file")
++    c.step(
++        "scan",
++        not problems,
++        f"sandbox root (store and key at their own paths excepted): found {scan_root.get('found')} in "
++        f"{scan_root.get('files_scanned')} files; --out: found {scan_out_dir.get('found')} in "
++        f"{scan_out_dir.get('files_scanned')} files; newer than marker under ~/.agent-rails, ~/Library/LaunchAgents, "
++        f"$TMPDIR, ~/.agent-lb: found {scan_new.get('found')} in {scan_new.get('files_scanned')} files; unreadable "
++        f"{scan_root.get('unreadable')}+{scan_out_dir.get('unreadable')}+{scan_new.get('unreadable')} "
++        f"{scan_new.get('unreadable_paths', [])[:5]}; secrets (tokens, key, ciphertexts) held by lb-sandbox "
++        f"{scan_out_dir.get('secrets_loaded')}; problems {problems or 'none'}",
++        [str(s0_out), str(s1_out), str(s2_out)],
++    )
++
++    stop_and_verify(c, run_id)
++
++    after = live_identity()
++    holders = sorted({h for h in (holder_before, live_restart_holder()) if h})
++    restarts = live_restarts_since(sync_mark)
++    (out / "live-after.json").write_text(json.dumps(after, indent=1))
++    (out / "live-restarts.json").write_text(
++        json.dumps({"sync_log": str(LIVE_SYNC_LOG), "offset": sync_mark, "logged": restarts, "lock_holders": holders})
++    )
++    verdict, detail = live_untouched(before, after, restarts, holders)
++    evidence = [str(out / "live-before.json"), str(out / "live-after.json"), str(out / "live-restarts.json")]
++    if verdict == "infra_error":
++        c.env_infra = detail
++        c.unverified.append(f"Live agent-lb untouched: not provable this run; {detail}")
++        c.steps.append({"name": "live-untouched", "result": "unverified", "detail": detail, "evidence": evidence})
++        print(f"[{utc()}] INFRA live-untouched: {detail}", flush=True)
++    else:
++        c.step("live-untouched", verdict == "pass", detail, evidence)
++
++
++def stop_and_verify(c: Check, run_id: str) -> None:
++    rc, stop, stop_out = c.sb("stop", "stop", "--run-id", run_id, "--logs-to", str(c.out / "logs"))
++    c.stopped = True
++    leftover = leftover_pids(run_id)
++    labels = sh("/bin/launchctl", "list")
++    # type: ignore[arg-type]
++    problems = stop_problems(rc, stop, leftover, labels, run_id)
++
++    rc_x, exported, x_out = c.sb("scan-exported-logs", "scan", "--run-id", run_id, str(c.out / "logs"))
++    problems += scan_problems("exported logs after stop", rc_x, exported, min_secrets=1)
++    c.step(
++        "stop-clean",
++        not problems,
++        f"stop exit {rc} clean {stop.get('clean')}: labels {stop.get('labels_loaded')}, listeners "
++        f"{stop.get('listeners')}, processes {stop.get('processes')}, root exists {stop.get('root_exists')}; "
++        f"logs {stop.get('logs')}; custody {stop.get('custody')}; independent ps leftover pids {leftover}; "
++        f"exported logs rescanned for the live token: found {exported.get('found')} in "
++        f"{exported.get('files_scanned')} files; problems {problems or 'none'}",
++        [str(stop_out), str(x_out), str(c.out / "logs")],
++    )
+diff --git a/scripts/lb_sandbox_check_turns.py b/scripts/lb_sandbox_check_turns.py
+new file mode 100644
+index 00000000..05f2b95c
+--- /dev/null
++++ b/scripts/lb_sandbox_check_turns.py
+@@ -0,0 +1,161 @@
++from __future__ import annotations
++
++import http.client
++import json
++import time
++
++MAX_TURN_BYTES = 256 << 10
++
++
++MAX_TURN_TEXT = 200
++
++
++TURN_DEADLINE = 120.0
++
++
++class TurnBudgetExceeded(Exception):
++    pass
++
++
++def post(port: int, path: str, body: dict, headers: dict, text_of=None) -> tuple[int, bytes]:
++
++    deadline = time.monotonic() + TURN_DEADLINE
++    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
++    try:
++        conn.request("POST", path, body=json.dumps(body), headers={"content-type": "application/json", **headers})
++        resp = conn.getresponse()
++        raw = b""
++        while True:
++            if time.monotonic() > deadline:
++                raise TurnBudgetExceeded("deadline")
++            chunk = resp.read1(16384)
++            if not chunk:
++                return resp.status, raw
++            raw += chunk
++            if len(raw) > MAX_TURN_BYTES:
++                raise TurnBudgetExceeded("bytes")
++            if text_of is not None and len(text_of(raw)) > MAX_TURN_TEXT:
++                raise TurnBudgetExceeded("output text")
++    finally:
++        conn.close()
++
++
++def sse_events(raw: bytes):
++    for line in raw.decode(errors="replace").splitlines():
++        if line.startswith("data:"):
++            try:
++                event = json.loads(line[5:])
++            except ValueError:
++                continue
++            if isinstance(event, dict):
++                yield event
++
++
++def anthropic_text(raw: bytes) -> str:
++    return "".join(
++        e.get("delta", {}).get("text", "") for e in sse_events(raw) if e.get("type") == "content_block_delta"
++    )
++
++
++def codex_text(raw: bytes) -> str:
++    return "".join(e.get("delta", "") for e in sse_events(raw) if e.get("type") == "response.output_text.delta")
++
++
++def anthropic_turn(port: int, model: str, stream: bool = False) -> dict:
++    body = {
++        "model": model,
++        "max_tokens": 48 if stream else 16,
++        "messages": [
++            {"role": "user", "content": "Count from 1 to 15, comma separated." if stream else "Reply with exactly: OK"}
++        ],
++    }
++    if stream:
++        body["stream"] = True
++    started = time.monotonic()
++    try:
++        status, raw = post(
++            port, "/v1/messages", body, {"anthropic-version": "2023-06-01"}, anthropic_text if stream else None
++        )
++    except TurnBudgetExceeded as exc:
++        return {"status": 0, "error": f"budget: {exc}", "text": "", "complete": False}
++    except (OSError, http.client.HTTPException) as exc:
++        return {"status": 0, "error": exc.__class__.__name__, "text": "", "complete": False}
++    text = ""
++    if stream:
++        text = anthropic_text(raw)
++        complete = b"message_stop" in raw
++    else:
++        try:
++            text = "".join(c.get("text", "") for c in json.loads(raw).get("content", []))
++        except (ValueError, AttributeError):
++            text = ""
++        complete = bool(text)
++    return {"status": status, "text": text[:200], "complete": complete, "seconds": round(time.monotonic() - started, 2)}
++
++
++def codex_turn(port: int, model: str) -> dict:
++    body = {
++        "model": model,
++        "instructions": "You are a terse test responder.",
++        "input": [
++            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Reply with exactly: OK"}]}
++        ],
++        "stream": True,
++        "store": False,
++        "reasoning": {"effort": "low"},
++    }
++    started = time.monotonic()
++    try:
++        status, raw = post(port, "/backend-api/codex/responses", body, {}, codex_text)
++    except TurnBudgetExceeded as exc:
++        return {"status": 0, "error": f"budget: {exc}", "text": "", "complete": False, "output_tokens": None}
++    except (OSError, http.client.HTTPException) as exc:
++        return {"status": 0, "error": exc.__class__.__name__, "text": "", "complete": False, "output_tokens": None}
++    text = codex_text(raw)
++    usage = {}
++    for event in sse_events(raw):
++        if event.get("type") == "response.completed":
++            usage = (event.get("response") or {}).get("usage") or {}
++    complete = b"response.completed" in raw
++    return {
++        "status": status,
++        "text": text[:200],
++        "complete": complete,
++        "output_tokens": usage.get("output_tokens"),
++        "seconds": round(time.monotonic() - started, 2),
++    }
++
++
++def within_budget(edge: str, turn: dict) -> bool:
++
++    if edge != "openai":
++        return True
++    tokens = turn.get("output_tokens")
++    return isinstance(tokens, int) and not isinstance(tokens, bool) and tokens < 50
++
++
++def dashboard_export_status(port: int, forged_user: str | None = None) -> int:
++
++    headers = {"content-type": "application/json"}
++    if forged_user:
++        headers["Remote-User"] = forged_user
++        headers["X-Forwarded-For"] = "192.0.2.1"
++    try:
++        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
++        conn.request("POST", "/api/accounts/lbsbx-probe/export/auth", body=b"{}", headers=headers)
++        status = conn.getresponse().status
++        conn.close()
++        return status
++    except (OSError, http.client.HTTPException):
++        return 0
++
++
++def in_flight(port: int) -> int:
++    try:
++        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
++        conn.request("GET", "/internal/drain/status")
++        data = json.loads(conn.getresponse().read())
++        conn.close()
++        return int(data["checks"]["in_flight"])
++    except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
++        return -1
+diff --git a/scripts/lb_sandbox_check_validation.py b/scripts/lb_sandbox_check_validation.py
+new file mode 100644
+index 00000000..164b1eb9
+--- /dev/null
++++ b/scripts/lb_sandbox_check_validation.py
+@@ -0,0 +1,137 @@
++from __future__ import annotations
++
++import re
++import stat
++from pathlib import Path
++
++CUTOVER_RE = re.compile(r"front -> :(\d+); primary pid (\d+) had (-?\d+|None) in flight")
++
++
++def parse_cutover(log_text: str) -> dict | None:
++
++    match = CUTOVER_RE.search(log_text)
++    if not match:
++        return None
++    flight = match.group(3)
++    return {
++        "standby_port": int(match.group(1)),
++        "old_pid": int(match.group(2)),
++        "in_flight": int(flight) if flight.lstrip("-").isdigit() else None,
++    }
++
++
++def restart_problems(
++    cutover: dict | None,
++    hold: dict | None,
++    released_after_cutover: bool,
++    rc: int | None,
++    restart: dict,
++    marks: dict,
++    switched: bool,
++    stream: dict,
++    stream_done: bool,
++) -> list[str]:
++    problems = []
++    if not cutover:
++        problems.append("no cutover line in the lb-restart log")
++    elif not isinstance(cutover.get("in_flight"), int) or cutover["in_flight"] < 1:
++        problems.append(f"{cutover.get('in_flight')} in flight on the primary at cutover (need >= 1)")
++    if not hold:
++        problems.append("the edge served no held stream")
++    elif hold.get("released_by") != "clear":
++        problems.append(f"the held stream ended by {hold.get('released_by')}, not by the check's release")
++    if not released_after_cutover:
++        problems.append("the check did not release the hold after the cutover")
++    if rc != 0 or restart.get("lb_restart_exit") != 0:
++        problems.append(f"lb-sandbox restart exit {rc}, lb-restart exit {restart.get('lb_restart_exit')}")
++    missing = sorted(name for name, seen in marks.items() if not seen)
++    if not marks or missing:
++        problems.append(f"lb-restart log lacks {missing or 'every mark'}")
++    if not switched:
++        problems.append("the front did not switch to the standby and back")
++    if not stream_done:
++        problems.append("the held stream was still open after the restart")
++    if stream.get("status") != 200 or stream.get("complete") is not True:
++        problems.append(f"stream status {stream.get('status')} complete {stream.get('complete')}")
++    return problems
++
++
++def scan_problems(name: str, rc: int | None, scan: dict, min_secrets: int = 2, keyed: bool = False) -> list[str]:
++
++    problems = []
++    if keyed and scan.get("ciphertext_keys") != 1:
++        problems.append(f"{name}: scanned without the store key ({scan.get('ciphertext_keys')})")
++    if rc != 0:
++        problems.append(f"{name}: exit {rc}")
++    if scan.get("found") is not False:
++        problems.append(f"{name}: found {scan.get('found')} hits {scan.get('hits')}")
++    if scan.get("complete") is not True:
++        problems.append(f"{name}: incomplete ({scan.get('unreadable')} unreadable)")
++    if not isinstance(scan.get("secrets_loaded"), int) or scan["secrets_loaded"] < min_secrets:
++        problems.append(f"{name}: {scan.get('secrets_loaded')} secrets loaded (need >= {min_secrets})")
++    return problems
++
++
++def process_scan_problems(rc: int | None, scan: dict, must_see: dict[str, int | None]) -> list[str]:
++
++    procs = scan.get("processes") or {}
++    problems = scan_problems("process scan", rc, scan)
++    if procs.get("found") is not False or procs.get("complete") is not True:
++        problems.append(f"process scan: found {procs.get('found')} complete {procs.get('complete')}")
++    visible = set(procs.get("visible_pids") or [])
++    unseen = sorted(set(procs.get("pids") or []) - visible) + list(procs.get("invisible_pids") or [])
++    if unseen:
++        problems.append(f"process scan did not read the environment of pids {sorted(set(unseen))}")
++    for role, pid in must_see.items():
++        if not isinstance(pid, int) or pid not in visible:
++            problems.append(f"process scan did not read the environment of the {role} (pid {pid})")
++    return problems
++
++
++def stop_problems(rc: int | None, stop: dict, leftover: list[str], labels: str, run_id: str) -> list[str]:
++    logs = stop.get("logs") or {}
++    custody = stop.get("custody") or {}
++    problems = []
++    if rc != 0 or stop.get("clean") is not True:
++        problems.append(f"stop exit {rc} clean {stop.get('clean')}")
++    if leftover:
++        problems.append(f"processes naming the run remain: {leftover}")
++    if f"sbx-{run_id}" in labels:
++        problems.append("a run label is still loaded")
++    if logs.get("scan_scope") != "root":
++        problems.append(f"teardown scanned {logs.get('scan_scope')}, not the whole sandbox root")
++    if logs.get("scan_found") is not False or logs.get("scan_complete") is not True:
++        problems.append(f"teardown scan found {logs.get('scan_found')} complete {logs.get('scan_complete')}")
++    if logs.get("secret_load_error") or logs.get("copy_error") or logs.get("copied") is not True:
++        problems.append(f"log export: {logs}")
++    if logs.get("export_found") or logs.get("export_scanned") is not True or not logs.get("files_copied"):
++        problems.append(
++            f"log export not scanned byte for byte: export_scanned {logs.get('export_scanned')} "
++            f"found {logs.get('export_found')} files {logs.get('files_copied')}"
++        )
++    if logs.get("ciphertext_keys") != 1:
++        problems.append(f"teardown scan ran without the store key ({logs.get('ciphertext_keys')})")
++    if custody.get("key_unlinked") is not True:
++        problems.append(f"store key unlinked: {custody.get('key_unlinked')}")
++    return problems
++
++
++def custody_problems(sandboxes: Path, root: Path) -> list[str]:
++
++    problems = []
++    for path, want in ((sandboxes, 0o700), (root, 0o700)):
++        try:
++            info = path.lstat()
++        except OSError as exc:
++            problems.append(f"{path}: {exc.__class__.__name__}")
++            continue
++        if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != want:
++            problems.append(f"{path} mode {oct(stat.S_IMODE(info.st_mode))} (want {oct(want)}, a real directory)")
++    key = root / "data" / "encryption.key"
++    try:
++        info = key.lstat()
++    except OSError as exc:
++        return [*problems, f"key: {exc.__class__.__name__}"]
++    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
++        problems.append(f"key mode {oct(stat.S_IMODE(info.st_mode))} links {info.st_nlink} (want 0o600, 1)")
++    return problems
