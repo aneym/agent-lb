@@ -2,36 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import stat
-import sys
-import time
-from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from importlib import import_module
-from ipaddress import ip_address, ip_network
-from pathlib import Path, PurePosixPath
-from typing import Any, Protocol, cast
-from urllib.parse import urlparse
+from typing import Any, cast
 
-import aiohttp
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
-from starlette.staticfiles import StaticFiles
+from fastapi import FastAPI
 
+from app.bridge_startup import ensure_bridge_durable_schema_ready
 from app.core import upload_throttle
 from app.core.auth.guardian import build_auth_guardian_scheduler
 from app.core.bootstrap import ensure_auto_bootstrap_token, log_bootstrap_token
 from app.core.clients.codex_pool import close_codex_pool
 from app.core.clients.http import close_http_client, init_http_client
-from app.core.config.settings import bridge_advertise_hostname_is_replica_specific, get_settings
+from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.forensics import register_stack_dump_signal
 from app.core.handlers import add_exception_handlers
 from app.core.identity_nodes import IdentityNodeCache
 from app.core.metrics.middleware import MetricsMiddleware
-from app.core.metrics.prometheus import PROMETHEUS_AVAILABLE, make_scrape_registry, mark_process_dead
-from app.core.metrics.serve import serve_metrics
+from app.core.metrics.prometheus import mark_process_dead
 from app.core.middleware import (
     add_api_firewall_middleware,
     add_app_version_middleware,
@@ -50,6 +39,7 @@ from app.core.resilience.event_loop_lag_monitor import build_event_loop_lag_moni
 from app.core.resilience.memory_monitor import configure as configure_memory_monitor
 from app.core.usage.refresh_scheduler import build_usage_refresh_scheduler
 from app.db.session import SessionLocal, close_db, init_background_db, init_db
+from app.metrics_startup import start_metrics_server
 from app.modules.account_schedule import api as account_schedule_api
 from app.modules.account_schedule.scheduler import build_account_resume_scheduler
 from app.modules.accounts import api as accounts_api
@@ -73,7 +63,6 @@ from app.modules.pools import api as pools_api
 from app.modules.pools.seat_quota_scheduler import build_seat_quota_scheduler
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy import meta_service as meta_api
-from app.modules.proxy.durable_bridge_repository import missing_durable_bridge_tables
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.proxy.ring_membership import (
     RING_HEARTBEAT_INTERVAL_SECONDS,
@@ -97,36 +86,16 @@ from app.modules.sticky_sessions.cleanup_scheduler import build_sticky_session_c
 from app.modules.team import api as team_api
 from app.modules.usage import api as usage_api
 from app.modules.usage.additional_quota_keys import reload_additional_quota_registry
+from app.runtime_diagnostics import log_runtime_diagnostic_fingerprint
+from app.static_routes import configure_static_routes
 
 logger = logging.getLogger(__name__)
-diagnostics_logger = logging.getLogger("app.main")
-bridge_logger = logging.getLogger("app.main")
-metrics_logger = logging.getLogger("app.main")
-
-
-class _RingMembershipReader(Protocol):
-    def list_active(
-        self,
-        stale_threshold_seconds: int = RING_STALE_THRESHOLD_SECONDS,
-        *,
-        require_endpoint: bool = False,
-    ) -> Awaitable[list[str]]: ...
-
-
-def resolve_static_asset_path(static_root: Path, requested_path: str) -> Path | None:
-
-    normalized = PurePosixPath(requested_path)
-    if normalized.is_absolute() or ".." in normalized.parts:
-        return None
-    full_path, stat_result = StaticFiles(directory=static_root, check_dir=False).lookup_path(normalized.as_posix())
-    if stat_result is None or not stat.S_ISREG(stat_result.st_mode):
-        return None
-    return Path(full_path)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import app.core.startup as startup_module
+    from app.bridge_startup import wait_for_bridge_advertise_endpoint
 
     startup_recorder = startup_module.StartupRecorder()
     shutdown_state = import_module("app.core.shutdown")
@@ -200,6 +169,8 @@ async def lifespan(app: FastAPI):
     metrics_server, metrics_server_task = start_metrics_server(settings)
 
     async def _complete_bridge_registration(svc: RingMembershipService, iid: str) -> None:
+        from app.bridge_startup import validate_bridge_advertise_endpoint_for_multi_replica
+
         if bridge_endpoint_base_url is None:
             await _activate_bridge_membership(svc, iid)
             startup_module.mark_bridge_registration_complete()
@@ -360,31 +331,6 @@ async def lifespan(app: FastAPI):
                 await close_db()
 
 
-def start_metrics_server(settings):
-    metrics_server = None
-    metrics_server_task = None
-    if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
-        import uvicorn
-
-        scrape_registry = make_scrape_registry()
-        prometheus_module = import_module("prometheus_client")
-        make_asgi_app = getattr(prometheus_module, "make_asgi_app")
-        metrics_app = make_asgi_app(registry=scrape_registry)
-        config = uvicorn.Config(
-            metrics_app,
-            host=settings.metrics_host,
-            port=settings.metrics_port,
-            log_level="warning",
-        )
-        metrics_server = uvicorn.Server(config)
-
-        metrics_server_task = asyncio.create_task(serve_metrics(metrics_server, settings.metrics_port))
-    elif settings.metrics_enabled:
-        metrics_logger.warning("Metrics endpoint enabled but prometheus-client is not installed")
-
-    return metrics_server, metrics_server_task
-
-
 def create_app() -> FastAPI:
 
     upload_throttle.install()
@@ -483,270 +429,6 @@ def configure_app(app: FastAPI, settings) -> None:
     app.include_router(federation_api.dashboard_router)
 
     configure_static_routes(app)
-
-
-def configure_static_routes(app: FastAPI) -> None:
-    static_dir = Path(__file__).parent / "static"
-    index_html = static_dir / "index.html"
-    static_root = static_dir.resolve()
-    frontend_build_hint = "Frontend assets are missing. Run `cd frontend && bun run build`."
-    excluded_prefixes = ("api/", "v1/", "backend-api/", "health")
-
-    def _is_static_asset_path(path: str) -> bool:
-        if path.startswith("assets/"):
-            return True
-        last_segment = path.rsplit("/", maxsplit=1)[-1]
-        return "." in last_segment
-
-    @app.get("/", include_in_schema=False)
-    @app.get("/{path:path}", include_in_schema=False)
-    async def spa_fallback(path: str = ""):
-        normalized = path.lstrip("/")
-        if normalized and any(
-            normalized == prefix.rstrip("/") or normalized.startswith(prefix) for prefix in excluded_prefixes
-        ):
-            raise HTTPException(status_code=404, detail="Not Found")
-
-        if normalized:
-            candidate = resolve_static_asset_path(static_root, normalized)
-            if candidate is not None:
-                return FileResponse(candidate)
-            if _is_static_asset_path(normalized):
-                raise HTTPException(status_code=404, detail="Not Found")
-
-        if not index_html.is_file():
-            raise HTTPException(status_code=503, detail=frontend_build_hint)
-
-        return FileResponse(
-            index_html,
-            media_type="text/html",
-            headers={"Cache-Control": "no-cache"},
-        )
-
-
-def log_runtime_diagnostic_fingerprint(settings, *, bridge_durable_schema_ready: bool | None) -> None:
-    fingerprint = _runtime_diagnostic_fingerprint(settings, bridge_durable_schema_ready=bridge_durable_schema_ready)
-    diagnostics_logger.info(
-        (
-            "agent_lb_runtime_fingerprint database_backend=%s data_dir=%s dashboard_auth_mode=%s "
-            "trusted_proxy_cidrs=%s proxy_unauthenticated_cidrs=%s proxy_tailnet_allowed=%s "
-            "metrics_enabled=%s metrics_available=%s metrics_bind=%s:%s "
-            "response_create_cap=%s stream_cap=%s bridge_enabled=%s bridge_schema_status=%s"
-        ),
-        fingerprint["database_backend"],
-        fingerprint["data_dir"],
-        fingerprint["dashboard_auth_mode"],
-        fingerprint["firewall_trusted_proxy_cidrs_count"],
-        fingerprint["proxy_unauthenticated_client_cidrs_count"],
-        fingerprint["proxy_unauthenticated_tailnet_allowed"],
-        fingerprint["metrics_enabled"],
-        fingerprint["metrics_available"],
-        fingerprint["metrics_host"],
-        fingerprint["metrics_port"],
-        fingerprint["proxy_account_response_create_limit"],
-        fingerprint["proxy_account_stream_limit"],
-        fingerprint["http_responses_session_bridge_enabled"],
-        fingerprint["bridge_schema_status"],
-        extra=fingerprint,
-    )
-
-
-def _runtime_diagnostic_fingerprint(settings, *, bridge_durable_schema_ready: bool | None) -> dict[str, Any]:
-    return {
-        "event": "agent_lb_runtime_fingerprint",
-        "database_backend": _database_backend(settings.database_url),
-        "data_dir": str(settings.data_dir),
-        "dashboard_auth_mode": _enum_value(settings.dashboard_auth_mode),
-        "firewall_trust_proxy_headers": settings.firewall_trust_proxy_headers,
-        "firewall_trusted_proxy_cidrs_count": len(settings.firewall_trusted_proxy_cidrs),
-        "proxy_unauthenticated_client_cidrs_count": len(settings.proxy_unauthenticated_client_cidrs),
-        "proxy_unauthenticated_tailnet_allowed": _cidrs_include_tailnet(settings.proxy_unauthenticated_client_cidrs),
-        "metrics_enabled": settings.metrics_enabled,
-        "metrics_available": PROMETHEUS_AVAILABLE,
-        "metrics_host": settings.metrics_host,
-        "metrics_port": settings.metrics_port,
-        "log_format": settings.log_format,
-        "proxy_account_response_create_limit": settings.proxy_account_response_create_limit,
-        "proxy_account_stream_limit": settings.proxy_account_stream_limit,
-        "http_responses_session_bridge_enabled": settings.http_responses_session_bridge_enabled,
-        "http_responses_session_bridge_instance_ring_size": len(settings.http_responses_session_bridge_instance_ring),
-        "http_responses_session_bridge_max_sessions": settings.http_responses_session_bridge_max_sessions,
-        "http_responses_session_bridge_queue_limit": settings.http_responses_session_bridge_queue_limit,
-        "http_responses_session_bridge_response_create_concurrency": (
-            settings.http_responses_session_bridge_response_create_concurrency
-        ),
-        "bridge_advertise_base_url_configured": settings.http_responses_session_bridge_advertise_base_url is not None,
-        "bridge_schema_status": _bridge_schema_status(
-            settings.http_responses_session_bridge_enabled,
-            bridge_durable_schema_ready,
-        ),
-    }
-
-
-def _database_backend(database_url: str) -> str:
-    scheme = urlparse(database_url).scheme
-    if not scheme:
-        return "unknown"
-    return scheme.split("+", maxsplit=1)[0]
-
-
-def _enum_value(value: Any) -> str:
-    raw = getattr(value, "value", value)
-    return str(raw)
-
-
-def _bridge_schema_status(bridge_enabled: bool, bridge_durable_schema_ready: bool | None) -> str:
-    if not bridge_enabled:
-        return "disabled"
-    if bridge_durable_schema_ready is None:
-        return "not_checked"
-    return "ready" if bridge_durable_schema_ready else "missing"
-
-
-def _cidrs_include_tailnet(cidrs: list[str]) -> bool:
-    tailnet_v4 = ip_network("100.64.0.0/10")
-    tailnet_v6 = ip_network("fd7a:115c:a1e0::/48")
-    for cidr in cidrs:
-        try:
-            network = ip_network(cidr, strict=False)
-        except ValueError:
-            continue
-        if network.version == 4 and network.overlaps(tailnet_v4):
-            return True
-        if network.version == 6 and network.overlaps(tailnet_v6):
-            return True
-    return False
-
-
-async def ensure_bridge_durable_schema_ready(settings) -> bool:
-    if not settings.http_responses_session_bridge_enabled:
-        return False
-    session = SessionLocal()
-    try:
-        missing_tables = await missing_durable_bridge_tables(session)
-    finally:
-        await session.close()
-    if not missing_tables:
-        return True
-    missing = ", ".join(missing_tables)
-    if settings.database_migrations_fail_fast:
-        raise RuntimeError(f"HTTP bridge durable schema is missing required tables: {missing}")
-    bridge_logger.warning(
-        "HTTP bridge durable schema is missing required tables but startup fail-fast is disabled",
-        extra={"missing_tables": missing_tables},
-    )
-    return False
-
-
-async def wait_for_bridge_advertise_endpoint(
-    bridge_endpoint_base_url: str | None,
-    *,
-    connect_timeout_seconds: float,
-) -> None:
-    local_port = _local_api_port()
-    if bridge_endpoint_base_url is None and local_port is None:
-        raise RuntimeError(
-            "Cannot determine local bridge listener port for registration probe; "
-            "set PORT or configure http_responses_session_bridge_advertise_base_url"
-        )
-    probe_base_url = bridge_endpoint_base_url or f"http://127.0.0.1:{local_port}"
-    probe_base_url = probe_base_url.rstrip("/")
-    probe_url = f"{probe_base_url}/health/live"
-    timeout = aiohttp.ClientTimeout(
-        total=connect_timeout_seconds,
-        sock_connect=connect_timeout_seconds,
-        sock_read=connect_timeout_seconds,
-    )
-    max_probe_wait_seconds = max(connect_timeout_seconds, 5.0)
-    deadline = time.monotonic() + max_probe_wait_seconds
-    await asyncio.sleep(0)
-    attempt = 0
-    while time.monotonic() < deadline:
-        attempt += 1
-        try:
-            async with aiohttp.ClientSession(timeout=timeout, trust_env=False) as session:
-                async with session.get(probe_url) as response:
-                    if response.status == 200:
-                        return
-        except Exception:
-            bridge_logger.debug(
-                "Bridge advertise endpoint not yet reachable",
-                extra={"probe_url": probe_url, "attempt": attempt},
-                exc_info=True,
-            )
-        delay = min(0.5 * (2 ** min(attempt - 1, 4)), 5.0)
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        await asyncio.sleep(min(delay, remaining))
-    raise RuntimeError(
-        f"Bridge advertise endpoint did not become reachable before registration probe deadline: {probe_url}"
-    )
-
-
-def _local_api_port() -> int | None:
-    raw = os.getenv("PORT")
-    port = _parse_port_value(raw.strip()) if raw is not None else None
-    if port is None:
-        port = _port_from_argv()
-    return port
-
-
-def _parse_port_value(raw: str) -> int | None:
-    try:
-        port = int(raw)
-    except ValueError:
-        return None
-    if port <= 0:
-        return None
-    return port
-
-
-def _port_from_argv() -> int | None:
-    args = tuple(sys.argv[1:])
-    for index, value in enumerate(args):
-        if value == "--port" and index + 1 < len(args):
-            return _parse_port_value(args[index + 1])
-        if value.startswith("--port="):
-            return _parse_port_value(value.split("=", 1)[1])
-    return None
-
-
-async def validate_bridge_advertise_endpoint_for_multi_replica(
-    svc: _RingMembershipReader,
-    *,
-    settings,
-    instance_id: str,
-    endpoint_base_url: str | None,
-) -> None:
-    if endpoint_base_url is None:
-        return
-    hostname = urlparse(endpoint_base_url).hostname
-    if hostname is None:
-        raise RuntimeError("http_responses_session_bridge_advertise_base_url must include a valid hostname")
-    try:
-        parsed_ip = ip_address(hostname)
-    except ValueError:
-        parsed_ip = None
-    if (parsed_ip is not None and parsed_ip.is_loopback) or hostname == "localhost":
-        configured_multi_replica = len(settings.http_responses_session_bridge_instance_ring) > 1
-        if configured_multi_replica:
-            raise RuntimeError(
-                "http_responses_session_bridge_advertise_base_url must be replica-specific for bridge routing"
-            )
-        try:
-            active_instances = await svc.list_active(stale_threshold_seconds=RING_HEARTBEAT_INTERVAL_SECONDS)
-        except Exception:
-            active_instances = []
-        if any(active_instance != instance_id for active_instance in active_instances):
-            raise RuntimeError(
-                "http_responses_session_bridge_advertise_base_url must be replica-specific for bridge routing"
-            )
-        return
-    if not bridge_advertise_hostname_is_replica_specific(hostname, instance_id=instance_id):
-        raise RuntimeError(
-            "http_responses_session_bridge_advertise_base_url must be replica-specific for bridge routing"
-        )
 
 
 app = create_app()
