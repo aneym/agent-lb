@@ -1,0 +1,98 @@
+..................F..
+=================================== FAILURES ===================================
+___ test_a_fold_keeps_order_past_a_name_list_matcher[Bash-Write, Bash-Bash] ____
+
+tmp_path = PosixPath('/home/jobs/.agent-rails/factory/sessions/sess-6d70f8690181/tmp/pytest-of-jobs/pytest-3/test_a_fold_keeps_order_past_a0')
+first = 'Bash', middle = 'Write, Bash', tool = 'Bash'
+
+    @pytest.mark.parametrize(
+        "first, middle, tool",
+        [
+            ("Bash", "Write, Bash", "Bash"),
+            ("Agent", "Task", "Agent"),
+            ("Agent", "Write|Task", "Agent"),
+            ("Bash", "*", "Bash"),
+            ("Bash", "", "Bash"),
+        ],
+    )
+    def test_a_fold_keeps_order_past_a_name_list_matcher(tmp_path: Path, first: str, middle: str, tool: str) -> None:
+    
+        home, _ = make_home(tmp_path)
+        (home / "g").mkdir()
+        for name, text in (("a.py", "first"), ("b.py", "second"), ("c.py", "third")):
+            (home / "g" / name).write_text(REWRITE % text)
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": first,
+                        "hooks": [
+                            {"type": "command", "command": 'python3 "$HOME/g/a.py"'},
+                            {"type": "command", "command": "true"},
+                        ],
+                    },
+                    {"matcher": middle, "hooks": [{"type": "command", "command": 'python3 "$HOME/g/b.py"'}]},
+                    {"matcher": first, "hooks": [{"type": "command", "command": 'python3 "$HOME/g/c.py"'}]},
+                ]
+            }
+        }
+        (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+        install, env = installer(tmp_path, home)
+        call = {"tool_name": tool, "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
+        import parity_registry as parity  # type: ignore[missing-import]
+    
+        def last_rewrite() -> str | None:
+            last = None
+            for group in hooks_of(home)["PreToolUse"]:
+                if not parity.matches(group.get("matcher"), tool):
+                    continue
+                for hook in group["hooks"]:
+                    out = run_hook(hook["command"], call, env).stdout
+                    specific = (json.loads(out) if out.strip() else {}).get("hookSpecificOutput") or {}
+                    last = specific.get("updatedInput", {}).get("command", last)
+            return last
+    
+        assert last_rewrite() == "third"
+>       install("--hook-dispatcher", "on")
+
+tests/floor/test_hook_dispatcher_matchers.py:131: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/floor/hook_dispatcher_support.py:151: in install
+    result = subprocess.run(
+/home/jobs/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/subprocess.py:556: in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jobs/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/subprocess.py:1222: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jobs/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/subprocess.py:2154: in _communicate
+    ready = selector.select(timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <selectors.PollSelector object at 0x72195978ed50>, timeout = 600000
+
+    def select(self, timeout=None):
+        # This is shared between poll() and epoll().
+        # epoll() has a different signature and handling of timeout parameter.
+        if timeout is None:
+            timeout = None
+        elif timeout <= 0:
+            timeout = 0
+        else:
+            # poll() has a resolution of 1 millisecond, round away from
+            # zero to wait *at least* timeout seconds.
+            timeout = math.ceil(timeout * 1e3)
+        ready = []
+        try:
+>           fd_event_list = self._selector.poll(timeout)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: Timeout (>60.0s) from pytest-timeout.
+
+/home/jobs/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/selectors.py:398: Failed
+=========================== short test summary info ============================
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_a_fold_keeps_order_past_a_name_list_matcher[Bash-Write, Bash-Bash]
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! KeyboardInterrupt !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+/home/jobs/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/selectors.py:398: KeyboardInterrupt
+(to show a full traceback on KeyboardInterrupt use --full-trace)
+1 failed, 20 passed in 184.60s (0:03:04)

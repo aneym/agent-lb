@@ -1,0 +1,37 @@
+{"findings": [], "count": 0}
+{
+  "cycles": [
+    "app",
+    "bin",
+    "clients",
+    "config",
+    "deploy",
+    "docs",
+    "features",
+    "frontend",
+    "openspec",
+    "patches",
+    "scripts",
+    "tests"
+  ],
+  "errors": [],
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+filecap: 0.382 s
+modcheck: 2.038 s
+comments: 0.487 s
+freeze: 0.299 s
+warning: freeze (advisory): filecap: freeze state was not synced; run studio_merge.py mirror
+gate-precheck: clean in 5.757 s
+nt-lb"}
+notes: {"features": ["accounts", "module-support-accounts"], "file": "app/modules/accounts/availability_api.py", "problem": "overlapping paths", "product": "agent-lb"}
+feature-map check: 5 s
+factory-lint check --changed
+pass: 0 new, 33 existing, 0 files fixed (5916 ms)
+make lint: 7 s
+ok: True
+notes: {"features": ["accounts", "module-support-accounts"], "file": "app/modules/accounts/api.py", "problem": "overlapping paths", "product": "agent-lb"}
+notes: {"features": ["accounts", "module-support-accounts"], "file": "app/modules/accounts/availability_api.py", "problem": "overlapping paths", "product": "agent-lb"}
+feature-map check: 1 s

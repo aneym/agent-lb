@@ -1,0 +1,100 @@
+            last = None
+            for group in hooks_of(home)["PreToolUse"]:
+                if not parity.matches(group.get("matcher"), tool):
+                    continue
+                for hook in group["hooks"]:
+                    out = run_hook(hook["command"], call, env).stdout
+                    specific = (json.loads(out) if out.strip() else {}).get("hookSpecificOutput") or {}
+                    last = specific.get("updatedInput", {}).get("command", last)
+            return last
+    
+>       assert last_rewrite() == "third"
+               ^^^^^^^^^^^^^^
+
+tests/floor/test_hook_dispatcher_matchers.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def last_rewrite() -> str | None:
+        last = None
+        for group in hooks_of(home)["PreToolUse"]:
+>           if not parity.matches(group.get("matcher"), tool):
+                   ^^^^^^^^^^^^^^
+E           AttributeError: module 'hook_dispatch_parity' has no attribute 'matches'
+
+tests/floor/test_hook_dispatcher_matchers.py:121: AttributeError
+________ test_a_command_shared_with_a_per_hook_group_runs_once_per_call ________
+
+tmp_path = PosixPath('/home/jobs/.agent-rails/factory/sessions/sess-6d70f8690181/tmp/pytest-of-jobs/pytest-0/test_a_command_shared_with_a_p0')
+
+    def test_a_command_shared_with_a_per_hook_group_runs_once_per_call(tmp_path: Path) -> None:
+    
+        home, _ = make_home(tmp_path)
+        (home / "g").mkdir()
+        (home / "g/count.py").write_text(COUNTED)
+        counter = tmp_path / "runs.txt"
+        guard = {"type": "command", "command": f'python3 "$HOME/g/count.py" "{counter}"'}
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Bash", "hooks": [guard, {"type": "command", "command": "true"}]},
+                    {"matcher": "^Bash$", "hooks": [guard]},
+                ]
+            }
+        }
+        (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+        install, env = installer(tmp_path, home)
+        call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
+        parity = parity_module()
+    
+        def runs_per_call() -> int:
+            counter.write_text("")
+            seen: list[str] = []
+            for group in hooks_of(home)["PreToolUse"]:
+                if parity.matches(group.get("matcher"), "Bash"):
+                    seen += [hook["command"] for hook in group["hooks"] if hook["command"] not in seen]
+            for command in seen:
+                run_hook(command, call, env)
+            return len(counter.read_text().splitlines())
+    
+>       assert runs_per_call() == 1
+               ^^^^^^^^^^^^^^^
+
+tests/floor/test_hook_dispatcher_matchers.py:164: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def runs_per_call() -> int:
+        counter.write_text("")
+        seen: list[str] = []
+        for group in hooks_of(home)["PreToolUse"]:
+>           if parity.matches(group.get("matcher"), "Bash"):
+               ^^^^^^^^^^^^^^
+E           AttributeError: module 'hook_dispatch_parity' has no attribute 'matches'
+
+tests/floor/test_hook_dispatcher_matchers.py:158: AttributeError
+=========================== short test summary info ============================
+FAILED tests/floor/test_hook_dispatcher_registry.py::test_env_that_changes_a_pinned_guard_runs_it[BASH_ENV]
+FAILED tests/floor/test_hook_dispatcher_registry.py::test_env_that_changes_a_pinned_guard_runs_it[BASHOPTS]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[None-Bash-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[-Read-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[*-Bash-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[Bash-Bash-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[Bash-Read-PreToolUse-False]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[Edit|Write-Write-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[Edit, Write-Write-PostToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[Task-Agent-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[^Bash$-Bash-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[^Bash$-BashOutput-PreToolUse-False]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[mcp__.*-mcp__aside__repl-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[.*-Read-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[Ba.*h-Bash-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[^Task$-Agent-PreToolUse-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[(-Bash-PreToolUse-False]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[Bash-None-UserPromptSubmit-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_the_fixture_matches_tools_as_claude_code_does[Read-Bash-Stop-True]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_a_fold_keeps_order_past_a_name_list_matcher[Bash-Write, Bash-Bash]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_a_fold_keeps_order_past_a_name_list_matcher[Agent-Task-Agent]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_a_fold_keeps_order_past_a_name_list_matcher[Agent-Write|Task-Agent]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_a_fold_keeps_order_past_a_name_list_matcher[Bash-*-Bash]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_a_fold_keeps_order_past_a_name_list_matcher[Bash--Bash]
+FAILED tests/floor/test_hook_dispatcher_matchers.py::test_a_command_shared_with_a_per_hook_group_runs_once_per_call
+25 failed, 18 passed in 103.96s (0:01:43)
