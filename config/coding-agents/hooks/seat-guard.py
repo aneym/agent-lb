@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from seat_guard_advisory import first_snapshot_advisory, snapshot_advisory  # type: ignore[missing-import]
-from seat_hands import hands_target, hands_warning, local_warning, preserve_seat, steer_input  # type: ignore[missing-import]
+from seat_hands import EXCEPTION, hands_target, hands_warning, local_warning, preserve_seat, steer_input  # type: ignore[missing-import]
 
 FORWARDER_SEATS = {
     "codex-sol",
@@ -247,23 +247,56 @@ def is_anthropic_model(model: str) -> bool:
     return any(marker in model for marker in ANTHROPIC_MODEL_MARKERS)
 
 
-def main() -> None:
-    try:
-        payload = json.load(sys.stdin)
-    except ValueError as error:
-        emit_advisory(f"could not read the Agent hook input (not JSON: {error})")
-        return
-    if not isinstance(payload, dict):
-        emit_advisory("could not read the Agent hook input (not a JSON object)")
-        return
-    if payload.get("tool_name") != "Agent":
-        emit_advisory("invalid Agent hook input; dispatch was not blocked")
+def recover(payload, error: str) -> None:
+    tool_input = payload.get("tool_input") if isinstance(payload, dict) else None
+    updated = None
+    seat = tool_input.get("subagent_type", "general-purpose") if isinstance(tool_input, dict) else None
+    prompt = tool_input.get("prompt") if isinstance(tool_input, dict) else None
+    if (
+        isinstance(seat, str)
+        and seat.strip().lower().removesuffix("-local") not in FORWARDER_SEATS
+        and not SOL_MODEL.search(seat)
+        and isinstance(prompt, str)
+        and not EXCEPTION.search(prompt)
+        and os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") != "1"
+    ):
+        try:
+            choice = hands_target(seat.strip().lower(), prompt)
+        except Exception:
+            choice = None
+        updated = steer_input(tool_input, choice[0] if choice else "gpt-implementer", prompt, True)
+    target = updated["subagent_type"] if updated else seat
+    ledger = Path(
+        os.environ.get("ROUTE_LEDGER")
+        or os.environ.get("DISPATCH_LEDGER")
+        or Path.home() / ".claude/logs/dispatch.jsonl"
+    )
+    append(
+        {
+            "ts": now(),
+            "event": "dispatch_error",
+            "error": error,
+            "original_subagent_type": seat,
+            "subagent_type": target,
+            "action": "rewrite" if updated else "pass-through",
+        },
+        ledger,
+    )
+    emit_context(
+        f"seat-guard: {error}; {seat} -> {target}" if updated else f"seat-guard: {error}; dispatch unchanged",
+        updated=updated,
+    )
+
+
+def main(payload) -> None:
+    if not isinstance(payload, dict) or payload.get("tool_name") != "Agent":
+        recover(payload, "invalid Agent hook input")
         return
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict) or any(
-        field in tool_input and not isinstance(tool_input[field], str) for field in ("subagent_type", "model")
+        field in tool_input and not isinstance(tool_input[field], str) for field in ("subagent_type", "model", "prompt")
     ):
-        emit_advisory("could not read the Agent hook input (tool_input is not an object of text fields)")
+        recover(payload, "tool_input is not an object of text fields")
         return
     subagent = (tool_input.get("subagent_type") or "").strip().lower()
     model = (tool_input.get("model") or "").strip().lower()
@@ -437,10 +470,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    payload = None
     try:
-        main()
+        payload = json.load(sys.stdin)
+        main(payload)
     except Exception as error:
-        emit_advisory(f"failed ({type(error).__name__})")
+        recover(payload, f"failed ({type(error).__name__})")
     else:
         if os.environ.get("HOOK_FLOOR_RECEIPT"):
             print("floor-ok seat-guard.py")

@@ -272,3 +272,14 @@ First use: Codex accounts 2661c1c1 and 409a8db4 returned every `server_is_overlo
 of 2026-10-22 (391; the other three had none), which made prod chat first tokens 9-25 s. They are excluded from
 gpt-6.1-sol until 2026-10-22T14:40Z (area-ship ruling b-20261022022947).
 
+
+
+## Claude hands enforcement (October 22, 2026)
+
+Team-lead's seat-guard-enforce brief supersedes warn-only hands admission: Agent
+hook errors route recognizable Claude dispatches without OPUS-REASON to the
+normal Codex target, or gpt-implementer when classification fails. Workflow
+hands calls rewrite when statically checkable; dynamic options block. The
+shared OPUS-REASON exemption and SEAT_GUARD_ALLOW_ANTHROPIC override remain.
+Mac-only opus-seat briefs without OPUS-REASON forward to gpt-implementer-local
+through seat-run on Studio instead of doing the work in-process.
