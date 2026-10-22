@@ -283,3 +283,12 @@ hands calls rewrite when statically checkable; dynamic options block. The
 shared OPUS-REASON exemption and SEAT_GUARD_ALLOW_ANTHROPIC override remain.
 Mac-only opus-seat briefs without OPUS-REASON forward to gpt-implementer-local
 through seat-run on Studio instead of doing the work in-process.
+## Hands dispatch stays off Claude (2026-10-22)
+
+Team-lead restated Alex's decision: Opus supplies architecture and Codex executes.
+Implementation, fix, fix-forward and migration resolve to implement; sweep, probe
+and test-run to mechanical; investigation and exploration to explore. Dispatch
+records both names. Fix retains its never-explore and Grok exclusion rules.
+Implement, mechanical, explore and research default to Sol. On exhaustion they
+try eligible non-Claude table arms, then wait; this supersedes the cross-vendor
+Claude fallback for those classes. Opus authority classes retain their policy.

@@ -5,6 +5,8 @@ import random
 from collections.abc import Callable
 from typing import Any
 
+SOL_CLASSES = frozenset({"implement", "mechanical", "explore", "research"})
+
 
 def standard_choice(standard: dict, reason: str) -> dict:
     return {
@@ -22,6 +24,21 @@ def standard_choice(standard: dict, reason: str) -> dict:
 def seat_block(api: Any, ctx: Any, arm: dict, excluded: set[str]) -> str | None:
     if arm.get("seat") in excluded:
         return f"excluded seat {arm['seat']}"
+    if ctx.class_name in SOL_CLASSES:
+        model = arm.get("model") or arm.get("model_alias")
+        if api.alias_vendor(ctx.table, model) == "anthropic":
+            return "hands classes never use Claude"
+        pool_id = arm.get("pool") or api.pool_for_model(ctx.table, model)
+        pool = ctx.pools.get(pool_id, {})
+        headroom = pool.get("headroomPercent")
+        if (
+            (isinstance(headroom, (int, float)) and not isinstance(headroom, bool) and headroom <= 0)
+            or pool.get("eligibleAccounts") == 0
+            or pool.get("status") in ("exhausted", "empty")
+        ):
+            return "pool unavailable"
+        if arm.get("seat") == "grok-implementer" and ctx.grok_choice is None:
+            return "Grok constraints not met"
     spec = (ctx.table.get("seats") or {}).get(arm.get("seat")) or {}
     if any(row.get("paused") or row.get("disabled") or row.get("enabled") is False for row in (arm, spec)):
         return "paused or disabled"
@@ -61,8 +78,14 @@ def explore_stop(api: Any, ctx: Any) -> Callable[[dict], str | None]:
 
 
 def fallback(
-    api: Any, ctx: Any, standard: dict, excluded: set[str], reason: str, pools: dict,
-    today: list, stop: Callable[[dict], str | None],
+    api: Any,
+    ctx: Any,
+    standard: dict,
+    excluded: set[str],
+    reason: str,
+    pools: dict,
+    today: list,
+    stop: Callable[[dict], str | None],
 ) -> dict | None:
     table = ctx.table
     class_name = ctx.class_name
@@ -91,6 +114,8 @@ def fallback(
                 "arm_id": arm.get("id") or f"spread:{arm['seat']}",
                 "pool": arm.get("pool"),
             }
+    if class_name in SOL_CLASSES:
+        return None
     variants = [standard, api.dispatch_standard(table, class_name, ctx.author_vendor)]
     variants.extend((table["standards"][class_name].get("by_author_vendor") or {}).values())
     override = (table.get("quota_swap") or {}).get(class_name)
@@ -125,6 +150,11 @@ def select(
     job_id: str,
 ) -> tuple:
     class_name = args.task_class
+    ctx.pools = api.pools_by_id(pools_doc)
+    leases = (lambda: pools_doc.get("reservations")) if args.pools_file else api.pick_leases
+    ctx.grok_choice, grok_skipped = api.constraint_choice(
+        table, class_name, ctx.pools, args.tag, mode_state["mode"], api.ledger_path(), leases
+    )
     if standard.get("chain") and not any(v is not None for v in (args.seat, args.model, args.effort)):
         return chain_choice(api, args, table, standard, pools_doc), [], False
     explore = table.get("explore") or {}
@@ -233,14 +263,15 @@ def select(
                     },
                 },
             }
-            choice = api.dispatch_choice(
-                filtered, class_name, rng, api.pools_by_id(pools_doc), standard, explore, shares, draw
+            choice = (
+                standard_choice(standard, "Sol standard")
+                if (class_name in SOL_CLASSES and not seat_block(api, ctx, standard, excluded))
+                else api.dispatch_choice(
+                    filtered, class_name, rng, api.pools_by_id(pools_doc), standard, explore, shares, draw
+                )
             )
     if not explicit and not sticky:
-        leases = (lambda: pools_doc.get("reservations")) if args.pools_file else api.pick_leases
-        constrained, skipped = api.constraint_choice(
-            table, class_name, api.pools_by_id(pools_doc), args.tag, mode_state["mode"], api.ledger_path(), leases
-        )
+        constrained, skipped = ctx.grok_choice, grok_skipped
         if constrained and constrained["seat"] not in excluded:
             choice = constrained
         elif skipped:
@@ -289,20 +320,34 @@ def balance_pool(document: dict, read_accounts: Any) -> None:
     usable = []
     for account in members:
         balance, cap = account.get("creditsBalance"), account.get("creditsCap")
-        if (account.get("status") == "active" and isinstance(balance, (int, float))
-                and not isinstance(balance, bool) and math.isfinite(balance) and balance > 0
-                and isinstance(cap, (int, float)) and not isinstance(cap, bool) and math.isfinite(cap) and cap > 0):
+        if (
+            account.get("status") == "active"
+            and isinstance(balance, (int, float))
+            and not isinstance(balance, bool)
+            and math.isfinite(balance)
+            and balance > 0
+            and isinstance(cap, (int, float))
+            and not isinstance(cap, bool)
+            and math.isfinite(cap)
+            and cap > 0
+        ):
             usable.append(min(100, 100 * balance / cap))
     empty = members and all(a.get("creditsBalance") == 0 for a in members)
-    document["pools"].append({
-        "id": "deepseek-flash", "provider": "openrouter", "kind": "weekly",
-        "accounts": len(members), "totalAccounts": len(members),
-        "usableAccounts": len(usable), "eligibleAccounts": len(usable),
-        "headroomPercent": max(usable, default=0),
-        "aggregateRemainingPercent": sum(usable) / len(members) if members else 0,
-        "status": "ok" if usable else "exhausted",
-        **({"unavailableReason": "no balance"} if empty else {}),
-    })
+    document["pools"].append(
+        {
+            "id": "deepseek-flash",
+            "provider": "openrouter",
+            "kind": "weekly",
+            "accounts": len(members),
+            "totalAccounts": len(members),
+            "usableAccounts": len(usable),
+            "eligibleAccounts": len(usable),
+            "headroomPercent": max(usable, default=0),
+            "aggregateRemainingPercent": sum(usable) / len(members) if members else 0,
+            "status": "ok" if usable else "exhausted",
+            **({"unavailableReason": "no balance"} if empty else {}),
+        }
+    )
 
 
 def chain_choice(api: Any, args: Any, table: dict, standard: dict, pools_doc: dict) -> dict | None:
@@ -313,11 +358,15 @@ def chain_choice(api: Any, args: Any, table: dict, standard: dict, pools_doc: di
         pool_id = api.pool_for_model(table, alias)
         pool = pools.get(pool_id, {})
         headroom = pool.get("headroomPercent")
-        if (not isinstance(headroom, (int, float)) or isinstance(headroom, bool)
-                or not math.isfinite(headroom) or headroom <= 0
-                or headroom < (table.get("spread") or {}).get("min_headroom_percent", 15)
-                or pool.get("eligibleAccounts", 0) <= 0
-                or pool.get("status") in ("exhausted", "empty")):
+        if (
+            not isinstance(headroom, (int, float))
+            or isinstance(headroom, bool)
+            or not math.isfinite(headroom)
+            or headroom <= 0
+            or headroom < (table.get("spread") or {}).get("min_headroom_percent", 15)
+            or pool.get("eligibleAccounts", 0) <= 0
+            or pool.get("status") in ("exhausted", "empty")
+        ):
             continue
         arm = {**standard, "model": alias}
         ctx = api.DispatchContext(table, args.task_class, args.author_vendor)

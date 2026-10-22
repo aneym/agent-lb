@@ -342,7 +342,9 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
 def arm_block(ctx: DispatchContext, arm: dict[str, Any]) -> str | None:
     explore = ctx.table.get("explore") or {}
     standard = ctx.table["standards"][ctx.class_name]
-    if ctx.class_name in (explore.get("never_classes") or []):
+    if ctx.class_name in (explore.get("never_classes") or []) or getattr(ctx, "requested_class", ctx.class_name) in (
+        explore.get("never_classes") or []
+    ):
         return f"{ctx.class_name} never explores"
     if explore.get("enabled") is not True:
         return "explore disabled"

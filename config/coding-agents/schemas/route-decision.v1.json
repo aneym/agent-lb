@@ -11,6 +11,7 @@
     "v": {"const": 1},
     "decision_id": {"type": "string", "pattern": "^dcn_[0-9A-HJKMNP-TV-Z]{26}$"},
     "ts": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"},
+    "requested_class": {"type": "string", "minLength": 1},
     "class": {"type": "string", "minLength": 1},
     "job_id": {"type": "string", "minLength": 1},
     "attempt": {"type": "integer", "minimum": 1},
