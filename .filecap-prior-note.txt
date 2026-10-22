@@ -1,0 +1,1 @@
+Blocked: _stream_responses_with_session in app/core/clients/proxy.py is 23,173 bytes, over the 20,000 cap by itself, with no removable comments. Its nonlocal-dependent closures can't be extracted with move-only lines plus import/declaration lines. The seat made no commits, and the checkout it saw wa
