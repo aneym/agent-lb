@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T21:07:51Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-clients-route",
-   "path": "clients/route",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T19:37:51Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -220,6 +210,30 @@
    "path": "clients/seat",
    "sha": "2cbe8279eb249aaf5f36343ad95038f3ee4e9d79",
    "until": "2026-10-29T18:47:37Z"
+  },
+  {
+   "into": [
+    "clients/route_anthropic_models.py",
+    "clients/route_build_outcomes.py",
+    "clients/route_class_candidates.py",
+    "clients/route_dispatch.py",
+    "clients/route_ladder_walk.py",
+    "clients/route_learn.py",
+    "clients/route_learning_text.py",
+    "clients/route_pace_state.py",
+    "clients/route_pick.py",
+    "clients/route_probe_model.py",
+    "clients/route_reserve_state.py",
+    "clients/route_resolve_one.py",
+    "clients/route_seat.py",
+    "clients/route_seat_states.py",
+    "clients/route_versioned_rules.py",
+    "clients/route_workflow_args.py"
+   ],
+   "note": "clients/route split at 13dd602f59. Reapply your diff onto the new module that now holds the code. Map: clients/route_anthropic_models.py: request, http_get, percent, command_plan, models_cache_path, retired_patterns, blocked_patterns, readmitted_patterns, is_retired, model_ids, served_models, anthropic_models; clients/route_build_outcomes.py: job_status, build_outcomes, ingest_outcomes, command_outcomes, probe_lb_health, probe_pools, probe_command, apply_cli_seat_holds, learning_entry; clients/route_class_candidates.py: class_candidates, release_job_hold, command_reservations, print_pick, workflow_relay_seat, read_decisions, table_digest, alias_vendor, decision_day, DispatchContext, outcome_events_path, outcomes_path; clients/route_dispatch.py: build_menu, arm_cap_block, command_dispatch, snapshot_resolved_models, policy_snapshot, row_time, replay_sources, DecisionIndex, merge_events; clients/route_ladder_walk.py: ladder_walk, command_ladder_pick, arm_block, dispatch_wait, merge_receipts_path; clients/route_learn.py: learning_report, command_standings; clients/route_learning_text.py: learning_outcomes, write_learning_table, learning_text; clients/route_pace_state.py: load_pool_history, record_pool_history, pace_state, command_pools, append_ledger, record_explicit_model, command_quota_mode, command_resolve, command_models, state_age_seconds, seat_is_up, record_caller_choice; clients/route_pick.py: command_reserve, reserve_walk, command_pick, command_menu, command_policy, outco",
+   "path": "clients/route",
+   "sha": "13dd602f59b0784a865357b7c6760664e9b7fff9",
+   "until": "2026-10-29T19:38:29Z"
   }
  ]
 }
