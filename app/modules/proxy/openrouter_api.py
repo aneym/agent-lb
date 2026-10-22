@@ -12,15 +12,12 @@ from app.modules.proxy.anthropic_service import AnthropicProxyError
 async def chat_response(
     request: Request, effective_model: str, stream_requested: bool | None, api_key: ApiKeyData | None
 ) -> Response:
-    from app.modules.proxy.api import (
-        collect_anthropic_body,
-        enforce_request_limits,
-        estimate_anthropic_request_usage,
-        logged_error_json_response,
-        openai_error,
-        release_reservation,
-        validate_model_access,
-    )
+    from app.core.errors import openai_error
+    from app.modules.proxy.anthropic_errors import collect_anthropic_body, estimate_anthropic_request_usage
+    from app.modules.proxy.request_admission import enforce_request_limits
+    from app.modules.proxy.request_policy import validate_model_access
+    from app.modules.proxy.reservations import release_reservation
+    from app.modules.proxy.response_errors import logged_error_json_response
 
     validate_model_access(api_key, effective_model)
     raw_body = await request.json()

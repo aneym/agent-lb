@@ -7,8 +7,8 @@ import pytest
 
 from app.core.anthropic.models import AnthropicMessageRequest
 from app.modules.api_keys.service_data import ApiKeyUsageReservationData
+from app.modules.proxy import anthropic_routes as proxy_api
 from app.modules.proxy import anthropic_service as anthropic_service_module
-from app.modules.proxy import api as proxy_api
 from app.modules.proxy.anthropic_service import AnthropicCountTokensResult, AnthropicProxyError, AnthropicProxyStream
 from app.modules.proxy.claude_codex_bridge import CCGPT_MODEL
 
@@ -19,6 +19,8 @@ pytestmark = pytest.mark.unit
 async def test_anthropic_stream_error_guard_releases_api_key_reservation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app.modules.proxy import anthropic_errors as proxy_api
+
     reservation = ApiKeyUsageReservationData(
         reservation_id="res_stream_error",
         key_id="key_stream_error",
