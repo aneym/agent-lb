@@ -327,6 +327,16 @@ SETTINGS_HOOKS = (
 )
 
 
+OBSERVATIONAL_HOOKS = (
+    ("SessionStart", "/.claude/hooks/register-session.sh"),
+    ("SessionStart", "/.claude/hooks/herdr-display-icon.sh"),
+    ("SessionStart", "/.claude/hooks/herdr-agent-state.sh"),
+    ("PostToolUse", "/skill-stats/dist/cli.js"),
+    ("SubagentStop", '/.claude/hooks/idle-agents.py" mark'),
+    ("TeammateIdle", '/.claude/hooks/idle-agents.py" mark'),
+)
+
+
 def is_settings_hook(command: Any, hook: dict[str, Any]) -> bool:
     path = re.search(r'hooks/[^"\s]+', hook["command"])
     return isinstance(command, str) and path is not None and path.group() in command
@@ -1133,6 +1143,8 @@ def reconcile_settings(
                     command = hook.get("command", "")
                     if "skill-stats" in command:
                         hook["timeout"] = 3
+                    if any(event == name and marker in command for name, marker in OBSERVATIONAL_HOOKS):
+                        hook["async"] = True
                     if "CACHE_ALERT" in command:
                         hook["command"] = (
                             'f="$HOME/.agent-lb/CACHE_ALERT"; [ ! -f "$f" ] || '
