@@ -2,6 +2,12 @@
 set -eu
 while read -r local_ref local_sha remote_ref remote_sha; do
     case "$local_sha" in
-        *[!0]*) filecap check --rev "$local_sha" ;;
+        *[!0]*) ;;
+        *) continue ;;
     esac
+    case "$remote_sha" in
+        *[!0]*) git cat-file -e "$remote_sha^{commit}" 2>/dev/null && base=$remote_sha || base=$(git merge-base origin/main "$local_sha") ;;
+        *) base=$(git merge-base origin/main "$local_sha") ;;
+    esac
+    filecap check --rev "$local_sha" --base "$base"
 done
