@@ -113,11 +113,12 @@ def git(paths: Paths, *args: str, timeout: float = 60) -> str:
 
 
 def fetch_main(paths: Paths) -> str | None:
+    mirror = os.environ.get("AGENT_LB_REPO_MIRROR") or str(Path.home() / ".local/bin/repo-mirror")
     try:
-        git(paths, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main", timeout=90)
-    except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        done = run([mirror, "fetch", str(paths.src)], timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as exc:
         return str(exc)[:200]
-    return None
+    return (done.stderr.strip() or f"repo-mirror exit {done.returncode}")[-200:] if done.returncode else None
 
 
 def origin_main(paths: Paths) -> str:
