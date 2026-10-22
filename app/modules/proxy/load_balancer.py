@@ -1279,8 +1279,7 @@ class LoadBalancer:
         selected: bool = False,
         expected_version: int | None = None,
     ) -> bool:
-        lock = await self._get_account_lock(account.id)
-        async with lock:
+        async with await self._get_account_lock(account.id):
             return self._sync_runtime_state(
                 account,
                 state,
@@ -1611,8 +1610,8 @@ class LoadBalancer:
             self._sync_runtime_state(account, state)
             self._selection_inputs_cache.invalidate()
 
-    async def record_error(self, account: Account) -> None:
-        await self.record_errors(account, 1)
+    async def record_error(self, account: Account, code: str = "") -> None:
+        await (self.cool_down(account, 20) if code == "server_is_overloaded" else self.record_errors(account, 1))
 
     async def record_errors(self, account: Account, count: int) -> None:
         if count < 1:
