@@ -1,0 +1,1 @@
+Blocked: select_account in load_balancer.py is 28,471 bytes, so a move-only split cannot get it under 20,000 bytes. Cross-module private-name renames also break the line-multiset rule. The worktree is unchanged with no commits, and HEAD is detached at b36a6635. Seat key: gpt-implementer-filecap-w8-l
