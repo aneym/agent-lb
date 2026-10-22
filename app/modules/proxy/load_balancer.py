@@ -1575,8 +1575,7 @@ class LoadBalancer:
             logger.warning("Failed to record sticky-session rebind", exc_info=True)
 
     async def mark_rate_limit(self, account: Account, error: UpstreamError) -> None:
-        lock = await self._get_account_lock(account.id)
-        async with lock:
+        async with await self._get_account_lock(account.id):
             state = self._state_for(account)
             handle_rate_limit(state, error)
             self._sync_runtime_state(account, state)
@@ -1585,8 +1584,7 @@ class LoadBalancer:
             self._selection_inputs_cache.invalidate()
 
     async def mark_quota_exceeded(self, account: Account, error: UpstreamError) -> None:
-        lock = await self._get_account_lock(account.id)
-        async with lock:
+        async with await self._get_account_lock(account.id):
             state = self._state_for(account)
             handle_quota_exceeded(state, error)
             self._sync_runtime_state(account, state)
@@ -1595,8 +1593,7 @@ class LoadBalancer:
             self._selection_inputs_cache.invalidate()
 
     async def mark_permanent_failure(self, account: Account, error_code: str) -> None:
-        lock = await self._get_account_lock(account.id)
-        async with lock:
+        async with await self._get_account_lock(account.id):
             state = self._state_for(account)
             handle_permanent_failure(state, error_code)
             self._sync_runtime_state(account, state)
@@ -1605,8 +1602,7 @@ class LoadBalancer:
             self._selection_inputs_cache.invalidate()
 
     async def cool_down(self, account: Account, seconds: float) -> None:
-        lock = await self._get_account_lock(account.id)
-        async with lock:
+        async with await self._get_account_lock(account.id):
             state = self._state_for(account)
             now = time.time()
             state.error_count += 1
@@ -1619,11 +1615,9 @@ class LoadBalancer:
         await self.record_errors(account, 1)
 
     async def record_errors(self, account: Account, count: int) -> None:
-
         if count < 1:
             return
-        lock = await self._get_account_lock(account.id)
-        async with lock:
+        async with await self._get_account_lock(account.id):
             account_snapshot = _clone_account(account)
             state = self._state_for(account)
             state.error_count += count
@@ -1636,11 +1630,9 @@ class LoadBalancer:
                 await self._persist_state_if_current(repos.accounts, account_snapshot, state)
 
     async def record_success(self, account: Account) -> None:
-
-        lock = await self._get_account_lock(account.id)
-        async with lock:
+        async with await self._get_account_lock(account.id):
             runtime = self._runtime.get(account.id)
-            if runtime and runtime.error_count > 0:
+            if runtime and runtime.error_count > 0 and time.time() - (runtime.last_error_at or 0) >= 60:
                 runtime.error_count = 0
                 runtime.last_error_at = None
                 runtime.version += 1
