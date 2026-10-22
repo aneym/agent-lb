@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T18:56:57Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-nfig-coding-agents-hooks-wide-scan-guard",
-   "path": "config/coding-agents/hooks/wide-scan-guard.sh",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T17:26:57Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -126,6 +116,15 @@
    "path": "config/coding-agents/hooks/hook-dispatch.py",
    "sha": "bab4b430deea9589cab0b3a4400496abab23649b",
    "until": "2026-10-29T17:26:54Z"
+  },
+  {
+   "into": [
+    "config/coding-agents/hooks/hook_wide_scan_shell.py"
+   ],
+   "note": "config/coding-agents/hooks/wide-scan-guard.sh split at 547565080f. Reapply your diff onto the new module that now holds the code. Map: config/coding-agents/hooks/hook_wide_scan_shell.py: strip_heredocs, join_continuations, shell_tokens, substitutions",
+   "path": "config/coding-agents/hooks/wide-scan-guard.sh",
+   "sha": "547565080f3c374a91bd32f0b5ccc6822ccab907",
+   "until": "2026-10-29T17:27:15Z"
   }
  ]
 }
