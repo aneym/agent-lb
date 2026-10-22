@@ -1,0 +1,1 @@
+Blocked, no commit made. The split is in the worktree: app/main.py is now 8381 bytes, and app/lifecycle.py and app/runtime_diagnostics.py are new. It also edits app/core/config/settings.py, app/core/startup.py, app/modules/health/api.py, tests/conftest.py and tests/e2e/conftest.py. The gate rejects 
