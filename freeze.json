@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T20:17:12Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-clients-seat",
-   "path": "clients/seat",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T18:47:12Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -202,6 +192,24 @@
    "path": "clients/claude-lb-launch",
    "sha": "450116a2d426c68a241cba2ede5ec005b38b02c7",
    "until": "2026-10-29T18:44:55Z"
+  },
+  {
+   "into": [
+    "clients/seat_accounts.py",
+    "clients/seat_environment.py",
+    "clients/seat_leases.py",
+    "clients/seat_models.py",
+    "clients/seat_outcome.py",
+    "clients/seat_probe.py",
+    "clients/seat_process.py",
+    "clients/seat_quota.py",
+    "clients/seat_run.py",
+    "clients/seat_storage.py"
+   ],
+   "note": "clients/seat split at 2cbe8279eb. Reapply your diff onto the new module that now holds the code. Map: clients/seat_accounts.py: command_accounts, command_add, command_set; clients/seat_environment.py: read_cursor_key, devin_data_dir, read_lease_cursor_env, local_proxy_vars, account_env, devin_trusted; clients/seat_leases.py: lease_error, leasable, bundle_secret, skip_reason, write_bundle, command_lease, release_error, release_diagnostic, release_log, command_release; clients/seat_models.py: resolve_model, cursor_models, check_cursor_model, build_command; clients/seat_outcome.py: parse_outcome, finish_text, final_prompt; clients/seat_probe.py: run_probe, apply_probe, command_probe; clients/seat_process.py: reserve_capacity, RunControl, run_stoppable, echo_until_exit, Stalled, post_stall, muse_call, muse_progress, MuseTail, group_alive, GroupStop, CapacityLease; clients/seat_quota.py: QuotaError, quota_window, quota_payload, cursor_quota, devin_quota, muse_quota, cursor_access_credential, quota_post, collect_quota, refresh_quota, command_quota; clients/seat_run.py: run_envelope, ready_candidates, command_run, same_model, run_reserved, run_on_accounts; clients/seat_storage.py: muse_version_ok, seat_home, registry_path, state_path, ledger_path, cli_bin, now, iso, parse_ts, route_command, fail, read_json",
+   "path": "clients/seat",
+   "sha": "2cbe8279eb249aaf5f36343ad95038f3ee4e9d79",
+   "until": "2026-10-29T18:47:37Z"
   }
  ]
 }
