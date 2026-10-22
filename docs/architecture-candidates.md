@@ -29,7 +29,7 @@ Slice: add `routing_policy.py` and move the readers in `clients/route`, `clients
 
 ## 2. Seat and route run record
 
-Files: `clients/seat`, `clients/route`, `clients/route_quota.py`, `clients/route_storage.py`, `clients/route_cache.py`.
+Files: `clients/seat`, `clients/route`, `clients/route_quota.py`, `clients/route_storage.py`, `clients/route_cache.py`, `clients/route_anthropic_models.py`, `clients/route_build_outcomes.py`, `clients/route_class_candidates.py`, `clients/route_dispatch.py`, `clients/route_ladder_walk.py`, `clients/route_learn.py`, `clients/route_learning_text.py`, `clients/route_pace_state.py`, `clients/route_pick.py`, `clients/route_probe_model.py`, `clients/route_reserve_state.py`, `clients/route_resolve_one.py`, `clients/route_seat.py`, `clients/route_seat_states.py`, `clients/route_versioned_rules.py`, `clients/route_workflow_args.py`.
 
 Problem: `seat` runs `route` as a subprocess (`ROUTE_BIN`), and the two binaries each define `append_ledger`, `ledger_path`, `state_path`, `finish_text`, `command_release`, `same_model` and `cursor_models`, with drifting shapes. For example, the route ledger row adds `ts` and `cwd` and the seat one does not. Both files are far over the 20 KB cap.
 

@@ -49,6 +49,22 @@ ROUTE_FILES = (
     "route_grok.py",
     "route_heal.py",
     "route_spread.py",
+    "route_anthropic_models.py",
+    "route_build_outcomes.py",
+    "route_class_candidates.py",
+    "route_dispatch.py",
+    "route_ladder_walk.py",
+    "route_learn.py",
+    "route_learning_text.py",
+    "route_pace_state.py",
+    "route_pick.py",
+    "route_probe_model.py",
+    "route_reserve_state.py",
+    "route_resolve_one.py",
+    "route_seat.py",
+    "route_seat_states.py",
+    "route_versioned_rules.py",
+    "route_workflow_args.py",
 )
 
 
