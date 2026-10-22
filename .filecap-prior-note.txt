@@ -1,0 +1,1 @@
+Blocked: the seat prepared the split but committed nothing. Head is still the base commit. The pre-commit hook (factory-lint) rejects the moved code for formatting and typing, and fixing that conflicts with the move-only rule. Sizes: entry 14497, database 1582, quota 8096 bytes. Work is uncommitted 
