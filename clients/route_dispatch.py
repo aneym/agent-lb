@@ -195,8 +195,12 @@ def command_dispatch(args: argparse.Namespace) -> int:
         args.tag = [*args.tag, "fix"]
     job_id = args.job or f"job_{new_ulid()}"
     history = read_decisions()
-    prior = [row for row in history if row.get("job_id") == job_id]
-    attempt = max((row.get("attempt") or 1 for row in prior), default=0) + 1
+    job_prior = [row for row in history if row.get("job_id") == job_id]
+    prior = [row for row in job_prior if row.get("class") == class_name]
+    attempt = max((row.get("attempt") or 1 for row in job_prior), default=0) + 1
+    parent_id = args.parent
+    if parent_id is None and job_prior and job_prior[-1].get("class") != class_name:
+        parent_id = job_prior[-1].get("decision_id")
     standard = dispatch_standard(table, class_name, args.author_vendor)
     if args.pools_file and not args.dry_run:
         setup_error("pools_file", "--pools-file needs --dry-run", args.json)
@@ -242,7 +246,7 @@ def command_dispatch(args: argparse.Namespace) -> int:
         "requested_class": requested_class,
         "job_id": job_id,
         "attempt": attempt,
-        "parent_id": args.parent,
+        "parent_id": parent_id,
         "caller": args.caller,
         "arm": choice["arm"],
         "arm_id": choice["arm_id"],

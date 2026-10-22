@@ -9,7 +9,7 @@ Claude smarts drive at Opus medium. Sonnet and Haiku take only bounded decisions
 Precedence, in order:
 1. **Explicit** seat, model or effort flags win and are logged as arm `explicit`.
 2. **Constraints** only narrow eligibility: never-explore classes, closed gates, exploration off, the Anthropic reserve and tight mode for Claude arms, daily caps counted in jobs, paused arms. An Opus-authority class under the reserve returns exit 3 `wait`; no constraint ever substitutes another model. The one exception is the Grok hands rule below, logged as arm `constraint` with its reason.
-3. **Sticky:** a job keeps its first arm through retries, fix rounds and box forwarding; nested wrappers never redraw.
+3. **Sticky:** a job keeps its first arm within the same class through retries, fix rounds and box forwarding; a different class gets its own decision with `parent_id` linking the previous decision, and nested wrappers in the same class never redraw.
 4. **Explore** draws a seeded arm among the eligible ones and logs its propensity.
 5. **Standard** otherwise.
 
