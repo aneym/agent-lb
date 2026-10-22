@@ -1,1 +1,0 @@
-Blocked, nothing committed. The seat says the private-import rule forces public-symbol renames, which conflicts with a move-only commit. It also says three importers that would need updating are already over 20,000 bytes and need their own splits.
