@@ -135,7 +135,9 @@ python3 "$(dirname "$0")/local-focus-snapshot.py" "$LOCAL_SEAT_FOCUS_BASELINE"
 export LOCAL_SEAT_FOCUS_HELPER="$(dirname "$0")/local-focus-snapshot.py"
 cp "$(dirname "$0")/local-seat-bin/desktop-guard-focus" "$focus_dir/desktop-guard-focus"
 chmod +x "$focus_dir/desktop-guard-focus"
+cp "$(dirname "$0")/host-probe.py" "$focus_dir/host-probe"
+chmod +x "$focus_dir/host-probe"
 export PATH="$focus_dir:$PATH"
-printf 'codex-local: host baseline %s; sandbox snapshot: python3 %s --baseline %s snapshot (non-live; lead compares after run)\n' "$LOCAL_SEAT_FOCUS_BASELINE" "$LOCAL_SEAT_FOCUS_HELPER" "$LOCAL_SEAT_FOCUS_BASELINE" >&2
+printf 'codex-local: host baseline %s is non-live; run host-probe --json for bounded live telemetry; lead runs python3 %s/host-probe.py --json once after the seat and compares readings\n' "$LOCAL_SEAT_FOCUS_BASELINE" "$(dirname "$0")" >&2
 companion="$HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs"
 exec python3 "$(dirname "$0")/codex-local-launch.py" node "$companion" "$@"

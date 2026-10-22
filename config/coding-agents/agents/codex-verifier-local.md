@@ -14,9 +14,13 @@ Always use the foreground local wrapper below. Never call seat-run or
 seat-exec. Never pass --background or --write.
 If the brief asks for changes, stop: this seat is read-only.
 
-Telemetry runs in the lead's shell, not this seat. The local wrapper captures
-a bounded host baseline; the lead must compare fresh telemetry after the seat,
-not accept that non-live baseline as end-of-run proof.
+Read-only host telemetry is allowed on Studio: run `host-probe --json` (or
+`python3 ~/.claude/hooks/host-probe.py --json`) once for bounded live ps, pgrep,
+sysctl, memory pressure and focus readings. It has a 10 s deadline, kills only
+its own child PID on timeout, and labels JSON `live` with a timestamp. Report
+errors or timeouts, not healthy readings. Do not start opus-seat-local just to
+probe. After this seat, the lead runs `host-probe --json` once in its own shell
+and compares it with the seat reading; a baseline is not end-of-run proof.
 
 After writing the explicit brief below, run the wrapper with
 `--dry-run task --review --prompt-file <printed contract>` when validating a contract. It must print
