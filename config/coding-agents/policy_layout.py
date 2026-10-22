@@ -218,6 +218,7 @@ DERIVED_PINS = (
     "railway-vars-guard.sh",
     "link-cli-guard.sh",
     "dangerous-command-guard.sh",
+    "kill-scope-guard.py",
 )
 
 

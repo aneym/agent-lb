@@ -105,4 +105,6 @@ DISPATCH_INPROC = (
     "workflow-relay-guard.py",
     "herdr-tab-autoname.py",
     "idle-agents.py",
+    "main-checkout-write-warn.py",
+    "merge-gate-guard.py",
 )

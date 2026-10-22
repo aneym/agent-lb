@@ -200,26 +200,25 @@ def plan_hook(hook, inproc_names, script_pins=None):
     plan.fallback_text = match.group("fb")
     script = expand_word(match.group("script"))
     name = os.path.basename(os.path.realpath(script))
-    if match.group("interp") is None:
-        pinned = SCRIPT_PREFILTERS.get(name)
-        if pinned is not None:
-            sensitive = env_sensitive()
-            hashes = pinned[0] if isinstance(pinned[0], tuple) else (pinned[0],)
-            derived = (script_pins or {}).get(name) if isinstance(script_pins, dict) else None
-            if isinstance(derived, str) and REV_SHA.fullmatch(derived):
-                hashes = hashes + (derived,)
-            missing = [need[0] for need in SCRIPT_NEEDS.get(name, ()) if not any(which(tool) for tool in need)]
-            if match.group("fb") is not None:
-                plan.reason = "pinned script with a fallback answer"
-            elif sensitive:
-                plan.reason = "pinned script, but %s is set" % sensitive
-            elif missing:
-                plan.reason = "pinned script, but %s is not on PATH" % ", ".join(missing)
-            elif sha256_file(os.path.realpath(script)) in hashes:
-                plan.kind, plan.prefilter, plan.reason = "filtered", pinned[1], "pinned script"
-            else:
-                plan.reason = "script changed since its prefilter was reviewed"
-            return plan
+    pinned = SCRIPT_PREFILTERS.get(name)
+    if pinned is not None and (match.group("interp") is None or python_like(match.group("interp"))):
+        sensitive = env_sensitive()
+        hashes = pinned[0] if isinstance(pinned[0], tuple) else (pinned[0],)
+        derived = (script_pins or {}).get(name) if isinstance(script_pins, dict) else None
+        if isinstance(derived, str) and REV_SHA.fullmatch(derived):
+            hashes = hashes + (derived,)
+        missing = [need[0] for need in SCRIPT_NEEDS.get(name, ()) if not any(which(tool) for tool in need)]
+        if match.group("fb") is not None:
+            plan.reason = "pinned script with a fallback answer"
+        elif sensitive:
+            plan.reason = "pinned script, but %s is set" % sensitive
+        elif missing:
+            plan.reason = "pinned script, but %s is not on PATH" % ", ".join(missing)
+        elif sha256_file(os.path.realpath(script)) in hashes:
+            plan.kind, plan.prefilter, plan.reason = "filtered", pinned[1], "pinned script"
+        else:
+            plan.reason = "script changed since its prefilter was reviewed"
+        return plan
     if name not in inproc_names:
         plan.reason = "not on the in-process list"
         return plan
