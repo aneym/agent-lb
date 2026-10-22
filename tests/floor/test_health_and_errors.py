@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app import __version__
-from app.main import resolve_static_asset_path
+from app.static_routes import resolve_static_asset_path
 
 pytestmark = pytest.mark.integration
 
