@@ -291,7 +291,13 @@ SCRIPT_PREFILTERS = {
     "agent-lb-bootout-guard.sh": ("8f4a0eea5f7639e7d0f6e8d02a048ffd00db3c37daa9b6f4acb86d612a36d304", pf_bootout),
     "display-wake.sh": ("05fa9781d2a413543b2432e583035168b968f1bc0353d03276d97c3105e1121e", pf_display_wake),
     "wide-scan-guard.sh": ((), pf_wide_scan_parse),
-    "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
+    "link-cli-guard.sh": (
+        (
+            "95b3c4c5e241ef572b859b21a14fac3f1407f1d4787fc6c18e97b6c1182534fd",
+            "0e98a75ac8a82786d97350a0c5b6469021cbc6eb3eeb4c56a1c85b2443e7edb6",
+        ),
+        pf_link_cli,
+    ),
     "dangerous-command-guard.sh": ((), pf_dangerous),
     "no-chrome-guard.sh": ("bdccc53befe25039a4db06eff96b9437ebb0cac4728e656ae73a20b7cd630916", pf_no_chrome),
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
