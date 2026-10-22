@@ -1,6 +1,16 @@
 {
  "claims": [],
- "freezes": [],
+ "freezes": [
+  {
+   "by": "aneyman@alexs-Mac-Studio",
+   "expires": "2026-10-22T16:17:03Z",
+   "lane": "filecap-council",
+   "owner_branch": "filecap-w8-lb-scripts-routing-daily-audit",
+   "path": "scripts/routing_daily_audit.py",
+   "reason": "filecap-council wave 8 move-only split",
+   "since": "2026-10-22T14:47:03Z"
+  }
+ ],
  "moved": [
   {
    "into": [
