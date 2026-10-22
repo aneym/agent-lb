@@ -88,7 +88,11 @@ def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
         '[python3 "$HOME/.claude/hooks/no-direct-merge.py"]: BLOCKED: merge through the queue\n\n'
         '[/usr/bin/python3 "$HOME/.claude/hooks/gh-write-guard.py"]: BLOCKED: kept floor "Alex\'s credentials": '
         "gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, "
-        "or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN).\n"
+        "or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN).\n\n"
+        '[/usr/bin/python3 "$HOME/.claude/hooks/merge-gate-guard.py"]: BLOCKED: direct `gh pr merge` skips the merge '
+        "gate. agent-rails lands with `python3 scripts/studio_merge.py merge <branch>`; other repos fast-forward push "
+        "to origin/main; Open Factory gated repos queue with `of gate queue <pr>`. `gh pr merge <pr> --disable-auto` "
+        "(dequeue) is still allowed.\n"
     )
 
     before = (home / ".claude/settings.json").read_bytes()
