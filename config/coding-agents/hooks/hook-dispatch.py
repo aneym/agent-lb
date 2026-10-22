@@ -433,10 +433,10 @@ def plan_hook(hook, inproc_names, script_pins=None):
     return plan
 
 
-_SPAWNS = [0]
+SPAWNS = [0]
 
 
-def _audit(event, _args):
+def audit(event, _args):
     if event in (
         "subprocess.Popen",
         "os.posix_spawn",
@@ -446,7 +446,7 @@ def _audit(event, _args):
         "os.spawn",
         "os.startfile",
     ):
-        _SPAWNS[0] += 1
+        SPAWNS[0] += 1
 
 
 class Payload(object):
@@ -534,7 +534,7 @@ def run_inproc(plan, payload):
     if plan.floor:
         os.environ[RECEIPT_ENV] = "1"
     code, timed_out, crashed = 0, False, False
-    spawned_before = _SPAWNS[0]
+    spawned_before = SPAWNS[0]
 
     def on_alarm(_signum, _frame):
         raise _GuardTimeout()
@@ -599,7 +599,7 @@ def run_inproc(plan, payload):
             os.chdir(saved_cwd)
     out_file.seek(0)
     err_file.seek(0)
-    result = Result(code, out_file.read(), err_file.read(), timed_out, "inproc", _SPAWNS[0] - spawned_before)
+    result = Result(code, out_file.read(), err_file.read(), timed_out, "inproc", SPAWNS[0] - spawned_before)
     out_file.close()
     err_file.close()
     if crashed:
@@ -1145,14 +1145,14 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
                 and not subagent_bash(payload_obj, event)
             ):
                 record["hooks"] = trace_hooks(plans, results)
-                record["spawned"] = _SPAWNS[0]
+                record["spawned"] = SPAWNS[0]
                 exec_into(plan, payload, record)
             started[index] = External(plan, payload)
         for index, external in started.items():
             results[index] = finish(plans[index], external.result(deadline))
         log_failures(event, key, plans, results)
         record["hooks"] = trace_hooks(plans, results)
-        record["spawned"] = _SPAWNS[0]
+        record["spawned"] = SPAWNS[0]
         answer = suppress_subagent_owner(merge(event, plans, results), payload_obj, event)
         record["answer"] = {
             "code": answer.code,
@@ -1200,7 +1200,7 @@ def main(argv=None):
             )
             return answer(refusal(event, note))
         if os.environ.get("HOOK_DISPATCH_TRACE"):
-            sys.addaudithook(_audit)
+            sys.addaudithook(audit)
 
         inproc_names = (
             registry.get("inproc_sha")

@@ -1,1 +1,0 @@
-Blocked: the seat staged a four-module split (entry is 15,858 bytes, all files under 20,000) but made no commit. modcheck flags private_reach on _SPAWNS and _audit in hook_dispatch_processes.py. Renaming them to public names breaks the move-only line-multiset rule. The installer import and managed-f
