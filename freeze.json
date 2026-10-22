@@ -1,0 +1,15 @@
+{
+ "claims": [],
+ "freezes": [
+  {
+   "by": "aneyman@alexs-Mac-Studio",
+   "expires": "2026-10-22T16:10:55Z",
+   "lane": "filecap-council",
+   "owner_branch": "filecap-w8-lb-ig-coding-agents-hooks-subagent-closeout",
+   "path": "config/coding-agents/hooks/subagent-closeout.py",
+   "reason": "filecap-council wave 8 move-only split",
+   "since": "2026-10-22T14:40:55Z"
+  }
+ ],
+ "moved": []
+}
