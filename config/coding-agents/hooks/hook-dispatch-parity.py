@@ -244,7 +244,7 @@ NOTICE_PREFIX = "Failed with non-blocking status code: "
 RECEIPT_ENV = "HOOK_FLOOR_RECEIPT"
 
 
-LEGACY_FLOOR = {
+COMMAND_DIGESTS = {
     "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c": '"$HOME/.claude/hooks/dangerous-command-guard.sh"',
     "85663684c44150f611a408af4d442c891ce1b66ba43f3e47610b7262c9b26525": '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"',
     "487abcd9095bc74d791c3371413cf424ba2a562e10e1f4a4e2f559d63f71de89": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"',
@@ -256,7 +256,7 @@ DIRECT = re.compile(
 
 
 def legacy(command):
-    return LEGACY_FLOOR.get(hashlib.sha256(command.encode("utf-8")).hexdigest())
+    return COMMAND_DIGESTS.get(hashlib.sha256(command.encode("utf-8")).hexdigest())
 
 
 def floor_of(command):
