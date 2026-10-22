@@ -14,6 +14,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+sys.path = [str(Path(__file__).resolve().parent), *sys.path]
+
 VERSION = "1"
 STATE_ENV = "CLAUDE_LB_DOCTOR_STATE_DIR"
 DEFAULT_MODELS = frozenset(
@@ -361,7 +363,7 @@ def repair_file(path: str | Path, models: set[str] | None = None) -> dict[str, A
     return final
 
 
-def _catalog(path: str | Path | None) -> tuple[set[str], str]:
+def load_models(path: str | Path | None) -> tuple[set[str], str]:
     models = set(DEFAULT_MODELS)
     if path is None:
         return models, hashlib.sha256(b"builtin").hexdigest()
@@ -447,7 +449,7 @@ def run_check(
 
     working = Path(cwd or Path.cwd()).resolve()
     home = Path(user_root or Path.home()).resolve()
-    models, catalog_hash = _catalog(models_file)
+    models, catalog_hash = load_models(models_file)
     paths = _definition_paths(working, home)
     cache_key, _ = _file_identity(paths, working, home, catalog_hash)
     configured_state = state_dir or os.environ.get(STATE_ENV)
