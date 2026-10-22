@@ -1,0 +1,1 @@
+Blocked: auth_manager.py is now 4,911 bytes and four new modules are under 20,000 bytes, but filecap cutover-check fails, filecap check flags three importers that grew, and the seat's commits are not in the worktree (the diff is staged only, with stray .cache logs staged that must be unstaged before
