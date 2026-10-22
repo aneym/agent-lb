@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.responses import StreamingResponse
 
-from app.modules.proxy import api as proxy_api
+from app.modules.proxy import anthropic_routes as proxy_api
 from app.modules.proxy.claude_codex_bridge import CCGPT_MODEL
 
 pytestmark = pytest.mark.integration

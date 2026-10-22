@@ -11,12 +11,10 @@ from app.modules.proxy.schemas import ModelListItem, ModelListResponse
 
 
 async def build_models_response(api_key: ApiKeyData | None) -> Response:
-    from app.modules.proxy.api import (
+    from app.modules.proxy.model_metadata import (
         allowed_models_for_api_key,
         codex_model_entries,
         codex_model_visibility_allowed_models,
-        enforce_request_limits,
-        release_reservation,
         to_model_metadata,
         v1_input_context_window,
         v1_max_output_tokens,
@@ -24,6 +22,8 @@ async def build_models_response(api_key: ApiKeyData | None) -> Response:
         v1_supports_reasoning,
         v1_supports_vision,
     )
+    from app.modules.proxy.request_admission import enforce_request_limits
+    from app.modules.proxy.reservations import release_reservation
 
     reservation = await enforce_request_limits(
         api_key,
