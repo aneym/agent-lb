@@ -46,6 +46,7 @@ ADOPTED_KEEP_NAMES = (
 
 MANAGED_HOOKS = (
     "claude-grind-pulse.py",
+    "idle-agents.py",
     "claude-bash-hands-nudge.py",
     "branch-guard.py",
     "hook_output.py",
