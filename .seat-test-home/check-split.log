@@ -1,0 +1,31 @@
+{"findings": [], "count": 0}
+{
+  "cycles": [
+    "app",
+    "bin",
+    "clients",
+    "config",
+    "deploy",
+    "docs",
+    "features",
+    "frontend",
+    "openspec",
+    "patches",
+    "scripts",
+    "tests"
+  ],
+  "errors": [],
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+filecap: 0.155 s
+modcheck: 0.585 s
+comments: 0.099 s
+freeze: 0.092 s
+gate-precheck: clean in 0.941 s
+factory-lint check --changed
+config/coding-agents/hooks/hook_wide_scan_shell.py:1:1 ruff-format/format Would reformat
+fail: 1 new, 0 existing, 0 files fixed (608 ms)
+make: *** [Makefile:32: lint] Error 1
+make lint: 0 s

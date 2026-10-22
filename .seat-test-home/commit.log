@@ -1,0 +1,30 @@
+{"findings": [], "count": 0}
+{
+  "cycles": [
+    "app",
+    "bin",
+    "clients",
+    "config",
+    "deploy",
+    "docs",
+    "features",
+    "frontend",
+    "openspec",
+    "patches",
+    "scripts",
+    "tests"
+  ],
+  "errors": [],
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+filecap: 0.105 s
+modcheck: 0.304 s
+comments: 0.084 s
+freeze: 0.067 s
+gate-precheck: clean in 0.562 s
+factory-lint check --changed
+factory-lint: path outside repository: .seat-test-home/pytest-of-jobs/pytest-0/test_a_guard_missing_a_tool_it0/tools/bash
+make: *** [Makefile:32: lint] Error 2
+make lint: 1 s

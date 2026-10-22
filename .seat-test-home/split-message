@@ -1,0 +1,7 @@
+Split wide scan shell parsing from guard policy
+
+Move heredoc, continuation, token and substitution parsing into its defining module.
+Keep the shell entry and policy checks in place.
+
+check: bash config/coding-agents/hooks/wide-scan-guard.sh < /dev/null
+filecap-cutover: config/coding-agents/hooks/wide-scan-guard.sh -> config/coding-agents/hooks/hook_wide_scan_shell.py
