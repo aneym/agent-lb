@@ -1,0 +1,5 @@
+
+
+[mcp_servers.exa]
+url = "https://mcp.exa.ai/mcp"
+default_tools_approval_mode = "approve"

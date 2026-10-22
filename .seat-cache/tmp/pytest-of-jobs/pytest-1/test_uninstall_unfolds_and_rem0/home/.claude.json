@@ -1,0 +1,17 @@
+{
+  "firstStartTime": "2026-10-22T13:24:18.990Z",
+  "firstStartVersion": "2.1.308",
+  "machineID": "fb1ba062752e7dca9d639d3777ee058670b10b4a5a6b164f2e51439204d8eef9",
+  "opusProMigrationComplete": true,
+  "sonnet1m45MigrationComplete": true,
+  "seenNotifications": {},
+  "hasResetAutoModeOptInForDefaultOffer": true,
+  "migrationVersion": 14,
+  "userID": "16abb86ba37b2a82b93092423aed37a720c67f5e38bcf280460d06fbf413c3f7",
+  "mcpServers": {
+    "exa": {
+      "type": "http",
+      "url": "https://mcp.exa.ai/mcp"
+    }
+  }
+}

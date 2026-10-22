@@ -1,0 +1,4 @@
+{"ts": "2026-10-22T13:23:54Z", "event": "PreToolUse", "key": "Bash", "command": "/usr/bin/python3 \"$HOME/synth/crash.py\"", "floor": null, "failure": "exited 1", "outcome": "failed open"}
+{"ts": "2026-10-22T13:23:54Z", "event": "PreToolUse", "key": "Bash", "command": "python3 \"$HOME/synth/hang.py\"", "floor": null, "failure": "timed out", "outcome": "failed open"}
+{"ts": "2026-10-22T13:23:54Z", "event": "PreToolUse", "key": "Bash", "command": "\"$HOME/synth/crash.sh\"", "floor": null, "failure": "exited 1", "outcome": "failed open"}
+{"ts": "2026-10-22T13:23:54Z", "event": "PreToolUse", "key": "Bash", "command": "\"$HOME/synth/hang.sh\"", "floor": null, "failure": "timed out", "outcome": "failed open"}

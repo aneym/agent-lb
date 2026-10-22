@@ -1,0 +1,213 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\" --session-env",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/factory-context.py\" 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "Factory context"
+          }
+        ],
+        "matcher": "compact|resume"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/seat-guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Seat guard"
+          }
+        ],
+        "matcher": "Agent"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-seat-guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Workflow seat guard"
+          }
+        ],
+        "matcher": "Workflow"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Edit|Write"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Read"
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/subagent-closeout.py\" 2>/dev/null || true",
+            "timeout": 5,
+            "statusMessage": "Dispatch closeout"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.agents/policy/coding-agents/hooks/focus-steal-check.py\" subagent-stop",
+            "timeout": 15,
+            "statusMessage": "Focus steal check"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-readback.py\"",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Workflow"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claude-grind-pulse.py\"",
+            "timeout": 2,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/compact-checkpoint.py\"",
+            "timeout": 10,
+            "statusMessage": "Compact checkpoint"
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-sonnet-5-5"
+  },
+  "model": "opus",
+  "effortLevel": "medium",
+  "autoCompactWindow": 300000
+}

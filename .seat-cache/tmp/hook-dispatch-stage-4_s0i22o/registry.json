@@ -1,0 +1,485 @@
+{
+  "schema": 1,
+  "rev": "e17f9b35a1a3",
+  "per_hook": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/no-direct-merge.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "true",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "true"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/seat-guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Seat guard"
+          }
+        ],
+        "matcher": "Agent"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-seat-guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Workflow seat guard"
+          }
+        ],
+        "matcher": "Workflow"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Edit|Write"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Read"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/bin/lane-bulletin-hook\" 2>/dev/null || true",
+            "timeout": 3
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-readback.py\"",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Workflow"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claude-grind-pulse.py\"",
+            "timeout": 2,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/context-pulse.py\" 2>/dev/null || true",
+            "timeout": 3,
+            "statusMessage": "Routing pulse"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-tab-autoname.py\" 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/idle-agents.py\" stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "dispatch": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'Bash' e17f9b35a1a3",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "true",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "true"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/seat-guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Seat guard"
+          }
+        ],
+        "matcher": "Agent"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-seat-guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Workflow seat guard"
+          }
+        ],
+        "matcher": "Workflow"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Edit|Write"
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'Read' e17f9b35a1a3",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" PostToolUse '*' e17f9b35a1a3",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-readback.py\"",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Workflow"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claude-grind-pulse.py\"",
+            "timeout": 2,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" UserPromptSubmit '*' e17f9b35a1a3",
+            "timeout": 60,
+            "statusMessage": "Routing pulse"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" Stop '*' e17f9b35a1a3",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  },
+  "entries": {
+    "PreToolUse": {
+      "Bash": [
+        {
+          "type": "command",
+          "command": "python3 \"$HOME/.claude/hooks/no-direct-merge.py\""
+        },
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\""
+        },
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "timeout": 10
+        },
+        {
+          "type": "command",
+          "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "timeout": 10
+        },
+        {
+          "type": "command",
+          "command": "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "timeout": 10
+        },
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "timeout": 10
+        },
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "timeout": 10
+        },
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "timeout": 10
+        },
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "timeout": 10
+        },
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "timeout": 10
+        }
+      ],
+      "Read": [
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "timeout": 10
+        }
+      ]
+    },
+    "PostToolUse": {
+      "*": [
+        {
+          "type": "command",
+          "command": "\"$HOME/.local/bin/lane-bulletin-hook\" 2>/dev/null || true",
+          "timeout": 3
+        }
+      ]
+    },
+    "UserPromptSubmit": {
+      "*": [
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/context-pulse.py\" 2>/dev/null || true",
+          "timeout": 3,
+          "statusMessage": "Routing pulse"
+        },
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-tab-autoname.py\" 2>/dev/null || true",
+          "timeout": 10
+        }
+      ]
+    },
+    "Stop": {
+      "*": [
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/.claude/hooks/idle-agents.py\" stop",
+          "timeout": 10
+        }
+      ]
+    }
+  },
+  "inproc": [
+    "branch-guard.py",
+    "rm-dynamic-deny",
+    "desktop-guard",
+    "stash-guard",
+    "host-credential-guard.py",
+    "gh-write-guard.py",
+    "kill-scope-guard.py",
+    "herdr-shell-host-guard.py",
+    "rm-cd-rewrite.py",
+    "no-direct-merge.py",
+    "box-offload-hook",
+    "lane-bulletin-hook",
+    "workflow-relay-guard.py",
+    "herdr-tab-autoname.py",
+    "idle-agents.py"
+  ],
+  "inproc_sha": {
+    "branch-guard.py": "a88fbeab561c45a71f8935550890439de85670bece90d4517e213d7ef7eee8a1",
+    "gh-write-guard.py": "e119fcf570ae75c22f8e4f0c08c429d36539ee8ccd9d214026b56f801ca45910",
+    "herdr-shell-host-guard.py": "c02b7ab89bc6f097711274db43f6dad80b7929232a5f8ffe4244b8a04c50df1b",
+    "herdr-tab-autoname.py": "060718bd59a9060ec2674eeebe517b3abe323ca133ffbd71bb690f82fcb63606",
+    "host-credential-guard.py": "75300e6c8d0092a27397a930e409d9ccbcf4764aa702c83507b320609c05ae23",
+    "idle-agents.py": "060718bd59a9060ec2674eeebe517b3abe323ca133ffbd71bb690f82fcb63606",
+    "kill-scope-guard.py": "1406e8ef0d786f53367217a7fa895600717d4c3fe324e6742e1ca0837db0a0a6",
+    "lane-bulletin-hook": "ae83886460dd3cf5b8c3602d1bb2b1d8dbf1a33f4729bfcc4f2e9ff5f870d52e",
+    "no-direct-merge.py": "fea5fc6214bb193793d088352b1cca6295db49bfff010ea7ecee8e679f6ee5ab"
+  },
+  "script_sha": {
+    "wide-scan-guard.sh": "115ba1e47dce25a5eeb089ba4e43e97140b04b300075a282de8d4a018e0f3408",
+    "agent-lb-bootout-guard.sh": "642ca7844bd14620ef5183dec406f853b9fa42b07264696420e3a4cf1d1d4943",
+    "railway-vars-guard.sh": "2343a3a23617f462b28009f9846201f593f21c31ed37072c9dc0a1a930762f03",
+    "link-cli-guard.sh": "0e98a75ac8a82786d97350a0c5b6469021cbc6eb3eeb4c56a1c85b2443e7edb6",
+    "dangerous-command-guard.sh": "44844bc0a8f5889d3c405f872ecfae55d41de8fa01e4b66427c09564514e1006"
+  },
+  "dispatcher_sha256": "c1efaa2effa0e96b7f12583dffd692f7b0ff2f78dc573377e0cd948ce99979a6"
+}

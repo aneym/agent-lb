@@ -1,0 +1,18 @@
+{
+  "theme": "dark",
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)"
+    ]
+  },
+  "customKey": [
+    1,
+    2,
+    {
+      "x": "y"
+    }
+  ],
+  "model": "opus",
+  "effortLevel": "medium",
+  "autoCompactWindow": 300000
+}

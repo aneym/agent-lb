@@ -1,0 +1,66 @@
+{
+  "quota_swap": {
+    "verify": {
+      "seat": "codex-verifier",
+      "model": "sol-latest",
+      "effort": "high",
+      "wrapper_model": null
+    }
+  },
+  "standards": {
+    "verdict": {
+      "seat": "plan-reviewer",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "verdict",
+      "evidence": "E19 Opus medium 9/20 = high 9/20; verdict authority stays on Opus",
+      "since": "2026-10-16"
+    },
+    "plan-review": {
+      "seat": "plan-reviewer",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "verdict",
+      "evidence": "E19 Opus medium 9/20 = high 9/20; verdict authority stays on Opus",
+      "since": "2026-10-16"
+    },
+    "scope": {
+      "seat": "planner",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "architecture",
+      "evidence": "E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted; Sol fallback removed, under reserve plans WAIT",
+      "since": "2026-10-16"
+    },
+    "spec": {
+      "seat": "planner",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "architecture",
+      "evidence": "E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted; Sol fallback removed, under reserve plans WAIT",
+      "since": "2026-10-16"
+    },
+    "contract": {
+      "seat": "planner",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "architecture",
+      "evidence": "E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted; Sol fallback removed, under reserve plans WAIT",
+      "since": "2026-10-16"
+    },
+    "architecture": {
+      "seat": "planner",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "architecture",
+      "evidence": "E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted; Sol fallback removed, under reserve plans WAIT",
+      "since": "2026-10-16"
+    }
+  }
+}

@@ -1,0 +1,202 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'Bash' e17f9b35a1a3",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "true",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "true"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/seat-guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Seat guard"
+          }
+        ],
+        "matcher": "Agent"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-seat-guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Workflow seat guard"
+          }
+        ],
+        "matcher": "Workflow"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Edit|Write"
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'Read' e17f9b35a1a3",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" PostToolUse '*' e17f9b35a1a3",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-readback.py\"",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Workflow"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claude-grind-pulse.py\"",
+            "timeout": 2,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" UserPromptSubmit '*' e17f9b35a1a3",
+            "timeout": 60,
+            "statusMessage": "Routing pulse"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" Stop '*' e17f9b35a1a3",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "true"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\" --session-env",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/factory-context.py\" 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "Factory context"
+          }
+        ],
+        "matcher": "compact|resume"
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/subagent-closeout.py\" 2>/dev/null || true",
+            "timeout": 5,
+            "statusMessage": "Dispatch closeout"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.agents/policy/coding-agents/hooks/focus-steal-check.py\" subagent-stop",
+            "timeout": 15,
+            "statusMessage": "Focus steal check"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/compact-checkpoint.py\"",
+            "timeout": 10,
+            "statusMessage": "Compact checkpoint"
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-sonnet-5-5"
+  },
+  "model": "opus",
+  "effortLevel": "medium",
+  "autoCompactWindow": 300000
+}

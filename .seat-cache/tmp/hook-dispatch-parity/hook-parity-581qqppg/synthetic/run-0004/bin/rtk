@@ -1,0 +1,6 @@
+#!/bin/sh
+input=$(cat)
+case "$input" in
+  *late-rewriter*) sleep 1.45 ;;
+esac
+printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"rtk rewritten"}}}'

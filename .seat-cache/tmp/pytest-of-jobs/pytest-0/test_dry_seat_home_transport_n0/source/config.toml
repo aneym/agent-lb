@@ -1,0 +1,14 @@
+model_provider = "agent-lb"
+[mcp_servers.not-for-seats]
+command = "never-run"
+[features]
+responses_websockets = true
+responses_websockets_v2 = true
+[model_providers.agent-lb]
+name = "Agent LB"
+base_url = "http://127.0.0.1:2455/backend-api/codex"
+wire_api = "responses"
+supports_websockets = true
+requires_openai_auth = true
+[model_providers.unrelated]
+base_url = "https://example.invalid"

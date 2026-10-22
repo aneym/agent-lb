@@ -1,0 +1,1 @@
+/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.seat-cache/tmp/pytest-of-jobs/pytest-0/test_parity_failure_keeps_the_0/home/.claude/hooks/idle-agents.py

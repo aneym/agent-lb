@@ -1,0 +1,259 @@
+{
+  "owner": "agent-lb",
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\" --session-env",
+        "timeout": 10
+      },
+      "needs_source": true,
+      "floor": true,
+      "prefilter": null,
+      "sha256": "e119fcf570ae75c22f8e4f0c08c429d36539ee8ccd9d214026b56f801ca45910"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true,
+      "floor": true,
+      "prefilter": null,
+      "sha256": "a88fbeab561c45a71f8935550890439de85670bece90d4517e213d7ef7eee8a1"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Agent",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/seat-guard.py\"",
+        "timeout": 5,
+        "statusMessage": "Seat guard"
+      },
+      "needs_source": false,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "f1b2fec828f1df81121e5fdcc278d258d1991614ee2a1f6a10ddd2aad0ced871"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Workflow",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-seat-guard.py\"",
+        "timeout": 5,
+        "statusMessage": "Workflow seat guard"
+      },
+      "needs_source": false,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "745b090018ba4fcf985b41bf62c3182953170a280fb4c0a4897182b83013dbc5"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+        "timeout": 10
+      },
+      "needs_source": false,
+      "floor": true,
+      "prefilter": "pf_railway_custody",
+      "sha256": "2343a3a23617f462b28009f9846201f593f21c31ed37072c9dc0a1a930762f03"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+        "timeout": 10
+      },
+      "needs_source": true,
+      "floor": true,
+      "prefilter": "pf_dangerous",
+      "sha256": "44844bc0a8f5889d3c405f872ecfae55d41de8fa01e4b66427c09564514e1006"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true,
+      "floor": true,
+      "prefilter": null,
+      "sha256": "1406e8ef0d786f53367217a7fa895600717d4c3fe324e6742e1ca0837db0a0a6"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true,
+      "floor": true,
+      "prefilter": null,
+      "sha256": "75300e6c8d0092a27397a930e409d9ccbcf4764aa702c83507b320609c05ae23"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true,
+      "floor": true,
+      "prefilter": null,
+      "sha256": "e119fcf570ae75c22f8e4f0c08c429d36539ee8ccd9d214026b56f801ca45910"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "d56c9574209a25ecf771335646c6faf527c55ba12095baff2ad971baf5d2c70f"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+        "timeout": 10
+      },
+      "needs_source": true,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "68d3b7a966150430dc42456aa74315c9000ae95c187e12269d0b54c2c264f184"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Edit|Write",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+        "timeout": 10
+      },
+      "needs_source": true,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "68d3b7a966150430dc42456aa74315c9000ae95c187e12269d0b54c2c264f184"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Read",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true,
+      "floor": true,
+      "prefilter": null,
+      "sha256": "75300e6c8d0092a27397a930e409d9ccbcf4764aa702c83507b320609c05ae23"
+    },
+    {
+      "event": "SubagentStop",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/subagent-closeout.py\" 2>/dev/null || true",
+        "timeout": 5,
+        "statusMessage": "Dispatch closeout"
+      },
+      "needs_source": false,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "2099e6c32638bf7704fc8d307f59d620bcd659e64df3ab48c4129577eb1fe201"
+    },
+    {
+      "event": "SubagentStop",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.agents/policy/coding-agents/hooks/focus-steal-check.py\" subagent-stop",
+        "timeout": 15,
+        "statusMessage": "Focus steal check"
+      },
+      "needs_source": false,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "950f98835b3bf839afe64363d4c015217464c61292d63584d341941f0ff08b71"
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Workflow",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-readback.py\"",
+        "timeout": 5
+      },
+      "needs_source": false,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "a9e24ba4aa8712acf194b9b03c1c91b460d2d9d82c292589d4ada97d6bdc7f4a"
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claude-grind-pulse.py\"",
+        "timeout": 2,
+        "async": true
+      },
+      "needs_source": true,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "7ec07162aceef71dd046fd4e95d371368b8f61d8cf7cd07d71aff9ef8e3a9785"
+    },
+    {
+      "event": "SessionStart",
+      "matcher": "compact|resume",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/factory-context.py\" 2>/dev/null || true",
+        "timeout": 10,
+        "statusMessage": "Factory context"
+      },
+      "needs_source": false,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "fdcf37be050a70b61480048d0ef870ccb46c786972069986a10e33618186014f"
+    },
+    {
+      "event": "PreCompact",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/compact-checkpoint.py\"",
+        "timeout": 10,
+        "statusMessage": "Compact checkpoint"
+      },
+      "needs_source": false,
+      "floor": false,
+      "prefilter": null,
+      "sha256": "2bda2cc877570a02981107e6158bb16c145642d20fd89ec7b177f0008dcf3e7a"
+    }
+  ]
+}

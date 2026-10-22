@@ -1,0 +1,1 @@
+{"updated_at": "2026-10-22T13:17:15.905439+00:00", "accounts": {"bad": {"vendor": "cursor", "daily": {"2026-09-30": {"grok-4.7-low": {"tokens_in": "abc"}}}}, "bad-run": {"vendor": "cursor", "auth_ok": true, "runs": [{"ts": "2026-10-22T13:17:15.905451+00:00", "tokens_in": "abc"}]}, "good": {"vendor": "cursor", "auth_ok": true}}}

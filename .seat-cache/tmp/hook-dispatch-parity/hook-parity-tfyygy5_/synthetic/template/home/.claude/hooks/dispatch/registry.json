@@ -1,0 +1,186 @@
+{
+  "schema": 1,
+  "per_hook": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/synth/crash.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/synth/hang.py\"",
+            "timeout": 2
+          },
+          {
+            "type": "command",
+            "command": "\"$HOME/synth/crash.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$HOME/synth/hang.sh\"",
+            "timeout": 2
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/synth/crash.py\" 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/synth/crash.py\" 2>/dev/null || { printf %s '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"synthetic fallback\"}}'; }"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/synth/failclosed.py\""
+          },
+          {
+            "type": "command",
+            "command": "\"$HOME/synth/failclosed.sh\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/synth/hang.py\"",
+            "timeout": 2
+          }
+        ]
+      },
+      {
+        "matcher": "RewriteSlow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rtk hook claude",
+            "timeout": 2.45
+          }
+        ]
+      },
+      {
+        "matcher": "RewriteLate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rtk hook claude",
+            "timeout": 1
+          }
+        ]
+      }
+    ]
+  },
+  "entries": {
+    "PreToolUse": {
+      "Bash": [
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/synth/crash.py\""
+        },
+        {
+          "type": "command",
+          "command": "python3 \"$HOME/synth/hang.py\"",
+          "timeout": 2
+        },
+        {
+          "type": "command",
+          "command": "\"$HOME/synth/crash.sh\""
+        },
+        {
+          "type": "command",
+          "command": "\"$HOME/synth/hang.sh\"",
+          "timeout": 2
+        },
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/synth/crash.py\" 2>/dev/null || true"
+        },
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/synth/crash.py\" 2>/dev/null || { printf %s '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"synthetic fallback\"}}'; }"
+        }
+      ],
+      "Agent": [
+        {
+          "type": "command",
+          "command": "/usr/bin/python3 \"$HOME/synth/failclosed.py\""
+        },
+        {
+          "type": "command",
+          "command": "\"$HOME/synth/failclosed.sh\""
+        },
+        {
+          "type": "command",
+          "command": "python3 \"$HOME/synth/hang.py\"",
+          "timeout": 2
+        }
+      ],
+      "RewriteSlow": [
+        {
+          "type": "command",
+          "command": "rtk hook claude",
+          "timeout": 2.45
+        }
+      ],
+      "RewriteLate": [
+        {
+          "type": "command",
+          "command": "rtk hook claude",
+          "timeout": 1
+        }
+      ]
+    }
+  },
+  "dispatch": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec python3 \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'Bash'",
+            "timeout": 2409
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec python3 \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'Agent'",
+            "timeout": 1207
+          }
+        ]
+      },
+      {
+        "matcher": "RewriteSlow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec python3 \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'RewriteSlow'",
+            "timeout": 7
+          }
+        ]
+      },
+      {
+        "matcher": "RewriteLate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec python3 \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'RewriteLate'",
+            "timeout": 6
+          }
+        ]
+      }
+    ]
+  },
+  "inproc": [
+    "crash.py",
+    "hang.py",
+    "failclosed.py"
+  ]
+}

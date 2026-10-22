@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "per_hook": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+            "timeout": 1
+          }
+        ]
+      }
+    ]
+  },
+  "entries": {
+    "PreToolUse": {
+      "Bash": [
+        {
+          "type": "command",
+          "command": "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "timeout": 1
+        }
+      ]
+    }
+  },
+  "dispatch": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec python3 \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'Bash'",
+            "timeout": 6
+          }
+        ]
+      }
+    ]
+  },
+  "inproc": [
+    "branch-guard.py",
+    "rm-dynamic-deny",
+    "desktop-guard",
+    "stash-guard",
+    "host-credential-guard.py",
+    "gh-write-guard.py",
+    "kill-scope-guard.py",
+    "herdr-shell-host-guard.py",
+    "rm-cd-rewrite.py",
+    "no-direct-merge.py",
+    "box-offload-hook",
+    "lane-bulletin-hook",
+    "workflow-relay-guard.py",
+    "herdr-tab-autoname.py",
+    "idle-agents.py"
+  ]
+}

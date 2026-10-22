@@ -1,0 +1,3 @@
+#!/bin/sh
+echo 'agent-lb tests never run the real agent CLI; set its command in the test' >&2
+exit 97

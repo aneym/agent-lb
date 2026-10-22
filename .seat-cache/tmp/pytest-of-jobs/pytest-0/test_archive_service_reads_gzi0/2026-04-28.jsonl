@@ -1,0 +1,1 @@
+{"timestamp": "2026-04-28T10:00:00+00:00", "request_id": "req_legacy", "direction": "codex_to_server", "kind": "responses", "transport": "http", "payload": {"input": "old"}}

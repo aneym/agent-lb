@@ -1,0 +1,107 @@
+........................................................................ [  6%]
+........................................................................ [ 12%]
+........................................................................ [ 18%]
+...............................................F+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~ Stack of conversation-archive-writer (126431011006144) ~~~~~~~~~~~~
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/app/core/conversation_archive.py", line 230, in _writer_loop
+    item = _WRITE_QUEUE.get()
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/queue.py", line 199, in get
+    self.not_empty.wait()
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/threading.py", line 369, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~ Stack of asyncio_1 (126431388481216) ~~~~~~~~~~~~~~~~~~~~~
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/concurrent/futures/thread.py", line 116, in _worker
+    work_item = work_queue.get(block=True)
+~~~~~~~~~~~~~~~~~~~~~ Stack of asyncio_0 (126431396873920) ~~~~~~~~~~~~~~~~~~~~~
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/concurrent/futures/thread.py", line 116, in _worker
+    work_item = work_queue.get(block=True)
+~~~~~~~~~~~~~~~~~~~~ Stack of MainThread (126431957960512) ~~~~~~~~~~~~~~~~~~~~~
+  File "<string>", line 1, in <module>
+    from pathlib import Path; from app.core.forensics import register_stack_dump_signal; register_stack_dump_signal(Path(".seat-cache/forensics")); import pytest; raise SystemExit(pytest.main(["tests/floor", "-q", "-ra", "--timeout=180", "--timeout-method=thread"]))
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/config/__init__.py", line 199, in main
+    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/main.py", line 365, in pytest_cmdline_main
+    return wrap_session(config, _main)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/main.py", line 318, in wrap_session
+    session.exitstatus = doit(config, session) or 0
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/main.py", line 372, in _main
+    config.hook.pytest_runtestloop(session=session)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/main.py", line 396, in pytest_runtestloop
+    item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 118, in pytest_runtest_protocol
+    runtestprotocol(item, nextitem=nextitem)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 137, in runtestprotocol
+    reports.append(call_and_report(item, "call", log))
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 244, in call_and_report
+    call = CallInfo.from_call(
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 353, in from_call
+    result: TResult | None = func()
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 245, in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/runner.py", line 179, in pytest_runtest_call
+    item.runtest()
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/python.py", line 1720, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/lib/python3.14/site-packages/_pytest/python.py", line 166, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/tests/floor/test_hook_dispatcher.py", line 131, in test_parity_failure_keeps_the_per_hook_config
+    result = install("--hook-dispatcher", "on", check=False)
+  File "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/tests/floor/hook_dispatcher_support.py", line 150, in install
+    result = subprocess.run(
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/subprocess.py", line 557, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/subprocess.py", line 1221, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/subprocess.py", line 2153, in _communicate
+    ready = selector.select(timeout)
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/selectors.py", line 398, in select
+    fd_event_list = self._selector.poll(timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++

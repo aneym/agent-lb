@@ -1,0 +1,69 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.7, pytest-9.0.3, pluggy-1.6.0 -- /srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5
+configfile: pyproject.toml
+plugins: timeout-2.4.0, asyncio-1.4.0, anyio-4.14.2
+timeout: 90.0s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=session, asyncio_default_test_loop_scope=session
+collecting ... collected 1 item
+
+tests/floor/test_hook_dispatcher.py::test_fold_parity_sticky_and_verbatim_rollback FAILED [100%]
+
+=================================== FAILURES ===================================
+________________ test_fold_parity_sticky_and_verbatim_rollback _________________
+
+tmp_path = PosixPath('/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.seat-cache/tmp/pytest-of-jobs/pytest-2/test_fold_parity_sticky_and_ve0')
+
+    def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
+        home, _ = make_home(tmp_path)
+        install, env = installer(tmp_path, home)
+        install()
+        per_hook = hooks_of(home)
+        assert not (home / ".claude/hooks/dispatch/registry.json").exists()
+        assert "hook-dispatch.py" not in json.dumps(per_hook)
+    
+>       out = install("--hook-dispatcher", "on").stdout
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/floor/test_hook_dispatcher.py:36: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/floor/hook_dispatcher_support.py:150: in install
+    result = subprocess.run(
+/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/subprocess.py:557: in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/subprocess.py:1221: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/subprocess.py:2153: in _communicate
+    ready = selector.select(timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <selectors.PollSelector object at 0x77c648214cd0>, timeout = 600000
+
+    def select(self, timeout=None):
+        # This is shared between poll() and epoll().
+        # epoll() has a different signature and handling of timeout parameter.
+        if timeout is None:
+            timeout = None
+        elif timeout <= 0:
+            timeout = 0
+        else:
+            # poll() has a resolution of 1 millisecond, round away from
+            # zero to wait *at least* timeout seconds.
+            timeout = math.ceil(timeout * 1e3)
+        ready = []
+        try:
+>           fd_event_list = self._selector.poll(timeout)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: Timeout (>90.0s) from pytest-timeout.
+
+/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/selectors.py:398: Failed
+=========================== short test summary info ============================
+FAILED tests/floor/test_hook_dispatcher.py::test_fold_parity_sticky_and_verbatim_rollback - Failed: Timeout (>90.0s) from pytest-timeout.
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+========================= 1 failed in 91.71s (0:01:31) =========================

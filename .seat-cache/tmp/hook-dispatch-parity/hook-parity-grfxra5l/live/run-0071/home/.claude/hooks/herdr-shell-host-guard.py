@@ -1,0 +1,1 @@
+/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.seat-cache/tmp/pytest-of-jobs/pytest-2/test_fold_parity_sticky_and_ve0/home/.claude/hooks/herdr-shell-host-guard.py

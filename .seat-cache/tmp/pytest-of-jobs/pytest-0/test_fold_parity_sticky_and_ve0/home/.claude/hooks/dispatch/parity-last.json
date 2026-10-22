@@ -1,0 +1,4939 @@
+{
+  "schema": 2,
+  "registry": "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.seat-cache/tmp/hook-dispatch-stage-y2lsmc71/registry.json",
+  "dispatcher": "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/config/coding-agents/hooks/hook-dispatch.py",
+  "home": "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.seat-cache/tmp/pytest-of-jobs/pytest-0/test_fold_parity_sticky_and_ve0/home",
+  "dispatcher_sha256": "c1efaa2effa0e96b7f12583dffd692f7b0ff2f78dc573377e0cd948ce99979a6",
+  "python": "/srv/cow/trees/box-jobs-wt/seat-gpt-implementer-agent-lb-floor-1792674862-2ebb-2340-64162fb5/.venv/bin/python",
+  "started": "2026-10-22T13:17:40Z",
+  "cases": [
+    {
+      "name": "allow-ls",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.282,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-git-status (rtk rewrite)",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.283,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-echo",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.362,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-python",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.321,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-rg-scoped",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.329,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-find-scoped",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.404,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-rm-substring",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.258,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-pkill (kill-guard is a PATH shim)",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.399,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-display-skip",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.375,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-display-wake-fires",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.213,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-box-offload",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.285,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-rm-cd-rewrite",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.276,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-open-other-app",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.163,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-wslview",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.205,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-flyctl",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: kept floor: Alex's own Fly login. Use a factory-provisioned FLY_API_TOKEN (ask ub_vaxptt)\n",
+      "new_decision": "deny",
+      "new_block_message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: kept floor: Alex's own Fly login. Use a factory-provisioned FLY_API_TOKEN (ask ub_vaxptt)\n",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.17,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "external",
+          "external",
+          "pinned script, prefilter matched"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-railway-names",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: BLOCKED: railway variables read prints values (secret floor).\n\n[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: kept floor: Alex's own Railway login. Use a factory-provisioned RAILWAY_TOKEN (ask ub_vaxptt)\n",
+      "new_decision": "deny",
+      "new_block_message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: BLOCKED: railway variables read prints values (secret floor).\n\n[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: kept floor: Alex's own Railway login. Use a factory-provisioned RAILWAY_TOKEN (ask ub_vaxptt)\n",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.16,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "external",
+          "external",
+          "pinned script, prefilter matched"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-link-cli-filtered",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.21,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-dangerous-cmd",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.247,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-rm-dynamic-deny",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.227,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-agent-lb-bootout",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.261,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "external",
+          "external",
+          "pinned script, prefilter matched"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-wide-scan-fifo",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.187,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "rewrite-wide-scan-fifo",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.315,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-wide-scan-root",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.302,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-wide-scan-lanes",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.328,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-link-cli-secret",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.314,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-railway-kv",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: BLOCKED: railway variables read prints values (secret floor).\n\n[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: kept floor: Alex's own Railway login. Use a factory-provisioned RAILWAY_TOKEN (ask ub_vaxptt)\n",
+      "new_decision": "deny",
+      "new_block_message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: BLOCKED: railway variables read prints values (secret floor).\n\n[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: kept floor: Alex's own Railway login. Use a factory-provisioned RAILWAY_TOKEN (ask ub_vaxptt)\n",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.894,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "external",
+          "external",
+          "pinned script, prefilter matched"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-railway-printenv",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: BLOCKED: railway run printenv/env prints every secret (secret floor).\n\n[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: kept floor: Alex's own Railway login. Use a factory-provisioned RAILWAY_TOKEN (ask ub_vaxptt)\n",
+      "new_decision": "deny",
+      "new_block_message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: BLOCKED: railway run printenv/env prints every secret (secret floor).\n\n[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: kept floor: Alex's own Railway login. Use a factory-provisioned RAILWAY_TOKEN (ask ub_vaxptt)\n",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.485,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "external",
+          "external",
+          "pinned script, prefilter matched"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-no-chrome",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.726,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-no-chrome-pc",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.744,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-no-chrome-pc-quote-split",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.633,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-ssh-pc",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.476,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-no-direct-merge",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[python3 \"$HOME/.claude/hooks/no-direct-merge.py\"]: BLOCKED: merge through the queue\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN).\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/",
+      "new_decision": "deny",
+      "new_block_message": "[python3 \"$HOME/.claude/hooks/no-direct-merge.py\"]: BLOCKED: merge through the queue\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN).\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.37,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-herdr-shell-host",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "BLOCKED: not on the host",
+      "new_decision": "deny",
+      "new_block_message": "BLOCKED: not on the host",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.594,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-desktop-guard",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.391,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-two-guards",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[python3 \"$HOME/.claude/hooks/no-direct-merge.py\"]: BLOCKED: merge through the queue\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN).\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/",
+      "new_decision": "deny",
+      "new_block_message": "[python3 \"$HOME/.claude/hooks/no-direct-merge.py\"]: BLOCKED: merge through the queue\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN).\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.243,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-stash-guard",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.224,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": false,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-stash-list",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.179,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-host-credential",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": host-credential-guard refuses `cat` on the host credential. Reading or copying ~/.agent-rails/rails-host/host.credential is never allowed; ls and stat of the directory are.\n",
+      "new_decision": "deny",
+      "new_block_message": "[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": host-credential-guard refuses `cat` on the host credential. Reading or copying ~/.agent-rails/rails-host/host.credential is never allowed; ls and stat of the directory are.\n",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.379,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-host-credential-ls",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.462,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "filtered",
+          "skipped",
+          "pinned script"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "malformed-rm (rm-dynamic-deny fails closed)",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: dangerous-command-guard could not read the hook input (jq exit 5), so this call is refused (the guard fails closed). Check jq and grep on PATH.\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": host-credential-guard refuses hook input that is not JSON (Expecting ',' delimiter: l",
+      "new_decision": "deny",
+      "new_block_message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: dangerous-command-guard could not read the hook input (jq exit 5), so this call is refused (the guard fails closed). Check jq and grep on PATH.\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": host-credential-guard refuses hook input that is not JSON (Expecting ',' delimiter: l",
+      "new_updated_input": null,
+      "new_shown": "Failed with non-blocking status code: Traceback (most recent call last):\n  File \"<run>/home/.claude/hooks/no-direct-merge.py\", line 2, in <module>\n    data = json.load(sys.stdin)\n           ^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/json/__init__.py\", line 293, in load\n    return loads(fp.read(),\n           ^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/json/__init__.py\", line 346, in loads\n  ",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.318,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "external",
+          "external",
+          "pinned script, prefilter matched"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "malformed-cua (desktop-guard fails closed)",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: dangerous-command-guard could not read the hook input (jq exit 5), so this call is refused (the guard fails closed). Check jq and grep on PATH.\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": host-credential-guard refuses hook input that is not JSON (Expecting ',' delimiter: l",
+      "new_decision": "deny",
+      "new_block_message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: dangerous-command-guard could not read the hook input (jq exit 5), so this call is refused (the guard fails closed). Check jq and grep on PATH.\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": host-credential-guard refuses hook input that is not JSON (Expecting ',' delimiter: l",
+      "new_updated_input": null,
+      "new_shown": "Failed with non-blocking status code: Traceback (most recent call last):\n  File \"<run>/home/.claude/hooks/no-direct-merge.py\", line 2, in <module>\n    data = json.load(sys.stdin)\n           ^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/json/__init__.py\", line 293, in load\n    return loads(fp.read(),\n           ^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/json/__init__.py\", line 346, in loads\n  ",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.689,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "external",
+          "external",
+          "pinned script, prefilter matched"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "malformed-plain (floor guards refuse)",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: dangerous-command-guard could not read the hook input (jq exit 5), so this call is refused (the guard fails closed). Check jq and grep on PATH.\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": host-credential-guard refuses hook input that is not JSON (Expecting value: line 1 co",
+      "new_decision": "deny",
+      "new_block_message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: BLOCKED: dangerous-command-guard could not read the hook input (jq exit 5), so this call is refused (the guard fails closed). Check jq and grep on PATH.\n\n[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": host-credential-guard refuses hook input that is not JSON (Expecting value: line 1 co",
+      "new_updated_input": null,
+      "new_shown": "Failed with non-blocking status code: Traceback (most recent call last):\n  File \"<run>/home/.claude/hooks/no-direct-merge.py\", line 2, in <module>\n    data = json.load(sys.stdin)\n           ^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/json/__init__.py\", line 293, in load\n    return loads(fp.read(),\n           ^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/json/__init__.py\", line 346, in loads\n  ",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.369,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "deny",
+      "expect_ok": true,
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "external",
+          "external",
+          "pinned script, prefilter matched"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "non-string-command",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"]: BLOCKED: kept floor \"Alex's credentials\": gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN).\n",
+      "new_decision": "deny",
+      "new_block_message": "[/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"]: hook-dispatch: floor guard refusal",
+      "new_updated_input": null,
+      "new_shown": "Failed with non-blocking status code: Traceback (most recent call last):\n  File \"<run>/home/.claude/hooks/no-direct-merge.py\", line 3, in <module>\n    if \"gh pr merge\" in (data.get(\"tool_input\") or {}).get(\"command\", \"\"):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: argument of type 'int' is not iterable\nFailed with non-blocking status code: Traceback (most ",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 0.27,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+          "external",
+          "external",
+          "shape"
+        ],
+        [
+          "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+          "external",
+          "external",
+          "pinned script, prefilter matched"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+          "external",
+          "external",
+          "hazard"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/merge-gate-guard.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/main-checkout-write-warn.py\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-seat-guard-blocked-model",
+      "event": "PreToolUse",
+      "tool": "Agent",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "Failed with non-blocking status code: Traceback (most recent call last):\n  File \"<run>/home/.claude/hooks/seat-guard.py\", line 16, in <module>\n    from seat_guard_advisory import first_snapshot_advisory, snapshot_advisory  # type: ignore[missing-import]\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nModuleNotFoundError: No module named 'seat_guard_advisory'",
+      "new_codes": [
+        1
+      ],
+      "new_seconds": 0.25,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-seat-guard",
+      "event": "PreToolUse",
+      "tool": "Agent",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "Failed with non-blocking status code: Traceback (most recent call last):\n  File \"<run>/home/.claude/hooks/seat-guard.py\", line 16, in <module>\n    from seat_guard_advisory import first_snapshot_advisory, snapshot_advisory  # type: ignore[missing-import]\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nModuleNotFoundError: No module named 'seat_guard_advisory'",
+      "new_codes": [
+        1
+      ],
+      "new_seconds": 0.184,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "deny-relay-guard",
+      "event": "PreToolUse",
+      "tool": "Workflow",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.207,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-relay-guard",
+      "event": "PreToolUse",
+      "tool": "Workflow",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.205,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-aside",
+      "event": "PreToolUse",
+      "tool": "mcp__aside__repl",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.003,
+      "new_timed_out": false,
+      "execd": [],
+      "expect": "allow",
+      "expect_ok": true,
+      "modes": [],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "allow-read",
+      "event": "PreToolUse",
+      "tool": "Read",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.197,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "post-bash-bulletin",
+      "event": "PostToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0,
+        0
+      ],
+      "new_seconds": 0.115,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "\"$HOME/.local/bin/lane-bulletin-hook\" 2>/dev/null || true",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "post-bash-quiet",
+      "event": "PostToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0,
+        0
+      ],
+      "new_seconds": 0.126,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "\"$HOME/.local/bin/lane-bulletin-hook\" 2>/dev/null || true",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "post-edit-no-prettier",
+      "event": "PostToolUse",
+      "tool": "Edit",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0,
+        0
+      ],
+      "new_seconds": 0.146,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "\"$HOME/.local/bin/lane-bulletin-hook\" 2>/dev/null || true",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "post-edit-prettier-config",
+      "event": "PostToolUse",
+      "tool": "Edit",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0,
+        0
+      ],
+      "new_seconds": 0.139,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "\"$HOME/.local/bin/lane-bulletin-hook\" 2>/dev/null || true",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "post-agent-idle",
+      "event": "PostToolUse",
+      "tool": "Agent",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0,
+        0
+      ],
+      "new_seconds": 0.128,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "\"$HOME/.local/bin/lane-bulletin-hook\" 2>/dev/null || true",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "post-skill-stats",
+      "event": "PostToolUse",
+      "tool": "Skill",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0,
+        0
+      ],
+      "new_seconds": 0.126,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "\"$HOME/.local/bin/lane-bulletin-hook\" 2>/dev/null || true",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "post-supabase",
+      "event": "PostToolUse",
+      "tool": "mcp__supabase__apply_migration",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0,
+        0
+      ],
+      "new_seconds": 0.122,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "\"$HOME/.local/bin/lane-bulletin-hook\" 2>/dev/null || true",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "ups-quiet",
+      "event": "UserPromptSubmit",
+      "tool": null,
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.124,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/context-pulse.py\" 2>/dev/null ||",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-tab-autoname.py\" 2>/dev/nu",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "ups-bulletin-and-jev-alert",
+      "event": "UserPromptSubmit",
+      "tool": null,
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.115,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/context-pulse.py\" 2>/dev/null ||",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-tab-autoname.py\" 2>/dev/nu",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "stop",
+      "event": "Stop",
+      "tool": null,
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.054,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "/usr/bin/python3 \"$HOME/.claude/hooks/idle-agents.py\" stop",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    }
+  ],
+  "crash_timeout": [
+    {
+      "name": "crash-and-timeout-fail-open",
+      "event": "PreToolUse",
+      "tool": "Bash",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "Failed with non-blocking status code: Traceback (most recent call last):\n  File \"<run>/home/synth/crash.py\", line 2, in <module>\n    raise RuntimeError('synthetic crash')\nRuntimeError: synthetic crash\nFailed with non-blocking status code: synthetic shell crash",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 2.114,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "/usr/bin/python3 \"$HOME/synth/crash.py\"",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ],
+        [
+          "python3 \"$HOME/synth/hang.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "\"$HOME/synth/crash.sh\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "\"$HOME/synth/hang.sh\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/synth/crash.py\" 2>/dev/null || true",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ],
+        [
+          "/usr/bin/python3 \"$HOME/synth/crash.py\" 2>/dev/null || { printf %s '{\"",
+          "inproc",
+          "inproc-crash",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": true,
+      "result": "pass"
+    },
+    {
+      "name": "crash-fail-closed-and-timeout",
+      "event": "PreToolUse",
+      "tool": "Agent",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "deny",
+      "block_message": "[/usr/bin/python3 \"$HOME/synth/failclosed.py\"]: synthetic guard error (ValueError); refused\n\n[\"$HOME/synth/failclosed.sh\"]: BLOCKED: synthetic shell refusal\n",
+      "new_decision": "deny",
+      "new_block_message": "[/usr/bin/python3 \"$HOME/synth/failclosed.py\"]: synthetic guard error (ValueError); refused\n\n[\"$HOME/synth/failclosed.sh\"]: BLOCKED: synthetic shell refusal\n",
+      "new_updated_input": null,
+      "new_shown": "",
+      "new_codes": [
+        2
+      ],
+      "new_seconds": 2.091,
+      "new_timed_out": false,
+      "execd": [],
+      "modes": [
+        [
+          "/usr/bin/python3 \"$HOME/synth/failclosed.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ],
+        [
+          "\"$HOME/synth/failclosed.sh\"",
+          "external",
+          "external",
+          "not on the in-process list"
+        ],
+        [
+          "python3 \"$HOME/synth/hang.py\"",
+          "inproc",
+          "inproc",
+          "same interpreter"
+        ]
+      ],
+      "timeouts": true,
+      "result": "pass"
+    },
+    {
+      "name": "rewriter-execd-rewrites",
+      "event": "PreToolUse",
+      "tool": "RewriteSlow",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": {
+        "command": "rtk rewritten"
+      },
+      "new_shown": "",
+      "new_codes": [
+        0
+      ],
+      "new_seconds": 0.048,
+      "new_timed_out": false,
+      "execd": [
+        "rtk hook claude"
+      ],
+      "modes": [
+        [
+          "rtk hook claude",
+          "rewriter",
+          null,
+          "side-effect free rewriter"
+        ]
+      ],
+      "timeouts": false,
+      "result": "pass"
+    },
+    {
+      "name": "rewriter-late-times-out",
+      "event": "PreToolUse",
+      "tool": "RewriteLate",
+      "mismatches": [],
+      "npx_calls": {
+        "old": [],
+        "new": []
+      },
+      "decision": "allow",
+      "block_message": "",
+      "new_decision": "allow",
+      "new_block_message": "",
+      "new_updated_input": null,
+      "new_shown": "Failed with non-blocking status code: No stderr output",
+      "new_codes": [
+        142
+      ],
+      "new_seconds": 1.532,
+      "new_timed_out": false,
+      "execd": [
+        "rtk hook claude"
+      ],
+      "modes": [
+        [
+          "rtk hook claude",
+          "rewriter",
+          null,
+          "side-effect free rewriter"
+        ]
+      ],
+      "timeouts": true,
+      "result": "pass"
+    }
+  ],
+  "floor_replay": [
+    {
+      "name": "floor-branch-guard.py-timeout",
+      "leaf": "branch-guard.py",
+      "control": false,
+      "mode": "timeout",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-branch-guard.py-crash",
+      "leaf": "branch-guard.py",
+      "control": false,
+      "mode": "crash",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-branch-guard.py-missing",
+      "leaf": "branch-guard.py",
+      "control": false,
+      "mode": "missing",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+      "per_hook_decision": "deny",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"]: /usr/bin/python3: can't open file '<run>/home/.claude/hooks/branch-guard.py': [Errno 2] No such file or directory\n",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-branch-guard.py-malformed",
+      "leaf": "branch-guard.py",
+      "control": false,
+      "mode": "malformed",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-branch-guard.py-no-receipt",
+      "leaf": "branch-guard.py",
+      "control": false,
+      "mode": "no-receipt",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/branch-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-railway-vars-guard.sh-timeout",
+      "leaf": "railway-vars-guard.sh",
+      "control": false,
+      "mode": "timeout",
+      "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-railway-vars-guard.sh-crash",
+      "leaf": "railway-vars-guard.sh",
+      "control": false,
+      "mode": "crash",
+      "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-railway-vars-guard.sh-missing",
+      "leaf": "railway-vars-guard.sh",
+      "control": false,
+      "mode": "missing",
+      "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-railway-vars-guard.sh-malformed",
+      "leaf": "railway-vars-guard.sh",
+      "control": false,
+      "mode": "malformed",
+      "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-railway-vars-guard.sh-no-receipt",
+      "leaf": "railway-vars-guard.sh",
+      "control": false,
+      "mode": "no-receipt",
+      "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-dangerous-command-guard.sh-timeout",
+      "leaf": "dangerous-command-guard.sh",
+      "control": false,
+      "mode": "timeout",
+      "command": "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-dangerous-command-guard.sh-crash",
+      "leaf": "dangerous-command-guard.sh",
+      "control": false,
+      "mode": "crash",
+      "command": "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-dangerous-command-guard.sh-missing",
+      "leaf": "dangerous-command-guard.sh",
+      "control": false,
+      "mode": "missing",
+      "command": "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-dangerous-command-guard.sh-malformed",
+      "leaf": "dangerous-command-guard.sh",
+      "control": false,
+      "mode": "malformed",
+      "command": "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-dangerous-command-guard.sh-no-receipt",
+      "leaf": "dangerous-command-guard.sh",
+      "control": false,
+      "mode": "no-receipt",
+      "command": "\"$HOME/.claude/hooks/dangerous-command-guard.sh\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[\"$HOME/.claude/hooks/dangerous-command-guard.sh\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-kill-scope-guard.py-timeout",
+      "leaf": "kill-scope-guard.py",
+      "control": false,
+      "mode": "timeout",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-kill-scope-guard.py-crash",
+      "leaf": "kill-scope-guard.py",
+      "control": false,
+      "mode": "crash",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-kill-scope-guard.py-missing",
+      "leaf": "kill-scope-guard.py",
+      "control": false,
+      "mode": "missing",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+      "per_hook_decision": "deny",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"]: /usr/bin/python3: can't open file '<run>/home/.claude/hooks/kill-scope-guard.py': [Errno 2] No such file or directory\n",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-kill-scope-guard.py-malformed",
+      "leaf": "kill-scope-guard.py",
+      "control": false,
+      "mode": "malformed",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-kill-scope-guard.py-no-receipt",
+      "leaf": "kill-scope-guard.py",
+      "control": false,
+      "mode": "no-receipt",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/kill-scope-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-host-credential-guard.py-timeout",
+      "leaf": "host-credential-guard.py",
+      "control": false,
+      "mode": "timeout",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-host-credential-guard.py-crash",
+      "leaf": "host-credential-guard.py",
+      "control": false,
+      "mode": "crash",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-host-credential-guard.py-missing",
+      "leaf": "host-credential-guard.py",
+      "control": false,
+      "mode": "missing",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+      "per_hook_decision": "deny",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: /usr/bin/python3: can't open file '<run>/home/.claude/hooks/host-credential-guard.py': [Errno 2] No such file or directory\n",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-host-credential-guard.py-malformed",
+      "leaf": "host-credential-guard.py",
+      "control": false,
+      "mode": "malformed",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-host-credential-guard.py-no-receipt",
+      "leaf": "host-credential-guard.py",
+      "control": false,
+      "mode": "no-receipt",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/host-credential-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-gh-write-guard.py-timeout",
+      "leaf": "gh-write-guard.py",
+      "control": false,
+      "mode": "timeout",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-gh-write-guard.py-crash",
+      "leaf": "gh-write-guard.py",
+      "control": false,
+      "mode": "crash",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-gh-write-guard.py-missing",
+      "leaf": "gh-write-guard.py",
+      "control": false,
+      "mode": "missing",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+      "per_hook_decision": "deny",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"]: /usr/bin/python3: can't open file '<run>/home/.claude/hooks/gh-write-guard.py': [Errno 2] No such file or directory\n",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-gh-write-guard.py-malformed",
+      "leaf": "gh-write-guard.py",
+      "control": false,
+      "mode": "malformed",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-gh-write-guard.py-no-receipt",
+      "leaf": "gh-write-guard.py",
+      "control": false,
+      "mode": "no-receipt",
+      "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"",
+      "per_hook_decision": "allow",
+      "decision": "deny",
+      "message": "[/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\"]: hook-dispatch: floor guard refusal",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-control-timeout",
+      "leaf": null,
+      "control": true,
+      "mode": "timeout",
+      "command": "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+      "per_hook_decision": "allow",
+      "decision": "allow",
+      "message": "",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-control-crash",
+      "leaf": null,
+      "control": true,
+      "mode": "crash",
+      "command": "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+      "per_hook_decision": "allow",
+      "decision": "allow",
+      "message": "",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-control-missing",
+      "leaf": null,
+      "control": true,
+      "mode": "missing",
+      "command": "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+      "per_hook_decision": "deny",
+      "decision": "deny",
+      "message": "[python3 \"$HOME/.claude/hooks/no-direct-merge.py\"]: python3: can't open file '<run>/home/.claude/hooks/no-direct-merge.py': [Errno 2] No such file or directory\n",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-control-malformed",
+      "leaf": null,
+      "control": true,
+      "mode": "malformed",
+      "command": "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+      "per_hook_decision": "allow",
+      "decision": "allow",
+      "message": "",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    },
+    {
+      "name": "floor-control-no-receipt",
+      "leaf": null,
+      "control": true,
+      "mode": "no-receipt",
+      "command": "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"",
+      "per_hook_decision": "allow",
+      "decision": "allow",
+      "message": "",
+      "parity": "pass",
+      "mismatches": [],
+      "ok": true
+    }
+  ],
+  "process_counter_selftest": null,
+  "process_count": [],
+  "guards": 19,
+  "not_run": [
+    "true"
+  ],
+  "expectations_failed": [
+    "deny-open-other-app",
+    "deny-wslview",
+    "deny-dangerous-cmd",
+    "deny-rm-dynamic-deny",
+    "deny-agent-lb-bootout",
+    "deny-link-cli-secret",
+    "deny-no-chrome",
+    "deny-no-chrome-pc",
+    "deny-no-chrome-pc-quote-split",
+    "deny-desktop-guard",
+    "deny-stash-guard"
+  ],
+  "parity": "pass",
+  "floor": "pass",
+  "hook_layer_max": null,
+  "process_count_max": null,
+  "process_count_ok": false,
+  "seconds": 60.9
+}

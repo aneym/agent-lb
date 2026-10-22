@@ -1,0 +1,11 @@
+#!/bin/sh
+echo "$*" >> "$NPX_CALL_LOG"
+if [ "$2" = "--find-config-path" ]; then
+  d=$(pwd)
+  while :; do
+    for f in "$d"/.prettierrc* "$d"/prettier.config*; do [ -e "$f" ] && exit 0; done
+    [ "$d" = / ] && exit 2
+    d=$(dirname "$d")
+  done
+fi
+exit 0

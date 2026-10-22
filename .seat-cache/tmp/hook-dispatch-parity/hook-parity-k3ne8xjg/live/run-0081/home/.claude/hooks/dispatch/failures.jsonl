@@ -1,0 +1,2 @@
+{"ts": "2026-10-22T13:24:19Z", "event": "PreToolUse", "key": "Bash", "command": "python3 \"$HOME/.claude/hooks/no-direct-merge.py\"", "floor": null, "failure": "exited 1", "outcome": "failed open"}
+{"ts": "2026-10-22T13:24:19Z", "event": "PreToolUse", "key": "Bash", "command": "/usr/bin/python3 \"$HOME/.claude/hooks/herdr-shell-host-guard.py\"", "floor": null, "failure": "exited 1", "outcome": "failed open"}

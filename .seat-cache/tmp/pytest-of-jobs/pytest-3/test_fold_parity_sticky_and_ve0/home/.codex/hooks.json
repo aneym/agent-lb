@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "H=\"$HOME/.local/bin/box-offload-hook\"; P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; if [ -r \"$H\" ]; then exec \"$P\" \"$H\"; fi",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}
