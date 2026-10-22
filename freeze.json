@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T18:54:03Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-app-db-models",
-   "path": "app/db/models.py",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T17:24:03Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -29,6 +19,23 @@
    "path": "scripts/routing_daily_audit.py",
    "sha": "fbc1ac8f8cb2b0f9b2067f6494ca2ac2c15de325",
    "until": "2026-10-29T14:51:59Z"
+  },
+  {
+   "into": [
+    "app/db/access_models.py",
+    "app/db/account_state_models.py",
+    "app/db/base.py",
+    "app/db/federation_models.py",
+    "app/db/model_indexes.py",
+    "app/db/quota_models.py",
+    "app/db/request_models.py",
+    "app/db/session_models.py",
+    "app/db/settings_models.py"
+   ],
+   "note": "app/db/models.py split at 7b6471fddf. Reapply your diff onto the new module that now holds the code. Map: app/db/access_models.py: TeamMemberStatus, TeamMember, ApiKeyUsageReservation, ApiKeyUsageReservationItem, RateLimitAttempt; app/db/account_state_models.py: AccountExchangeIntent, AccountResumeSchedule, ResetCreditAttempt; app/db/base.py: Base, enum_values; app/db/federation_models.py: AccountTransferDirection, AccountTransferState, FederationUsageDaily, AccountTransfer, BridgeRingMember; app/db/model_indexes.py: ; app/db/quota_models.py: QuotaPlannerSettings, QuotaPlannerDecision, QuotaWindowObservation; app/db/request_models.py: AccountRoutingPolicy, RequestKind, RequestLog, ProxyEndpoint, ProxyPool, ProxyPoolMember, AccountProxyBinding, AccountLimitWarmup, ApiKey, ApiKeyAccountAssignment, LimitType, LimitWindow; app/db/session_models.py: StickySession, HttpBridgeSessionRecord, HttpBridgeSessionAlias; app/db/settings_models.py: AuditLog, SchedulerLeader, ApiFirewallAllowlist, CacheInvalidation, RoutingPolicyVersion",
+   "path": "app/db/models.py",
+   "sha": "7b6471fddfc142334630cbc914ecf09518fe3af1",
+   "until": "2026-10-29T17:24:28Z"
   }
  ]
 }
