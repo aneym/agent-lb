@@ -1,0 +1,1599 @@
+diff --git a/.cache/check.log b/.cache/check.log
+new file mode 100644
+index 00000000..939aa112
+--- /dev/null
++++ b/.cache/check.log
+@@ -0,0 +1,31 @@
++{"findings": [], "count": 0}
++{
++  "cycles": [
++    "app",
++    "bin",
++    "clients",
++    "config",
++    "deploy",
++    "docs",
++    "features",
++    "frontend",
++    "openspec",
++    "patches",
++    "scripts",
++    "tests"
++  ],
++  "errors": [],
++  "ok": true,
++  "unowned": 132
++}
++test-guard: 0 violation(s)
++filecap: 0.174 s
++modcheck: 0.358 s
++comments: 0.290 s
++freeze: 0.131 s
++gate-precheck: clean in 0.958 s
++factory-lint check --changed
++app/modules/proxy/api.py:1089:13 pyrefly/bad-argument-type Argument `AsyncIterable[Content]` is not assignable to parameter `source` with type `AsyncIterator[bytes | str]` in function `app.modules.proxy.claude_codex_response.responses_to_claude_events`
++fail: 1 new, 13 existing, 0 files fixed (1550 ms)
++make: *** [Makefile:32: lint] Error 1
++make lint: 2 s
+diff --git a/.cache/forensics/py-stacks.log b/.cache/forensics/py-stacks.log
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/.cache/pytest.log b/.cache/pytest.log
+new file mode 100644
+index 00000000..fcc5a46e
+--- /dev/null
++++ b/.cache/pytest.log
+@@ -0,0 +1,2 @@
++..................                                                       [100%]
++18 passed in 3.78s
+diff --git a/.cache/tmp/agent-lb-tests-02vfyer4/agent-lb.db b/.cache/tmp/agent-lb-tests-02vfyer4/agent-lb.db
+new file mode 100644
+index 0000000000000000000000000000000000000000..9f5f8e0c40dd2508791f31ab325602cc62fac172
+GIT binary patch
+literal 565248
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/.cache/tmp/agent-lb-tests-02vfyer4/encryption-0e7e2be91260406ab5afebfd5d85964f.key b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-0e7e2be91260406ab5afebfd5d85964f.key
+new file mode 100644
+index 00000000..bd0d6f1f
+--- /dev/null
++++ b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-0e7e2be91260406ab5afebfd5d85964f.key
+@@ -0,0 +1 @@
++bab6tzt3jQYzHZWx2kfsjVKEKfgAHusabaR9C0FGbBE=
+\ No newline at end of file
+diff --git a/.cache/tmp/agent-lb-tests-02vfyer4/encryption-bbe773db96b044cfb8843927481174ba.key b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-bbe773db96b044cfb8843927481174ba.key
+new file mode 100644
+index 00000000..172175b5
+--- /dev/null
++++ b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-bbe773db96b044cfb8843927481174ba.key
+@@ -0,0 +1 @@
++thjgrcZWuGwqSXf9AruJ8_xTzMg5A43DR8HojXamVfg=
+\ No newline at end of file
+diff --git a/.cache/tmp/agent-lb-tests-02vfyer4/encryption-eaea142c0bc84a019120b7fb47a3211e.key b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-eaea142c0bc84a019120b7fb47a3211e.key
+new file mode 100644
+index 00000000..f0671fe1
+--- /dev/null
++++ b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-eaea142c0bc84a019120b7fb47a3211e.key
+@@ -0,0 +1 @@
++5A1opT-cJivT6AlgB1op3Jsu-3L4YZRGHirPMETrUUI=
+\ No newline at end of file
+diff --git a/.cache/tmp/agent-lb-tests-02vfyer4/encryption-eb96d46e60dd463e86e06a7767b3819d.key b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-eb96d46e60dd463e86e06a7767b3819d.key
+new file mode 100644
+index 00000000..1bcfdec2
+--- /dev/null
++++ b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-eb96d46e60dd463e86e06a7767b3819d.key
+@@ -0,0 +1 @@
++Ajbm9NwvOC5obfc3SkUY1Wz_NjR6bgjpo_mebx9tst4=
+\ No newline at end of file
+diff --git a/.cache/tmp/agent-lb-tests-02vfyer4/encryption-ecbac2eab7344e688d9976fbd141573c.key b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-ecbac2eab7344e688d9976fbd141573c.key
+new file mode 100644
+index 00000000..14462039
+--- /dev/null
++++ b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-ecbac2eab7344e688d9976fbd141573c.key
+@@ -0,0 +1 @@
++KVKe3tUWxlD1ethgmvMcPSFaRHnwmE5REMzkqeTiq-0=
+\ No newline at end of file
+diff --git a/.cache/tmp/agent-lb-tests-02vfyer4/encryption-f2ba2f002e2449729ba3460ebedc4a32.key b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-f2ba2f002e2449729ba3460ebedc4a32.key
+new file mode 100644
+index 00000000..93d057df
+--- /dev/null
++++ b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-f2ba2f002e2449729ba3460ebedc4a32.key
+@@ -0,0 +1 @@
++D4Yn5ApLo94_YRM2JjDgQ2s-xC4XcGTgCKb9Tad90zA=
+\ No newline at end of file
+diff --git a/.cache/tmp/agent-lb-tests-02vfyer4/encryption-f78761fafd3842a5ae8472a9a0c4c18e.key b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-f78761fafd3842a5ae8472a9a0c4c18e.key
+new file mode 100644
+index 00000000..17cc6f61
+--- /dev/null
++++ b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-f78761fafd3842a5ae8472a9a0c4c18e.key
+@@ -0,0 +1 @@
++VxeJ5dIRw2TGr5t8Z8gyzTgESKtWNf9rO0gj1mdMGI0=
+\ No newline at end of file
+diff --git a/.cache/tmp/agent-lb-tests-02vfyer4/encryption-f9a0a36756be4c7297325283a638dad0.key b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-f9a0a36756be4c7297325283a638dad0.key
+new file mode 100644
+index 00000000..7eb28c32
+--- /dev/null
++++ b/.cache/tmp/agent-lb-tests-02vfyer4/encryption-f9a0a36756be4c7297325283a638dad0.key
+@@ -0,0 +1 @@
++lSccAeULXkDzeWhG96cBpnQlsrJd8vf9P00kOvmDv0k=
+\ No newline at end of file
+diff --git a/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/agent b/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/agent
+new file mode 100755
+index 00000000..7b91fb37
+--- /dev/null
++++ b/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/agent
+@@ -0,0 +1,3 @@
++#!/bin/sh
++echo 'agent-lb tests never run the real agent CLI; set its command in the test' >&2
++exit 97
+diff --git a/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/cursor-agent b/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/cursor-agent
+new file mode 100755
+index 00000000..24c3da03
+--- /dev/null
++++ b/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/cursor-agent
+@@ -0,0 +1,3 @@
++#!/bin/sh
++echo 'agent-lb tests never run the real cursor-agent CLI; set its command in the test' >&2
++exit 97
+diff --git a/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/devin b/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/devin
+new file mode 100755
+index 00000000..f5a01451
+--- /dev/null
++++ b/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/devin
+@@ -0,0 +1,3 @@
++#!/bin/sh
++echo 'agent-lb tests never run the real devin CLI; set its command in the test' >&2
++exit 97
+diff --git a/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/muse b/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/muse
+new file mode 100755
+index 00000000..f6635dee
+--- /dev/null
++++ b/.cache/tmp/agent-lb-vendor-cli-stubs-gakdyr12/muse
+@@ -0,0 +1,3 @@
++#!/bin/sh
++echo 'agent-lb tests never run the real muse CLI; set its command in the test' >&2
++exit 97
+diff --git a/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/agent b/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/agent
+new file mode 100755
+index 00000000..7b91fb37
+--- /dev/null
++++ b/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/agent
+@@ -0,0 +1,3 @@
++#!/bin/sh
++echo 'agent-lb tests never run the real agent CLI; set its command in the test' >&2
++exit 97
+diff --git a/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/cursor-agent b/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/cursor-agent
+new file mode 100755
+index 00000000..24c3da03
+--- /dev/null
++++ b/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/cursor-agent
+@@ -0,0 +1,3 @@
++#!/bin/sh
++echo 'agent-lb tests never run the real cursor-agent CLI; set its command in the test' >&2
++exit 97
+diff --git a/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/devin b/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/devin
+new file mode 100755
+index 00000000..f5a01451
+--- /dev/null
++++ b/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/devin
+@@ -0,0 +1,3 @@
++#!/bin/sh
++echo 'agent-lb tests never run the real devin CLI; set its command in the test' >&2
++exit 97
+diff --git a/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/muse b/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/muse
+new file mode 100755
+index 00000000..f6635dee
+--- /dev/null
++++ b/.cache/tmp/agent-lb-vendor-cli-stubs-xh4bv6qi/muse
+@@ -0,0 +1,3 @@
++#!/bin/sh
++echo 'agent-lb tests never run the real muse CLI; set its command in the test' >&2
++exit 97
+diff --git a/app/modules/proxy/api.py b/app/modules/proxy/api.py
+index 8f5e9ab9..78a2568b 100644
+--- a/app/modules/proxy/api.py
++++ b/app/modules/proxy/api.py
+@@ -146,15 +146,17 @@ from app.modules.proxy.claude_codex_bridge import (
+     CCGPT_MODEL,
+     CCGPT_REASONING_EFFORT,
+     CCGPT_SERVICE_TIER,
++    claude_to_responses,
++    estimate_claude_input_tokens,
++)
++from app.modules.proxy.claude_codex_response import (
+     anthropic_error_from_response,
+     anthropic_status_for_error,
+-    claude_to_responses,
+     collect_claude_message,
+-    estimate_claude_input_tokens,
+     format_claude_events,
+     responses_to_claude_events,
+-    split_startup_error,
+ )
++from app.modules.proxy.claude_codex_startup import split_startup_error
+ from app.modules.proxy.helpers import _rate_limit_details
+ from app.modules.proxy.http_bridge_forwarding import parse_forwarded_request
+ from app.modules.proxy.model_families import resolve_ccgpt_model
+diff --git a/app/modules/proxy/claude_codex_bridge.py b/app/modules/proxy/claude_codex_bridge.py
+index a2eeae72..ad6df59f 100644
+--- a/app/modules/proxy/claude_codex_bridge.py
++++ b/app/modules/proxy/claude_codex_bridge.py
+@@ -1,80 +1,31 @@
+ from __future__ import annotations
+ 
+-import asyncio
+ import base64
+ import json
+ import math
+-import uuid
+-from collections.abc import AsyncIterator, Mapping
+-from dataclasses import dataclass, field
++from collections.abc import Mapping
+ from typing import cast
+ 
+ from app.core.anthropic.models import AnthropicMessageRequest
+ from app.core.openai.requests import ResponsesRequest
+ from app.core.types import JsonObject, JsonValue
+-from app.core.utils.sse import format_sse_event, parse_sse_data_json
+ 
+ CCGPT_MODEL = "gpt-6.1-sol"
+-CCGPT_WORKER_MODEL = "gpt-6.1-sol"
+-CCGPT_REASONING_EFFORT = "high"
+-CCGPT_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
+-CCGPT_SERVICE_TIER = "priority"
+-_SIGNATURE_PREFIX = "codex:"
+-
+ 
+-_PROMPT_TOO_LONG = "Prompt is too long"
+-_CONTEXT_OVERFLOW_CODE = "context_length_exceeded"
+-_CONTEXT_OVERFLOW_MESSAGE_MARKERS = (
+-    "prompt is too long",
+-    "context window",
+-    "context length",
+-    "input token limit",
+-    "maximum context length",
+-)
+ 
++CCGPT_WORKER_MODEL = "gpt-6.1-sol"
+ 
+-def _is_context_overflow_error(code: str | None, message: str | None) -> bool:
+-    if isinstance(code, str) and code.strip().lower() == _CONTEXT_OVERFLOW_CODE:
+-        return True
+-    if isinstance(message, str):
+-        lowered = message.lower()
+-        return any(marker in lowered for marker in _CONTEXT_OVERFLOW_MESSAGE_MARKERS)
+-    return False
+ 
++CCGPT_REASONING_EFFORT = "high"
+ 
+-def _anthropic_overflow_message(detail: str | None) -> str:
+-    text = detail.strip() if isinstance(detail, str) and detail.strip() else ""
+-    if not text:
+-        return _PROMPT_TOO_LONG
+-    if "prompt is too long" in text.lower():
+-        return text
+-    return f"{_PROMPT_TOO_LONG}: {text}"
+ 
++CCGPT_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
+ 
+-def _anthropic_error_payload(code: str | None, message: str) -> JsonObject:
+-    if _is_context_overflow_error(code, message):
+-        return {"type": "invalid_request_error", "message": _anthropic_overflow_message(message)}
+-    return {"type": "api_error", "message": message}
+ 
++CCGPT_SERVICE_TIER = "priority"
+ 
+-def _error_fields_from_event(event: JsonObject) -> tuple[str | None, str]:
+ 
+-    error = event.get("error")
+-    if not isinstance(error, dict):
+-        response = event.get("response")
+-        error = response.get("error") if isinstance(response, dict) else None
+-    if not isinstance(error, dict) and event.get("type") == "error":
+-        error = event
+-    message = "OpenAI response failed"
+-    code: str | None = None
+-    if isinstance(error, dict):
+-        message_value = error.get("message")
+-        if isinstance(message_value, str) and message_value.strip():
+-            message = message_value
+-        code_value = error.get("code")
+-        if isinstance(code_value, str) and code_value.strip():
+-            code = code_value
+-    return code, message
++_SIGNATURE_PREFIX = "codex:"
+ 
+ 
+ def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
+@@ -175,8 +126,14 @@ def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
+ 
+ 
+ _RELAYED_REQUEST_HEADER = "[Workflow harness \u2014 user request]"
++
++
+ _COMPUTED_TASK_HEADER = "[Workflow harness \u2014 computed task]"
++
++
+ _COMPUTED_TASK_LEAD_IN = "The computed task text follows:"
++
++
+ _SEAT_TASK_FRAME = (
+     "[Workflow harness \u2014 computed task] The task below is this agent's brief, written by the lead "
+     "agent that launched it. It is the only request for this agent: the lead's chat with the user is "
+@@ -240,221 +197,6 @@ def estimate_claude_input_tokens(payload: Mapping[str, JsonValue]) -> int:
+     return max(1, math.ceil(len(encoded) / 4))
+ 
+ 
+-async def responses_to_claude_events(
+-    source: AsyncIterator[bytes | str], model: str = CCGPT_MODEL, input_tokens_estimate: int = 0
+-) -> AsyncIterator[JsonObject]:
+-
+-    state = _ClaudeStreamState(actual_model=model, input_tokens_estimate=input_tokens_estimate)
+-    buffer = ""
+-    async for chunk in source:
+-        buffer += chunk.decode("utf-8", "replace") if isinstance(chunk, bytes) else chunk
+-        while "\n\n" in buffer:
+-            block, buffer = buffer.split("\n\n", 1)
+-            event = parse_sse_data_json(block)
+-            if event is None:
+-                continue
+-            for translated in state.consume(event):
+-                yield translated
+-    if buffer.strip():
+-        event = parse_sse_data_json(buffer)
+-        if event is not None:
+-            for translated in state.consume(event):
+-                yield translated
+-    for translated in state.finish():
+-        yield translated
+-
+-
+-async def responses_to_claude_sse(source: AsyncIterator[bytes | str]) -> AsyncIterator[str]:
+-    async for event in responses_to_claude_events(source):
+-        yield format_sse_event(event)
+-
+-
+-async def format_claude_events(events: AsyncIterator[JsonObject]) -> AsyncIterator[str]:
+-    async for event in events:
+-        yield format_sse_event(event)
+-
+-
+-_CONTENT_FRAME_TYPES = frozenset({"content_block_start", "content_block_delta"})
+-
+-_ERROR_STATUS_BY_TYPE: Mapping[str, int] = {
+-    "invalid_request_error": 400,
+-    "authentication_error": 401,
+-    "permission_error": 403,
+-    "not_found_error": 404,
+-    "rate_limit_error": 429,
+-    "overloaded_error": 529,
+-    "api_error": 502,
+-}
+-
+-
+-def anthropic_status_for_error(error_frame: JsonObject) -> int:
+-
+-    error = error_frame.get("error")
+-    error_type = error.get("type") if isinstance(error, dict) else None
+-    if isinstance(error_type, str):
+-        return _ERROR_STATUS_BY_TYPE.get(error_type, 502)
+-    return 502
+-
+-
+-async def _empty_events() -> AsyncIterator[JsonObject]:
+-    return
+-    yield  # pragma: no cover - makes this a (never-yielding) async generator
+-
+-
+-STARTUP_FIRST_FRAME_TIMEOUT_SECONDS = 90.0
+-STARTUP_CONTENT_GRACE_SECONDS = 10.0
+-
+-
+-async def split_startup_error(
+-    events: AsyncIterator[JsonObject],
+-    *,
+-    first_frame_timeout_seconds: float = STARTUP_FIRST_FRAME_TIMEOUT_SECONDS,
+-    content_grace_seconds: float = STARTUP_CONTENT_GRACE_SECONDS,
+-) -> tuple[JsonObject | None, AsyncIterator[JsonObject]]:
+-
+-    iterator = events.__aiter__()
+-    loop = asyncio.get_running_loop()
+-    deadline = loop.time() + first_frame_timeout_seconds
+-    buffered: list[JsonObject] = []
+-    pending: asyncio.Future[JsonObject] | None = None
+-    exhausted = False
+-    while True:
+-        if pending is None:
+-            pending = asyncio.ensure_future(iterator.__anext__())
+-        done, _ = await asyncio.wait({pending}, timeout=max(0.0, deadline - loop.time()))
+-        if not done:
+-            if buffered:
+-                break
+-            pending.cancel()
+-            await asyncio.wait({pending})
+-            await _aclose(events)
+-            return _startup_timeout_error(first_frame_timeout_seconds), _empty_events()
+-        try:
+-            event = pending.result()
+-        except StopAsyncIteration:
+-            pending = None
+-            exhausted = True
+-            break
+-        pending = None
+-        if event.get("type") == "error":
+-            await _aclose(events)
+-            return event, _empty_events()
+-        if not buffered:
+-            deadline = loop.time() + content_grace_seconds
+-        buffered.append(event)
+-        if event.get("type") in _CONTENT_FRAME_TYPES:
+-            break
+-
+-    async def replay() -> AsyncIterator[JsonObject]:
+-        try:
+-            for event in buffered:
+-                yield event
+-            if exhausted:
+-                return
+-            if pending is not None:
+-                try:
+-                    yield await pending
+-                except StopAsyncIteration:
+-                    return
+-            async for event in iterator:
+-                yield event
+-        finally:
+-            if pending is not None and not pending.done():
+-                pending.cancel()
+-                await asyncio.wait({pending})
+-            await _aclose(events)
+-
+-    return None, replay()
+-
+-
+-def _startup_timeout_error(timeout_seconds: float) -> JsonObject:
+-    return {
+-        "type": "error",
+-        "error": {
+-            "type": "api_error",
+-            "message": f"Upstream produced no response within {timeout_seconds:g}s; retry the request",
+-        },
+-    }
+-
+-
+-async def _aclose(events: AsyncIterator[JsonObject]) -> None:
+-    aclose = getattr(events, "aclose", None)
+-    if callable(aclose):
+-        await aclose()
+-
+-
+-async def collect_claude_message(source: AsyncIterator[str]) -> JsonObject:
+-    message: JsonObject = {
+-        "id": f"msg_{uuid.uuid4().hex}",
+-        "type": "message",
+-        "role": "assistant",
+-        "model": CCGPT_MODEL,
+-        "content": [],
+-        "stop_reason": "end_turn",
+-        "stop_sequence": None,
+-        "usage": {"input_tokens": 0, "output_tokens": 0},
+-    }
+-    content = cast(list[JsonObject], message["content"])
+-    blocks: dict[int, JsonObject] = {}
+-    async for frame in source:
+-        event = parse_sse_data_json(frame)
+-        if event is None:
+-            continue
+-        event_type = event.get("type")
+-        if event_type == "message_start" and isinstance(event.get("message"), dict):
+-            started = cast(JsonObject, event["message"])
+-            message["id"] = started.get("id", message["id"])
+-            message["model"] = started.get("model", CCGPT_MODEL)
+-        elif event_type == "content_block_start":
+-            index = event.get("index")
+-            block = event.get("content_block")
+-            if isinstance(index, int) and isinstance(block, dict):
+-                blocks[index] = cast(JsonObject, block)
+-        elif event_type == "content_block_delta":
+-            index = event.get("index")
+-            delta = event.get("delta")
+-            if not isinstance(index, int) or not isinstance(delta, dict) or index not in blocks:
+-                continue
+-            block = blocks[index]
+-            if delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
+-                block["text"] = str(block.get("text", "")) + cast(str, delta["text"])
+-            elif delta.get("type") == "input_json_delta" and isinstance(delta.get("partial_json"), str):
+-                block["input"] = str(block.get("input", "")) + cast(str, delta["partial_json"])
+-        elif event_type == "message_delta":
+-            delta = event.get("delta")
+-            usage = event.get("usage")
+-            if isinstance(delta, dict):
+-                message["stop_reason"] = delta.get("stop_reason", "end_turn")
+-            if isinstance(usage, dict):
+-                message["usage"] = cast(JsonObject, usage)
+-    for index in sorted(blocks):
+-        block = blocks[index]
+-        if block.get("type") == "tool_use" and isinstance(block.get("input"), str):
+-            try:
+-                block["input"] = cast(JsonValue, json.loads(cast(str, block["input"])))
+-            except json.JSONDecodeError:
+-                block["input"] = {}
+-        content.append(block)
+-    return message
+-
+-
+-def anthropic_error_from_response(status_code: int, body: bytes) -> JsonObject:
+-    message = body.decode("utf-8", "replace") or f"upstream request failed with status {status_code}"
+-    code: str | None = None
+-    try:
+-        parsed = json.loads(message)
+-    except json.JSONDecodeError:
+-        parsed = None
+-    if isinstance(parsed, dict):
+-        error = parsed.get("error")
+-        if isinstance(error, dict):
+-            if isinstance(error.get("message"), str):
+-                message = error["message"]
+-            if isinstance(error.get("code"), str):
+-                code = error["code"]
+-    return {"type": "error", "error": _anthropic_error_payload(code, message)}
+-
+-
+ def _text_message(role: str, text: str) -> JsonObject:
+     return {
+         "type": "message",
+@@ -543,216 +285,3 @@ def _decode_reasoning_signature(value: JsonValue | None) -> str | None:
+         return base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode()
+     except (ValueError, UnicodeDecodeError):
+         return None
+-
+-
+-@dataclass(slots=True)
+-class _ClaudeStreamState:
+-    message_id: str = field(default_factory=lambda: f"msg_{uuid.uuid4().hex}")
+-    block_index: int = 0
+-    open_block: str | None = None
+-    open_call_id: str | None = None
+-    saw_start: bool = False
+-    saw_terminal: bool = False
+-    emitted_text: bool = False
+-    emitted_tool: bool = False
+-    actual_model: str = CCGPT_MODEL
+-
+-    input_tokens_estimate: int = 0
+-
+-    def consume(self, event: JsonObject) -> list[JsonObject]:
+-        event_type = event.get("type")
+-        output: list[JsonObject] = []
+-        if event_type == "response.created":
+-            response = event.get("response")
+-            if isinstance(response, dict):
+-                response_id = response.get("id")
+-                if isinstance(response_id, str):
+-                    self.message_id = response_id.replace("resp_", "msg_", 1)
+-            output.extend(self._start())
+-        elif event_type == "response.output_text.delta":
+-            output.extend(self._start())
+-            output.extend(self._open_text())
+-            delta = event.get("delta")
+-            if isinstance(delta, str):
+-                self.emitted_text = True
+-                output.append(
+-                    {
+-                        "type": "content_block_delta",
+-                        "index": self.block_index,
+-                        "delta": {"type": "text_delta", "text": delta},
+-                    }
+-                )
+-        elif event_type == "response.output_item.added":
+-            item = event.get("item")
+-            if isinstance(item, dict) and item.get("type") == "function_call":
+-                output.extend(self._start())
+-                output.extend(self._close_block())
+-                call_id = item.get("call_id") or item.get("id")
+-                name = item.get("name")
+-                if isinstance(call_id, str) and isinstance(name, str):
+-                    self.open_block = "tool_use"
+-                    self.open_call_id = call_id
+-                    self.emitted_tool = True
+-                    output.append(
+-                        {
+-                            "type": "content_block_start",
+-                            "index": self.block_index,
+-                            "content_block": {"type": "tool_use", "id": call_id, "name": name, "input": {}},
+-                        }
+-                    )
+-        elif event_type == "response.function_call_arguments.delta" and self.open_block == "tool_use":
+-            delta = event.get("delta")
+-            if isinstance(delta, str):
+-                output.append(
+-                    {
+-                        "type": "content_block_delta",
+-                        "index": self.block_index,
+-                        "delta": {"type": "input_json_delta", "partial_json": delta},
+-                    }
+-                )
+-        elif event_type == "response.output_item.done":
+-            item = event.get("item")
+-            if isinstance(item, dict) and item.get("type") == "function_call":
+-                if self.open_block != "tool_use":
+-                    output.extend(self._start())
+-                    output.extend(self._close_block())
+-                    call_id = item.get("call_id") or item.get("id")
+-                    name = item.get("name")
+-                    if isinstance(call_id, str) and isinstance(name, str):
+-                        self.open_block = "tool_use"
+-                        self.open_call_id = call_id
+-                        self.emitted_tool = True
+-                        output.append(
+-                            {
+-                                "type": "content_block_start",
+-                                "index": self.block_index,
+-                                "content_block": {"type": "tool_use", "id": call_id, "name": name, "input": {}},
+-                            }
+-                        )
+-                        arguments = item.get("arguments")
+-                        if isinstance(arguments, str) and arguments:
+-                            output.append(
+-                                {
+-                                    "type": "content_block_delta",
+-                                    "index": self.block_index,
+-                                    "delta": {"type": "input_json_delta", "partial_json": arguments},
+-                                }
+-                            )
+-                output.extend(self._close_block())
+-            elif isinstance(item, dict) and item.get("type") == "message" and not self.emitted_text:
+-                text = _message_output_text(item)
+-                if text:
+-                    output.extend(self._start())
+-                    output.extend(self._open_text())
+-                    output.append(
+-                        {
+-                            "type": "content_block_delta",
+-                            "index": self.block_index,
+-                            "delta": {"type": "text_delta", "text": text},
+-                        }
+-                    )
+-                    self.emitted_text = True
+-        elif event_type in {"response.completed", "response.incomplete"}:
+-            response = event.get("response")
+-            output.extend(self._complete(response if isinstance(response, dict) else {}))
+-        elif event_type in {"response.failed", "error"}:
+-            output.extend(self._close_block())
+-            code, message = _error_fields_from_event(event)
+-            output.append({"type": "error", "error": _anthropic_error_payload(code, message)})
+-            self.saw_terminal = True
+-        return output
+-
+-    def finish(self) -> list[JsonObject]:
+-        if self.saw_terminal:
+-            return []
+-        return self._complete({})
+-
+-    def _start(self) -> list[JsonObject]:
+-        if self.saw_start:
+-            return []
+-        self.saw_start = True
+-        return [
+-            {
+-                "type": "message_start",
+-                "message": {
+-                    "id": self.message_id,
+-                    "type": "message",
+-                    "role": "assistant",
+-                    "model": self.actual_model,
+-                    "content": [],
+-                    "stop_reason": None,
+-                    "stop_sequence": None,
+-                    "usage": {"input_tokens": self.input_tokens_estimate, "output_tokens": 0},
+-                },
+-            }
+-        ]
+-
+-    def _open_text(self) -> list[JsonObject]:
+-        if self.open_block == "text":
+-            return []
+-        output = self._close_block()
+-        self.open_block = "text"
+-        output.append(
+-            {"type": "content_block_start", "index": self.block_index, "content_block": {"type": "text", "text": ""}}
+-        )
+-        return output
+-
+-    def _close_block(self) -> list[JsonObject]:
+-        if self.open_block is None:
+-            return []
+-        output = [{"type": "content_block_stop", "index": self.block_index}]
+-        self.block_index += 1
+-        self.open_block = None
+-        self.open_call_id = None
+-        return output
+-
+-    def _complete(self, response: Mapping[str, JsonValue]) -> list[JsonObject]:
+-        if self.saw_terminal:
+-            return []
+-        self.saw_terminal = True
+-        output = self._start()
+-        output.extend(self._close_block())
+-        usage = response.get("usage")
+-        input_tokens = 0
+-        output_tokens = 0
+-        cache_tokens = 0
+-        if isinstance(usage, dict):
+-            input_tokens = _int_value(usage.get("input_tokens"))
+-            output_tokens = _int_value(usage.get("output_tokens"))
+-            details = usage.get("input_tokens_details")
+-            if isinstance(details, dict):
+-                cache_tokens = _int_value(details.get("cached_tokens"))
+-        stop_reason = "tool_use" if self.emitted_tool else "end_turn"
+-
+-        message_usage: JsonObject = {
+-            "input_tokens": max(0, input_tokens - cache_tokens),
+-            "cache_read_input_tokens": cache_tokens,
+-            "cache_creation_input_tokens": 0,
+-            "output_tokens": output_tokens,
+-        }
+-        output.extend(
+-            [
+-                {
+-                    "type": "message_delta",
+-                    "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+-                    "usage": message_usage,
+-                },
+-                {"type": "message_stop"},
+-            ]
+-        )
+-        return output
+-
+-
+-def _message_output_text(item: Mapping[str, JsonValue]) -> str:
+-    content = item.get("content")
+-    if not isinstance(content, list):
+-        return ""
+-    return "".join(
+-        cast(str, part["text"])
+-        for part in content
+-        if isinstance(part, dict) and part.get("type") == "output_text" and isinstance(part.get("text"), str)
+-    )
+-
+-
+-def _int_value(value: JsonValue | None) -> int:
+-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+diff --git a/app/modules/proxy/claude_codex_response.py b/app/modules/proxy/claude_codex_response.py
+new file mode 100644
+index 00000000..368bbd1e
+--- /dev/null
++++ b/app/modules/proxy/claude_codex_response.py
+@@ -0,0 +1,408 @@
++from __future__ import annotations
++
++import json
++import uuid
++from collections.abc import AsyncIterator, Mapping
++from dataclasses import dataclass, field
++from typing import cast
++
++from app.core.types import JsonObject, JsonValue
++from app.core.utils.sse import format_sse_event, parse_sse_data_json
++from app.modules.proxy.claude_codex_bridge import CCGPT_MODEL
++
++_PROMPT_TOO_LONG = "Prompt is too long"
++
++
++_CONTEXT_OVERFLOW_CODE = "context_length_exceeded"
++
++
++_CONTEXT_OVERFLOW_MESSAGE_MARKERS = (
++    "prompt is too long",
++    "context window",
++    "context length",
++    "input token limit",
++    "maximum context length",
++)
++
++
++def _is_context_overflow_error(code: str | None, message: str | None) -> bool:
++    if isinstance(code, str) and code.strip().lower() == _CONTEXT_OVERFLOW_CODE:
++        return True
++    if isinstance(message, str):
++        lowered = message.lower()
++        return any(marker in lowered for marker in _CONTEXT_OVERFLOW_MESSAGE_MARKERS)
++    return False
++
++
++def _anthropic_overflow_message(detail: str | None) -> str:
++    text = detail.strip() if isinstance(detail, str) and detail.strip() else ""
++    if not text:
++        return _PROMPT_TOO_LONG
++    if "prompt is too long" in text.lower():
++        return text
++    return f"{_PROMPT_TOO_LONG}: {text}"
++
++
++def _anthropic_error_payload(code: str | None, message: str) -> JsonObject:
++    if _is_context_overflow_error(code, message):
++        return {"type": "invalid_request_error", "message": _anthropic_overflow_message(message)}
++    return {"type": "api_error", "message": message}
++
++
++def _error_fields_from_event(event: JsonObject) -> tuple[str | None, str]:
++
++    error = event.get("error")
++    if not isinstance(error, dict):
++        response = event.get("response")
++        error = response.get("error") if isinstance(response, dict) else None
++    if not isinstance(error, dict) and event.get("type") == "error":
++        error = event
++    message = "OpenAI response failed"
++    code: str | None = None
++    if isinstance(error, dict):
++        message_value = error.get("message")
++        if isinstance(message_value, str) and message_value.strip():
++            message = message_value
++        code_value = error.get("code")
++        if isinstance(code_value, str) and code_value.strip():
++            code = code_value
++    return code, message
++
++
++async def responses_to_claude_events(
++    source: AsyncIterator[bytes | str], model: str = CCGPT_MODEL, input_tokens_estimate: int = 0
++) -> AsyncIterator[JsonObject]:
++
++    state = _ClaudeStreamState(actual_model=model, input_tokens_estimate=input_tokens_estimate)
++    buffer = ""
++    async for chunk in source:
++        buffer += chunk.decode("utf-8", "replace") if isinstance(chunk, bytes) else chunk
++        while "\n\n" in buffer:
++            block, buffer = buffer.split("\n\n", 1)
++            event = parse_sse_data_json(block)
++            if event is None:
++                continue
++            for translated in state.consume(event):
++                yield translated
++    if buffer.strip():
++        event = parse_sse_data_json(buffer)
++        if event is not None:
++            for translated in state.consume(event):
++                yield translated
++    for translated in state.finish():
++        yield translated
++
++
++async def responses_to_claude_sse(source: AsyncIterator[bytes | str]) -> AsyncIterator[str]:
++    async for event in responses_to_claude_events(source):
++        yield format_sse_event(event)
++
++
++async def format_claude_events(events: AsyncIterator[JsonObject]) -> AsyncIterator[str]:
++    async for event in events:
++        yield format_sse_event(event)
++
++
++_ERROR_STATUS_BY_TYPE: Mapping[str, int] = {
++    "invalid_request_error": 400,
++    "authentication_error": 401,
++    "permission_error": 403,
++    "not_found_error": 404,
++    "rate_limit_error": 429,
++    "overloaded_error": 529,
++    "api_error": 502,
++}
++
++
++def anthropic_status_for_error(error_frame: JsonObject) -> int:
++
++    error = error_frame.get("error")
++    error_type = error.get("type") if isinstance(error, dict) else None
++    if isinstance(error_type, str):
++        return _ERROR_STATUS_BY_TYPE.get(error_type, 502)
++    return 502
++
++
++async def collect_claude_message(source: AsyncIterator[str]) -> JsonObject:
++    message: JsonObject = {
++        "id": f"msg_{uuid.uuid4().hex}",
++        "type": "message",
++        "role": "assistant",
++        "model": CCGPT_MODEL,
++        "content": [],
++        "stop_reason": "end_turn",
++        "stop_sequence": None,
++        "usage": {"input_tokens": 0, "output_tokens": 0},
++    }
++    content = cast(list[JsonObject], message["content"])
++    blocks: dict[int, JsonObject] = {}
++    async for frame in source:
++        event = parse_sse_data_json(frame)
++        if event is None:
++            continue
++        event_type = event.get("type")
++        if event_type == "message_start" and isinstance(event.get("message"), dict):
++            started = cast(JsonObject, event["message"])
++            message["id"] = started.get("id", message["id"])
++            message["model"] = started.get("model", CCGPT_MODEL)
++        elif event_type == "content_block_start":
++            index = event.get("index")
++            block = event.get("content_block")
++            if isinstance(index, int) and isinstance(block, dict):
++                blocks[index] = cast(JsonObject, block)
++        elif event_type == "content_block_delta":
++            index = event.get("index")
++            delta = event.get("delta")
++            if not isinstance(index, int) or not isinstance(delta, dict) or index not in blocks:
++                continue
++            block = blocks[index]
++            if delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
++                block["text"] = str(block.get("text", "")) + cast(str, delta["text"])
++            elif delta.get("type") == "input_json_delta" and isinstance(delta.get("partial_json"), str):
++                block["input"] = str(block.get("input", "")) + cast(str, delta["partial_json"])
++        elif event_type == "message_delta":
++            delta = event.get("delta")
++            usage = event.get("usage")
++            if isinstance(delta, dict):
++                message["stop_reason"] = delta.get("stop_reason", "end_turn")
++            if isinstance(usage, dict):
++                message["usage"] = cast(JsonObject, usage)
++    for index in sorted(blocks):
++        block = blocks[index]
++        if block.get("type") == "tool_use" and isinstance(block.get("input"), str):
++            try:
++                block["input"] = cast(JsonValue, json.loads(cast(str, block["input"])))
++            except json.JSONDecodeError:
++                block["input"] = {}
++        content.append(block)
++    return message
++
++
++def anthropic_error_from_response(status_code: int, body: bytes) -> JsonObject:
++    message = body.decode("utf-8", "replace") or f"upstream request failed with status {status_code}"
++    code: str | None = None
++    try:
++        parsed = json.loads(message)
++    except json.JSONDecodeError:
++        parsed = None
++    if isinstance(parsed, dict):
++        error = parsed.get("error")
++        if isinstance(error, dict):
++            if isinstance(error.get("message"), str):
++                message = error["message"]
++            if isinstance(error.get("code"), str):
++                code = error["code"]
++    return {"type": "error", "error": _anthropic_error_payload(code, message)}
++
++
++@dataclass(slots=True)
++class _ClaudeStreamState:
++    message_id: str = field(default_factory=lambda: f"msg_{uuid.uuid4().hex}")
++    block_index: int = 0
++    open_block: str | None = None
++    open_call_id: str | None = None
++    saw_start: bool = False
++    saw_terminal: bool = False
++    emitted_text: bool = False
++    emitted_tool: bool = False
++    actual_model: str = CCGPT_MODEL
++
++    input_tokens_estimate: int = 0
++
++    def consume(self, event: JsonObject) -> list[JsonObject]:
++        event_type = event.get("type")
++        output: list[JsonObject] = []
++        if event_type == "response.created":
++            response = event.get("response")
++            if isinstance(response, dict):
++                response_id = response.get("id")
++                if isinstance(response_id, str):
++                    self.message_id = response_id.replace("resp_", "msg_", 1)
++            output.extend(self._start())
++        elif event_type == "response.output_text.delta":
++            output.extend(self._start())
++            output.extend(self._open_text())
++            delta = event.get("delta")
++            if isinstance(delta, str):
++                self.emitted_text = True
++                output.append(
++                    {
++                        "type": "content_block_delta",
++                        "index": self.block_index,
++                        "delta": {"type": "text_delta", "text": delta},
++                    }
++                )
++        elif event_type == "response.output_item.added":
++            item = event.get("item")
++            if isinstance(item, dict) and item.get("type") == "function_call":
++                output.extend(self._start())
++                output.extend(self._close_block())
++                call_id = item.get("call_id") or item.get("id")
++                name = item.get("name")
++                if isinstance(call_id, str) and isinstance(name, str):
++                    self.open_block = "tool_use"
++                    self.open_call_id = call_id
++                    self.emitted_tool = True
++                    output.append(
++                        {
++                            "type": "content_block_start",
++                            "index": self.block_index,
++                            "content_block": {"type": "tool_use", "id": call_id, "name": name, "input": {}},
++                        }
++                    )
++        elif event_type == "response.function_call_arguments.delta" and self.open_block == "tool_use":
++            delta = event.get("delta")
++            if isinstance(delta, str):
++                output.append(
++                    {
++                        "type": "content_block_delta",
++                        "index": self.block_index,
++                        "delta": {"type": "input_json_delta", "partial_json": delta},
++                    }
++                )
++        elif event_type == "response.output_item.done":
++            item = event.get("item")
++            if isinstance(item, dict) and item.get("type") == "function_call":
++                if self.open_block != "tool_use":
++                    output.extend(self._start())
++                    output.extend(self._close_block())
++                    call_id = item.get("call_id") or item.get("id")
++                    name = item.get("name")
++                    if isinstance(call_id, str) and isinstance(name, str):
++                        self.open_block = "tool_use"
++                        self.open_call_id = call_id
++                        self.emitted_tool = True
++                        output.append(
++                            {
++                                "type": "content_block_start",
++                                "index": self.block_index,
++                                "content_block": {"type": "tool_use", "id": call_id, "name": name, "input": {}},
++                            }
++                        )
++                        arguments = item.get("arguments")
++                        if isinstance(arguments, str) and arguments:
++                            output.append(
++                                {
++                                    "type": "content_block_delta",
++                                    "index": self.block_index,
++                                    "delta": {"type": "input_json_delta", "partial_json": arguments},
++                                }
++                            )
++                output.extend(self._close_block())
++            elif isinstance(item, dict) and item.get("type") == "message" and not self.emitted_text:
++                text = _message_output_text(item)
++                if text:
++                    output.extend(self._start())
++                    output.extend(self._open_text())
++                    output.append(
++                        {
++                            "type": "content_block_delta",
++                            "index": self.block_index,
++                            "delta": {"type": "text_delta", "text": text},
++                        }
++                    )
++                    self.emitted_text = True
++        elif event_type in {"response.completed", "response.incomplete"}:
++            response = event.get("response")
++            output.extend(self._complete(response if isinstance(response, dict) else {}))
++        elif event_type in {"response.failed", "error"}:
++            output.extend(self._close_block())
++            code, message = _error_fields_from_event(event)
++            output.append({"type": "error", "error": _anthropic_error_payload(code, message)})
++            self.saw_terminal = True
++        return output
++
++    def finish(self) -> list[JsonObject]:
++        if self.saw_terminal:
++            return []
++        return self._complete({})
++
++    def _start(self) -> list[JsonObject]:
++        if self.saw_start:
++            return []
++        self.saw_start = True
++        return [
++            {
++                "type": "message_start",
++                "message": {
++                    "id": self.message_id,
++                    "type": "message",
++                    "role": "assistant",
++                    "model": self.actual_model,
++                    "content": [],
++                    "stop_reason": None,
++                    "stop_sequence": None,
++                    "usage": {"input_tokens": self.input_tokens_estimate, "output_tokens": 0},
++                },
++            }
++        ]
++
++    def _open_text(self) -> list[JsonObject]:
++        if self.open_block == "text":
++            return []
++        output = self._close_block()
++        self.open_block = "text"
++        output.append(
++            {"type": "content_block_start", "index": self.block_index, "content_block": {"type": "text", "text": ""}}
++        )
++        return output
++
++    def _close_block(self) -> list[JsonObject]:
++        if self.open_block is None:
++            return []
++        output = [{"type": "content_block_stop", "index": self.block_index}]
++        self.block_index += 1
++        self.open_block = None
++        self.open_call_id = None
++        return output
++
++    def _complete(self, response: Mapping[str, JsonValue]) -> list[JsonObject]:
++        if self.saw_terminal:
++            return []
++        self.saw_terminal = True
++        output = self._start()
++        output.extend(self._close_block())
++        usage = response.get("usage")
++        input_tokens = 0
++        output_tokens = 0
++        cache_tokens = 0
++        if isinstance(usage, dict):
++            input_tokens = _int_value(usage.get("input_tokens"))
++            output_tokens = _int_value(usage.get("output_tokens"))
++            details = usage.get("input_tokens_details")
++            if isinstance(details, dict):
++                cache_tokens = _int_value(details.get("cached_tokens"))
++        stop_reason = "tool_use" if self.emitted_tool else "end_turn"
++
++        message_usage: JsonObject = {
++            "input_tokens": max(0, input_tokens - cache_tokens),
++            "cache_read_input_tokens": cache_tokens,
++            "cache_creation_input_tokens": 0,
++            "output_tokens": output_tokens,
++        }
++        output.extend(
++            [
++                {
++                    "type": "message_delta",
++                    "delta": {"stop_reason": stop_reason, "stop_sequence": None},
++                    "usage": message_usage,
++                },
++                {"type": "message_stop"},
++            ]
++        )
++        return output
++
++
++def _message_output_text(item: Mapping[str, JsonValue]) -> str:
++    content = item.get("content")
++    if not isinstance(content, list):
++        return ""
++    return "".join(
++        cast(str, part["text"])
++        for part in content
++        if isinstance(part, dict) and part.get("type") == "output_text" and isinstance(part.get("text"), str)
++    )
++
++
++def _int_value(value: JsonValue | None) -> int:
++    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+diff --git a/app/modules/proxy/claude_codex_startup.py b/app/modules/proxy/claude_codex_startup.py
+new file mode 100644
+index 00000000..9483b579
+--- /dev/null
++++ b/app/modules/proxy/claude_codex_startup.py
+@@ -0,0 +1,97 @@
++from __future__ import annotations
++
++import asyncio
++from collections.abc import AsyncIterator
++
++from app.core.types import JsonObject
++
++_CONTENT_FRAME_TYPES = frozenset({"content_block_start", "content_block_delta"})
++
++
++async def _empty_events() -> AsyncIterator[JsonObject]:
++    return
++    yield  # pragma: no cover - makes this a (never-yielding) async generator
++
++
++STARTUP_FIRST_FRAME_TIMEOUT_SECONDS = 90.0
++
++
++STARTUP_CONTENT_GRACE_SECONDS = 10.0
++
++
++async def split_startup_error(
++    events: AsyncIterator[JsonObject],
++    *,
++    first_frame_timeout_seconds: float = STARTUP_FIRST_FRAME_TIMEOUT_SECONDS,
++    content_grace_seconds: float = STARTUP_CONTENT_GRACE_SECONDS,
++) -> tuple[JsonObject | None, AsyncIterator[JsonObject]]:
++
++    iterator = events.__aiter__()
++    loop = asyncio.get_running_loop()
++    deadline = loop.time() + first_frame_timeout_seconds
++    buffered: list[JsonObject] = []
++    pending: asyncio.Future[JsonObject] | None = None
++    exhausted = False
++    while True:
++        if pending is None:
++            pending = asyncio.ensure_future(iterator.__anext__())
++        done, _ = await asyncio.wait({pending}, timeout=max(0.0, deadline - loop.time()))
++        if not done:
++            if buffered:
++                break
++            pending.cancel()
++            await asyncio.wait({pending})
++            await _aclose(events)
++            return _startup_timeout_error(first_frame_timeout_seconds), _empty_events()
++        try:
++            event = pending.result()
++        except StopAsyncIteration:
++            pending = None
++            exhausted = True
++            break
++        pending = None
++        if event.get("type") == "error":
++            await _aclose(events)
++            return event, _empty_events()
++        if not buffered:
++            deadline = loop.time() + content_grace_seconds
++        buffered.append(event)
++        if event.get("type") in _CONTENT_FRAME_TYPES:
++            break
++
++    async def replay() -> AsyncIterator[JsonObject]:
++        try:
++            for event in buffered:
++                yield event
++            if exhausted:
++                return
++            if pending is not None:
++                try:
++                    yield await pending
++                except StopAsyncIteration:
++                    return
++            async for event in iterator:
++                yield event
++        finally:
++            if pending is not None and not pending.done():
++                pending.cancel()
++                await asyncio.wait({pending})
++            await _aclose(events)
++
++    return None, replay()
++
++
++def _startup_timeout_error(timeout_seconds: float) -> JsonObject:
++    return {
++        "type": "error",
++        "error": {
++            "type": "api_error",
++            "message": f"Upstream produced no response within {timeout_seconds:g}s; retry the request",
++        },
++    }
++
++
++async def _aclose(events: AsyncIterator[JsonObject]) -> None:
++    aclose = getattr(events, "aclose", None)
++    if callable(aclose):
++        await aclose()
