@@ -34,12 +34,13 @@ if [[ ! -d "$release" ]]; then
   mkdir -p "$RELEASES"
   stage="$(mktemp -d "$RELEASES/.cut-${sha:0:8}.XXXXXX")"
   trap 'rm -rf "$stage"' EXIT
-  git -C "$REPO_DIR" archive "$sha" "${CLIENTS[@]/#/clients/}" | tar -x -C "$stage"
-  mv "$stage/clients/"* "$stage/"
-  rmdir "$stage/clients"
+  git -C "$REPO_DIR" archive "$sha" "${CLIENTS[@]/#/clients/}" 'clients/claude_lb_*.py' | tar -x -C "$stage"
+  for name in "${CLIENTS[@]}"; do
+    ln -s "clients/$name" "$stage/$name"
+  done
   {
     echo "commit ${sha:0:8} $(date -u +%Y-%m-%dT%H:%M:%SZ) cut by scripts/cut-client-release.sh from $ref"
-    (cd "$stage" && shasum -a 256 "${CLIENTS[@]}")
+    (cd "$stage" && shasum -a 256 "${CLIENTS[@]}" clients/claude_lb_*.py)
   } > "$stage/RELEASE"
   chmod 755 "$stage"
   mv "$stage" "$release"

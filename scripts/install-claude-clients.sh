@@ -59,6 +59,7 @@ from pathlib import Path
 
 source, runtime = (Path(value).absolute() for value in sys.argv[1:3])
 files = [Path("clients") / name for name in sys.argv[4:]]
+files.extend(path.relative_to(source) for path in sorted((source / "clients").glob("claude_lb_*.py")))
 files.append(Path("scripts/install-claude-clients.sh"))
 files.extend(
     path.relative_to(source)
