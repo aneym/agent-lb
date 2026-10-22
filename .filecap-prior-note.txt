@@ -1,1 +1,0 @@
-Blocked: filecap cutover-check exits 1. It reads the trailer arrow as a missing path and rejects Python declarations, import-path setup, a closing parenthesis and a type directive. Otherwise the split is done: the largest file is 18178 bytes, and ./check --staged, py_compile and filecap check passed

@@ -18,6 +18,8 @@ import threading
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 HOME = Path.home()
 LIVE_LABEL = "com.aneyman.agent-lb"
 LIVE_FRONT_LABEL = "com.aneyman.agent-lb-front"
@@ -46,6 +48,11 @@ def utc() -> str:
 
 
 class Check:
+    run_id: str | None
+    started: bool
+    stopped: bool
+    infra: str | None
+
     def __init__(self, out: Path, lb_sandbox: Path) -> None:
         self.out = out
         self.lb_sandbox = lb_sandbox
@@ -420,7 +427,7 @@ def process_scan_problems(rc: int | None, scan: dict, must_see: dict[str, int | 
     return problems
 
 
-def stop_problems(rc: int | None, stop: dict, leftover: list[str], labels: str, run_id: str) -> list[str]:
+def stop_problems(rc: int | None, stop: dict, leftover: list[int], labels: str, run_id: str) -> list[str]:
     logs = stop.get("logs") or {}
     custody = stop.get("custody") or {}
     problems = []
