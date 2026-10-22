@@ -1,1 +1,0 @@
-Blocked and nothing committed (HEAD is still the base sha). The split is staged into 22 modules, with the entry at 5944 bytes and the largest module at 11972 bytes, and it compiles. Help output matches the baseline for all nine CLI commands. The pre-commit no-new-comments check rejects 5 markers for
