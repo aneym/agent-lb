@@ -1,0 +1,116 @@
+.s...........FF....F...                                                  [100%]
+=================================== FAILURES ===================================
+____________ test_env_that_changes_a_pinned_guard_runs_it[BASH_ENV] ____________
+
+tmp_path = PosixPath('/home/jobs/.agent-rails/factory/sessions/sess-7998b21c7e1c/tmp/pytest-of-jobs/pytest-0/test_env_that_changes_a_pinned0')
+variable = 'BASH_ENV'
+
+    @pytest.mark.parametrize("variable", ["BASH_ENV", "BASHOPTS"])
+    def test_env_that_changes_a_pinned_guard_runs_it(tmp_path: Path, variable: str) -> None:
+        _home, env = dispatcher_home(tmp_path, [{"type": "command", "command": LINK_HOOK}])
+        if shutil.which("jq", path=env.get("PATH")) is None:
+            pytest.skip("the link-cli guard reads its input with jq")
+        startup = tmp_path / "startup.sh"
+        startup.write_text("shopt -s xpg_echo\n")
+        env[variable] = str(startup) if variable == "BASH_ENV" else "xpg_echo"
+    
+        call = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "eval $'l\\x69nk-cli auth status'"},
+            "hook_event_name": "PreToolUse",
+        }
+        if run_hook(LINK_HOOK, call, env).returncode != 2:
+            pytest.skip(f"this bash ignores {variable} (BASHOPTS needs bash 4.1+)")
+        assert decision(run_hook(DISPATCH_BASH, call, env)) == "deny"
+    
+        env.pop(variable)
+        trace = tmp_path / "trace.jsonl"
+        ls = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
+        quiet = run_hook(DISPATCH_BASH, ls, env | {"HOOK_DISPATCH_TRACE": str(trace)})
+>       assert quiet.returncode == 0 and not quiet.stdout
+E       assert (2 == 0)
+E        +  where 2 = CompletedProcess(args=['/bin/sh', '-c', 'python3 "$HOME/.claude/hooks/hook-dispatch.py" PreToolUse \'Bash\''], returnc...ard link-cli-guard.sh exited 0 without its allow receipt, so this call is refused (a floor guard that fails denies)\n').returncode
+
+tests/floor/test_hook_dispatcher_registry.py:137: AssertionError
+____________ test_env_that_changes_a_pinned_guard_runs_it[BASHOPTS] ____________
+
+tmp_path = PosixPath('/home/jobs/.agent-rails/factory/sessions/sess-7998b21c7e1c/tmp/pytest-of-jobs/pytest-0/test_env_that_changes_a_pinned1')
+variable = 'BASHOPTS'
+
+    @pytest.mark.parametrize("variable", ["BASH_ENV", "BASHOPTS"])
+    def test_env_that_changes_a_pinned_guard_runs_it(tmp_path: Path, variable: str) -> None:
+        _home, env = dispatcher_home(tmp_path, [{"type": "command", "command": LINK_HOOK}])
+        if shutil.which("jq", path=env.get("PATH")) is None:
+            pytest.skip("the link-cli guard reads its input with jq")
+        startup = tmp_path / "startup.sh"
+        startup.write_text("shopt -s xpg_echo\n")
+        env[variable] = str(startup) if variable == "BASH_ENV" else "xpg_echo"
+    
+        call = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "eval $'l\\x69nk-cli auth status'"},
+            "hook_event_name": "PreToolUse",
+        }
+        if run_hook(LINK_HOOK, call, env).returncode != 2:
+            pytest.skip(f"this bash ignores {variable} (BASHOPTS needs bash 4.1+)")
+        assert decision(run_hook(DISPATCH_BASH, call, env)) == "deny"
+    
+        env.pop(variable)
+        trace = tmp_path / "trace.jsonl"
+        ls = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
+        quiet = run_hook(DISPATCH_BASH, ls, env | {"HOOK_DISPATCH_TRACE": str(trace)})
+>       assert quiet.returncode == 0 and not quiet.stdout
+E       assert (2 == 0)
+E        +  where 2 = CompletedProcess(args=['/bin/sh', '-c', 'python3 "$HOME/.claude/hooks/hook-dispatch.py" PreToolUse \'Bash\''], returnc...ard link-cli-guard.sh exited 0 without its allow receipt, so this call is refused (a floor guard that fails denies)\n').returncode
+
+tests/floor/test_hook_dispatcher_registry.py:137: AssertionError
+___________ test_sessions_on_settings_without_a_rev_keep_their_fold ____________
+
+tmp_path = PosixPath('/home/jobs/.agent-rails/factory/sessions/sess-7998b21c7e1c/tmp/pytest-of-jobs/pytest-0/test_sessions_on_settings_with0')
+
+    def test_sessions_on_settings_without_a_rev_keep_their_fold(tmp_path: Path) -> None:
+    
+        home, _ = make_home(tmp_path)
+        install, env = installer(tmp_path, home)
+        install("--hook-dispatcher", "on")
+        dispatch = home / ".claude/hooks/dispatch"
+        registry = json.loads((dispatch / "registry.json").read_text())
+    
+        settings = json.loads((home / ".claude/settings.json").read_text())
+        text = json.dumps(settings).replace(" " + registry["rev"], "")
+        (home / ".claude/settings.json").write_text(json.dumps(json.loads(text), indent=2) + "\n")
+        old = {key: value for key, value in registry.items() if key != "rev"}
+        (dispatch / "registry.json").write_text(json.dumps(old))
+        (dispatch / "registry.json.bak").write_text(json.dumps(old))
+>       install("--hook-dispatcher", "on")
+
+tests/floor/test_hook_dispatcher_registry.py:224: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+check = True, options = ('--hook-dispatcher', 'on')
+
+    def install(*options: str, check: bool = True) -> subprocess.CompletedProcess:
+        result = subprocess.run(
+            [sys.executable, str(SOURCE / "install-policy.py"), "--home", str(home), *options],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if check:
+>           assert result.returncode == 0, result.stdout + result.stderr
+                   ^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError: error: hook dispatcher not installed; parity fixture failed: parity fail: 63 cases, 18 failed (malformed-rm (rm-dynamic-deny fails closed), malformed-plain (floor guards refuse), non-string-command, allow-read, post-bash-bulletin, post-bash-quiet, post-edit-no-prettier, post-edit-prettier-config, post-agent-idle, post-skill-stats, post-supabase, ups-quiet, ups-bulletin-and-jev-alert, stop, crash-and-timeout-fail-open, crash-fail-closed-and-timeout, rewriter-execd-rewrites, rewriter-late-times-out); floor replay fail (35 runs, failed: floor-branch-guard.py-timeout, floor-branch-guard.py-crash, floor-branch-guard.py-missing, floor-branch-guard.py-malformed, floor-branch-guard.py-no-receipt, floor-railway-vars-guard.sh-timeout, floor-railway-vars-guard.sh-crash, floor-railway-vars-guard.sh-missing, floor-railway-vars-guard.sh-malformed, floor-railway-vars-guard.sh-no-receipt, floor-dangerous-command-guard.sh-timeout, floor-dangerous-command-guard.sh-crash, floor-dangerous-command-guard.sh-missing, floor-dangerous-command-guard.sh-malformed, floor-dangerous-command-guard.sh-no-receipt, floor-kill-scope-guard.py-timeout, floor-kill-scope-guard.py-crash, floor-kill-scope-guard.py-missing, floor-kill-scope-guard.py-malformed, floor-kill-scope-guard.py-no-receipt, floor-host-credential-guard.py-timeout, floor-host-credential-guard.py-crash, floor-host-credential-guard.py-missing, floor-host-credential-guard.py-malformed, floor-host-credential-guard.py-no-receipt, floor-gh-write-guard.py-timeout, floor-gh-write-guard.py-crash, floor-gh-write-guard.py-missing, floor-gh-write-guard.py-malformed, floor-gh-write-guard.py-no-receipt, floor-control-timeout, floor-control-crash, floor-control-missing, floor-control-malformed, floor-control-no-receipt); hook-layer processes per Bash call max None (exit 1; report /home/jobs/.agent-rails/factory/sessions/sess-7998b21c7e1c/tmp/pytest-of-jobs/pytest-0/test_sessions_on_settings_with0/home/.claude/hooks/dispatch/parity-last.json)
+
+tests/floor/hook_dispatcher_support.py:158: AssertionError
+=============================== warnings summary ===============================
+tests/floor/test_hook_dispatcher_processes.py::test_a_hook_child_left_running_or_stopped_is_killed_after_the_parity_run
+  <frozen importlib._bootstrap>:530: DeprecationWarning: the load_module() method is deprecated and slated for removal in Python 3.15; use exec_module() instead
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/floor/test_hook_dispatcher_processes.py:53: the observer uses kqueue and libproc
+FAILED tests/floor/test_hook_dispatcher_registry.py::test_env_that_changes_a_pinned_guard_runs_it[BASH_ENV]
+FAILED tests/floor/test_hook_dispatcher_registry.py::test_env_that_changes_a_pinned_guard_runs_it[BASHOPTS]
+FAILED tests/floor/test_hook_dispatcher_registry.py::test_sessions_on_settings_without_a_rev_keep_their_fold
+3 failed, 19 passed, 1 skipped, 1 warning in 118.31s (0:01:58)

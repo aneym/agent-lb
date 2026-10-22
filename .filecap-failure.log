@@ -1,0 +1,38 @@
+.F
+=================================== FAILURES ===================================
+____________ test_env_that_changes_a_pinned_guard_runs_it[BASH_ENV] ____________
+
+tmp_path = PosixPath('/home/jobs/.agent-rails/factory/sessions/sess-7998b21c7e1c/tmp/pytest-of-jobs/pytest-1/test_env_that_changes_a_pinned0')
+variable = 'BASH_ENV'
+
+    @pytest.mark.parametrize("variable", ["BASH_ENV", "BASHOPTS"])
+    def test_env_that_changes_a_pinned_guard_runs_it(tmp_path: Path, variable: str) -> None:
+        _home, env = dispatcher_home(tmp_path, [{"type": "command", "command": LINK_HOOK}])
+        if shutil.which("jq", path=env.get("PATH")) is None:
+            pytest.skip("the link-cli guard reads its input with jq")
+        startup = tmp_path / "startup.sh"
+        startup.write_text("shopt -s xpg_echo\n")
+        env[variable] = str(startup) if variable == "BASH_ENV" else "xpg_echo"
+    
+        call = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "eval $'l\\x69nk-cli auth status'"},
+            "hook_event_name": "PreToolUse",
+        }
+        if run_hook(LINK_HOOK, call, env).returncode != 2:
+            pytest.skip(f"this bash ignores {variable} (BASHOPTS needs bash 4.1+)")
+        assert decision(run_hook(DISPATCH_BASH, call, env)) == "deny"
+    
+        env.pop(variable)
+        trace = tmp_path / "trace.jsonl"
+        ls = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
+        quiet = run_hook(DISPATCH_BASH, ls, env | {"HOOK_DISPATCH_TRACE": str(trace)})
+>       assert quiet.returncode == 0 and not quiet.stdout
+E       assert (2 == 0)
+E        +  where 2 = CompletedProcess(args=['/bin/sh', '-c', 'python3 "$HOME/.claude/hooks/hook-dispatch.py" PreToolUse \'Bash\''], returnc...ard link-cli-guard.sh exited 0 without its allow receipt, so this call is refused (a floor guard that fails denies)\n').returncode
+
+tests/floor/test_hook_dispatcher_registry.py:137: AssertionError
+=========================== short test summary info ============================
+FAILED tests/floor/test_hook_dispatcher_registry.py::test_env_that_changes_a_pinned_guard_runs_it[BASH_ENV]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 1 passed, 16 deselected in 0.95s

@@ -1,0 +1,9 @@
+.s..................                                                     [100%]
+=============================== warnings summary ===============================
+tests/floor/test_hook_dispatcher_processes.py::test_a_hook_child_left_running_or_stopped_is_killed_after_the_parity_run
+  <frozen importlib._bootstrap>:530: DeprecationWarning: the load_module() method is deprecated and slated for removal in Python 3.15; use exec_module() instead
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/floor/test_hook_dispatcher_processes.py:53: the observer uses kqueue and libproc
+19 passed, 1 skipped, 3 deselected, 1 warning in 6.49s

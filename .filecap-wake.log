@@ -1,0 +1,2 @@
+PASS: 12 dispatcher subprocess cases; main loop, subagent, explicit owner, idempotence, rewrite composition, denial
+PASS: test-owned fixture directory cleaned up
