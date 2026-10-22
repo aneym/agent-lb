@@ -61,28 +61,12 @@ def pf_railway_custody(payload):
     return not isinstance(command, str) or "railway" in command
 
 
-BROWSER_WORDS = (
-    "safari",
-    "chrom",
-    "aside",
-    "osascript",
-    "agent-cdp-launch",
-    "remote-debugging",
-    "user-data-dir",
-    "headless",
-    "storage",
-    "puppeteer",
-    "persistent",
-    "com.apple.",
-    "com.google.",
-    "open",
-    "browser",
-    "gio",
-    "firefox",
-    "rails",
-    "brave",
-    "microsoft",
-    "vivaldi",
+NO_CHROME_GREP = re.compile(
+    r"safari|chrom|aside|osascript|agent-cdp-launch|remote-debugging|user-data-dir|headless|storage.?state|"
+    r"puppeteer|persistent.?context|com\.apple\.|com\.google\.|(^|[^A-Za-z0-9_.-])open([^A-Za-z0-9_-]|$)|"
+    r"xdg-open|gnome-open|kde-open|wslview|-browser|webbrowser|(^|[^A-Za-z0-9_.-])gio([^A-Za-z0-9_-]|$)|"
+    r"firefox|rails\.app|fresh-rails-profile|brave.?browser|microsoft.?edge|vivaldi",
+    re.I | re.M,
 )
 
 
@@ -90,8 +74,8 @@ def pf_no_chrome(payload):
     command = jq_field(payload, "command")
     if command is None or not command.isascii():
         return True
-    bare = re.sub(r"[\"'\\\n]", "", command).lower()
-    return any(word in bare for word in BROWSER_WORDS)
+    bare = re.sub(r"[\"'\\\n]", "", command) + " " + re.sub(r"[\"'\\]", "", command.replace("\n", " "))
+    return NO_CHROME_GREP.search(bare) is not None
 
 
 _WIDE_TOOL = re.compile(r"(^|[;&|(`\s])(grep\s+([^;&|]*\s)?-[a-zA-Z]*[rR]|rg\s|find\s|fd\s)", re.M)

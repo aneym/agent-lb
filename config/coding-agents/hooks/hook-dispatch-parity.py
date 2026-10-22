@@ -539,6 +539,8 @@ def builtin_cases():
         dict(bash("cd %s && python3 -m pytest -q checks" % HEAVY_DIR), name="allow-box-offload", expect="allow"),
         dict(bash("cd sub && rm a1 a2"), name="allow-rm-cd-rewrite", expect="allow", setup="rmcd"),
         dict(bash("open -a Preview out.png"), name="deny-open-other-app", expect=deny),
+        dict(bash("wslview https://x"), name="deny-wslview", expect=deny),
+        dict(bash("flyctl deploy"), name="deny-flyctl", expect=deny),
         dict(bash("railway variables --json | jq 'keys'"), name="deny-railway-names", expect=deny),
         dict(
             bash("link-cli auth status --filter-output authenticated"), name="allow-link-cli-filtered", expect="allow"
@@ -1534,15 +1536,13 @@ def main():
     parser.add_argument(
         "--no-process-count",
         action="store_true",
-        help="skip the process count (install-policy's gate: parity and the floor replay only)",
+        help="skip the process count",
     )
-    parser.add_argument(
-        "--lock-held", action="store_true", help="the caller (install-policy) holds the per-home install lock already"
-    )
+    parser.add_argument("--lock-held", action="store_true", help="the caller holds the install lock")
     parser.add_argument(
         "--require-expectations",
         action="store_true",
-        help="also require each deny/allow case to get its expected decision (the live guard set)",
+        help="also require each expected decision",
     )
     args = parser.parse_args()
     home = os.path.abspath(args.home)
