@@ -29,8 +29,6 @@ plist = {
     "ProgramArguments": args,
     "RunAtLoad": True,
     "StartInterval": 300,
-    "LowPriorityIO": True,
-    "Nice": 10,
     "EnvironmentVariables": {
         "PATH": f"{home}/.bun/bin:{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
     },
