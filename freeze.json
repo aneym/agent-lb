@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T18:58:12Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-scripts-lb-sandbox-check",
-   "path": "scripts/lb-sandbox-check",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T17:28:12Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -162,6 +152,18 @@
    "path": "config/coding-agents/verify-routing",
    "sha": "bdfd4fce2c896811b95f46f84a9ff58867408c9f",
    "until": "2026-10-29T17:28:08Z"
+  },
+  {
+   "into": [
+    "scripts/lb_sandbox_check_flow.py",
+    "scripts/lb_sandbox_check_runtime.py",
+    "scripts/lb_sandbox_check_turns.py",
+    "scripts/lb_sandbox_check_validation.py"
+   ],
+   "note": "scripts/lb-sandbox-check split at f86dcf4bec. Reapply your diff onto the new module that now holds the code. Map: scripts/lb_sandbox_check_flow.py: edge_lines, count_lines, run_check, stop_and_verify; scripts/lb_sandbox_check_runtime.py: utc, Check, sh, launchd_pid, listener_pids, live_identity, sync_log_size, live_restarts_since, live_restart_holder, live_untouched, resolve_model, leftover_pids; scripts/lb_sandbox_check_turns.py: TurnBudgetExceeded, post, sse_events, anthropic_text, codex_text, anthropic_turn, codex_turn, within_budget, dashboard_export_status, in_flight; scripts/lb_sandbox_check_validation.py: parse_cutover, restart_problems, scan_problems, process_scan_problems, stop_problems, custody_problems",
+   "path": "scripts/lb-sandbox-check",
+   "sha": "f86dcf4beca05a9b0e7cad8aaa5e4370f73248d7",
+   "until": "2026-10-29T17:28:28Z"
   }
  ]
 }
