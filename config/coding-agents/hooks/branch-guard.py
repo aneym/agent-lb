@@ -34,6 +34,30 @@ def first_checkout(cwd):
         return None
 
 
+def removable_worktree(where, force=False):
+    if not where:
+        return False
+    path = Path(where).resolve()
+    if not path.is_relative_to(ROOT):
+        return False
+    parts = path.relative_to(ROOT).parts
+    if len(parts) < 2 or not parts[0].endswith("-wt") or first_checkout(str(path)) is True:
+        return False
+    if not force:
+        return True
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(path), "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        return result.returncode == 0 and not result.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def strip_heredocs(text):
     pending, kept = [], []
     marker = re.compile(r"<<(?P<tabs>-)?[ \t]*(?:'(?P<single>[^'\n]+)'|\"(?P<double>[^\"\n]+)\"|(?P<bare>[\w-]+))")
@@ -105,6 +129,11 @@ def fallback_commands(text, cwd):
             if not paths:
                 continue
             where = str((Path(where) / paths[0]).resolve())
+            force = bool(re.search(r"(?:^|\s)(?:--force|-[a-zA-Z]*f[a-zA-Z]*)(?:\s|$)", args))
+            if not any(char in where for char in "$`") and removable_worktree(where, force):
+                continue
+            found.append((action, None))
+            continue
         found.append((action, None if any(char in where for char in "$`") else where))
     return found
 
@@ -312,14 +341,14 @@ def commands(text, cwd, depth=0):
                     targets = [arg for arg in rest[1:] if not arg.startswith("-")]
                     if targets:
                         target = targets[0]
-                        found.append(
-                            (
-                                "worktree remove",
-                                None
-                                if where is None or any(x in target for x in "$`")
-                                else str((Path(where) / target).resolve()),
-                            )
+                        resolved = (
+                            None
+                            if where is None or any(x in target for x in "$`")
+                            else str((Path(where) / target).resolve())
                         )
+                        force = any(arg == "--force" or re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", arg) for arg in rest[1:])
+                        if not removable_worktree(resolved, force):
+                            found.append(("worktree remove", None))
         name = Path(segment[0]).name
         if name in {"sh", "bash", "zsh"}:
             index = next((i for i, arg in enumerate(segment[1:], 1) if arg.startswith("-") and "c" in arg[1:]), None)
