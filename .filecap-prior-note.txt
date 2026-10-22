@@ -1,0 +1,1 @@
+Blocked: _stream_once alone is 28,765 bytes (20,624 at minimum indentation), so it can't fit under 20,000 bytes with a move-only split. The seat made no commits and mixin.py is still 51,990 bytes. The seat also started at detached HEAD, because the named branch was absent on its box.
