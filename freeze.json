@@ -1,16 +1,6 @@
 {
  "claims": [],
- "freezes": [
-  {
-   "by": "aneyman@alexs-Mac-Studio",
-   "expires": "2026-10-22T21:09:13Z",
-   "lane": "filecap-council",
-   "owner_branch": "filecap-w8-lb-scripts-lb-spend-cap-check",
-   "path": "scripts/lb-spend-cap-check",
-   "reason": "filecap-council move-only split",
-   "since": "2026-10-22T19:39:13Z"
-  }
- ],
+ "freezes": [],
  "moved": [
   {
    "into": [
@@ -263,6 +253,15 @@
    "path": "scripts/lb-sandbox",
    "sha": "4adbadb8ab9652d8ea0249226fd253c2d227d054",
    "until": "2026-10-29T19:39:09Z"
+  },
+  {
+   "into": [
+    "scripts/lb_spend_cap_check_support.py"
+   ],
+   "note": "scripts/lb-spend-cap-check split at a6e722561b. Reapply your diff onto the new module that now holds the code. Map: scripts/lb_spend_cap_check_support.py: now_iso, free_port, guard_port, listener_pids, listener_addresses, sse_body, FakeAnthropic, _FakeHandler, http_call, send_message, InfraError, Check",
+   "path": "scripts/lb-spend-cap-check",
+   "sha": "a6e722561b88a48167d1368fcecd9723bd6fdfc2",
+   "until": "2026-10-29T19:39:40Z"
   }
  ]
 }
