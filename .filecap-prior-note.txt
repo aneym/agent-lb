@@ -1,0 +1,1 @@
+Blocked: the seat found that scripts/lb-restart is exempt from ruff-format and pyrefly because it has no extension. Moving its code unchanged into .py modules fails ruff-format, import sorting and pyrefly checks (23 new findings), and modcheck reports private-name reach (_lexical, _real_home) across
