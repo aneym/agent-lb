@@ -59,7 +59,11 @@ def test_an_install_puts_the_adopted_wide_scan_guard_in_place(tmp_path: Path) ->
     assert os.access(guard, os.X_OK)
     call = {"tool_name": "Bash", "hook_event_name": "PreToolUse", "cwd": str(tmp_path)}
     refused = run_hook(f'"{guard}"', call | {"tool_input": {"command": "rg needle /"}}, env)
-    assert refused.returncode == 2 and "BLOCKED: wide-scan-guard: recursive rg over /" in refused.stderr, refused
+    assert (
+        refused.returncode == 2
+        and "BLOCKED (floor: secrets and protected credentials): recursive content reads must stay inside one repository"
+        in refused.stderr
+    ), refused
     allowed = run_hook(f'"{guard}"', call | {"tool_input": {"command": "rg -n needle src"}}, env)
     assert allowed.returncode == 0 and not allowed.stdout, allowed
 
@@ -78,7 +82,11 @@ def test_an_install_puts_the_adopted_wide_scan_guard_in_place(tmp_path: Path) ->
     assert guard.read_bytes() == (SOURCE / "hooks/wide-scan-guard.sh").read_bytes() and os.access(guard, os.X_OK)
     assert not (home / ".agent-lb/managed/coding-agents/wide-scan-guard").exists()
     refused = run_hook(f'"{guard}"', call | {"tool_input": {"command": "rg needle /"}}, env)
-    assert refused.returncode == 2 and "BLOCKED: wide-scan-guard: recursive rg over /" in refused.stderr, refused
+    assert (
+        refused.returncode == 2
+        and "BLOCKED (floor: secrets and protected credentials): recursive content reads must stay inside one repository"
+        in refused.stderr
+    ), refused
 
 
 def test_rollback_passes_over_a_registry_that_cannot_restore_the_guards(tmp_path: Path) -> None:

@@ -9,7 +9,6 @@ from pathlib import Path
 from tests.floor.hook_dispatcher_support import (
     DENY_ALL,
     DENY_MERGE,
-    DISPATCH,
     DISPATCH_INSTALLED,
     FLAKY,
     MERGE_GUARD,
@@ -85,7 +84,12 @@ def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
     new = run_hook(bash[0]["hooks"][0]["command"], payload, env)
     assert new.returncode == 2
     reason = json.loads(new.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
-    assert reason == '[python3 "$HOME/.claude/hooks/no-direct-merge.py"]: BLOCKED: merge through the queue\n'
+    assert reason == (
+        '[python3 "$HOME/.claude/hooks/no-direct-merge.py"]: BLOCKED: merge through the queue\n\n'
+        '[/usr/bin/python3 "$HOME/.claude/hooks/gh-write-guard.py"]: BLOCKED: kept floor "Alex\'s credentials": '
+        "gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, "
+        "or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN).\n"
+    )
 
     before = (home / ".claude/settings.json").read_bytes()
     assert "already converged" in install().stdout
@@ -212,7 +216,7 @@ def test_a_sticky_run_whose_fixture_fails_keeps_the_fold(tmp_path: Path) -> None
     settings_before = json.loads((home / ".claude/settings.json").read_text())
     (home / ".claude/hooks/no-direct-merge.py").write_text(FLAKY)
     out = install().stdout
-    assert "running it once more" in out and "keeping the installed fold" in out
+    assert "running it once more" in out and "keeping installed fold" in out
     assert json.loads((home / ".claude/settings.json").read_text())["hooks"] == settings_before["hooks"]
     assert {name: (dispatch / name).read_bytes() for name in before} == before
 

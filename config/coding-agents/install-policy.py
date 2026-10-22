@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from dispatch_parity import run_parity  # type: ignore[missing-import]
 from harness_mcp import ensure_harness_mcp
 from hook_inventory import hook_path_problems, validate_hook_changes  # type: ignore[missing-import]
@@ -82,6 +83,7 @@ POLICY_FILES = (
     "FINISH.md",
     "claude-adapter.md",
     "install-policy.py",
+    "dispatch_parity.py",
     "harness_mcp.py",
     "policy_inventory.py",
     "policy_hosts.py",
@@ -1117,7 +1119,9 @@ def reconcile_settings(
     updated = json.loads(json.dumps(settings))
     hooks = updated.get("hooks", {})
     if isinstance(hooks, dict):
-        hooks, _ = drop_hooks(hooks)
+        hooks, dropped = drop_hooks(hooks)
+        for line in dropped:
+            print(f"dropped {line}")
         updated["hooks"] = hooks
     if not uninstall and source is not None and isinstance(hooks, dict):
         for line in rewrite_floor_commands(hooks, source):
@@ -1532,7 +1536,7 @@ def main() -> int:
                     print(f"hook dispatcher parity passed: {summary}")
                 elif mode == "on":
                     raise SystemExit(f"error: hook dispatcher not installed; parity fixture failed: {summary}")
-                elif old_registry and not any(n in json.dumps(old_registry) for n in RETIRED_HOOKS):
+                elif old_registry and not any(n in json.dumps(old_registry.get("per_hook")) for n in RETIRED_HOOKS):
                     keep_fold = True
                     print(f"WARNING hook dispatcher: parity failed twice ({summary}); keeping installed fold")
                 else:
@@ -1659,8 +1663,10 @@ def main() -> int:
                 REV_FILE.fullmatch(path.name)
                 and path != rev_path
                 and path not in changes
-                and path.name not in in_use
-                and time.time() - path.stat().st_mtime > REV_KEEP_SECONDS
+                and (
+                    args.uninstall
+                    or (path.name not in in_use and time.time() - path.stat().st_mtime > REV_KEEP_SECONDS)
+                )
             ):
                 changes[path] = None
     if not args.uninstall:
@@ -1899,6 +1905,12 @@ def verify_install_revision(
     def git(*words):
         return subprocess.run(["git", "-C", str(repo), *words], capture_output=True, text=True, timeout=60)
 
+    pinned = os.environ.get("AGENT_LB_POLICY_TEST_PIN", "").strip()
+    if pinned and git("cat-file", "-e", pinned + "^{commit}").returncode == 0:
+        known = git("merge-base", "--is-ancestor", pinned, "origin/main").returncode == 0
+        if known and git("merge-base", "--is-ancestor", pinned, "HEAD").returncode == 0:
+            return
+        raise SystemExit(f"error: stale installer: HEAD does not contain the test pin {pinned} from origin/main")
     fetched = git("fetch", "origin", "main")
     if fetched.returncode:
         raise SystemExit("error: could not fetch origin/main; refusing policy installation")

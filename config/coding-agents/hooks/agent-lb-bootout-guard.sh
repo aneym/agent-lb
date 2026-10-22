@@ -210,7 +210,13 @@ PY
 }
 JQ=/opt/homebrew/bin/jq
 [ -x "$JQ" ] || JQ=jq
-INPUT=$(cat)
+INPUT=
+READ=0
+IFS= read -r -d '' INPUT || READ=$?
+if [ "$READ" -gt 1 ]; then
+  echo "BLOCKED ($FLOOR): agent-lb-bootout-guard could not read the hook input (read exit $READ), so the call is refused." >&2
+  exit 2
+fi
 if ! CMD=$(printf '%s' "$INPUT" | "$JQ" -r '.tool_input.command // empty' 2>/dev/null); then
   echo "BLOCKED ($FLOOR): agent-lb-bootout-guard could not read the hook input (jq missing or failed), so the call is refused." >&2
   exit 2

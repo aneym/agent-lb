@@ -178,8 +178,8 @@ def test_the_adopted_bootout_guard_refuses_input_it_cannot_read(tmp_path: Path) 
         pytest.skip("the guard reads its input with jq")
     call = {"tool_name": "Bash", "tool_input": {"command": RAW_RESTART}, "hook_event_name": "PreToolUse"}
     refused = run_hook(hook["command"], call, env)
-    assert refused.returncode == 2 and "raw launchctl restart of agent-lb" in refused.stderr, refused
-    assert "floor: keeps the orchestrators up" in refused.stderr, refused
+    assert refused.returncode == 2 and "raw launchctl restart was not run" in refused.stderr, refused
+    assert "floor: shared live sessions" in refused.stderr, refused
     assert decision(run_hook(hook["command"], dict(call, tool_input={"command": "ls"}), env)) == "allow"
     broken = subprocess.run(
         ["/bin/sh", "-c", hook["command"]],

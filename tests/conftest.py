@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from uuid import uuid4
@@ -23,6 +24,15 @@ os.environ["AGENT_LB_STICKY_SESSION_CLEANUP_ENABLED"] = "false"
 os.environ["AGENT_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED"] = "false"
 os.environ["AGENT_LB_QUOTA_PLANNER_SCHEDULER_ENABLED"] = "false"
 os.environ["AGENT_LB_ACCOUNTS_CACHE_WARMER_ENABLED"] = "false"
+
+_PIN = subprocess.run(
+    ["git", "-C", str(Path(__file__).resolve().parents[1]), "rev-parse", "--verify", "-q", "origin/main"],
+    capture_output=True,
+    text=True,
+    timeout=60,
+).stdout.strip()
+if _PIN:
+    os.environ["AGENT_LB_POLICY_TEST_PIN"] = _PIN
 
 os.environ["AGENT_LB_SEAT_STATE"] = str(Path(tempfile.gettempdir()) / "agent-lb-tests-no-seat-state.json")
 

@@ -88,7 +88,6 @@ DISPATCH_INPROC = (
     "lane-bulletin-hook",
     "aside-regular-tabs.py",
     "workflow-relay-guard.py",
-    "routing-pulse.py",
     "herdr-tab-autoname.py",
     "idle-agents.py",
 )

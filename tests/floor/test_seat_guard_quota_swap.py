@@ -11,11 +11,17 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 HOOK = ROOT / "config/coding-agents/hooks/seat-guard.py"
+IMPLEMENT = "Implement the parser change."
 
 
 def run_hook(
-    tmp_path, seat, model="opus", route_body='print(\'{"mode":"codex-swap"}\')',
-    prompt="Review the change.", lean_body=None, missing_target=None,
+    tmp_path,
+    seat,
+    model="opus",
+    route_body='print(\'{"mode":"codex-swap"}\')',
+    prompt="Review the change.",
+    lean_body=None,
+    missing_target=None,
 ):
     home = tmp_path / "home"
     home.mkdir()
@@ -66,32 +72,44 @@ def run_hook(
     return done, output, tool_input, json.loads(ledger.read_text()) if ledger.exists() else {}
 
 
-@pytest.mark.parametrize(
-    ("seat", "target"),
-    [
-        ("verifier", "codex-verifier"),
-        ("lab-python-verifier", "codex-verifier"),
-        ("plan-reviewer", "codex-verifier"),
-        ("security-reviewer", "codex-verifier"),
-        ("opus-seat", "codex-sol"),
-        ("sonnet-implementer", "gpt-implementer"),
-    ],
-)
-def test_quota_swap_rewrites_agent_input(tmp_path, seat, target):
-    done, output, original, record = run_hook(tmp_path, seat)
+def test_quota_swap_rewrites_an_implementation_brief(tmp_path):
+    seat, target = "sonnet-implementer", "gpt-implementer"
+    _done, output, original, record = run_hook(tmp_path, seat, prompt=IMPLEMENT)
     expected = dict(original, subagent_type=target)
     expected.pop("model")
     assert output["hookEventName"] == "PreToolUse"
     assert output["permissionDecision"] == "allow"
     assert output["updatedInput"] == expected
-    assert f"{seat} -> {target}" in done.stderr
+    assert f"{seat} -> {target}" in output["additionalContext"]
     assert record["original_subagent_type"] == seat
     assert record["subagent_type"] == target
 
 
+@pytest.mark.parametrize(
+    ("seat", "prompt"),
+    [
+        ("verifier", IMPLEMENT),
+        ("lab-python-verifier", IMPLEMENT),
+        ("plan-reviewer", IMPLEMENT),
+        ("security-reviewer", IMPLEMENT),
+        ("opus-seat", "Review the change."),
+        ("sonnet-implementer", "Review the change."),
+    ],
+)
+def test_quota_swap_keeps_review_and_judgment_seats(tmp_path, seat, prompt):
+    done, output, original, record = run_hook(
+        tmp_path, seat, prompt=prompt, route_body="raise RuntimeError('a kept seat must not read quota')"
+    )
+    assert "updatedInput" not in output
+    assert output.get("permissionDecision") != "deny"
+    assert record["subagent_type"] == original["subagent_type"] == seat
+    assert "original_subagent_type" not in record and "quota_mode" not in record
+    assert " -> " not in done.stderr + output.get("additionalContext", "")
+
+
 @pytest.mark.parametrize("model", ["sonnet", "claude-sonnet-5-5", "claude-opus-5-5", "haiku"])
 def test_quota_swap_removes_only_opus_sonnet_override(tmp_path, model):
-    _, output, _, _ = run_hook(tmp_path, "verifier", model=model)
+    _, output, _, _ = run_hook(tmp_path, "sonnet-implementer", model=model, prompt=IMPLEMENT)
     assert output["updatedInput"].get("model") == ("haiku" if model == "haiku" else None)
 
 
@@ -116,9 +134,9 @@ def test_quota_swap_leaves_unrelated_seats_unchanged(tmp_path, seat):
     ],
 )
 def test_quota_mode_fail_open_and_anthropic_noop(tmp_path, body):
-    done, output, _, record = run_hook(tmp_path, "verifier", route_body=body)
+    done, output, _, record = run_hook(tmp_path, "sonnet-implementer", route_body=body, prompt=IMPLEMENT)
     assert "updatedInput" not in output
-    assert record["subagent_type"] == "verifier"
+    assert record["subagent_type"] == "sonnet-implementer"
     if "anthropic" not in body:
         assert "fail open" in done.stderr
         assert "quota_mode_error" in record
@@ -129,12 +147,12 @@ def test_quota_mode_fail_open_and_anthropic_noop(tmp_path, body):
     [
         ("sonnet-implementer-local", "gpt-implementer-local"),
         ("opus-seat-local", None),
-        ("verifier-local", "codex-verifier-local"),
-        ("lab-python-verifier-local", "codex-verifier-local"),
+        ("verifier-local", None),
+        ("lab-python-verifier-local", None),
     ],
 )
 def test_quota_swap_preserves_local_execution(tmp_path, seat, target):
-    _, output, _, record = run_hook(tmp_path, seat)
+    _, output, _, record = run_hook(tmp_path, seat, prompt=IMPLEMENT if target else "Review the change.")
     if target:
         assert output["updatedInput"]["subagent_type"] == target
         assert record["subagent_type"] == target
@@ -146,7 +164,9 @@ def test_quota_swap_preserves_local_execution(tmp_path, seat, target):
 @pytest.mark.parametrize("seat", ["verifier-local"])
 def test_missing_local_target_preserves_original_seat(tmp_path, seat):
     done, output, original, record = run_hook(
-        tmp_path, seat, missing_target="codex-verifier-local",
+        tmp_path,
+        seat,
+        missing_target="codex-verifier-local",
         route_body="raise RuntimeError('missing target must bypass quota lookup')",
     )
     assert "updatedInput" not in output
@@ -158,7 +178,7 @@ def test_missing_local_target_preserves_original_seat(tmp_path, seat):
 
 @pytest.mark.parametrize("body", ['print("[" * 100000 + "]" * 100000)', 'print("null")'])
 def test_quota_mode_parse_failure_never_denies(tmp_path, body):
-    done, output, _, record = run_hook(tmp_path, "verifier", route_body=body)
+    done, output, _, record = run_hook(tmp_path, "sonnet-implementer", route_body=body, prompt=IMPLEMENT)
     assert "updatedInput" not in output
     assert output.get("permissionDecision") != "deny"
     assert "fail open" in done.stderr
@@ -166,9 +186,11 @@ def test_quota_mode_parse_failure_never_denies(tmp_path, body):
 
 
 @pytest.mark.parametrize("model", ["gpt-5.6", "gpt-5.4"])
-def test_quota_swap_runs_advisories_and_kept_floor_checks(tmp_path, model):
+def test_quota_swap_runs_advisories_and_local_placement_warnings(tmp_path, model):
     _, output, _, record = run_hook(
-        tmp_path, "sonnet-implementer", model=model,
+        tmp_path,
+        "sonnet-implementer",
+        model=model,
         prompt="In worktree /repo-wt/fix, fix every bug.",
     )
     assert output["updatedInput"]["subagent_type"] == "gpt-implementer"
@@ -178,24 +200,29 @@ def test_quota_swap_runs_advisories_and_kept_floor_checks(tmp_path, model):
     assert record["needs_missing"] is True
     if model == "gpt-5.6":
         assert record["explicit_models"] == [{"model": model, "source": "dispatch"}]
-    denied = tmp_path / "denied"
-    denied.mkdir()
-    _, output, _, record = run_hook(
-        denied, "opus-seat-local", model=model, lean_body="print('kept floor'); sys.exit(1)",
+    local = tmp_path / "local"
+    local.mkdir()
+    done, output, _, record = run_hook(
+        local,
+        "opus-seat-local",
+        model=model,
+        lean_body="print('brief needs Linux, not this Mac'); sys.exit(1)",
     )
-    assert output["permissionDecision"] == "deny"
-    assert "kept floor" in output["permissionDecisionReason"]
-    assert "updatedInput" not in output
-    assert record["lean_studio_refused"] is True
+    assert done.returncode == 0
+    assert output.get("permissionDecision") != "deny" and "updatedInput" not in output
+    assert output["additionalContext"].count("brief needs Linux, not this Mac") == 1
+    assert record["lean_studio_warning"] == "brief needs Linux, not this Mac"
+    assert record["subagent_type"] == "opus-seat-local"
 
 
-@pytest.mark.parametrize("seat", ["verifier"])
+@pytest.mark.parametrize("seat", ["sonnet-implementer"])
 def test_anthropic_mode_logs_unchanged_dispatch(tmp_path, seat):
-    done, output, _, record = run_hook(tmp_path, seat, route_body='print(\'{"mode":"anthropic"}\')')
-    assert "mode=anthropic" in done.stderr
-    assert "no rewrite" in done.stderr
+    done, output, _, record = run_hook(tmp_path, seat, route_body='print(\'{"mode":"anthropic"}\')', prompt=IMPLEMENT)
     assert "updatedInput" not in output
+    assert output.get("permissionDecision") != "deny"
     assert record["quota_mode"] == "anthropic"
+    assert record["subagent_type"] == seat and "original_subagent_type" not in record
+    assert "quota_mode_error" not in record and "fail open" not in done.stderr
 
 
 if __name__ == "__main__":

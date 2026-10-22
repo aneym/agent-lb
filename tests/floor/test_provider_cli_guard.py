@@ -66,13 +66,18 @@ def test_exported_hook_environment(tmp_path):
     assert "not-a-real-token" not in result.stdout + result.stderr
 
 
-def test_exact_cos_approval(tmp_path):
+def test_an_approval_record_never_opens_alexs_railway_login(tmp_path):
     root = tmp_path / ".open-factory/approvals"
     root.mkdir(parents=True)
     approval = root / "alex-provider.md"
     approval.write_text("Alex approved at 22:44Z\n`railway ssh`\n")
-    assert run(f"railway ssh # alex-approval: {approval}", tmp_path).returncode == 0
-    assert run(f"railway variable set X=1 # alex-approval: {approval}", tmp_path).returncode == 2
+    for command in (
+        f"railway ssh # alex-approval: {approval}",
+        f"railway variable set X=1 # alex-approval: {approval}",
+    ):
+        result = run(command, tmp_path)
+        assert result.returncode == 2, (command, result.stderr)
+        assert "kept floor: Alex's own Railway login" in result.stderr, (command, result.stderr)
 
 
 def test_existing_destructive_sql_floor(tmp_path):
@@ -96,6 +101,7 @@ def test_installer_revision_refuses_stale_and_passes_descendant(tmp_path, monkey
             monkeypatch.delenv(key)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.delenv("AGENT_LB_POLICY_TEST_PIN", raising=False)
 
     installer = GUARD.parent.parent / "install-policy.py"
     verify = runpy.run_path(str(installer))["verify_install_revision"]

@@ -38,7 +38,7 @@ if "Herdr Shell" in (data.get("tool_input") or {}).get("command", ""):
 
 QUIET = "import sys\nsys.stdin.read()\n"
 
-CONTEXT = "import sys\nsys.stdin.read()\nprint('context from routing-pulse')\n"
+CONTEXT = "import sys\nsys.stdin.read()\nprint('context from context-pulse')\n"
 
 
 def processes_naming(text: str) -> list[tuple[int, str]]:
@@ -71,7 +71,7 @@ def make_home(tmp_path: Path) -> tuple[Path, dict]:
         ("no-direct-merge.py", MERGE_GUARD),
         ("herdr-shell-host-guard.py", HOST_GUARD),
         ("idle-agents.py", QUIET),
-        ("routing-pulse.py", CONTEXT),
+        ("context-pulse.py", CONTEXT),
         ("herdr-tab-autoname.py", QUIET),
     ):
         (hooks / name).write_text(text)
@@ -110,7 +110,7 @@ def make_home(tmp_path: Path) -> tuple[Path, dict]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": f'{py} "$HOME/.claude/hooks/routing-pulse.py" 2>/dev/null || true',
+                            "command": f'{py} "$HOME/.claude/hooks/context-pulse.py" 2>/dev/null || true',
                             "timeout": 3,
                             "statusMessage": "Routing pulse",
                         },

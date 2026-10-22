@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 refuse() {
-  echo "wide-scan-guard (warn only): $1; scope searches to one repository or directory." >&2
-  exit 0
+  echo "BLOCKED (floor): wide-scan-guard $1, so it fails closed." >&2
+  exit 2
 }
 allow() {
   if [ -n "${HOOK_FLOOR_RECEIPT:-}" ]; then printf 'floor-ok %s\n' wide-scan-guard.sh; fi

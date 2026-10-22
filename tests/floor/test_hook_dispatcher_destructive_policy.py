@@ -22,7 +22,7 @@ from tests.floor.hook_dispatcher_support import (
 from tests.floor.hook_dispatcher_support import kill_spawned_hooks as kill_spawned_hooks
 
 
-def test_the_bootout_guard_accepts_the_rails_cos_approval_record(tmp_path: Path) -> None:
+def test_an_approval_record_never_lets_a_raw_restart_through(tmp_path: Path) -> None:
 
     home, env, hook = guard_home(tmp_path, "agent-lb-bootout-guard.sh", BOOTOUT)
     if not (Path("/opt/homebrew/bin/jq").exists() or shutil.which("jq", path=env["PATH"])):
@@ -37,14 +37,16 @@ def test_the_bootout_guard_accepts_the_rails_cos_approval_record(tmp_path: Path)
         call = {"tool_name": "Bash", "tool_input": {"command": RAW_RESTART + suffix}, "hook_event_name": "PreToolUse"}
         return run_hook(hook["command"], call, env)
 
-    assert run(" # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-restart-2026-10-08.md").returncode == 0
     for suffix in (
         "",
+        " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-restart-2026-10-08.md",
         " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-missing-2026-10-08.md",
         " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-notime-2026-10-08.md",
         " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/../orchestrator-refs/alex-restart-2026-10-08.md",
     ):
-        assert run(suffix).returncode == 2, suffix
+        refused = run(suffix)
+        assert refused.returncode == 2, suffix
+        assert "raw launchctl restart was not run" in refused.stderr, (suffix, refused.stderr)
 
 
 def test_the_dangerous_command_guard_keeps_only_the_drop_floor(tmp_path: Path) -> None:
@@ -143,22 +145,23 @@ def test_the_bootout_guard_reads_only_the_command_that_runs(tmp_path, command, r
 
 
 @pytest.mark.parametrize(
-    "guard,command",
+    "guard,command,approved_rc",
     [
-        (DANGER, "psql -c 'DROP TABLE accounts'"),
-        (SOURCE / "hooks/agent-lb-bootout-guard.sh", "launchctl bootout gui/501/com.aneyman.agent-lb"),
+        (DANGER, "psql -c 'DROP TABLE accounts'", 0),
+        (SOURCE / "hooks/agent-lb-bootout-guard.sh", "launchctl bootout gui/501/com.aneyman.agent-lb", 2),
     ],
 )
 @pytest.mark.parametrize(
     "prefix,suffix,rc",
     [
-        ("", " # alex-approval: {ref}", 0),
+        ("", " # alex-approval: {ref}", None),
         ("# alex-approval: {ref}\n", "", 2),
         ("", " x# alex-approval: {ref}", 2),
         ("", " ' # alex-approval: {ref}'", 2),
     ],
 )
-def test_guard_trim_approval_comment_boundary(tmp_path, guard, command, prefix, suffix, rc):
+def test_guard_trim_approval_comment_boundary(tmp_path, guard, command, approved_rc, prefix, suffix, rc):
+    rc = approved_rc if rc is None else rc
     refs = tmp_path / ".agent-rails/lanes/orchestrator-refs"
     refs.mkdir(parents=True)
     ref = refs / "alex-test-2026-10-08.md"
