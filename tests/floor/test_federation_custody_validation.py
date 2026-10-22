@@ -247,7 +247,7 @@ async def test_checkout_and_checkin_refuse_live_exchange_intent(db_setup: bool) 
             nonce="intent-prior-checkout",
         )
         await repo.mark_transfer_settled("intent-prior-checkout")
-        from app.modules.accounts.auth_manager import refresh_token_material_fingerprint
+        from app.modules.accounts.auth_exchange import refresh_token_material_fingerprint
 
         for account_id in ("intent-checkout", "intent-checkin"):
             account = await session.get(Account, account_id)
