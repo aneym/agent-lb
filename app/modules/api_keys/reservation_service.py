@@ -4,13 +4,31 @@ import asyncio
 
 from sqlalchemy.exc import OperationalError
 
+from app.core.utils.time import utcnow
 from app.db.request_models import LimitType
 from app.db.session import sqlite_writer_section
 from app.modules.api_keys.key_validation import _ensure_valid_api_key_row, _lazy_reset_expired_limits
 from app.modules.api_keys.repository_data import UsageReservationItemData
 from app.modules.api_keys.repository_protocol import ApiKeysRepositoryProtocol
-from app.modules.api_keys.reservation_pricing import _calculate_cost_microdollars, _compute_increment_for_limit_type, _is_sqlite_database_locked, _limit_applies_for_request, _model_has_list_price, _next_usage_reservation_id, _normalize_request_usage_budget, _rate_limit_exceeded_error, _reserve_delta_for_limit  # noqa: I001  # fmt: skip
-from app.modules.api_keys.service_data import _SQLITE_BUSY_RETRY_ATTEMPTS, _SQLITE_BUSY_RETRY_BASE_SECONDS, ApiKeyInvalidError, ApiKeyRequestUsageBudget, ApiKeyUnpricedModelError, ApiKeyUsageReservationData  # noqa: I001  # fmt: skip
+from app.modules.api_keys.reservation_pricing import (
+    _calculate_cost_microdollars,
+    _compute_increment_for_limit_type,
+    _is_sqlite_database_locked,
+    _limit_applies_for_request,
+    _model_has_list_price,
+    _next_usage_reservation_id,
+    _normalize_request_usage_budget,
+    _rate_limit_exceeded_error,
+    _reserve_delta_for_limit,
+)
+from app.modules.api_keys.service_data import (
+    _SQLITE_BUSY_RETRY_ATTEMPTS,
+    _SQLITE_BUSY_RETRY_BASE_SECONDS,
+    ApiKeyInvalidError,
+    ApiKeyRequestUsageBudget,
+    ApiKeyUnpricedModelError,
+    ApiKeyUsageReservationData,
+)
 
 
 class ApiKeyReservationService:
@@ -24,7 +42,8 @@ class ApiKeyReservationService:
         request_service_tier: str | None = None,
         request_usage_budget: ApiKeyRequestUsageBudget | None = None,
         request_is_file_operation: bool = False,
-    ) -> ApiKeyUsageReservationData:
+        request_has_source_pricing: bool = False,
+    ) -> ApiKeyUsageReservationData | None:
         for attempt in range(_SQLITE_BUSY_RETRY_ATTEMPTS):
             try:
                 return await self._enforce_limits_for_request_once(
@@ -33,13 +52,13 @@ class ApiKeyReservationService:
                     request_service_tier=request_service_tier,
                     request_usage_budget=request_usage_budget,
                     request_is_file_operation=request_is_file_operation,
+                    request_has_source_pricing=request_has_source_pricing,
                 )
             except OperationalError as exc:
                 await self._repository.rollback()
                 if not _is_sqlite_database_locked(exc) or attempt == _SQLITE_BUSY_RETRY_ATTEMPTS - 1:
                     raise
-                await asyncio.sleep(_SQLITE_BUSY_RETRY_BASE_SECONDS * (2**attempt))
-
+                await asyncio.sleep(_SQLITE_BUSY_RETRY_BASE_SECONDS * 2**attempt)
         raise RuntimeError("unreachable")
 
     async def _enforce_limits_for_request_once(
@@ -50,25 +69,30 @@ class ApiKeyReservationService:
         request_service_tier: str | None,
         request_usage_budget: ApiKeyRequestUsageBudget | None,
         request_is_file_operation: bool = False,
-    ) -> ApiKeyUsageReservationData:
+        request_has_source_pricing: bool = False,
+    ) -> ApiKeyUsageReservationData | None:
         now = self._now()
         async with sqlite_writer_section(self._repository.session):
-            row = _ensure_valid_api_key_row(await self._repository.get_by_id(key_id))
+            row = _ensure_valid_api_key_row(await self._repository.get_for_limit_enforcement(key_id))
             if row.expires_at is not None and row.expires_at < now:
                 raise ApiKeyInvalidError("API key has expired")
             limits_reset = await _lazy_reset_expired_limits(self._repository, row.limits, now=now)
-            refreshed = _ensure_valid_api_key_row(await self._repository.get_by_id(key_id)) if limits_reset else row
+            refreshed = (
+                _ensure_valid_api_key_row(await self._repository.get_for_limit_enforcement(key_id))
+                if limits_reset
+                else row
+            )
             if refreshed.expires_at is not None and refreshed.expires_at < now:
                 raise ApiKeyInvalidError("API key has expired")
-
             reservation_items: list[UsageReservationItemData] = []
+            reservation_id: str | None = None
             normalized_usage_budget = _normalize_request_usage_budget(request_usage_budget)
             try:
                 for limit in refreshed.limits:
                     if (
                         request_is_file_operation
                         and request_model in {"files-create", "files-finalize"}
-                        and limit.limit_type == LimitType.COST_USD
+                        and (limit.limit_type == LimitType.COST_USD)
                     ):
                         continue
                     if not _limit_applies_for_request(limit, request_model=request_model):
@@ -76,12 +100,11 @@ class ApiKeyReservationService:
                     if (
                         limit.limit_type == LimitType.COST_USD
                         and request_model is not None
-                        and not _model_has_list_price(request_model)
+                        and not request_has_source_pricing
+                        and (not _model_has_list_price(request_model))
                     ):
                         raise ApiKeyUnpricedModelError(
-                            model=request_model,
-                            limit_window=limit.limit_window.value,
-                            max_microdollars=limit.max_value,
+                            model=request_model, limit_window=limit.limit_window.value, max_microdollars=limit.max_value
                         )
                     if limit.current_value >= limit.max_value:
                         raise _rate_limit_exceeded_error(limit)
@@ -93,9 +116,7 @@ class ApiKeyReservationService:
                     )
                     if reserve_delta > 0:
                         result = await self._repository.try_reserve_usage(
-                            limit.id,
-                            delta=reserve_delta,
-                            expected_reset_at=limit.reset_at,
+                            limit.id, delta=reserve_delta, expected_reset_at=limit.reset_at
                         )
                         if not result.success:
                             raise _rate_limit_exceeded_error(limit)
@@ -107,23 +128,25 @@ class ApiKeyReservationService:
                             expected_reset_at=limit.reset_at,
                         )
                     )
-
-                reservation_id = _next_usage_reservation_id()
-                await self._repository.create_usage_reservation(
-                    reservation_id,
-                    key_id=key_id,
-                    model=request_model or "",
-                    items=reservation_items,
-                )
-                await self._repository.commit()
+                if not reservation_items:
+                    await self._repository.commit()
+                else:
+                    reservation_id = _next_usage_reservation_id()
+                    await self._repository.create_usage_reservation(
+                        reservation_id, key_id=key_id, model=request_model or "", items=reservation_items
+                    )
+                    await self._repository.commit()
             except Exception:
                 await self._repository.rollback()
                 raise
-
+        if reservation_id is None:
+            await self._last_used_coalescer.record(key_id, utcnow())
+            return None
         return ApiKeyUsageReservationData(
             reservation_id=reservation_id,
             key_id=key_id,
             model=request_model or "",
+            has_applicable_limits=bool(reservation_items),
         )
 
     async def finalize_usage_reservation(
@@ -139,6 +162,7 @@ class ApiKeyReservationService:
         cache_read_input_tokens: int | None = None,
         cache_creation_tier: str | None = None,
         cache_creation_1h_input_tokens: int | None = None,
+        cost_microdollars: int | None = None,
     ) -> None:
         for attempt in range(_SQLITE_BUSY_RETRY_ATTEMPTS):
             try:
@@ -154,14 +178,14 @@ class ApiKeyReservationService:
                     cache_read_input_tokens=cache_read_input_tokens,
                     cache_creation_tier=cache_creation_tier,
                     cache_creation_1h_input_tokens=cache_creation_1h_input_tokens,
+                    cost_microdollars_override=cost_microdollars,
                 )
                 return
             except OperationalError as exc:
                 await self._repository.rollback()
                 if not _is_sqlite_database_locked(exc) or attempt == _SQLITE_BUSY_RETRY_ATTEMPTS - 1:
                     raise
-                await asyncio.sleep(_SQLITE_BUSY_RETRY_BASE_SECONDS * (2**attempt))
-
+                await asyncio.sleep(_SQLITE_BUSY_RETRY_BASE_SECONDS * 2**attempt)
         raise RuntimeError("unreachable")
 
     async def fail_usage_reservation(
@@ -190,8 +214,7 @@ class ApiKeyReservationService:
                 await self._repository.rollback()
                 if not _is_sqlite_database_locked(exc) or attempt == _SQLITE_BUSY_RETRY_ATTEMPTS - 1:
                     raise
-                await asyncio.sleep(_SQLITE_BUSY_RETRY_BASE_SECONDS * (2**attempt))
-
+                await asyncio.sleep(_SQLITE_BUSY_RETRY_BASE_SECONDS * 2**attempt)
         raise RuntimeError("unreachable")
 
     async def _settle_usage_reservation(
@@ -208,36 +231,34 @@ class ApiKeyReservationService:
         cache_read_input_tokens: int | None = None,
         cache_creation_tier: str | None = None,
         cache_creation_1h_input_tokens: int | None = None,
+        cost_microdollars_override: int | None = None,
     ) -> None:
         async with sqlite_writer_section(self._repository.session):
             reservation = await self._repository.get_usage_reservation(reservation_id)
             if reservation is None or reservation.status != "reserved":
                 return
-
             claimed = await self._repository.transition_usage_reservation_status(
-                reservation_id,
-                expected_status="reserved",
-                new_status="settling",
+                reservation_id, expected_status="reserved", new_status="settling"
             )
             if not claimed:
                 await self._repository.rollback()
                 return
-
             effective_input_tokens = input_tokens or 0
             effective_output_tokens = output_tokens or 0
             effective_cached_input_tokens = cached_input_tokens or 0
-            cost_microdollars = _calculate_cost_microdollars(
-                model,
-                effective_input_tokens,
-                effective_output_tokens,
-                effective_cached_input_tokens,
-                service_tier,
-                cache_creation_input_tokens=cache_creation_input_tokens,
-                cache_read_input_tokens=cache_read_input_tokens,
-                cache_creation_tier=cache_creation_tier,
-                cache_creation_1h_input_tokens=cache_creation_1h_input_tokens,
-            )
-
+            cost_microdollars = cost_microdollars_override
+            if cost_microdollars is None:
+                cost_microdollars = _calculate_cost_microdollars(
+                    model,
+                    effective_input_tokens,
+                    effective_output_tokens,
+                    effective_cached_input_tokens,
+                    service_tier,
+                    cache_creation_input_tokens=cache_creation_input_tokens,
+                    cache_read_input_tokens=cache_read_input_tokens,
+                    cache_creation_tier=cache_creation_tier,
+                    cache_creation_1h_input_tokens=cache_creation_1h_input_tokens,
+                )
             consumed_tokens = (
                 effective_input_tokens
                 + effective_output_tokens
@@ -246,7 +267,6 @@ class ApiKeyReservationService:
                 + (cache_read_input_tokens or 0)
             )
             unpriced_usage = cost_microdollars is None and consumed_tokens > 0
-
             try:
                 for item in reservation.items:
                     if item.limit_type == LimitType.COST_USD and unpriced_usage:
@@ -261,16 +281,11 @@ class ApiKeyReservationService:
                     delta = actual_delta - item.reserved_delta
                     if delta != 0:
                         await self._repository.adjust_reserved_usage(
-                            item.limit_id,
-                            delta=delta,
-                            expected_reset_at=item.expected_reset_at,
+                            item.limit_id, delta=delta, expected_reset_at=item.expected_reset_at
                         )
                     await self._repository.upsert_reservation_item_actual(
-                        reservation_id,
-                        item=item,
-                        actual_delta=actual_delta,
+                        reservation_id, item=item, actual_delta=actual_delta
                     )
-
                 await self._repository.settle_usage_reservation(
                     reservation_id,
                     status=status,
@@ -279,11 +294,11 @@ class ApiKeyReservationService:
                     cached_input_tokens=cached_input_tokens,
                     cost_microdollars=cost_microdollars,
                 )
-                await self._repository.update_last_used(reservation.api_key_id, commit=False)
                 await self._repository.commit()
             except Exception:
                 await self._repository.rollback()
                 raise
+        await self._last_used_coalescer.record(reservation.api_key_id, utcnow())
 
     async def touch_usage_reservation(self, reservation_id: str) -> bool:
         for attempt in range(_SQLITE_BUSY_RETRY_ATTEMPTS):
@@ -296,8 +311,7 @@ class ApiKeyReservationService:
                 await self._repository.rollback()
                 if not _is_sqlite_database_locked(exc) or attempt == _SQLITE_BUSY_RETRY_ATTEMPTS - 1:
                     raise
-                await asyncio.sleep(_SQLITE_BUSY_RETRY_BASE_SECONDS * (2**attempt))
-
+                await asyncio.sleep(_SQLITE_BUSY_RETRY_BASE_SECONDS * 2**attempt)
         raise RuntimeError("unreachable")
 
     async def release_usage_reservation(self, reservation_id: str) -> None:
@@ -309,8 +323,7 @@ class ApiKeyReservationService:
                 await self._repository.rollback()
                 if not _is_sqlite_database_locked(exc) or attempt == _SQLITE_BUSY_RETRY_ATTEMPTS - 1:
                     raise
-                await asyncio.sleep(_SQLITE_BUSY_RETRY_BASE_SECONDS * (2**attempt))
-
+                await asyncio.sleep(_SQLITE_BUSY_RETRY_BASE_SECONDS * 2**attempt)
         raise RuntimeError("unreachable")
 
     async def _release_usage_reservation_once(self, reservation_id: str) -> None:
@@ -318,28 +331,18 @@ class ApiKeyReservationService:
             reservation = await self._repository.get_usage_reservation(reservation_id)
             if reservation is None or reservation.status != "reserved":
                 return
-
             claimed = await self._repository.transition_usage_reservation_status(
-                reservation_id,
-                expected_status="reserved",
-                new_status="released",
+                reservation_id, expected_status="reserved", new_status="released"
             )
             if not claimed:
                 await self._repository.rollback()
                 return
-
             try:
                 for item in reservation.items:
                     await self._repository.adjust_reserved_usage(
-                        item.limit_id,
-                        delta=-item.reserved_delta,
-                        expected_reset_at=item.expected_reset_at,
+                        item.limit_id, delta=-item.reserved_delta, expected_reset_at=item.expected_reset_at
                     )
-                    await self._repository.upsert_reservation_item_actual(
-                        reservation_id,
-                        item=item,
-                        actual_delta=0,
-                    )
+                    await self._repository.upsert_reservation_item_actual(reservation_id, item=item, actual_delta=0)
                 await self._repository.settle_usage_reservation(
                     reservation_id,
                     status="released",
@@ -364,11 +367,7 @@ class ApiKeyReservationService:
         service_tier: str | None = None,
     ) -> None:
         cost_microdollars = _calculate_cost_microdollars(
-            model,
-            input_tokens,
-            output_tokens,
-            cached_input_tokens,
-            service_tier,
+            model, input_tokens, output_tokens, cached_input_tokens, service_tier
         )
         await self._repository.increment_limit_usage(
             key_id,

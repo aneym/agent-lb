@@ -38,14 +38,14 @@ def _usage_sort_key(state: AccountState) -> tuple[float, float, float, str]:
     primary_used = _priority_primary_used(state)
     secondary_used = _priority_secondary_used(state, primary_used)
     last_selected = state.last_selected_at or 0.0
-    return secondary_used, primary_used, last_selected, state.account_id
+    return (secondary_used, primary_used, last_selected, state.account_id)
 
 
 def _primary_usage_sort_key(state: AccountState) -> tuple[float, float, float, str]:
     primary_used = _priority_primary_used(state)
     secondary_used = _priority_secondary_used(state, primary_used)
     last_selected = state.last_selected_at or 0.0
-    return primary_used, secondary_used, last_selected, state.account_id
+    return (primary_used, secondary_used, last_selected, state.account_id)
 
 
 def _reset_preference_bucket(state: AccountState, current: float, window: ResetPreferenceWindow) -> int:
@@ -66,25 +66,19 @@ def _reset_preference_bucket(state: AccountState, current: float, window: ResetP
 
 
 def _prefer_earlier_reset_candidates(
-    available: list[AccountState],
-    current: float,
-    window: ResetPreferenceWindow,
+    available: list[AccountState], current: float, window: ResetPreferenceWindow
 ) -> list[AccountState]:
-    earliest_bucket = min(_reset_preference_bucket(state, current, window) for state in available)
+    earliest_bucket = min((_reset_preference_bucket(state, current, window) for state in available))
     return [state for state in available if _reset_preference_bucket(state, current, window) == earliest_bucket]
 
 
 def _fallback_secondary_capacity_credits(plan_type: str | None) -> float:
     normalized = (plan_type or "").strip().lower()
     resolved_plan = CAPACITY_PLAN_ALIASES.get(normalized, normalized or UNKNOWN_PLAN_FALLBACK)
-    return PLAN_CAPACITY_CREDITS_SECONDARY.get(
-        resolved_plan,
-        PLAN_CAPACITY_CREDITS_SECONDARY[UNKNOWN_PLAN_FALLBACK],
-    )
+    return PLAN_CAPACITY_CREDITS_SECONDARY.get(resolved_plan, PLAN_CAPACITY_CREDITS_SECONDARY[UNKNOWN_PLAN_FALLBACK])
 
 
 def _remaining_secondary_credits(state: AccountState) -> float:
-
     capacity = (
         state.priority_capacity_credits if state.priority_capacity_credits is not None else state.capacity_credits
     )
@@ -147,17 +141,12 @@ def _relative_availability_score_per_minute(raw_score: float) -> float:
 
 
 def _log_relative_availability_candidate_scores(
-    raw_scores: list[tuple[AccountState, float]],
-    *,
-    current: float,
+    raw_scores: list[tuple[AccountState, float]], *, current: float
 ) -> None:
     for state, raw_score in raw_scores:
         remaining_seconds = _relative_availability_remaining_seconds(state, current)
         logger.debug(
-            (
-                f"{_RELATIVE_AVAILABILITY_LOG_PREFIX_CANDIDATE}account=%s "
-                "remaining_credits=%.2f remaining_minutes=%.2f score_per_minute=%.6f"
-            ),
+            f"{_RELATIVE_AVAILABILITY_LOG_PREFIX_CANDIDATE}account=%s remaining_credits=%.2f remaining_minutes=%.2f score_per_minute=%.6f",
             _relative_availability_label(state),
             _remaining_secondary_credits(state),
             remaining_seconds / 60.0,
@@ -166,36 +155,25 @@ def _log_relative_availability_candidate_scores(
 
 
 def _log_relative_availability_top_k(
-    weighted_candidates: list[tuple[AccountState, float, float]],
-    *,
-    current: float,
+    weighted_candidates: list[tuple[AccountState, float, float]], *, current: float
 ) -> None:
     formatted_candidates = ", ".join(
         (
-            f"account={_relative_availability_label(state)} "
-            f"remaining_credits={_remaining_secondary_credits(state):.2f} "
-            f"remaining_minutes={_relative_availability_remaining_seconds(state, current) / 60.0:.2f} "
-            f"score_per_minute={_relative_availability_score_per_minute(raw_score):.6f} "
-            f"weight={weight:.8f}"
+            f"account={_relative_availability_label(state)} remaining_credits={_remaining_secondary_credits(state):.2f} remaining_minutes={_relative_availability_remaining_seconds(state, current) / 60.0:.2f} score_per_minute={_relative_availability_score_per_minute(raw_score):.6f} weight={weight:.8f}"
+            for state, weight, raw_score in weighted_candidates
         )
-        for state, weight, raw_score in weighted_candidates
     )
     logger.info("%s%s", _RELATIVE_AVAILABILITY_LOG_PREFIX_TOP_K, formatted_candidates)
 
 
 def _relative_availability_weighted_candidates(
-    available: list[AccountState],
-    *,
-    current: float,
-    power: float,
-    top_k: int,
+    available: list[AccountState], *, current: float, power: float, top_k: int
 ) -> list[tuple[AccountState, float, float]]:
     raw_scores = [(state, _relative_availability_raw_score(state, current)) for state in available]
     _log_relative_availability_candidate_scores(raw_scores, current=current)
     best_raw_score = max((score for _, score in raw_scores), default=0.0)
     if best_raw_score <= 0.0:
         return []
-
     weighted: list[tuple[AccountState, float, float]] = []
     safe_power = power if power > 0.0 else DEFAULT_RELATIVE_AVAILABILITY_POWER
     for state, raw_score in raw_scores:
@@ -204,17 +182,9 @@ def _relative_availability_weighted_candidates(
         if weight < RELATIVE_AVAILABILITY_MIN_WEIGHT_FRACTION:
             continue
         weighted.append((state, weight, raw_score))
-
     if not weighted:
         return []
-
-    weighted.sort(
-        key=lambda item: (
-            -item[1],
-            -item[2],
-            *_usage_sort_key(item[0]),
-        )
-    )
+    weighted.sort(key=lambda item: (-item[1], -item[2], *_usage_sort_key(item[0])))
     safe_top_k = max(1, top_k)
     top_candidates = weighted[:safe_top_k]
     _log_relative_availability_top_k(top_candidates, current=current)
@@ -222,18 +192,11 @@ def _relative_availability_weighted_candidates(
 
 
 def _log_relative_availability_winner(
-    winner: AccountState,
-    *,
-    current: float,
-    weight: float | None,
-    raw_score: float,
+    winner: AccountState, *, current: float, weight: float | None, raw_score: float
 ) -> None:
     remaining_seconds = _relative_availability_remaining_seconds(winner, current)
     logger.info(
-        (
-            f"{_RELATIVE_AVAILABILITY_LOG_PREFIX_WINNER}account=%s "
-            "remaining_credits=%.2f remaining_minutes=%.2f score_per_minute=%.6f weight=%s"
-        ),
+        f"{_RELATIVE_AVAILABILITY_LOG_PREFIX_WINNER}account=%s remaining_credits=%.2f remaining_minutes=%.2f score_per_minute=%.6f weight=%s",
         _relative_availability_label(winner),
         _remaining_secondary_credits(winner),
         remaining_seconds / 60.0,
@@ -243,26 +206,15 @@ def _log_relative_availability_winner(
 
 
 def _select_relative_availability(
-    available: list[AccountState],
-    *,
-    current: float,
-    power: float,
-    top_k: int,
-    deterministic_probe: bool,
+    available: list[AccountState], *, current: float, power: float, top_k: int, deterministic_probe: bool
 ) -> AccountState:
     weighted_candidates = _relative_availability_weighted_candidates(
-        available,
-        current=current,
-        power=power,
-        top_k=top_k,
+        available, current=current, power=power, top_k=top_k
     )
     if not weighted_candidates:
         winner = min(available, key=_usage_sort_key)
         _log_relative_availability_winner(
-            winner,
-            current=current,
-            weight=None,
-            raw_score=_relative_availability_raw_score(winner, current),
+            winner, current=current, weight=None, raw_score=_relative_availability_raw_score(winner, current)
         )
         return winner
     if deterministic_probe:
@@ -275,10 +227,7 @@ def _select_relative_availability(
     if total <= 0.0:
         winner = min(available, key=_usage_sort_key)
         _log_relative_availability_winner(
-            winner,
-            current=current,
-            weight=None,
-            raw_score=_relative_availability_raw_score(winner, current),
+            winner, current=current, weight=None, raw_score=_relative_availability_raw_score(winner, current)
         )
         return winner
     winner = random.choices(states, weights=weights, k=1)[0]
@@ -312,11 +261,7 @@ def _usage_exhausted(state: AccountState) -> bool:
 
 
 def _sequential_drain_sort_key(state: AccountState) -> tuple[float, str, str]:
-    return (
-        _configured_capacity_credits(state),
-        _stable_tie_breaker(state.account_id),
-        state.account_id,
-    )
+    return (_configured_capacity_credits(state), _stable_tie_breaker(state.account_id), state.account_id)
 
 
 def _weekly_reset_timestamp(state: AccountState, current: float) -> float:
@@ -351,8 +296,7 @@ def _reset_drain_sort_key(state: AccountState, current: float) -> tuple[int, flo
 
 
 def _capacity_probe_sort_key_with_cost(
-    state: AccountState,
-    routing_costs: RoutingCostsByAccount | None,
+    state: AccountState, routing_costs: RoutingCostsByAccount | None
 ) -> tuple[float, float, float, float, float, str]:
     secondary_used, primary_used, last_selected, account_id = _usage_sort_key(state)
     return (
@@ -366,17 +310,15 @@ def _capacity_probe_sort_key_with_cost(
 
 
 def _lowest_planner_cost_candidates(
-    available: list[AccountState],
-    routing_costs: RoutingCostsByAccount | None,
+    available: list[AccountState], routing_costs: RoutingCostsByAccount | None
 ) -> list[AccountState]:
     if not routing_costs:
         return available
-    lowest_cost = min(_planner_cost(state, routing_costs) for state in available)
+    lowest_cost = min((_planner_cost(state, routing_costs) for state in available))
     return [state for state in available if _planner_cost(state, routing_costs) == lowest_cost]
 
 
 def _select_capacity_weighted(available: list[AccountState]) -> AccountState:
-
     weights = [_remaining_secondary_credits(s) for s in available]
     total = sum(weights)
     if total <= 0.0:
@@ -387,9 +329,8 @@ def _select_capacity_weighted(available: list[AccountState]) -> AccountState:
 def _fill_first_sort_key(state: AccountState) -> tuple[float, float, str]:
     primary_used = state.used_percent if state.used_percent is not None else 0.0
     secondary_used = state.secondary_used_percent if state.secondary_used_percent is not None else 0.0
-    return -primary_used, -secondary_used, state.account_id
+    return (-primary_used, -secondary_used, state.account_id)
 
 
 def _select_fill_first(available: list[AccountState]) -> AccountState:
-
     return min(available, key=_fill_first_sort_key)

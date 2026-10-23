@@ -1,14 +1,36 @@
-from __future__ import annotations  # noqa: I001
+from __future__ import annotations
 
 import uuid
 from datetime import datetime
 from enum import Enum
+from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, false, func, text, true  # noqa: I001  # fmt: skip
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+    func,
+    text,
+    true,
+)
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, enum_values
+
+if TYPE_CHECKING:
+    from app.db.models import ApiKeyModelSourceAssignment, ModelSource
 
 
 class AccountRoutingPolicy(str, Enum):
@@ -24,71 +46,177 @@ class RequestKind(str, Enum):
 
 class RequestLog(Base):
     __tablename__ = "request_logs"
-    __table_args__ = (Index("idx_logs_useragent_group", "useragent_group"),)
+
+    __table_args__ = (
+        Index("idx_logs_useragent_group", "useragent_group"),
+        Index("idx_logs_conversation_id", "conversation_id"),
+        Index("idx_logs_client_ip", "client_ip"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
     account_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
     )
+
     provider: Mapped[str] = mapped_column(String, default="openai", server_default=text("'openai'"), nullable=False)
+
     api_key_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     client_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     caller_user: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     caller_user_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     caller_machine: Mapped[str | None] = mapped_column(String(48), nullable=True)
+
     caller_machine_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     stripped_tools: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     caller_seat: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     room: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     lane: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     dispatch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     unified_5h_utilization: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     unified_7d_utilization: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     unified_headers: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+
     quota_observed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     request_id: Mapped[str] = mapped_column(String, nullable=False)
+
     request_kind: Mapped[str] = mapped_column(
         String, default=RequestKind.NORMAL.value, server_default=text("'normal'"), nullable=False
     )
+
     requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     model: Mapped[str] = mapped_column(String, nullable=False)
+
     plan_type: Mapped[str | None] = mapped_column(String, nullable=True)
+
     source: Mapped[str | None] = mapped_column(String, nullable=True)
+
     useragent: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     useragent_group: Mapped[str | None] = mapped_column(String, nullable=True)
+
     transport: Mapped[str | None] = mapped_column(String, nullable=True)
+
     service_tier: Mapped[str | None] = mapped_column(String, nullable=True)
+
     requested_service_tier: Mapped[str | None] = mapped_column(String, nullable=True)
+
     actual_service_tier: Mapped[str | None] = mapped_column(String, nullable=True)
+
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     cache_creation_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     cache_creation_tier: Mapped[str | None] = mapped_column(String(2), nullable=True)
+
     cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     reasoning_effort: Mapped[str | None] = mapped_column(String, nullable=True)
+
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     latency_first_token_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     status: Mapped[str] = mapped_column(String, nullable=False)
+
     error_code: Mapped[str | None] = mapped_column(String, nullable=True)
+
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     failure_phase: Mapped[str | None] = mapped_column(String, nullable=True)
+
     failure_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     failure_exception_type: Mapped[str | None] = mapped_column(String, nullable=True)
+
     upstream_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     upstream_error_code: Mapped[str | None] = mapped_column(String, nullable=True)
+
     bridge_stage: Mapped[str | None] = mapped_column(String, nullable=True)
+
     upstream_proxy_route_mode: Mapped[str | None] = mapped_column(String, nullable=True)
+
     upstream_proxy_pool_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     upstream_proxy_endpoint_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     upstream_proxy_fallback_used: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
     upstream_proxy_fail_closed_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
     account: Mapped[Account | None] = relationship("Account", back_populates="request_logs")  # type: ignore[unknown-name]  # noqa: F821
+
+    model_source_id: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+    )
+
+    model_source_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    archive_request_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    connection_request_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    conversation_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    client_ip: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    latency_queue_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    latency_response_created_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    latency_first_upstream_event_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    latency_response_create_gate_wait_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    latency_bridge_queue_wait_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    prewarm_status: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    prewarm_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    prewarm_canary_bucket: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    prewarm_eligible_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    session_previous_gap_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    upstream_transport: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    model_source: Mapped["ModelSource | None"] = relationship(
+        "ModelSource",
+        back_populates="request_logs",
+        primaryjoin="foreign(RequestLog.model_source_id) == ModelSource.id",
+    )
 
 
 class ProxyEndpoint(Base):
@@ -226,42 +354,64 @@ class AccountLimitWarmup(Base):
 
 class ApiKey(Base):
     __tablename__ = "api_keys"
-    __table_args__ = (Index("idx_api_keys_member_id", "member_id"),)
+
+    __table_args__ = (
+        Index("idx_api_keys_member_id", "member_id"),
+        CheckConstraint(
+            "allowed_reasoning_efforts IS NULL OR enforced_reasoning_effort IS NULL",
+            name="ck_api_keys_reasoning_policy_exclusive",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+
     name: Mapped[str] = mapped_column(String, nullable=False)
+
     member_id: Mapped[str | None] = mapped_column(
         String,
         ForeignKey("team_members.id", ondelete="SET NULL"),
         nullable=True,
     )
+
     key_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+
     key_prefix: Mapped[str] = mapped_column(String, nullable=False)
+
     allowed_models: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     apply_to_codex_model: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
         server_default=false(),
         nullable=False,
     )
+
     enforced_model: Mapped[str | None] = mapped_column(String, nullable=True)
+
     enforced_reasoning_effort: Mapped[str | None] = mapped_column(String, nullable=True)
+
     enforced_service_tier: Mapped[str | None] = mapped_column(String, nullable=True)
+
     traffic_class: Mapped[str] = mapped_column(
         String,
         default="foreground",
         server_default=text("'foreground'"),
         nullable=False,
     )
+
     account_assignment_scope_enabled: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
         server_default=false(),
         nullable=False,
     )
+
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     limits: Mapped[list["ApiKeyLimit"]] = relationship(  # type: ignore[unknown-name]  # noqa: F821
@@ -270,8 +420,34 @@ class ApiKey(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+
     account_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(  # type: ignore[unknown-name]  # noqa: F821
         "ApiKeyAccountAssignment",
+        back_populates="api_key",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    allowed_reasoning_efforts: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    transport_policy_override: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    source_assignment_scope_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+
+    usage_sections: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=False,
+        default="upstream_limits,account_pool_usage",
+        server_default="upstream_limits,account_pool_usage",
+    )
+
+    source_assignments: Mapped[list["ApiKeyModelSourceAssignment"]] = relationship(
+        "ApiKeyModelSourceAssignment",
         back_populates="api_key",
         cascade="all, delete-orphan",
         lazy="selectin",

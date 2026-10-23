@@ -4,29 +4,46 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from app.core.auth.exchange_phase import ExchangePhase
-from app.core.clients.codex_tls import codex_tls_kwargs
-from app.core.upstream_proxy import ResolvedUpstreamRoute
+import aiohttp
+from aiohttp_socks import ProxyConnector
+from python_socks import ProxyType
 
-_RESERVED = frozenset({"proxy", "proxies", "impersonate", "ja3", "akamai", "extra_fp"})
+from app.core.auth.exchange_phase import ExchangePhase
+from app.core.resilience.network_recovery import (
+    PROCESS_NETWORK_UNAVAILABLE_CODE,
+    is_pre_dispatch_connection_failure,
+    is_process_network_failure,
+)
+from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute
+
+_RESERVED = frozenset({"akamai", "extra_fp", "impersonate", "ja3", "proxies", "proxy"})
 
 
 class CodexTransportError(RuntimeError):
     def __init__(
-        self, message: str, *, status_code: int | None = None, phase: ExchangePhase = ExchangePhase.AMBIGUOUS
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        phase: ExchangePhase = ExchangePhase.AMBIGUOUS,
+        error_code: str | None = None,
+        retryable_same_contract: bool = False,
+        failure_phase: str | None = None,
+        is_tls_verification_failure: bool = False,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.phase = phase
+        self.error_code = error_code
+        self.retryable_same_contract = retryable_same_contract
+        self.failure_phase = failure_phase
+        self.is_tls_verification_failure = is_tls_verification_failure
 
 
 def require_route_or_direct_egress_opt_in(
-    *,
-    route: ResolvedUpstreamRoute | None,
-    allow_direct_egress: bool,
-    operation: str,
+    *, route: ResolvedUpstreamRoute | None, allow_direct_egress: bool, operation: str
 ) -> None:
-    if route is None and not allow_direct_egress:
+    if route is None and (not allow_direct_egress):
         raise ValueError(f"Direct Codex upstream egress for {operation} requires allow_direct_egress=True")
 
 
@@ -45,6 +62,95 @@ class CodexWebSocketResult:
     fallback_used: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _BufferedResponse:
+    status: int
+    status_code: int
+    headers: Mapping[str, str]
+    content: bytes
+
+    async def read(self) -> bytes:
+        return self.content
+
+    async def text(self) -> str:
+        return self.content.decode("utf-8", errors="replace")
+
+    def json(self) -> Any:
+        import json
+
+        return json.loads(self.content)
+
+
+class _SessionOwnedContent:
+    def __init__(self, content: Any, session: aiohttp.ClientSession) -> None:
+        self._content = content
+        self._session = session
+
+    def iter_chunked(self, size: int) -> Any:
+        return self._iter_and_close(self._content.iter_chunked(size))
+
+    async def _iter_and_close(self, iterator: Any) -> Any:
+        try:
+            async for chunk in iterator:
+                yield chunk
+        finally:
+            await self._session.close()
+
+
+class _SessionOwnedResponse:
+    def __init__(self, response: Any, session: aiohttp.ClientSession) -> None:
+        self._response = response
+        self._session = session
+        self.status = getattr(response, "status", getattr(response, "status_code", 0))
+        self.status_code = getattr(response, "status_code", self.status)
+        self.headers = getattr(response, "headers", {}) or {}
+        self.content = _SessionOwnedContent(response.content, session)
+
+    async def read(self) -> bytes:
+        try:
+            result = self._response.read()
+            if asyncio.iscoroutine(result):
+                result = await result
+            if isinstance(result, bytes):
+                return result
+            if isinstance(result, str):
+                return result.encode()
+            return b""
+        finally:
+            await self._session.close()
+
+    async def text(self) -> str:
+        return (await self.read()).decode("utf-8", errors="replace")
+
+    async def json(self, *args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        import json
+
+        return json.loads(await self.read())
+
+
+class _SessionOwnedWebSocketContext:
+    def __init__(self, context: Any, session: aiohttp.ClientSession) -> None:
+        self._context = context
+        self._session = session
+
+    async def __aenter__(self) -> Any:
+        return self._context
+
+    async def __aexit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        try:
+            if hasattr(self._context, "__aexit__"):
+                await self._context.__aexit__(exc_type, exc, traceback)
+            else:
+                close = getattr(self._context, "close", None)
+                if callable(close):
+                    result = close()
+                    if asyncio.iscoroutine(result):
+                        await result
+        finally:
+            await self._session.close()
+
+
 class CodexClient:
     def __init__(self, session: Any) -> None:
         self._session = session
@@ -57,32 +163,75 @@ class CodexClient:
     ) -> CodexRequestResult:
         if route is None:
             raise ValueError("Codex upstream calls require a resolved upstream proxy route")
+        buffer_response = bool(kwargs.pop("buffer_response", True))
+        _normalize_aiohttp_request_kwargs(kwargs)
         _reject_reserved(kwargs)
         endpoints = (route.endpoint, *route.fallbacks)
         allow_fallback = _is_idempotent_method(method)
         for index, endpoint in enumerate(endpoints):
             candidate = route.with_endpoint(endpoint, tuple(endpoints[index + 1 :]))
             try:
-                response = await self._session.request(
-                    method, url, proxy=endpoint.proxy_url, **codex_tls_kwargs(), **kwargs
-                )
+                if endpoint.scheme.startswith("socks"):
+                    response = await _request_via_socks_proxy(
+                        method, url, endpoint, buffer_response=buffer_response, **kwargs
+                    )
+                else:
+                    try:
+                        response = await self._session.request(method, url, proxy=endpoint.proxy_url, **kwargs)
+                    except Exception as exc:
+                        raise _transport_error(
+                            "request",
+                            endpoint.id,
+                            exc,
+                            failure_phase="connect" if is_pre_dispatch_connection_failure(exc) else "request",
+                            retryable_same_contract=is_pre_dispatch_connection_failure(exc),
+                        ) from None
+                    if buffer_response:
+                        try:
+                            response = await _buffer_response(response)
+                        except Exception as exc:
+                            raise _transport_error(
+                                "response body",
+                                endpoint.id,
+                                exc,
+                                failure_phase="body_read",
+                                retryable_same_contract=False,
+                            ) from None
                 return CodexRequestResult(response, candidate, index > 0)
+            except CodexTransportError as exc:
+                if index == len(endpoints) - 1 or not (
+                    allow_fallback or (exc.retryable_same_contract and (not exc.is_tls_verification_failure))
+                ):
+                    raise
             except Exception as exc:
-                if index == len(endpoints) - 1 or not allow_fallback:
-                    raise _transport_error("request", endpoint.id, exc) from None
+                pre_dispatch = is_pre_dispatch_connection_failure(exc) and (not isinstance(exc, aiohttp.ClientSSLError))
+                if index == len(endpoints) - 1 or not (allow_fallback or pre_dispatch):
+                    raise _transport_error(
+                        "request",
+                        endpoint.id,
+                        exc,
+                        failure_phase="connect" if is_pre_dispatch_connection_failure(exc) else "request",
+                        retryable_same_contract=is_pre_dispatch_connection_failure(exc),
+                    ) from None
         raise RuntimeError("unreachable Codex client fallback state")
 
     async def ws_connect(self, url: str, *, route: ResolvedUpstreamRoute, **kwargs: Any) -> Any:
         if route is None:
             raise ValueError("Codex upstream calls require a resolved upstream proxy route")
         _reject_reserved(kwargs)
-        result = self._session.ws_connect(url, proxy=route.proxy_url, **codex_tls_kwargs(), **kwargs)
+        result = self._session.ws_connect(url, proxy=route.proxy_url, **kwargs)
         if asyncio.iscoroutine(result):
             return await result
         return result
 
     async def open_ws_with_route_metadata(
-        self, url: str, *, route: ResolvedUpstreamRoute, **kwargs: Any
+        self,
+        url: str,
+        *,
+        route: ResolvedUpstreamRoute,
+        retry_handshake_status: bool = True,
+        retry_network_errors: bool = True,
+        **kwargs: Any,
     ) -> CodexWebSocketResult:
         if route is None:
             raise ValueError("Codex upstream calls require a resolved upstream proxy route")
@@ -91,27 +240,41 @@ class CodexClient:
         for index, endpoint in enumerate(endpoints):
             candidate = route.with_endpoint(endpoint, tuple(endpoints[index + 1 :]))
             context: Any | None = None
+            entered_context: Any | None = None
             try:
-                context = self._session.ws_connect(
-                    url,
-                    proxy=endpoint.proxy_url,
-                    **codex_tls_kwargs(),
-                    **kwargs,
-                )
-                if asyncio.iscoroutine(context):
-                    context = await context
-                websocket = await context.__aenter__() if hasattr(context, "__aenter__") else context
-                return CodexWebSocketResult(
-                    websocket,
-                    context if hasattr(context, "__aenter__") else None,
-                    candidate,
-                    index > 0,
-                )
+                if endpoint.scheme.startswith("socks"):
+                    websocket, context = await _open_ws_via_socks_proxy(url, endpoint, **kwargs)
+                    entered_context = context
+                else:
+                    context = self._session.ws_connect(url, proxy=endpoint.proxy_url, **kwargs)
+                    if asyncio.iscoroutine(context):
+                        context = await context
+                    if hasattr(context, "__aenter__"):
+                        websocket = await context.__aenter__()
+                        entered_context = context
+                    else:
+                        websocket = context
+                return CodexWebSocketResult(websocket, entered_context, candidate, index > 0)
             except Exception as exc:
-                if context is not None and hasattr(context, "__aexit__"):
-                    await context.__aexit__(None, None, None)
+                if entered_context is not None and hasattr(entered_context, "__aexit__"):
+                    await entered_context.__aexit__(None, None, None)
+                handshake_status = _transport_error_status_code(exc)
+                if handshake_status is not None and (not retry_handshake_status):
+                    raise _transport_error(
+                        "websocket", endpoint.id, exc, failure_phase="connect", retryable_same_contract=False
+                    ) from None
+                if handshake_status is None and (not retry_network_errors):
+                    raise _transport_error(
+                        "websocket", endpoint.id, exc, failure_phase="connect", retryable_same_contract=False
+                    ) from None
                 if index == len(endpoints) - 1:
-                    raise _transport_error("websocket", endpoint.id, exc) from None
+                    raise _transport_error(
+                        "websocket",
+                        endpoint.id,
+                        exc,
+                        failure_phase="connect",
+                        retryable_same_contract=is_pre_dispatch_connection_failure(exc),
+                    ) from None
         raise RuntimeError("unreachable Codex client websocket fallback state")
 
     async def close(self) -> None:
@@ -126,9 +289,140 @@ class CodexClient:
 
 
 def create_codex_session(*, max_clients: int = 10) -> Any:
-    from curl_cffi.requests import AsyncSession
+    from app.core.clients.http import _build_ssl_context
 
-    return AsyncSession(max_clients=max_clients, trust_env=False, **codex_tls_kwargs())
+    connector = aiohttp.TCPConnector(limit=max_clients, ssl=_build_ssl_context())
+    return aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=None), trust_env=False)
+
+
+async def _request_via_socks_proxy(
+    method: str, url: str, endpoint: ResolvedProxyEndpoint, *, buffer_response: bool, **kwargs: Any
+) -> Any:
+    connector = _socks_proxy_connector(endpoint)
+    session = aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=None), trust_env=False)
+    try:
+        try:
+            response = await session.request(method, url, **kwargs)
+        except Exception as exc:
+            raise _transport_error(
+                "request",
+                endpoint.id,
+                exc,
+                failure_phase="connect" if is_pre_dispatch_connection_failure(exc) else "request",
+                retryable_same_contract=is_pre_dispatch_connection_failure(exc),
+            ) from None
+        if buffer_response:
+            try:
+                return await _buffer_response(response)
+            except Exception as exc:
+                raise _transport_error(
+                    "response body", endpoint.id, exc, failure_phase="body_read", retryable_same_contract=False
+                ) from None
+        return _SessionOwnedResponse(response, session)
+    except Exception:
+        await session.close()
+        raise
+    finally:
+        if buffer_response:
+            await session.close()
+
+
+async def _open_ws_via_socks_proxy(url: str, endpoint: ResolvedProxyEndpoint, **kwargs: Any) -> tuple[Any, Any]:
+    connector = _socks_proxy_connector(endpoint)
+    session = aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=None), trust_env=False)
+    try:
+        context = session.ws_connect(url, **kwargs)
+        if asyncio.iscoroutine(context):
+            context = await context
+        websocket = await context.__aenter__() if hasattr(context, "__aenter__") else context
+        return (websocket, _SessionOwnedWebSocketContext(context, session))
+    except BaseException:
+        await session.close()
+        raise
+
+
+def _socks_proxy_connector(endpoint: ResolvedProxyEndpoint) -> ProxyConnector:
+    from app.core.clients.http import _build_ssl_context
+
+    proxy_scheme = endpoint.proxy_url.split(":", 1)[0]
+    return ProxyConnector(
+        host=endpoint.host,
+        port=endpoint.port,
+        proxy_type=ProxyType.SOCKS5,
+        username=endpoint.username,
+        password=endpoint.password,
+        rdns=proxy_scheme == "socks5h",
+        ssl=_build_ssl_context(),
+    )
+
+
+def _normalize_aiohttp_request_kwargs(kwargs: dict[str, Any]) -> None:
+    files = kwargs.pop("files", None)
+    if files is None:
+        return
+    form = aiohttp.FormData()
+    data = kwargs.pop("data", None)
+    if isinstance(data, Mapping):
+        for name, value in data.items():
+            form.add_field(str(name), value)
+    elif data is not None:
+        form.add_field("data", data)
+    file_items = files.items() if isinstance(files, Mapping) else files
+    for name, value in file_items:
+        _add_form_file(form, str(name), value)
+    kwargs["data"] = form
+
+
+def _add_form_file(form: aiohttp.FormData, name: str, value: Any) -> None:
+    if isinstance(value, tuple):
+        filename = value[0] if len(value) >= 1 else None
+        file_value = value[1] if len(value) >= 2 else b""
+        content_type = value[2] if len(value) >= 3 else None
+        form.add_field(
+            name,
+            file_value,
+            filename=str(filename) if filename else None,
+            content_type=str(content_type) if content_type else None,
+        )
+        return
+    form.add_field(name, value)
+
+
+async def _buffer_response(response: Any) -> Any:
+    body = await _read_response_body(response)
+    if body is None:
+        return response
+    status = _response_status(response)
+    headers = getattr(response, "headers", {}) or {}
+    return _BufferedResponse(
+        status=status,
+        status_code=status,
+        headers={str(key): str(value) for key, value in headers.items()},
+        content=body,
+    )
+
+
+async def _read_response_body(response: Any) -> bytes | None:
+    read = getattr(response, "read", None)
+    if callable(read):
+        result = read()
+        if asyncio.iscoroutine(result):
+            result = await result
+        if isinstance(result, bytes):
+            return result
+        if isinstance(result, str):
+            return result.encode()
+    content = getattr(response, "content", None)
+    if isinstance(content, bytes):
+        return content
+    if isinstance(content, str):
+        return content.encode()
+    return None
+
+
+def _response_status(response: Any) -> int:
+    value = getattr(response, "status", getattr(response, "status_code", 0))
+    return int(value or 0)
 
 
 def _reject_reserved(kwargs: Mapping[str, Any]) -> None:
@@ -141,11 +435,18 @@ def _is_idempotent_method(method: str) -> bool:
     return method.upper() in {"GET", "HEAD", "OPTIONS", "TRACE"}
 
 
-def _transport_error(operation: str, endpoint_id: str, exc: Exception) -> CodexTransportError:
+def _transport_error(
+    operation: str, endpoint_id: str, exc: Exception, *, failure_phase: str, retryable_same_contract: bool
+) -> CodexTransportError:
+    process_network_failure = is_process_network_failure(exc, include_permanent_dns=False)
     return CodexTransportError(
         codex_transport_error_message(operation, endpoint_id, exc),
         status_code=_transport_error_status_code(exc),
-        phase=ExchangePhase.PRE_SEND if getattr(exc, "code", None) in {5, 6, 7, 35, 60} else ExchangePhase.AMBIGUOUS,
+        error_code=PROCESS_NETWORK_UNAVAILABLE_CODE if process_network_failure else None,
+        retryable_same_contract=retryable_same_contract,
+        failure_phase=failure_phase,
+        is_tls_verification_failure=isinstance(exc, aiohttp.ClientSSLError),
+        phase=ExchangePhase.PRE_SEND if is_pre_dispatch_connection_failure(exc) else ExchangePhase.AMBIGUOUS,
     )
 
 

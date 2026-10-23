@@ -1,3 +1,4 @@
+import { WriteControls } from "@/lb/kit/write-controls";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Plus } from "lucide-react";
@@ -161,7 +162,6 @@ export function KeysPage() {
       });
       setCreated(result.key);
 
-
       const restrictions: ApiKeyUpdateRequest = { ...payload };
       delete restrictions.name;
       delete restrictions.expiresAt;
@@ -190,9 +190,7 @@ export function KeysPage() {
       const result = await regenerateMutation.mutateAsync(key.id);
       setCreated(result.key);
       refresh();
-    } catch {
-
-    }
+    } catch {}
   };
   const confirmRevoke = async () => {
     const targets = revokeRuns ? runs.filter((key) => key.isActive) : revoke ? [revoke] : [];
@@ -201,9 +199,7 @@ export function KeysPage() {
       setRevoke(null);
       setRevokeRuns(false);
       refresh();
-    } catch {
-
-    }
+    } catch {}
   };
   const submitMember = async (payload: TeamMemberCreateRequest | TeamMemberUpdateRequest) => {
     if (memberDrawer && memberDrawer !== "new")
@@ -218,9 +214,7 @@ export function KeysPage() {
       });
       setCreated(result.key);
       refresh();
-    } catch {
-
-    }
+    } catch {}
   };
   const error = [
     ownerKeys.error,
@@ -250,234 +244,241 @@ export function KeysPage() {
     onIssueKey: (member: TeamMember) => void issueKey(member),
   };
   return (
-    <div className="keys-page">
-      <PageHead
-        title="Keys"
-        action={
-          <button type="button" className="btn primary" onClick={() => setChoosingOwner(true)}>
-            <Plus size={16} />
-            New key
-          </button>
-        }
-      >
-        Every client that talks to agent-lb uses a key. Spend caps, account limits and usage attach
-        to the key, so any load can be traced to whoever sent it.
-      </PageHead>
-      <ConnectClient />
-      {error && <AlertMessage variant="error">{error}</AlertMessage>}
-      <Section
-        title="All keys"
-        aside="A key's secret is shown once, when it is created"
-        className="keys-section"
-      >
-        <div className="rows keys">
-          <div className="row hd">
-            <span>Key</span>
-            <span>Scope</span>
-            <span>This week</span>
-            <span>Last used</span>
-            <span>Expires</span>
-            <span />
-          </div>
-          <OwnerGroup name="You" detail={keyCount(personal.length)} keys={personal} {...actions} />
-          {members.map((member) => (
+    <WriteControls>
+      <div className="keys-page">
+        <PageHead
+          title="Keys"
+          action={
+            <button type="button" className="btn primary" onClick={() => setChoosingOwner(true)}>
+              <Plus size={16} />
+              New key
+            </button>
+          }
+        >
+          Every client that talks to agent-lb uses a key. Spend caps, account limits and usage
+          attach to the key, so any load can be traced to whoever sent it.
+        </PageHead>
+        <ConnectClient />
+        {error && <AlertMessage variant="error">{error}</AlertMessage>}
+        <Section
+          title="All keys"
+          aside="A key's secret is shown once, when it is created"
+          className="keys-section"
+        >
+          <div className="rows keys">
+            <div className="row hd">
+              <span>Key</span>
+              <span>Scope</span>
+              <span>This week</span>
+              <span>Last used</span>
+              <span>Expires</span>
+              <span />
+            </div>
             <OwnerGroup
-              key={member.id}
-              name={member.name}
-              detail={`team member · ${keyCount(byMember.get(member.id)?.length ?? 0)}${member.status === "suspended" ? " · suspended" : ""}`}
-              keys={byMember.get(member.id) ?? []}
-              member={member}
+              name="You"
+              detail={keyCount(personal.length)}
+              keys={personal}
               {...actions}
             />
-          ))}
-          <OwnerGroup
-            name="Run keys"
-            detail={`expiry within 7 days or of- name · ${keyCount(runs.length)} live`}
-            keys={runs}
-            onRevokeAll={runs.length > 0 ? () => setRevokeRuns(true) : undefined}
-            {...actions}
-          />
-          {revoked.length > 0 && (
-            <>
-              <button
-                type="button"
-                className="keys-revoked-toggle"
-                aria-expanded={showRevoked}
-                onClick={() => setShowRevoked((shown) => !shown)}
-              >
-                {showRevoked ? "Hide" : "Show"} {keyCount(revoked.length)} revoked
-              </button>
-              {showRevoked && (
-                <OwnerGroup
-                  name="Revoked keys"
-                  detail={keyCount(revoked.length)}
-                  keys={revoked}
-                  {...actions}
-                />
-              )}
-            </>
-          )}
-        </div>
-        <button
-          type="button"
-          className="btn ghost sm keys-add-member"
-          onClick={() => setMemberDrawer("new")}
-        >
-          <Plus size={15} />
-          Add team member
-        </button>
-        <div className="qline">
-          <span>Run keys from a script:</span>
-          <code>
-            POST {typeof window === "undefined" ? "" : window.location.origin}
-            /api/api-keys{" "}
-            {JSON.stringify({
-              name: "of-eval · arm-d",
-              expires_at: "2026-09-26T14:00Z",
-              limits: [
-                {
-                  limit_type: "cost_usd",
-                  limit_window: "weekly",
-                  max_value: 40,
-                },
-              ],
-            })}
-          </code>
-        </div>
-      </Section>
-      <Dialog open={choosingOwner} onOpenChange={setChoosingOwner}>
-        <DialogContent className="keys-owner-dialog">
-          <DialogHeader>
-            <DialogTitle>Who is this key for?</DialogTitle>
-            <DialogDescription>
-              Choose an owner before setting the key's restrictions.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="keys-owner-options">
-            {[
-              { id: "", label: "You", detail: "A personal key" },
-              ...members.map((member) => ({
-                id: member.id,
-                label: member.name,
-                detail: "Team member",
-              })),
-              {
-                id: "run",
-                label: "Run key",
-                detail: "A short-lived key for scripts",
-              },
-            ].map((choice) => (
-              <button
-                key={choice.id}
-                type="button"
-                className="keys-owner-option"
-                onClick={() => {
-                  setOwner(choice.id);
-                  setChoosingOwner(false);
-                  setCreating(true);
-                }}
-              >
-                <strong>{choice.label}</strong>
-                <span>{choice.detail}</span>
-              </button>
+            {members.map((member) => (
+              <OwnerGroup
+                key={member.id}
+                name={member.name}
+                detail={`team member · ${keyCount(byMember.get(member.id)?.length ?? 0)}${member.status === "suspended" ? " · suspended" : ""}`}
+                keys={byMember.get(member.id) ?? []}
+                member={member}
+                {...actions}
+              />
             ))}
+            <OwnerGroup
+              name="Run keys"
+              detail={`expiry within 7 days or of- name · ${keyCount(runs.length)} live`}
+              keys={runs}
+              onRevokeAll={runs.length > 0 ? () => setRevokeRuns(true) : undefined}
+              {...actions}
+            />
+            {revoked.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  className="keys-revoked-toggle"
+                  aria-expanded={showRevoked}
+                  onClick={() => setShowRevoked((shown) => !shown)}
+                >
+                  {showRevoked ? "Hide" : "Show"} {keyCount(revoked.length)} revoked
+                </button>
+                {showRevoked && (
+                  <OwnerGroup
+                    name="Revoked keys"
+                    detail={keyCount(revoked.length)}
+                    keys={revoked}
+                    {...actions}
+                  />
+                )}
+              </>
+            )}
           </div>
-        </DialogContent>
-      </Dialog>
-      <ApiKeyCreateDialog
-        open={creating}
-        busy={createMutation.isPending || issueKeyMutation.isPending}
-        onOpenChange={setCreating}
-        onSubmit={createKey}
-      />
-      <ApiKeyCreatedDialog
-        open={created !== null}
-        apiKey={created}
-        onOpenChange={(open) => {
-          if (!open) setCreated(null);
-        }}
-      />
-      <ApiKeyEditDialog
-        open={editing !== null}
-        apiKey={editing}
-        busy={updateMutation.isPending}
-        onOpenChange={(open) => {
-          if (!open) setEditing(null);
-        }}
-        onSubmit={async (payload: ApiKeyUpdateRequest) => {
-          if (!editing) return;
-          await updateMutation.mutateAsync({ keyId: editing.id, payload });
-          refresh();
-        }}
-      />
-      <ConfirmDialog
-        open={revoke !== null || revokeRuns}
-        title={revokeRuns ? "Revoke all run keys?" : `Revoke ${revoke?.name ?? "key"}?`}
-        description={
-          revokeRuns
-            ? `This will stop ${runs.filter((key) => key.isActive).length} run keys immediately.`
-            : `The key ${revoke?.name ?? ""} will stop working immediately.`
-        }
-        confirmLabel="Revoke"
-        onOpenChange={(open) => {
-          if (!open) {
-            setRevoke(null);
-            setRevokeRuns(false);
-          }
-        }}
-        onConfirm={() => void confirmRevoke()}
-      />
-      <TeamMemberDrawer
-        open={memberDrawer !== null}
-        member={memberDrawer === "new" ? null : memberDrawer}
-        busy={addMember.isPending || updateMember.isPending}
-        onOpenChange={(open) => {
-          if (!open) setMemberDrawer(null);
-        }}
-        onSubmit={submitMember}
-      />
-      <TeamOnboardingDialog
-        open={onboarding !== null}
-        member={onboarding}
-        onOpenChange={(open) => {
-          if (!open) setOnboarding(null);
-        }}
-      />
-      <ConfirmDialog
-        open={remove !== null}
-        title={`Remove ${remove?.name ?? "team member"}?`}
-        description="Their keys keep working but stop counting against this member's caps."
-        confirmLabel="Remove"
-        onOpenChange={(open) => {
-          if (!open) setRemove(null);
-        }}
-        onConfirm={() => {
-          if (remove)
-            void removeMember.mutateAsync(remove.id).then(() => {
-              setRemove(null);
-              refresh();
-            });
-        }}
-      />
-      <ConfirmDialog
-        open={suspend !== null}
-        title={`${suspend?.status === "active" ? "Suspend" : "Reactivate"} ${suspend?.name ?? "team member"}?`}
-        description="This changes whether their keys can send requests."
-        onOpenChange={(open) => {
-          if (!open) setSuspend(null);
-        }}
-        onConfirm={() => {
-          if (suspend)
-            void updateMember
-              .mutateAsync({
-                memberId: suspend.id,
-                payload: {
-                  status: suspend.status === "active" ? "suspended" : "active",
+          <button
+            type="button"
+            className="btn ghost sm keys-add-member"
+            onClick={() => setMemberDrawer("new")}
+          >
+            <Plus size={15} />
+            Add team member
+          </button>
+          <div className="qline">
+            <span>Run keys from a script:</span>
+            <code>
+              POST {typeof window === "undefined" ? "" : window.location.origin}
+              /api/api-keys{" "}
+              {JSON.stringify({
+                name: "of-eval · arm-d",
+                expires_at: "2026-09-26T14:00Z",
+                limits: [
+                  {
+                    limit_type: "cost_usd",
+                    limit_window: "weekly",
+                    max_value: 40,
+                  },
+                ],
+              })}
+            </code>
+          </div>
+        </Section>
+        <Dialog open={choosingOwner} onOpenChange={setChoosingOwner}>
+          <DialogContent className="keys-owner-dialog">
+            <DialogHeader>
+              <DialogTitle>Who is this key for?</DialogTitle>
+              <DialogDescription>
+                Choose an owner before setting the key's restrictions.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="keys-owner-options">
+              {[
+                { id: "", label: "You", detail: "A personal key" },
+                ...members.map((member) => ({
+                  id: member.id,
+                  label: member.name,
+                  detail: "Team member",
+                })),
+                {
+                  id: "run",
+                  label: "Run key",
+                  detail: "A short-lived key for scripts",
                 },
-              })
-              .then(() => setSuspend(null));
-        }}
-      />
-    </div>
+              ].map((choice) => (
+                <button
+                  key={choice.id}
+                  type="button"
+                  className="keys-owner-option"
+                  onClick={() => {
+                    setOwner(choice.id);
+                    setChoosingOwner(false);
+                    setCreating(true);
+                  }}
+                >
+                  <strong>{choice.label}</strong>
+                  <span>{choice.detail}</span>
+                </button>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+        <ApiKeyCreateDialog
+          open={creating}
+          busy={createMutation.isPending || issueKeyMutation.isPending}
+          onOpenChange={setCreating}
+          onSubmit={createKey}
+        />
+        <ApiKeyCreatedDialog
+          open={created !== null}
+          apiKey={created}
+          onOpenChange={(open) => {
+            if (!open) setCreated(null);
+          }}
+        />
+        <ApiKeyEditDialog
+          open={editing !== null}
+          apiKey={editing}
+          busy={updateMutation.isPending}
+          onOpenChange={(open) => {
+            if (!open) setEditing(null);
+          }}
+          onSubmit={async (payload: ApiKeyUpdateRequest) => {
+            if (!editing) return;
+            await updateMutation.mutateAsync({ keyId: editing.id, payload });
+            refresh();
+          }}
+        />
+        <ConfirmDialog
+          open={revoke !== null || revokeRuns}
+          title={revokeRuns ? "Revoke all run keys?" : `Revoke ${revoke?.name ?? "key"}?`}
+          description={
+            revokeRuns
+              ? `This will stop ${runs.filter((key) => key.isActive).length} run keys immediately.`
+              : `The key ${revoke?.name ?? ""} will stop working immediately.`
+          }
+          confirmLabel="Revoke"
+          onOpenChange={(open) => {
+            if (!open) {
+              setRevoke(null);
+              setRevokeRuns(false);
+            }
+          }}
+          onConfirm={() => void confirmRevoke()}
+        />
+        <TeamMemberDrawer
+          open={memberDrawer !== null}
+          member={memberDrawer === "new" ? null : memberDrawer}
+          busy={addMember.isPending || updateMember.isPending}
+          onOpenChange={(open) => {
+            if (!open) setMemberDrawer(null);
+          }}
+          onSubmit={submitMember}
+        />
+        <TeamOnboardingDialog
+          open={onboarding !== null}
+          member={onboarding}
+          onOpenChange={(open) => {
+            if (!open) setOnboarding(null);
+          }}
+        />
+        <ConfirmDialog
+          open={remove !== null}
+          title={`Remove ${remove?.name ?? "team member"}?`}
+          description="Their keys keep working but stop counting against this member's caps."
+          confirmLabel="Remove"
+          onOpenChange={(open) => {
+            if (!open) setRemove(null);
+          }}
+          onConfirm={() => {
+            if (remove)
+              void removeMember.mutateAsync(remove.id).then(() => {
+                setRemove(null);
+                refresh();
+              });
+          }}
+        />
+        <ConfirmDialog
+          open={suspend !== null}
+          title={`${suspend?.status === "active" ? "Suspend" : "Reactivate"} ${suspend?.name ?? "team member"}?`}
+          description="This changes whether their keys can send requests."
+          onOpenChange={(open) => {
+            if (!open) setSuspend(null);
+          }}
+          onConfirm={() => {
+            if (suspend)
+              void updateMember
+                .mutateAsync({
+                  memberId: suspend.id,
+                  payload: {
+                    status: suspend.status === "active" ? "suspended" : "active",
+                  },
+                })
+                .then(() => setSuspend(null));
+          }}
+        />
+      </div>
+    </WriteControls>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import type { PropsWithChildren } from "react";
+import { useTranslation } from "react-i18next";
 
 import { AgentLbLogo } from "@/components/brand/agent-lb-logo";
 import { SpinnerBlock } from "@/components/ui/spinner";
@@ -9,6 +10,7 @@ import { TotpDialog } from "@/features/auth/components/totp-dialog";
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
 
 export function AuthGate({ children }: PropsWithChildren) {
+  const { t } = useTranslation();
   const refreshSessionStable = useAuthStore((state) => state.refreshSession);
   const initialized = useAuthStore((state) => state.initialized);
   const loading = useAuthStore((state) => state.loading);
@@ -17,6 +19,9 @@ export function AuthGate({ children }: PropsWithChildren) {
   const bootstrapRequired = useAuthStore((state) => state.bootstrapRequired);
   const totpRequiredOnLogin = useAuthStore((state) => state.totpRequiredOnLogin);
   const authMode = useAuthStore((state) => state.authMode);
+  const adminLoginRequested = useAuthStore((state) => state.adminLoginRequested);
+  const guestAccessEnabled = useAuthStore((state) => state.guestAccessEnabled);
+  const guestPasswordRequired = useAuthStore((state) => state.guestPasswordRequired);
 
   useEffect(() => {
     void refreshSessionStable();
@@ -35,13 +40,16 @@ export function AuthGate({ children }: PropsWithChildren) {
     return <BootstrapSetupScreen />;
   }
 
-  if (passwordRequired && !authenticated) {
+  if (
+    (passwordRequired || (authMode === "standard" && guestAccessEnabled && guestPasswordRequired)) &&
+    (!authenticated || adminLoginRequested)
+  ) {
     if (totpRequiredOnLogin) {
       return <TotpDialog open />;
     }
     return (
       <div className="relative flex min-h-screen items-center justify-center p-4">
-        {                           }
+        {/* Background decoration */}
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div className="absolute -top-1/4 -right-1/4 h-[600px] w-[600px] rounded-full bg-primary/5 blur-3xl" />
           <div className="absolute -bottom-1/4 -left-1/4 h-[500px] w-[500px] rounded-full bg-primary/3 blur-3xl" />
@@ -54,8 +62,8 @@ export function AuthGate({ children }: PropsWithChildren) {
               <AgentLbLogo size={28} className="text-primary" />
             </div>
             <div>
-              <h1 className="text-xl font-semibold tracking-tight">Agent LB</h1>
-              <p className="mt-0.5 text-sm text-muted-foreground">API Load Balancer</p>
+              <h1 className="text-xl font-semibold tracking-tight">{t("auth.appTitle")}</h1>
+              <p className="mt-0.5 text-sm text-muted-foreground">{t("auth.appSubtitle")}</p>
             </div>
           </div>
           <LoginForm />
@@ -68,10 +76,9 @@ export function AuthGate({ children }: PropsWithChildren) {
     return (
       <div className="relative flex min-h-screen items-center justify-center p-4">
         <div className="w-full max-w-lg rounded-2xl border bg-card p-6 shadow-sm">
-          <h1 className="text-lg font-semibold tracking-tight">Reverse proxy authentication required</h1>
+          <h1 className="text-lg font-semibold tracking-tight">{t("auth.trustedHeader.title")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            This dashboard expects a trusted auth header from your reverse proxy. Open it through Authelia
-            or configure a fallback dashboard password first.
+            {t("auth.trustedHeader.body")}
           </p>
         </div>
       </div>

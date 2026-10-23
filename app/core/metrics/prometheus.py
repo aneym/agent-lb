@@ -11,18 +11,23 @@ class CollectorRegistryLike(Protocol):
 
 class CounterLike(Protocol):
     def inc(self, amount: float = 1) -> None: ...
+
     def labels(self, *args: str, **kwargs: str) -> "CounterLike": ...
 
 
 class GaugeLike(Protocol):
     def inc(self, amount: float = 1) -> None: ...
+
     def dec(self, amount: float = 1) -> None: ...
+
     def set(self, value: float) -> None: ...
+
     def labels(self, *args: str, **kwargs: str) -> "GaugeLike": ...
 
 
 class HistogramLike(Protocol):
     def observe(self, amount: float) -> None: ...
+
     def labels(self, *args: str, **kwargs: str) -> "HistogramLike": ...
 
 
@@ -30,42 +35,25 @@ try:
     prometheus_client = import_module("prometheus_client")
 except ImportError:
     prometheus_client = None
-
-
 PROMETHEUS_AVAILABLE = prometheus_client is not None
 MULTIPROCESS_MODE = bool(os.environ.get("PROMETHEUS_MULTIPROC_DIR"))
-
-
 if PROMETHEUS_AVAILABLE:
     CollectorRegistry = getattr(prometheus_client, "CollectorRegistry")
     Counter = getattr(prometheus_client, "Counter")
     Gauge = getattr(prometheus_client, "Gauge")
     Histogram = getattr(prometheus_client, "Histogram")
-
     REGISTRY = CollectorRegistry(auto_describe=True)
-
     requests_total = Counter(
-        "agent_lb_requests_total",
-        "Total HTTP requests",
-        ["method", "path", "status"],
-        registry=REGISTRY,
+        "agent_lb_requests_total", "Total HTTP requests", ["method", "path", "status"], registry=REGISTRY
     )
     request_duration_seconds = Histogram(
-        "agent_lb_request_duration_seconds",
-        "HTTP request duration",
-        ["method", "path"],
-        registry=REGISTRY,
+        "agent_lb_request_duration_seconds", "HTTP request duration", ["method", "path"], registry=REGISTRY
     )
     upstream_requests_total = Counter(
-        "agent_lb_upstream_requests_total",
-        "Total upstream requests",
-        ["account_id", "status"],
-        registry=REGISTRY,
+        "agent_lb_upstream_requests_total", "Total upstream requests", ["account_id", "status"], registry=REGISTRY
     )
     upstream_request_duration_seconds = Histogram(
-        "agent_lb_upstream_request_duration_seconds",
-        "Upstream request duration",
-        registry=REGISTRY,
+        "agent_lb_upstream_request_duration_seconds", "Upstream request duration", registry=REGISTRY
     )
     startup_phase_duration_seconds = Histogram(
         "agent_lb_startup_phase_duration_seconds",
@@ -80,52 +68,40 @@ if PROMETHEUS_AVAILABLE:
         registry=REGISTRY,
     )
     startup_readiness_duration_seconds = Histogram(
-        "agent_lb_startup_readiness_duration_seconds",
-        "Service process start to readiness duration",
-        registry=REGISTRY,
+        "agent_lb_startup_readiness_duration_seconds", "Service process start to readiness duration", registry=REGISTRY
     )
-
     _gauge_kwargs: dict[str, str] = {}
     if MULTIPROCESS_MODE:
         _gauge_kwargs["multiprocess_mode"] = "livesum"
-
     active_connections = Gauge(
-        "agent_lb_active_connections",
-        "Active HTTP connections",
-        registry=REGISTRY,
-        **_gauge_kwargs,
+        "agent_lb_active_connections", "Active HTTP connections", registry=REGISTRY, **_gauge_kwargs
     )
     startup_complete_seconds = Gauge(
         "agent_lb_startup_complete_seconds",
         "Most recent service process start to startup-complete duration",
         registry=REGISTRY,
-        **({"multiprocess_mode": "livemostrecent"} if MULTIPROCESS_MODE else {}),
+        **{"multiprocess_mode": "livemostrecent"} if MULTIPROCESS_MODE else {},
     )
     startup_ready_seconds = Gauge(
         "agent_lb_startup_ready_seconds",
         "Most recent service process start to readiness duration",
         registry=REGISTRY,
-        **({"multiprocess_mode": "livemostrecent"} if MULTIPROCESS_MODE else {}),
+        **{"multiprocess_mode": "livemostrecent"} if MULTIPROCESS_MODE else {},
     )
-    rate_limit_hits_total = Counter(
-        "agent_lb_rate_limit_hits_total",
-        "Rate limit hits",
-        ["type"],
-        registry=REGISTRY,
-    )
+    rate_limit_hits_total = Counter("agent_lb_rate_limit_hits_total", "Rate limit hits", ["type"], registry=REGISTRY)
     circuit_breaker_state = Gauge(
         "agent_lb_circuit_breaker_state",
         "Circuit breaker state (0=closed, 1=open, 2=half-open)",
         ["service"],
         registry=REGISTRY,
-        **({"multiprocess_mode": "liveall"} if MULTIPROCESS_MODE else {}),
+        **{"multiprocess_mode": "liveall"} if MULTIPROCESS_MODE else {},
     )
     accounts_total = Gauge(
         "agent_lb_accounts_total",
         "Total accounts by status",
         ["status"],
         registry=REGISTRY,
-        **({"multiprocess_mode": "liveall"} if MULTIPROCESS_MODE else {}),
+        **{"multiprocess_mode": "liveall"} if MULTIPROCESS_MODE else {},
     )
     bridge_instance_mismatch_total = Counter(
         "agent_lb_bridge_instance_mismatch_total",
@@ -144,16 +120,10 @@ if PROMETHEUS_AVAILABLE:
         registry=REGISTRY,
     )
     bridge_owner_forward_total = Counter(
-        "agent_lb_bridge_owner_forward_total",
-        "Total bridge owner forwards by outcome",
-        ["outcome"],
-        registry=REGISTRY,
+        "agent_lb_bridge_owner_forward_total", "Total bridge owner forwards by outcome", ["outcome"], registry=REGISTRY
     )
     bridge_durable_recover_total = Counter(
-        "agent_lb_bridge_durable_recover_total",
-        "Total durable bridge recoveries by path",
-        ["path"],
-        registry=REGISTRY,
+        "agent_lb_bridge_durable_recover_total", "Total durable bridge recoveries by path", ["path"], registry=REGISTRY
     )
     bridge_same_account_takeover_total = Counter(
         "agent_lb_bridge_same_account_takeover_total",
@@ -184,15 +154,10 @@ if PROMETHEUS_AVAILABLE:
         registry=REGISTRY,
     )
     bridge_local_rebind_total = Counter(
-        "agent_lb_bridge_local_rebind_total",
-        "Total bridge local rebinds by reason",
-        ["reason"],
-        registry=REGISTRY,
+        "agent_lb_bridge_local_rebind_total", "Total bridge local rebinds by reason", ["reason"], registry=REGISTRY
     )
     bridge_forward_latency_seconds = Histogram(
-        "agent_lb_bridge_forward_latency_seconds",
-        "Bridge owner forward latency",
-        registry=REGISTRY,
+        "agent_lb_bridge_forward_latency_seconds", "Bridge owner forward latency", registry=REGISTRY
     )
     bridge_public_contract_error_total = Counter(
         "agent_lb_bridge_public_contract_error_total",
@@ -247,7 +212,7 @@ if PROMETHEUS_AVAILABLE:
         "agent_lb_event_loop_lag_seconds",
         "Most recent asyncio event loop scheduling drift",
         registry=REGISTRY,
-        **({"multiprocess_mode": "liveall"} if MULTIPROCESS_MODE else {}),
+        **{"multiprocess_mode": "liveall"} if MULTIPROCESS_MODE else {},
     )
     event_loop_lag_events_total = Counter(
         "agent_lb_event_loop_lag_events_total",
@@ -271,6 +236,118 @@ if PROMETHEUS_AVAILABLE:
             except (ImportError, AttributeError):
                 pass
 
+    upstream_transport_decisions_total = Counter(
+        "agent_lb_upstream_transport_decisions_total",
+        "Total upstream transport decisions for streaming Responses requests",
+        ["downstream_transport", "upstream_transport", "policy", "sticky", "status"],
+        registry=REGISTRY,
+    )
+    image_requests_total = Counter(
+        "agent_lb_image_requests_total",
+        "Total OpenAI-compatible image route requests",
+        ["route", "model", "stream", "status", "outcome"],
+        registry=REGISTRY,
+    )
+    image_request_duration_seconds = Histogram(
+        "agent_lb_image_request_duration_seconds",
+        "OpenAI-compatible image route request duration",
+        ["route", "model", "stream", "status", "outcome"],
+        registry=REGISTRY,
+    )
+    bridge_handoff_compatibility_rejection_total = Counter(
+        "agent_lb_bridge_handoff_compatibility_rejection_total",
+        "Total closed HTTP bridge admission handoffs rejected for incompatible request context",
+        ["continuity_anchor", "preferred_account", "service_tier", "api_key_scope"],
+        registry=REGISTRY,
+    )
+    bridge_unanchored_handoff_recovery_total = Counter(
+        "agent_lb_bridge_unanchored_handoff_recovery_total",
+        "Total stale closed HTTP bridge admission handoffs recovered without a continuity anchor",
+        ["reason"],
+        registry=REGISTRY,
+    )
+    account_inflight_leases = Gauge(
+        "agent_lb_account_inflight_leases",
+        "Current in-process account pressure leases by account and kind",
+        ["account_id", "kind"],
+        registry=REGISTRY,
+        **_gauge_kwargs,
+    )
+    api_key_fair_share_rejections_total = Counter(
+        "agent_lb_api_key_fair_share_rejections_total",
+        "Total stream selections denied by the per-API-key fair-share gate",
+        registry=REGISTRY,
+    )
+    stream_pool_inflight = Gauge(
+        "agent_lb_stream_pool_inflight",
+        "In-flight stream leases over the fair-share gate's last candidate pool",
+        registry=REGISTRY,
+        **_gauge_kwargs,
+    )
+    _replica_gauge_kwargs: dict[str, str] = {}
+    if MULTIPROCESS_MODE:
+        _replica_gauge_kwargs["multiprocess_mode"] = "livemax"
+    cap_partition_replicas = Gauge(
+        "agent_lb_cap_partition_replicas",
+        "Live replica count currently used for account cap partitioning",
+        registry=REGISTRY,
+        **_replica_gauge_kwargs,
+    )
+    stream_pool_capacity = Gauge(
+        "agent_lb_stream_pool_capacity",
+        "Stream capacity of the fair-share gate's last candidate pool",
+        registry=REGISTRY,
+        **_gauge_kwargs,
+    )
+    proxy_phase_latency_seconds = Histogram(
+        "agent_lb_proxy_phase_latency_seconds",
+        "Proxy phase latency by low-cardinality phase and transport labels",
+        ["phase", "transport", "upstream_transport", "model_class"],
+        registry=REGISTRY,
+    )
+    http_bridge_prewarm_total = Counter(
+        "agent_lb_http_bridge_prewarm_total", "Total HTTP bridge Codex prewarm outcomes", ["outcome"], registry=REGISTRY
+    )
+    http_bridge_stuck_retire_total = Counter(
+        "agent_lb_http_bridge_stuck_retire_total",
+        "Total HTTP bridge stuck-session retirements",
+        ["reason", "affinity_kind", "model_class"],
+        registry=REGISTRY,
+    )
+    http_bridge_retry_circuit_total = Counter(
+        "agent_lb_http_bridge_retry_circuit_total",
+        "Total HTTP bridge automatic retry circuit outcomes",
+        ["outcome"],
+        registry=REGISTRY,
+    )
+    event_loop_lag_warnings_total = Counter(
+        "agent_lb_event_loop_lag_warnings_total",
+        "Total event-loop lag samples at or above the warning threshold",
+        registry=REGISTRY,
+    )
+    stream_keepalive_sent_total = Counter(
+        "agent_lb_stream_keepalive_sent_total",
+        "Total downstream SSE keepalive frames emitted by surface",
+        ["surface"],
+        registry=REGISTRY,
+    )
+    stream_idle_timeout_total = Counter(
+        "agent_lb_stream_idle_timeout_total",
+        "Total streams terminated after exceeding the configured idle window",
+        ["surface"],
+        registry=REGISTRY,
+    )
+    cache_invalidation_bump_failures_total = Counter(
+        "agent_lb_cache_invalidation_bump_failures_total",
+        "Total cache invalidation version bumps that failed after retries",
+        ["namespace"],
+        registry=REGISTRY,
+    )
+    cache_invalidation_poll_failures_total = Counter(
+        "agent_lb_cache_invalidation_poll_failures_total",
+        "Total cache invalidation poll cycles that failed",
+        registry=REGISTRY,
+    )
 else:
     REGISTRY: CollectorRegistryLike | None = None
     requests_total: CounterLike | None = None
@@ -315,7 +392,25 @@ else:
     def mark_process_dead() -> None:
         pass
 
-
+    upstream_transport_decisions_total: CounterLike | None = None
+    image_requests_total: CounterLike | None = None
+    image_request_duration_seconds: HistogramLike | None = None
+    bridge_handoff_compatibility_rejection_total: CounterLike | None = None
+    bridge_unanchored_handoff_recovery_total: CounterLike | None = None
+    account_inflight_leases: GaugeLike | None = None
+    api_key_fair_share_rejections_total: CounterLike | None = None
+    stream_pool_capacity: GaugeLike | None = None
+    stream_pool_inflight: GaugeLike | None = None
+    cap_partition_replicas: GaugeLike | None = None
+    proxy_phase_latency_seconds: HistogramLike | None = None
+    http_bridge_prewarm_total: CounterLike | None = None
+    http_bridge_stuck_retire_total: CounterLike | None = None
+    http_bridge_retry_circuit_total: CounterLike | None = None
+    event_loop_lag_warnings_total: CounterLike | None = None
+    stream_keepalive_sent_total: CounterLike | None = None
+    stream_idle_timeout_total: CounterLike | None = None
+    cache_invalidation_bump_failures_total: CounterLike | None = None
+    cache_invalidation_poll_failures_total: CounterLike | None = None
 __all__ = [
     "MULTIPROCESS_MODE",
     "PROMETHEUS_AVAILABLE",
@@ -358,4 +453,23 @@ __all__ = [
     "startup_ready_seconds",
     "upstream_request_duration_seconds",
     "upstream_requests_total",
+    "account_inflight_leases",
+    "api_key_fair_share_rejections_total",
+    "bridge_handoff_compatibility_rejection_total",
+    "bridge_unanchored_handoff_recovery_total",
+    "cache_invalidation_bump_failures_total",
+    "cache_invalidation_poll_failures_total",
+    "cap_partition_replicas",
+    "event_loop_lag_warnings_total",
+    "http_bridge_prewarm_total",
+    "http_bridge_retry_circuit_total",
+    "http_bridge_stuck_retire_total",
+    "stream_keepalive_sent_total",
+    "stream_idle_timeout_total",
+    "image_request_duration_seconds",
+    "image_requests_total",
+    "proxy_phase_latency_seconds",
+    "stream_pool_capacity",
+    "stream_pool_inflight",
+    "upstream_transport_decisions_total",
 ]

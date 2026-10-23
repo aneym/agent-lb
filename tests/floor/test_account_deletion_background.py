@@ -1,0 +1,82 @@
+"""Background account deletion floor: chunking, races and superseded credentials."""
+
+import pytest
+
+from tests.floor.account_deletion_floor_group_1 import (
+    test_begin_delete_preserves_seat_identity_before_token_wipe as test_begin_delete_preserves_seat_identity_before_token_wipe,
+)
+from tests.floor.account_deletion_floor_group_1 import (
+    test_chunked_hard_delete_removes_history as test_chunked_hard_delete_removes_history,
+)
+from tests.floor.account_deletion_floor_group_1 import (
+    test_chunked_soft_delete_drains_across_chunk_boundaries as test_chunked_soft_delete_drains_across_chunk_boundaries,
+)
+from tests.floor.account_deletion_floor_group_1 import (
+    test_delete_api_marks_and_hides_immediately as test_delete_api_marks_and_hides_immediately,
+)
+from tests.floor.account_deletion_floor_group_1 import (
+    test_fold_interleaved_between_chunks_does_not_resurrect_hard as test_fold_interleaved_between_chunks_does_not_resurrect_hard,
+)
+from tests.floor.account_deletion_floor_group_1 import (
+    test_fold_interleaved_between_chunks_does_not_resurrect_soft as test_fold_interleaved_between_chunks_does_not_resurrect_soft,
+)
+from tests.floor.account_deletion_floor_group_1 import (
+    test_marked_account_wipes_tokens_and_rejects_stale_status_writes as test_marked_account_wipes_tokens_and_rejects_stale_status_writes,
+)
+from tests.floor.account_deletion_floor_group_1 import (
+    test_pass_picks_up_account_marked_mid_pass as test_pass_picks_up_account_marked_mid_pass,
+)
+from tests.floor.account_deletion_floor_group_1 import (
+    test_pass_round_robins_chunks_across_pending_accounts as test_pass_round_robins_chunks_across_pending_accounts,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_assignment_insert_rechecks_marker_atomically as test_assignment_insert_rechecks_marker_atomically,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_chunk_self_heals_drift_from_unfenced_replicas as test_chunk_self_heals_drift_from_unfenced_replicas,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_credential_replacement_supersedes_pending_deletion as test_credential_replacement_supersedes_pending_deletion,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_finalization_serializes_against_inflight_log_insert as test_finalization_serializes_against_inflight_log_insert,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_legacy_replacement_with_empty_refresh_token_supersedes as test_legacy_replacement_with_empty_refresh_token_supersedes,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_legacy_replica_replacement_before_finalize_is_abandoned as test_legacy_replica_replacement_before_finalize_is_abandoned,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_legacy_replica_replacement_supersedes_mid_drain as test_legacy_replica_replacement_supersedes_mid_drain,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_marked_account_cannot_be_assigned_to_api_key as test_marked_account_cannot_be_assigned_to_api_key,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_repeat_delete_short_circuits_without_waiting_on_chunk_lock as test_repeat_delete_short_circuits_without_waiting_on_chunk_lock,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_restart_resumes_partial_drain as test_restart_resumes_partial_drain,
+)
+from tests.floor.account_deletion_floor_group_2 import (
+    test_straggler_row_settled_mid_drain_is_finalized as test_straggler_row_settled_mid_drain_is_finalized,
+)
+from tests.floor.account_deletion_floor_group_3 import (
+    test_chunk_batch_query_plan_uses_account_leading_indexes_postgresql as test_chunk_batch_query_plan_uses_account_leading_indexes_postgresql,
+)
+from tests.floor.account_deletion_floor_group_3 import (
+    test_chunk_batch_statements_pin_account_leading_index_order as test_chunk_batch_statements_pin_account_leading_index_order,
+)
+from tests.floor.account_deletion_floor_group_3 import (
+    test_pass_probes_drained_tables_once_per_pass as test_pass_probes_drained_tables_once_per_pass,
+)
+from tests.floor.account_deletion_floor_group_3 import (
+    test_supersede_after_partial_drain_preserves_folded_attribution as test_supersede_after_partial_drain_preserves_folded_attribution,
+)
+from tests.floor.account_deletion_floor_group_3 import (
+    test_supersede_between_drain_and_finalize_is_abandoned as test_supersede_between_drain_and_finalize_is_abandoned,
+)
+from tests.floor.account_deletion_floor_support import _no_background_wake as _no_background_wake
+
+pytestmark = pytest.mark.integration

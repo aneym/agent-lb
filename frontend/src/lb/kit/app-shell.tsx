@@ -9,13 +9,19 @@ import { clock } from "../format";
 const nav = [
   { label: "Providers", path: "/" },
   { label: "Routing", path: "/routing" },
+  { label: "Requests", path: "/dashboard" },
   { label: "Usage", path: "/usage" },
   { label: "Keys", path: "/keys" },
+  { label: "Automations", path: "/automations" },
   { label: "Settings", path: "/settings" },
 ];
 export function AppShell() {
   const { pathname } = useLocation();
   const logout = useAuthStore((state) => state.logout);
+  const role = useAuthStore((state) => state.role);
+  const canWrite = useAuthStore((state) => state.canWrite);
+  const startAdminLogin = useAuthStore((state) => state.startAdminLogin);
+  const guestPasswordRequired = useAuthStore((state) => state.guestPasswordRequired);
   const passwordRequired = useAuthStore((state) => state.passwordRequired);
   const hideEmails = usePrivacyStore((state) => state.blurred);
   const toggleEmails = usePrivacyStore((state) => state.toggle);
@@ -80,7 +86,12 @@ export function AppShell() {
             >
               {hideEmails ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
-            {passwordRequired && (
+            {!canWrite && (
+              <button className="btn ghost sm" onClick={startAdminLogin}>
+                Admin sign in
+              </button>
+            )}
+            {(passwordRequired || (role === "guest" && guestPasswordRequired)) && (
               <button className="btn ghost sm" onClick={() => void logout()}>
                 Sign out
               </button>
@@ -102,6 +113,19 @@ export function AppShell() {
         )}
       </header>
       <main>
+        {["/dashboard", "/reports", "/apis", "/accounts"].includes(pathname) && (
+          <nav className="tabs" aria-label="Explorer">
+            <Link to="/dashboard">Requests</Link>
+            <Link to="/reports">Reports</Link>
+            <Link to="/apis">Key usage</Link>
+            <Link to="/accounts">Accounts</Link>
+          </nav>
+        )}
+        {!canWrite && (
+          <p className="settings-notice" role="status">
+            Guest access · read only
+          </p>
+        )}
         <Outlet />
       </main>
       <footer className="foot">

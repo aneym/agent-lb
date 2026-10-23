@@ -25,27 +25,18 @@ class ApiKeyUsageService:
             return None
         now = self._now()
         since = now - timedelta(days=_SPARKLINE_DAYS)
-        buckets = await self._repository.trends_by_key(
-            key_id,
-            since,
-            now,
-            _DETAIL_BUCKET_SECONDS,
-        )
+        buckets = await self._repository.trends_by_key(key_id, since, now, _DETAIL_BUCKET_SECONDS)
         return _build_api_key_trends(key_id, buckets, since, now, _DETAIL_BUCKET_SECONDS)
 
     async def get_key_usage_summary_for_self(self, key_id: str) -> ApiKeySelfUsageData | None:
-
         row = await self._repository.get_by_id(key_id)
         if row is None:
             return None
-
         now = self._now()
-
         limits_reset = await _lazy_reset_expired_limits(self._repository, row.limits, now=now)
         refreshed = await self._repository.get_by_id(key_id) if limits_reset else row
         if refreshed is None:
             return None
-
         usage = await self._repository.get_usage_summary_by_key_id(key_id)
         limits = [
             ApiKeySelfLimitData(
@@ -83,10 +74,7 @@ class ApiKeyUsageService:
             cached_input_tokens=data.cached_input_tokens,
             account_costs=[
                 ApiKeyAccountCostData(
-                    account_id=ac.account_id,
-                    email=ac.email,
-                    cost_usd=ac.cost_usd,
-                    is_deleted=ac.is_deleted,
+                    account_id=ac.account_id, email=ac.email, cost_usd=ac.cost_usd, is_deleted=ac.is_deleted
                 )
                 for ac in data.account_costs
             ],

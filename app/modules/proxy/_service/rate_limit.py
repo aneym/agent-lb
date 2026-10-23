@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Mapping
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from app.core import usage as usage_core
 from app.core.usage.types import UsageWindowRow
@@ -30,9 +29,13 @@ from app.modules.usage.additional_quota_keys import get_additional_display_label
 from app.modules.usage.mappers import usage_history_to_window_row
 from app.modules.usage.updater import UsageUpdater
 
+if TYPE_CHECKING:
+    from app.modules.proxy.load_balancer import LoadBalancer
+
 
 class _RateLimitServiceProtocol(Protocol):
     _repo_factory: ProxyRepoFactory
+    _load_balancer: LoadBalancer
 
 
 def _has_available_usage_account(
@@ -71,6 +74,19 @@ def _has_available_usage_account(
 
 
 class _RateLimitMixin:
+    async def record_account_probe_result(
+        self,
+        *,
+        account_id: str,
+        http_status: int,
+    ) -> None:
+        """Feed a dashboard Force Probe into this process's health state."""
+        proxy = cast(_RateLimitServiceProtocol, self)
+        await proxy._load_balancer.record_probe_result(
+            account_id=account_id,
+            http_status=http_status,
+        )
+
     async def rate_limit_headers(self) -> dict[str, str]:
         return await get_rate_limit_headers_cache().get(self._compute_rate_limit_headers)
 
@@ -84,15 +100,17 @@ class _RateLimitMixin:
                 return headers
 
             account_map = {account.id: account for account in selected_accounts}
-            primary_rows_raw, secondary_rows_raw = await asyncio.gather(
-                self._latest_usage_rows(repos, account_map, "primary"),
-                self._latest_usage_rows(repos, account_map, "secondary"),
-            )
+            primary_rows_raw = await self._latest_usage_rows(repos, account_map, "primary")
+            secondary_rows_raw = await self._latest_usage_rows(repos, account_map, "secondary")
             monthly_rows = await self._latest_usage_rows(repos, account_map, "monthly")
             primary_rows, secondary_rows = usage_core.normalize_weekly_only_rows(
                 primary_rows_raw,
                 secondary_rows_raw,
             )
+            now_epoch = int(time.time())
+            primary_rows = usage_core.expire_elapsed_window_rows(primary_rows, now_epoch=now_epoch)
+            secondary_rows = usage_core.expire_elapsed_window_rows(secondary_rows, now_epoch=now_epoch)
+            monthly_rows = usage_core.expire_elapsed_window_rows(monthly_rows, now_epoch=now_epoch)
 
             primary_summary = _summarize_window(primary_rows, account_map, "primary")
             if primary_summary is not None:
@@ -118,21 +136,22 @@ class _RateLimitMixin:
                 return RateLimitStatusPayloadData(plan_type="guest")
 
             account_map = {account.id: account for account in selected_accounts}
-            primary_rows_raw, secondary_rows_raw = await asyncio.gather(
-                self._latest_usage_rows(repos, account_map, "primary"),
-                self._latest_usage_rows(repos, account_map, "secondary"),
-            )
+            primary_rows_raw = await self._latest_usage_rows(repos, account_map, "primary")
+            secondary_rows_raw = await self._latest_usage_rows(repos, account_map, "secondary")
             monthly_rows = await self._latest_usage_rows(repos, account_map, "monthly")
             primary_rows, secondary_rows = usage_core.normalize_weekly_only_rows(
                 primary_rows_raw,
                 secondary_rows_raw,
             )
+            now_epoch = int(time.time())
+            primary_rows = usage_core.expire_elapsed_window_rows(primary_rows, now_epoch=now_epoch)
+            secondary_rows = usage_core.expire_elapsed_window_rows(secondary_rows, now_epoch=now_epoch)
+            monthly_rows = usage_core.expire_elapsed_window_rows(monthly_rows, now_epoch=now_epoch)
 
             primary_summary = _summarize_window(primary_rows, account_map, "primary")
             secondary_summary = _summarize_window(secondary_rows, account_map, "secondary")
             monthly_summary = _summarize_window(monthly_rows, account_map, "monthly")
 
-            now_epoch = int(time.time())
             primary_window = _window_snapshot(primary_summary, primary_rows, "primary", now_epoch)
             secondary_window = _window_snapshot(secondary_summary, secondary_rows, "secondary", now_epoch)
             monthly_window = _window_snapshot(monthly_summary, monthly_rows, "monthly", now_epoch)
@@ -201,20 +220,20 @@ class _RateLimitMixin:
         if not account_map:
             return []
 
-        limit_names = await repos.additional_usage.list_limit_names(account_ids=list(account_map.keys()))
+        candidate_account_ids = list(account_map.keys())
+        limit_names = await repos.additional_usage.list_limit_names(account_ids=candidate_account_ids)
         additional_limits = []
 
         for limit_name in limit_names:
-            account_ids = list(account_map)
             latest_entries = await repos.additional_usage.latest_by_account(
                 limit_name=limit_name,
                 window="primary",
-                account_ids=account_ids,
+                account_ids=candidate_account_ids,
             )
             latest_secondary = await repos.additional_usage.latest_by_account(
                 limit_name=limit_name,
                 window="secondary",
-                account_ids=account_ids,
+                account_ids=candidate_account_ids,
             )
 
             filtered_entries = {

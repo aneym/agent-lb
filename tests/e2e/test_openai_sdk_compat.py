@@ -106,14 +106,17 @@ async def sdk_client(
     if hasattr(result, "__await__"):
         await result
 
-    transport = e2e_client._transport  # noqa: SLF001
     import httpx
+    import httpx2
+
+    transport = e2e_client._transport  # noqa: SLF001
+    assert isinstance(transport, httpx.ASGITransport)
 
     client = openai.AsyncOpenAI(
         api_key=created["key"],
         base_url="http://testserver/v1",
-        http_client=httpx.AsyncClient(
-            transport=transport,
+        http_client=httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=transport.app),
             base_url="http://testserver",
         ),
     )
@@ -439,7 +442,8 @@ class TestImages:
         assert result.data[0].b64_json == "GENERATED_B64"
 
         assert result.data[0].revised_prompt == "a clean red circle"
-
+        # Image routes hide the fixed internal host model from clients;
+        # ensure the upstream call really used a host model.
         assert captured["model"] not in {None, ""}
         tools = captured["tools"]
         assert tools, "image_generation tool must be forwarded to upstream"

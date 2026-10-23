@@ -1,16 +1,7 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
-import logging
-import os
-import re
-import socket
-import unicodedata
-from collections.abc import Mapping
-from functools import lru_cache
-from ipaddress import ip_address, ip_network
+from functools import cached_property, lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -21,87 +12,47 @@ from app.core.config.settings_defaults import (
     DEFAULT_CONVERSATION_ARCHIVE_DIR,
     DEFAULT_DATABASE_URL,
     DEFAULT_ENCRYPTION_KEY_FILE,
-    DEFAULT_HOME_DIR,
     _default_home_dir,
 )
-from app.core.config.settings_fields import SettingsFields
-
-logger = logging.getLogger(__name__)
-
-type StringListInput = str | list[str] | None
-type OptionalStringInput = str | None
-type ModelContextWindowOverridesInput = str | dict[str, int] | None
-
-
-def identity_handle(value: str | None, limit: int) -> str | None:
-
-    if not value:
-        return None
-    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", ascii_value).strip("-")[:limit].rstrip("-")
-    return slug or None
-
-
-def _validate_context_window_entries(data: Mapping[str, object]) -> dict[str, int]:
-    result: dict[str, int] = {}
-    for k, v in data.items():
-        if isinstance(v, bool):
-            raise TypeError(f"model_context_window_overrides value for '{k}' must be a positive integer, got bool")
-        if not isinstance(v, int):
-            raise TypeError(
-                f"model_context_window_overrides value for '{k}' must be a positive integer, got {type(v).__name__}"
-            )
-        if v <= 0:
-            raise ValueError(f"model_context_window_overrides value for '{k}' must be a positive integer, got {v}")
-        result[str(k)] = v
-    return result
+from app.core.config.settings_defaults import DEFAULT_HOME_DIR as DEFAULT_HOME_DIR
+from app.core.config.settings_defaults import (
+    bridge_advertise_hostname_is_replica_specific as bridge_advertise_hostname_is_replica_specific,
+)
+from app.core.config.settings_identity import SettingsIdentityValidators as SettingsIdentityValidators
+from app.core.config.settings_validation import _REMOVED_SETTINGS as _REMOVED_SETTINGS
+from app.core.config.settings_validation import AUTH_BASE_URL as AUTH_BASE_URL
+from app.core.config.settings_validation import OAUTH_CALLBACK_PORT as OAUTH_CALLBACK_PORT
+from app.core.config.settings_validation import OAUTH_CLIENT_ID as OAUTH_CLIENT_ID
+from app.core.config.settings_validation import OAUTH_ORIGINATOR as OAUTH_ORIGINATOR
+from app.core.config.settings_validation import OAUTH_REDIRECT_URI as OAUTH_REDIRECT_URI
+from app.core.config.settings_validation import OAUTH_SCOPE as OAUTH_SCOPE
+from app.core.config.settings_validation import ModelContextWindowOverridesInput as ModelContextWindowOverridesInput
+from app.core.config.settings_validation import OptionalStringInput as OptionalStringInput
+from app.core.config.settings_validation import StringListInput as StringListInput
+from app.core.config.settings_validation import _configured_http_port as _configured_http_port
+from app.core.config.settings_validation import _normalize_cidr_list as _normalize_cidr_list
+from app.core.config.settings_validation import _parse_port_value as _parse_port_value
+from app.core.config.settings_validation import _validate_context_window_entries as _validate_context_window_entries
+from app.core.config.settings_validation import identity_handle as identity_handle
+from app.core.config.settings_validation import logger as logger
+from app.core.config.settings_validation import warn_removed_settings as warn_removed_settings
 
 
-def _parse_port_value(raw: str) -> int | None:
-    try:
-        port = int(raw)
-    except ValueError:
-        return None
-    if port <= 0:
-        return None
-    return port
+class Settings(SettingsIdentityValidators):
+    @field_validator("request_log_retention_days")
+    @classmethod
+    def _validate_request_log_retention(cls, value: int) -> int:
+        if value != 0 and value < 30:
+            raise ValueError("request_log_retention_days must be 0 (disabled) or >= 30")
+        return value
 
+    @field_validator("usage_history_retention_days")
+    @classmethod
+    def _validate_usage_history_retention(cls, value: int) -> int:
+        if value != 0 and value < 45:
+            raise ValueError("usage_history_retention_days must be 0 (disabled) or >= 45")
+        return value
 
-def _configured_http_port() -> int:
-    raw_env_port = os.getenv("PORT")
-    if raw_env_port is not None:
-        parsed_env_port = _parse_port_value(raw_env_port.strip())
-        if parsed_env_port is not None:
-            return parsed_env_port
-    return 2455
-
-
-def _normalize_cidr_list(value: StringListInput, *, field_name: str, invalid_label: str) -> list[str]:
-    if value is None:
-        return []
-
-    cidrs: list[str] = []
-    if isinstance(value, str):
-        entries = [entry.strip() for entry in value.split(",")]
-        cidrs = [entry for entry in entries if entry]
-    elif isinstance(value, list):
-        for entry in value:
-            if isinstance(entry, str):
-                cidr = entry.strip()
-                if cidr:
-                    cidrs.append(cidr)
-    else:
-        raise TypeError(f"{field_name} must be a list or comma-separated string")
-
-    for cidr in cidrs:
-        try:
-            ip_network(cidr, strict=False)
-        except ValueError as exc:
-            raise ValueError(f"Invalid {invalid_label}: {cidr}") from exc
-    return cidrs
-
-
-class Settings(SettingsFields):
     @field_validator("data_dir", mode="before")
     @classmethod
     def _expand_data_dir(cls, value: str | Path) -> Path:
@@ -133,25 +84,6 @@ class Settings(SettingsFields):
             return Path(value).expanduser()
         raise TypeError("encryption_key_file must be a path")
 
-    @field_validator("federation_push_path", "federation_push_sources_path", mode="before")
-    @classmethod
-    def _expand_federation_push_paths(cls, value: str | Path) -> Path:
-        if isinstance(value, Path):
-            return value.expanduser()
-        if isinstance(value, str):
-            return Path(value.strip()).expanduser()
-        raise TypeError("federation push paths must be paths")
-
-    @field_validator("federation_tailscale_bin", mode="before")
-    @classmethod
-    def _normalize_federation_tailscale_bin(cls, value: OptionalStringInput) -> str | None:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            stripped = value.strip()
-            return stripped or None
-        raise TypeError("federation_tailscale_bin must be a string")
-
     @field_validator("conversation_archive_dir", mode="before")
     @classmethod
     def _expand_conversation_archive_dir(cls, value: str | Path) -> Path:
@@ -179,54 +111,18 @@ class Settings(SettingsFields):
             return normalized
         raise TypeError("image_inline_allowed_hosts must be a list or comma-separated string")
 
-    @field_validator("identity_owner_machines", mode="before")
-    @classmethod
-    def _normalize_identity_owner_machines(cls, value: StringListInput) -> list[str]:
-        entries = value.split(",") if isinstance(value, str) else (value or [])
-        return [handle for entry in entries if (handle := identity_handle(entry, 48)) is not None]
-
-    @field_validator("identity_machine_aliases", mode="before")
-    @classmethod
-    def _normalize_identity_machine_aliases(cls, value: str | Mapping[str, str] | None) -> dict[str, str]:
-
-        if value is None:
-            return {}
-        if isinstance(value, str):
-            pairs = [entry.partition("=") for entry in value.split(",") if entry.strip()]
-            items = [(node, alias) for node, separator, alias in pairs if separator]
-            if len(items) != len(pairs):
-                logger.warning("Ignoring malformed identity machine alias entries")
-        elif isinstance(value, Mapping):
-            items = list(value.items())
-        else:
-            logger.warning("Ignoring malformed identity machine aliases")
-            return {}
-        result: dict[str, str] = {}
-        for node, alias in items:
-            node_key = identity_handle(str(node), 48)
-            alias_value = identity_handle(str(alias), 48)
-            if not node_key or not alias_value:
-                logger.warning("Ignoring malformed identity machine alias entry")
-                continue
-            result[node_key] = alias_value
-        return result
-
     @field_validator("firewall_trusted_proxy_cidrs", mode="before")
     @classmethod
     def _normalize_firewall_trusted_proxy_cidrs(cls, value: StringListInput) -> list[str]:
         return _normalize_cidr_list(
-            value,
-            field_name="firewall_trusted_proxy_cidrs",
-            invalid_label="firewall trusted proxy CIDR",
+            value, field_name="firewall_trusted_proxy_cidrs", invalid_label="firewall trusted proxy CIDR"
         )
 
     @field_validator("proxy_unauthenticated_client_cidrs", mode="before")
     @classmethod
     def _normalize_proxy_unauthenticated_client_cidrs(cls, value: StringListInput) -> list[str]:
         return _normalize_cidr_list(
-            value,
-            field_name="proxy_unauthenticated_client_cidrs",
-            invalid_label="proxy unauthenticated client CIDR",
+            value, field_name="proxy_unauthenticated_client_cidrs", invalid_label="proxy unauthenticated client CIDR"
         )
 
     @field_validator("dashboard_auth_proxy_header", mode="before")
@@ -263,44 +159,6 @@ class Settings(SettingsFields):
             stripped = value.strip().rstrip("/")
             return stripped or None
         raise TypeError("http_responses_session_bridge_advertise_base_url must be a string")
-
-    @field_validator("federation_peer_url", mode="before")
-    @classmethod
-    def _normalize_federation_peer_url(cls, value: OptionalStringInput) -> str | None:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            stripped = value.strip().rstrip("/")
-            return stripped or None
-        raise TypeError("federation_peer_url must be a string")
-
-    @field_validator("federation_taker_instance_ids", mode="before")
-    @classmethod
-    def _normalize_federation_taker_instance_ids(cls, value: StringListInput) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        if isinstance(value, list) and all(isinstance(item, str) for item in value):
-            return [item.strip() for item in value if item.strip()]
-        raise TypeError("federation_taker_instance_ids must be a comma-separated string or list of strings")
-
-    @field_validator(
-        "federation_token",
-        "federation_mirror_token",
-        "federation_transfer_token",
-        "federation_transfer_inbound_sha256",
-        "federation_transfer_outbound_token",
-        mode="before",
-    )
-    @classmethod
-    def _normalize_federation_token(cls, value: OptionalStringInput) -> str | None:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            stripped = value.strip()
-            return stripped or None
-        raise TypeError("federation_token must be a string")
 
     @field_validator("model_context_window_overrides", mode="before")
     @classmethod
@@ -339,29 +197,6 @@ class Settings(SettingsFields):
         return normalized
 
     @model_validator(mode="after")
-    def _validate_transfer_credentials(self) -> "Settings":
-        if self.federation_transfer_token is not None:
-            raise ValueError(
-                "federation_transfer_token is obsolete; use federation_transfer_inbound_sha256 "
-                "and federation_transfer_outbound_token"
-            )
-        inbound = self.federation_transfer_inbound_sha256
-        outbound = self.federation_transfer_outbound_token
-        if inbound is not None and (len(inbound) != 64 or any(c not in "0123456789abcdef" for c in inbound)):
-            raise ValueError("federation_transfer_inbound_sha256 must be 64 lowercase hex characters")
-        other = [value for value in (self.federation_token, self.federation_mirror_token) if value]
-        if outbound and any(hmac.compare_digest(outbound, value) for value in other):
-            raise ValueError("federation_transfer_outbound_token must differ from mirror and legacy credentials")
-        if inbound and any(
-            hmac.compare_digest(inbound, hashlib.sha256(value.encode()).hexdigest())
-            for value in ([outbound] if outbound else []) + other
-        ):
-            raise ValueError(
-                "federation_transfer_inbound_sha256 must differ from outbound, mirror and legacy credentials"
-            )
-        return self
-
-    @model_validator(mode="after")
     def _apply_data_dir_defaults(self) -> "Settings":
         if self.data_dir == DEFAULT_HOME_DIR:
             return self
@@ -382,8 +217,7 @@ class Settings(SettingsFields):
         ring = self.http_responses_session_bridge_instance_ring
         if ring and self.http_responses_session_bridge_instance_id not in ring:
             raise ValueError(
-                "http_responses_session_bridge_instance_id must be explicitly present in "
-                "http_responses_session_bridge_instance_ring"
+                "http_responses_session_bridge_instance_id must be explicitly present in http_responses_session_bridge_instance_ring"
             )
         advertise_base_url = self.http_responses_session_bridge_advertise_base_url
         if advertise_base_url is not None:
@@ -391,13 +225,27 @@ class Settings(SettingsFields):
             if hostname is None:
                 raise ValueError("http_responses_session_bridge_advertise_base_url must include a valid hostname")
             if not bridge_advertise_hostname_is_replica_specific(
-                hostname,
-                instance_id=self.http_responses_session_bridge_instance_id,
-                multi_replica_intent=len(ring) > 1,
+                hostname, instance_id=self.http_responses_session_bridge_instance_id, multi_replica_intent=len(ring) > 1
             ):
                 raise ValueError(
                     "http_responses_session_bridge_advertise_base_url must be replica-specific for bridge routing"
                 )
+        return self
+
+    @cached_property
+    def trace_channels(self) -> frozenset[str]:
+        return frozenset((entry.strip().lower() for entry in self.trace.split(",") if entry.strip()))
+
+    @model_validator(mode="after")
+    def _validate_token_refresh_claim_ttl(self) -> "Settings":
+        minimum_ttl = self.proxy_admission_wait_timeout_seconds + 2.0 * self.token_refresh_timeout_seconds
+        if "token_refresh_claim_ttl_seconds" not in self.model_fields_set:
+            self.token_refresh_claim_ttl_seconds = max(self.token_refresh_claim_ttl_seconds, minimum_ttl)
+            return self
+        if self.token_refresh_claim_ttl_seconds < minimum_ttl:
+            raise ValueError(
+                f"token_refresh_claim_ttl_seconds must be at least proxy_admission_wait_timeout_seconds + 2x token_refresh_timeout_seconds ({minimum_ttl}s) so a healthy claimant cannot lose its claim while waiting for refresh admission or mid-exchange"
+            )
         return self
 
     @model_validator(mode="after")
@@ -419,45 +267,30 @@ class Settings(SettingsFields):
         return self
 
     @model_validator(mode="after")
+    def _validate_firewall_proxy_trust(self) -> "Settings":
+        if self.firewall_trust_proxy_headers and (not self.firewall_trusted_proxy_cidrs):
+            raise ValueError(
+                "firewall_trust_proxy_headers=true requires at least one entry in firewall_trusted_proxy_cidrs; configure a trusted proxy CIDR or disable proxy header trust"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_dashboard_auth_mode(self) -> "Settings":
         if self.dashboard_auth_mode != DashboardAuthMode.TRUSTED_HEADER:
             return self
         if not self.firewall_trust_proxy_headers:
             raise ValueError("dashboard_auth_mode=trusted_header requires firewall_trust_proxy_headers=true")
-        if not self.firewall_trusted_proxy_cidrs:
-            raise ValueError("dashboard_auth_mode=trusted_header requires non-empty firewall_trusted_proxy_cidrs")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_workers_per_instance(self) -> "Settings":
+        if self.workers_per_instance > 1:
+            raise ValueError(
+                f"workers_per_instance (CODEX_LB_WORKERS_PER_INSTANCE={self.workers_per_instance}) is not supported: running more than one worker process per instance would multiply per-account concurrency caps, because those caps are partitioned per replica via the bridge ring and intra-pod worker partitioning cannot be made reliable. Run ONE worker per pod/container and scale horizontally via replicas (the bridge ring partitions caps per replica); set CODEX_LB_WORKERS_PER_INSTANCE=1 (the default)."
+            )
         return self
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
-
-
-def bridge_advertise_hostname_is_replica_specific(
-    hostname: str,
-    *,
-    instance_id: str,
-    multi_replica_intent: bool = False,
-) -> bool:
-    pod_ip = os.getenv("POD_IP")
-    if pod_ip and hostname == pod_ip:
-        return True
-    try:
-        parsed_ip = ip_address(hostname)
-    except ValueError:
-        labels = set(hostname.split("."))
-        pod_name = os.getenv("POD_NAME", "").strip()
-        host_name = os.getenv("HOSTNAME", "").strip()
-        allowed_labels = {
-            label
-            for label in {
-                instance_id.strip(),
-                pod_name,
-                host_name,
-                socket.gethostname().strip(),
-            }
-            if label
-        }
-        return bool(labels & allowed_labels)
-    return parsed_ip.is_loopback and not multi_replica_intent

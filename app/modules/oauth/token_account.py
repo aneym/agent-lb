@@ -6,6 +6,7 @@ from app.core.auth import (
     extract_id_token_claims,
     generate_unique_account_id,
     normalize_seat_type,
+    resolve_seat_identity,
 )
 from app.core.clients.oauth import OAuthError, OAuthTokens
 from app.core.crypto import TokenEncryptor
@@ -28,9 +29,11 @@ def account_from_tokens(tokens: OAuthTokens, provider_name: str, encryptor: Toke
     workspace_id: str | None = None
     workspace_label: str | None = None
     seat_type: str | None = None
+    chatgpt_user_id: str | None = None
     if provider.name == OPENAI_PROVIDER_NAME and tokens.id_token:
         claims = extract_id_token_claims(tokens.id_token)
         auth_claims = claims.auth or OpenAIAuthClaims()
+        chatgpt_user_id = resolve_seat_identity(claims, auth_claims)
         raw_account_id = auth_claims.chatgpt_account_id or claims.chatgpt_account_id or metadata.account_id
         email = claims.email or metadata.email or tokens.email or DEFAULT_EMAIL
         workspace_id = clean_account_identity_part(auth_claims.workspace_id or claims.workspace_id)
@@ -43,12 +46,13 @@ def account_from_tokens(tokens: OAuthTokens, provider_name: str, encryptor: Toke
     else:
         raw_account_id = metadata.account_id or tokens.account_id
         email = metadata.email or tokens.email or DEFAULT_EMAIL
-    account_id = generate_unique_account_id(raw_account_id, email, workspace_id)
+    account_id = generate_unique_account_id(raw_account_id, email, workspace_id, workspace_label)
 
     account = Account(
         id=account_id,
         provider=provider.name,
         chatgpt_account_id=raw_account_id,
+        chatgpt_user_id=chatgpt_user_id,
         email=email,
         workspace_id=workspace_id,
         workspace_label=workspace_label,

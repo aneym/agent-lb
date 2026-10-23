@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+
+from sqlalchemy.exc import OperationalError
 
 from app.core.clients import anthropic_resets, rate_limit_resets
 from app.core.config.settings import get_settings
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
-from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus
+from app.core.upstream_proxy import UpstreamProxyRouteError, resolve_upstream_route
+from app.core.upstream_proxy.resolver import _is_missing_upstream_proxy_schema
+from app.db.models import Account, AccountStatus, DashboardSettings
 from app.modules.accounts import reset_credit_cache
+from app.modules.accounts.anthropic_reset_service import AnthropicAccountResetService as AnthropicAccountResetService
 from app.modules.accounts.auth_manager import is_locally_owned
 from app.modules.accounts.lifecycle import AccountsLifecycle
 from app.modules.accounts.reset_credit_attempts import ResetCreditAttemptsRepository
@@ -18,15 +22,61 @@ from app.modules.accounts.schemas import (
     AccountResetCreditConsumeResponse,
     AccountResetCreditsResponse,
 )
+from app.modules.accounts.service_errors import (
+    AccountResetCreditsUnavailableError as AccountResetCreditsUnavailableError,
+)
+from app.modules.accounts.service_errors import (
+    AccountUsageResetConsumeUnavailableError as AccountUsageResetConsumeUnavailableError,
+)
+from app.modules.accounts.service_errors import (
+    AccountUsageResetCreditsUnavailableError as AccountUsageResetCreditsUnavailableError,
+)
 from app.modules.accounts.subscription_status import is_subscription_usable
+from app.modules.accounts.usage_reset_service import AccountUsageResetService as AccountUsageResetService
 from app.modules.proxy.account_cache import get_account_selection_cache
 
+logger = logging.getLogger(__name__)
+IMPORT_PROXY_REQUIRED_PAUSE_REASON = "upstream_proxy_required_on_import"
 
-class AccountResetCreditsUnavailableError(Exception):
-    pass
 
+class AccountsService(AnthropicAccountResetService, AccountUsageResetService, AccountsLifecycle):
+    async def _get_visible_account(self, account_id: str) -> Account | None:
+        account = await self._repo.get_by_id(account_id)
+        if account is None or account.delete_requested_at is not None:
+            return None
+        return account
 
-class AccountsService(AccountsLifecycle):
+    async def _import_usage_refresh_allowed(self, account: Account) -> bool:
+        try:
+            route = await resolve_upstream_route(
+                self._repo.session,
+                account_id=account.id,
+                operation="usage_refresh",
+                scope="account",
+                encryptor=self._encryptor,
+            )
+        except UpstreamProxyRouteError as exc:
+            logger.info(
+                "Pausing imported account until upstream proxy binding is available account_id=%s reason=%s",
+                account.id,
+                exc.reason,
+            )
+            return False
+        if route is not None:
+            return True
+        try:
+            settings = await self._repo.session.get(DashboardSettings, 1)
+        except OperationalError as exc:
+            if not _is_missing_upstream_proxy_schema(exc):
+                raise
+            return True
+        if settings is not None and settings.upstream_proxy_routing_enabled:
+            logger.info(
+                "Pausing imported account until upstream proxy default pool is configured account_id=%s", account.id
+            )
+            return False
+        return True
+
     async def list_rate_limit_reset_credits(self, account_id: str) -> AccountResetCreditsResponse | None:
         account = await self._repo.get_by_id(account_id)
         if account is None:
@@ -45,11 +95,9 @@ class AccountsService(AccountsLifecycle):
                     id=grant.id,
                     reset_type="claude_banked",
                     status="available"
-                    if (
-                        grant.resets_left > 0
-                        and (grant.ends_at is None or anthropic_resets._utc(grant.ends_at) > now)
-                        and (grant.starts_at is None or anthropic_resets._utc(grant.starts_at) <= now)
-                    )
+                    if grant.resets_left > 0
+                    and (grant.ends_at is None or anthropic_resets._utc(grant.ends_at) > now)
+                    and (grant.starts_at is None or anthropic_resets._utc(grant.starts_at) <= now)
                     else "unavailable",
                     granted_at=grant.starts_at.isoformat() if grant.starts_at else "",
                     expires_at=grant.ends_at.isoformat() if grant.ends_at else None,
@@ -58,7 +106,7 @@ class AccountsService(AccountsLifecycle):
                 for grant in inventory.grants
             ]
             available_count = sum(
-                grant.resets_left for grant, credit in zip(inventory.grants, credits) if credit.status == "available"
+                (grant.resets_left for grant, credit in zip(inventory.grants, credits) if credit.status == "available")
             )
             reset_credit_cache.record_count(account_id, available_count)
             redeemable_now = inventory.usable_grant(now) is not None
@@ -70,13 +118,9 @@ class AccountsService(AccountsLifecycle):
                 ineligible_reason=None if redeemable_now else inventory.redemption_blocker(now),
             )
         payload = await rate_limit_resets.fetch_reset_credits(
-            access_token=access_token,
-            chatgpt_account_id=credit_account.chatgpt_account_id,
+            access_token=access_token, chatgpt_account_id=credit_account.chatgpt_account_id
         )
-        reset_credit_cache.record_count(
-            account_id,
-            sum(credit.status == "available" for credit in payload.credits),
-        )
+        reset_credit_cache.record_count(account_id, sum((credit.status == "available" for credit in payload.credits)))
         return AccountResetCreditsResponse(
             account_id=account_id,
             available_count=payload.available_count,
@@ -91,7 +135,6 @@ class AccountsService(AccountsLifecycle):
         trigger: str = "manual",
         override_daily_limit: bool = False,
     ) -> AccountResetCreditConsumeResponse | None:
-
         account = await self._repo.get_by_id(account_id)
         if account is None:
             return None
@@ -106,7 +149,6 @@ class AccountsService(AccountsLifecycle):
             return await self._redeem_anthropic_reset(
                 credit_account, credit_id, trigger=trigger, override_daily_limit=override_daily_limit
             )
-
         primary_before, secondary_before = await self._latest_usage_percents(account_id)
         access_token = self._encryptor.decrypt(credit_account.access_token_encrypted)
         attempts = self._reset_attempts or ResetCreditAttemptsRepository(self._repo.session)
@@ -119,15 +161,14 @@ class AccountsService(AccountsLifecycle):
                 raise AccountResetCreditsUnavailableError("Reset recovery is already running or cooling down")
         else:
             inventory = await rate_limit_resets.fetch_reset_credits(
-                access_token=access_token,
-                chatgpt_account_id=credit_account.chatgpt_account_id,
+                access_token=access_token, chatgpt_account_id=credit_account.chatgpt_account_id
             )
             available = [item for item in inventory.credits if item.status == "available"]
             reset_credit_cache.record_count(account_id, len(available))
             if (
                 inventory.available_count <= 0
                 or not available
-                or (credit_id is not None and not any(item.id == credit_id for item in available))
+                or (credit_id is not None and (not any((item.id == credit_id for item in available))))
             ):
                 return AccountResetCreditConsumeResponse(
                     status="not_redeemed",
@@ -144,16 +185,13 @@ class AccountsService(AccountsLifecycle):
             attempt = await attempts.create(account_id, credit_id, trigger)
             if attempt is None:
                 raise AccountResetCreditsUnavailableError("Another reset attempt is already running")
-
         if attempt.state == "applied":
             payload = rate_limit_resets.ConsumeResetCreditPayload(
-                code="already_redeemed",
-                windows_reset=attempt.windows_reset,
+                code="already_redeemed", windows_reset=attempt.windows_reset
             )
         else:
             inventory = await rate_limit_resets.fetch_reset_credits(
-                access_token=access_token,
-                chatgpt_account_id=credit_account.chatgpt_account_id,
+                access_token=access_token, chatgpt_account_id=credit_account.chatgpt_account_id
             )
             available = [item for item in inventory.credits if item.status == "available"]
             reset_credit_cache.record_count(account_id, len(available))
@@ -169,7 +207,7 @@ class AccountsService(AccountsLifecycle):
             else:
                 if self._usage_updater and self._usage_repo:
                     refreshed = await self._usage_updater.force_refresh(credit_account)
-                    if retrying and not refreshed:
+                    if retrying and (not refreshed):
                         raise AccountResetCreditsUnavailableError("Pending reset requires fresh usage reconciliation")
                 if inventory.available_count <= 0:
                     raise AccountResetCreditsUnavailableError("Reset inventory has no available credits")
@@ -179,30 +217,23 @@ class AccountsService(AccountsLifecycle):
                     redeem_request_id=attempt.id,
                     credit_id=attempt.credit_id,
                 )
-
             if payload.code in ("reset", "already_redeemed"):
                 await attempts.applied(attempt, payload.code, payload.windows_reset)
             else:
                 await attempts.settle(attempt, payload.code)
-
         if payload.code in ("reset", "already_redeemed"):
             try:
                 refreshed_credits = await rate_limit_resets.fetch_reset_credits(
-                    access_token=access_token,
-                    chatgpt_account_id=credit_account.chatgpt_account_id,
+                    access_token=access_token, chatgpt_account_id=credit_account.chatgpt_account_id
                 )
                 reset_credit_cache.record_count(
-                    account_id,
-                    sum(credit.status == "available" for credit in refreshed_credits.credits),
+                    account_id, sum((credit.status == "available" for credit in refreshed_credits.credits))
                 )
             except Exception:
                 reset_credit_cache.clear(account_id)
                 logging.getLogger(__name__).warning(
-                    "Post-redemption reset-credit listing failed account=%s",
-                    account_id,
-                    exc_info=True,
+                    "Post-redemption reset-credit listing failed account=%s", account_id, exc_info=True
                 )
-
             if self._usage_repo and self._usage_updater:
                 recovered = await refresh_standard_capacity(credit_account, self._usage_updater, self._usage_repo)
                 get_account_selection_cache().invalidate()
@@ -211,96 +242,12 @@ class AccountsService(AccountsLifecycle):
                     recovered = await refresh_standard_capacity(credit_account, self._usage_updater, self._usage_repo)
                 if recovered is True:
                     await attempts.settle(attempt, payload.code)
-
         primary_after, secondary_after = await self._latest_usage_percents(account_id)
         return AccountResetCreditConsumeResponse(
             status="redeemed" if payload.code in ("reset", "already_redeemed") else "not_redeemed",
             account_id=account_id,
             code=payload.code,
             windows_reset=payload.windows_reset,
-            primary_used_percent_before=primary_before,
-            primary_used_percent_after=primary_after,
-            secondary_used_percent_before=secondary_before,
-            secondary_used_percent_after=secondary_after,
-        )
-
-    async def _redeem_anthropic_reset(
-        self,
-        account: Account,
-        credit_id: str | None,
-        *,
-        trigger: str,
-        override_daily_limit: bool,
-    ) -> AccountResetCreditConsumeResponse:
-        if not is_locally_owned(account, get_settings()):
-            raise AccountResetCreditsUnavailableError("Account is not locally owned and cannot use reset credits")
-        account_id = account.id
-        token = self._encryptor.decrypt(account.access_token_encrypted)
-        attempts = self._reset_attempts or ResetCreditAttemptsRepository(self._repo.session)
-        primary_before, secondary_before = await self._latest_usage_percents(account_id)
-        attempt = await attempts.active()
-        if attempt is not None:
-            if attempt.account_id != account_id or (credit_id is not None and credit_id != attempt.credit_id):
-                raise AccountResetCreditsUnavailableError("Another reset attempt requires reconciliation")
-            if not await attempts.acquire(attempt):
-                raise AccountResetCreditsUnavailableError("Reset recovery is already running or cooling down")
-            if attempt.state != "applied":
-                raise AccountResetCreditsUnavailableError(
-                    "Claude reset outcome is unresolved; no additional credit will be consumed"
-                )
-            result_code = attempt.result_code or "reset"
-            windows_reset = attempt.windows_reset
-        else:
-            inventory = await anthropic_resets.fetch_status(access_token=token)
-            grant = inventory.usable_grant(datetime.now(timezone.utc), credit_id)
-            if grant is None:
-                return AccountResetCreditConsumeResponse(
-                    status="not_redeemed",
-                    account_id=account_id,
-                    code="not_eligible",
-                    windows_reset=0,
-                    primary_used_percent_before=primary_before,
-                    primary_used_percent_after=primary_before,
-                    secondary_used_percent_before=secondary_before,
-                    secondary_used_percent_after=secondary_before,
-                )
-
-            attempt_trigger = "manual_override" if override_daily_limit else trigger
-            attempt = await attempts.create(account_id, grant.id, attempt_trigger)
-            if attempt is None:
-                raise AccountResetCreditsUnavailableError("Another reset attempt is already running")
-            if not override_daily_limit and await attempts.anthropic_applied_since(utcnow() - timedelta(days=1)):
-                await attempts.settle(attempt, "daily_limit")
-                raise AccountResetCreditsUnavailableError("One Claude reset was already used in the last 24 hours")
-            result = await anthropic_resets.redeem(access_token=token, grant_id=grant.id, request_id=attempt.id)
-            result_code = result.result
-            windows_reset = len(result.cleared)
-            if result.result == "reset":
-                await attempts.applied(attempt, result_code, windows_reset)
-            elif result.result == "unavailable":
-                raise AccountResetCreditsUnavailableError("Claude reset outcome is unresolved; reconciliation required")
-            else:
-                await attempts.settle(attempt, result_code)
-                return AccountResetCreditConsumeResponse(
-                    status="not_redeemed",
-                    account_id=account_id,
-                    code=result_code,
-                    windows_reset=0,
-                    primary_used_percent_before=primary_before,
-                    secondary_used_percent_before=secondary_before,
-                )
-        reset_credit_cache.clear(account_id)
-        if self._usage_repo and self._usage_updater:
-            recovered = await refresh_standard_capacity(account, self._usage_updater, self._usage_repo)
-            get_account_selection_cache().invalidate()
-            if recovered is True:
-                await attempts.settle(attempt, result_code)
-        primary_after, secondary_after = await self._latest_usage_percents(account_id)
-        return AccountResetCreditConsumeResponse(
-            status="redeemed",
-            account_id=account_id,
-            code=result_code,
-            windows_reset=windows_reset,
             primary_used_percent_before=primary_before,
             primary_used_percent_after=primary_after,
             secondary_used_percent_before=secondary_before,

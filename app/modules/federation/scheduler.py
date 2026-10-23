@@ -18,7 +18,17 @@ from app.db.request_models import RequestLog
 from app.db.session import get_background_session
 from app.modules.federation.peer_client import AiohttpFederationPeerClient, FederationPeerClient
 from app.modules.federation.repository import FederationRepository
-from app.modules.federation.schemas import CALLER_MACHINE_MAX_LENGTH, CALLER_MACHINE_SOURCE_MAX_LENGTH, CALLER_SEAT_MAX_LENGTH, CALLER_USER_MAX_LENGTH, CALLER_USER_SOURCE_MAX_LENGTH, ROOM_MAX_LENGTH, FederationRequestLogRow, FederationRequestLogsRequest, FederationUsageReportRequest  # noqa: I001  # fmt: skip
+from app.modules.federation.schemas import (  # noqa: I001  # fmt: skip
+    CALLER_MACHINE_MAX_LENGTH,
+    CALLER_MACHINE_SOURCE_MAX_LENGTH,
+    CALLER_SEAT_MAX_LENGTH,
+    CALLER_USER_MAX_LENGTH,
+    CALLER_USER_SOURCE_MAX_LENGTH,
+    ROOM_MAX_LENGTH,
+    FederationRequestLogRow,
+    FederationRequestLogsRequest,
+    FederationUsageReportRequest,
+)
 from app.modules.proxy.account_cache import get_account_selection_cache
 
 logger = logging.getLogger(__name__)

@@ -1,3 +1,4 @@
+import { WriteControls } from "@/lb/kit/write-controls";
 import { useState, type FormEvent } from "react";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useQueryClient } from "@tanstack/react-query";
@@ -303,198 +304,200 @@ export function PolicyTab() {
       </div>
     );
   return (
-    <div className="policy-split">
-      <aside className="policy-list">
-        <div className="sec-h">
-          <h2>Versions</h2>
-          <button className="btn sm" onClick={() => setNewDraft((open) => !open)}>
-            + New draft
-          </button>
-        </div>
-        {newDraft && (
-          <form className="policy-new" onSubmit={(event) => void makeDraft(event)}>
-            <label htmlFor="policy-summary">Draft summary</label>
-            <input
-              id="policy-summary"
-              autoFocus
-              value={draftSummary}
-              onChange={(event) => setDraftSummary(event.target.value)}
-              placeholder="What will change?"
-            />
-            <div>
-              <button className="btn sm primary" disabled={busy || !draftSummary.trim()}>
-                Create draft
-              </button>
-              <button type="button" className="btn sm ghost" onClick={() => setNewDraft(false)}>
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
-        <div className="policy-versions">
-          {versions.data.versions.map((version) => (
-            <button
-              className={`policy-version ${selected === version.version ? "selected" : ""}`}
-              aria-current={selected === version.version ? "true" : undefined}
-              key={version.version}
-              onClick={() => {
-                setSelection(version.version);
-                setExpanded(false);
-                setMessage("");
-              }}
-            >
-              <span className="policy-version-top">
-                <span className="mono">v{version.version}</span>
-                <VersionBadge state={version.state} />
-              </span>
-              <span>{version.summary}</span>
-              <span className="muted policy-small">{versionSource(version, blurred)}</span>
+    <WriteControls>
+      <div className="policy-split">
+        <aside className="policy-list">
+          <div className="sec-h">
+            <h2>Versions</h2>
+            <button className="btn sm" onClick={() => setNewDraft((open) => !open)}>
+              + New draft
             </button>
-          ))}
-          {!versions.data.versions.length && <EmptyState title="No policy versions yet" />}
-        </div>
-        <p className="muted policy-hint">
-          Every change is a new version. A draft goes live only after a replay against the eval
-          baseline and an approval.
-        </p>
-      </aside>
-      <div className="policy-detail">
-        {message && (
-          <p className="policy-error" role="alert">
-            {message}
-          </p>
-        )}
-        {detail.isPending && selected != null && <EmptyState title="Loading version…" />}
-        {detail.isError && (
-          <div className="policy-error" role="alert">
-            Could not load this policy version. {errorMessage(detail.error)}
           </div>
-        )}
-        {detail.data && (
-          <>
-            <div className="policy-header">
-              <div className="policy-heading">
-                <div className="policy-heading-line">
-                  <span className="mono strong">v{detail.data.version}</span>
-                  <VersionBadge state={detail.data.state} />
-                  {detail.data.version !== versions.data.activeVersion &&
-                    versions.data.activeVersion != null && (
-                      <span className="muted policy-small">
-                        compared with v{versions.data.activeVersion} (active)
-                      </span>
-                    )}
-                </div>
-                <span>{detail.data.summary}</span>
-              </div>
-              {detail.data.state === "draft" && (
-                <div className="policy-actions">
-                  <button className="btn" disabled title="No replay runner yet">
-                    Replay
-                  </button>
-                  <button className="btn primary" disabled title={approvalMessage}>
-                    Approve and activate
-                  </button>
-                  <button className="btn ghost" disabled={busy} onClick={() => void discard()}>
-                    Discard
-                  </button>
-                  <span className="muted policy-approval">{approvalMessage}</span>
-                </div>
-              )}
-            </div>
-            <section className="sec">
-              <div className="sec-h">
-                <h2>What changes</h2>
-                <span className="aside">
-                  {changes.length} {changes.length === 1 ? "edit" : "edits"}
-                </span>
-              </div>
-              <div className="rows policy-diff">
-                {detail.data.diff.length ? (
-                  changes.map((change, index) => (
-                    <Difference change={change} key={`${change.path}-${index}`} />
-                  ))
-                ) : (
-                  <p className="policy-no-diff muted">
-                    {detail.data.state === "active"
-                      ? "This is the active version."
-                      : "No changes compared with the active version."}
-                  </p>
-                )}
-              </div>
-            </section>
-            <section className="sec">
-              <div className="sec-h">
-                <h2>Everything in v{detail.data.version}</h2>
-                <button className="policy-link" onClick={() => setJsonOpen(true)}>
-                  View as JSON
-                </button>
-              </div>
-              <div className="rows policy-config">
-                {sections.map((section) => (
-                  <div className="row" key={section}>
-                    <span className="strong">{section}</span>
-                    {summary(detail.data!, section, expanded, () => setExpanded(true))}
-                    <span className="policy-edit">
-                      <button
-                        className="btn sm"
-                        disabled={busy}
-                        onClick={() => void startEdit(section)}
-                      >
-                        Edit
-                      </button>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-            <SidePanel
-              open={jsonOpen}
-              onOpenChange={setJsonOpen}
-              title={`Policy v${detail.data.version} · JSON`}
-            >
-              <pre className="policy-json">
-                {JSON.stringify(
-                  { routingTable: detail.data.routingTable, decider: detail.data.decider },
-                  null,
-                  2,
-                )}
-              </pre>
-            </SidePanel>
-            <SidePanel
-              open={editor != null}
-              onOpenChange={(open) => {
-                if (!open) {
-                  setEditor(null);
-                  setMessage("");
-                }
-              }}
-              title={`Edit ${editor || "policy"} · v${editorVersion}`}
-            >
-              <p className="muted">Edit this section as JSON. Saving updates the draft only.</p>
-              <textarea
-                className="policy-editor"
-                aria-label={`${editor} JSON`}
-                spellCheck={false}
-                value={editorText}
-                onChange={(event) => setEditorText(event.target.value)}
+          {newDraft && (
+            <form className="policy-new" onSubmit={(event) => void makeDraft(event)}>
+              <label htmlFor="policy-summary">Draft summary</label>
+              <input
+                id="policy-summary"
+                autoFocus
+                value={draftSummary}
+                onChange={(event) => setDraftSummary(event.target.value)}
+                placeholder="What will change?"
               />
-              {message && (
-                <p className="policy-error" role="alert">
-                  {message}
-                </p>
-              )}
-              <div className="policy-editor-actions">
-                <button className="btn primary" disabled={busy} onClick={() => void saveEdit()}>
-                  Save draft
+              <div>
+                <button className="btn sm primary" disabled={busy || !draftSummary.trim()}>
+                  Create draft
                 </button>
-                <button className="btn ghost" onClick={() => setEditor(null)}>
+                <button type="button" className="btn sm ghost" onClick={() => setNewDraft(false)}>
                   Cancel
                 </button>
               </div>
-            </SidePanel>
-          </>
-        )}
+            </form>
+          )}
+          <div className="policy-versions">
+            {versions.data.versions.map((version) => (
+              <button
+                className={`policy-version ${selected === version.version ? "selected" : ""}`}
+                aria-current={selected === version.version ? "true" : undefined}
+                key={version.version}
+                onClick={() => {
+                  setSelection(version.version);
+                  setExpanded(false);
+                  setMessage("");
+                }}
+              >
+                <span className="policy-version-top">
+                  <span className="mono">v{version.version}</span>
+                  <VersionBadge state={version.state} />
+                </span>
+                <span>{version.summary}</span>
+                <span className="muted policy-small">{versionSource(version, blurred)}</span>
+              </button>
+            ))}
+            {!versions.data.versions.length && <EmptyState title="No policy versions yet" />}
+          </div>
+          <p className="muted policy-hint">
+            Every change is a new version. A draft goes live only after a replay against the eval
+            baseline and an approval.
+          </p>
+        </aside>
+        <div className="policy-detail">
+          {message && (
+            <p className="policy-error" role="alert">
+              {message}
+            </p>
+          )}
+          {detail.isPending && selected != null && <EmptyState title="Loading version…" />}
+          {detail.isError && (
+            <div className="policy-error" role="alert">
+              Could not load this policy version. {errorMessage(detail.error)}
+            </div>
+          )}
+          {detail.data && (
+            <>
+              <div className="policy-header">
+                <div className="policy-heading">
+                  <div className="policy-heading-line">
+                    <span className="mono strong">v{detail.data.version}</span>
+                    <VersionBadge state={detail.data.state} />
+                    {detail.data.version !== versions.data.activeVersion &&
+                      versions.data.activeVersion != null && (
+                        <span className="muted policy-small">
+                          compared with v{versions.data.activeVersion} (active)
+                        </span>
+                      )}
+                  </div>
+                  <span>{detail.data.summary}</span>
+                </div>
+                {detail.data.state === "draft" && (
+                  <div className="policy-actions">
+                    <button className="btn" disabled title="No replay runner yet">
+                      Replay
+                    </button>
+                    <button className="btn primary" disabled title={approvalMessage}>
+                      Approve and activate
+                    </button>
+                    <button className="btn ghost" disabled={busy} onClick={() => void discard()}>
+                      Discard
+                    </button>
+                    <span className="muted policy-approval">{approvalMessage}</span>
+                  </div>
+                )}
+              </div>
+              <section className="sec">
+                <div className="sec-h">
+                  <h2>What changes</h2>
+                  <span className="aside">
+                    {changes.length} {changes.length === 1 ? "edit" : "edits"}
+                  </span>
+                </div>
+                <div className="rows policy-diff">
+                  {detail.data.diff.length ? (
+                    changes.map((change, index) => (
+                      <Difference change={change} key={`${change.path}-${index}`} />
+                    ))
+                  ) : (
+                    <p className="policy-no-diff muted">
+                      {detail.data.state === "active"
+                        ? "This is the active version."
+                        : "No changes compared with the active version."}
+                    </p>
+                  )}
+                </div>
+              </section>
+              <section className="sec">
+                <div className="sec-h">
+                  <h2>Everything in v{detail.data.version}</h2>
+                  <button className="policy-link" onClick={() => setJsonOpen(true)}>
+                    View as JSON
+                  </button>
+                </div>
+                <div className="rows policy-config">
+                  {sections.map((section) => (
+                    <div className="row" key={section}>
+                      <span className="strong">{section}</span>
+                      {summary(detail.data!, section, expanded, () => setExpanded(true))}
+                      <span className="policy-edit">
+                        <button
+                          className="btn sm"
+                          disabled={busy}
+                          onClick={() => void startEdit(section)}
+                        >
+                          Edit
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              <SidePanel
+                open={jsonOpen}
+                onOpenChange={setJsonOpen}
+                title={`Policy v${detail.data.version} · JSON`}
+              >
+                <pre className="policy-json">
+                  {JSON.stringify(
+                    { routingTable: detail.data.routingTable, decider: detail.data.decider },
+                    null,
+                    2,
+                  )}
+                </pre>
+              </SidePanel>
+              <SidePanel
+                open={editor != null}
+                onOpenChange={(open) => {
+                  if (!open) {
+                    setEditor(null);
+                    setMessage("");
+                  }
+                }}
+                title={`Edit ${editor || "policy"} · v${editorVersion}`}
+              >
+                <p className="muted">Edit this section as JSON. Saving updates the draft only.</p>
+                <textarea
+                  className="policy-editor"
+                  aria-label={`${editor} JSON`}
+                  spellCheck={false}
+                  value={editorText}
+                  onChange={(event) => setEditorText(event.target.value)}
+                />
+                {message && (
+                  <p className="policy-error" role="alert">
+                    {message}
+                  </p>
+                )}
+                <div className="policy-editor-actions">
+                  <button className="btn primary" disabled={busy} onClick={() => void saveEdit()}>
+                    Save draft
+                  </button>
+                  <button className="btn ghost" onClick={() => setEditor(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </SidePanel>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </WriteControls>
   );
 }

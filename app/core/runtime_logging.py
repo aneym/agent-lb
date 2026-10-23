@@ -4,8 +4,6 @@ import atexit
 import copy
 import json
 import logging
-import logging.config
-import logging.handlers
 import re
 import time
 from collections.abc import Callable
@@ -20,9 +18,12 @@ from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 
 _SENSITIVE_LOG_VALUE_PATTERNS = (
-    re.compile(r"(?i)(password|passwd|pwd|token|secret|api[_-]?key)(\s*[=:]\s*)([^\s,&]+)"),
-    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"),
-    re.compile(r"(?i)(authorization\s*[=:]\s*)(?!\s*bearer\b)([^,&]+)"),
+    re.compile("(?i)(password|passwd|pwd|token|secret|api[_-]?key)(\\s*[=:]\\s*)([^\\s,&]+)"),
+    re.compile("(?i)(bearer\\s+)[A-Za-z0-9._~+/=-]+"),
+    re.compile("(?i)(authorization\\s*[=:]\\s*)(?!\\s*bearer\\b)([^,&]+)"),
+)
+_JSON_SENSITIVE_LOG_VALUE_PATTERN = re.compile(
+    '(?i)("(?:password|passwd|pwd|token|secret|api[_-]?key|authorization)"\\s*:\\s*")(?:\\\\.|[^"\\\\])*(")'
 )
 _LOG_REDACTION = "[REDACTED]"
 _MAX_LOG_VALUE_CHARS = 1000
@@ -33,6 +34,7 @@ def _redact_log_value(value: str | None) -> str | None:
     if collapsed is None:
         return None
     redacted = collapsed
+    redacted = _JSON_SENSITIVE_LOG_VALUE_PATTERN.sub(_redact_json_secret, redacted)
     redacted = _SENSITIVE_LOG_VALUE_PATTERNS[0].sub(_redact_keyed_secret, redacted)
     redacted = _SENSITIVE_LOG_VALUE_PATTERNS[1].sub(_redact_bearer_token, redacted)
     redacted = _SENSITIVE_LOG_VALUE_PATTERNS[2].sub(_redact_authorization_value, redacted)
@@ -41,6 +43,10 @@ def _redact_log_value(value: str | None) -> str | None:
 
 def _redact_keyed_secret(match: re.Match[str]) -> str:
     return f"{match.group(1)}{match.group(2)}{_LOG_REDACTION}"
+
+
+def _redact_json_secret(match: re.Match[str]) -> str:
+    return f"{match.group(1)}{_LOG_REDACTION}{match.group(2)}"
 
 
 def _redact_bearer_token(match: re.Match[str]) -> str:
@@ -66,7 +72,7 @@ class UtcAccessFormatter(AccessFormatter):
 class ArgsPreservingQueueHandler(logging.handlers.QueueHandler):
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
         record = copy.copy(record)
-        if record.exc_info and not record.exc_text:
+        if record.exc_info and (not record.exc_text):
             formatter = self.formatter or logging.Formatter()
             record.exc_text = formatter.formatException(record.exc_info)
         record.exc_info = None
@@ -85,7 +91,6 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
-
         try:
             from app.core.tracing.otel import get_current_span_id, get_current_trace_id
 
@@ -97,7 +102,6 @@ class JsonFormatter(logging.Formatter):
                 log_entry["span_id"] = span_id
         except Exception:
             pass
-
         excluded_keys = {
             "name",
             "msg",
@@ -122,7 +126,6 @@ class JsonFormatter(logging.Formatter):
             "message",
             "taskName",
         }
-
         for key, value in record.__dict__.items():
             if key not in excluded_keys:
                 try:
@@ -130,10 +133,8 @@ class JsonFormatter(logging.Formatter):
                     log_entry[key] = value
                 except (TypeError, ValueError):
                     log_entry[key] = str(value)
-
         if record.exc_info:
             log_entry["exception"] = self.formatException(record.exc_info)
-
         return json.dumps(log_entry, default=str)
 
 
@@ -162,11 +163,8 @@ def build_log_config() -> LogConfig:
     formatters = config.setdefault("formatters", {})
     handlers = config.setdefault("handlers", {})
     settings = get_settings()
-
     if settings.log_format == "json":
-        formatters["default"] = {
-            "()": "app.core.runtime_logging.JsonFormatter",
-        }
+        formatters["default"] = {"()": "app.core.runtime_logging.JsonFormatter"}
     else:
         formatters["default"] = {
             "()": "app.core.runtime_logging.UtcDefaultFormatter",
@@ -174,11 +172,8 @@ def build_log_config() -> LogConfig:
             "datefmt": "%Y-%m-%dT%H:%M:%SZ",
             "use_colors": None,
         }
-
     if settings.log_format == "json":
-        formatters["access"] = {
-            "()": "app.core.runtime_logging.JsonAccessFormatter",
-        }
+        formatters["access"] = {"()": "app.core.runtime_logging.JsonAccessFormatter"}
     else:
         formatters["access"] = {
             "()": "app.core.runtime_logging.UtcAccessFormatter",
@@ -186,14 +181,10 @@ def build_log_config() -> LogConfig:
             "datefmt": "%Y-%m-%dT%H:%M:%SZ",
             "use_colors": None,
         }
-
     handlers.setdefault(
         "default", {"class": "logging.StreamHandler", "formatter": "default", "stream": "ext://sys.stderr"}
     )
-    config["root"] = {
-        "handlers": ["default"],
-        "level": "INFO",
-    }
+    config["root"] = {"handlers": ["default"], "level": "INFO"}
     _queue_stream_handlers(handlers)
     return cast(LogConfig, config)
 
@@ -203,7 +194,6 @@ _STREAM_SUFFIX = "_stream"
 
 
 def _queue_stream_handlers(handlers: dict[str, object]) -> None:
-
     for name in _QUEUED_HANDLER_NAMES:
         stream = handlers.get(name)
         if not isinstance(stream, dict) or str(stream.get("class", "")).endswith("QueueHandler"):
@@ -215,15 +205,10 @@ def _queue_stream_handlers(handlers: dict[str, object]) -> None:
             if name == "access"
             else "logging.handlers.QueueHandler"
         )
-        handlers[name] = {
-            "class": handler_class,
-            "handlers": [stream_name],
-            "respect_handler_level": True,
-        }
+        handlers[name] = {"class": handler_class, "handlers": [stream_name], "respect_handler_level": True}
 
 
 def start_log_listeners() -> list[logging.handlers.QueueListener]:
-
     started: list[logging.handlers.QueueListener] = []
     for name in _QUEUED_HANDLER_NAMES:
         handler = logging.getHandlerByName(name)
@@ -241,12 +226,11 @@ def _stop_listener(listener: logging.handlers.QueueListener) -> None:
     try:
         if getattr(listener, "_thread", None) is not None:
             listener.stop()
-    except Exception:  # noqa: BLE001 - shutdown must never raise
+    except Exception:
         pass
 
 
 def configure_runtime_logging() -> LogConfig:
-
     config = build_log_config()
     logging.config.dictConfig(cast(dict[str, object], config))
     start_log_listeners()
@@ -287,6 +271,13 @@ def log_error_response(
         },
         exc_info=exc_info,
     )
+
+
+def _error_log_field(value: str | None) -> str:
+    redacted = _redact_log_value(value)
+    if redacted is None:
+        return "-"
+    return json.dumps(redacted)
 
 
 def _collapse_log_value(value: str | None) -> str | None:

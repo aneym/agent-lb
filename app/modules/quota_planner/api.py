@@ -6,7 +6,11 @@ import json
 from fastapi import APIRouter, Body, Depends, Query, Request
 
 from app.core.audit.service import AuditService
-from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
+from app.core.auth.dependencies import (
+    require_dashboard_write_access,
+    set_dashboard_error_format,
+    validate_dashboard_session,
+)
 from app.core.exceptions import DashboardBadRequestError
 from app.dependencies import QuotaPlannerContext, get_quota_planner_context
 from app.modules.accounts.repository import AccountsRepository
@@ -143,6 +147,7 @@ async def update_quota_planner_settings(
     request: Request,
     payload: QuotaPlannerSettingsUpdateRequest = Body(...),
     context: QuotaPlannerContext = Depends(get_quota_planner_context),
+    _write_access=Depends(require_dashboard_write_access),
 ) -> QuotaPlannerSettingsResponse:
     current = await context.repository.get_settings()
     updated = PlannerSettings(
@@ -227,6 +232,7 @@ async def get_quota_planner_forecast(
 async def quota_planner_warm_now(
     payload: QuotaPlannerWarmNowRequest = Body(...),
     context: QuotaPlannerContext = Depends(get_quota_planner_context),
+    _write_access=Depends(require_dashboard_write_access),
 ) -> QuotaPlannerWarmupActionResponse:
     result = await QuotaWarmupService(context.session).warm_now(
         account_id=payload.account_id,
@@ -241,6 +247,7 @@ async def quota_planner_warm_now(
 async def quota_planner_cancel_decision(
     decision_id: str,
     context: QuotaPlannerContext = Depends(get_quota_planner_context),
+    _write_access=Depends(require_dashboard_write_access),
 ) -> QuotaPlannerWarmupActionResponse:
     result = await QuotaWarmupService(context.session).cancel_decision(decision_id)
     if result is None:

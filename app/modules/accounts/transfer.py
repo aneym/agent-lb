@@ -40,55 +40,46 @@ from app.modules.accounts.schemas import (
     OpenCodeAuthJson,
     OpenCodeOAuthAuth,
 )
-from app.modules.proxy.account_cache import get_account_selection_cache
+from app.modules.proxy.account_cache import (
+    clear_account_routing_unavailable,
+    get_account_selection_cache,
+    mark_account_routing_unavailable,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class AccountsTransfer(AccountsQueries):
     async def export_opencode_auth(self, account_id: str) -> AccountOpenCodeAuthExportResponse | None:
-        account = await self._repo.get_by_id(account_id)
+        account = await self._get_visible_account(account_id)
         if account is None:
             return None
-
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
         refresh_token = self._encryptor.decrypt(account.refresh_token_encrypted)
         expires = token_expiry_epoch_ms(access_token) or 0
         return AccountOpenCodeAuthExportResponse(
             filename=_opencode_auth_export_filename(account),
             account=AccountOpenCodeAuthExportAccount(
-                account_id=account.id,
-                chatgpt_account_id=account.chatgpt_account_id,
-                email=account.email,
+                account_id=account.id, chatgpt_account_id=account.chatgpt_account_id, email=account.email
             ),
             auth_json=OpenCodeAuthJson(
                 openai=OpenCodeOAuthAuth(
-                    refresh=refresh_token,
-                    access=access_token,
-                    expires=expires,
-                    account_id=account.chatgpt_account_id,
-                ),
+                    refresh=refresh_token, access=access_token, expires=expires, account_id=account.chatgpt_account_id
+                )
             ),
         )
 
     async def export_auth(self, account_id: str) -> AccountAuthExportResponse | None:
-        account = await self._repo.get_by_id(account_id)
+        account = await self._get_visible_account(account_id)
         if account is None:
             return None
-
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
         refresh_token = self._encryptor.decrypt(account.refresh_token_encrypted)
-
         id_token = self._encryptor.decrypt(account.id_token_encrypted) if account.id_token_encrypted else ""
         expires = token_expiry_epoch_ms(access_token) or 0
-
         tokens = AccountAuthExportTokens(
-            id_token=id_token,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_at_ms=expires,
+            id_token=id_token, access_token=access_token, refresh_token=refresh_token, expires_at_ms=expires
         )
-
         codex_auth_json = CodexAuthJson(
             auth_mode="chatgpt",
             openai_api_key=None,
@@ -100,22 +91,15 @@ class AccountsTransfer(AccountsQueries):
             ),
             last_refresh=account.last_refresh.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
         )
-
         opencode_auth_json = OpenCodeAuthJson(
             openai=OpenCodeOAuthAuth(
-                refresh=refresh_token,
-                access=access_token,
-                expires=expires,
-                account_id=account.chatgpt_account_id,
-            ),
+                refresh=refresh_token, access=access_token, expires=expires, account_id=account.chatgpt_account_id
+            )
         )
-
         return AccountAuthExportResponse(
             filename=_opencode_auth_export_filename(account),
             account=AccountOpenCodeAuthExportAccount(
-                account_id=account.id,
-                chatgpt_account_id=account.chatgpt_account_id,
-                email=account.email,
+                account_id=account.id, chatgpt_account_id=account.chatgpt_account_id, email=account.email
             ),
             tokens=tokens,
             codex_auth_json=codex_auth_json,
@@ -130,13 +114,11 @@ class AccountsTransfer(AccountsQueries):
         provider = get_provider(OPENAI_PROVIDER_NAME)
         metadata = provider.account_metadata_from_id_token(auth.tokens.id_token)
         claims = claims_from_auth(auth)
-
         email = claims.email or metadata.email or DEFAULT_EMAIL
         raw_account_id = claims.account_id or metadata.account_id
-        account_id = generate_unique_account_id(raw_account_id, email, claims.workspace_id)
+        account_id = generate_unique_account_id(raw_account_id, email, claims.workspace_id, claims.workspace_label)
         plan_type = coerce_account_plan_type(claims.plan_type or metadata.plan_type, DEFAULT_PLAN)
         last_refresh = to_utc_naive(auth.last_refresh_at) if auth.last_refresh_at else utcnow()
-
         account = Account(
             id=account_id,
             provider=provider.name,
@@ -145,6 +127,7 @@ class AccountsTransfer(AccountsQueries):
             workspace_id=claims.workspace_id,
             workspace_label=claims.workspace_label,
             seat_type=claims.seat_type,
+            chatgpt_user_id=claims.chatgpt_user_id,
             plan_type=plan_type,
             access_token_encrypted=self._encryptor.encrypt(auth.tokens.access_token),
             refresh_token_encrypted=self._encryptor.encrypt(auth.tokens.refresh_token),
@@ -154,11 +137,19 @@ class AccountsTransfer(AccountsQueries):
             status=AccountStatus.ACTIVE,
             deactivation_reason=None,
         )
-
         saved = await self._repo.upsert_account_slot(account)
-        if self._usage_repo and self._usage_updater:
+        import_usage_refresh_allowed = await self._import_usage_refresh_allowed(saved)
+        if not import_usage_refresh_allowed:
+            await self._repo.update_status(
+                saved.id, AccountStatus.PAUSED, "upstream_proxy_required_on_import", None, blocked_at=None
+            )
+            mark_account_routing_unavailable(saved.id)
+            saved = await self._repo.get_by_id(saved.id) or saved
+        if import_usage_refresh_allowed and self._usage_repo and self._usage_updater:
             latest_usage = await self._usage_repo.latest_by_account(window="primary")
             await self._usage_updater.refresh_accounts([saved], latest_usage)
+        if saved.status == AccountStatus.ACTIVE:
+            clear_account_routing_unavailable(saved.id)
         get_account_selection_cache().invalidate()
         return AccountImportResponse(
             account_id=saved.id,
@@ -198,16 +189,13 @@ class AccountsTransfer(AccountsQueries):
         credits_window = None
         if provider_name == OPENROUTER_PROVIDER_NAME:
             credits_window = window_from_parts(
-                balance=payload.credits_balance,
-                cap=payload.credits_cap,
-                spent=payload.credits_spent,
+                balance=payload.credits_balance, cap=payload.credits_cap, spent=payload.credits_spent
             )
             if credits_window is None:
                 credits_window = await fetch_openrouter_credits(api_key)
         status = AccountStatus.ACTIVE
         if credits_window is not None and credits_exhausted(credits_window):
             status = AccountStatus.QUOTA_EXCEEDED
-
         account = Account(
             id=account_id,
             provider=provider.name,
@@ -224,7 +212,6 @@ class AccountsTransfer(AccountsQueries):
             status=status,
             deactivation_reason=None,
         )
-
         saved = await self._repo.upsert_account_slot(account, preserve_unknown_workspace_duplicates=False)
         alias_source = payload.alias if "alias" in payload.model_fields_set else defaults.alias
         if alias_source is not None:
@@ -261,7 +248,7 @@ class AccountsTransfer(AccountsQueries):
         )
 
     async def export_account(self, account_id: str) -> AccountExportResponse | None:
-        account = await self._repo.get_by_id(account_id)
+        account = await self._get_visible_account(account_id)
         if not account:
             return None
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
@@ -292,5 +279,5 @@ class AccountsTransfer(AccountsQueries):
 
 def _opencode_auth_export_filename(account: Account) -> str:
     source = account.email or account.id
-    safe = "".join(char if char.isalnum() or char in "._-" else "-" for char in source).strip("-._")
+    safe = "".join((char if char.isalnum() or char in "._-" else "-" for char in source)).strip("-._")
     return f"opencode-auth-{safe or account.id}.json"

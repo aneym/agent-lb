@@ -1,51 +1,19 @@
 # Usage Refresh Policy Context
 
-## Anthropic five-hour window priming
-
-Anthropic priming reuses the limit-warmup sender and durable attempt table, but
-does not use the optional OpenAI warmup switch or working-hours planner. After
-a five-hour reset, Anthropic's usage endpoint reports the primary window with
-0% used and no reset time until the next request opens it; that closed state
-can last for hours on an idle account. The scheduler primes from that state,
-not from seeing the reset happen: when fresh primary and weekly usage (at most
-ten minutes old) show the window closed and weekly capacity free, it sends a
-one-token Haiku Messages request. A Haiku-standard sample blocks priming only
-when it shows that quota exhausted; idle accounts usually have none.
-
-The attempt is keyed by account and the start of the fixed five-hour bucket
-(from the Unix epoch) holding the decision time. Anthropic starts a window at
-the request time floored to ten minutes, so a window a primer opens resets in
-a later bucket and each closed period gets one primer. A primer that was sent
-but did not visibly open a window blocks another for 4h45m, which covers a
-bucket boundary right after a send. Explicit failures back off, at most five
-retries per bucket; an uncertain in-flight or successful-but-unconfirmed send is
-retained without an automatic duplicate. A usage read showing a primary reset
-four to six hours after the send marks the attempt confirmed. `agent-lb status`
-shows the last confirmed prime time, or `never` when none exists.
-
-The weekly window is not primed. Its reset stays on a fixed per-account weekly
-schedule (for example every Friday 18:00 UTC for one account since July) and
-rolls over at that time with or without traffic, so a request cannot move it.
-
-For example, if an account's primary window reset at 20:00 UTC and nobody used
-it, a usage sample at 20:00:10 showing 0% and no reset time permits one Haiku
-primer, and a sample at 23:00 in the same state does not. A later sample with a
-reset near 01:00 UTC confirms the new window. A weekly-capped account is skipped.
-
 ## Purpose
 
-This context explains how agent-lb derives an account's usage and status, and
-how to diagnose disagreements between agent-lb and Codex Desktop or the Codex
+This context explains how codex-lb derives an account's usage and status, and
+how to diagnose disagreements between codex-lb and Codex Desktop or the Codex
 CLI quota pill.
 
-agent-lb treats `/wham/usage` as the source of truth for account usage. Other
+codex-lb treats `/wham/usage` as the source of truth for account usage. Other
 OpenAI account surfaces can display reset state earlier than `/wham/usage`,
 especially during team reset windows, so the dashboard can temporarily show an
 account as `rate_limited` even when Codex Desktop says the quota has reset.
 
 ## Upstream Usage Source
 
-agent-lb refreshes account usage by calling:
+codex-lb refreshes account usage by calling:
 
 ```http
 GET https://chatgpt.com/backend-api/wham/usage
@@ -67,7 +35,7 @@ status from `primary_window.used_percent`:
 - `used_percent >= 100` on the primary rate-limit window: `RATE_LIMITED`
 - `used_percent < 100`: `ACTIVE`
 
-There is no manual reset step inside agent-lb. Recovery is driven by the next
+There is no manual reset step inside codex-lb. Recovery is driven by the next
 refresh tick that observes a sub-100 value from `/wham/usage`.
 
 ## Why Codex Settings Can Disagree
@@ -83,31 +51,47 @@ OpenAI-side data sources:
 
 During a reset window it is normal for Settings -> Account to show the reset
 state while `/wham/usage` still returns `used_percent: 100` for a short period
-afterwards. agent-lb mirrors `/wham/usage` during that window, so the account
+afterwards. codex-lb mirrors `/wham/usage` during that window, so the account
 stays `RATE_LIMITED` or `QUOTA_EXCEEDED` until upstream catches up.
+
+## Limit Warm-Up Exhaustion Threshold
+
+Reset-confirmed limit warm-up compares the usage sample from before a refresh
+with the sample written after that refresh. The pre-refresh sample must be at
+or above the configured exhausted threshold, the post-refresh sample must be
+below `100`, and `reset_at` must move forward.
+
+The exhausted threshold defaults to `99.0` because some upstream usage payloads
+plateau at 99 percent for windows that are practically exhausted. This avoids
+missing reset-confirmed warm-ups for those accounts while keeping the reset
+confirmation requirement intact. Operators who want the historical strict
+behavior can set the threshold to `100.0`.
 
 ## Operational Notes
 
 - Wait first. The next request through that account usually wakes the upstream
-  rate limiter; agent-lb auto-recovers on the next refresh tick after the
+  rate limiter; codex-lb auto-recovers on the next refresh tick after the
   upstream payload changes.
-- A force-probe action is planned in
-  [#677](https://github.com/aneym/agent-lb/issues/677). The dashboard should
-  expose a per-account button that fires one minimal `responses.create` against
-  the affected account to nudge the upstream limiter to re-evaluate the window.
-- Do not manually flip the agent-lb account state to `ACTIVE` while
+- The dashboard Force Probe action fires one minimal `responses.create` against
+  the selected account and immediately refreshes its usage. An accepted 2xx
+  probe also contributes to that replica's probing-health recovery streak;
+  non-2xx results do not restore routing health. Settlement reloads and
+  normalizes weekly/monthly and zero-primary-capacity usage like ordinary
+  routing and is discarded when newer replica-local runtime activity arrives
+  during that snapshot load.
+- Do not manually flip the codex-lb account state to `ACTIVE` while
   `/wham/usage` still reports the account as fully used. That only masks the
   upstream state and can route traffic back to an account that the upstream
   limiter will reject.
 
 ## Verification Example
 
-To confirm that the disagreement is upstream rather than agent-lb's mirror,
-call `/wham/usage` directly with the same account token agent-lb is using:
+To confirm that the disagreement is upstream rather than codex-lb's mirror,
+call `/wham/usage` directly with the same account token codex-lb is using:
 
 ```bash
 ACCESS_TOKEN=...
-ACCOUNT_ID=...   # chatgpt-account-id UUID, not agent-lb's id
+ACCOUNT_ID=...   # chatgpt-account-id UUID, not codex-lb's id
 
 curl -s https://chatgpt.com/backend-api/wham/usage \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
@@ -116,11 +100,12 @@ curl -s https://chatgpt.com/backend-api/wham/usage \
 ```
 
 If `primary_window.used_percent` is still `100` here while Settings -> Account
-shows the account as reset, agent-lb has nothing fresher to mirror. The account
-is inside the upstream propagation window, and the practical fix is to wait or,
-once #677 lands, use the Probe action.
+shows the account as reset, codex-lb has nothing fresher to mirror. The account
+is inside the upstream propagation window, and the practical fix is to wait or
+use the Force Probe action. Check its `probe_status_code`: a non-2xx response
+does not count as evidence that the account is healthy.
 
 ## Related Work
 
-- [#676 - initial bug report on `/wham/usage` vs. Settings UI divergence](https://github.com/aneym/agent-lb/issues/676)
-- [#677 - dashboard per-account force-probe action](https://github.com/aneym/agent-lb/issues/677)
+- [#676 - initial bug report on `/wham/usage` vs. Settings UI divergence](https://github.com/Soju06/codex-lb/issues/676)
+- [#677 - dashboard per-account force-probe action](https://github.com/Soju06/codex-lb/issues/677)

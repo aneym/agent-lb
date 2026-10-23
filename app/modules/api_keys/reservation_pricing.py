@@ -13,7 +13,15 @@ from app.core.usage.pricing import DEFAULT_MODEL_ALIASES as OPENAI_MODEL_ALIASES
 from app.core.usage.pricing import DEFAULT_PRICING_MODELS as OPENAI_PRICING_MODELS
 from app.core.usage.pricing import UsageTokens, calculate_cost_from_usage, get_pricing_for_model
 from app.db.request_models import ApiKeyLimit, LimitType
-from app.modules.api_keys.service_data import _API_KEY_USAGE_RESERVATION_UNKNOWN_MODEL_BASE_TOKENS, _API_KEY_USAGE_RESERVATION_UNKNOWN_MODEL_MICRODOLLARS, API_KEY_USAGE_RESERVATION_DEFAULT_INPUT_TOKENS, API_KEY_USAGE_RESERVATION_DEFAULT_OUTPUT_TOKENS, API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET, ApiKeyRateLimitExceededError, ApiKeyRequestUsageBudget  # noqa: I001  # fmt: skip
+from app.modules.api_keys.service_data import (
+    _API_KEY_USAGE_RESERVATION_UNKNOWN_MODEL_BASE_TOKENS,
+    _API_KEY_USAGE_RESERVATION_UNKNOWN_MODEL_MICRODOLLARS,
+    API_KEY_USAGE_RESERVATION_DEFAULT_INPUT_TOKENS,
+    API_KEY_USAGE_RESERVATION_DEFAULT_OUTPUT_TOKENS,
+    API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET,
+    ApiKeyRateLimitExceededError,
+    ApiKeyRequestUsageBudget,
+)
 
 
 def _rate_limit_exceeded_error(limit: ApiKeyLimit) -> ApiKeyRateLimitExceededError:
@@ -59,12 +67,10 @@ def _normalize_request_usage_budget(budget: ApiKeyRequestUsageBudget | None) -> 
         )
     return ApiKeyRequestUsageBudget(
         input_tokens=_normalize_reservation_token_budget(
-            budget.input_tokens,
-            default=API_KEY_USAGE_RESERVATION_DEFAULT_INPUT_TOKENS,
+            budget.input_tokens, default=API_KEY_USAGE_RESERVATION_DEFAULT_INPUT_TOKENS
         ),
         output_tokens=_normalize_reservation_token_budget(
-            budget.output_tokens,
-            default=API_KEY_USAGE_RESERVATION_DEFAULT_OUTPUT_TOKENS,
+            budget.output_tokens, default=API_KEY_USAGE_RESERVATION_DEFAULT_OUTPUT_TOKENS
         ),
     )
 
@@ -92,10 +98,7 @@ def _reserve_budget_for_limit_type(
         return output_tokens
     if limit_type == LimitType.COST_USD:
         return _reserve_cost_budget_microdollars(
-            request_model,
-            request_service_tier,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            request_model, request_service_tier, input_tokens=input_tokens, output_tokens=output_tokens
         )
     if limit_type == LimitType.CREDITS:
         return 0
@@ -103,21 +106,11 @@ def _reserve_budget_for_limit_type(
 
 
 def _reserve_cost_budget_microdollars(
-    model: str | None,
-    service_tier: str | None,
-    *,
-    input_tokens: int,
-    output_tokens: int,
+    model: str | None, service_tier: str | None, *, input_tokens: int, output_tokens: int
 ) -> int:
     if not model:
         return _unknown_model_reserve_cost_budget_microdollars(input_tokens=input_tokens, output_tokens=output_tokens)
-    cost_microdollars = _calculate_cost_microdollars(
-        model,
-        input_tokens,
-        output_tokens,
-        0,
-        service_tier,
-    )
+    cost_microdollars = _calculate_cost_microdollars(model, input_tokens, output_tokens, 0, service_tier)
     return (
         cost_microdollars
         if cost_microdollars is not None and cost_microdollars > 0
@@ -137,11 +130,7 @@ def _unknown_model_reserve_cost_budget_microdollars(*, input_tokens: int, output
 
 
 def _compute_increment_for_limit_type(
-    limit_type: LimitType,
-    *,
-    input_tokens: int,
-    output_tokens: int,
-    cost_microdollars: int,
+    limit_type: LimitType, *, input_tokens: int, output_tokens: int, cost_microdollars: int
 ) -> int:
     if limit_type == LimitType.TOTAL_TOKENS:
         return input_tokens + output_tokens
@@ -161,7 +150,6 @@ def _next_usage_reservation_id() -> str:
 
 
 def _model_has_list_price(model: str) -> bool:
-
     normalized = model.lower()
     prices = {name.lower() for name in OPENAI_PRICING_MODELS}
     explicit_aliases = {
@@ -186,7 +174,6 @@ def _calculate_cost_microdollars(
     cache_creation_tier: str | None = None,
     cache_creation_1h_input_tokens: int | None = None,
 ) -> int | None:
-
     if not model:
         return None
     resolved = get_pricing_for_model(model)
@@ -200,7 +187,7 @@ def _calculate_cost_microdollars(
         cost_usd = calculate_cost_from_usage(usage, price, service_tier=service_tier)
         if cost_usd is None:
             return 0
-        return int(cost_usd * 1_000_000)
+        return int(cost_usd * 1000000)
     anthropic_resolved = get_anthropic_pricing_for_model(model)
     if anthropic_resolved is None:
         return None
@@ -224,9 +211,8 @@ def _calculate_cost_microdollars(
     )
     if anthropic_cost_usd is None:
         return 0
-    anthropic_cost_usd += one_hour_writes * anthropic_price.cache_creation_1h_input_per_1m / 1_000_000
-
-    return round(anthropic_cost_usd * 1_000_000)
+    anthropic_cost_usd += one_hour_writes * anthropic_price.cache_creation_1h_input_per_1m / 1000000
+    return round(anthropic_cost_usd * 1000000)
 
 
 def _is_sqlite_database_locked(exc: OperationalError) -> bool:

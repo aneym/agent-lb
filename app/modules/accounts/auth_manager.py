@@ -1,28 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
-import logging
+import contextvars
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping
-from contextlib import AbstractAsyncContextManager, nullcontext
-from datetime import datetime, timedelta
-from hashlib import sha256
-from typing import Any, Protocol, TypeAlias
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 
-from app.core.auth import DEFAULT_PLAN, token_expiry_epoch_ms
 from app.core.auth.exchange_phase import ExchangePhase
 from app.core.auth.refresh import (
     RefreshError,
     TokenRefreshResult,
-    classify_refresh_error,
+    get_token_refresh_timeout_override,
+    pop_token_refresh_timeout_override,
+    push_token_refresh_timeout_override,
     refresh_access_token,
-    should_refresh,
 )
-from app.core.balancer import account_status_for_permanent_failure, permanent_failure_reason
-from app.core.config.settings import Settings, get_settings
+from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
-from app.core.plan_types import coerce_account_plan_type
 from app.core.providers import (
     ANTHROPIC_PROVIDER_NAME,
     KIMI_PROVIDER_NAME,
@@ -32,215 +26,83 @@ from app.core.providers import (
     get_provider,
 )
 from app.core.upstream_proxy import UpstreamProxyRouteError, resolve_upstream_route
-from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db import session as db_session
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts import refresh_lock
-from app.modules.accounts.exchange_persist import (
-    dedicated_accounts_repo,
-    mark_exchange_unsaved,
-    persist_budget_seconds,
-    persist_exchange_result,
+from app.modules.accounts.auth_exchange import AccountExchangeRefresh as AccountExchangeRefresh
+from app.modules.accounts.auth_persistence import AccountRefreshPersistence as AccountRefreshPersistence
+from app.modules.accounts.auth_preflight import AccountRefreshPreflight as AccountRefreshPreflight
+from app.modules.accounts.auth_support import (
+    _ACCESS_TOKEN_REFRESH_MARGIN_SECONDS as _ACCESS_TOKEN_REFRESH_MARGIN_SECONDS,
 )
+from app.modules.accounts.auth_support import (
+    _ACCESS_TOKEN_SERVING_MARGIN_SECONDS as _ACCESS_TOKEN_SERVING_MARGIN_SECONDS,
+)
+from app.modules.accounts.auth_support import _CLAIM_RELEASE_MAX_ATTEMPTS as _CLAIM_RELEASE_MAX_ATTEMPTS
+from app.modules.accounts.auth_support import _CLAIM_RELEASE_RETRY_BASE_SECONDS as _CLAIM_RELEASE_RETRY_BASE_SECONDS
+from app.modules.accounts.auth_support import _FINAL_PERSIST_MAX_ATTEMPTS as _FINAL_PERSIST_MAX_ATTEMPTS
+from app.modules.accounts.auth_support import _FINAL_PERSIST_RETRY_BASE_SECONDS as _FINAL_PERSIST_RETRY_BASE_SECONDS
+from app.modules.accounts.auth_support import _REFRESH_SINGLEFLIGHT as _REFRESH_SINGLEFLIGHT
+from app.modules.accounts.auth_support import _TERMINAL_REFRESH_STATUSES as _TERMINAL_REFRESH_STATUSES
+from app.modules.accounts.auth_support import _TOKEN_CAS_MAX_ATTEMPTS as _TOKEN_CAS_MAX_ATTEMPTS
+from app.modules.accounts.auth_support import _TOKEN_REFRESH_CLAIM_POLL_SECONDS as _TOKEN_REFRESH_CLAIM_POLL_SECONDS
+from app.modules.accounts.auth_support import _TOKEN_REFRESH_CLAIM_WAIT_SECONDS as _TOKEN_REFRESH_CLAIM_WAIT_SECONDS
+from app.modules.accounts.auth_support import AccountNotOwnedError as AccountNotOwnedError
+from app.modules.accounts.auth_support import AccountsRepositoryPort as AccountsRepositoryPort
+from app.modules.accounts.auth_support import RefreshAdmissionLeasePort as RefreshAdmissionLeasePort
+from app.modules.accounts.auth_support import _access_token_needs_refresh as _access_token_needs_refresh
+from app.modules.accounts.auth_support import _account_has_active_proxy_binding as _account_has_active_proxy_binding
+from app.modules.accounts.auth_support import _account_needs_refresh as _account_needs_refresh
+from app.modules.accounts.auth_support import _adopt_account_row as _adopt_account_row
+from app.modules.accounts.auth_support import (
+    _call_with_supported_optional_kwargs as _call_with_supported_optional_kwargs,
+)
+from app.modules.accounts.auth_support import _chatgpt_account_id_from_id_token as _chatgpt_account_id_from_id_token
+from app.modules.accounts.auth_support import _clean_optional as _clean_optional
+from app.modules.accounts.auth_support import _clear_refresh_singleflight_state as _clear_refresh_singleflight_state
+from app.modules.accounts.auth_support import _decrypt_refresh_token_plaintext as _decrypt_refresh_token_plaintext
+from app.modules.accounts.auth_support import _exchange_timeout_seconds as _exchange_timeout_seconds
+from app.modules.accounts.auth_support import _expires_within as _expires_within
+from app.modules.accounts.auth_support import _is_genuine_peer_rotation as _is_genuine_peer_rotation
+from app.modules.accounts.auth_support import _refresh_singleflight_key as _refresh_singleflight_key
+from app.modules.accounts.auth_support import _refresh_token_material_changed as _refresh_token_material_changed
+from app.modules.accounts.auth_support import _refresh_token_material_fingerprint as _refresh_token_material_fingerprint
+from app.modules.accounts.auth_support import _RefreshSingleflight as _RefreshSingleflight
+from app.modules.accounts.auth_support import _RefreshSingleflightKey as _RefreshSingleflightKey
+from app.modules.accounts.auth_support import _snapshot as _snapshot
+from app.modules.accounts.auth_support import _stored_expiry_ms as _stored_expiry_ms
+from app.modules.accounts.auth_support import _terminal_status_refresh_error as _terminal_status_refresh_error
+from app.modules.accounts.auth_support import access_token_hard_expired as access_token_hard_expired
+from app.modules.accounts.auth_support import expiry_datetime as expiry_datetime
+from app.modules.accounts.auth_support import is_locally_owned as is_locally_owned
+from app.modules.accounts.auth_support import logger as logger
+from app.modules.accounts.refresh_claims import RefreshClaimCoordinatorPort, get_refresh_claim_coordinator
 from app.modules.accounts.repository import EXCHANGE_RESET_REASONS
-from app.modules.proxy.account_cache import get_account_selection_cache
 
 
-class AccountsRepositoryPort(Protocol):
-    async def get_by_id(self, account_id: str) -> Account | None: ...
-
-    async def reload_by_id(self, account_id: str) -> Account | None: ...
-
-    async def exchange_intent_hash(self, account_id: str) -> str | None: ...
-
-    async def drop_stale_exchange_intent(self, account_id: str, stale_hash: str, expected_token: bytes) -> bool: ...
-
-    async def begin_exchange(
-        self,
-        account_id: str,
-        token_hash: str,
-        expected_token: bytes,
-        *,
-        replay: bool = False,
-        timeout_seconds: float | None = None,
-    ) -> bool: ...
-
-    async def mark_exchange_uncertain(
-        self, account_id: str, token_hash: str, expected_token: bytes, *, reason: str | None = None
-    ) -> None: ...
-
-    async def abort_exchange(self, account_id: str, token_hash: str) -> None: ...
-
-    async def update_status(
-        self,
-        account_id: str,
-        status: AccountStatus,
-        deactivation_reason: str | None = None,
-        reset_at: int | None = None,
-        blocked_at: int | None = None,
-        *,
-        expected_refresh_token_encrypted: bytes | None = None,
-    ) -> bool: ...
-
-    async def update_tokens(
-        self,
-        account_id: str,
-        access_token_encrypted: bytes,
-        refresh_token_encrypted: bytes,
-        id_token_encrypted: bytes | None,
-        last_refresh: datetime,
-        plan_type: str | None = None,
-        email: str | None = None,
-        chatgpt_account_id: str | None = None,
-        workspace_id: str | None = None,
-        workspace_label: str | None = None,
-        seat_type: str | None = None,
-        *,
-        expected_refresh_token_encrypted: bytes | None = None,
-        access_expires_at: datetime | None = None,
-        exchange_token_hash: str | None = None,
-    ) -> bool: ...
-
-    async def workspace_slot_taken(
-        self,
-        *,
-        account_id: str,
-        email: str,
-        chatgpt_account_id: str | None,
-        workspace_id: str,
-    ) -> bool: ...
-
-
-class RefreshAdmissionLeasePort(Protocol):
-    def release(self) -> None: ...
-
-
-logger = logging.getLogger(__name__)
-_ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 300
-
-_ACCESS_TOKEN_SERVING_MARGIN_SECONDS = 300
-
-
-class AccountNotOwnedError(Exception):
-    def __init__(self, account_id: str, owner_instance: str | None, local_instance_id: str) -> None:
-        message = (
-            f"Account {account_id} is owned by instance {owner_instance!r}, not the "
-            f"local instance {local_instance_id!r}; refusing to refresh"
-        )
-        super().__init__(message)
-        self.account_id = account_id
-        self.owner_instance = owner_instance
-        self.local_instance_id = local_instance_id
-
-
-def is_locally_owned(account: Account, settings: Settings) -> bool:
-    return account.owner_instance is None or account.owner_instance == settings.local_instance_id
-
-
-_RefreshSingleflightKey: TypeAlias = tuple[str, str]
-
-
-class _RefreshSingleflight:
-    def __init__(self) -> None:
-        self._inflight: dict[_RefreshSingleflightKey, asyncio.Task[Account]] = {}
-        self._recent_failures: dict[_RefreshSingleflightKey, tuple[float, tuple[str, str, bool]]] = {}
-        self._lock = asyncio.Lock()
-
-    async def run(
-        self,
-        key: _RefreshSingleflightKey,
-        factory: Callable[[], Coroutine[object, object, Account]],
-    ) -> Account:
-        account_id = key[0]
-        async with self._lock:
-            self._purge_stale_versions(account_id, keep_key=key)
-            cached_failure = self._recent_failures.get(key)
-            if cached_failure is not None:
-                expires_at, failure = cached_failure
-                if expires_at > time.monotonic():
-                    code, message, is_permanent = failure
-                    raise RefreshError(code, message, is_permanent)
-                self._recent_failures.pop(key, None)
-            task = self._inflight.get(key)
-            if task is not None and task.done() and not task.cancelled() and task.exception() is None:
-                pass
-            elif task is None or task.done():
-                task = asyncio.create_task(factory())
-                self._inflight[key] = task
-                task.add_done_callback(lambda done, *, cache_key=key: self._schedule_complete(cache_key, done))
-        assert task is not None
-        return await asyncio.shield(task)
-
-    def _schedule_complete(self, key: _RefreshSingleflightKey, task: asyncio.Task[Account]) -> None:
-        asyncio.create_task(self._complete(key, task))
-
-    async def _complete(self, key: _RefreshSingleflightKey, task: asyncio.Task[Account]) -> None:
-        try:
-            async with self._lock:
-                current = self._inflight.get(key)
-                if current is task:
-                    self._inflight.pop(key, None)
-                if task.cancelled():
-                    self._recent_failures.pop(key, None)
-                    return
-                try:
-                    task.result()
-                except RefreshError as exc:
-                    ttl = max(0.0, float(get_settings().proxy_refresh_failure_cooldown_seconds))
-                    if ttl > 0 and not exc.transport_error:
-                        self._recent_failures[key] = (
-                            time.monotonic() + ttl,
-                            (exc.code, exc.message, exc.is_permanent),
-                        )
-                    else:
-                        self._recent_failures.pop(key, None)
-                except BaseException:
-                    self._recent_failures.pop(key, None)
-                else:
-                    self._recent_failures.pop(key, None)
-        except BaseException:
-            logger.exception("Refresh singleflight completion cleanup failed key=%s", key)
-
-    def _purge_stale_versions(self, account_id: str, *, keep_key: _RefreshSingleflightKey) -> None:
-        stale_failures = [key for key in self._recent_failures if key[0] == account_id and key != keep_key]
-        for key in stale_failures:
-            self._recent_failures.pop(key, None)
-        stale_inflight = [
-            key for key, task in self._inflight.items() if key[0] == account_id and key != keep_key and task.done()
-        ]
-        for key in stale_inflight:
-            self._inflight.pop(key, None)
-
-    def clear(self) -> None:
-        self._inflight.clear()
-        self._recent_failures.clear()
-
-
-_REFRESH_SINGLEFLIGHT = _RefreshSingleflight()
-
-
-class AuthManager:
+class AuthManager(AccountRefreshPreflight, AccountRefreshPersistence, AccountExchangeRefresh):
     def __init__(
         self,
         repo: AccountsRepositoryPort,
         *,
         acquire_refresh_admission: Callable[[], Awaitable[RefreshAdmissionLeasePort]] | None = None,
         refresh_repo_factory: Callable[[], AbstractAsyncContextManager[AccountsRepositoryPort]] | None = None,
+        refresh_claims: RefreshClaimCoordinatorPort | None = None,
+        redact_sensitive_details: bool = False,
     ) -> None:
         self._repo = repo
         self._encryptor = TokenEncryptor()
         self._acquire_refresh_admission = acquire_refresh_admission
-
+        self._redact_sensitive_details = redact_sensitive_details
         self._refresh_repo_factory = refresh_repo_factory
+        self._refresh_claims = refresh_claims
 
     async def ensure_fresh(self, account: Account, *, force: bool = False, recover_uncertain: bool = False) -> Account:
         settings = get_settings()
-
         latest = await self._repo.reload_by_id(account.id)
         if latest is not None:
             account = latest
-
         account = _snapshot(self._repo, account)
         if not is_locally_owned(account, settings):
             if force or access_token_hard_expired(self._encryptor, account):
@@ -260,305 +122,145 @@ class AuthManager:
                         or (not intent.replay and intent.reason not in {"unsaved", "auto_exhausted"})
                     )
                 )
-            if not force and not recover_exchange and not access_token_hard_expired(self._encryptor, account):
+            if not force and (not recover_exchange) and (not access_token_hard_expired(self._encryptor, account)):
                 return await self._ensure_chatgpt_account_id(account)
         if force or recover_exchange or _account_needs_refresh(self._encryptor, account):
             account = await _REFRESH_SINGLEFLIGHT.run(
-                _refresh_singleflight_key(self._encryptor, account),
-                lambda: self._run_refresh(account),
+                _refresh_singleflight_key(self._encryptor, account), lambda: self._run_refresh(account)
             )
         return await self._ensure_chatgpt_account_id(account)
 
     async def _run_refresh(self, account: Account) -> Account:
-
         if self._refresh_repo_factory is None:
-            return await self.refresh_account(account)
-        async with self._refresh_repo_factory() as repo:
-            owned = AuthManager(repo, acquire_refresh_admission=self._acquire_refresh_admission)
+            owned = AuthManager(
+                self._repo,
+                acquire_refresh_admission=self._acquire_refresh_admission,
+                refresh_claims=self._refresh_claims,
+                redact_sensitive_details=True,
+            )
             return await owned.refresh_account(account)
+        async with self._refresh_repo_factory() as repo:
+            owned = AuthManager(
+                repo,
+                acquire_refresh_admission=self._acquire_refresh_admission,
+                refresh_claims=self._refresh_claims,
+                redact_sensitive_details=True,
+            )
+            return await owned.refresh_account(account)
+
+    def _diagnostic_value(self, value: str | None) -> str | None:
+        if self._redact_sensitive_details and value is not None:
+            return "<redacted>"
+        return value
 
     async def refresh_account(self, account: Account) -> Account:
         try:
-            provider = get_provider(account.provider)
+            get_provider(account.provider)
         except ProviderLookupError as exc:
             raise RefreshError("unsupported_provider", str(exc), True) from exc
+        if not is_locally_owned(account, get_settings()):
+            raise AccountNotOwnedError(account.id, account.owner_instance, get_settings().local_instance_id)
+        claims = self._refresh_claims if self._refresh_claims is not None else get_refresh_claim_coordinator()
+        if claims is None:
+            return await self._perform_refresh(account, refresh_token_encrypted=account.refresh_token_encrypted)
+        return await self._refresh_account_with_claim(account, claims)
+
+    async def _refresh_account_with_claim(self, account: Account, claims: RefreshClaimCoordinatorPort) -> Account:
+        settings = get_settings()
+        requested_fingerprint = _refresh_token_material_fingerprint(self._encryptor, account.refresh_token_encrypted)
+        wait_seconds = _TOKEN_REFRESH_CLAIM_WAIT_SECONDS
+        caller_budget = get_token_refresh_timeout_override()
+        start = time.monotonic()
+        caller_deadline: float | None = None
+        if caller_budget is not None:
+            caller_budget = max(0.0, caller_budget)
+            caller_deadline = start + caller_budget
+            wait_seconds = min(wait_seconds, caller_budget)
+        deadline = start + wait_seconds
+        poll_seconds = _TOKEN_REFRESH_CLAIM_POLL_SECONDS
+        while True:
+            if await claims.try_acquire(
+                account.id, ttl_seconds=settings.token_refresh_claim_ttl_seconds, owner=requested_fingerprint
+            ):
+                claim_ttl = max(0.0, float(settings.token_refresh_claim_ttl_seconds))
+                persist_deadline = time.monotonic() + claim_ttl
+                if caller_deadline is not None:
+                    persist_deadline = min(persist_deadline, caller_deadline)
+                try:
+                    latest = await self._repo.get_by_id_fresh(account.id)
+                    if latest is not None:
+                        if (
+                            _refresh_token_material_fingerprint(self._encryptor, latest.refresh_token_encrypted)
+                            != requested_fingerprint
+                        ):
+                            return _adopt_account_row(account, latest)
+                        if latest.status in _TERMINAL_REFRESH_STATUSES:
+                            _adopt_account_row(account, latest)
+                            raise _terminal_status_refresh_error(account)
+                    fresh_material = (
+                        latest.refresh_token_encrypted if latest is not None else account.refresh_token_encrypted
+                    )
+                    if caller_deadline is not None:
+                        remaining_budget = caller_deadline - time.monotonic()
+                        if remaining_budget <= 0:
+                            raise RefreshError(
+                                "refresh_claim_timeout",
+                                f"Token refresh for account {account.id} exhausted its {caller_budget:.3f}s budget waiting for a peer replica's refresh claim before the upstream exchange could start",
+                                False,
+                                transport_error=True,
+                            )
+                        override_token = push_token_refresh_timeout_override(remaining_budget)
+                        try:
+                            return await self._perform_refresh(
+                                account, refresh_token_encrypted=fresh_material, deadline=persist_deadline
+                            )
+                        finally:
+                            pop_token_refresh_timeout_override(override_token)
+                    return await self._perform_refresh(
+                        account, refresh_token_encrypted=fresh_material, deadline=persist_deadline
+                    )
+                finally:
+                    await self._release_claim_quietly(claims, account.id, owner=requested_fingerprint)
+            latest = await self._repo.get_by_id_fresh(account.id)
+            if (
+                latest is not None
+                and _refresh_token_material_fingerprint(self._encryptor, latest.refresh_token_encrypted)
+                != requested_fingerprint
+            ):
+                return _adopt_account_row(account, latest)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RefreshError(
+                    "refresh_claim_timeout",
+                    f"Token refresh for account {account.id} is claimed by another replica; timed out waiting {wait_seconds:.3f}s for its rotation",
+                    False,
+                    transport_error=True,
+                )
+            await asyncio.sleep(min(poll_seconds, remaining))
+
+    async def _release_claim_quietly(self, claims: RefreshClaimCoordinatorPort, account_id: str, *, owner: str) -> None:
+        last_exc: Exception | None = None
+        for attempt in range(_CLAIM_RELEASE_MAX_ATTEMPTS):
+            try:
+                await claims.release(account_id, owner=owner)
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _CLAIM_RELEASE_MAX_ATTEMPTS - 1:
+                    await asyncio.sleep(_CLAIM_RELEASE_RETRY_BASE_SECONDS * 2**attempt)
+        logger.warning(
+            "Failed to release refresh claim for account_id=%s after %d attempts; leaving it to expire by TTL (the committed refresh result is unaffected)",
+            self._diagnostic_value(account_id),
+            _CLAIM_RELEASE_MAX_ATTEMPTS,
+            exc_info=None if self._redact_sensitive_details else last_exc,
+        )
+
+    async def _perform_refresh(
+        self, account: Account, *, refresh_token_encrypted: bytes, deadline: float | None = None
+    ) -> Account:
+        provider = get_provider(account.provider)
         async with refresh_lock._cross_process_refresh_lock(account.id):
-            return await self._refresh_account_locked(account, provider)
-
-    async def _refresh_account_locked(self, account: Account, provider: Provider) -> Account:
-        expected_refresh_token_encrypted = account.refresh_token_encrypted
-        latest = await self._repo.reload_by_id(account.id)
-        if latest is not None and _refresh_token_material_changed(
-            self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
-        ):
-            if not is_locally_owned(latest, get_settings()):
-                raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
-
-            return _snapshot(self._repo, latest)
-        if latest is None:
-            if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
-                raise RefreshError("account_missing", "Account no longer exists", False)
-            latest = account
-        if not is_locally_owned(latest, get_settings()):
-            raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
-        account = latest
-        account_id = account.id
-        expected_refresh_token_encrypted = latest.refresh_token_encrypted
-        token_hash = _refresh_token_material_fingerprint(self._encryptor, expected_refresh_token_encrypted)
-        intent_supported = isinstance(getattr(self._repo, "session", None), db_session.AsyncSession)
-        persist_repo = dedicated_accounts_repo if intent_supported else lambda: nullcontext(self._repo)
-        replay = False
-        if intent_supported:
-            timeout = _exchange_timeout_seconds()
-            intent = await self._repo.exchange_intent_window(account.id, timeout)
-            if intent is not None and intent.token_hash != token_hash:
-                if account.status != AccountStatus.EXCHANGE_UNCERTAIN and await self._repo.drop_stale_exchange_intent(
-                    account.id, intent.token_hash, expected_refresh_token_encrypted
-                ):
-                    logger.info("Dropped stale exchange intent account_id=%s", account.id)
-                    intent = None
-                else:
-                    raise RefreshError("exchange_intent_conflict", "A previous exchange is unresolved", False)
-            if intent is not None:
-                if account.status in {AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED}:
-                    raise RefreshError("exchange_uncertain", "Permanent auth failure requires operator recovery", False)
-                if not intent.ready or (
-                    intent.reason not in EXCHANGE_RESET_REASONS
-                    and (intent.replay or intent.reason in {"unsaved", "auto_exhausted"})
-                ):
-                    if account.status != AccountStatus.EXCHANGE_UNCERTAIN:
-                        await self._repo.mark_exchange_uncertain(
-                            account.id, token_hash, expected_refresh_token_encrypted
-                        )
-                        get_account_selection_cache().invalidate()
-                    raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
-                replay = True
-            elif account.status == AccountStatus.EXCHANGE_UNCERTAIN:
-                raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
-            if not await self._repo.begin_exchange(
-                account_id,
-                token_hash,
-                expected_refresh_token_encrypted,
-                replay=replay,
-                timeout_seconds=timeout if replay else None,
-            ):
-                latest = await self._repo.reload_by_id(account_id)
-                if latest is not None and not is_locally_owned(latest, get_settings()):
-                    raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
-                if latest is not None and _refresh_token_material_changed(
-                    self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
-                ):
-                    return _snapshot(self._repo, latest)
-                if await self._repo.exchange_intent_hash(account_id) == token_hash:
-                    await self._repo.mark_exchange_uncertain(account_id, token_hash, expected_refresh_token_encrypted)
-                    get_account_selection_cache().invalidate()
-                raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
-        elif account.status == AccountStatus.EXCHANGE_UNCERTAIN:
-            raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
-        exchange_started = False
-
-        def mark_exchange_started() -> None:
-            nonlocal exchange_started
-            exchange_started = True
-
-        try:
-            refresh_token = self._encryptor.decrypt(expected_refresh_token_encrypted)
-            result = await self._refresh_tokens(
-                refresh_token, account=account, provider=provider, on_exchange_start=mark_exchange_started
-            )
-        except BaseException as exc:
-            if intent_supported:
-                phase = exc.phase if isinstance(exc, RefreshError) else ExchangePhase.AMBIGUOUS
-                if (
-                    not exchange_started
-                    or phase == ExchangePhase.PRE_SEND
-                    or (
-                        phase == ExchangePhase.ANSWERED
-                        and isinstance(exc, RefreshError)
-                        and not exc.is_permanent
-                        and not (exc.status_code is not None and exc.status_code >= 500)
-                    )
-                ):
-                    await self._repo.abort_exchange(account.id, token_hash)
-                    if replay:
-                        await self._repo.update_status(
-                            account.id,
-                            AccountStatus.ACTIVE,
-                            expected_refresh_token_encrypted=expected_refresh_token_encrypted,
-                        )
-                    if isinstance(exc, RefreshError):
-                        raise
-                    raise
-                if phase == ExchangePhase.ANSWERED and isinstance(exc, RefreshError) and exc.is_permanent:
-                    await self._repo.abort_exchange(account.id, token_hash)
-                    status = account_status_for_permanent_failure(exc.code)
-                    await self._repo.update_status(
-                        account.id,
-                        status,
-                        permanent_failure_reason(exc.code),
-                        expected_refresh_token_encrypted=expected_refresh_token_encrypted,
-                    )
-                    logger.info("Refresh exchange resolved account_id=%s outcome=reauth_required", account.id)
-                    raise
-                if isinstance(exc, RefreshError) and exc.code == "invalid_response":
-                    await mark_exchange_unsaved(
-                        persist_repo, account.id, account.provider, token_hash, expected_refresh_token_encrypted
-                    )
-                else:
-                    await self._repo.mark_exchange_uncertain(account.id, token_hash, expected_refresh_token_encrypted)
-                get_account_selection_cache().invalidate()
-                raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False) from exc
-            if not isinstance(exc, RefreshError):
-                raise
-            is_permanent = exc.is_permanent or classify_refresh_error(exc.code)
-            if is_permanent:
-                exc.is_permanent = True
-                latest = await self._repo.reload_by_id(account.id)
-                if latest is not None and _refresh_token_material_changed(
-                    self._encryptor,
-                    latest.refresh_token_encrypted,
-                    expected_refresh_token_encrypted,
-                ):
-                    return _snapshot(self._repo, latest)
-                reason = permanent_failure_reason(exc.code)
-                status = account_status_for_permanent_failure(exc.code)
-                status_updated = await self._repo.update_status(
-                    account.id,
-                    status,
-                    reason,
-                    expected_refresh_token_encrypted=(
-                        latest.refresh_token_encrypted if latest is not None else expected_refresh_token_encrypted
-                    ),
-                )
-                if not status_updated:
-                    current = await self._repo.reload_by_id(account.id)
-                    if current is not None and _refresh_token_material_changed(
-                        self._encryptor,
-                        current.refresh_token_encrypted,
-                        expected_refresh_token_encrypted,
-                    ):
-                        return _snapshot(self._repo, current)
-                    raise
-                account.status = status
-                account.deactivation_reason = reason
-                logger.warning(
-                    "OAuth refresh requires reauthentication account_id=%s provider=%s code=%s",
-                    account.id,
-                    account.provider,
-                    exc.code,
-                )
-            raise
-
-        if provider.requires_id_token and not result.id_token:
-            if intent_supported:
-                await mark_exchange_unsaved(
-                    persist_repo, account.id, account.provider, token_hash, expected_refresh_token_encrypted
-                )
-            raise RefreshError("invalid_response", "Refresh response missing id token", False)
-
-        new_access_token_encrypted = self._encryptor.encrypt(result.access_token)
-        new_refresh_token_encrypted = self._encryptor.encrypt(result.refresh_token)
-        account.access_token_encrypted = new_access_token_encrypted
-        account.refresh_token_encrypted = new_refresh_token_encrypted
-        if result.id_token:
-            account.id_token_encrypted = self._encryptor.encrypt(result.id_token)
-        else:
-            account.id_token_encrypted = None
-        account.last_refresh = utcnow()
-        account.access_expires_at = expiry_datetime(result.access_token, result.expires_in, now=account.last_refresh)
-        if result.account_id:
-            account.chatgpt_account_id = result.account_id
-        if result.plan_type is not None:
-            account.plan_type = coerce_account_plan_type(
-                result.plan_type,
-                account.plan_type or DEFAULT_PLAN,
-            )
-        elif not account.plan_type:
-            account.plan_type = DEFAULT_PLAN
-        if result.email:
-            account.email = result.email
-        incoming_workspace_id = _clean_optional(result.workspace_id)
-        current_workspace_id = _clean_optional(account.workspace_id)
-        next_workspace_id = current_workspace_id
-        if incoming_workspace_id and current_workspace_id and current_workspace_id != incoming_workspace_id:
-            logger.warning(
-                "Refresh payload reported workspace_id=%s for account_id=%s while existing "
-                "workspace_id=%s is already set; keeping slot identity",
-                incoming_workspace_id,
-                account.id,
-                current_workspace_id,
-            )
-            next_workspace_id = current_workspace_id
-        elif not current_workspace_id and incoming_workspace_id:
-            slot_taken = await self._repo.workspace_slot_taken(
-                account_id=account.id,
-                email=account.email,
-                chatgpt_account_id=account.chatgpt_account_id,
-                workspace_id=incoming_workspace_id,
-            )
-            if slot_taken:
-                logger.warning(
-                    "Refresh payload reported workspace_id=%s for legacy account_id=%s, but that slot "
-                    "is already owned by another account; keeping unknown workspace",
-                    incoming_workspace_id,
-                    account.id,
-                )
-            else:
-                next_workspace_id = incoming_workspace_id
-                account.workspace_id = next_workspace_id
-        workspace_matches_current_slot = incoming_workspace_id is None or incoming_workspace_id == next_workspace_id
-        if workspace_matches_current_slot and result.workspace_label:
-            account.workspace_label = result.workspace_label
-        if workspace_matches_current_slot and result.seat_type:
-            account.seat_type = result.seat_type
-
-        if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
-            self._repo.session.expunge(account)
-
-        try:
-            tokens_updated = await persist_exchange_result(
-                persist_repo,
-                account.id,
-                account.provider,
-                {
-                    "access_token_encrypted": account.access_token_encrypted,
-                    "refresh_token_encrypted": account.refresh_token_encrypted,
-                    "id_token_encrypted": account.id_token_encrypted,
-                    "last_refresh": account.last_refresh,
-                    "plan_type": account.plan_type,
-                    "email": account.email,
-                    "chatgpt_account_id": account.chatgpt_account_id,
-                    "workspace_id": next_workspace_id,
-                    "workspace_label": account.workspace_label,
-                    "seat_type": account.seat_type,
-                    "access_expires_at": account.access_expires_at,
-                },
-                expected_refresh_token_encrypted,
-                token_hash if intent_supported else None,
-                persist_budget_seconds(),
-            )
-        except Exception:
-            tokens_updated = None
-        if tokens_updated is False:
-            latest = await self._repo.reload_by_id(account.id)
-            if latest is not None and _refresh_token_material_changed(
-                self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
-            ):
-                return _snapshot(self._repo, latest)
-        if not tokens_updated:
-            if intent_supported:
-                await mark_exchange_unsaved(
-                    persist_repo, account.id, account.provider, token_hash, expected_refresh_token_encrypted
-                )
-            raise RefreshError("refresh_unsaved", "Refreshed tokens could not be stored", False)
-        if replay:
-            logger.info("Refresh exchange resolved account_id=%s outcome=active", account.id)
-        get_account_selection_cache().invalidate()
-        if hasattr(self._repo, "session"):
-            stored = await self._repo.reload_by_id(account.id)
-            if stored is not None:
-                account = stored
-        return _snapshot(self._repo, account)
+            return await self._refresh_account_locked(account, provider, deadline=deadline)
 
     async def _refresh_tokens(
         self,
@@ -567,10 +269,27 @@ class AuthManager:
         account: Account,
         provider: Provider,
         on_exchange_start: Callable[[], None] | None = None,
+        deadline: float | None = None,
     ) -> TokenRefreshResult:
-        refresh_lease: RefreshAdmissionLeasePort | None = None
-        if self._acquire_refresh_admission is not None:
-            refresh_lease = await self._acquire_refresh_admission()
+        budget = get_token_refresh_timeout_override()
+        if budget is not None:
+            caller_deadline = time.monotonic() + max(0.0, budget)
+            deadline = min(deadline, caller_deadline) if deadline is not None else caller_deadline
+        refresh_lease = await self._acquire_refresh_admission_bounded(account, deadline)
+        exchange_override: contextvars.Token[float | None] | None = None
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                if refresh_lease is not None:
+                    refresh_lease.release()
+                raise RefreshError(
+                    "refresh_claim_timeout",
+                    "Refresh budget exhausted before token exchange",
+                    False,
+                    transport_error=True,
+                    phase=ExchangePhase.PRE_SEND,
+                )
+            exchange_override = push_token_refresh_timeout_override(remaining)
         try:
             if provider.name not in (OPENAI_PROVIDER_NAME, ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME):
                 if on_exchange_start:
@@ -599,6 +318,15 @@ class AuthManager:
                         transport_error=True,
                         upstream_proxy_fail_closed_reason=exc.reason,
                     ) from exc
+                if route is None and await _account_has_active_proxy_binding(session, account.id):
+                    raise RefreshError(
+                        "upstream_proxy_unavailable",
+                        "Account has an active proxy binding but no route resolved",
+                        False,
+                        transport_error=True,
+                        upstream_proxy_fail_closed_reason="binding_route_unavailable",
+                        phase=ExchangePhase.PRE_SEND,
+                    )
             return await _call_with_supported_optional_kwargs(
                 refresh_access_token,
                 refresh_token,
@@ -609,193 +337,7 @@ class AuthManager:
                 },
             )
         finally:
+            if exchange_override is not None:
+                pop_token_refresh_timeout_override(exchange_override)
             if refresh_lease is not None:
                 refresh_lease.release()
-
-    async def _ensure_chatgpt_account_id(self, account: Account) -> Account:
-        if account.chatgpt_account_id:
-            return account
-        if account.provider != OPENAI_PROVIDER_NAME or account.id_token_encrypted is None:
-            return account
-        try:
-            id_token = self._encryptor.decrypt(account.id_token_encrypted)
-        except Exception:
-            return account
-        raw_account_id = get_provider(account.provider).account_metadata_from_id_token(id_token).account_id
-        if not raw_account_id:
-            return account
-
-        expected_refresh_token_encrypted = account.refresh_token_encrypted
-        account.chatgpt_account_id = raw_account_id
-        try:
-            updated = await self._repo.update_tokens(
-                account.id,
-                access_token_encrypted=account.access_token_encrypted,
-                refresh_token_encrypted=account.refresh_token_encrypted,
-                id_token_encrypted=account.id_token_encrypted,
-                last_refresh=account.last_refresh,
-                plan_type=account.plan_type,
-                email=account.email,
-                chatgpt_account_id=raw_account_id,
-                workspace_id=account.workspace_id,
-                workspace_label=account.workspace_label,
-                seat_type=account.seat_type,
-                expected_refresh_token_encrypted=expected_refresh_token_encrypted,
-            )
-            if not updated:
-                latest = await self._repo.reload_by_id(account.id)
-                if latest is not None:
-                    return _snapshot(self._repo, latest)
-        except Exception:
-            logger.warning("Failed to persist chatgpt_account_id account_id=%s", account.id, exc_info=True)
-        return account
-
-
-def _exchange_timeout_seconds() -> float:
-    settings = get_settings()
-    return max(settings.oauth_timeout_seconds, settings.token_refresh_timeout_seconds, 30.0)
-
-
-def _chatgpt_account_id_from_id_token(id_token: str) -> str | None:
-    return get_provider(OPENAI_PROVIDER_NAME).account_metadata_from_id_token(id_token).account_id
-
-
-def _refresh_singleflight_key(encryptor: TokenEncryptor, account: Account) -> _RefreshSingleflightKey:
-    return (account.id, _refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted))
-
-
-def _expires_within(expires_ms: int, *, margin_seconds: float, now: datetime | None = None) -> bool:
-
-    current = to_utc_naive(now) if now is not None else utcnow()
-    threshold_ms = naive_utc_to_epoch(current) * 1000 + (margin_seconds * 1000)
-    return expires_ms <= threshold_ms
-
-
-def _access_token_needs_refresh(
-    encryptor: TokenEncryptor,
-    account: Account,
-    *,
-    now: datetime | None = None,
-) -> bool:
-    try:
-        access_token = encryptor.decrypt(account.access_token_encrypted)
-    except Exception:
-        return False
-    expires_ms = _stored_expiry_ms(account, access_token)
-    if expires_ms is None:
-        return False
-    return _expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_REFRESH_MARGIN_SECONDS, now=now)
-
-
-def access_token_hard_expired(
-    encryptor: TokenEncryptor,
-    account: Account,
-    *,
-    now: datetime | None = None,
-) -> bool:
-
-    if not account.access_token_encrypted:
-        return True
-    try:
-        access_token = encryptor.decrypt(account.access_token_encrypted)
-    except Exception:
-        return True
-    expires_ms = _stored_expiry_ms(account, access_token)
-    if expires_ms is None:
-        return False
-    return _expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_SERVING_MARGIN_SECONDS, now=now)
-
-
-def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: datetime | None = None) -> bool:
-    current = to_utc_naive(now) if now is not None else utcnow()
-    if _access_token_needs_refresh(encryptor, account, now=current):
-        return True
-    try:
-        provider = get_provider(account.provider)
-    except ProviderLookupError:
-        return should_refresh(account.last_refresh, now=current)
-    interval_seconds = provider.access_token_refresh_interval_seconds
-    if interval_seconds is not None:
-        last = to_utc_naive(account.last_refresh)
-        return current - last > timedelta(seconds=interval_seconds)
-    return should_refresh(account.last_refresh, now=current)
-
-
-def _snapshot(repo: object, account: Account) -> Account:
-
-    if not hasattr(repo, "session"):
-        return account
-    return Account(**{column.key: getattr(account, column.key) for column in Account.__table__.columns})
-
-
-def _refresh_token_material_changed(
-    encryptor: TokenEncryptor,
-    latest_refresh_token_encrypted: bytes,
-    current_refresh_token_encrypted: bytes,
-) -> bool:
-    return _refresh_token_material_fingerprint(
-        encryptor,
-        latest_refresh_token_encrypted,
-    ) != _refresh_token_material_fingerprint(
-        encryptor,
-        current_refresh_token_encrypted,
-    )
-
-
-def _refresh_token_material_fingerprint(encryptor: TokenEncryptor, refresh_token_encrypted: bytes) -> str:
-    try:
-        material = encryptor.decrypt(refresh_token_encrypted).encode("utf-8")
-    except Exception:
-        material = refresh_token_encrypted
-    return sha256(material).hexdigest()
-
-
-def _clean_optional(value: str | None) -> str | None:
-    if not isinstance(value, str):
-        return None
-    cleaned = value.strip()
-    return cleaned or None
-
-
-async def _call_with_supported_optional_kwargs(
-    func: Callable[..., Awaitable[Any]],
-    /,
-    *args: Any,
-    optional_kwargs: Mapping[str, Any],
-    **required_kwargs: Any,
-) -> Any:
-    kwargs = dict(required_kwargs)
-    kwargs.update(optional_kwargs)
-    try:
-        signature = inspect.signature(func)
-    except (TypeError, ValueError):
-        signature = None
-    accepts_var_keyword = signature is not None and any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
-    )
-    if signature is not None and not accepts_var_keyword:
-        for name in optional_kwargs:
-            if name not in signature.parameters:
-                kwargs.pop(name, None)
-    return await func(*args, **kwargs)
-
-
-def _clear_refresh_singleflight_state() -> None:
-    _REFRESH_SINGLEFLIGHT.clear()
-
-
-def expiry_datetime(
-    access_token: str, expires_in: int | None = None, *, now: datetime | None = None
-) -> datetime | None:
-    expires_ms = token_expiry_epoch_ms(access_token)
-    if expires_ms is not None:
-        return datetime.utcfromtimestamp(expires_ms / 1000)
-    if expires_in is not None and expires_in > 0:
-        return (now or utcnow()) + timedelta(seconds=expires_in)
-    return None
-
-
-def _stored_expiry_ms(account: Account, access_token: str) -> int | None:
-    if account.access_expires_at is not None:
-        return naive_utc_to_epoch(to_utc_naive(account.access_expires_at)) * 1000
-    return token_expiry_epoch_ms(access_token)

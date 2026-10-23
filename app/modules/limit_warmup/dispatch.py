@@ -11,7 +11,12 @@ from app.core.usage.pricing import get_pricing_for_model
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, DashboardSettings
 from app.db.request_models import AccountLimitWarmup
-from app.modules.limit_warmup.constants import _ANTHROPIC_CONTINUOUS_WINDOW, _ANTHROPIC_PRIMER_PROMPT, _DEFAULT_ANTHROPIC_WARMUP_MODEL, _OPENAI_CONTINUOUS_WINDOW  # noqa: I001  # fmt: skip
+from app.modules.limit_warmup.constants import (  # noqa: I001  # fmt: skip
+    _ANTHROPIC_CONTINUOUS_WINDOW,
+    _ANTHROPIC_PRIMER_PROMPT,
+    _DEFAULT_ANTHROPIC_WARMUP_MODEL,
+    _OPENAI_CONTINUOUS_WINDOW,
+)
 from app.modules.limit_warmup.contracts import LimitWarmupAttemptsRepository, LimitWarmupSender, LimitWarmupSendOutcome
 
 logger = logging.getLogger("app.modules.limit_warmup.service")

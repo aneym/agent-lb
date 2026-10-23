@@ -27,6 +27,8 @@ from app.modules.usage.schemas import (
 )
 
 _LOG_METRICS_CACHE_TTL_SECONDS = 60.0
+
+
 _LOG_METRICS_CACHE: dict[
     tuple[str, int, tuple[str, ...]],
     tuple[float, UsageMetricsSummary, UsageCostSummary],

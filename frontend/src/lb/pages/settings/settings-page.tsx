@@ -1,12 +1,22 @@
 import { Suspense, lazy, useState, type ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 
+import { ApiKeyAuthToggle } from "@/features/api-keys/components/api-key-auth-toggle";
+import { ApiKeyQuotaPrivacyToggle } from "@/features/api-keys/components/api-key-quota-privacy-toggle";
 import { AlertMessage } from "@/components/alert-message";
 import { LoadingOverlay } from "@/components/layout/loading-overlay";
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { RequestArchivePanel } from "@/features/conversation-archive/components/request-archive-panel";
 import { useConversationArchiveFiles } from "@/features/conversation-archive/hooks/use-conversation-archive";
 import { FirewallSection } from "@/features/firewall/components/firewall-section";
+import { useAccounts } from "@/features/accounts/hooks/use-accounts";
+import { buildSettingsUpdateRequest } from "@/features/settings/payload";
+import { DataRetentionSettings } from "@/features/settings/components/data-retention-settings";
+import { GuestAccessSettings } from "@/features/settings/components/guest-access-settings";
+import { ResetCreditSettings } from "@/features/settings/components/reset-credit-settings";
+import { RoutingSettings } from "@/features/settings/components/routing-settings";
+import { TelemetrySettings } from "@/features/settings/components/telemetry-settings";
+import { ModelSourcesSettings } from "@/features/model-sources/components/model-sources-settings";
 import { AppearanceSettings } from "@/features/settings/components/appearance-settings";
 import { ImportSettings } from "@/features/settings/components/import-settings";
 import { PasswordSettings } from "@/features/settings/components/password-settings";
@@ -91,8 +101,15 @@ function ArchiveSettings() {
 export function SettingsPage() {
   const { section } = useParams<{ section: string }>();
   const { settingsQuery, updateSettingsMutation } = useSettings();
-  const { upstreamProxyQuery, createEndpointMutation, createPoolMutation, addPoolMemberMutation } =
-    useUpstreamProxyAdmin();
+  const { accountsQuery } = useAccounts();
+  const canWrite = useAuthStore((state) => state.canWrite);
+  const {
+    upstreamProxyQuery,
+    createEndpointMutation,
+    createPoolMutation,
+    addPoolMemberMutation,
+    testEndpointMutation,
+  } = useUpstreamProxyAdmin();
   const authMode = useAuthStore((state) => state.authMode);
   const passwordManagementEnabled = useAuthStore((state) => state.passwordManagementEnabled);
   const passwordSessionActive = useAuthStore((state) => state.passwordSessionActive);
@@ -103,6 +120,8 @@ export function SettingsPage() {
 
   const settings = settingsQuery.data;
   const busy =
+    !canWrite ||
+    testEndpointMutation.isPending ||
     updateSettingsMutation.isPending ||
     createEndpointMutation.isPending ||
     createPoolMutation.isPending ||
@@ -115,7 +134,8 @@ export function SettingsPage() {
     getErrorMessageOrNull(createPoolMutation.error) ||
     getErrorMessageOrNull(addPoolMemberMutation.error);
   const handleSave = async (payload: SettingsUpdateRequest): Promise<void> => {
-    await updateSettingsMutation.mutateAsync(payload);
+    if (!settings || !canWrite) return;
+    await updateSettingsMutation.mutateAsync(buildSettingsUpdateRequest(settings, payload));
   };
 
   return (
@@ -143,6 +163,14 @@ export function SettingsPage() {
               >
                 <AppearanceSettings />
               </SettingsPanel>
+              {settings && (
+                <SettingsPanel
+                  title="Reset credits"
+                  description="Control credit badges and expiry redemption."
+                >
+                  <ResetCreditSettings settings={settings} busy={busy} onSave={handleSave} />
+                </SettingsPanel>
+              )}
               <Panel className="settings-moved">
                 Routing strategy, sticky sessions and warm-ups moved to{" "}
                 <Link className="link" to="/routing">
@@ -166,14 +194,26 @@ export function SettingsPage() {
                   login.
                 </p>
               )}
-              <SettingsPanel
-                title="Password"
-                description="Manage password access to the dashboard."
-                keepLegacyHeading
-              >
-                <PasswordSettings disabled={busy} />
-              </SettingsPanel>
-              {passwordManagementEnabled && passwordSessionActive && settings && (
+              {canWrite && (
+                <SettingsPanel
+                  title="Password"
+                  description="Manage password access to the dashboard."
+                  keepLegacyHeading
+                >
+                  <PasswordSettings disabled={busy} />
+                </SettingsPanel>
+              )}
+              {canWrite && settings && (
+                <SettingsPanel title="Guest access" description="Grant read-only dashboard access.">
+                  <GuestAccessSettings
+                    settings={settings}
+                    busy={busy}
+                    onSave={handleSave}
+                    onRefresh={() => settingsQuery.refetch()}
+                  />
+                </SettingsPanel>
+              )}
+              {canWrite && passwordManagementEnabled && passwordSessionActive && settings && (
                 <SettingsPanel
                   title="Two-factor authentication"
                   description="Protect password login with a one-time code."
@@ -183,7 +223,7 @@ export function SettingsPage() {
                   </Suspense>
                 </SettingsPanel>
               )}
-              {passwordManagementEnabled && settings && (
+              {canWrite && passwordManagementEnabled && settings && (
                 <SettingsPanel
                   title="Dashboard sessions"
                   description="Choose how long new password sessions stay signed in."
@@ -191,34 +231,76 @@ export function SettingsPage() {
                   <SessionSettings settings={settings} busy={busy} onSave={handleSave} />
                 </SettingsPanel>
               )}
+              {settings && (
+                <SettingsPanel
+                  title="API key access"
+                  description="Control key authentication and upstream quota visibility."
+                >
+                  <ApiKeyAuthToggle
+                    enabled={settings.apiKeyAuthEnabled}
+                    disabled={busy}
+                    onChange={(enabled) => void handleSave({ apiKeyAuthEnabled: enabled })}
+                  />
+                  <ApiKeyQuotaPrivacyToggle
+                    enabled={settings.hideUpstreamQuotaFromApiKeys}
+                    disabled={busy}
+                    onChange={(enabled) =>
+                      void handleSave({ hideUpstreamQuotaFromApiKeys: enabled })
+                    }
+                  />
+                </SettingsPanel>
+              )}
               <SettingsPanel
                 title="Allowed IPs"
                 description="Limit which client addresses can reach the proxy."
               >
-                <FirewallSection />
+                <FirewallSection disabled={busy} />
               </SettingsPanel>
             </>
           )}
           {section === "network" && (
-            <SettingsPanel
-              title="Upstream proxy"
-              description="Configure proxy endpoints and pools for outbound traffic."
-            >
-              {upstreamProxyQuery.data ? (
-                <UpstreamProxySettings
-                  admin={upstreamProxyQuery.data}
-                  busy={busy}
-                  onSaveSettings={handleSave}
-                  onCreateEndpoint={(payload) => createEndpointMutation.mutateAsync(payload)}
-                  onCreatePool={(payload) => createPoolMutation.mutateAsync(payload)}
-                  onAddPoolMember={(poolId, payload) =>
-                    addPoolMemberMutation.mutateAsync({ poolId, payload })
-                  }
-                />
-              ) : !upstreamProxyQuery.isError ? (
-                <p>Loading upstream proxy settings…</p>
-              ) : null}
-            </SettingsPanel>
+            <>
+              <SettingsPanel
+                title="Upstream proxy"
+                description="Configure proxy endpoints and pools for outbound traffic."
+              >
+                {upstreamProxyQuery.data ? (
+                  <UpstreamProxySettings
+                    admin={upstreamProxyQuery.data}
+                    busy={busy}
+                    onSaveSettings={handleSave}
+                    onCreateEndpoint={(payload) => createEndpointMutation.mutateAsync(payload)}
+                    onTestEndpoint={(endpointId) => testEndpointMutation.mutateAsync(endpointId)}
+                    onCreatePool={(payload) => createPoolMutation.mutateAsync(payload)}
+                    onAddPoolMember={(poolId, payload) =>
+                      addPoolMemberMutation.mutateAsync({ poolId, payload })
+                    }
+                  />
+                ) : !upstreamProxyQuery.isError ? (
+                  <p>Loading upstream proxy settings…</p>
+                ) : null}
+              </SettingsPanel>
+              <SettingsPanel
+                title="Model sources"
+                description="Connect model endpoints and assign them to keys."
+              >
+                <ModelSourcesSettings disabled={busy} />
+              </SettingsPanel>
+              {settings && (
+                <SettingsPanel
+                  title="Transport and routing controls"
+                  description="Configure transport, capacity sharing and quota warm-ups."
+                >
+                  <RoutingSettings
+                    settings={settings}
+                    accounts={accountsQuery.data ?? []}
+                    accountsLoading={accountsQuery.isLoading}
+                    busy={busy}
+                    onSave={handleSave}
+                  />
+                </SettingsPanel>
+              )}
+            </>
           )}
           {section === "data" && (
             <>
@@ -244,6 +326,25 @@ export function SettingsPage() {
                   to export it.
                 </p>
               </SettingsPanel>
+              {settings && (
+                <SettingsPanel
+                  title="Data retention"
+                  description="Set how long request logs and usage history are retained."
+                >
+                  <DataRetentionSettings
+                    key={`${settings.requestLogRetentionOverrideDays}:${settings.usageHistoryRetentionOverrideDays}`}
+                    settings={settings}
+                    busy={busy}
+                    onSave={handleSave}
+                  />
+                </SettingsPanel>
+              )}
+              <SettingsPanel
+                title="Telemetry"
+                description="Review optional usage telemetry and consent."
+              >
+                <TelemetrySettings disabled={busy} />
+              </SettingsPanel>
               <SettingsPanel
                 title="Request archive"
                 description="Find archived records for a request ID."
@@ -252,7 +353,7 @@ export function SettingsPage() {
               </SettingsPanel>
             </>
           )}
-          <LoadingOverlay visible={busy} label="Saving settings..." />
+          <LoadingOverlay visible={canWrite && busy} label="Saving settings..." />
         </div>
       </div>
     </div>

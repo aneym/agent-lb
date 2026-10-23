@@ -3,23 +3,23 @@ from __future__ import annotations
 import gzip
 import io
 import zlib
-from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 import zstandard as zstd
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from starlette._utils import get_route_path
+from starlette.datastructures import Headers
 from starlette.requests import ClientDisconnect
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.config.settings import get_settings
-from app.core.errors import dashboard_error
-
-_RESPONSES_DECOMPRESSION_PATHS = frozenset(
-    {
-        "/backend-api/codex/responses",
-        "/v1/responses",
-    }
+from app.core.middleware.request_body_limit import (
+    REQUEST_BODY_TOO_LARGE_MESSAGE,
+    request_body_limit_for_path,
+    request_ingress_error_response,
 )
+
+_RESPONSES_DECOMPRESSION_PATHS = frozenset({"/backend-api/codex/responses", "/v1/responses"})
 
 
 class _DecompressedBodyTooLarge(Exception):
@@ -58,18 +58,18 @@ def _decompress_deflate(data: bytes, max_size: int) -> bytes:
     chunk_size = 64 * 1024
     for start in range(0, len(data), chunk_size):
         chunk = data[start : start + chunk_size]
-
         while chunk:
             remaining = max_size - len(buffer)
-            if remaining == 0:
+            decompressed = decompressor.decompress(chunk, max_length=remaining + 1)
+            if len(decompressed) > remaining:
                 raise _DecompressedBodyTooLarge(max_size)
-            buffer.extend(decompressor.decompress(chunk, max_length=remaining))
+            buffer.extend(decompressed)
             chunk = decompressor.unconsumed_tail
     while True:
         remaining = max_size - len(buffer)
-        if remaining == 0:
+        drained = decompressor.decompress(b"", max_length=remaining + 1)
+        if len(drained) > remaining:
             raise _DecompressedBodyTooLarge(max_size)
-        drained = decompressor.decompress(b"", max_length=remaining)
         if not drained:
             break
         buffer.extend(drained)
@@ -93,7 +93,7 @@ def _decompress_zstd(data: bytes, max_size: int) -> bytes:
 
 def _decompress_body(data: bytes, encodings: list[str], max_size: int) -> bytes:
     supported = {"zstd", "gzip", "deflate", "identity"}
-    if any(encoding not in supported for encoding in encodings):
+    if any((encoding not in supported for encoding in encodings)):
         raise ValueError("Unsupported content-encoding")
     result = data
     for encoding in reversed(encodings):
@@ -104,8 +104,85 @@ def _decompress_body(data: bytes, encodings: list[str], max_size: int) -> bytes:
         elif encoding == "deflate":
             result = _decompress_deflate(result, max_size)
         elif encoding == "identity":
-            continue
+            pass
+        if len(result) > max_size:
+            raise _DecompressedBodyTooLarge(max_size)
     return result
+
+
+def _rewrite_scope_headers_for_body(scope: Scope, body_length: int) -> None:
+    headers: list[tuple[bytes, bytes]] = []
+    for key, value in scope.get("headers", []):
+        if key.lower() in (b"content-encoding", b"content-length"):
+            continue
+        headers.append((key, value))
+    headers.append((b"content-length", str(body_length).encode("ascii")))
+    scope["headers"] = headers
+
+
+async def _drain_request_body(receive: Receive) -> bytes:
+    chunks = bytearray()
+    while True:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            raise ClientDisconnect()
+        chunks.extend(message.get("body", b""))
+        if not message.get("more_body", False):
+            return bytes(chunks)
+
+
+class RequestDecompressionMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        content_encoding = Headers(scope=scope).get("content-encoding")
+        if not content_encoding:
+            await self.app(scope, receive, send)
+            return
+        encodings = [enc.strip().lower() for enc in content_encoding.split(",") if enc.strip()]
+        if not encodings:
+            await self.app(scope, receive, send)
+            return
+        max_size = request_body_limit_for_path(get_route_path(scope))
+        body = await _drain_request_body(receive)
+        try:
+            decompressed = _decompress_body(body, encodings, max_size)
+        except _DecompressedBodyTooLarge:
+            response = request_ingress_error_response(
+                Request(scope), status_code=413, code="payload_too_large", message=REQUEST_BODY_TOO_LARGE_MESSAGE
+            )
+            await response(scope, receive, send)
+            return
+        except ValueError:
+            response = request_ingress_error_response(
+                Request(scope), status_code=400, code="invalid_request", message="Unsupported Content-Encoding"
+            )
+            await response(scope, receive, send)
+            return
+        except Exception:
+            response = request_ingress_error_response(
+                Request(scope),
+                status_code=400,
+                code="invalid_request",
+                message="Request body is compressed but could not be decompressed",
+            )
+            await response(scope, receive, send)
+            return
+        _rewrite_scope_headers_for_body(scope, len(decompressed))
+        body_replayed = False
+
+        async def replay_receive() -> Message:
+            nonlocal body_replayed
+            if not body_replayed:
+                body_replayed = True
+                return {"type": "http.request", "body": decompressed, "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
 
 
 def _replace_request_body(request: Request, body: bytes) -> None:
@@ -117,7 +194,6 @@ def _replace_request_body(request: Request, body: bytes) -> None:
         headers.append((key, value))
     headers.append((b"content-length", str(len(body)).encode("ascii")))
     request.scope["headers"] = headers
-
     request.__dict__.pop("_headers", None)
 
 
@@ -129,47 +205,4 @@ def _max_decompressed_body_bytes_for_request(request: Request) -> int:
 
 
 def add_request_decompression_middleware(app: FastAPI) -> None:
-    @app.middleware("http")
-    async def request_decompression_middleware(
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        content_encoding = request.headers.get("content-encoding")
-        if not content_encoding:
-            return await call_next(request)
-        encodings = [enc.strip().lower() for enc in content_encoding.split(",") if enc.strip()]
-        if not encodings:
-            return await call_next(request)
-        max_size = _max_decompressed_body_bytes_for_request(request)
-        try:
-            body = await request.body()
-        except ClientDisconnect:
-            raise
-        try:
-            decompressed = _decompress_body(body, encodings, max_size)
-        except _DecompressedBodyTooLarge:
-            return JSONResponse(
-                status_code=413,
-                content=dashboard_error(
-                    "payload_too_large",
-                    "Request body exceeds the maximum allowed size",
-                ),
-            )
-        except ValueError:
-            return JSONResponse(
-                status_code=400,
-                content=dashboard_error(
-                    "invalid_request",
-                    "Unsupported Content-Encoding",
-                ),
-            )
-        except Exception:
-            return JSONResponse(
-                status_code=400,
-                content=dashboard_error(
-                    "invalid_request",
-                    "Request body is compressed but could not be decompressed",
-                ),
-            )
-        _replace_request_body(request, decompressed)
-        return await call_next(request)
+    app.add_middleware(RequestDecompressionMiddleware)

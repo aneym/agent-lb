@@ -1,3 +1,5 @@
+import { AccountResetCredits } from "./account-reset-credits";
+import { WriteControls } from "@/lb/kit/write-controls";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -14,13 +16,7 @@ import { usePrivacyStore } from "@/hooks/use-privacy";
 import { PausePopover } from "../../kit/pause-popover";
 import { ProviderMark } from "../../kit/provider-mark";
 import { providerMark } from "../../kit/provider-mark-helpers";
-import {
-  AccountState,
-  Crumbs,
-  EmptyState,
-  ModelChip,
-  RowMenu,
-} from "../../kit/primitives";
+import { AccountState, Crumbs, EmptyState, ModelChip, RowMenu } from "../../kit/primitives";
 import { Limits } from "./account-limits";
 import { Routing } from "./account-routing";
 import "./account.css";
@@ -262,234 +258,234 @@ export function AccountPage() {
     try {
       setExportData(await mutations.exportAuthMutation.mutateAsync(accountId));
       setExportOpen(true);
-    } catch {
-
-    }
+    } catch {}
   };
   const saveAlias = async () => {
     try {
       await mutations.setAliasMutation.mutateAsync({ accountId, alias: alias.trim() || null });
       setRenameOpen(false);
-    } catch {
-
-    }
+    } catch {}
   };
   const remove = async () => {
     try {
       await mutations.deleteMutation.mutateAsync({ accountId, deleteHistory: false });
       navigate("/");
-    } catch {
-
-    }
+    } catch {}
   };
   return (
-    <div className="account-page">
-      <Crumbs
-        items={[
-          { label: "Providers", to: "/" },
-          { label: groupOf(account), to: "/" },
-          { label: name },
-        ]}
-      />
-      <div className="acct-head">
-        <ProviderMark
-          id={account.provider === "anthropic" ? "claude" : providerMark(account.provider)}
-          size={28}
+    <WriteControls>
+      <div className="account-page">
+        <Crumbs
+          items={[
+            { label: "Providers", to: "/" },
+            { label: groupOf(account), to: "/" },
+            { label: name },
+          ]}
         />
-        <div className="id">
-          <h1>{name}</h1>
-          <span className="meta">
-            {account.planType.replace(/^./, (first) => first.toUpperCase())} ·{" "}
-            <span className={hideEmails ? "privacy-blur" : undefined}>{account.email}</span>
-            {addedAt && !Number.isNaN(new Date(addedAt).getTime()) && (
-              <>
-                {" "}
-                · added{" "}
-                {new Intl.DateTimeFormat("en", { day: "numeric", month: "short" }).format(
-                  new Date(addedAt),
+        <div className="acct-head">
+          <ProviderMark
+            id={account.provider === "anthropic" ? "claude" : providerMark(account.provider)}
+            size={28}
+          />
+          <div className="id">
+            <h1>{name}</h1>
+            <span className="meta">
+              {account.planType.replace(/^./, (first) => first.toUpperCase())} ·{" "}
+              <span className={hideEmails ? "privacy-blur" : undefined}>{account.email}</span>
+              {addedAt && !Number.isNaN(new Date(addedAt).getTime()) && (
+                <>
+                  {" "}
+                  · added{" "}
+                  {new Intl.DateTimeFormat("en", { day: "numeric", month: "short" }).format(
+                    new Date(addedAt),
+                  )}
+                </>
+              )}
+            </span>
+            <AccountState
+              status={account.status}
+              resetAt={account.rateLimitResetAt || account.resetAtPrimary}
+              sub={account.status === "rate_limited" ? "· 5-hour window used up" : undefined}
+            />
+          </div>
+          <div className="actions">
+            {account.status !== "reauth_required" && (
+              <div className="lb-pop-wrap">
+                {account.status === "paused" ? (
+                  <button
+                    className="btn"
+                    onClick={() => mutations.resumeMutation.mutate(accountId)}
+                  >
+                    Resume
+                  </button>
+                ) : (
+                  <button className="btn" onClick={() => setPauseOpen(!pauseOpen)}>
+                    Pause ⌄
+                  </button>
                 )}
-              </>
-            )}
-          </span>
-          <AccountState
-            status={account.status}
-            resetAt={account.rateLimitResetAt || account.resetAtPrimary}
-            sub={account.status === "rate_limited" ? "· 5-hour window used up" : undefined}
-          />
-        </div>
-        <div className="actions">
-          {account.status !== "reauth_required" && (
-            <div className="lb-pop-wrap">
-              {account.status === "paused" ? (
-                <button className="btn" onClick={() => mutations.resumeMutation.mutate(accountId)}>
-                  Resume
-                </button>
-              ) : (
-                <button className="btn" onClick={() => setPauseOpen(!pauseOpen)}>
-                  Pause ⌄
-                </button>
-              )}
-              {pauseOpen && (
-                <PausePopover
-                  accountId={accountId}
-                  pool={groupOf(account)}
-                  fiveHourResetAt={
-                    account.windowMinutesPrimary === 300 ? account.resetAtPrimary : null
-                  }
-                  weeklyResetAt={account.resetAtSecondary}
-                  onClose={() => setPauseOpen(false)}
-                />
-              )}
-            </div>
-          )}
-          {account.status !== "reauth_required" && (
-            <button
-              className="btn"
-              disabled={mutations.probeMutation.isPending}
-              onClick={() => mutations.probeMutation.mutate({ accountId })}
-            >
-              Check limits now
-            </button>
-          )}
-          <RowMenu
-            label="Account actions"
-            items={[
-              {
-                label: "Rename",
-                onSelect: () => {
-                  setAlias(account.alias || "");
-                  setRenameOpen(true);
-                },
-              },
-              {
-                label: "Export sign-in file",
-                hidden: !isOAuth || account.provider !== "openai",
-                onSelect: () => void exportSignIn(),
-              },
-              { label: "Sign in again", onSelect: signIn },
-            ]}
-          />
-        </div>
-      </div>
-      <div className="layout">
-        <div>
-          <Limits account={account} />
-          <LastSevenDays accountId={accountId} />
-          <RecentRequests accountId={accountId} />
-        </div>
-        <aside>
-          <Routing account={account} mutations={mutations} />
-          <section className="card account-signin">
-            <h2>Sign-in</h2>
-            <div className="account-setting">
-              <span>Method</span>
-              <span>{isOAuth ? `${groupOf(account)} OAuth` : "API key"}</span>
-            </div>
-            {lastRefreshAt && (
-              <div className="account-setting">
-                <span>Token refreshed</span>
-                <span>{relative(lastRefreshAt)}</span>
+                {pauseOpen && (
+                  <PausePopover
+                    accountId={accountId}
+                    pool={groupOf(account)}
+                    fiveHourResetAt={
+                      account.windowMinutesPrimary === 300 ? account.resetAtPrimary : null
+                    }
+                    weeklyResetAt={account.resetAtSecondary}
+                    onClose={() => setPauseOpen(false)}
+                  />
+                )}
               </div>
             )}
-            <div className="toolbar">
+            {account.status !== "reauth_required" && (
               <button
-                className={`btn sm ${account.status === "reauth_required" ? "primary" : ""}`}
-                onClick={signIn}
+                className="btn"
+                disabled={mutations.probeMutation.isPending}
+                onClick={() => mutations.probeMutation.mutate({ accountId })}
               >
-                Sign in again
+                Check limits now
               </button>
-              {account.provider === "openai" && (
-                <button className="btn sm" onClick={() => void exportSignIn()}>
-                  Export sign-in file
-                </button>
-              )}
-            </div>
-          </section>
-          <section className="card danger">
-            <h2>Remove account</h2>
-            <p>
-              Stops routing to {name} and deletes its stored sign-in. Receipts stay. Type the
-              account name to confirm.
-            </p>
-            <input
-              className="account-confirm"
-              aria-label="Type account name to remove"
-              placeholder={name}
-              value={confirm}
-              onChange={(event) => setConfirm(event.target.value)}
+            )}
+            <RowMenu
+              label="Account actions"
+              items={[
+                {
+                  label: "Rename",
+                  onSelect: () => {
+                    setAlias(account.alias || "");
+                    setRenameOpen(true);
+                  },
+                },
+                {
+                  label: "Export sign-in file",
+                  hidden: !isOAuth || account.provider !== "openai",
+                  onSelect: () => void exportSignIn(),
+                },
+                { label: "Sign in again", onSelect: signIn },
+              ]}
             />
-            <button
-              className="btn sm"
-              disabled={confirm !== name || mutations.deleteMutation.isPending}
-              onClick={() => void remove()}
-            >
-              Remove account
-            </button>
-          </section>
-        </aside>
-      </div>
-      {renameOpen && (
-        <div className="account-overlay" role="presentation">
-          <div
-            className="card account-rename"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Rename account"
-          >
-            <h2>Rename account</h2>
-            <input
-              autoFocus
-              aria-label="Account name"
-              value={alias}
-              onChange={(event) => setAlias(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void saveAlias();
-              }}
-            />
-            <div className="toolbar">
-              <button className="btn" onClick={() => setRenameOpen(false)}>
-                Cancel
-              </button>
-              <button
-                className="btn primary"
-                disabled={mutations.setAliasMutation.isPending}
-                onClick={() => void saveAlias()}
-              >
-                Save
-              </button>
-            </div>
           </div>
         </div>
-      )}
-      {isOAuth && (
-        <OauthDialog
-          key={account.provider}
-          open={oauthOpen}
-          state={oauth.state}
-          initialProvider={account.provider === "anthropic" ? "anthropic" : "openai"}
-          onOpenChange={(open) => {
-            setOauthOpen(open);
-            if (!open && params.has("signin")) {
-              const next = new URLSearchParams(params);
-              next.delete("signin");
-              setParams(next, { replace: true });
-            }
-          }}
-          onStart={async (method, provider) => {
-            await oauth.start(method, provider);
-          }}
-          onComplete={async () => {
-            await oauth.complete();
-            await mutations.accountsQuery.refetch();
-            toast.success("Sign-in updated");
-          }}
-          onManualCallback={async (callback) => {
-            await oauth.manualCallback(callback);
-          }}
-          onReset={oauth.reset}
-        />
-      )}
-      <AuthExportDialog open={exportOpen} exportData={exportData} onOpenChange={setExportOpen} />
-    </div>
+        <div className="layout">
+          <div>
+            <Limits account={account} />
+            <AccountResetCredits account={account} />
+            <LastSevenDays accountId={accountId} />
+            <RecentRequests accountId={accountId} />
+          </div>
+          <aside>
+            <Routing account={account} mutations={mutations} />
+            <section className="card account-signin">
+              <h2>Sign-in</h2>
+              <div className="account-setting">
+                <span>Method</span>
+                <span>{isOAuth ? `${groupOf(account)} OAuth` : "API key"}</span>
+              </div>
+              {lastRefreshAt && (
+                <div className="account-setting">
+                  <span>Token refreshed</span>
+                  <span>{relative(lastRefreshAt)}</span>
+                </div>
+              )}
+              <div className="toolbar">
+                <button
+                  className={`btn sm ${account.status === "reauth_required" ? "primary" : ""}`}
+                  onClick={signIn}
+                >
+                  Sign in again
+                </button>
+                {account.provider === "openai" && (
+                  <button className="btn sm" onClick={() => void exportSignIn()}>
+                    Export sign-in file
+                  </button>
+                )}
+              </div>
+            </section>
+            <section className="card danger">
+              <h2>Remove account</h2>
+              <p>
+                Stops routing to {name} and deletes its stored sign-in. Receipts stay. Type the
+                account name to confirm.
+              </p>
+              <input
+                className="account-confirm"
+                aria-label="Type account name to remove"
+                placeholder={name}
+                value={confirm}
+                onChange={(event) => setConfirm(event.target.value)}
+              />
+              <button
+                className="btn sm"
+                disabled={confirm !== name || mutations.deleteMutation.isPending}
+                onClick={() => void remove()}
+              >
+                Remove account
+              </button>
+            </section>
+          </aside>
+        </div>
+        {renameOpen && (
+          <div className="account-overlay" role="presentation">
+            <div
+              className="card account-rename"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Rename account"
+            >
+              <h2>Rename account</h2>
+              <input
+                autoFocus
+                aria-label="Account name"
+                value={alias}
+                onChange={(event) => setAlias(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void saveAlias();
+                }}
+              />
+              <div className="toolbar">
+                <button className="btn" onClick={() => setRenameOpen(false)}>
+                  Cancel
+                </button>
+                <button
+                  className="btn primary"
+                  disabled={mutations.setAliasMutation.isPending}
+                  onClick={() => void saveAlias()}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {isOAuth && (
+          <OauthDialog
+            key={account.provider}
+            open={oauthOpen}
+            state={oauth.state}
+            initialProvider={account.provider === "anthropic" ? "anthropic" : "openai"}
+            onOpenChange={(open) => {
+              setOauthOpen(open);
+              if (!open && params.has("signin")) {
+                const next = new URLSearchParams(params);
+                next.delete("signin");
+                setParams(next, { replace: true });
+              }
+            }}
+            onStart={async (method, provider) => {
+              await oauth.start(method, provider, accountId);
+            }}
+            onComplete={async () => {
+              await oauth.complete();
+              await mutations.accountsQuery.refetch();
+              toast.success("Sign-in updated");
+            }}
+            onManualCallback={async (callback) => {
+              await oauth.manualCallback(callback);
+            }}
+            onReset={oauth.reset}
+          />
+        )}
+        <AuthExportDialog open={exportOpen} exportData={exportData} onOpenChange={setExportOpen} />
+      </div>
+    </WriteControls>
   );
 }

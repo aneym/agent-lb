@@ -7,10 +7,50 @@ from hashlib import sha256
 
 from app.core.utils.time import to_utc_naive
 from app.db.request_models import ApiKey, ApiKeyLimit, LimitType, LimitWindow
-from app.modules.api_keys.limit_windows import advance_limit_reset, next_limit_reset
+from app.modules.api_keys.limit_windows import advance_limit_reset, limit_window_delta, next_limit_reset
+from app.modules.api_keys.policy_validation import (
+    _deserialize_allowed_reasoning_efforts,
+    _get_usage_sections_with_default,
+    _normalize_transport_policy_override_lenient,
+)
 from app.modules.api_keys.repository_data import ApiKeyUsageSummary
 from app.modules.api_keys.repository_protocol import ApiKeysRepositoryProtocol
-from app.modules.api_keys.service_data import _SUPPORTED_REASONING_EFFORTS, _SUPPORTED_SERVICE_TIERS, _SUPPORTED_TRAFFIC_CLASSES, TRAFFIC_CLASS_FOREGROUND, ApiKeyCreatedData, ApiKeyData, ApiKeyInvalidError, ApiKeyUsageSummaryData, ApiKeyValidationError, LimitRuleData, LimitRuleInput, PooledCreditData  # noqa: I001  # fmt: skip
+from app.modules.api_keys.service_data import (
+    _SUPPORTED_REASONING_EFFORTS,
+    _SUPPORTED_SERVICE_TIERS,
+    _SUPPORTED_TRAFFIC_CLASSES,
+    TRAFFIC_CLASS_FOREGROUND,
+    ApiKeyCreatedData,
+    ApiKeyData,
+    ApiKeyInvalidError,
+    ApiKeyUsageSummaryData,
+    ApiKeyValidationError,
+    LimitRuleData,
+    LimitRuleInput,
+    PooledCreditData,
+)
+
+
+async def _new_limit_input_to_backfilled_row(
+    submitted: LimitRuleInput, key_id: str, now: datetime, repository: ApiKeysRepositoryProtocol
+) -> ApiKeyLimit:
+    limit_type = LimitType(submitted.limit_type)
+    window = LimitWindow(submitted.limit_window)
+    reset_at = next_limit_reset(now, window)
+    since = now - limit_window_delta(window)
+    current_value = await repository.get_limit_usage_value(
+        key_id, limit_type=limit_type, since=since, until=now, model_filter=submitted.model_filter
+    )
+    return _limit_input_to_row(submitted, key_id, now, current_value=current_value, reset_at=reset_at)
+
+
+def _validate_unique_limit_rule_identities(limits: list[LimitRuleInput]) -> None:
+    identities: set[tuple[str, str, str | None]] = set()
+    for limit in limits:
+        identity = _limit_identity_from_input(limit)
+        if identity in identities:
+            raise ApiKeyValidationError(f"Duplicate limit rules are not allowed: {identity!r}")
+        identities.add(identity)
 
 
 def _normalize_name(name: str) -> str:
@@ -172,21 +212,14 @@ def _ensure_valid_api_key_row(row: ApiKey | None) -> ApiKey:
 
 
 async def _lazy_reset_expired_limits(
-    repository: ApiKeysRepositoryProtocol,
-    limits: list[ApiKeyLimit],
-    *,
-    now: datetime,
+    repository: ApiKeysRepositoryProtocol, limits: list[ApiKeyLimit], *, now: datetime
 ) -> bool:
     reset_performed = False
     for limit in limits:
         if limit.reset_at >= now:
             continue
         new_reset_at = advance_limit_reset(limit.reset_at, now, limit.limit_window)
-        await repository.reset_limit(
-            limit.id,
-            expected_reset_at=limit.reset_at,
-            new_reset_at=new_reset_at,
-        )
+        await repository.reset_limit(limit.id, expected_reset_at=limit.reset_at, new_reset_at=new_reset_at)
         reset_performed = True
     return reset_performed
 
@@ -212,17 +245,20 @@ def _to_created_data(data: ApiKeyData, key: str) -> ApiKeyCreatedData:
         assigned_account_ids=data.assigned_account_ids,
         member_id=data.member_id,
         key=key,
+        allowed_reasoning_efforts=data.allowed_reasoning_efforts,
+        transport_policy_override=data.transport_policy_override,
+        usage_sections=data.usage_sections,
+        source_assignment_scope_enabled=data.source_assignment_scope_enabled,
+        assigned_source_ids=data.assigned_source_ids,
     )
 
 
 def _to_api_key_data(
-    row: ApiKey,
-    *,
-    usage_summary: ApiKeyUsageSummaryData | None = None,
-    pooled_credits: PooledCreditData | None = None,
+    row: ApiKey, *, usage_summary: ApiKeyUsageSummaryData | None = None, pooled_credits: PooledCreditData | None = None
 ) -> ApiKeyData:
     limits = [_to_limit_rule_data(limit) for limit in row.limits] if row.limits else []
     account_assignments = getattr(row, "account_assignments", [])
+    source_assignments = getattr(row, "source_assignments", [])
     return ApiKeyData(
         id=row.id,
         name=row.name,
@@ -243,6 +279,15 @@ def _to_api_key_data(
         assigned_account_ids=[assignment.account_id for assignment in account_assignments],
         pooled_credits=pooled_credits,
         member_id=getattr(row, "member_id", None),
+        allowed_reasoning_efforts=_deserialize_allowed_reasoning_efforts(
+            getattr(row, "allowed_reasoning_efforts", None)
+        ),
+        transport_policy_override=_normalize_transport_policy_override_lenient(
+            getattr(row, "transport_policy_override", None)
+        ),
+        usage_sections=_get_usage_sections_with_default(row),
+        source_assignment_scope_enabled=getattr(row, "source_assignment_scope_enabled", False),
+        assigned_source_ids=[assignment.source_id for assignment in source_assignments],
     )
 
 
@@ -258,12 +303,7 @@ def _to_usage_summary_data(summary: ApiKeyUsageSummary | None) -> ApiKeyUsageSum
 
 
 def _limit_input_to_row(
-    li: LimitRuleInput,
-    key_id: str,
-    now: datetime,
-    *,
-    current_value: int = 0,
-    reset_at: datetime | None = None,
+    li: LimitRuleInput, key_id: str, now: datetime, *, current_value: int = 0, reset_at: datetime | None = None
 ) -> ApiKeyLimit:
     window = LimitWindow(li.limit_window)
     if li.limit_type == LimitType.CREDITS.value and li.model_filter is not None:
@@ -279,44 +319,36 @@ def _limit_input_to_row(
     )
 
 
-def _build_limit_rows_for_update(
+async def _build_limit_rows_for_update(
     *,
     key_id: str,
     now: datetime,
     submitted_limits: list[LimitRuleInput],
     existing_limits: list[ApiKeyLimit],
     reset_usage: bool,
+    repository: ApiKeysRepositoryProtocol | None = None,
 ) -> list[ApiKeyLimit]:
     existing_by_key = {_limit_identity_from_row(limit): limit for limit in existing_limits}
-    submitted_by_key = {_limit_identity_from_input(limit): limit for limit in submitted_limits}
-    if len(submitted_by_key) != len(submitted_limits):
-        raise ApiKeyValidationError("Duplicate limit rules are not allowed")
-
+    _validate_unique_limit_rule_identities(submitted_limits)
     rows: list[ApiKeyLimit] = []
     for submitted in submitted_limits:
         identity = _limit_identity_from_input(submitted)
         matched = existing_by_key.get(identity)
-        if matched is None or reset_usage:
+        if reset_usage:
             rows.append(_limit_input_to_row(submitted, key_id, now))
             continue
+        if matched is None:
+            if repository is None:
+                raise TypeError("repository is required to backfill new API key limit usage")
+            rows.append(await _new_limit_input_to_backfilled_row(submitted, key_id, now, repository))
+            continue
         rows.append(
-            _limit_input_to_row(
-                submitted,
-                key_id,
-                now,
-                current_value=matched.current_value,
-                reset_at=matched.reset_at,
-            )
+            _limit_input_to_row(submitted, key_id, now, current_value=matched.current_value, reset_at=matched.reset_at)
         )
     return rows
 
 
-def _build_reset_limit_rows(
-    *,
-    key_id: str,
-    now: datetime,
-    existing_limits: list[ApiKeyLimit],
-) -> list[ApiKeyLimit]:
+def _build_reset_limit_rows(*, key_id: str, now: datetime, existing_limits: list[ApiKeyLimit]) -> list[ApiKeyLimit]:
     rows: list[ApiKeyLimit] = []
     for existing in existing_limits:
         rows.append(

@@ -1,9 +1,7 @@
+import { ConversationArchiveFileSchema } from "@/features/conversation-archive/schemas";
 import { get } from "@/lib/api-client";
 
-import {
-  ConversationArchiveFileSchema,
-  ConversationArchiveRecordsResponseSchema,
-} from "@/features/conversation-archive/schemas";
+import { ConversationArchiveRecordsResponseSchema } from "@/features/conversation-archive/schemas";
 
 const CONVERSATION_ARCHIVE_PATH = "/api/conversation-archive";
 
@@ -17,10 +15,6 @@ export type ConversationArchiveRecordParams = {
   requestId?: string;
   requestedAt?: string;
 };
-
-export function listConversationArchiveFiles() {
-  return get(`${CONVERSATION_ARCHIVE_PATH}/files`, ConversationArchiveFileSchema.array());
-}
 
 export function listConversationArchiveRecords(params: ConversationArchiveRecordParams) {
   const query = new URLSearchParams();
@@ -48,5 +42,12 @@ export function listConversationArchiveRecords(params: ConversationArchiveRecord
   if (params.requestedAt) {
     query.set("requestedAt", params.requestedAt);
   }
-  return get(`${CONVERSATION_ARCHIVE_PATH}/records?${query.toString()}`, ConversationArchiveRecordsResponseSchema);
+  return get(
+    `${CONVERSATION_ARCHIVE_PATH}/records?${query.toString()}`,
+    ConversationArchiveRecordsResponseSchema,
+  );
+}
+
+export function listConversationArchiveFiles() {
+  return get(`${CONVERSATION_ARCHIVE_PATH}/files`, ConversationArchiveFileSchema.array());
 }

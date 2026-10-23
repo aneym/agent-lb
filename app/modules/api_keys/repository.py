@@ -2,22 +2,21 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, insert, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import load_only, selectinload
+from sqlalchemy.orm import load_only, raiseload, selectinload
 
 from app.core.utils.time import utcnow
-from app.db.access_models import ApiKeyUsageReservation, ApiKeyUsageReservationItem
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountStatus, ApiKeyModelSourceAssignment, ApiKeyUsageRollup, ModelSource
 from app.db.request_models import ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType, LimitWindow
-from app.db.session import sqlite_writer_section
 from app.modules.api_keys.limit_windows import advance_limit_reset
-from app.modules.api_keys.repository_data import _EXPIRED_LIMIT_RESET_BATCH_SIZE, _STALE_USAGE_RESERVATION_RELEASE_BATCH_SIZE, _UNSET, UsageReservationItemData, _Unset  # noqa: I001  # fmt: skip
+from app.modules.api_keys.repository_data import _EXPIRED_LIMIT_RESET_BATCH_SIZE, _UNSET, _Unset
+from app.modules.api_keys.reservation_cleanup import ApiKeyReservationCleanup as ApiKeyReservationCleanup
 from app.modules.api_keys.reservation_repository import ApiKeyReservations
 from app.modules.api_keys.usage_repository import ApiKeyUsageQueries
 
 
-class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
+class ApiKeysRepository(ApiKeyReservationCleanup, ApiKeyUsageQueries, ApiKeyReservations):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -32,6 +31,7 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
             .options(
                 selectinload(ApiKey.limits),
                 selectinload(ApiKey.account_assignments),
+                selectinload(ApiKey.source_assignments),
             )
         )
 
@@ -45,6 +45,20 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
 
     async def get_by_id(self, key_id: str) -> ApiKey | None:
         result = await self._session.execute(self._select_api_key().where(ApiKey.id == key_id))
+        return result.scalar_one_or_none()
+
+    async def get_for_limit_enforcement(self, key_id: str) -> ApiKey | None:
+        result = await self._session.execute(
+            select(ApiKey)
+            .execution_options(populate_existing=True)
+            .options(
+                load_only(ApiKey.is_active, ApiKey.expires_at, raiseload=True),
+                selectinload(ApiKey.limits),
+                raiseload(ApiKey.account_assignments),
+                raiseload(ApiKey.source_assignments),
+            )
+            .where(ApiKey.id == key_id)
+        )
         return result.scalar_one_or_none()
 
     async def get_by_hash(self, key_hash: str) -> ApiKey | None:
@@ -62,7 +76,14 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
             select(Account)
             .options(load_only(Account.id, Account.plan_type, Account.status))
             .where(Account.id.in_(account_ids))
+            .where(Account.delete_requested_at.is_(None))
         )
+        return list(result.scalars().all())
+
+    async def list_model_sources_by_ids(self, source_ids: list[str]) -> list[ModelSource]:
+        if not source_ids:
+            return []
+        result = await self._session.execute(select(ModelSource).where(ModelSource.id.in_(source_ids)))
         return list(result.scalars().all())
 
     async def list_all_accounts(self) -> list[Account]:
@@ -72,6 +93,7 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
             .where(
                 ~Account.status.in_((AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED))
             )
+            .where(Account.delete_requested_at.is_(None))
         )
         return list(result.scalars().all())
 
@@ -93,6 +115,10 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
         key_prefix: str | _Unset = _UNSET,
         member_id: str | None | _Unset = _UNSET,
         commit: bool = True,
+        allowed_reasoning_efforts: str | None | _Unset = _UNSET,
+        transport_policy_override: str | None | _Unset = _UNSET,
+        usage_sections: str | _Unset = _UNSET,
+        source_assignment_scope_enabled: bool | _Unset = _UNSET,
     ) -> ApiKey | None:
         row = await self.get_by_id(key_id)
         if row is None:
@@ -112,15 +138,27 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
         if enforced_reasoning_effort is not _UNSET:
             assert enforced_reasoning_effort is None or isinstance(enforced_reasoning_effort, str)
             row.enforced_reasoning_effort = enforced_reasoning_effort
+        if allowed_reasoning_efforts is not _UNSET:
+            assert allowed_reasoning_efforts is None or isinstance(allowed_reasoning_efforts, str)
+            row.allowed_reasoning_efforts = allowed_reasoning_efforts
         if enforced_service_tier is not _UNSET:
             assert enforced_service_tier is None or isinstance(enforced_service_tier, str)
             row.enforced_service_tier = enforced_service_tier
         if traffic_class is not _UNSET:
             assert isinstance(traffic_class, str)
             row.traffic_class = traffic_class
+        if transport_policy_override is not _UNSET:
+            assert transport_policy_override is None or isinstance(transport_policy_override, str)
+            row.transport_policy_override = transport_policy_override
+        if usage_sections is not _UNSET:
+            assert isinstance(usage_sections, str)
+            row.usage_sections = usage_sections
         if account_assignment_scope_enabled is not _UNSET:
             assert isinstance(account_assignment_scope_enabled, bool)
             row.account_assignment_scope_enabled = account_assignment_scope_enabled
+        if source_assignment_scope_enabled is not _UNSET:
+            assert isinstance(source_assignment_scope_enabled, bool)
+            row.source_assignment_scope_enabled = source_assignment_scope_enabled
         if expires_at is not _UNSET:
             assert expires_at is None or isinstance(expires_at, datetime)
             row.expires_at = expires_at
@@ -144,17 +182,18 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
         row = await self.get_by_id(key_id)
         if row is None:
             return False
+        await self._session.execute(delete(ApiKeyUsageRollup).where(ApiKeyUsageRollup.api_key_id == key_id))
         await self._session.delete(row)
         await self._session.commit()
         return True
+
+    async def commit(self) -> None:
+        await self._session.commit()
 
     async def update_last_used(self, key_id: str, *, commit: bool = True) -> None:
         await self._session.execute(update(ApiKey).where(ApiKey.id == key_id).values(last_used_at=utcnow()))
         if commit:
             await self._session.commit()
-
-    async def commit(self) -> None:
-        await self._session.commit()
 
     async def rollback(self) -> None:
         await self._session.rollback()
@@ -180,7 +219,6 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
         existing = await self.get_limits_by_key(key_id)
         existing_by_key = {_limit_key(limit): limit for limit in existing}
         incoming_keys = {_limit_key(limit) for limit in limits}
-
         for incoming in limits:
             key = _limit_key(incoming)
             matched = existing_by_key.get(key)
@@ -191,11 +229,9 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
             matched.max_value = incoming.max_value
             matched.current_value = incoming.current_value
             matched.reset_at = incoming.reset_at
-
         for old_limit in existing:
             if _limit_key(old_limit) not in incoming_keys:
                 await self._session.delete(old_limit)
-
         if commit:
             await self._session.commit()
         parent = await self._session.get(ApiKey, key_id)
@@ -204,23 +240,40 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
         return await self.get_limits_by_key(key_id)
 
     async def replace_account_assignments(self, key_id: str, account_ids: list[str], *, commit: bool = True) -> None:
+        if account_ids and self._session.get_bind().dialect.name == "postgresql":
+            await self._session.execute(
+                select(Account.id).where(Account.id.in_(account_ids)).with_for_update(read=True)
+            )
         await self._session.execute(delete(ApiKeyAccountAssignment).where(ApiKeyAccountAssignment.api_key_id == key_id))
-        for account_id in account_ids:
-            self._session.add(ApiKeyAccountAssignment(api_key_id=key_id, account_id=account_id))
+        if account_ids:
+            assignment_source = (
+                select(literal(key_id), Account.id)
+                .where(Account.id.in_(account_ids))
+                .where(Account.delete_requested_at.is_(None))
+            )
+            await self._session.execute(
+                insert(ApiKeyAccountAssignment).from_select(["api_key_id", "account_id"], assignment_source)
+            )
         if commit:
             await self._session.commit()
         parent = await self._session.get(ApiKey, key_id)
         if parent is not None:
             await self._session.refresh(parent, attribute_names=["account_assignments"])
 
+    async def replace_source_assignments(self, key_id: str, source_ids: list[str], *, commit: bool = True) -> None:
+        await self._session.execute(
+            delete(ApiKeyModelSourceAssignment).where(ApiKeyModelSourceAssignment.api_key_id == key_id)
+        )
+        for source_id in source_ids:
+            self._session.add(ApiKeyModelSourceAssignment(api_key_id=key_id, source_id=source_id))
+        if commit:
+            await self._session.commit()
+        parent = await self._session.get(ApiKey, key_id)
+        if parent is not None:
+            await self._session.refresh(parent, attribute_names=["source_assignments"])
+
     async def increment_limit_usage(
-        self,
-        key_id: str,
-        *,
-        model: str,
-        input_tokens: int,
-        output_tokens: int,
-        cost_microdollars: int,
+        self, key_id: str, *, model: str, input_tokens: int, output_tokens: int, cost_microdollars: int
     ) -> None:
         limits = await self.get_limits_by_key(key_id)
         for limit in limits:
@@ -233,7 +286,6 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
                     .where(ApiKeyLimit.id == limit.id)
                     .values(current_value=ApiKeyLimit.current_value + increment)
                 )
-        await self._session.execute(update(ApiKey).where(ApiKey.id == key_id).values(last_used_at=utcnow()))
         await self._session.commit()
 
     async def reset_limit(self, limit_id: int, *, expected_reset_at: datetime, new_reset_at: datetime) -> bool:
@@ -251,11 +303,7 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
         reset_count = 0
         while True:
             result = await self._session.execute(
-                select(
-                    ApiKeyLimit.id,
-                    ApiKeyLimit.reset_at,
-                    ApiKeyLimit.limit_window,
-                )
+                select(ApiKeyLimit.id, ApiKeyLimit.reset_at, ApiKeyLimit.limit_window)
                 .where(ApiKeyLimit.reset_at < now)
                 .order_by(ApiKeyLimit.reset_at.asc(), ApiKeyLimit.id.asc())
                 .limit(_EXPIRED_LIMIT_RESET_BATCH_SIZE)
@@ -263,110 +311,17 @@ class ApiKeysRepository(ApiKeyUsageQueries, ApiKeyReservations):
             expired_limits = result.all()
             if not expired_limits:
                 return reset_count
-
             for limit in expired_limits:
                 update_result = await self._session.execute(
                     update(ApiKeyLimit)
                     .where(ApiKeyLimit.id == limit.id)
                     .where(ApiKeyLimit.reset_at == limit.reset_at)
-                    .values(
-                        current_value=0,
-                        reset_at=advance_limit_reset(limit.reset_at, now, limit.limit_window),
-                    )
+                    .values(current_value=0, reset_at=advance_limit_reset(limit.reset_at, now, limit.limit_window))
                     .returning(ApiKeyLimit.id)
                 )
                 if update_result.scalar_one_or_none() is not None:
                     reset_count += 1
             await self._session.commit()
-
-    async def release_stale_usage_reservations(
-        self,
-        *,
-        cutoff: datetime,
-        batch_size: int = _STALE_USAGE_RESERVATION_RELEASE_BATCH_SIZE,
-    ) -> int:
-        released_count = 0
-
-        try:
-            while True:
-                async with sqlite_writer_section(self._session):
-                    result = await self._session.execute(
-                        select(ApiKeyUsageReservation.id)
-                        .where(ApiKeyUsageReservation.status == "reserved")
-                        .where(ApiKeyUsageReservation.updated_at < cutoff)
-                        .order_by(ApiKeyUsageReservation.updated_at.asc())
-                        .limit(batch_size)
-                    )
-                    reservation_ids = list(result.scalars().all())
-                    if not reservation_ids:
-                        break
-
-                    item_result = await self._session.execute(
-                        select(
-                            ApiKeyUsageReservationItem.reservation_id,
-                            ApiKeyUsageReservationItem.limit_id,
-                            ApiKeyUsageReservationItem.limit_type,
-                            ApiKeyUsageReservationItem.reserved_delta,
-                            ApiKeyUsageReservationItem.expected_reset_at,
-                            ApiKeyUsageReservationItem.actual_delta,
-                        ).where(ApiKeyUsageReservationItem.reservation_id.in_(reservation_ids))
-                    )
-                    items_by_reservation_id: dict[str, list[UsageReservationItemData]] = {
-                        reservation_id: [] for reservation_id in reservation_ids
-                    }
-                    for item in item_result.all():
-                        items_by_reservation_id[item.reservation_id].append(
-                            UsageReservationItemData(
-                                limit_id=item.limit_id,
-                                limit_type=LimitType(item.limit_type),
-                                reserved_delta=item.reserved_delta,
-                                expected_reset_at=item.expected_reset_at,
-                                actual_delta=item.actual_delta,
-                            )
-                        )
-
-                    for reservation_id in reservation_ids:
-                        claimed = await self._session.execute(
-                            update(ApiKeyUsageReservation)
-                            .where(ApiKeyUsageReservation.id == reservation_id)
-                            .where(ApiKeyUsageReservation.status == "reserved")
-                            .where(ApiKeyUsageReservation.updated_at < cutoff)
-                            .values(
-                                status="released",
-                                input_tokens=None,
-                                output_tokens=None,
-                                cached_input_tokens=None,
-                                cost_microdollars=None,
-                            )
-                            .returning(ApiKeyUsageReservation.id)
-                        )
-                        if claimed.scalar_one_or_none() is None:
-                            continue
-
-                        for item in items_by_reservation_id[reservation_id]:
-                            await self.adjust_reserved_usage(
-                                item.limit_id,
-                                delta=-item.reserved_delta,
-                                expected_reset_at=item.expected_reset_at,
-                            )
-                            await self.upsert_reservation_item_actual(
-                                reservation_id,
-                                item=UsageReservationItemData(
-                                    limit_id=item.limit_id,
-                                    limit_type=item.limit_type,
-                                    reserved_delta=item.reserved_delta,
-                                    expected_reset_at=item.expected_reset_at,
-                                    actual_delta=item.actual_delta,
-                                ),
-                                actual_delta=0,
-                            )
-                        released_count += 1
-                    await self._session.commit()
-        except Exception:
-            await self._session.rollback()
-            raise
-
-        return released_count
 
 
 def _compute_increment(limit: ApiKeyLimit, input_tokens: int, output_tokens: int, cost_microdollars: int) -> int:

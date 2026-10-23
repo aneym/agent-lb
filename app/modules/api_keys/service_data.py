@@ -4,44 +4,18 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 _SQLITE_BUSY_RETRY_ATTEMPTS = 4
-
-
 _SQLITE_BUSY_RETRY_BASE_SECONDS = 0.1
-
-
 _SPARKLINE_DAYS = 7
-
-
 _DETAIL_BUCKET_SECONDS = 3600
-
-
-API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET = 8_192
-
-
+API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET = 8192
 API_KEY_USAGE_RESERVATION_DEFAULT_INPUT_TOKENS = API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET
-
-
-API_KEY_USAGE_RESERVATION_DEFAULT_OUTPUT_TOKENS = 2_048
-
-
-_API_KEY_USAGE_RESERVATION_UNKNOWN_MODEL_MICRODOLLARS = 2_000_000
-
-
+API_KEY_USAGE_RESERVATION_DEFAULT_OUTPUT_TOKENS = 2048
+_API_KEY_USAGE_RESERVATION_UNKNOWN_MODEL_MICRODOLLARS = 2000000
 _API_KEY_USAGE_RESERVATION_UNKNOWN_MODEL_BASE_TOKENS = API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET * 2
-
-
 TRAFFIC_CLASS_FOREGROUND = "foreground"
-
-
 TRAFFIC_CLASS_OPPORTUNISTIC = "opportunistic"
-
-
 _SUPPORTED_TRAFFIC_CLASSES = frozenset({TRAFFIC_CLASS_FOREGROUND, TRAFFIC_CLASS_OPPORTUNISTIC})
-
-
-_SUPPORTED_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
-
-
+_SUPPORTED_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"})
 _SUPPORTED_SERVICE_TIERS = frozenset({"auto", "default", "priority", "flex"})
 
 
@@ -73,8 +47,7 @@ class ApiKeyUnpricedModelError(ValueError):
         self.limit_window = limit_window
         self.max_microdollars = max_microdollars
         super().__init__(
-            f"Model {model!r} has no list price, so API key cost_usd {limit_window} cap "
-            f"(max {max_microdollars / 1_000_000:.6f} USD) cannot meter it; request refused"
+            f"Model {model!r} has no list price, so API key cost_usd {limit_window} cap (max {max_microdollars / 1000000:.6f} USD) cannot meter it; request refused"
         )
 
 
@@ -114,10 +87,14 @@ class ApiKeyCreateData:
     apply_to_codex_model: bool = False
     enforced_model: str | None = None
     enforced_reasoning_effort: str | None = None
+    allowed_reasoning_efforts: list[str] | None = None
     enforced_service_tier: str | None = None
     traffic_class: str = TRAFFIC_CLASS_FOREGROUND
+    transport_policy_override: str | None = None
+    usage_sections: str = "upstream_limits,account_pool_usage"
     expires_at: datetime | None = None
     assigned_account_ids: list[str] | None = None
+    assigned_source_ids: list[str] | None = None
     limits: list[LimitRuleInput] = field(default_factory=list)
     member_id: str | None = None
 
@@ -134,16 +111,24 @@ class ApiKeyUpdateData:
     enforced_model_set: bool = False
     enforced_reasoning_effort: str | None = None
     enforced_reasoning_effort_set: bool = False
+    allowed_reasoning_efforts: list[str] | None = None
+    allowed_reasoning_efforts_set: bool = False
     enforced_service_tier: str | None = None
     enforced_service_tier_set: bool = False
     traffic_class: str | None = None
     traffic_class_set: bool = False
+    transport_policy_override: str | None = None
+    transport_policy_override_set: bool = False
+    usage_sections: str | None = None
+    usage_sections_set: bool = False
     expires_at: datetime | None = None
     expires_at_set: bool = False
     is_active: bool | None = None
     is_active_set: bool = False
     assigned_account_ids: list[str] | None = None
     assigned_account_ids_set: bool = False
+    assigned_source_ids: list[str] | None = None
+    assigned_source_ids_set: bool = False
     limits: list[LimitRuleInput] | None = None
     limits_set: bool = False
     reset_usage: bool = False
@@ -164,12 +149,17 @@ class ApiKeyData:
     is_active: bool
     created_at: datetime
     last_used_at: datetime | None
+    allowed_reasoning_efforts: list[str] | None = None
     apply_to_codex_model: bool = False
     traffic_class: str = TRAFFIC_CLASS_FOREGROUND
+    transport_policy_override: str | None = None
+    usage_sections: str = "upstream_limits,account_pool_usage"
     limits: list[LimitRuleData] = field(default_factory=list)
     usage_summary: "ApiKeyUsageSummaryData | None" = None
     account_assignment_scope_enabled: bool = False
+    source_assignment_scope_enabled: bool = False
     assigned_account_ids: list[str] = field(default_factory=list)
+    assigned_source_ids: list[str] = field(default_factory=list)
     pooled_credits: "PooledCreditData | None" = None
     member_id: str | None = None
 
@@ -199,6 +189,7 @@ class ApiKeyUsageReservationData:
     reservation_id: str
     key_id: str
     model: str
+    has_applicable_limits: bool = True
 
 
 @dataclass(frozen=True, slots=True)

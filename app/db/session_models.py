@@ -3,7 +3,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +44,15 @@ class StickySession(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    # A non-null timestamp with NULL scope is the historical global tombstone.
+    # Source-scoped abandonment instead leaves this timestamp NULL and stores
+    # the typed scope below. That asymmetry is intentional: binaries predating
+    # the scope column see a live hard owner during rollout/rollback, while new
+    # binaries can let a process-session restart ignore the ambiguous raw row
+    # without erasing its explicit-turn-state ownership. Stale-hard cleanup
+    # may later promote the scoped marker to a timestamped global tombstone.
+    continuity_abandoned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    continuity_abandonment_scope: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
 
 
 class HttpBridgeSessionRecord(Base):
@@ -46,6 +64,7 @@ class HttpBridgeSessionRecord(Base):
     session_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     api_key_scope: Mapped[str] = mapped_column(String(255), nullable=False)
     owner_instance_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    owner_process_epoch: Mapped[str | None] = mapped_column(String(64), nullable=True)
     owner_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     state: Mapped[HttpBridgeSessionState] = mapped_column(
@@ -68,6 +87,7 @@ class HttpBridgeSessionRecord(Base):
     latest_response_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     latest_input_item_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latest_input_full_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    latest_pending_tool_calls_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

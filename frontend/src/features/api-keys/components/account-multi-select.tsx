@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { ChevronsUpDown, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,30 +12,30 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { StatusGlyph } from "@/components/ui/status-glyph";
+import { StatusBadge } from "@/components/status-badge";
 import { useAccounts } from "@/features/accounts/hooks/use-accounts";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { cn } from "@/lib/utils";
-import { isAccountAssignmentSelectable } from "@/utils/account-status";
-import {
-  formatPercentNullable,
-  formatSlug,
-  formatWindowLabel,
-} from "@/utils/formatters";
+import { isAccountAssignmentSelectable, normalizeStatus } from "@/utils/account-status";
+import { formatPercentNullable, formatSlug, formatWindowLabel } from "@/utils/formatters";
 
 export type AccountMultiSelectProps = {
   value: string[];
   onChange: (value: string[]) => void;
   placeholder?: string;
+  triggerId?: string;
+  ariaInvalid?: boolean;
+  ariaDescribedBy?: string;
+  triggerClassName?: string;
+  allowPausedAccounts?: boolean;
 };
-
 type LimitChip = {
   key: string;
   label: string;
   percent: number | null;
 };
 
-function buildLimitChips(account: AccountSummary): LimitChip[] {
+function buildLimitChips(account: AccountSummary, t: ReturnType<typeof useTranslation>["t"]): LimitChip[] {
   const chips: LimitChip[] = [];
   const monthlyOnly =
     account.windowMinutesMonthly != null &&
@@ -44,30 +45,31 @@ function buildLimitChips(account: AccountSummary): LimitChip[] {
   if (monthlyOnly || account.usage?.monthlyRemainingPercent != null) {
     chips.push({
       key: `${account.accountId}-monthly`,
-      label: `Monthly ${formatPercentNullable(account.usage?.monthlyRemainingPercent)} left`,
+      label: t("apiKeys.accountSelect.limitLeft", {
+        label: t("common.quota.monthly"),
+        percent: formatPercentNullable(account.usage?.monthlyRemainingPercent),
+      }),
       percent: account.usage?.monthlyRemainingPercent ?? null,
     });
   }
 
-  if (
-    !monthlyOnly &&
-    (account.windowMinutesPrimary != null ||
-      account.usage?.primaryRemainingPercent != null)
-  ) {
+  if (!monthlyOnly && (account.windowMinutesPrimary != null || account.usage?.primaryRemainingPercent != null)) {
     chips.push({
       key: `${account.accountId}-primary`,
-      label: `${formatWindowLabel("primary", account.windowMinutesPrimary)} ${formatPercentNullable(account.usage?.primaryRemainingPercent)} left`,
+      label: t("apiKeys.accountSelect.limitLeft", {
+        label: formatWindowLabel("primary", account.windowMinutesPrimary),
+        percent: formatPercentNullable(account.usage?.primaryRemainingPercent),
+      }),
       percent: account.usage?.primaryRemainingPercent ?? null,
     });
   }
-  if (
-    !monthlyOnly &&
-    (account.windowMinutesSecondary != null ||
-      account.usage?.secondaryRemainingPercent != null)
-  ) {
+  if (!monthlyOnly && (account.windowMinutesSecondary != null || account.usage?.secondaryRemainingPercent != null)) {
     chips.push({
       key: `${account.accountId}-secondary`,
-      label: `${formatWindowLabel("secondary", account.windowMinutesSecondary)} ${formatPercentNullable(account.usage?.secondaryRemainingPercent)} left`,
+      label: t("apiKeys.accountSelect.limitLeft", {
+        label: formatWindowLabel("secondary", account.windowMinutesSecondary),
+        percent: formatPercentNullable(account.usage?.secondaryRemainingPercent),
+      }),
       percent: account.usage?.secondaryRemainingPercent ?? null,
     });
   }
@@ -75,27 +77,29 @@ function buildLimitChips(account: AccountSummary): LimitChip[] {
   return chips;
 }
 
-
-
-
-
 function chipToneClass(percent: number | null): string {
   if (percent === null) {
     return "border-border bg-muted text-muted-foreground";
   }
-  if (percent < 20) {
-    return "border-border bg-muted font-semibold text-foreground";
+
+  if (percent >= 70) {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   }
-  return "border-border bg-muted text-foreground";
+  if (percent >= 30) {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
+  return "border-red-500/20 bg-red-500/10 text-red-700 dark:text-red-300";
 }
 
 function AccountOption({ account }: { account: AccountSummary }) {
+  const { t } = useTranslation();
+  const status = normalizeStatus(account.status);
   const title = account.displayName || account.email;
   const subtitle =
     account.displayName && account.displayName !== account.email
       ? `${account.email} · ${formatSlug(account.planType)}`
       : formatSlug(account.planType);
-  const limitChips = buildLimitChips(account);
+  const limitChips = buildLimitChips(account, t);
 
   return (
     <div className="min-w-0 flex-1 py-0.5">
@@ -104,12 +108,12 @@ function AccountOption({ account }: { account: AccountSummary }) {
           <div className="truncate text-sm font-medium">{title}</div>
           <div
             className="truncate text-[11px] text-muted-foreground"
-            title={`Account ID ${account.accountId}`}
+            title={t("accounts.detail.accountIdTitle", { accountId: account.accountId })}
           >
             {subtitle}
           </div>
         </div>
-        <StatusGlyph status={account.status} className="shrink-0" />
+        <StatusBadge status={status} />
       </div>
 
       <div className="mt-1.5 flex flex-wrap gap-1">
@@ -132,19 +136,24 @@ function AccountOption({ account }: { account: AccountSummary }) {
 export function AccountMultiSelect({
   value,
   onChange,
-  placeholder = "All accounts",
+  placeholder,
+  triggerId,
+  ariaInvalid = false,
+  ariaDescribedBy,
+  triggerClassName,
+  allowPausedAccounts = false,
 }: AccountMultiSelectProps) {
+  const { t } = useTranslation();
+  const placeholderLabel = placeholder ?? t("apiKeys.accountSelect.all");
   const { accountsQuery } = useAccounts();
-  const accounts = useMemo(
-    () => accountsQuery.data ?? [],
-    [accountsQuery.data],
-  );
+  const accounts = useMemo(() => accountsQuery.data ?? [], [accountsQuery.data]);
   const selectableAccounts = useMemo(
     () =>
-      accounts.filter((account) =>
-        isAccountAssignmentSelectable(account.status),
+      accounts.filter(
+        (account) =>
+          isAccountAssignmentSelectable(account.status) || (allowPausedAccounts && account.status === "paused"),
       ),
-    [accounts],
+    [accounts, allowPausedAccounts],
   );
   const [search, setSearch] = useState("");
 
@@ -163,13 +172,8 @@ export function AccountMultiSelect({
   const selectedAccounts = useMemo(
     () =>
       value
-        .map((accountId) =>
-          accounts.find((account) => account.accountId === accountId),
-        )
-        .filter(
-          (account): account is (typeof accounts)[number] =>
-            account !== undefined,
-        ),
+        .map((accountId) => accounts.find((account) => account.accountId === accountId))
+        .filter((account): account is (typeof accounts)[number] => account !== undefined),
     [accounts, value],
   );
 
@@ -196,9 +200,7 @@ export function AccountMultiSelect({
   }, [onChange]);
 
   const label =
-    value.length === 0
-      ? placeholder
-      : `${value.length} account${value.length > 1 ? "s" : ""} selected`;
+    value.length === 0 ? placeholderLabel : t("apiKeys.accountSelect.selected", { count: value.length });
 
   return (
     <div className="space-y-1.5">
@@ -207,24 +209,24 @@ export function AccountMultiSelect({
           <Button
             type="button"
             variant="outline"
-            className="w-full justify-between font-normal"
+            id={triggerId}
+            aria-invalid={ariaInvalid}
+            aria-describedby={ariaDescribedBy}
+            className={cn("w-full justify-between font-normal", triggerClassName)}
             disabled={accountsQuery.isLoading}
           >
             <span className="truncate text-left">
-              {accountsQuery.isLoading ? "Loading accounts..." : label}
+              {accountsQuery.isLoading ? t("apiKeys.accountSelect.loading") : label}
             </span>
             <ChevronsUpDown className="ml-1 size-4 shrink-0 opacity-50" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="start"
-          className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64"
-        >
+        <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64">
           <div className="px-2 py-1.5">
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search accounts..."
+              placeholder={t("accounts.list.searchPlaceholder")}
               className="h-7 text-xs"
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => event.stopPropagation()}
@@ -236,7 +238,7 @@ export function AccountMultiSelect({
             onCheckedChange={selectAll}
             onSelect={(event) => event.preventDefault()}
           >
-            All accounts
+            {t("apiKeys.accountSelect.all")}
           </DropdownMenuCheckboxItem>
           <DropdownMenuSeparator />
           {filtered.map((account) => (
@@ -251,9 +253,7 @@ export function AccountMultiSelect({
             </DropdownMenuCheckboxItem>
           ))}
           {filtered.length === 0 ? (
-            <div className="px-2 py-1.5 text-xs text-muted-foreground">
-              No accounts found
-            </div>
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">{t("apiKeys.accountSelect.empty")}</div>
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -261,11 +261,7 @@ export function AccountMultiSelect({
       {selectedAccounts.length > 0 ? (
         <div className="flex flex-wrap gap-1">
           {selectedAccounts.map((account) => (
-            <Badge
-              key={account.accountId}
-              variant="secondary"
-              className="gap-1 text-xs"
-            >
+            <Badge key={account.accountId} variant="secondary" className="gap-1 text-xs">
               {account.email}
               <button
                 type="button"

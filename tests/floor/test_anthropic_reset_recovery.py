@@ -10,8 +10,8 @@ from app.core.utils.time import utcnow
 from app.db.account_state_models import ResetCreditAttempt
 from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal
+from app.modules.accounts import anthropic_reset_service as service_module
 from app.modules.accounts import api as accounts_api
-from app.modules.accounts import service as service_module
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.reset_credit_attempts import ResetCreditAttemptsRepository
 from app.modules.accounts.service import AccountResetCreditsUnavailableError, AccountsService

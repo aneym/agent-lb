@@ -22,7 +22,7 @@ from app.core.clients.codex import (
     require_route_or_direct_egress_opt_in,
 )
 from app.core.clients.http import lease_http_session
-from app.core.config.settings import get_settings
+from app.core.config.settings import AUTH_BASE_URL, OAUTH_CLIENT_ID, OAUTH_REDIRECT_URI, get_settings
 from app.core.types import JsonObject
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 from app.core.utils.request_id import get_request_id
@@ -68,7 +68,7 @@ def pkce_challenge(verifier: str) -> str:
 
 def generate_pkce_pair() -> tuple[str, str]:
     verifier = secrets.token_urlsafe(32)
-    return verifier, pkce_challenge(verifier)
+    return (verifier, pkce_challenge(verifier))
 
 
 def build_authorization_url(
@@ -94,13 +94,7 @@ def build_authorization_url(
         "code_challenge_method": "S256",
         "state": state,
     }
-    params.update(
-        extra_params
-        or {
-            "id_token_add_organizations": "true",
-            "codex_cli_simplified_flow": "true",
-        }
-    )
+    params.update(extra_params or {"id_token_add_organizations": "true", "codex_cli_simplified_flow": "true"})
     params["originator"] = originator or settings.oauth_originator
     query = urlencode(params, quote_via=quote)
     return f"{auth_base}/oauth/authorize?{query}"
@@ -120,25 +114,22 @@ async def exchange_authorization_code(
     allow_direct_egress: bool = False,
 ) -> OAuthTokens:
     settings = get_settings()
-    url = f"{(base_url or settings.auth_base_url).rstrip('/')}/oauth/token"
+    url = f"{(base_url or AUTH_BASE_URL).rstrip('/')}/oauth/token"
     payload = {
         "grant_type": "authorization_code",
-        "client_id": client_id or settings.oauth_client_id,
+        "client_id": client_id or OAUTH_CLIENT_ID,
         "code": code,
         "code_verifier": code_verifier,
-        "redirect_uri": redirect_uri or settings.oauth_redirect_uri,
+        "redirect_uri": redirect_uri or OAUTH_REDIRECT_URI,
     }
     encoded = urlencode(payload, quote_via=quote)
     timeout = aiohttp.ClientTimeout(total=timeout_seconds or settings.oauth_timeout_seconds)
-
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     request_id = get_request_id()
     if request_id:
         headers["x-request-id"] = request_id
     require_route_or_direct_egress_opt_in(
-        route=route,
-        allow_direct_egress=allow_direct_egress,
-        operation="OAuth token exchange",
+        route=route, allow_direct_egress=allow_direct_egress, operation="OAuth token exchange"
     )
     if route is not None:
         resp = await _codex_post(
@@ -164,20 +155,12 @@ async def exchange_authorization_code(
             raise error
         return _parse_tokens(payload)
     async with lease_http_session(session) as client_session:
-        async with client_session.post(
-            url,
-            data=encoded,
-            headers=headers,
-            timeout=timeout,
-        ) as resp:
+        async with client_session.post(url, data=encoded, headers=headers, timeout=timeout) as resp:
             data = await _safe_json(resp)
             try:
                 payload = OAuthTokenPayload.model_validate(data)
             except ValidationError as exc:
-                logger.warning(
-                    "OAuth token response invalid request_id=%s",
-                    get_request_id(),
-                )
+                logger.warning("OAuth token response invalid request_id=%s", get_request_id())
                 raise OAuthError("invalid_response", "OAuth response invalid") from exc
             if resp.status >= 400:
                 error = _oauth_error_from_payload(payload, resp.status)
@@ -189,7 +172,6 @@ async def exchange_authorization_code(
                     error.message[:200],
                 )
                 raise error
-
     return _parse_tokens(payload)
 
 
@@ -204,21 +186,16 @@ async def request_device_code(
     allow_direct_egress: bool = False,
 ) -> DeviceCode:
     settings = get_settings()
-    auth_base = (base_url or settings.auth_base_url).rstrip("/")
+    auth_base = (base_url or AUTH_BASE_URL).rstrip("/")
     url = f"{auth_base}/api/accounts/deviceauth/usercode"
-    payload = {
-        "client_id": client_id or settings.oauth_client_id,
-    }
+    payload = {"client_id": client_id or OAUTH_CLIENT_ID}
     timeout = aiohttp.ClientTimeout(total=timeout_seconds or settings.oauth_timeout_seconds)
-
     headers: dict[str, str] = {}
     request_id = get_request_id()
     if request_id:
         headers["x-request-id"] = request_id
     require_route_or_direct_egress_opt_in(
-        route=route,
-        allow_direct_egress=allow_direct_egress,
-        operation="device code request",
+        route=route, allow_direct_egress=allow_direct_egress, operation="device code request"
     )
     if route is not None:
         resp = await _codex_post(
@@ -235,10 +212,7 @@ async def request_device_code(
             if status == 404:
                 raise OAuthError(
                     "device_auth_unavailable",
-                    (
-                        "Device code login is not enabled for this Codex server. "
-                        "Use the browser login or verify the server URL."
-                    ),
+                    "Device code login is not enabled for this Codex server. Use the browser login or verify the server URL.",
                     status,
                 )
             logger.warning("Device auth request failed request_id=%s status=%s", get_request_id(), status)
@@ -252,21 +226,12 @@ async def request_device_code(
                     if resp.status == 404:
                         raise OAuthError(
                             "device_auth_unavailable",
-                            (
-                                "Device code login is not enabled for this Codex server. "
-                                "Use the browser login or verify the server URL."
-                            ),
+                            "Device code login is not enabled for this Codex server. Use the browser login or verify the server URL.",
                             resp.status,
                         )
-                    logger.warning(
-                        "Device auth request failed request_id=%s status=%s",
-                        get_request_id(),
-                        resp.status,
-                    )
+                    logger.warning("Device auth request failed request_id=%s status=%s", get_request_id(), resp.status)
                     raise OAuthError(
-                        "device_auth_failed",
-                        f"Device code request failed with status {resp.status}",
-                        resp.status,
+                        "device_auth_failed", f"Device code request failed with status {resp.status}", resp.status
                     )
                 payload_data = _validate_device_code_payload(data)
     verification_url = f"{auth_base}/codex/device"
@@ -276,10 +241,8 @@ async def request_device_code(
     expires_in = payload_data.expires_in or 0
     if expires_in <= 0:
         expires_in = _expires_in_seconds(payload_data.expires_at) or 900
-
     if not user_code or not device_auth_id:
         raise OAuthError("invalid_response", "Device auth response missing fields")
-
     return DeviceCode(
         verification_url=verification_url,
         user_code=user_code,
@@ -301,18 +264,15 @@ async def exchange_device_token(
     allow_direct_egress: bool = False,
 ) -> OAuthTokens | None:
     settings = get_settings()
-    url = f"{(base_url or settings.auth_base_url).rstrip('/')}/api/accounts/deviceauth/token"
+    url = f"{(base_url or AUTH_BASE_URL).rstrip('/')}/api/accounts/deviceauth/token"
     payload = {"device_auth_id": device_auth_id, "user_code": user_code}
     timeout = aiohttp.ClientTimeout(total=timeout_seconds or settings.oauth_timeout_seconds)
-
     headers: dict[str, str] = {}
     request_id = get_request_id()
     if request_id:
         headers["x-request-id"] = request_id
     require_route_or_direct_egress_opt_in(
-        route=route,
-        allow_direct_egress=allow_direct_egress,
-        operation="device token exchange",
+        route=route, allow_direct_egress=allow_direct_egress, operation="device token exchange"
     )
     if route is not None:
         resp = await _codex_post(
@@ -345,31 +305,25 @@ async def exchange_device_token(
                 if resp.status >= 400:
                     if _is_pending_error(payload_data):
                         return None
-                    logger.warning(
-                        "Device token request failed request_id=%s status=%s",
-                        get_request_id(),
-                        resp.status,
-                    )
+                    logger.warning("Device token request failed request_id=%s status=%s", get_request_id(), resp.status)
                     raise _oauth_error_from_payload(payload_data, resp.status)
                 if _is_pending_error(payload_data):
                     return None
-
     if payload_data.authorization_code:
         if not payload_data.code_verifier:
             raise OAuthError("invalid_response", "Device auth response missing code verifier")
-        redirect_uri = f"{(base_url or settings.auth_base_url).rstrip('/')}/deviceauth/callback"
+        redirect_uri = f"{(base_url or AUTH_BASE_URL).rstrip('/')}/deviceauth/callback"
         return await exchange_authorization_code(
             code=payload_data.authorization_code,
             code_verifier=payload_data.code_verifier,
             redirect_uri=redirect_uri,
             base_url=base_url,
-            client_id=settings.oauth_client_id,
+            client_id=OAUTH_CLIENT_ID,
             timeout_seconds=timeout_seconds,
             route=route,
             codex_client=codex_client,
             allow_direct_egress=allow_direct_egress,
         )
-
     return _parse_tokens(payload_data)
 
 
@@ -380,12 +334,10 @@ def _ensure_offline_access(scope: str) -> str:
 
 
 def _parse_tokens(payload: OAuthTokenPayload) -> OAuthTokens:
-    if not payload.access_token or not payload.refresh_token or not payload.id_token:
+    if not payload.access_token or not payload.refresh_token or (not payload.id_token):
         raise OAuthError("invalid_response", "OAuth response missing tokens")
     return OAuthTokens(
-        access_token=payload.access_token,
-        refresh_token=payload.refresh_token,
-        id_token=payload.id_token,
+        access_token=payload.access_token, refresh_token=payload.refresh_token, id_token=payload.id_token
     )
 
 
@@ -399,11 +351,7 @@ async def _safe_json(resp: aiohttp.ClientResponse) -> JsonObject:
 
 
 async def _codex_post(
-    url: str,
-    *,
-    route: ResolvedUpstreamRoute,
-    codex_client: CodexClient | None,
-    **kwargs: Any,
+    url: str, *, route: ResolvedUpstreamRoute, codex_client: CodexClient | None, **kwargs: Any
 ) -> Any:
     owns_codex_client = codex_client is None
     active_codex_client = codex_client or CodexClient(create_codex_session())

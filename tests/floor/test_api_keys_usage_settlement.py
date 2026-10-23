@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.exc import OperationalError
 
+from app.core.utils.time import utcnow
 from app.db.request_models import LimitType
+from app.modules.api_keys.last_used_coalescer import ApiKeyLastUsedCoalescer
 from app.modules.api_keys.repository_data import UsageReservationData
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyCreateData, LimitRuleInput
@@ -259,9 +261,10 @@ async def test_finalize_usage_reservation_is_idempotent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_finalize_usage_reservation_updates_last_used_in_settlement_commit() -> None:
+async def test_finalize_usage_reservation_records_last_used_in_coalescer() -> None:
     repo = _FakeApiKeysRepository()
-    service = ApiKeysService(repo)
+    coalescer = ApiKeyLastUsedCoalescer()
+    service = ApiKeysService(repo, last_used_coalescer=coalescer)
     created = await service.create_key(
         ApiKeyCreateData(
             name="reservation-last-used-key",
@@ -287,8 +290,11 @@ async def test_finalize_usage_reservation_updates_last_used_in_settlement_commit
 
     stored = await repo.get_by_id(created.id)
     assert stored is not None
-    assert stored.last_used_at is not None
-    assert repo.update_last_used_commit_flags == [False]
+    assert stored.last_used_at is None
+    assert repo.update_last_used_commit_flags == []
+    pending = coalescer.pending_snapshot()
+    assert set(pending) == {created.id}
+    assert pending[created.id] <= utcnow()
     assert repo.commit_count == initial_commit_count + 2
 
 
