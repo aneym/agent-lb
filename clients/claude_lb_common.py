@@ -28,7 +28,9 @@ def remote_only_mac() -> bool:
 
 
 def default_remote_url() -> str:
-    return STUDIO_LB_URL if remote_only_mac() else LOCAL_LB_URL
+    if remote_only_mac() or sys.platform.startswith("linux"):
+        return STUDIO_LB_URL
+    return LOCAL_LB_URL
 
 
 class LaunchConfig:
