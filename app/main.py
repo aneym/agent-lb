@@ -407,6 +407,7 @@ def configure_app(app: FastAPI, settings) -> None:
     app.include_router(usage_api.router)
     app.include_router(public_usage_api.router)
     app.include_router(request_logs_api.router)
+    app.include_router(request_logs_api.factory_router)
     app.include_router(receipts_api.router)
     app.include_router(routing_view_api.router)
     app.include_router(routing_policy_api.router)

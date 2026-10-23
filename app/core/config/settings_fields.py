@@ -234,6 +234,7 @@ class SettingsFields(BaseSettings):
     proxy_unauthenticated_client_cidrs: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     identity_enabled: bool = True
+    factory_usage_token: str = ""
     identity_owner: str = "owner"
     identity_owner_machines: Annotated[list[str], NoDecode] = Field(default_factory=list)
     identity_local_machine: str | None = None

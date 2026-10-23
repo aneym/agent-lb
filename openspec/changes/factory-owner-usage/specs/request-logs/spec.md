@@ -10,3 +10,15 @@ The service SHALL persist factory project, owner, host and job on request log ro
 #### Scenario: Ordinary traffic
 - **WHEN** a request has no valid factory project and job headers
 - **THEN** the factory fields are null
+
+
+### Requirement: Read factory usage
+A dedicated owner-configured token SHALL authorize a read-only factory usage endpoint. It SHALL return only factory attribution and token totals for the requested project, without account credentials or request content. Project and job headers remain owner-attested until workload identity verification is installed.
+
+#### Scenario: Missing usage token
+- **WHEN** a caller reads factory usage without the configured token
+- **THEN** the endpoint returns 403
+
+#### Scenario: Two owners
+- **WHEN** attributed requests from both owner instances are queried
+- **THEN** the result retains each serving owner and host
