@@ -46,7 +46,6 @@ ADOPTED_KEEP_NAMES = (
     "agent-lb-bootout-guard.sh",
     "dangerous-command-guard.sh",
     "link-cli-guard.sh",
-    "workflow-relay-guard.py",
 )
 
 MANAGED_HOOKS = (
@@ -55,7 +54,6 @@ MANAGED_HOOKS = (
     "no_chrome_shell.py",
     "no_chrome_argv.py",
     "no_chrome_python.py",
-    "claude-grind-pulse.py",
     "idle-agents.py",
     "branch-guard.py",
     "hook_output.py",
@@ -80,14 +78,12 @@ MANAGED_HOOKS = (
     "railway-vars-guard.sh",
     "dangerous-command-guard.sh",
     "link-cli-guard.sh",
-    "workflow-relay-guard.py",
     "plutil-guard.sh",
     "kill-scope-guard.py",
     "host-credential-guard.py",
     "gh-write-guard.py",
     "merge-gate-guard.py",
     "main-checkout-write-warn.py",
-    "poll-loop-warn.py",
     "hook-dispatch.py",
     "hook_dispatch_answers.py",
     "hook_dispatch_planning.py",
@@ -110,11 +106,8 @@ DISPATCH_INPROC = (
     "no-direct-merge.py",
     "box-offload-hook",
     "lane-bulletin-hook",
-    "claude-grind-pulse.py",
-    "workflow-relay-guard.py",
     "herdr-tab-autoname.py",
     "idle-agents.py",
     "merge-gate-guard.py",
     "main-checkout-write-warn.py",
-    "poll-loop-warn.py",
 )
