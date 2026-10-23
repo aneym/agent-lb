@@ -4,6 +4,7 @@ import Foundation
 
 
 enum ProviderScope: String, CaseIterable, Sendable {
+  static let allCases: [ProviderScope] = [.all, .openai, .anthropic, .cursor, .devin, .other]
   case all
   case openai
   case anthropic
@@ -33,6 +34,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
 
   func includes(_ seat: SeatAccount) -> Bool {
     if self == .all { return true }
+    if self == .other { return seat.vendor.lowercased() == "muse" }
     return seat.vendor.lowercased() == rawValue && isSeatVendor
   }
 
@@ -44,7 +46,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
     if self == .all { return true }
     let provider = account.provider.lowercased()
     if self == .other {
-      return !["openai", "anthropic", "cursor", "devin", "muse"].contains(provider)
+      return !["openai", "anthropic", "cursor", "devin"].contains(provider)
     }
     return provider == rawValue
   }
@@ -65,13 +67,13 @@ enum ProviderScope: String, CaseIterable, Sendable {
     for account in accounts where account.isHeadlineCountable {
       counts[.all, default: 0] += 1
       let providerScope = ProviderScope(rawValue: account.provider.lowercased()) ?? .other
-      let scope: ProviderScope = providerScope == .all ? .other : providerScope
+      let scope: ProviderScope = providerScope == .all || providerScope == .muse ? .other : providerScope
       counts[scope, default: 0] += 1
     }
     for seat in seats {
       counts[.all, default: 0] += 1
       if let scope = seat.scope {
-        counts[scope, default: 0] += 1
+        counts[scope == .muse ? .other : scope, default: 0] += 1
       }
     }
     return counts

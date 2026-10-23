@@ -36,7 +36,8 @@ final class AppState {
 
 
   var providerScope: ProviderScope = {
-    ProviderScope(rawValue: UserDefaults.standard.string(forKey: "providerScope") ?? "") ?? .all
+    let saved = UserDefaults.standard.string(forKey: "providerScope") ?? ""
+    return saved == "muse" ? .other : (ProviderScope(rawValue: saved) ?? .all)
   }()
 
   private let client = APIClient()

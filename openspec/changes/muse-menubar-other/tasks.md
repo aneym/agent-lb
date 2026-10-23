@@ -1,0 +1,4 @@
+- [x] Inspect Kimi/Muse native grouping and canonical pool state.
+- [x] Group Muse seats/accounts and counts under Other; migrate saved selection.
+- [ ] Build signed bundle and verify checks.
+- [ ] Sync identical landed bundle to Studio and Book, preserving preferences.

@@ -75,7 +75,8 @@ struct AccountRow: View {
   }
 
   private var ringPercent: Double? {
-    isCodex
+    if account.provider.lowercased() == "kimi" { return nil }
+    return isCodex
       ? account.usage.secondaryRemainingPercent
       : account.usage.primaryRemainingPercent
   }
@@ -299,7 +300,18 @@ struct AccountRow: View {
   }
 
 
+  @ViewBuilder
   private var windowGrid: some View {
+    if account.provider.lowercased() == "kimi" {
+      Text("Kimi · quota not reported")
+        .font(.system(size: 10, design: .monospaced))
+        .foregroundStyle(.secondary)
+    } else {
+      standardWindowGrid
+    }
+  }
+
+  private var standardWindowGrid: some View {
     var cells: [RowWindow] = []
     if !isCodex {
       cells.append(RowWindow(

@@ -17,7 +17,7 @@ struct RootView: View {
   @AppStorage("recentExpanded") private var recentExpanded = true
 
   private var scope: ProviderScope {
-    ProviderScope(rawValue: providerScopeRaw) ?? .all
+    providerScopeRaw == "muse" ? .other : (ProviderScope(rawValue: providerScopeRaw) ?? .all)
   }
 
 
