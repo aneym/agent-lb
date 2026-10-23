@@ -1,0 +1,350 @@
+#!/usr/bin/env python3
+# codex-lb-launch — run the Codex CLI through a bounded local CONNECT proxy.
+# Vendored, dependency-free (stdlib only).
+#
+# The proxy is a blind tunnel: it never terminates TLS or rewrites requests.
+# Every tunnel in the proxy process draws from one aggregate bandwidth bucket,
+# and the number of tunnels open at once is capped so a Codex session that
+# opens many concurrent connections cannot grow sockets, threads and buffers
+# without bound. A CONNECT past the cap is refused with 503 + Retry-After
+# instead of queueing, so the client backs off and retries. The proxy dies
+# with its parent.
+#
+# Usage:
+#   clients/codex-lb-launch [codex args...]
+#
+# Env:
+#   CODEX_LB_TUNNEL_RATE_MBPS  aggregate tunnel relay rate, upload + download
+#                              combined (default 40; <=0 or NaN disables pacing)
+#   CODEX_LB_MAX_TUNNELS       concurrent tunnel cap (default 64; <=0 disables)
+#   CODEX_LB_DRY_RUN=1         print the final command instead of exec'ing it
+
+from __future__ import annotations
+
+import http.server
+import math
+import os
+import select
+import shlex
+import socket
+import socketserver
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+TUNNEL_RATE_MBPS_DEFAULT = 40.0
+MAX_TUNNELS_DEFAULT = 64
+TUNNEL_RETRY_AFTER_SECONDS = 1
+CLIENT_IDLE_TIMEOUT_SECONDS = 30.0
+UPSTREAM_CONNECT_TIMEOUT_SECONDS = 20.0
+PROXY_START_TIMEOUT_SECONDS = 5.0
+PROXY_ENV_NAMES = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy")
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+class _TunnelBucket:
+    """Aggregate rate limiter shared by every tunnel in a proxy process.
+
+    Earliest-departure-time pacing: each chunk books its transmission slot
+    under the lock and sleeps until that slot, so admission is FIFO by arrival
+    and no chunk size can exceed the budget into an unsatisfiable wait.
+    """
+
+    # Writes this small skip the sleep while the booked backlog stays under one
+    # burst window. They still debit the schedule, so a stream chunked small to
+    # dodge shaping steals at most one burst window before it throttles.
+    SMALL_WRITE_BYTES = 8192
+
+    def __init__(self, rate_bytes_per_second: float, burst_bytes: float | None = None) -> None:
+        self.rate = rate_bytes_per_second
+        # Burst is one second of budget, floored at two relay chunks so a tiny
+        # configured rate cannot stall a single 64KB recv() indefinitely.
+        capacity = max(rate_bytes_per_second, 131072.0) if burst_bytes is None else burst_bytes
+        self.burst_seconds = capacity / rate_bytes_per_second if rate_bytes_per_second > 0 else 0.0
+        self.next_free = time.monotonic() - self.burst_seconds
+        self.lock = threading.Lock()
+
+    def throttle(self, nbytes: int) -> None:
+        if self.rate <= 0:
+            return
+        with self.lock:
+            now = time.monotonic()
+            base = max(self.next_free, now - self.burst_seconds)
+            wait = base - now
+            self.next_free = base + nbytes / self.rate
+        if nbytes <= self.SMALL_WRITE_BYTES and wait <= self.burst_seconds:
+            return
+        while wait > 0:
+            step = min(wait, 0.5)
+            time.sleep(step)
+            wait -= step
+
+
+class _TunnelLimiter:
+    """Hard cap on tunnels open at once in a proxy process.
+
+    Non-blocking: a caller past the cap is told no immediately, so refused
+    connections never hold a thread or socket while they wait for a slot.
+    """
+
+    def __init__(self, max_tunnels: int) -> None:
+        self.max_tunnels = max_tunnels
+        self.active = 0
+        self.lock = threading.Lock()
+
+    def try_acquire(self) -> bool:
+        with self.lock:
+            if self.active >= self.max_tunnels:
+                return False
+            self.active += 1
+            return True
+
+    def release(self) -> None:
+        with self.lock:
+            if self.active > 0:
+                self.active -= 1
+
+
+def _tunnel_bucket_from_env() -> _TunnelBucket | None:
+    rate_mbps = _env_float("CODEX_LB_TUNNEL_RATE_MBPS", TUNNEL_RATE_MBPS_DEFAULT)
+    # NaN passes a plain <=0 gate and would poison every sleep computation.
+    if not math.isfinite(rate_mbps) or rate_mbps <= 0:
+        return None
+    return _TunnelBucket(rate_mbps * 125_000.0)
+
+
+def _tunnel_limiter_from_env() -> _TunnelLimiter | None:
+    max_tunnels = _env_int("CODEX_LB_MAX_TUNNELS", MAX_TUNNELS_DEFAULT)
+    if max_tunnels <= 0:
+        return None
+    return _TunnelLimiter(max_tunnels)
+
+
+def _parse_connect_target(target: str) -> tuple[str, int] | None:
+    host, separator, port_text = target.rpartition(":")
+    if not separator or not host or not port_text.isdigit():
+        return None
+    port = int(port_text)
+    host = host.strip("[]")
+    if not host or not 1 <= port <= 65535 or any(char.isspace() for char in host):
+        return None
+    return host, port
+
+
+def _splice(
+    a: socket.socket,
+    b: socket.socket,
+    bucket: _TunnelBucket | None = None,
+) -> tuple[int, int]:
+    """Pump bytes both ways until either side closes. Returns (a->b, b->a)."""
+    ends = (a, b)
+    a_to_b = 0
+    b_to_a = 0
+    try:
+        while True:
+            readable, _, errored = select.select(ends, [], ends, 300)
+            if errored:
+                break
+            for src in readable:
+                dst = b if src is a else a
+                try:
+                    data = src.recv(65536)
+                except OSError:
+                    return a_to_b, b_to_a
+                if not data:
+                    return a_to_b, b_to_a
+                if bucket is not None:
+                    bucket.throttle(len(data))
+                try:
+                    dst.sendall(data)
+                except OSError:
+                    return a_to_b, b_to_a
+                if src is a:
+                    a_to_b += len(data)
+                else:
+                    b_to_a += len(data)
+    finally:
+        for sock in ends:
+            try:
+                sock.close()
+            except OSError:
+                pass
+    return a_to_b, b_to_a
+
+
+class _ProxyHandler(http.server.BaseHTTPRequestHandler):
+    """Blind CONNECT proxy; every other method is refused."""
+
+    protocol_version = "HTTP/1.1"
+    timeout = CLIENT_IDLE_TIMEOUT_SECONDS
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_CONNECT(self) -> None:
+        self.close_connection = True
+        target = _parse_connect_target(self.path)
+        if target is None:
+            self._reply(400, "Bad Request")
+            return
+        limiter = getattr(self.server, "tunnel_limiter", None)
+        if limiter is not None and not limiter.try_acquire():
+            self._reply(503, "Service Unavailable", retry_after=TUNNEL_RETRY_AFTER_SECONDS)
+            return
+        try:
+            self._tunnel(*target)
+        finally:
+            if limiter is not None:
+                limiter.release()
+
+    def _refuse(self) -> None:
+        self.close_connection = True
+        self._reply(405, "Method Not Allowed")
+
+    do_GET = _refuse
+    do_HEAD = _refuse
+    do_POST = _refuse
+    do_PUT = _refuse
+    do_DELETE = _refuse
+    do_PATCH = _refuse
+    do_OPTIONS = _refuse
+
+    def _reply(self, status: int, reason: str, *, retry_after: int | None = None) -> None:
+        lines = [f"HTTP/1.1 {status} {reason}", "content-length: 0", "connection: close"]
+        if retry_after is not None:
+            lines.append(f"retry-after: {retry_after}")
+        try:
+            self.connection.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("ascii"))
+        except OSError:
+            pass
+
+    def _tunnel(self, host: str, port: int) -> None:
+        try:
+            upstream = socket.create_connection((host, port), timeout=UPSTREAM_CONNECT_TIMEOUT_SECONDS)
+        except OSError:
+            self._reply(502, "Bad Gateway")
+            return
+        try:
+            self.connection.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        except OSError:
+            try:
+                upstream.close()
+            except OSError:
+                pass
+            return
+        # Established tunnels stay open while idle; select() drives them.
+        self.connection.settimeout(None)
+        upstream.settimeout(None)
+        _splice(self.connection, upstream, getattr(self.server, "tunnel_bucket", None))
+
+
+class _ThreadingProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    """Threaded CONNECT proxy on an ephemeral loopback port."""
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def handle_error(self, request: object, client_address: object) -> None:
+        return
+
+
+def _build_proxy_server(listen_port: int = 0) -> _ThreadingProxyServer:
+    server = _ThreadingProxyServer(("127.0.0.1", listen_port), _ProxyHandler)
+    server.tunnel_bucket = _tunnel_bucket_from_env()
+    server.tunnel_limiter = _tunnel_limiter_from_env()
+    return server
+
+
+def run_proxy(ready_path: str, parent_pid: int) -> None:
+    server = _build_proxy_server()
+    port = server.server_address[1]
+    ready = Path(ready_path)
+    tmp = ready.with_name(ready.name + ".tmp")
+    tmp.write_text(f"{port}\n")
+    os.replace(tmp, ready)
+
+    def stop_when_parent_exits() -> None:
+        while True:
+            try:
+                os.kill(parent_pid, 0)
+            except OSError:
+                server.shutdown()
+                return
+            time.sleep(2.0)
+
+    threading.Thread(target=stop_when_parent_exits, daemon=True).start()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        try:
+            ready.unlink()
+        except OSError:
+            pass
+
+
+def _start_proxy() -> str:
+    ready_dir = Path(tempfile.mkdtemp(prefix="codex-lb-proxy-"))
+    ready = ready_dir / "port"
+    subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "--proxy", str(ready), str(os.getpid())],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + PROXY_START_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            port = int(ready.read_text().strip())
+        except (OSError, ValueError):
+            time.sleep(0.02)
+            continue
+        if 1 <= port <= 65535:
+            return f"http://127.0.0.1:{port}"
+    raise SystemExit("codex-lb-launch: local tunnel proxy did not start")
+
+
+def _append_no_proxy(env: dict[str, str], hosts: tuple[str, ...]) -> None:
+    for name in ("NO_PROXY", "no_proxy"):
+        entries = [entry.strip() for entry in env.get(name, "").split(",") if entry.strip()]
+        entries.extend(host for host in hosts if host not in entries)
+        env[name] = ",".join(entries)
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[0] == "--proxy":
+        run_proxy(argv[1], int(argv[2]))
+        return 0
+    command = ["codex", *argv]
+    if os.environ.get("CODEX_LB_DRY_RUN") == "1":
+        print(shlex.join(command))
+        return 0
+    proxy_url = _start_proxy()
+    env = dict(os.environ)
+    for name in PROXY_ENV_NAMES:
+        env[name] = proxy_url
+    _append_no_proxy(env, LOOPBACK_HOSTS)
+    os.execvpe(command[0], command, env)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
