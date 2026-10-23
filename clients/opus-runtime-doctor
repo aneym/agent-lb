@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import resource
 import secrets
 import shlex
 import signal
@@ -600,7 +601,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _raise_fd_soft_limit() -> None:
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = 10240 if hard == resource.RLIM_INFINITY else min(10240, hard)
+        if soft != resource.RLIM_INFINITY and soft < target:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (OSError, ValueError):
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _raise_fd_soft_limit()
     args = parse_args(sys.argv[1:] if argv is None else argv)
     if args.schedule:
         return schedule()
