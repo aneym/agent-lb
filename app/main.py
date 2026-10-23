@@ -63,6 +63,7 @@ from app.modules.pools import api as pools_api
 from app.modules.pools.seat_quota_scheduler import build_seat_quota_scheduler
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy import meta_service as meta_api
+from app.modules.proxy.models_api import router as models_router
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.proxy.ring_membership import (
     RING_HEARTBEAT_INTERVAL_SECONDS,
@@ -397,6 +398,7 @@ def configure_app(app: FastAPI, settings) -> None:
         proxy_api.usage_router,
     ):
         app.include_router(router)
+    app.include_router(models_router)
     app.include_router(meta_api.router)
     app.include_router(meta_api.provider_router)
     app.include_router(audit_api.router)

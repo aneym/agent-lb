@@ -2247,7 +2247,7 @@ def _codex_model_entries(
 
 
 async def _build_models_response(api_key: ApiKeyData | None) -> Response:
-    from app.modules.proxy.models_api import _build_models_response as build
+    from app.modules.proxy.models_api import build_models_response as build
 
     return await build(api_key)
 

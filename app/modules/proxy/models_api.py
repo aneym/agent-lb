@@ -2,15 +2,47 @@ from __future__ import annotations
 
 import time
 
-from fastapi import Response
+from fastapi import APIRouter, Depends, Response, Security
 from fastapi.responses import JSONResponse
 
+from app.core.auth.dependencies import set_openai_error_format, validate_proxy_api_key
+from app.core.errors import openai_error
 from app.core.openai.model_registry import get_model_registry, is_public_model
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy.schemas import ModelListItem, ModelListResponse
 
+router = APIRouter(
+    prefix="/v1",
+    tags=["proxy"],
+    dependencies=[Depends(set_openai_error_format), Security(validate_proxy_api_key)],
+)
 
-async def _build_models_response(api_key: ApiKeyData | None) -> Response:
+
+@router.get("/models/{model_id:path}", response_model=ModelListItem)
+async def retrieve_model(
+    model_id: str,
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    catalog = await build_models_catalog(api_key)
+    for model in catalog.data:
+        if model.id == model_id:
+            return JSONResponse(content=model.model_dump(mode="json"))
+    return JSONResponse(
+        status_code=404,
+        content=openai_error(
+            "model_not_found",
+            f"The model '{model_id}' does not exist or you do not have access to it.",
+            error_type="invalid_request_error",
+        ),
+    )
+
+
+async def build_models_response(api_key: ApiKeyData | None) -> Response:
+    catalog = await build_models_catalog(api_key)
+    return JSONResponse(content=catalog.model_dump(mode="json"))
+
+
+async def build_models_catalog(api_key: ApiKeyData | None) -> ModelListResponse:
     from app.modules.proxy.api import (
         _allowed_models_for_api_key,
         _codex_model_entries,
@@ -69,9 +101,7 @@ async def _build_models_response(api_key: ApiKeyData | None) -> Response:
             )
         )
     await _release_reservation(reservation)
-    return JSONResponse(
-        content=ModelListResponse(
-            data=items,
-            models=_codex_model_entries(models, allowed_models, visibility_allowed_models),
-        ).model_dump(mode="json")
+    return ModelListResponse(
+        data=items,
+        models=_codex_model_entries(models, allowed_models, visibility_allowed_models),
     )

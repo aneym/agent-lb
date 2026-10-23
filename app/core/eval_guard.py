@@ -80,4 +80,4 @@ def is_eval_proxy_path(path: str) -> bool:
         "/health/live",
         "/health/ready",
         "/health/startup",
-    } or path.startswith(("/backend-api/codex/", "/backend-api/files/"))
+    } or path.startswith(("/backend-api/codex/", "/backend-api/files/", "/v1/models/"))
