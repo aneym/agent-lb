@@ -28,6 +28,10 @@ ALLOWED: dict[str, set[str]] = {
 }
 
 _DROP_HEADERS = {
+    "x-factory-project",
+    "x-factory-job",
+    "x-factory-owner",
+    "x-factory-host",
     "host",
     "content-length",
     "connection",
