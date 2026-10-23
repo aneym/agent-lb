@@ -23,8 +23,9 @@ MODE="install"
 case "${1:-}" in
   --print) MODE="print" ;;
   --uninstall) MODE="uninstall" ;;
+  --clients-only) MODE="clients-only" ;;
   "") ;;
-  *) echo "usage: $0 [--print | --uninstall]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--print | --uninstall | --clients-only]" >&2; exit 2 ;;
 esac
 
 
@@ -187,9 +188,13 @@ if [[ -e "$CURRENT" || -L "$CURRENT" ]]; then
     exit 1
   fi
 fi
-"$POLICY_INSTALLER" --home "$USER_HOME" --print >/dev/null
+if [[ "$MODE" != "clients-only" ]]; then
+  "$POLICY_INSTALLER" --home "$USER_HOME" --print >/dev/null
+fi
 bundle="$(prepare_bundle)"
-AGENT_LB_POLICY_SOURCE_REPO="$REPO_DIR" "$bundle/config/coding-agents/install-policy.py" --home "$USER_HOME"
+if [[ "$MODE" != "clients-only" ]]; then
+  AGENT_LB_POLICY_SOURCE_REPO="$REPO_DIR" "$bundle/config/coding-agents/install-policy.py" --home "$USER_HOME"
+fi
 
 
 python3 - "$bundle" "$CURRENT" <<'PY'
@@ -212,5 +217,7 @@ for name in "${CLIENT_NAMES[@]}"; do
 done
 install_link "$POLICY_DIR/coding-agents" "$CURRENT/config/coding-agents"
 
-remove_retired_artifacts
-echo "removed retired ccdex artifacts where present"
+if [[ "$MODE" != "clients-only" ]]; then
+  remove_retired_artifacts
+  echo "removed retired ccdex artifacts where present"
+fi
