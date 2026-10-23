@@ -606,7 +606,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def raise_fd_soft_limit() -> int:
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    target = 8192 if hard == resource.RLIM_INFINITY else hard
+    target = 8192 if hard == resource.RLIM_INFINITY else min(hard, 8192)
     if soft == resource.RLIM_INFINITY or soft >= target:
         return soft
     try:
