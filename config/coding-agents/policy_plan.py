@@ -81,8 +81,8 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes):
                     changes[path] = None
         for name in RETIRED_HOOKS:
             stub = args.home / ".claude/hooks" / name
-            if read_text(stub) != "import sys; sys.stdin.read()\n":
-                changes[stub] = "import sys; sys.stdin.read()\n"
+            if stub.is_file() or stub.is_symlink():
+                changes[stub] = None
             for relative in (POLICY_DIR / "hooks" / name, MANAGED_DIR / Path(name).stem):
                 target = args.home / relative
                 if target.is_file() and not target.is_symlink():

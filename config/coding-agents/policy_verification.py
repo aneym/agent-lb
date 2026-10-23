@@ -28,6 +28,5 @@ MANAGED = (
     ("codex-sol-local", ".claude/agents/codex-sol-local.md", "agents/codex-sol-local.md"),
     ("codex-test-runner-local", ".claude/agents/codex-test-runner-local.md", "agents/codex-test-runner-local.md"),
     ("computer-use-local", ".claude/agents/computer-use-local.md", "agents/computer-use-local.md"),
-    ("seat-guard", ".claude/hooks/seat-guard.py", "hooks/seat-guard.py"),
     ("subagent-closeout", ".claude/hooks/subagent-closeout.py", "hooks/subagent-closeout.py"),
 )

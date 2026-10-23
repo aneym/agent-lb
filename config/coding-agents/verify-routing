@@ -327,52 +327,6 @@ check(
 )
 
 
-hook = SOURCE / "hooks" / "seat-guard.py"
-with tempfile.TemporaryDirectory() as scratch:
-    agents_dir = Path(scratch) / "agents"
-    agents_dir.mkdir()
-    (agents_dir / "legacy-fable.md").write_text("---\nname: legacy-fable\nmodel: claude-fable-5-1\n---\nbody\n")
-    env = os.environ | {
-        "HOME": scratch,
-        "ROUTING_TABLE": str(SOURCE / "routing-table.json"),
-        "ROUTE_TABLE": str(SOURCE / "routing-table.json"),
-        "SEAT_GUARD_AGENTS_DIR": str(agents_dir),
-        "DISPATCH_LEDGER": str(Path(scratch) / "dispatch.jsonl"),
-        "LIMIT_WATCH_SNAPSHOT": str(Path(scratch) / "missing.json"),
-    }
-
-    env.pop("ROUTE_LEDGER", None)
-
-    def decision(tool_input: dict) -> str | None:
-        payload = json.dumps({"tool_name": "Agent", "tool_input": {"prompt": "x", **tool_input}})
-        result = subprocess.run(
-            ["/usr/bin/python3" if Path("/usr/bin/python3").exists() else sys.executable, str(hook)],
-            input=payload,
-            text=True,
-            capture_output=True,
-            env=env,
-            timeout=30,
-        )
-        if result.returncode == 0 and not result.stdout.strip():
-            return None
-        try:
-            return json.loads(result.stdout)["hookSpecificOutput"].get("permissionDecision")
-        except (json.JSONDecodeError, KeyError):
-            return "error"
-
-
-    check(decision({"subagent_type": "opus-seat", "model": "fable"}) is None,
-          "seat guard admits model=fable when the dispatch names it (logged)")
-
-    check(decision({"subagent_type": "opus-seat", "model": "claude-planner"}) != "deny",
-          "seat guard warns, never denies, a blocked model named on the dispatch")
-    check(decision({"subagent_type": "legacy-fable"}) != "deny",
-          "seat guard warns, never denies, a Fable-defined subagent type with nothing asking for Fable")
-    check(decision({"subagent_type": "gpt-implementer"}) is None, "seat guard admits a cheap seat")
-    check(decision({"subagent_type": "fable-orchestrator", "model": "fable"}) is None,
-          "seat guard admits Fable on the readmitted fable-orchestrator seat")
-    check(decision({"subagent_type": "astra-consult", "model": "gpt-6-astra"}) is None,
-          "seat guard admits Astra on the readmitted astra-consult seat")
 
 if not SOURCE_ONLY:
 

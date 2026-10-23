@@ -59,13 +59,6 @@ def verify_installation(
             isinstance(sonnet_pin, str) and re.fullmatch(r"claude-sonnet-\d+(?:-\d+)?", sonnet_pin) is not None,
             f"settings.json pins Claude Code's sonnet alias (ANTHROPIC_DEFAULT_SONNET_MODEL={sonnet_pin})",
         )
-        guard_registered = any(
-            "seat-guard.py" in hook.get("command", "")
-            for group in settings.get("hooks", {}).get("PreToolUse", [])
-            if group.get("matcher") == "Agent"
-            for hook in group.get("hooks", [])
-        )
-        check(guard_registered, "seat guard is registered as the Agent PreToolUse hook")
 
         for name, installed, source in MANAGED:
             check(

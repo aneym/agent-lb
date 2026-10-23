@@ -134,20 +134,6 @@ def builtin_cases():
         dict(event="PreToolUse", tool="Bash", input={"command": 123}, name="non-string-command", expect=None),
         dict(
             event="PreToolUse",
-            tool="Agent",
-            input={"subagent_type": "general-purpose", "model": "gpt-5.4-mini", "prompt": "x", "description": "x"},
-            name="deny-seat-guard-blocked-model",
-            expect=None,
-        ),
-        dict(
-            event="PreToolUse",
-            tool="Agent",
-            input={"subagent_type": "Explore", "prompt": "find files", "description": "explore"},
-            name="allow-seat-guard",
-            expect=None,
-        ),
-        dict(
-            event="PreToolUse",
             tool="Workflow",
             input={"script": "agent('do the thing')"},
             name="deny-relay-guard",

@@ -117,7 +117,7 @@ LANE_SUBS = {
     "close",
 }
 SESSION = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
-GUEST_RAILS = re.compile(r"/Users/lume/Applications(/[A-Za-z0-9_. -]+)*/Rails\.app")
+GUEST_RAILS = re.compile(r"/Users/[^/]+/Applications(/[A-Za-z0-9_. -]+)*/Rails\.app")
 PLAIN = re.compile(r"[A-Za-z0-9_./:=%+,@ -]+")
 LAUNCH_CODE = re.compile(
     r"\bwebbrowser\b|puppeteer\.launch|chromium\.launch|launchPersistentContext|launch_persistent_context|storage_state\s*=|--storage-state|--user-data-dir|\bconnectOverCDP\s*\(|\bconnect_over_cdp\s*\(|--cdp\b|--remote-debugging-port\b|wss?://[^\s\"']+:\d+/devtools"

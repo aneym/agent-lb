@@ -311,3 +311,7 @@ agent-owned profile, never the owner's Library or copied profile state.
 page-shot, acct-browser and Rails test-account sessions remain sanctioned.
 Real hook-input subprocess cases cover refusals and legitimate proof/brief
 commands; the existing Open Factory browser-floor replay is kept unchanged.
+
+## 2026-10-23: Requested seats are not hook policy
+
+Pick the seat by the routing rules; hooks never rewrite seats. Removed Agent and Workflow seat guards, their hands classifier and Bash steering nudge, and the OPUS-REASON exception. The policy installer retires their installed files and hook registrations. Mac-only Opus forwarding keeps Opus rather than selecting Sol. Kept-floor guards are unchanged.

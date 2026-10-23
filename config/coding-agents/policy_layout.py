@@ -112,6 +112,11 @@ RETIRED_AGENTS = ("astra", "implementer")
 
 
 RETIRED_HOOKS = (
+    "claude-bash-hands-nudge.py",
+    "seat-guard.py",
+    "seat_guard_advisory.py",
+    "seat_hands.py",
+    "workflow-seat-guard.py",
     "seat-budget.py",
     "routing-pulse.py",
     "load-governor.py",
