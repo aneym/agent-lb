@@ -113,7 +113,10 @@ export function AccountListItem({
             title
           )}
         </p>
-        <OwnerInstanceBadge ownerInstance={account.ownerInstance} />
+        <OwnerInstanceBadge
+          ownerInstance={account.ownerInstance}
+          isLocallyOwned={account.isLocallyOwned}
+        />
         <StatusGlyph
           status={account.status}
           showLabel={account.status !== "active"}

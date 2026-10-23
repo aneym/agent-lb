@@ -87,6 +87,7 @@ export const AccountSubscriptionLedgerSchema = z.object({
 
 export const AccountSummarySchema = z.object({
   ownerInstance: z.string().nullable().optional(),
+  isLocallyOwned: z.boolean().optional(),
   accountId: z.string(),
   provider: AccountProviderSchema.optional(),
   email: z.string(),

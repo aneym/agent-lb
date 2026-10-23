@@ -1,9 +1,13 @@
 type OwnerInstanceBadgeProps = {
   ownerInstance?: string | null;
+  isLocallyOwned?: boolean;
 };
 
-export function OwnerInstanceBadge({ ownerInstance }: OwnerInstanceBadgeProps) {
-  const label = ownerInstance ?? "Local";
+export function OwnerInstanceBadge({
+  ownerInstance,
+  isLocallyOwned,
+}: OwnerInstanceBadgeProps) {
+  const label = isLocallyOwned ? "Local" : (ownerInstance ?? "Local");
 
   return (
     <span

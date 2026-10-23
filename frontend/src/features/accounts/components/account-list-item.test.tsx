@@ -17,12 +17,12 @@ describe("AccountListItem", () => {
   });
 
   it.each([
-    ["studio", "Owner: studio"],
-    ["peer-instance", "Owner: peer-instance"],
-    [null, "Owner: Local"],
-    [undefined, "Owner: Local"],
-  ])("shows the owning instance for %s", (ownerInstance, label) => {
-    const account = createAccountSummary({ ownerInstance });
+    ["studio", true, "Owner: Local"],
+    ["peer-instance", false, "Owner: peer-instance"],
+    [null, true, "Owner: Local"],
+    [undefined, true, "Owner: Local"],
+  ])("shows the owning instance for %s", (ownerInstance, isLocallyOwned, label) => {
+    const account = createAccountSummary({ ownerInstance, isLocallyOwned });
 
     render(
       <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,

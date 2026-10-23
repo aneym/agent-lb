@@ -142,7 +142,10 @@ export function AccountDetail({
         <p className="text-xs text-muted-foreground">
           {contextParts.join(" · ")}
         </p>
-        <OwnerInstanceBadge ownerInstance={account.ownerInstance} />
+        <OwnerInstanceBadge
+          ownerInstance={account.ownerInstance}
+          isLocallyOwned={account.isLocallyOwned}
+        />
         <AccountAliasForm
           account={account}
           busy={busy}

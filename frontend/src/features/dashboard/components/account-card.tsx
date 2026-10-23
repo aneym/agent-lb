@@ -138,7 +138,10 @@ export function AccountCard({
         <StatusGlyph status={account.status} className="shrink-0" />
       </div>
 
-      <OwnerInstanceBadge ownerInstance={account.ownerInstance} />
+      <OwnerInstanceBadge
+        ownerInstance={account.ownerInstance}
+        isLocallyOwned={account.isLocallyOwned}
+      />
 
       {/* Quota bars */}
       <div

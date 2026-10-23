@@ -85,6 +85,7 @@ class AccountSubscriptionLedger(DashboardModel):
 
 class AccountSummary(DashboardModel):
     owner_instance: str | None = None
+    is_locally_owned: bool = True
     account_id: str
     provider: str = "openai"
     email: str

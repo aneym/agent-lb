@@ -12,6 +12,7 @@ from app.core.usage.quota import apply_usage_quota
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
 from app.core.utils.time import from_epoch_seconds, utcnow
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory
+from app.modules.accounts import auth_manager
 from app.modules.accounts.schemas import (
     AccountAdditionalQuota,
     AccountAuthStatus,
@@ -247,6 +248,7 @@ def _account_to_summary(
     return AccountSummary(
         account_id=account.id,
         owner_instance=account.owner_instance,
+        is_locally_owned=auth_manager.is_locally_owned(account, config_settings.get_settings()),
         provider=account.provider,
         email=account.email,
         alias=account.alias,
