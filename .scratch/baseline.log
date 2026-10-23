@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "/srv/cow/jobs/seat-gpt-implementer-alias-routes-1792784474-baf4-ed6a92b62b336580-464b4c58/worktree/.scratch/proof.py", line 87, in <module>
+    asyncio.run(main())
+    ~~~~~~~~~~~^^^^^^^^
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py", line 205, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/jobs/.local/share/uv/python/cpython-3.14.7-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/srv/cow/jobs/seat-gpt-implementer-alias-routes-1792784474-baf4-ed6a92b62b336580-464b4c58/worktree/.scratch/proof.py", line 60, in main
+    assert r.status_code==400 and r.json()['error']['code']=='model_not_allowed',(path,model,r.status_code,r.text)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('/v1/images/edits', 'blocked-direct', 400, '{"error":{"message":"Invalid request payload","type":"invalid_request_error","code":"invalid_request_error","param":"model"}}')

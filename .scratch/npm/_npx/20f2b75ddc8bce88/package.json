@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@fission-ai/openspec": "^1.14.3"
+  },
+  "_npx": {
+    "packages": [
+      "@fission-ai/openspec@latest"
+    ]
+  }
+}
