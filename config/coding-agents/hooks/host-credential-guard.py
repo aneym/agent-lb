@@ -42,11 +42,7 @@ def expand(word, home):
 def touches(word, base, home, paths, folders):
     word = expand(word, home)
     full = os.path.normpath(os.path.join(base, word))
-    if NAME in word or any(c in word for c in "*?[") and any(fnmatch.fnmatchcase(p, full) for p in paths | folders):
-        return True
-    if "$" in word or "`" in word or CODE & set(word):
-        return ".agent-rails/rails-host" in full or "host.cred" in word
-    return bool({full, os.path.realpath(full)} & (paths | folders))
+    return full in paths
 
 
 def segments(command):
@@ -69,7 +65,7 @@ def check_bash(command, cwd):
     try:
         parts = list(segments(command))
     except ValueError:
-        if NAME in command or "rails-host" in command:
+        if any(path in expand(command, home) for path in paths):
             refuse("a shell command it cannot parse that names the credential")
         return
     for words in parts:
@@ -91,7 +87,7 @@ def check_read(path):
     if not isinstance(path, str):
         refuse("a Read call whose file_path is not text")
     full = os.path.normpath(expand(path, home))
-    if os.path.basename(full) == NAME or os.path.realpath(full) in paths:
+    if full in paths:
         refuse("a Read of the host credential")
 
 

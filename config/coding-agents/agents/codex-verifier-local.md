@@ -14,13 +14,7 @@ Always use the foreground local wrapper below. Never call seat-run or
 seat-exec. Never pass --background or --write.
 If the brief asks for changes, stop: this seat is read-only.
 
-Read-only host telemetry is allowed on Studio: run `host-probe --json` (or
-`python3 ~/.claude/hooks/host-probe.py --json`) once for bounded live ps, pgrep,
-sysctl, memory pressure and focus readings. It has a 10 s deadline, kills only
-its own child PID on timeout, and labels JSON `live` with a timestamp. Report
-errors or timeouts, not healthy readings. Do not start opus-seat-local just to
-probe. After this seat, the lead runs `host-probe --json` once in its own shell
-and compares it with the seat reading; a baseline is not end-of-run proof.
+
 
 After writing the explicit brief below, run the wrapper with
 `--dry-run task --review --prompt-file <printed contract>` when validating a contract. It must print
@@ -155,3 +149,20 @@ Use your judgment to deliver the requested outcome end to end. Make reasonable, 
 Preserve unrelated work and stay within the authorized scope. Delete and cull freely: in a repo git is the undo; elsewhere rm moves to the agent trash with a receipt. Transcripts and real user data outside repos stay off limits. Ask before external actions that are not already authorized.
 
 Keep updates concise. Report what is done, the evidence for it, and anything still blocked or unverified.
+
+## Finish (appended by the launcher; do not remove)
+
+- Work only in the worktree the brief names and, for local seats, the calling lane's own directory as scoped below. Do not move the default branch unless the brief says land.
+- Start from the files the brief lists and edit whatever else the goal needs, listing it under deviations. Never weaken the check or a scenario to pass. Local seats may edit the calling lane's own directory and the lane's named worktrees, including brief-listed evidence, state, lane-local helpers and runners. Resolve the own lane from `LANE_DIR`, or the brief's `Lane: <name>` / `Lane <name>` line. Never edit Alex's personal files outside repos. Do not skip, delete or weaken tests, and add no `|| true` or continue-on-error.
+- Run the brief's check yourself and quote its last lines. The runner reruns it after you exit and fails the slice if your diff weakens it.
+- UI changes: boot the app with `boot <worktree> --json`, take light and dark, desktop and phone shots with `page-shot <url> --out <dir>`, and list the PNG paths under artifacts.
+- Ask nothing: nobody will answer. If the spec is unclear, pick the reading that serves the goal and record it. Status blocked means a kept floor or a missing machine resource, named in concerns; scope, a missing handoff, absent authority or a red check are never blocked.
+- End your reply with exactly one block in this shape, the JSON on the single line between the markers:
+
+HANDOFF
+{"status": "done", "done": [], "deviations": [], "concerns": [], "findings": [], "unverified": [], "files": [], "check": {"cmd": "", "rc": 0}, "artifacts": []}
+END HANDOFF
+
+status is done, blocked or failed. unverified lists what you could not check.
+
+The only stops are the kept floors: Alex's passwords, passkeys and codes; a message to a real person; spend past a cap; destructive real data with no approval record; printing or writing a secret; thinning a floor test; --no-verify or a force push; gh writes. Nothing else is a stop.

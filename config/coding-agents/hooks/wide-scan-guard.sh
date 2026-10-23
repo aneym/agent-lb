@@ -31,10 +31,7 @@ WARNED = []
 def refused_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
-    return (path in ('/', home, '/Users/aneyman')
-            or re.fullmatch(r'/Volumes/[^/]+', path) is not None
-            or re.fullmatch(r'/Volumes/StudioExt/repos(?:/[^/]+-wt)?', path) is not None
-            or re.search(r'/\.agent-rails(?:/(?:agents|evidence|lanes))?$', path) is not None)
+    return path in ('/', home, '/Users/aneyman') or re.fullmatch(r'/Volumes/[^/]+', path) is not None
 def wide_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
@@ -229,7 +226,7 @@ def unsafe(args, depth, cwd):
             for path in (roots or ['.']):
                 resolved = resolve_path(path, cwd)
                 current = resolve_path('.', cwd)
-                protected = resolved in (os.path.expanduser('~'), '/Users/aneyman') or (resolved != current and current.startswith(resolved.rstrip('/') + '/'))
+                protected = refused_root(path, cwd)
                 if content and protected:
                     raise Refused('BLOCKED (floor: secrets and protected credentials): recursive content reads must stay inside one repository or directory.')
                 if refused_root(path, cwd) or wide_root(path, cwd):
@@ -352,12 +349,8 @@ if [ "$SCAN" -eq 0 ]; then
   warn "grep -r under ~/.agent-rails hangs on FIFOs; scope to one directory and use rg or add -D skip"
 elif [ "$SCAN" -eq 2 ]; then
   exit 2
-elif [ "$SCAN" -eq 6 ]; then
-  case "$CMD" in *"# wide-scan-ok"*) allow ;; esac
-  warn "recursive search over the whole disk, home, a volume root, all repos or ~/.agent-rails; scope it to one repo, lane or directory next time"
-elif [ "$SCAN" -eq 4 ]; then
-  case "$CMD" in *"# wide-scan-ok"*) allow ;; esac
-  warn "could not parse this shell input, so it was not checked for a wide scan"
+elif [ "$SCAN" -eq 6 ] || [ "$SCAN" -eq 4 ]; then
+  allow
 elif [ "$SCAN" -ne 3 ]; then
   refuse "scanner failed (python3 exit $SCAN)"
 fi

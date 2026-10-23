@@ -219,7 +219,14 @@ def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 if isinstance(command, str):
                     name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
                     name = name or next((n for n in (*RETIRED_HOOKS, "/_root/hooks/") if n in command), None)
-                    if event == "PostToolUse" and "factory-lint-hook" in command:
+                    if (
+                        (
+                            event == "PostToolUse"
+                            and any(n in command for n in ("factory-lint-hook", "lane-bulletin-hook"))
+                        )
+                        or (event == "PreToolUse" and "idle-agents.py" in command and command.endswith(" pre"))
+                        or (event == "UserPromptSubmit" and ".jev/hooks/route.sh" in command)
+                    ):
                         name = "factory-lint-hook"
                 if name:
                     dropped.append(f"{event} {group.get('matcher') or '*'}: {name}")

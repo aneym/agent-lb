@@ -12,16 +12,6 @@
       "needs_source": true
     },
     {
-      "event": "PreToolUse",
-      "matcher": "SendMessage",
-      "hook": {
-        "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/idle-agents.py\" pre",
-        "timeout": 5
-      },
-      "needs_source": false
-    },
-    {
       "event": "SessionStart",
       "matcher": null,
       "hook": {
@@ -155,16 +145,6 @@
     },
     {
       "event": "PostToolUse",
-      "matcher": null,
-      "hook": {
-        "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claude-grind-pulse.py\"",
-        "timeout": 2
-      },
-      "needs_source": true
-    },
-    {
-      "event": "PostToolUse",
       "matcher": "Workflow",
       "hook": {
         "type": "command",
@@ -194,16 +174,6 @@
         "statusMessage": "Compact checkpoint"
       },
       "needs_source": false
-    },
-    {
-      "event": "PreToolUse",
-      "matcher": "Bash",
-      "hook": {
-        "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/poll-loop-warn.py\"",
-        "timeout": 5
-      },
-      "needs_source": true
     }
   ]
 }

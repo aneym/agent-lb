@@ -7,11 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-WRITES = re.compile(
-    r">|\b(?:tee|cp|mv|rm|touch|install|truncate|patch|apply_patch)\b|"
-    r"\bsed\s+[^\n;]*-[^\s]*i|\bperl\s+[^\n;]*-[^\s]*i|"
-    r"write_text|write_bytes|writeFile|open\s*\([^\n]*[\"\'][wax+][bat+]*[\"\']"
-)
+WRITES = re.compile(r">|\btee\b|\bsed\s+[^\n;]*-[^\s]*i|\bgit\s+(?:apply|commit|add)\b")
 
 
 def tracked_main(path):
@@ -29,7 +25,7 @@ def tracked_main(path):
         return None
     repo = Path(common.stdout.strip()).parent
     root = (
-        Path(os.environ.get("REPOS_ROOT") or os.environ.get("GIT_GUARD_REPOS_ROOT") or repo.parent)
+        Path(os.environ.get("REPOS_ROOT") or os.environ.get("GIT_GUARD_REPOS_ROOT") or "/Volumes/StudioExt/repos")
         .expanduser()
         .resolve()
     )

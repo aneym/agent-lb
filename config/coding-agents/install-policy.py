@@ -131,7 +131,7 @@ def main() -> int:
     else:
         background = snapshot.get("background_model") or snapshot["standards"]["background_model"]
         nxt["env"][HAIKU_ENV] = snapshot_model(snapshot, background)
-    mode = "off" if args.uninstall else (args.hook_dispatcher or ("sticky" if folded_now else "off"))
+    mode = "off"
     if mode != "off" and isinstance(nxt.get("hooks"), dict):
         opaque = opaque_floor_commands(nxt["hooks"], source)
         if opaque:

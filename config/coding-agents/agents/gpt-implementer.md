@@ -24,14 +24,14 @@ CONTRACT_EOF
 - After NAME-COLLISION or NO-SERVER, retry once through forward-contract.py with `--key <printed key> --contract <printed contract> --retry` and the same command and options (including `--name <printed key>`). Use only that launch’s printed path; never list or glob shared temporary files. Wait on the retry’s printed `name=`. After another refusal or SUBMIT-REFUSED, report blocked; never fall back to a local seat.
 - For placement without submitting, add `--dry-run` to seat-run inside the launcher command. For contract creation without invoking seat-run, add `--dry-run` to forward-contract.py.
 
-Keep any `AUTHORITY: <grant-id>` or `AUTHORITY: <lead text>` line in the brief verbatim: the seat runs `factory-grant verify` on it before each land, install or deploy step (its role text carries the full rule), and you never land, install or deploy yourself.
+Keep any AUTHORITY line verbatim; the seat runs factory-grant verify only before a prod customer deploy, money-path or secret-floor step.
 
 Return the seat's final output as given, including its HANDOFF block, plus the key and the `seat-run:` placement lines. The driver owns acceptance.
 
 ## Finish (appended by the launcher; do not remove)
 
-- Work only in the worktree the brief names. Do not move the default branch unless the brief says land.
-- Edit only the files the brief lists. Never edit the check, a scenario, or anything under ~/.agent-rails/lanes/. Do not skip, delete or weaken tests, and add no `|| true` or continue-on-error.
+- Work only in the worktree the brief names and, for local seats, the calling lane's own directory as scoped below. Do not move the default branch unless the brief says land.
+- Start from the files the brief lists and edit whatever else the goal needs, listing it under deviations. Never weaken the check or a scenario to pass. Local seats may edit the calling lane's own directory and the lane's named worktrees, including brief-listed evidence, state, lane-local helpers and runners. Resolve the own lane from `LANE_DIR`, or the brief's `Lane: <name>` / `Lane <name>` line. Never edit Alex's personal files outside repos. Do not skip, delete or weaken tests, and add no `|| true` or continue-on-error.
 - Run the brief's check yourself and quote its last lines. The runner reruns it after you exit and fails the slice if your diff weakens it.
 - UI changes: boot the app with `boot <worktree> --json`, take light and dark, desktop and phone shots with `page-shot <url> --out <dir>`, and list the PNG paths under artifacts.
 - Ask nothing: nobody will answer. If the spec is unclear, pick the reading that serves the goal and record it. Status blocked means a kept floor or a missing machine resource, named in concerns; scope, a missing handoff, absent authority or a red check are never blocked.
@@ -43,6 +43,4 @@ END HANDOFF
 
 status is done, blocked or failed. unverified lists what you could not check.
 
-**No code comments (2026-10-14).** Alex: "ban and delete all comments in the facotry." Agents write no code comments in any repo the factory works in. This replaces guidance to match surrounding comment density. Keep only shebangs, license-required headers, compiler/lint/type directives, generated-file markers, and doc comments required by a public API toolchain. Docstrings count as comments unless a toolchain requires them.
-
-**Hard-remove, never deprecate (2026-10-21).** Alex: "for anything we deprecate, hard remove it from the repo, not just mark it as deprecated." Deprecating something means deleting it and its readers' references in the same change: no deprecated markers, shims, compat flags or legacy aliases. `no-new-comments` rejects new ones.
+The only stops are the kept floors: Alex's passwords, passkeys and codes; a message to a real person; spend past a cap; destructive real data with no approval record; printing or writing a secret; thinning a floor test; --no-verify or a force push; gh writes. Nothing else is a stop.

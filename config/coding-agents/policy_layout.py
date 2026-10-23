@@ -113,6 +113,10 @@ RETIRED_AGENTS = ("astra", "implementer")
 
 RETIRED_HOOKS = (
     "claude-bash-hands-nudge.py",
+    "claude-grind-pulse.py",
+    "poll-loop-warn.py",
+    "workflow-relay-guard.py",
+    "claude-bash-hands-nudge.py",
     "seat-guard.py",
     "seat_guard_advisory.py",
     "seat_hands.py",

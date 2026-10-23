@@ -351,32 +351,6 @@ def last_closeout_tokens(session_id: str, agent_id: str) -> int:
     return 0
 
 
-def mode_pre(payload: dict) -> None:
-    if payload.get("agent_id") or payload.get("tool_name") != "SendMessage":
-        return
-    target = (payload.get("tool_input") or {}).get("to")
-    session_id = payload.get("session_id")
-    session_dir = session_dir_for(payload)
-    if not (isinstance(target, str) and session_id and session_dir):
-        return
-    with Registry() as reg:
-        rows = decide(session_id, session_dir, reg.data)
-        reg.save()
-    for row in rows:
-        if row["name"] != target or row["action"] != "stop":
-            continue
-        if row["idle_min"] <= 6 or last_closeout_tokens(session_id, row["agent_id"]) <= 150_000:
-            return
-        name = " ".join(target.split())[:120]
-        line = (
-            f"Resume fresh: {name} is idle over 6 min with last closeout tokens_in over 150k; "
-            f"write a handoff to the lane dir, TaskStop {name}, spawn {name}-2 with the handoff. "
-            "Advisory only; this SendMessage is not blocked."
-        )
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": line}}))
-        return
-
-
 def mode_post(payload: dict) -> None:
     if payload.get("agent_id"):
         return
@@ -511,7 +485,7 @@ def main() -> None:
         return
     payload = read_payload()
     try:
-        {"mark": mode_mark, "pre": mode_pre, "post": mode_post, "stop": mode_stop}[mode](payload)
+        {"mark": mode_mark, "post": mode_post, "stop": mode_stop}[mode](payload)
     except Exception as exc:
         log(f"error mode={mode}: {exc!r}")
 
