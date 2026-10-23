@@ -93,6 +93,9 @@ def handle_quota_exceeded(state: AccountState, error: UpstreamError) -> None:
 
 def _live_quota_retry_at(error: UpstreamError, failures: int, *, now: float) -> float:
 
+    quota_reset = error.get("quota_reset_at")
+    if quota_reset is not None and quota_reset > now:
+        return float(quota_reset)
     delays = (60, 300, 900, 3600)
     delay = delays[min(max(failures, 1) - 1, len(delays) - 1)]
     provider_reset = _extract_reset_at(error)

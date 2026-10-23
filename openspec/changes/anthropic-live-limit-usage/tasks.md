@@ -1,0 +1,4 @@
+- [x] Parse account-wide utilization, rejection, and reset headers independently.
+- [x] Persist fresh proxy and operator probe observations without erasing missing fields.
+- [x] Honor authoritative exhausted-window resets without changing generic retry cooldowns.
+- [x] Exercise isolated HTTP upstream and service regression; run focused lint/import checks.

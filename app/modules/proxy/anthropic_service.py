@@ -27,7 +27,8 @@ from app.core.anthropic.models import (
     cache_creation_1h_tokens,
 )
 from app.core.anthropic.parsing import collect_usage_from_chunk as _collect_usage_from_chunk
-from app.core.anthropic.quota_headers import capture_unified_headers
+from app.core.anthropic.quota_headers import capture_unified_headers, exhausted_account_reset
+from app.core.anthropic.quota_headers import parse_reset_epoch as _parse_reset_epoch
 from app.core.anthropic.quota_headers import parse_unified_utilization as _parse_unified_utilization
 from app.core.anthropic.quota_keys import model_quota_key
 from app.core.auth.refresh import RefreshError, classify_refresh_error
@@ -80,6 +81,7 @@ from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
 from app.modules.proxy.openrouter_usage import chat_usage, collect_chat_usage
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 from app.modules.usage.additional_quota_keys import get_additional_quota_definition_for_model
+from app.modules.usage.anthropic_live_quota import observe_anthropic_quota
 
 logger = logging.getLogger(__name__)
 
@@ -610,6 +612,8 @@ class AnthropicProxyService(AnthropicTransport):
                                     unified_7d_utilization = _parse_unified_utilization(
                                         resp.headers.get("anthropic-ratelimit-unified-7d-utilization")
                                     )
+                                if provider_name == ANTHROPIC_PROVIDER_NAME:
+                                    await observe_anthropic_quota(account.id, resp.headers)
                                 if resp.status >= 400:
                                     raw_error = await resp.read()
                                     try:
@@ -2744,7 +2748,10 @@ def _unified_limit_exhausted(headers: Mapping[str, str]) -> bool:
 
 def _rate_limit_error_from_response(resp: aiohttp.ClientResponse, message: str) -> UpstreamError:
     error = UpstreamError(message=message)
-    reset_at = _anthropic_rate_limit_reset_at(resp.headers)
+    quota_reset = exhausted_account_reset(resp.headers)
+    if quota_reset is not None:
+        error["quota_reset_at"] = quota_reset
+    reset_at = quota_reset or _anthropic_rate_limit_reset_at(resp.headers)
     if reset_at is not None:
         error["resets_at"] = reset_at
     retry_after = _retry_after_seconds(resp.headers)
@@ -2790,29 +2797,6 @@ def _retry_after_seconds(headers: Mapping[str, str]) -> int | None:
         return None
     try:
         return max(0, int(float(retry_after)))
-    except ValueError:
-        return None
-
-
-def _parse_reset_epoch(value: str | None) -> int | None:
-
-    if not value:
-        return None
-    normalized = value.strip()
-    try:
-        epoch = float(normalized)
-    except ValueError:
-        pass
-    else:
-        if epoch <= 0:
-            return None
-        if epoch > 1e12:
-            epoch /= 1000.0
-        return int(epoch)
-    if normalized.endswith("Z"):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        return int(datetime.fromisoformat(normalized).timestamp())
     except ValueError:
         return None
 

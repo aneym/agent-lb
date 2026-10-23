@@ -245,6 +245,8 @@ class AccountsLifecycle(AccountsTransfer):
         provider = normalize_provider_name(probe_account.provider)
         compat_profiles = {profile.provider_name: profile for profile in ANTHROPIC_COMPAT_PROFILES}
         compat_profile = compat_profiles.get(provider)
+        if provider == ANTHROPIC_PROVIDER_NAME and self._usage_updater:
+            await self._usage_updater.force_refresh(probe_account)
         if compat_profile is not None:
             base_url = compat_profile.upstream_base_url
             if base_url is None:
@@ -254,6 +256,7 @@ class AccountsLifecycle(AccountsTransfer):
                 access_token=access_token,
                 base_url=base_url,
                 model=model or compat_profile.default_probe_model,
+                account_id=account_id if provider == ANTHROPIC_PROVIDER_NAME else None,
             )
         else:
             probe_status = await self._send_probe_request(
@@ -262,11 +265,11 @@ class AccountsLifecycle(AccountsTransfer):
                 model=probe_model,
             )
 
-        if self._usage_repo and self._usage_updater and provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME}:
+        if self._usage_repo and self._usage_updater and provider == OPENAI_PROVIDER_NAME:
             await self._usage_updater.force_refresh(probe_account)
             get_account_selection_cache().invalidate()
 
-        refreshed = await self._repo.get_by_id(account_id) or account
+        refreshed = await self._repo.reload_by_id(account_id) or account
         primary_after, secondary_after = await self._latest_usage_percents(account_id)
 
         return AccountProbeResponse(
@@ -310,11 +313,13 @@ class AccountsLifecycle(AccountsTransfer):
         access_token: str,
         base_url: str,
         model: str,
+        account_id: str | None = None,
     ) -> tuple[int, str | None]:
         return await probes.send_messages_probe(
             access_token=access_token,
             base_url=base_url,
             model=model,
+            account_id=account_id,
         )
 
     async def _send_anthropic_subscription_check_request(

@@ -5,6 +5,7 @@ from typing import Literal, TypedDict
 
 class UpstreamError(TypedDict, total=False):
     message: str
+    quota_reset_at: int
     resets_at: int | float
     resets_in_seconds: int | float
 

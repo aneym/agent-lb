@@ -151,6 +151,7 @@ async def send_messages_probe(
     model: str,
     max_tokens: int = 4,
     thinking: AdaptiveThinking | None = None,
+    account_id: str | None = None,
 ) -> tuple[int, str | None]:
     settings = get_settings()
     url = urljoin(base_url.rstrip("/") + "/", "v1/messages")
@@ -177,6 +178,10 @@ async def send_messages_probe(
     try:
         async with lease_http_session() as session:
             async with session.post(url, headers=headers, json=body, timeout=timeout) as resp:
+                if account_id is not None:
+                    from app.modules.usage.anthropic_live_quota import observe_anthropic_quota
+
+                    await observe_anthropic_quota(account_id, resp.headers)
                 if resp.status >= 400:
                     return resp.status, await read_probe_error(resp)
                 return resp.status, None

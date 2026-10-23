@@ -9,6 +9,7 @@ from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.usage.models import UsagePayload
 from app.core.utils.request_id import get_request_id
+from app.core.utils.time import utcnow
 from app.db.models import Account
 from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
@@ -44,6 +45,7 @@ class UsageAccountRefresh(UsageAccountSync):
         *,
         usage_account_id: str | None,
     ) -> AccountRefreshResult:
+        refresh_started_at = utcnow()
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
         payload: UsagePayload | None = None
         try:
@@ -96,6 +98,12 @@ class UsageAccountRefresh(UsageAccountSync):
 
         if payload is None:
             return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+
+        if account.provider == ANTHROPIC_PROVIDER_NAME:
+            for window in ("primary", "secondary"):
+                latest = await self._usage_repo.latest_entry_for_account(account.id, window=window)
+                if latest is not None and latest.recorded_at > refresh_started_at:
+                    return AccountRefreshResult(usage_written=False, fetch_succeeded=True)
 
         if payload_mismatches_account_slot(account, payload):
             logger.warning(
@@ -245,6 +253,7 @@ class UsageAccountRefresh(UsageAccountSync):
                 input_tokens=None,
                 output_tokens=None,
                 window="primary",
+                recorded_at=refresh_started_at,
                 reset_at=bounded_exhaustion_reset_at(
                     primary.used_percent,
                     primary.reset_at,
@@ -267,6 +276,7 @@ class UsageAccountRefresh(UsageAccountSync):
                 input_tokens=None,
                 output_tokens=None,
                 window="secondary",
+                recorded_at=refresh_started_at,
                 reset_at=reset_time(secondary.reset_at, secondary.reset_after_seconds, now_epoch),
                 window_minutes=minutes_of(secondary.limit_window_seconds),
             )
