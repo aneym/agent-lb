@@ -246,6 +246,7 @@ def _account_to_summary(
     # burn stays dashboard-visible even though it never rescues the status.
     return AccountSummary(
         account_id=account.id,
+        owner_instance=account.owner_instance,
         provider=account.provider,
         email=account.email,
         alias=account.alias,

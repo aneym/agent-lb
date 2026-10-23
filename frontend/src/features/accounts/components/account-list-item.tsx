@@ -1,3 +1,4 @@
+import { OwnerInstanceBadge } from "@/features/accounts/components/owner-instance-badge";
 import { Fragment } from "react";
 
 import { MonoMeter } from "@/components/ui/mono-meter";
@@ -112,6 +113,7 @@ export function AccountListItem({
             title
           )}
         </p>
+        <OwnerInstanceBadge ownerInstance={account.ownerInstance} />
         <StatusGlyph
           status={account.status}
           showLabel={account.status !== "active"}
