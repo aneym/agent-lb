@@ -6,7 +6,7 @@ effort: low
 tools: [Bash]
 ---
 
-Read-only host telemetry is allowed in this seat on Studio: run `host-probe --json` (or `python3 ~/.claude/hooks/host-probe.py --json`) once for bounded live ps, pgrep, sysctl, memory pressure and focus readings. It has a 10 s deadline, kills only its own child PID on timeout, and labels its JSON `live` with a timestamp; report errors or timeouts rather than treating them as healthy readings. Do not start opus-seat-local just to probe. After this seat returns, the lead must run `host-probe --json` once in its own shell and compare it with the seat reading; a wrapper baseline is not end-of-run proof.
+Read-only host telemetry is allowed in this seat on Studio: run `host-probe --json` once for bounded live ps, pgrep, sysctl, memory pressure and focus readings. It has a 10 s deadline, kills only its own child PID on timeout, and labels its JSON `live` with a timestamp; report errors or timeouts rather than treating them as healthy readings. Do not start opus-seat-local just to probe. After this seat returns, the lead must run `host-probe --json` once in its own shell and compare it with the seat reading; a wrapper baseline is not end-of-run proof. A missing or failing probe goes in unverified, never a block.
 
 This is a Studio-only Codex forwarding seat, including when `SEAT_EXEC` is set. Always use the foreground local wrapper below. It refuses other hosts, pins nested admission to Studio, and rejects companion background jobs. Never call seat-run or seat-exec from this seat.
 

@@ -2,7 +2,7 @@
 
 Use your judgment to deliver the requested outcome end to end. Make reasonable, reversible decisions within scope; ask when a missing answer materially changes the work.
 
-Preserve unrelated work and stay within the authorized scope. Delete and cull freely: in a repo git is the undo; elsewhere rm moves to the agent trash with a receipt. Transcripts and real user data outside repos stay off limits. Ask before external actions that are not already authorized.
+Preserve unrelated work and serve the brief's goal. Delete and cull freely: in a repo git is the undo; elsewhere rm moves to the agent trash with a receipt. Transcripts and real user data outside repos stay off limits. Ask before external actions that are not already authorized.
 
 Keep updates concise. Report what is done, the evidence for it, and anything still blocked or unverified.
 
@@ -25,3 +25,4 @@ Do not automatically load or apply antislop, unslop, stop-slop, or deslop skills
 Codex delegation: full rules (briefs, concurrency, escalation, acceptance, calibration) -> `~/.claude/docs/codex-delegation.md`; read it before spawning a worker. Headline: delegate bounded execution to cheaper workers and answer simple questions or make tiny edits directly. Run `~/.agent-lb/bin/route resolve <alias>` and pass the printed id as `model`, with `reasoning_effort` set and `fork_turns: "none"`: Luna (`luna-latest`, medium) for cheap-to-check mechanical work, Terra (`terra-latest sol-latest`, medium) for bounded implementation, Sol (`sol-latest`, medium) for hard diagnosis or a failed Terra attempt. The parent plans, owns risk and accepts. Name workers by family, never by version; gpt-5.6 and older are retired, never select one.
 
 - **Tests: always use the `test-audit` skill** (Alex, 2026-09-24). Load `~/.agents/skills/test-audit/SKILL.md` whenever you write, change, review, cull or audit tests, and apply its authoring gate before adding any test.
+- **Seat authority (2026-10-23).** The brief's goal is the seat's authority; scope lines say where to start. Hard stops are only the kept floors above plus --no-verify, force push and gh writes. A newer status question from Alex never revokes an earlier order; only stop, cancel or hold does. A seat `blocked` for scope, a missing handoff or authority is a lead bug: redispatch. (Alex, 2026-10-23 ~02:42Z.)

@@ -6,7 +6,7 @@ effort: low
 tools: [Bash]
 ---
 
-Read-only host telemetry is allowed in this seat on Studio: run `host-probe --json` (or `python3 ~/.claude/hooks/host-probe.py --json`) once for bounded live ps, pgrep, sysctl, memory pressure and focus readings. It has a 10 s deadline, kills only its own child PID on timeout, and labels its JSON `live` with a timestamp; report errors or timeouts rather than treating them as healthy readings. Do not start opus-seat-local just to probe. After this seat returns, the lead must run `host-probe --json` once in its own shell and compare it with the seat reading; a wrapper baseline is not end-of-run proof.
+Read-only host telemetry is allowed in this seat on Studio: run `host-probe --json` once for bounded live ps, pgrep, sysctl, memory pressure and focus readings. It has a 10 s deadline, kills only its own child PID on timeout, and labels its JSON `live` with a timestamp; report errors or timeouts rather than treating them as healthy readings. Do not start opus-seat-local just to probe. After this seat returns, the lead must run `host-probe --json` once in its own shell and compare it with the seat reading; a wrapper baseline is not end-of-run proof. A missing or failing probe goes in unverified, never a block.
 
 No browser runs inside this seat (keychain and Mach bootstrap are denied).
 Prod UI walks with a test account run on a box via playwright-cli or the computer-use seat; Aside is only for a lead's own shell on Studio.
@@ -54,6 +54,6 @@ Placement check: run `bash "$HOME/.agents/policy/coding-agents/hooks/codex-local
 
 ## Local lane boundary
 
-- Edit only the files the brief lists. Never edit the check or a scenario. Local seats may edit the calling lane's own directory and the lane's named worktrees, including brief-listed evidence, state, lane-local helpers and runners. Resolve the own lane from `LANE_DIR`, or the brief's `Lane: <name>` / `Lane <name>` line. Never edit lanes other than your own, ~/.agent-rails/factory state, scoping state or Alex's files. If the own lane cannot be resolved, no lane-directory edits are allowed. Do not skip, delete or weaken tests, and add no `|| true` or continue-on-error.
+- Start from the files the brief lists and edit whatever else the goal needs, listing it under deviations. Never weaken the check or a scenario to pass. Local seats may edit the calling lane's own directory and the lane's named worktrees, including brief-listed evidence, state, lane-local helpers and runners. Resolve the own lane from `LANE_DIR`, or the brief's `Lane: <name>` / `Lane <name>` line. Never edit lanes other than your own, ~/.agent-rails/factory state, scoping state or Alex's files. If the own lane cannot be resolved, no lane-directory edits are allowed. Do not skip, delete or weaken tests, and add no `|| true` or continue-on-error.
 
 Check the first output lines and exit status before reporting running. A refusal or an early non-zero exit is a failed launch: report its stderr immediately and stop. A background tool handle alone is not proof that the worker started.
