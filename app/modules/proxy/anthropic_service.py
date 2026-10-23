@@ -814,6 +814,25 @@ class AnthropicProxyService:
                         )
                     )
                 )
+                # The extra-usage tripwire is only a safety gate while the
+                # subscription window is exhausted. Once the latest primary
+                # snapshot shows ordinary headroom again (below 100%, or the
+                # exhausted window has already reset), a leftover tripwire
+                # must not keep a healthy account out of routing.
+                primary_headroom_account_ids = frozenset(
+                    account_id
+                    for account_id, entry in primary_usage.items()
+                    if entry.used_percent is not None
+                    and (
+                        float(entry.used_percent) < 100.0
+                        or (entry.reset_at is not None and int(entry.reset_at) <= now)
+                    )
+                )
+                extra_usage_tripwire_cooldowns = {
+                    account_id: cooldown
+                    for account_id, cooldown in extra_usage_tripwire_cooldowns.items()
+                    if account_id not in primary_headroom_account_ids
+                }
             weekly_usage_used_percent: dict[str, float] = {}
             secondary_exhaustion: dict[str, int | None] = {}
             if extra_usage_gate or fable_routing:
