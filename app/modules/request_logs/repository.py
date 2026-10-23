@@ -17,6 +17,7 @@ from app.core.identity import RequestIdentity, identity_for_log
 from app.core.model_aliases import requested_model_alias
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
 from app.core.utils.client_session import (  # noqa: I001  # fmt: skip
+    FACTORY_ATTRIBUTION,
     get_caller_seat,
     get_client_session_id,
     get_dispatch_id,
@@ -150,6 +151,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
             )
             error_code = error_code or upstream_error_code
         caller = identity_for_log(identity)
+        factory = FACTORY_ATTRIBUTION.get()
         async with sqlite_writer_section(self._session):
             resolved_request_id = ensure_request_id(request_id)
             resolved_plan_type = plan_type
@@ -173,6 +175,10 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
                 caller_machine=caller.caller_machine,
                 caller_machine_source=caller.caller_machine_source,
                 caller_seat=get_caller_seat(),
+                factory_project=factory.project,
+                factory_owner=factory.owner,
+                factory_host=factory.host,
+                factory_job=factory.job,
                 room=get_room(),
                 lane=get_lane(),
                 job_id=get_job_id(),

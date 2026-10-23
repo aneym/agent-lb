@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import cast as typing_cast
 
-from app.core.usage.logs import RequestLogLike, cached_input_tokens_from_log, cost_breakdown_from_log, output_tokens_from_log, total_tokens_from_log  # noqa: I001  # fmt: skip
+from app.core.usage.logs import (  # noqa: I001  # fmt: skip
+    RequestLogLike,
+    cached_input_tokens_from_log,
+    cost_breakdown_from_log,
+    output_tokens_from_log,
+    total_tokens_from_log,
+)
 from app.db.request_models import RequestLog
 from app.modules.request_logs.schemas import RequestLogCostBreakdown, RequestLogEntry
 
@@ -38,6 +44,10 @@ def to_request_log_entry(log: RequestLog, *, api_key_name: str | None = None) ->
         caller_machine=log.caller_machine,
         caller_machine_source=log.caller_machine_source,
         caller_seat=log.caller_seat,
+        factory_project=log.factory_project,
+        factory_owner=log.factory_owner,
+        factory_host=log.factory_host,
+        factory_job=log.factory_job,
         provider=log.provider,
         room=log.room,
         unified_5h_utilization=log.unified_5h_utilization,
