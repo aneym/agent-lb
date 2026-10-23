@@ -205,6 +205,7 @@ _PUBLIC_RESPONSE_OUTPUT_ITEM_TYPES = frozenset(
         "function_call",
         "function_call_output",
         "reasoning",
+        "compaction",
         "web_search_call",
         "file_search_call",
         "computer_call",
