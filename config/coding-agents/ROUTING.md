@@ -10,7 +10,7 @@ adapters: when they disagree with this file, this file wins.
 Optimize for keeping Claude capacity safe without sacrificing intelligence —
 **hands vs brain**. Claude weekly capacity is a hard scarce resource; the brain
 decides, hands do volume. One capable driver, one adversarial partner,
-cheap fast fan-out. Opus 5 drives (orchestrates, decides,
+cheap fast fan-out. Opus 5.5 drives (orchestrates, decides,
 verifies) while spending as few of its own tokens as possible: subagents and
 subagent workflows do the volume work quickly and in parallel.
 
@@ -32,7 +32,7 @@ change against it.
 Claude Code, entered through `cc`, is the only coding harness. Fable 5/high is
 the normal driver because it owns orchestration and routes volume to the
 canonical worker seats. `cc` and `fable` are equivalent entrypoints. `opus` is
-the explicit Opus 5 `[1m]` command for work that specifically needs genuine 1M
+the explicit Opus 5.5 `[1m]` command for work that specifically needs genuine 1M
 context. Fable currently has a verified 200k model context, even though its
 compaction ceiling is configured at 1M for forward compatibility. Fable 5/high is
 the driver: it coordinates, decides, reconciles, and verifies using the native
@@ -44,7 +44,7 @@ per task. Sol seats are served by agent-lb's Messages-route model aliases
 
 | Seat                   | Agent definition                        | Model                | Effort            |
 | ---------------------- | --------------------------------------- | -------------------- | ----------------- |
-| Driver (main loop)     | —                                       | `claude-opus-5`      | high              |
+| Driver (main loop)     | —                                       | `claude-opus-5-5`    | high              |
 | Explore / scouts       | `~/.claude/agents/Explore.md`           | `gpt-5.6-sol-medium` | medium, fast tier |
 | Implementer            | `~/.claude/agents/implementer.md`       | `gpt-5.6-terra-medium` | medium, fast tier |
 | Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
@@ -349,7 +349,7 @@ work that outlives the session.
 - `clients/cc` delegates to `clients/fable`; Fable 5/high is the default.
 - `clients/fable` execs the launcher with the driver and opus/fable
   slots set to `claude-fable-5` and the seat slots untouched.
-- `clients/opus` is the explicit Opus 5 `[1m]` entrypoint.
+- `clients/opus` is the explicit Opus 5.5 `[1m]` entrypoint.
 - `scripts/install-claude-clients.sh` installs this policy and the `cc`,
   `fable`, and `opus` clients, and removes retired ccdex artifacts (clients, hook, MCP
   registration) when it finds them.
@@ -367,5 +367,5 @@ work that outlives the session.
 
 Run `~/.agents/policy/coding-agents/verify-routing` for deterministic machine
 checks. Routing is not proven by prose alone. A valid rollout also has one
-live `cc` response reporting Opus 5/high, or an explicit current provider-capacity
+live `cc` response reporting Opus 5.5/high, or an explicit current provider-capacity
 blocker.

@@ -132,7 +132,7 @@ check("CLIENT_NAMES=(cc fable opus)" in installer_text, "client installer instal
 routing_text = CANONICAL.read_text() if CANONICAL.is_file() else ""
 check("## Fable driver mode" in routing_text, "canonical policy documents Fable driver mode")
 for seat, model, effort in (
-    ("Driver (main loop)", "claude-opus-5", "high"),
+    ("Driver (main loop)", "claude-opus-5-5", "high"),
     ("Explore / scouts", "gpt-5.6-sol-medium", "medium, fast tier"),
     ("Implementer", "gpt-5.6-terra-medium", "medium, fast tier"),
     ("Verifier (adversarial)", "gpt-5.6-sol-xhigh", "xhigh, fast tier"),
