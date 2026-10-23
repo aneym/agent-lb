@@ -9,8 +9,11 @@ from pathlib import Path
 
 
 def main() -> None:
+    argv = list(sys.argv[1:])
+    if not any(arg == "--autocompact" or arg.startswith("--autocompact=") for arg in argv):
+        argv = ["--autocompact", "1m", *argv]
     launcher = Path(__file__).resolve().with_name("claude-lb-launch")
-    os.execv(launcher, [str(launcher), *sys.argv[1:]])
+    os.execv(launcher, [str(launcher), *argv])
 
 
 if __name__ == "__main__":
