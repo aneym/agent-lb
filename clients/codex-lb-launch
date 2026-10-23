@@ -504,15 +504,10 @@ def main(argv: list[str]) -> None:
     for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
         os.environ[name] = proxy_url
     _append_no_proxy(("127.0.0.1", "localhost", "::1"))
-    headers = {}
-    for variable, header in (("FACTORY_PROJECT", "x-factory-project"), ("FACTORY_JOB", "x-factory-job")):
-        value = os.environ.get(variable, "")
-        if value:
-            headers[header] = variable
     overrides = []
-    if headers:
-        table = "{ " + ", ".join(json.dumps(k) + " = " + json.dumps(v) for k, v in headers.items()) + " }"
-        overrides = ["-c", "model_providers.agent-lb.env_http_headers=" + table]
+    for variable, header in (("FACTORY_PROJECT", "x-factory-project"), ("FACTORY_JOB", "x-factory-job")):
+        if os.environ.get(variable):
+            overrides.extend(["-c", "model_providers.agent-lb.env_http_headers." + header + "=" + json.dumps(variable)])
     os.execvp("codex", ["codex", *overrides, *argv])
 
 
