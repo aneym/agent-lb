@@ -17,7 +17,6 @@ async def apply_error_rule(
         async with repo_factory() as repos:
             await AccountsService(repos.accounts).pause_account(account.id, reason=rule.reason)
     elif rule.action == "cooldown":
-        await balancer.mark_rate_limit(account, {"resets_in_seconds": rule.cooldown_seconds})
         await balancer.cool_down(account, rule.cooldown_seconds)
 
 

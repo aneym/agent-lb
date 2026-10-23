@@ -20,7 +20,7 @@ values and unknown fields fail settings validation at startup.
 | Action | Result |
 |---|---|
 | `pause` | Pause the account with the supplied reason and try another account. |
-| `cooldown` | Temporarily exclude the account and try another account. `cooldown_seconds` defaults to 60 and must be positive. |
+| `cooldown` | Exclude the account from selection for `cooldown_seconds` and try another account, without changing its stored status or quota reset marks. The failure is counted once in runtime state. `cooldown_seconds` defaults to 60 and must be positive; the exclusion is held in memory and clears on restart. |
 | `fail_request` | Surface the failure immediately without penalising the account. |
 
 The built-in GLM rule pauses on code `1113` at any error status. Kimi rules

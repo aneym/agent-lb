@@ -113,7 +113,6 @@ def select_account(
     current = now or time.time()
     available: list[AccountState] = []
     in_error_backoff: list[AccountState] = []
-    cooled: list[AccountState] = []
     all_states = list(states)
     bypass_account_ids = None if bypass_quota_exceeded_account_ids is None else set(bypass_quota_exceeded_account_ids)
 
@@ -146,7 +145,6 @@ def select_account(
             if state.blocked_at is None:
                 state.error_count = 0
         if state.cooldown_until and current < state.cooldown_until:
-            cooled.append(state)
             continue
         if state.error_count >= 3 and state.blocked_at is None:
             backoff = min(300, 30 * (2 ** (state.error_count - 3)))
@@ -165,8 +163,8 @@ def select_account(
         available = opportunistic_available
 
     if not available:
-        if allow_backoff_fallback and (in_error_backoff or cooled):
-            available.append(min(in_error_backoff + cooled, key=lambda s: (s.error_count, s.last_error_at or 0.0)))
+        if allow_backoff_fallback and in_error_backoff:
+            available.append(min(in_error_backoff, key=lambda s: (s.error_count, s.last_error_at or 0.0)))
             if traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC:
                 opportunistic_available, reason = _filter_opportunistic_candidates(available, current)
                 if not opportunistic_available:

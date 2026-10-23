@@ -7,6 +7,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -62,17 +63,19 @@ def serve() -> None:
     uvicorn.run("app.main:app", host="127.0.0.1", port=int(sys.argv[2]), log_level="error", access_log=False)
 
 
-async def scenario(name, provider, upstream_status, error, expected, rules=()):
+async def scenario(name, provider, upstream_status, error, expected, rules=(), cooldown_seconds: float | None = None):
     data = ROOT / ".local" / "error-rules" / name
     data.mkdir(parents=True, exist_ok=True)
     database = data / "store.db"
     if database.exists():
         database.unlink()
     calls = 0
+    call_times: list[float] = []
 
     async def upstream(request):
         nonlocal calls
         calls += 1
+        call_times.append(time.monotonic())
         return web.json_response({"error": error}, status=upstream_status)
 
     app = web.Application()
@@ -101,6 +104,7 @@ async def scenario(name, provider, upstream_status, error, expected, rules=()):
         "kimi_anthropic_upstream_base_url": f"http://127.0.0.1:{upstream_port}",
         "proxy_unauthenticated_client_cidrs": "127.0.0.1/32",
         "identity_enabled": "false",
+        "anthropic_pool_exhausted_wait_enabled": "false",
         "dashboard_bootstrap_token": "local-proof-placeholder",
         "upstream_error_rules": json.dumps(rules),
     }
@@ -131,7 +135,7 @@ async def scenario(name, provider, upstream_status, error, expected, rules=()):
         )
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as client:
-                for _ in range(300):
+                for _ in range(1200):
                     if child.poll() is not None:
                         raise RuntimeError(f"server exited; see {data / 'server.log'}")
                     try:
@@ -159,12 +163,25 @@ async def scenario(name, provider, upstream_status, error, expected, rules=()):
                     or (downstream_status < 400 and '"type": "error"' not in result)
                 ):
                     raise AssertionError((name, state, expected, calls, downstream_status, result))
-                if name == "custom-cooldown":
+                if cooldown_seconds is not None:
+                    with sqlite3.connect(database) as connection:
+                        marks = connection.execute("SELECT reset_at, blocked_at FROM accounts").fetchone()
+                    if marks != (None, None):
+                        raise AssertionError(f"cooldown persisted rate-limit marks: {marks}")
+                    duration = cooldown_seconds
+                    started = call_times[0]
                     prior_calls = calls
+                    for offset in (0, duration - 2):
+                        await asyncio.sleep(max(0, started + offset - time.monotonic()))
+                        async with client.post(f"http://127.0.0.1:{port}/v1/messages", json=body) as retry:
+                            await retry.read()
+                        if calls != prior_calls:
+                            raise AssertionError("cooldown account was selected before expiry")
+                    await asyncio.sleep(max(0, started + duration + 0.5 - time.monotonic()))
                     async with client.post(f"http://127.0.0.1:{port}/v1/messages", json=body) as retry:
                         await retry.read()
-                    if calls != prior_calls:
-                        raise AssertionError("cooldown account was selected again")
+                    if calls <= prior_calls:
+                        raise AssertionError("cooldown account remained excluded after expiry")
                 if name == "custom-fail" and (calls != 1 or not any(row[0] == "upstream_rule" for row in logs)):
                     raise AssertionError(f"fail_request retried: {calls}")
                 if name == "unmatched-500" and not any(row[0] == "upstream_500" for row in logs):
@@ -248,23 +265,25 @@ async def main():
         ],
     )
 
-    await scenario(
-        "custom-cooldown",
-        "glm",
-        400,
-        {"code": "custom"},
-        ("rate_limited", None),
-        [
-            {
-                "provider": "glm",
-                "http_status": 400,
-                "error_code": "custom",
-                "action": "cooldown",
-                "reason": "operator cooldown",
-                "cooldown_seconds": 300,
-            }
-        ],
-    )
+    for duration in (10, 65):
+        await scenario(
+            f"custom-cooldown-{duration}",
+            "glm",
+            400,
+            {"code": "custom"},
+            ("active", None),
+            [
+                {
+                    "provider": "glm",
+                    "http_status": 400,
+                    "error_code": "custom",
+                    "action": "cooldown",
+                    "reason": "operator cooldown",
+                    "cooldown_seconds": duration,
+                }
+            ],
+            cooldown_seconds=duration,
+        )
 
 
 if __name__ == "__main__":
