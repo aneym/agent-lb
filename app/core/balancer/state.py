@@ -67,6 +67,7 @@ class AccountState:
     primary_reset_at: int | None = None
     blocked_at: float | None = None
     cooldown_until: float | None = None
+    error_rule_cooldown_until: float | None = None
     secondary_used_percent: float | None = None
     secondary_reset_at: int | None = None
     last_error_at: float | None = None
