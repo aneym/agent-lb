@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
+from anyio import CancelScope
 from fastapi import Request, Response
 from fastapi.responses import StreamingResponse
 
@@ -39,6 +42,16 @@ async def chat_response(
         request_service_tier=None,
         request_usage_budget=_estimate_anthropic_request_usage(routing_payload, raw_body=await request.body()),
     )
+
+    async def release_body(body: AsyncIterator[bytes], first: bytes) -> AsyncIterator[bytes]:
+        try:
+            yield first
+            async for chunk in body:
+                yield chunk
+        finally:
+            with CancelScope(shield=True):
+                await _release_reservation(reservation)
+
     try:
         stream = await get_anthropic_proxy_context(request).service.stream_messages(
             routing_payload,
@@ -48,8 +61,30 @@ async def chat_response(
             api_key_reservation=reservation,
         )
         if stream_requested:
-            return StreamingResponse(stream.body, media_type=stream.media_type)
-        return Response(content=await _collect_anthropic_body(stream.body), media_type=stream.media_type)
+            try:
+                first = await anext(stream.body)
+            except StopAsyncIteration:
+                await _release_reservation(reservation)
+                return Response(content=b"", media_type=stream.media_type)
+            return StreamingResponse(release_body(stream.body, first), media_type=stream.media_type)
+        try:
+            return Response(content=await _collect_anthropic_body(stream.body), media_type=stream.media_type)
+        finally:
+            await _release_reservation(reservation)
     except AnthropicProxyError as exc:
         await _release_reservation(reservation)
-        return _logged_error_json_response(request, exc.status_code, openai_error(exc.code, exc.message))
+        return _logged_error_json_response(
+            request,
+            exc.status_code,
+            openai_error(
+                exc.code,
+                exc.message,
+                error_type={401: "authentication_error", 403: "permission_error", 429: "rate_limit_error"}.get(
+                    exc.status_code, "invalid_request_error" if exc.status_code < 500 else "server_error"
+                ),
+            ),
+        )
+    except BaseException:
+        with CancelScope(shield=True):
+            await _release_reservation(reservation)
+        raise

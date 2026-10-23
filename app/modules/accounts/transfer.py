@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 
@@ -195,6 +196,15 @@ class AccountsTransfer(AccountsQueries):
         email = (payload.email or default_email).strip().lower()
         raw_account_id = (payload.account_id or default_account_id).strip()
         account_id = generate_unique_account_id(raw_account_id, email)
+        if provider_name in {"kimi", "glm", OPENROUTER_PROVIDER_NAME}:
+            for existing in await self._repo.list_accounts():
+                if normalize_provider_name(existing.provider) != provider_name:
+                    continue
+                if hmac.compare_digest(self._encryptor.decrypt(existing.access_token_encrypted), api_key):
+                    account_id = existing.id
+                    raw_account_id = existing.chatgpt_account_id
+                    email = existing.email
+                    break
         plan_type = coerce_account_plan_type(payload.plan_type, defaults.plan_type)
         credits_window = None
         if provider_name == OPENROUTER_PROVIDER_NAME:
