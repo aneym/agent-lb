@@ -412,6 +412,7 @@ def configure_app(app: FastAPI, settings) -> None:
         usage_api.router,
         public_usage_api.router,
         request_logs_api.router,
+        request_logs_api.factory_router,
         receipts_api.router,
         routing_view_api.router,
         routing_policy_api.router,
