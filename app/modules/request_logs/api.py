@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import hmac
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
+from app.core.config.settings import get_settings
 from app.core.utils.time import utcnow
 from app.dependencies import RequestLogsContext, get_request_logs_context
 from app.modules.request_logs.schemas import (
+    FactoryUsageResponse,
     RequestLogApiKeyOption,
     RequestLogFilterOptionsResponse,
     RequestLogModelOption,
@@ -186,37 +189,19 @@ async def list_request_log_filter_options(
 factory_router = APIRouter(prefix="/api/factory-usage", tags=["factory"])
 
 
-@factory_router.get("")
+@factory_router.get("", response_model=FactoryUsageResponse)
 async def factory_usage(
     request: Request,
-    project: str = Query(min_length=1, max_length=63),
+    project: str = Query(min_length=1, max_length=128),
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    before_id: int | None = Query(default=None, alias="beforeId", ge=1),
     context: RequestLogsContext = Depends(get_request_logs_context),
-) -> dict:
-    import hmac
-
-    from fastapi import HTTPException
-
-    from app.core.config.settings import get_settings
-
+) -> FactoryUsageResponse:
     token = get_settings().factory_usage_token
-    supplied = request.headers.get("Authorization", "")
-    if not token or not hmac.compare_digest(supplied, "Bearer " + token):
+    supplied = request.headers.get("Authorization", "").encode("utf-8")
+    if not token or not hmac.compare_digest(supplied, ("Bearer " + token).encode("utf-8")):
         raise HTTPException(status_code=403, detail="Factory usage access refused")
-    page = await context.service.list_recent(limit=limit, offset=offset, include_total=False)
-    return {
-        "requests": [
-            {
-                "factoryProject": row.factory_project,
-                "factoryOwner": row.factory_owner,
-                "factoryHost": row.factory_host,
-                "factoryJob": row.factory_job,
-                "tokens": row.tokens or 0,
-            }
-            for row in page.requests
-            if row.factory_project == project
-        ],
-        "hasMore": page.has_more,
-        "nextOffset": offset + len(page.requests),
-    }
+    if before_id is not None and offset:
+        raise HTTPException(status_code=400, detail="Use beforeId without offset")
+    return await context.service.list_factory_usage(project=project, limit=limit, offset=offset, before_id=before_id)

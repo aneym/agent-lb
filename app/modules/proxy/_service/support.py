@@ -17,6 +17,7 @@ from app.core.identity import RequestIdentity
 from app.core.openai.models import OpenAIEvent
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
+from app.core.utils.client_session import FACTORY_ATTRIBUTION, FactoryAttribution
 from app.db.models import Account
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyRequestUsageBudget, ApiKeyUsageReservationData
 from app.modules.proxy.affinity import _AffinityPolicy
@@ -187,6 +188,7 @@ class _WebSocketRequestState:
     latency_first_token_ms: int | None = None
     request_log_id: str | None = None
     identity: RequestIdentity | None = None
+    factory_attribution: FactoryAttribution = field(default_factory=FACTORY_ATTRIBUTION.get)
     requested_service_tier: str | None = None
     actual_service_tier: str | None = None
     response_id: str | None = None

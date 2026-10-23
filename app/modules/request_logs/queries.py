@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.utils.time import to_utc_naive
 from app.db.models import Account
 from app.db.request_models import ApiKey, RequestLog
+from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +20,20 @@ class _RequestLogFilters:
 
 class RequestLogQueries:
     _session: AsyncSession
+
+    async def list_factory_usage(
+        self, *, project: str, limit: int, offset: int = 0, before_id: int | None = None
+    ) -> list[RequestLog]:
+        stmt = select(RequestLog).where(
+            RequestLog.factory_project == project,
+            RequestLog.deleted_at.is_(None),
+            RequestLog.request_kind != "warmup",
+            exclude_forwarded_edge_logs(),
+        )
+        if before_id is not None:
+            stmt = stmt.where(RequestLog.id < before_id)
+        result = await self._session.execute(stmt.order_by(RequestLog.id.desc()).offset(offset).limit(limit + 1))
+        return list(result.scalars().all())
 
     async def list_recent(
         self,

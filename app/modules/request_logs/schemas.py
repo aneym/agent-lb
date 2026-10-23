@@ -90,3 +90,20 @@ class RequestLogFilterOptionsResponse(DashboardModel):
     model_options: list[RequestLogModelOption] = Field(default_factory=list)
     api_keys: list[RequestLogApiKeyOption] = Field(default_factory=list)
     statuses: list[str] = Field(default_factory=list)
+
+
+class FactoryUsageEntry(DashboardModel):
+    id: int
+    requested_at: datetime
+    factory_project: str | None
+    factory_owner: str | None
+    factory_host: str | None
+    factory_job: str | None
+    tokens: int
+
+
+class FactoryUsageResponse(DashboardModel):
+    requests: list[FactoryUsageEntry]
+    has_more: bool
+    next_offset: int
+    next_before_id: int | None

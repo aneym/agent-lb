@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -471,6 +472,49 @@ def _append_no_proxy(hosts: tuple[str, ...]) -> None:
         os.environ[name] = ",".join(entries)
 
 
+def _factory_header_overrides(argv: list[str]) -> list[str]:
+    tags = [(name, header) for name, header in (("FACTORY_PROJECT", "x-factory-project"),
+            ("FACTORY_JOB", "x-factory-job")) if os.environ.get(name)]
+    if not tags:
+        return []
+    config_path = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
+    config = tomllib.loads(config_path.read_text()) if config_path.exists() else {}
+    profile = config.get("profile")
+    overrides = {}
+    for index, arg in enumerate(argv):
+        value = None
+        if arg in ("-p", "--profile") and index + 1 < len(argv):
+            profile = argv[index + 1]
+        elif arg.startswith("--profile="):
+            profile = arg.split("=", 1)[1]
+        elif arg in ("-c", "--config") and index + 1 < len(argv):
+            value = argv[index + 1]
+        elif arg.startswith("--config="):
+            value = arg.split("=", 1)[1]
+        elif arg.startswith("-c") and arg != "-c":
+            value = arg[2:]
+        if value and "=" in value:
+            key, raw = value.split("=", 1)
+            if key.strip() in ("model_provider", "profile"):
+                try:
+                    overrides[key.strip()] = tomllib.loads("value=" + raw)["value"]
+                except tomllib.TOMLDecodeError:
+                    overrides[key.strip()] = raw.strip()
+    profile = overrides.get("profile", profile)
+    profile_path = config_path.with_name(str(profile) + ".config.toml")
+    profile_config = tomllib.loads(profile_path.read_text()) if profile and profile_path.exists() else (
+        config.get("profiles", {}).get(profile, {}) if profile else {}
+    )
+    provider = overrides.get("model_provider", profile_config.get("model_provider", config.get("model_provider", "openai")))
+    if "--oss" in argv or provider not in (config.get("model_providers", {}) | profile_config.get("model_providers", {})):
+        return []
+    result = []
+    for variable, header in tags:
+        result.extend(["-c", "model_providers." + provider + ".env_http_headers."
+                       + header + "=" + json.dumps(variable)])
+    return result
+
+
 def main(argv: list[str]) -> None:
     for name in ("GH_TOKEN", "GITHUB_TOKEN"):
         os.environ.pop(name, None)
@@ -504,10 +548,7 @@ def main(argv: list[str]) -> None:
     for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
         os.environ[name] = proxy_url
     _append_no_proxy(("127.0.0.1", "localhost", "::1"))
-    overrides = []
-    for variable, header in (("FACTORY_PROJECT", "x-factory-project"), ("FACTORY_JOB", "x-factory-job")):
-        if os.environ.get(variable):
-            overrides.extend(["-c", "model_providers.agent-lb.env_http_headers." + header + "=" + json.dumps(variable)])
+    overrides = _factory_header_overrides(argv)
     os.execvp("codex", ["codex", *overrides, *argv])
 
 

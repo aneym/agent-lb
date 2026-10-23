@@ -4,7 +4,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20261023_000000_factory_usage_attribution"
-down_revision = "20261021_130000_add_request_logs_job_time_index"
+down_revision = "20261026_200100_add_request_log_client_session_index"
 branch_labels = None
 depends_on = None
 

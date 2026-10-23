@@ -3227,6 +3227,7 @@ class _WebSocketMixin:
             )
             await proxy._write_request_log(
                 identity=request_state.identity,
+                factory_attribution=request_state.factory_attribution,
                 account_id=account_id_value,
                 api_key=api_key,
                 request_id=request_log_response_id,
@@ -3256,47 +3257,6 @@ class _WebSocketMixin:
                 useragent=request_state.useragent,
                 useragent_group=request_state.useragent_group,
             )
-
-    async def _write_websocket_connect_failure(
-        self,
-        *,
-        account_id: str | None,
-        api_key: ApiKeyData | None,
-        request_state: _WebSocketRequestState,
-        error_code: str,
-        error_message: str,
-    ) -> None:
-        proxy = cast(_WebSocketServiceProtocol, self)
-        _ = proxy
-        if request_state.skip_request_log:
-            return
-        await proxy._write_request_log(
-            identity=request_state.identity,
-            account_id=account_id,
-            api_key=api_key,
-            request_id=request_state.request_log_id or request_state.request_id,
-            model=request_state.model or "",
-            latency_ms=int((time.monotonic() - request_state.started_at) * 1000),
-            status="error",
-            error_code=error_code,
-            error_message=error_message,
-            reasoning_effort=request_state.reasoning_effort,
-            transport=request_state.transport,
-            service_tier=request_state.service_tier,
-            requested_service_tier=request_state.requested_service_tier,
-            actual_service_tier=request_state.actual_service_tier,
-            latency_first_token_ms=request_state.latency_first_token_ms,
-            session_id=request_state.client_session_id or request_state.session_id,
-            upstream_proxy_route_mode=request_state.upstream_proxy_route_mode,
-            upstream_proxy_pool_id=request_state.upstream_proxy_pool_id,
-            upstream_proxy_endpoint_id=request_state.upstream_proxy_endpoint_id,
-            upstream_proxy_fallback_used=(
-                request_state.upstream_proxy_fallback_used if request_state.upstream_proxy_endpoint_id else None
-            ),
-            upstream_proxy_fail_closed_reason=request_state.upstream_proxy_fail_closed_reason,
-            useragent=request_state.useragent,
-            useragent_group=request_state.useragent_group,
-        )
 
     async def _emit_websocket_connect_failure(
         self,
@@ -3473,6 +3433,7 @@ class _WebSocketMixin:
             latency_ms = int((time.monotonic() - request_state.started_at) * 1000)
             await proxy._write_request_log(
                 identity=request_state.identity,
+                factory_attribution=request_state.factory_attribution,
                 account_id=account_id_value,
                 api_key=api_key,
                 request_id=request_state.response_id or request_state.request_log_id or request_state.request_id,
