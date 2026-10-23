@@ -188,7 +188,7 @@ def prepare_ccgpt_endpoint() -> bool:
         endpoint = urllib.parse.urlsplit(url).netloc or url
         suffix = " (local)" if label == "local" else ""
         print(
-            f"ccgpt: {c('Claude Code + Codex', '1;36')} · {CCGPT_MODEL}/high · "
+            f"ccgpt: {c('Claude Code + Codex', '1;36')} · {CCGPT_MODEL}/{requested_effort(sys.argv[1:])} · "
             f"{'bypass perms' if not has_permission_option(sys.argv[1:]) else 'custom perms'} · "
             f"requested priority {c(f'via {endpoint}{suffix}', '2')} · {stand_in_banner()}",
             file=sys.stderr,

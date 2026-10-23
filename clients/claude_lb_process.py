@@ -76,23 +76,23 @@ def claude_executable() -> str:
 def build_command(argv: list[str]) -> list[str]:
     command = [claude_executable()]
     if CCGPT_MODE:
-        argv = without_option(without_option(argv, "--model"), "--effort")
-        command.extend(["--model", CCGPT_MODEL, "--effort", "high"])
+        argv = without_option(without_option(argv, "--model"), "-m")
+        command.extend(["--model", CCGPT_MODEL])
     else:
         if arg_value(argv, "--model", "-m") is None and not os.environ.get("ANTHROPIC_MODEL"):
             command.extend(["--model", DEFAULT_CLAUDE_MODEL])
-        effort_arg = arg_value(argv, "--effort")
-        effort_env = (os.environ.get("CC_EFFORT_LEVEL") or "").strip()
+    effort_arg = arg_value(argv, "--effort")
+    effort_env = (os.environ.get("CC_EFFORT_LEVEL") or "").strip()
 
-        if effort_arg is None:
-            if effort_env.lower() not in {"", "none", "off"}:
-                command.extend(["--effort", effort_env])
-            elif effort_env.lower() in {"none", "off"}:
-                pass
-            else:
-                command.extend(["--effort", DEFAULT_CLAUDE_EFFORT])
-        elif effort_arg.lower() in {"none", "off"}:
-            argv = without_option(argv, "--effort")
+    if effort_arg is None:
+        if effort_env.lower() not in {"", "none", "off"}:
+            command.extend(["--effort", effort_env])
+        elif effort_env.lower() in {"none", "off"}:
+            pass
+        else:
+            command.extend(["--effort", "high" if CCGPT_MODE else DEFAULT_CLAUDE_EFFORT])
+    elif effort_arg.lower() in {"none", "off"}:
+        argv = without_option(argv, "--effort")
     permission_mode = None if CCGPT_MODE else os.environ.get("CC_PERMISSION_MODE")
     if CCGPT_MODE and not has_permission_option(argv):
         permission_mode = "bypassPermissions"
