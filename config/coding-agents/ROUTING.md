@@ -44,7 +44,7 @@ per task. Sol seats are served by agent-lb's Messages-route model aliases
 
 | Seat                   | Agent definition                        | Model                | Effort            |
 | ---------------------- | --------------------------------------- | -------------------- | ----------------- |
-| Driver (main loop)     | —                                       | `claude-opus-5`      | high              |
+| Driver (main loop)     | —                                       | `claude-opus-5-5`    | high              |
 | Explore / scouts       | `~/.claude/agents/Explore.md`           | `gpt-5.6-sol-medium` | medium, fast tier |
 | Implementer            | `~/.claude/agents/implementer.md`       | `gpt-5.6-terra-medium` | medium, fast tier |
 | Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
