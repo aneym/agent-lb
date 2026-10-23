@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import resource
 import secrets
 import shlex
 import signal
@@ -188,16 +189,11 @@ def stream_diagnostics(stdout: str, stderr: str) -> dict[str, Any]:
         elif model:
             parent_models.add(model)
     return {
-        "event_count": event_count,
-        "malformed_lines": malformed_lines,
-        "init_model": init_model,
-        "session_id": session_id,
-        "last_event_type": last_type,
-        "last_event_subtype": last_subtype,
-        "terminal_subtype": terminal_subtype,
-        "parent_models": sorted(parent_models)[:10],
-        "child_models": sorted(child_models)[:10],
-        "stderr_tags": _stderr_tags(stderr),
+        "event_count": event_count, "malformed_lines": malformed_lines,
+        "init_model": init_model, "session_id": session_id,
+        "last_event_type": last_type, "last_event_subtype": last_subtype,
+        "terminal_subtype": terminal_subtype, "parent_models": sorted(parent_models)[:10],
+        "child_models": sorted(child_models)[:10], "stderr_tags": _stderr_tags(stderr),
     }
 
 
@@ -348,43 +344,39 @@ def analyze_stream(stdout: str, nonce: str, expected_model: str) -> tuple[str, s
 
 def _probe_command(fable: Path, prompt: str, session_id: str) -> list[str]:
     return [
-        sys.executable,
-        str(fable),
-        "-p",
-        prompt,
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--forward-subagent-text",
-        "--disable-slash-commands",
-        "--max-turns",
-        "8",
-        "--effort",
-        "low",
-        "--tools",
-        "Agent,Read",
-        "--allowedTools",
-        "Agent,Read",
-        "--strict-mcp-config",
-        "--mcp-config",
-        '{"mcpServers":{}}',
-        "--settings",
-        '{"disableAllHooks":true}',
-        "--system-prompt",
-        "Runtime diagnostic only. Follow the user probe steps exactly and report no unrelated data.",
-        "--session-id",
-        session_id,
+        sys.executable, str(fable), "-p", prompt, "--output-format", "stream-json", "--verbose",
+        "--forward-subagent-text", "--disable-slash-commands", "--max-turns", "8", "--effort", "low",
+        "--tools", "Agent,Read", "--allowedTools", "Agent,Read", "--strict-mcp-config",
+        "--mcp-config", '{"mcpServers":{}}', "--settings", '{"disableAllHooks":true}',
+        "--system-prompt", "Runtime diagnostic only. Follow the user probe steps exactly and report no unrelated data.",
+        "--session-id", session_id,
     ]
 
 
+def raise_fd_soft_limit() -> int | None:
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    except (OSError, ValueError):
+        return None
+    target = 8192 if hard == resource.RLIM_INFINITY else min(8192, hard)
+    if soft == resource.RLIM_INFINITY or soft >= target:
+        return soft
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (OSError, ValueError):
+        return soft
+    return target
+
+
 def run_probe(*, canonical_retry: bool = False) -> ProbeOutcome:
-    started = time.monotonic()
+    fd_limit = raise_fd_soft_limit()
+    start = time.monotonic()
     expected_model = os.environ.get("AGENT_LB_OPUS_MODEL") or EXPECTED_MODEL_DEFAULT
     nonce = secrets.token_hex(16)
     directory = state_dir()
     fable = _sibling("fable")
     if not fable.is_file():
-        return ProbeOutcome("FAIL", "fable_missing", {}, time.monotonic() - started)
+        return ProbeOutcome("FAIL", "fable_missing", {}, time.monotonic() - start)
     with tempfile.TemporaryDirectory(prefix="opus-doctor-", dir=directory) as temp_name:
         temp = Path(temp_name)
         sentinel = temp / "sentinel.txt"
@@ -397,16 +389,11 @@ def run_probe(*, canonical_retry: bool = False) -> ProbeOutcome:
             "report its nonce and its own system-context model identity. Return both tool results."
         )
         env = os.environ.copy()
-        env.update(
-            {
-                "CLAUDE_LB_DOCTOR_SKIP": "1",
-                "CLAUDE_LB_AUTO_RESUME": "0",
-                "CLAUDE_LB_WAIT": "never",
-                "CLAUDE_LB_WAIT_FOR_LIMIT": "never",
-                "CLAUDE_LB_REQUIRE": "1",
-                "CLAUDE_LB_SESSION_ID": f"opus-doctor-{uuid.uuid4()}",
-            }
-        )
+        env.update({
+            "CLAUDE_LB_DOCTOR_SKIP": "1", "CLAUDE_LB_AUTO_RESUME": "0",
+            "CLAUDE_LB_WAIT": "never", "CLAUDE_LB_WAIT_FOR_LIMIT": "never",
+            "CLAUDE_LB_REQUIRE": "1", "CLAUDE_LB_SESSION_ID": f"opus-doctor-{uuid.uuid4()}",
+        })
         env.pop("CLAUDECODE", None)
         env.pop("CLAUDE_CODE_SUBAGENT_MODEL", None)
         if canonical_retry:
@@ -415,17 +402,11 @@ def run_probe(*, canonical_retry: bool = False) -> ProbeOutcome:
         command = _probe_command(fable, prompt, str(uuid.uuid4()))
         try:
             process = subprocess.Popen(
-                command,
-                cwd=temp,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
+                command, cwd=temp, env=env, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
             )
         except OSError as error:
-            return ProbeOutcome("FAIL", type(error).__name__, {}, time.monotonic() - started)
+            return ProbeOutcome("FAIL", type(error).__name__, {}, time.monotonic() - start)
         try:
             stdout, stderr = process.communicate(timeout=PROBE_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
@@ -434,19 +415,15 @@ def run_probe(*, canonical_retry: bool = False) -> ProbeOutcome:
             except ProcessLookupError:
                 pass
             stdout, stderr = process.communicate()
-            return ProbeOutcome(
-                "FAIL",
-                "timeout",
-                stream_diagnostics(stdout, stderr),
-                time.monotonic() - started,
-            )
+            evidence = {**stream_diagnostics(stdout, stderr), "fd_soft_limit": fd_limit}
+            return ProbeOutcome("FAIL", "timeout", evidence, time.monotonic() - start)
         if process.returncode != 0:
             evidence = stream_diagnostics(stdout, stderr)
             evidence["returncode"] = process.returncode
-            return ProbeOutcome("FAIL", "nonzero_exit", evidence, time.monotonic() - started)
+            return ProbeOutcome("FAIL", "nonzero_exit", evidence, time.monotonic() - start)
         status, error_class, evidence = analyze_stream(stdout, nonce, expected_model)
         evidence.update(stream_diagnostics(stdout, stderr))
-        return ProbeOutcome(status, error_class, evidence, time.monotonic() - started)
+        return ProbeOutcome(status, error_class, evidence, time.monotonic() - start)
 
 
 def _attempt_dict(outcome: ProbeOutcome, number: int) -> dict[str, Any]:
