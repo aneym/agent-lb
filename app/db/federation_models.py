@@ -4,7 +4,18 @@ import uuid
 from datetime import date, datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, String, Text, func, text
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import Mapped, mapped_column
 

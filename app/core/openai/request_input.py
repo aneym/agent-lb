@@ -8,8 +8,22 @@ from typing import cast
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
-type MutableJsonObject = dict[str, JsonValue]
+_COMPACT_TOOL_CALL_TYPE_BY_OUTPUT_TYPE: dict[str, str] = {
+    "function_call_output": "function_call",
+    "custom_tool_call_output": "custom_tool_call",
+    "apply_patch_call_output": "apply_patch_call",
+}
 
+
+def _is_preserved_non_message_directive(item: Mapping[str, JsonValue]) -> bool:
+    if item.get("role") not in ("system", "developer"):
+        return False
+    item_type = item.get("type")
+    return item_type is not None and item_type != "message"
+
+
+_COMPACT_TOOL_CALL_OUTPUT_ITEM_TYPES = frozenset(_COMPACT_TOOL_CALL_TYPE_BY_OUTPUT_TYPE)
+type MutableJsonObject = dict[str, JsonValue]
 _INTERLEAVED_REASONING_KEYS = frozenset({"reasoning_content", "reasoning_details", "tool_calls", "function_call"})
 _INTERLEAVED_REASONING_PART_TYPES = frozenset({"reasoning", "reasoning_content", "reasoning_details"})
 _ASSISTANT_TEXT_PART_TYPES = frozenset({"text", "input_text", "output_text"})
@@ -56,74 +70,48 @@ def _input_image_file_reference(item: Mapping[str, JsonValue]) -> str | None:
 
 
 def extract_input_file_ids(input_value: JsonValue) -> set[str]:
-
     if not is_json_list(input_value):
         return set()
     file_ids: set[str] = set()
+
+    def collect_part(part: JsonValue) -> None:
+        if not is_json_mapping(part):
+            return
+        if _is_input_file_with_id(part):
+            file_id = part.get("file_id")
+            if isinstance(file_id, str) and file_id:
+                file_ids.add(file_id)
+        image_file_id = _input_image_file_reference(part)
+        if image_file_id is not None:
+            file_ids.add(image_file_id)
+
     for item in input_value:
         if not is_json_mapping(item):
             continue
-        item_mapping = item
-        if _is_input_file_with_id(item_mapping):
-            file_id = item_mapping.get("file_id")
-            if isinstance(file_id, str) and file_id:
-                file_ids.add(file_id)
-        image_file_id = _input_image_file_reference(item_mapping)
-        if image_file_id is not None:
-            file_ids.add(image_file_id)
-        content = item_mapping.get("content")
-        if is_json_list(content):
-            parts: list[JsonValue] = content
-        elif is_json_mapping(content):
-            parts = [content]
-        else:
-            parts = []
-        for part in parts:
-            if not is_json_mapping(part):
-                continue
-            if _is_input_file_with_id(part):
-                file_id = part.get("file_id")
-                if isinstance(file_id, str) and file_id:
-                    file_ids.add(file_id)
-            image_file_id = _input_image_file_reference(part)
-            if image_file_id is not None:
-                file_ids.add(image_file_id)
+        collect_part(item)
+        for part in _json_parts(item.get("content")):
+            collect_part(part)
+        if item.get("type") in _COMPACT_TOOL_CALL_OUTPUT_ITEM_TYPES:
+            for part in _json_parts(item.get("output")):
+                collect_part(part)
     return file_ids
 
 
 def _append_input_image_file_references(
-    references: list[InputImageFileReference],
-    value: JsonValue,
-    *,
-    item_index: int,
-    content_index: int | None,
+    references: list[InputImageFileReference], value: JsonValue, *, item_index: int, content_index: int | None
 ) -> None:
     if is_json_mapping(value):
         file_id = _input_image_file_reference(value)
         if file_id is not None:
             references.append(
-                InputImageFileReference(
-                    item_index=item_index,
-                    content_index=content_index,
-                    file_id=file_id,
-                )
+                InputImageFileReference(item_index=item_index, content_index=content_index, file_id=file_id)
             )
         for child in value.values():
-            _append_input_image_file_references(
-                references,
-                child,
-                item_index=item_index,
-                content_index=content_index,
-            )
+            _append_input_image_file_references(references, child, item_index=item_index, content_index=content_index)
         return
     if is_json_list(value):
         for child in value:
-            _append_input_image_file_references(
-                references,
-                child,
-                item_index=item_index,
-                content_index=content_index,
-            )
+            _append_input_image_file_references(references, child, item_index=item_index, content_index=content_index)
 
 
 def extract_input_image_file_references(input_value: JsonValue) -> list[InputImageFileReference]:
@@ -137,11 +125,7 @@ def extract_input_image_file_references(input_value: JsonValue) -> list[InputIma
         top_level_file_id = _input_image_file_reference(item_mapping)
         if top_level_file_id is not None:
             references.append(
-                InputImageFileReference(
-                    item_index=item_index,
-                    content_index=None,
-                    file_id=top_level_file_id,
-                )
+                InputImageFileReference(item_index=item_index, content_index=None, file_id=top_level_file_id)
             )
         content = item_mapping.get("content")
         if is_json_list(content):
@@ -151,25 +135,19 @@ def extract_input_image_file_references(input_value: JsonValue) -> list[InputIma
         else:
             parts = []
         for content_index, part in enumerate(parts):
-            _append_input_image_file_references(
-                references,
-                part,
-                item_index=item_index,
-                content_index=content_index,
-            )
+            _append_input_image_file_references(references, part, item_index=item_index, content_index=content_index)
         output = item_mapping.get("output")
-        _append_input_image_file_references(
-            references,
-            output,
-            item_index=item_index,
-            content_index=None,
-        )
+        _append_input_image_file_references(references, output, item_index=item_index, content_index=None)
     return references
 
 
 def _sanitize_input_items(input_items: list[JsonValue]) -> list[JsonValue]:
     sanitized_input: list[JsonValue] = []
     for item in input_items:
+        item_mapping = _json_mapping_or_none(item)
+        if item_mapping is not None and _is_preserved_non_message_directive(item_mapping):
+            sanitized_input.append(item)
+            continue
         sanitized_item = _sanitize_interleaved_reasoning_input_item(item)
         if sanitized_item is None:
             continue
@@ -181,7 +159,6 @@ def _sanitize_interleaved_reasoning_input_item(item: JsonValue) -> JsonValue | N
     item_mapping = _json_mapping_or_none(item)
     if item_mapping is None:
         return item
-
     sanitized_item: MutableJsonObject = {}
     for key, value in item_mapping.items():
         if key in _INTERLEAVED_REASONING_KEYS:
@@ -215,11 +192,9 @@ def _sanitize_interleaved_reasoning_content_part(part: JsonValue) -> JsonValue |
     part_mapping = _json_mapping_or_none(part)
     if part_mapping is None:
         return part
-
     part_type = part_mapping.get("type")
     if isinstance(part_type, str) and part_type in _INTERLEAVED_REASONING_PART_TYPES:
         return None
-
     sanitized_part = dict(part_mapping)
     for key in _INTERLEAVED_REASONING_KEYS:
         sanitized_part.pop(key, None)
@@ -323,7 +298,7 @@ def _extract_text_content_part(part: JsonValue, allowed_types: frozenset[str]) -
         return None
     part_type = part_mapping.get("type")
     text = part_mapping.get("text")
-    if ((isinstance(part_type, str) and part_type in allowed_types) or part_type is None) and isinstance(text, str):
+    if (isinstance(part_type, str) and part_type in allowed_types or part_type is None) and isinstance(text, str):
         return text
     refusal = part_mapping.get("refusal")
     if isinstance(part_type, str) and part_type == "refusal" and isinstance(refusal, str):

@@ -10,9 +10,11 @@ from fastapi.responses import JSONResponse
 
 import app.modules.oauth.service as oauth_module
 from app.core.clients.oauth import OAuthError
+from app.core.crypto import TokenEncryptor
 from app.db.session import SessionLocal
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.oauth import api as oauth_api_module
+from app.modules.oauth.repository import OAuthFlowRecord, OAuthFlowRepository
 from app.modules.oauth.schemas import ManualCallbackRequest
 from tests.floor.oauth_flow_support import (
     _oauth_state_token,
@@ -70,7 +72,7 @@ async def test_manual_callback_api_preserves_oauth_error():
 
 
 @pytest.mark.asyncio
-async def test_manual_callback_service_sanitizes_unexpected_exception(monkeypatch, caplog):
+async def test_manual_callback_service_sanitizes_unexpected_exception(db_setup, monkeypatch, caplog):
     await oauth_module._OAUTH_STORE.reset()
     caplog.set_level(logging.ERROR, logger=oauth_module.logger.name)
     async with oauth_module._OAUTH_STORE.lock:
@@ -93,6 +95,13 @@ async def test_manual_callback_service_sanitizes_unexpected_exception(monkeypatc
     monkeypatch.setattr(oauth_module, "_oauth_route", fake_oauth_route)
     monkeypatch.setattr(oauth_module, "exchange_authorization_code", fake_exchange_authorization_code)
     service = oauth_module.OauthService(cast(AccountsRepository, SimpleNamespace()))
+
+    async with SessionLocal() as session:
+        await OAuthFlowRepository(session, TokenEncryptor()).create(
+            OAuthFlowRecord(
+                flow_id="flow-1", method="browser", status="pending", state_token="state-1", code_verifier="verifier-1"
+            )
+        )
 
     response = await service.manual_callback("http://localhost:1455/?code=code-1&state=state-1", flow_id="flow-1")
 

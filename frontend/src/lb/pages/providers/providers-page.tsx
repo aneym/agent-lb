@@ -1,11 +1,25 @@
 import { useState } from "react";
+import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { Link } from "react-router-dom";
 import { useAccounts } from "@/features/accounts/hooks/use-accounts";
-import { usePools, useReceiptSummary, useSeatAccounts, useStickySessions, type Pool } from "../../api";
+import {
+  usePools,
+  useReceiptSummary,
+  useSeatAccounts,
+  useStickySessions,
+  type Pool,
+} from "../../api";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { ProviderMark } from "../../kit/provider-mark";
 import { providerMark, vendorName } from "../../kit/provider-mark-helpers";
-import { EmptyState, FilterSelect, PageHead, SearchField, Section, Seg } from "../../kit/primitives";
+import {
+  EmptyState,
+  FilterSelect,
+  PageHead,
+  SearchField,
+  Section,
+  Seg,
+} from "../../kit/primitives";
 import { RoutingDashboard } from "@/features/dashboard/components/routing-dashboard";
 import { useAccountPlan } from "@/features/dashboard/use-account-plan";
 import {
@@ -32,6 +46,7 @@ function durationWords(milliseconds: number) {
 }
 
 export function ProvidersPage() {
+  const canWrite = useAuthStore((state) => state.canWrite);
   usePrivacyStore((state) => state.blurred);
   const pools = usePools();
   const plan = useAccountPlan();
@@ -47,8 +62,17 @@ export function ProvidersPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [sort, setSort] = useState("reset");
-  const activePools = pools.data?.pools.filter((p) => p.kind !== "fable_scoped" && !(p.kind === "cli_seat" &&
-    pools.data.pools.some((other) => other.provider === p.provider && other.kind === "cli_seat_budget"))) || [];
+  const activePools =
+    pools.data?.pools.filter(
+      (p) =>
+        p.kind !== "fable_scoped" &&
+        !(
+          p.kind === "cli_seat" &&
+          pools.data.pools.some(
+            (other) => other.provider === p.provider && other.kind === "cli_seat_budget",
+          )
+        ),
+    ) || [];
   const accounts = accountsQuery.data || [];
   const seatAccounts = seat.data?.accounts ?? [];
   const paused =
@@ -131,9 +155,11 @@ export function ProvidersPage() {
       <PageHead
         title="Providers"
         action={
-          <Link className="btn primary" to="/providers/add">
-            ＋ Add account
-          </Link>
+          canWrite && (
+            <Link className="btn primary" to="/providers/add">
+              ＋ Add account
+            </Link>
+          )
         }
       >
         {pools.data
@@ -175,6 +201,9 @@ export function ProvidersPage() {
         title="Accounts"
         aside={
           <div className="toolbar acct-tools">
+            <Link className="btn sm" to="/accounts">
+              List view
+            </Link>
             <SearchField value={search} onChange={setSearch} />
             <Seg
               options={[
@@ -227,11 +256,13 @@ export function ProvidersPage() {
                       <ProviderMark id={group.mark} />
                       <span className="gn">{group.title}</span>
                       <span className="gs">· {group.list.length} accounts</span>
-                      <span className="ga">
-                        <Link className="btn ghost sm" to="/providers/add">
-                          ＋ Add
-                        </Link>
-                      </span>
+                      {canWrite && (
+                        <span className="ga">
+                          <Link className="btn ghost sm" to="/providers/add">
+                            ＋ Add
+                          </Link>
+                        </span>
+                      )}
                     </div>
                     {group.list.map((a) => (
                       <ProxyAccountRow
@@ -247,36 +278,38 @@ export function ProvidersPage() {
             </>
           )}
           <>
-              {seatGroups.map((group) => (
-                <div key={group.vendor}>
-                  <div className="grp">
-                    <ProviderMark id={providerMark(group.vendor)} />
-                    <span className="gn">{vendorName(group.vendor)}</span>
-                    <span className="gs">
-                      · {group.list.length} {group.list.length === 1 ? "account" : "accounts"} · CLI
-                      seat
-                    </span>
-                  </div>
-                  {group.list.map((a) => (
-                    <SeatAccountRow key={a.id} a={a} />
-                  ))}
+            {seatGroups.map((group) => (
+              <div key={group.vendor}>
+                <div className="grp">
+                  <ProviderMark id={providerMark(group.vendor)} />
+                  <span className="gn">{vendorName(group.vendor)}</span>
+                  <span className="gs">
+                    · {group.list.length} {group.list.length === 1 ? "account" : "accounts"} · CLI
+                    seat
+                  </span>
                 </div>
-              ))}
-              {!accountsQuery.isPending && !filtered.length && !seatFiltered.length && (
-                <EmptyState
-                  title={search || filter !== "all" ? "No matching accounts" : "No accounts yet"}
-                />
-              )}
+                {group.list.map((a) => (
+                  <SeatAccountRow key={a.id} a={a} />
+                ))}
+              </div>
+            ))}
+            {!accountsQuery.isPending && !filtered.length && !seatFiltered.length && (
+              <EmptyState
+                title={search || filter !== "all" ? "No matching accounts" : "No accounts yet"}
+              />
+            )}
           </>
-          <div className="add-more">
-            Not connected yet:{" "}
-            <Link className="btn sm" to="/providers/add">
-              <ProviderMark id="gemini" size={16} /> Gemini
-            </Link>
-            <Link className="btn sm" to="/providers/add">
-              <ProviderMark id="ollama" size={16} /> Ollama
-            </Link>
-          </div>
+          {canWrite && (
+            <div className="add-more">
+              Not connected yet:{" "}
+              <Link className="btn sm" to="/providers/add">
+                <ProviderMark id="gemini" size={16} /> Gemini
+              </Link>
+              <Link className="btn sm" to="/providers/add">
+                <ProviderMark id="ollama" size={16} /> Ollama
+              </Link>
+            </div>
+          )}
         </div>
       </Section>
     </>

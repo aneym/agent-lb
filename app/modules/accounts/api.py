@@ -1,38 +1,38 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, Request
 
 from app.core.audit.service import AuditService
-from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
+from app.core.auth.dependencies import (
+    require_dashboard_write_access,
+    set_dashboard_error_format,
+    validate_dashboard_session,
+)
 from app.core.auth.refresh import RefreshError
-from app.core.clients.rate_limit_resets import ResetCreditsError
 from app.core.config.settings import get_settings
 from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
-from app.dependencies import AccountsContext, get_accounts_context
+from app.dependencies import AccountsContext, get_accounts_context, get_proxy_service_for_app
 from app.modules.accounts.auth_manager import AccountNotOwnedError
-from app.modules.accounts.errors import AccountNotProbableError, AccountStateTransitionError, InvalidAuthJsonError
-from app.modules.accounts.identity_repository import AccountIdentityConflictError
+from app.modules.accounts.credits_api import consume_account_reset_credit as consume_account_reset_credit
+from app.modules.accounts.credits_api import consume_account_usage_reset_credit as consume_account_usage_reset_credit
+from app.modules.accounts.credits_api import get_account_usage_reset_credits as get_account_usage_reset_credits
+from app.modules.accounts.credits_api import list_account_reset_credits as list_account_reset_credits
+from app.modules.accounts.credits_api import router as credits_api_router
+from app.modules.accounts.errors import AccountNotProbableError, AccountStateTransitionError
 from app.modules.accounts.refresh_lock import _cross_process_refresh_lock
 from app.modules.accounts.schemas import (
     AccountAliasRequest,
     AccountAliasResponse,
-    AccountApiKeyImportRequest,
-    AccountAuthExportResponse,
     AccountDeleteResponse,
-    AccountExportResponse,
-    AccountImportResponse,
     AccountLimitWarmupUpdateRequest,
     AccountLimitWarmupUpdateResponse,
-    AccountOpenCodeAuthExportResponse,
     AccountPauseResponse,
     AccountProbeRequest,
     AccountProbeResponse,
     AccountReactivateResponse,
-    AccountResetCreditConsumeRequest,
-    AccountResetCreditConsumeResponse,
-    AccountResetCreditsResponse,
     AccountRoutingPolicyUpdateRequest,
     AccountRoutingPolicyUpdateResponse,
     AccountsResponse,
@@ -43,9 +43,15 @@ from app.modules.accounts.schemas import (
     AccountUpdateRequest,
     AccountUpdateResponse,
 )
-from app.modules.accounts.service import AccountResetCreditsUnavailableError
+from app.modules.accounts.transfer_api import _ACCOUNT_IMPORT_OPENAPI_EXTRA as _ACCOUNT_IMPORT_OPENAPI_EXTRA
+from app.modules.accounts.transfer_api import export_account as export_account
+from app.modules.accounts.transfer_api import export_account_auth as export_account_auth
+from app.modules.accounts.transfer_api import export_account_opencode_auth as export_account_opencode_auth
+from app.modules.accounts.transfer_api import import_account as import_account
+from app.modules.accounts.transfer_api import import_api_key_account as import_api_key_account
 from app.modules.federation.push_receiver import load_binding
 
+logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/accounts",
     tags=["dashboard"],
@@ -55,10 +61,8 @@ router = APIRouter(
 
 @router.get("", response_model=AccountsResponse)
 async def list_accounts(
-    fresh: bool = False,
-    context: AccountsContext = Depends(get_accounts_context),
+    fresh: bool = False, context: AccountsContext = Depends(get_accounts_context)
 ) -> AccountsResponse:
-
     state_path = get_settings().federation_push_sources_path.with_name("federation-push-state.json")
     try:
         source_bindings = load_binding(state_path)
@@ -71,8 +75,7 @@ async def list_accounts(
 
 @router.get("/{account_id}/trends", response_model=AccountTrendsResponse)
 async def get_account_trends(
-    account_id: str,
-    context: AccountsContext = Depends(get_accounts_context),
+    account_id: str, context: AccountsContext = Depends(get_accounts_context)
 ) -> AccountTrendsResponse:
     result = await context.service.get_account_trends(account_id)
     if not result:
@@ -80,115 +83,10 @@ async def get_account_trends(
     return result
 
 
-@router.post("/{account_id}/export", response_model=AccountExportResponse, deprecated=True)
-async def export_account(
-    request: Request,
-    response: Response,
-    account_id: str,
-    context: AccountsContext = Depends(get_accounts_context),
-) -> AccountExportResponse:
-    result = await context.service.export_account(account_id)
-    if not result:
-        raise DashboardNotFoundError("Account not found", code="account_not_found")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    AuditService.log_async(
-        "account_exported",
-        actor_ip=request.client.host if request.client else None,
-        details={"account_id": result.account_id},
-    )
-    return result
-
-
-@router.post("/{account_id}/export/auth", response_model=AccountAuthExportResponse)
-async def export_account_auth(
-    request: Request,
-    response: Response,
-    account_id: str,
-    context: AccountsContext = Depends(get_accounts_context),
-) -> AccountAuthExportResponse:
-    result = await context.service.export_auth(account_id)
-    if not result:
-        raise DashboardNotFoundError("Account not found", code="account_not_found")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    AuditService.log_async(
-        "account_auth_exported",
-        actor_ip=request.client.host if request.client else None,
-        details={"account_id": account_id},
-    )
-    return result
-
-
-@router.post("/{account_id}/export/opencode-auth", response_model=AccountOpenCodeAuthExportResponse, deprecated=True)
-async def export_account_opencode_auth(
-    request: Request,
-    response: Response,
-    account_id: str,
-    context: AccountsContext = Depends(get_accounts_context),
-) -> AccountOpenCodeAuthExportResponse:
-    result = await context.service.export_opencode_auth(account_id)
-    if not result:
-        raise DashboardNotFoundError("Account not found", code="account_not_found")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    AuditService.log_async(
-        "account_auth_exported",
-        actor_ip=request.client.host if request.client else None,
-        details={"account_id": account_id},
-    )
-    return result
-
-
-@router.post("/import", response_model=AccountImportResponse)
-async def import_account(
-    request: Request,
-    auth_json: UploadFile = File(...),
-    context: AccountsContext = Depends(get_accounts_context),
-) -> AccountImportResponse:
-    raw = await auth_json.read()
-    try:
-        response = await context.service.import_account(raw)
-        AuditService.log_async(
-            "account_created",
-            actor_ip=request.client.host if request.client else None,
-            details={"account_id": response.account_id},
-        )
-        return response
-    except InvalidAuthJsonError as exc:
-        raise DashboardBadRequestError("Invalid auth.json payload", code="invalid_auth_json") from exc
-    except AccountIdentityConflictError as exc:
-        raise DashboardConflictError(str(exc), code="duplicate_identity_conflict") from exc
-
-
-@router.post("/import/api-key", response_model=AccountImportResponse)
-async def import_api_key_account(
-    payload: AccountApiKeyImportRequest,
-    request: Request,
-    context: AccountsContext = Depends(get_accounts_context),
-) -> AccountImportResponse:
-    try:
-        response = await context.service.import_api_key_account(payload)
-    except ValueError as exc:
-        raise DashboardBadRequestError(str(exc), code="invalid_api_key_account") from exc
-    except AccountIdentityConflictError as exc:
-        raise DashboardConflictError(str(exc), code="duplicate_identity_conflict") from exc
-    AuditService.log_async(
-        "account_created",
-        actor_ip=request.client.host if request.client else None,
-        details={"account_id": response.account_id, "provider": payload.provider},
-    )
-    return response
-
-
 @router.post("/{account_id}/exchange-reset")
 async def reset_uncertain_exchange(
     account_id: str, context: AccountsContext = Depends(get_accounts_context)
 ) -> dict[str, str]:
-
     settings = get_settings()
     timeout_seconds = max(settings.oauth_timeout_seconds, settings.token_refresh_timeout_seconds, 30.0)
     async with _cross_process_refresh_lock(account_id):
@@ -207,6 +105,7 @@ async def reset_uncertain_exchange(
 @router.post("/{account_id}/reactivate", response_model=AccountReactivateResponse)
 async def reactivate_account(
     account_id: str,
+    _write_access=Depends(require_dashboard_write_access),
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountReactivateResponse:
     try:
@@ -223,24 +122,21 @@ async def update_account(
     account_id: str,
     payload: AccountUpdateRequest,
     request: Request,
+    _write_access=Depends(require_dashboard_write_access),
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountUpdateResponse:
     changed_fields = [field for field, value in payload.model_dump(exclude_unset=True).items() if value is not None]
     if not changed_fields:
         raise DashboardBadRequestError("No supported account fields to update", code="empty_account_update")
     success = await context.service.update_account(
-        account_id,
-        security_work_authorized=payload.security_work_authorized,
+        account_id, security_work_authorized=payload.security_work_authorized
     )
     if not success:
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     AuditService.log_async(
         "account_updated",
         actor_ip=request.client.host if request.client else None,
-        details={
-            "account_id": account_id,
-            "changed_fields": changed_fields,
-        },
+        details={"account_id": account_id, "changed_fields": changed_fields},
     )
     return AccountUpdateResponse(status="updated")
 
@@ -250,6 +146,7 @@ async def probe_account(
     request: Request,
     account_id: str,
     body: AccountProbeRequest | None = None,
+    _write_access=Depends(require_dashboard_write_access),
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountProbeResponse:
     requested_model = body.model if body is not None else None
@@ -261,15 +158,34 @@ async def probe_account(
         raise DashboardConflictError(str(exc), code="account_not_probable") from exc
     except RefreshError as exc:
         raise DashboardConflictError(
-            f"Probe could not refresh account credentials: {exc.message}",
-            code="account_probe_refresh_failed",
+            f"Probe could not refresh account credentials: {exc.message}", code="account_probe_refresh_failed"
         ) from exc
     if result is None:
         raise DashboardNotFoundError("Account not found", code="account_not_found")
-    if result.probe_status_code == 200:
+    account = await context.repository.get_by_id(account_id)
+    if account is not None and account.provider == "openai":
+        probe_succeeded = 200 <= result.probe_status_code < 300
+        if not probe_succeeded or result.usage_refresh_ready_for_probe_settlement():
+            try:
+                await get_proxy_service_for_app(request.app).record_account_probe_result(
+                    account_id=result.account_id, http_status=result.probe_status_code
+                )
+            except Exception:
+                logger.exception(
+                    "Force Probe advisory settlement failed account_id=%s probe_status_code=%s",
+                    result.account_id,
+                    result.probe_status_code,
+                )
+        else:
+            logger.warning(
+                "Force Probe success skipped advisory settlement before successful usage refresh fetch account_id=%s probe_status_code=%s",
+                result.account_id,
+                result.probe_status_code,
+            )
+    elif result.probe_status_code == 200:
         account = await context.repository.get_by_id(account_id)
         service = getattr(request.app.state, "anthropic_proxy_service", None)
-        if account is not None and account.provider != "openai" and service is not None:
+        if account is not None and account.provider != "openai" and (service is not None):
             await service._load_balancer.record_success(account)
     AuditService.log_async(
         "account_probed",
@@ -283,74 +199,10 @@ async def probe_account(
     return result
 
 
-@router.get("/{account_id}/rate-limit-reset-credits", response_model=AccountResetCreditsResponse)
-async def list_account_reset_credits(
-    account_id: str,
-    context: AccountsContext = Depends(get_accounts_context),
-) -> AccountResetCreditsResponse:
-    try:
-        result = await context.service.list_rate_limit_reset_credits(account_id)
-    except AccountResetCreditsUnavailableError as exc:
-        raise DashboardConflictError(str(exc), code="account_reset_credits_unavailable") from exc
-    except RefreshError as exc:
-        raise DashboardConflictError(
-            f"Reset-credit listing could not refresh account credentials: {exc.message}",
-            code="account_reset_credits_refresh_failed",
-        ) from exc
-    except ResetCreditsError as exc:
-        raise DashboardConflictError(
-            f"Upstream reset-credit listing failed: {exc.message}",
-            code="account_reset_credits_upstream_error",
-        ) from exc
-    if result is None:
-        raise DashboardNotFoundError("Account not found", code="account_not_found")
-    return result
-
-
-@router.post("/{account_id}/rate-limit-reset-credits/consume", response_model=AccountResetCreditConsumeResponse)
-async def consume_account_reset_credit(
-    request: Request,
-    account_id: str,
-    body: AccountResetCreditConsumeRequest | None = None,
-    context: AccountsContext = Depends(get_accounts_context),
-) -> AccountResetCreditConsumeResponse:
-    credit_id = body.credit_id if body is not None else None
-    override_daily_limit = body.override_daily_limit if body is not None else False
-    try:
-        result = await context.service.redeem_rate_limit_reset_credit(
-            account_id, credit_id=credit_id, override_daily_limit=override_daily_limit
-        )
-    except AccountResetCreditsUnavailableError as exc:
-        raise DashboardConflictError(str(exc), code="account_reset_credits_unavailable") from exc
-    except RefreshError as exc:
-        raise DashboardConflictError(
-            f"Reset-credit redemption could not refresh account credentials: {exc.message}",
-            code="account_reset_credits_refresh_failed",
-        ) from exc
-    except ResetCreditsError as exc:
-        raise DashboardConflictError(
-            f"Upstream reset-credit redemption failed: {exc.message}",
-            code="account_reset_credits_upstream_error",
-        ) from exc
-    if result is None:
-        raise DashboardNotFoundError("Account not found", code="account_not_found")
-    AuditService.log_async(
-        "account_reset_credit_redeemed",
-        actor_ip=request.client.host if request.client else None,
-        details={
-            "account_id": account_id,
-            "credit_id": credit_id,
-            "override_daily_limit": override_daily_limit,
-            "code": result.code,
-            "windows_reset": result.windows_reset,
-        },
-    )
-    return result
-
-
 @router.post("/{account_id}/pause", response_model=AccountPauseResponse)
 async def pause_account(
     account_id: str,
+    _write_access=Depends(require_dashboard_write_access),
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountPauseResponse:
     try:
@@ -366,6 +218,7 @@ async def pause_account(
 async def set_account_alias(
     account_id: str,
     payload: AccountAliasRequest,
+    _write_access=Depends(require_dashboard_write_access),
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountAliasResponse:
     success = await context.service.set_account_alias(account_id, payload.alias)
@@ -381,14 +234,14 @@ async def set_account_alias(
 async def update_account_limit_warmup(
     account_id: str,
     payload: AccountLimitWarmupUpdateRequest,
+    _write_access=Depends(require_dashboard_write_access),
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountLimitWarmupUpdateResponse:
     success = await context.service.set_limit_warmup_enabled(account_id, payload.enabled)
     if not success:
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     return AccountLimitWarmupUpdateResponse(
-        status="enabled" if payload.enabled else "disabled",
-        enabled=payload.enabled,
+        status="enabled" if payload.enabled else "disabled", enabled=payload.enabled
     )
 
 
@@ -396,6 +249,7 @@ async def update_account_limit_warmup(
 async def update_account_routing_policy(
     account_id: str,
     payload: AccountRoutingPolicyUpdateRequest,
+    _write_access=Depends(require_dashboard_write_access),
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountRoutingPolicyUpdateResponse:
     success = await context.service.set_routing_policy(account_id, payload.routing_policy)
@@ -406,9 +260,7 @@ async def update_account_routing_policy(
 
 @router.post("/{account_id}/subscription/check", response_model=AccountSubscriptionCheckResponse)
 async def check_account_subscription(
-    request: Request,
-    account_id: str,
-    context: AccountsContext = Depends(get_accounts_context),
+    request: Request, account_id: str, context: AccountsContext = Depends(get_accounts_context)
 ) -> AccountSubscriptionCheckResponse:
     try:
         result = await context.service.check_subscription(account_id)
@@ -456,6 +308,7 @@ async def delete_account(
     request: Request,
     account_id: str,
     delete_history: bool = False,
+    _write_access=Depends(require_dashboard_write_access),
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountDeleteResponse:
     success = await context.service.delete_account(account_id, delete_history=delete_history)
@@ -467,3 +320,10 @@ async def delete_account(
         details={"account_id": account_id, "delete_history": delete_history},
     )
     return AccountDeleteResponse(status="deleted")
+
+
+router.include_router(credits_api_router)
+
+from app.modules.accounts.transfer_api import router as transfer_api_router
+
+router.include_router(transfer_api_router)

@@ -1,79 +1,5 @@
 import { z } from "zod";
 
-export type AccountProvider = "openai" | "anthropic" | "glm" | "kimi" | "openrouter";
-
-export const AccountProviderSchema = z.enum([
-  "openai",
-  "anthropic",
-  "glm",
-  "kimi",
-  "openrouter",
-]);
-
-export const UsageTrendPointSchema = z.object({
-  t: z.string().datetime({ offset: true }),
-  v: z.number(),
-});
-
-export const AccountUsageTrendSchema = z.object({
-  primary: z.array(UsageTrendPointSchema),
-  secondary: z.array(UsageTrendPointSchema),
-  secondaryScheduled: z.array(UsageTrendPointSchema).default([]),
-});
-
-export const AccountUsageSchema = z.object({
-  primaryRemainingPercent: z.number().nullable(),
-  secondaryRemainingPercent: z.number().nullable(),
-  monthlyRemainingPercent: z.number().nullable().optional(),
-});
-
-export const AccountRequestUsageSchema = z.object({
-  requestCount: z.number().int().nonnegative(),
-  totalTokens: z.number().int().nonnegative(),
-  cachedInputTokens: z.number().int().nonnegative(),
-  cacheCreationTokens: z.number().int().nonnegative().optional(),
-  cacheReadTokens: z.number().int().nonnegative().optional(),
-  totalCostUsd: z.number().nonnegative(),
-});
-
-export const AccountTokenStatusSchema = z.object({
-  expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
-  state: z.string().nullable().optional(),
-});
-
-export const AccountAuthSchema = z.object({
-  access: AccountTokenStatusSchema.nullable().optional(),
-  refresh: AccountTokenStatusSchema.nullable().optional(),
-  idToken: AccountTokenStatusSchema.nullable().optional(),
-});
-
-export const AccountLimitWarmupStatusSchema = z.object({
-  window: z.enum(["primary", "secondary"]).or(z.string()),
-  resetAt: z.number().int(),
-  status: z.string(),
-  model: z.string(),
-  attemptedAt: z.string().datetime({ offset: true }),
-  completedAt: z.string().datetime({ offset: true }).nullable().optional(),
-  errorCode: z.string().nullable().optional(),
-  errorMessage: z.string().nullable().optional(),
-});
-
-export const AccountAdditionalWindowSchema = z.object({
-  usedPercent: z.number(),
-  resetAt: z.number().nullable().optional(),
-  windowMinutes: z.number().nullable().optional(),
-});
-
-export const AccountAdditionalQuotaSchema = z.object({
-  quotaKey: z.string().nullable().optional(),
-  limitName: z.string(),
-  meteredFeature: z.string(),
-  displayLabel: z.string().nullable().optional(),
-  routingPolicy: z.enum(["inherit", "normal", "burn_first", "preserve"]).nullable().optional(),
-  primaryWindow: AccountAdditionalWindowSchema.nullable().optional(),
-  secondaryWindow: AccountAdditionalWindowSchema.nullable().optional(),
-});
-
 export const AccountSubscriptionStatusSchema = z.enum([
   "active",
   "pause_pending",
@@ -91,9 +17,87 @@ export const AccountSubscriptionLedgerSchema = z.object({
   notes: z.string().max(2000).nullable().optional(),
 });
 
-export const AccountSummarySchema = z.object({
+export const AccountProviderSchema = z.enum(["openai", "anthropic", "glm", "kimi", "openrouter"]);
+
+export type AccountProvider = "openai" | "anthropic" | "glm" | "kimi" | "openrouter";
+
+const UsageTrendPointSchema = z.object({
+  t: z.iso.datetime({ offset: true }),
+  v: z.number(),
+});
+
+const AccountUsageSchema = z.object({
+  primaryRemainingPercent: z.number().nullable(),
+  secondaryRemainingPercent: z.number().nullable(),
+  monthlyRemainingPercent: z.number().nullable().optional(),
+});
+
+const AccountRequestUsageSchema = z.object({
+  requestCount: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative(),
+  cacheCreationTokens: z.number().int().nonnegative().optional(),
+  cacheReadTokens: z.number().int().nonnegative().optional(),
+  totalCostUsd: z.number().nonnegative(),
+});
+
+export const AccountUsageResetCreditsSchema = z.object({
+  availableCount: z.number().int().nonnegative(),
+});
+
+export const AccountUsageResetCreditsResponseSchema = z.object({
   accountId: z.string(),
+  rateLimitResetCredits: AccountUsageResetCreditsSchema,
+});
+
+const AccountTokenStatusSchema = z.object({
+  expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  state: z.string().nullable().optional(),
+});
+
+const AccountAuthSchema = z.object({
+  access: AccountTokenStatusSchema.nullable().optional(),
+  refresh: AccountTokenStatusSchema.nullable().optional(),
+  idToken: AccountTokenStatusSchema.nullable().optional(),
+});
+
+const AccountLimitWarmupStatusSchema = z.object({
+  window: z.enum(["primary", "secondary"]).or(z.string()),
+  resetAt: z.number().int(),
+  status: z.string(),
+  model: z.string(),
+  attemptedAt: z.iso.datetime({ offset: true }),
+  completedAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  errorCode: z.string().nullable().optional(),
+  errorMessage: z.string().nullable().optional(),
+});
+
+const AccountAdditionalWindowSchema = z.object({
+  usedPercent: z.number(),
+  resetAt: z.number().nullable().optional(),
+  windowMinutes: z.number().nullable().optional(),
+});
+
+export const AccountAdditionalQuotaSchema = z.object({
+  quotaKey: z.string().nullable().optional(),
+  limitName: z.string(),
+  meteredFeature: z.string(),
+  displayLabel: z.string().nullable().optional(),
+  routingPolicy: z.enum(["inherit", "normal", "burn_first", "preserve"]).nullable().optional(),
+  primaryWindow: AccountAdditionalWindowSchema.nullable().optional(),
+  secondaryWindow: AccountAdditionalWindowSchema.nullable().optional(),
+});
+
+export const AccountSummarySchema = z.object({
   provider: AccountProviderSchema.optional(),
+  rateLimitResetAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
+  fableEligible: z.boolean().nullable().optional(),
+  resetCreditsAvailable: z.number().int().nullable().optional(),
+  ownerInstance: z.string().nullable().optional(),
+  isLocallyOwned: z.boolean().optional(),
+  accountId: z.string(),
+  chatgptAccountId: z.string().nullable().optional(),
   email: z.string(),
   alias: z.string().nullable().optional(),
   displayName: z.string(),
@@ -105,10 +109,9 @@ export const AccountSummarySchema = z.object({
   status: z.string(),
   securityWorkAuthorized: z.boolean().optional(),
   usage: AccountUsageSchema.nullable().optional(),
-  resetAtPrimary: z.string().datetime({ offset: true }).nullable().optional(),
-  resetAtSecondary: z.string().datetime({ offset: true }).nullable().optional(),
-  resetAtMonthly: z.string().datetime({ offset: true }).nullable().optional(),
-  rateLimitResetAt: z.string().datetime({ offset: true }).nullable().optional(),
+  resetAtPrimary: z.iso.datetime({ offset: true }).nullable().optional(),
+  resetAtSecondary: z.iso.datetime({ offset: true }).nullable().optional(),
+  resetAtMonthly: z.iso.datetime({ offset: true }).nullable().optional(),
   windowMinutesPrimary: z.number().nullable().optional(),
   windowMinutesSecondary: z.number().nullable().optional(),
   windowMinutesMonthly: z.number().nullable().optional(),
@@ -123,15 +126,36 @@ export const AccountSummarySchema = z.object({
   creditsBalance: z.number().nullable().optional(),
   requestUsage: AccountRequestUsageSchema.nullable().optional(),
   auth: AccountAuthSchema.nullable().optional(),
-  subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
   additionalQuotas: z.array(AccountAdditionalQuotaSchema).default([]),
-  fableEligible: z.boolean().nullable().optional(),
-  resetCreditsAvailable: z.number().int().nullable().optional(),
   limitWarmupEnabled: z.boolean().default(false),
   limitWarmup: AccountLimitWarmupStatusSchema.nullable().optional(),
   isEmailDuplicate: z.boolean().optional(),
-  ownerInstance: z.string().nullable().optional(),
-  isLocallyOwned: z.boolean().optional(),
+  availableResetCredits: z.number().nullable().optional(),
+  resetCreditNearestExpiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+});
+
+const RateLimitResetCreditItemSchema = z.object({
+  id: z.string(),
+  status: z.string().nullable().optional(),
+  resetType: z.string().nullable().optional(),
+  grantedAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  title: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  redeemedAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  redeemStartedAt: z.iso.datetime({ offset: true }).nullable().optional(),
+});
+
+export const RateLimitResetCreditsSnapshotSchema = z.object({
+  availableCount: z.number(),
+  nearestExpiresAt: z.iso.datetime({ offset: true }).nullable(),
+  credits: z.array(RateLimitResetCreditItemSchema),
+});
+
+export const ConsumeRateLimitResetCreditResponseSchema = z.object({
+  code: z.string().nullable().optional(),
+  windowsReset: z.number().nullable().optional(),
+  redeemedAt: z.iso.datetime({ offset: true }).nullable(),
 });
 
 export const AccountTrendsResponseSchema = z.object({
@@ -146,6 +170,7 @@ export const AccountsResponseSchema = z.object({
 });
 
 export const AccountImportResponseSchema = z.object({
+  provider: AccountProviderSchema.optional(),
   accountId: z.string(),
   email: z.string(),
   workspaceId: z.string().nullable().optional(),
@@ -155,7 +180,7 @@ export const AccountImportResponseSchema = z.object({
   status: z.string(),
 });
 
-export const OpenCodeOAuthAuthSchema = z.object({
+const OpenCodeOAuthAuthSchema = z.object({
   type: z.literal("oauth"),
   refresh: z.string(),
   access: z.string(),
@@ -163,31 +188,31 @@ export const OpenCodeOAuthAuthSchema = z.object({
   accountId: z.string().nullable().optional(),
 });
 
-export const OpenCodeAuthJsonSchema = z.object({
+const OpenCodeAuthJsonSchema = z.object({
   openai: OpenCodeOAuthAuthSchema,
 });
 
-export const AccountOpenCodeAuthExportAccountSchema = z.object({
+const AccountOpenCodeAuthExportAccountSchema = z.object({
   accountId: z.string(),
   chatgptAccountId: z.string().nullable().optional(),
   email: z.string(),
 });
 
-export const CodexAuthTokensSchema = z.object({
+const CodexAuthTokensSchema = z.object({
   id_token: z.string(),
   access_token: z.string(),
   refresh_token: z.string(),
   account_id: z.string().nullable().optional(),
 });
 
-export const CodexAuthJsonSchema = z.object({
+const CodexAuthJsonSchema = z.object({
   auth_mode: z.string(),
   OPENAI_API_KEY: z.string().nullable().optional(),
   tokens: CodexAuthTokensSchema,
   last_refresh: z.string(),
 });
 
-export const AccountAuthExportTokensSchema = z.object({
+const AccountAuthExportTokensSchema = z.object({
   idToken: z.string(),
   accessToken: z.string(),
   refreshToken: z.string(),
@@ -222,38 +247,25 @@ export const AccountProbeResponseSchema = z.object({
   accountStatusAfter: z.string(),
 });
 
-export const AccountResetCreditSchema = z.object({
-  id: z.string(),
-  resetType: z.string(),
-  status: z.string(),
-  grantedAt: z.string(),
-  expiresAt: z.string().nullable().optional(),
-  title: z.string().nullable().optional(),
-  description: z.string().nullable().optional(),
+export const AccountUsageResetConsumeRequestSchema = z.object({
+  redeemRequestId: z.string().trim().min(1).optional(),
 });
 
-export const AccountResetCreditsResponseSchema = z.object({
-  accountId: z.string(),
-  availableCount: z.number().int(),
-  credits: z.array(AccountResetCreditSchema).default([]),
-});
-
-export const AccountResetCreditConsumeRequestSchema = z.object({
-  creditId: z.string().min(1).optional(),
-});
-
-export const AccountResetCreditConsumeResponseSchema = z.object({
+export const AccountUsageResetConsumeResponseSchema = z.object({
   status: z.string(),
   accountId: z.string(),
   code: z.string(),
-  windowsReset: z.number().int(),
-  primaryUsedPercentBefore: z.number().nullable().optional(),
-  primaryUsedPercentAfter: z.number().nullable().optional(),
-  secondaryUsedPercentBefore: z.number().nullable().optional(),
-  secondaryUsedPercentAfter: z.number().nullable().optional(),
+  windowsReset: z.number().int().nonnegative(),
+  usageWritten: z.boolean(),
+  primaryUsedPercentBefore: z.number().nullable(),
+  primaryUsedPercentAfter: z.number().nullable(),
+  secondaryUsedPercentBefore: z.number().nullable(),
+  secondaryUsedPercentAfter: z.number().nullable(),
+  accountStatusBefore: z.string(),
+  accountStatusAfter: z.string(),
 });
 
-export const AccountRoutingPolicySchema = z.enum(["normal", "burn_first", "preserve"]);
+const AccountRoutingPolicySchema = z.enum(["normal", "burn_first", "preserve"]);
 
 export const AccountAliasRequestSchema = z.object({
   alias: z.string().max(255).nullable(),
@@ -282,30 +294,6 @@ export const AccountRoutingPolicyUpdateResponseSchema = z.object({
   routingPolicy: AccountRoutingPolicySchema,
 });
 
-export const AccountSubscriptionUpdateRequestSchema = AccountSubscriptionLedgerSchema;
-
-export const AccountSubscriptionUpdateResponseSchema = z.object({
-  accountId: z.string(),
-  subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
-});
-
-export const AccountSubscriptionCheckResponseSchema = z.object({
-  status: z.string(),
-  accountId: z.string(),
-  working: z.boolean(),
-  probeStatusCode: z.number().int(),
-  subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
-  message: z.string().nullable().optional(),
-});
-
-export const AccountExportResponseSchema = z.object({
-  accountId: z.string(),
-  email: z.string(),
-  planType: z.string(),
-  status: z.string(),
-  authJson: z.string(),
-});
-
 export const AccountUpdateRequestSchema = z.object({
   securityWorkAuthorized: z.boolean().optional(),
 });
@@ -313,6 +301,7 @@ export const AccountUpdateRequestSchema = z.object({
 export const OauthStartRequestSchema = z.object({
   provider: AccountProviderSchema.default("openai"),
   forceMethod: z.string().optional(),
+  accountId: z.string().optional(),
 });
 
 export const OauthStartResponseSchema = z.object({
@@ -341,6 +330,7 @@ export const OauthCompleteRequestSchema = z.object({
 
 export const OauthCompleteResponseSchema = z.object({
   status: z.string(),
+  errorMessage: z.string().nullable().optional(),
 });
 
 export const ManualOauthCallbackRequestSchema = z.object({
@@ -378,34 +368,26 @@ export const ImportStateSchema = z.object({
 });
 
 export type UsageTrendPoint = z.infer<typeof UsageTrendPointSchema>;
-export type AccountUsageTrend = z.infer<typeof AccountUsageTrendSchema>;
-export type AccountRequestUsage = z.infer<typeof AccountRequestUsageSchema>;
 export type AccountSummary = z.infer<typeof AccountSummarySchema>;
+export type RateLimitResetCreditItem = z.infer<typeof RateLimitResetCreditItemSchema>;
+export type RateLimitResetCreditsSnapshot = z.infer<typeof RateLimitResetCreditsSnapshotSchema>;
+export type ConsumeRateLimitResetCreditResponse = z.infer<
+  typeof ConsumeRateLimitResetCreditResponseSchema
+>;
 export type AccountRoutingPolicy = z.infer<typeof AccountRoutingPolicySchema>;
-export type AccountSubscriptionLedger = z.infer<typeof AccountSubscriptionLedgerSchema>;
-export type AccountSubscriptionCheckResponse = z.infer<
-  typeof AccountSubscriptionCheckResponseSchema
->;
 export type AccountAliasResponse = z.infer<typeof AccountAliasResponseSchema>;
-export type AccountLimitWarmupStatus = z.infer<
-  typeof AccountLimitWarmupStatusSchema
->;
-export type AccountExportResponse = z.infer<typeof AccountExportResponseSchema>;
-export type AccountAdditionalWindow = z.infer<
-  typeof AccountAdditionalWindowSchema
->;
-export type AccountAdditionalQuota = z.infer<
-  typeof AccountAdditionalQuotaSchema
+export type AccountLimitWarmupStatus = z.infer<typeof AccountLimitWarmupStatusSchema>;
+export type AccountAdditionalWindow = z.infer<typeof AccountAdditionalWindowSchema>;
+export type AccountAdditionalQuota = z.infer<typeof AccountAdditionalQuotaSchema>;
+export type AccountUsageResetCredits = z.infer<typeof AccountUsageResetCreditsSchema>;
+export type AccountUsageResetCreditsResponse = z.infer<
+  typeof AccountUsageResetCreditsResponseSchema
 >;
 export type AccountProbeResponse = z.infer<typeof AccountProbeResponseSchema>;
-export type AccountResetCredit = z.infer<typeof AccountResetCreditSchema>;
-export type AccountResetCreditsResponse = z.infer<
-  typeof AccountResetCreditsResponseSchema
+export type AccountUsageResetConsumeRequest = z.infer<typeof AccountUsageResetConsumeRequestSchema>;
+export type AccountUsageResetConsumeResponse = z.infer<
+  typeof AccountUsageResetConsumeResponseSchema
 >;
-export type AccountResetCreditConsumeResponse = z.infer<
-  typeof AccountResetCreditConsumeResponseSchema
->;
-
 export type AccountTrendsResponse = z.infer<typeof AccountTrendsResponseSchema>;
 export type OpenCodeAuthJson = z.infer<typeof OpenCodeAuthJsonSchema>;
 export type CodexAuthJson = z.infer<typeof CodexAuthJsonSchema>;
@@ -413,11 +395,31 @@ export type AccountAuthExportTokens = z.infer<typeof AccountAuthExportTokensSche
 export type AccountAuthExportResponse = z.infer<typeof AccountAuthExportResponseSchema>;
 export type OauthStartResponse = z.infer<typeof OauthStartResponseSchema>;
 export type OauthStatusResponse = z.infer<typeof OauthStatusResponseSchema>;
-export type ManualOauthCallbackResponse = z.infer<
-  typeof ManualOauthCallbackResponseSchema
->;
-export type RuntimeConnectAddressResponse = z.infer<
-  typeof RuntimeConnectAddressResponseSchema
->;
+export type ManualOauthCallbackResponse = z.infer<typeof ManualOauthCallbackResponseSchema>;
+export type RuntimeConnectAddressResponse = z.infer<typeof RuntimeConnectAddressResponseSchema>;
 export type OAuthState = z.infer<typeof OAuthStateSchema>;
 export type ImportState = z.infer<typeof ImportStateSchema>;
+
+export const AccountSubscriptionUpdateRequestSchema = AccountSubscriptionLedgerSchema;
+
+export const AccountSubscriptionUpdateResponseSchema = z.object({
+  accountId: z.string(),
+  subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
+});
+
+export const AccountSubscriptionCheckResponseSchema = z.object({
+  status: z.string(),
+  accountId: z.string(),
+  working: z.boolean(),
+  probeStatusCode: z.number().int(),
+  subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
+  message: z.string().nullable().optional(),
+});
+
+export type AccountRequestUsage = z.infer<typeof AccountRequestUsageSchema>;
+
+export type AccountSubscriptionLedger = z.infer<typeof AccountSubscriptionLedgerSchema>;
+
+export type AccountSubscriptionCheckResponse = z.infer<
+  typeof AccountSubscriptionCheckResponseSchema
+>;

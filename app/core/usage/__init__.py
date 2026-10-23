@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Iterable, Mapping
 
@@ -29,7 +29,6 @@ PLAN_CAPACITY_CREDITS_PRIMARY = {
     "prolite": 1125.0,
     "enterprise": 1500.0,
 }
-
 PLAN_CAPACITY_CREDITS_SECONDARY = {
     "claude": 100.0,
     "free": 1134.0,
@@ -42,11 +41,8 @@ PLAN_CAPACITY_CREDITS_SECONDARY = {
     "prolite": 37800.0,
     "enterprise": 50400.0,
 }
-
-PLAN_CAPACITY_CREDITS_MONTHLY = {
-    "free": 1134.0,
-}
-
+PLAN_CAPACITY_CREDITS_MONTHLY = {"free": 1134.0}
+SIBLING_FETCH_MARGIN_SECONDS = 5.0
 DEFAULT_WINDOW_MINUTES_PRIMARY = 300
 DEFAULT_WINDOW_MINUTES_SECONDARY = 10080
 DEFAULT_WINDOW_MINUTES_MONTHLY = 43200
@@ -71,13 +67,12 @@ def _normalize_window_key(window: str | None) -> str:
 
 
 def normalize_rate_limit_windows(
-    primary_window: UsageWindow | None,
-    secondary_window: UsageWindow | None,
+    primary_window: UsageWindow | None, secondary_window: UsageWindow | None
 ) -> NormalizedRateLimitWindows:
     if (
         primary_window is not None
         and primary_window.limit_window_seconds == DEFAULT_WINDOW_MINUTES_MONTHLY * 60
-        and secondary_window is None
+        and (secondary_window is None)
     ):
         return NormalizedRateLimitWindows(primary=None, secondary=None, monthly=primary_window)
     return NormalizedRateLimitWindows(primary=primary_window, secondary=secondary_window, monthly=None)
@@ -87,23 +82,16 @@ def _empty_cost() -> UsageCostSummary:
     return UsageCostSummary(currency="USD", total_usd_7d=0.0, by_model=[])
 
 
-def _empty_window(
-    reset_at: int | None = None,
-    window_minutes: int | None = None,
-) -> UsageWindowSnapshot:
+def _empty_window(reset_at: int | None = None, window_minutes: int | None = None) -> UsageWindowSnapshot:
     return UsageWindowSnapshot(
-        used_percent=0.0,
-        capacity_credits=0.0,
-        used_credits=0.0,
-        reset_at=reset_at,
-        window_minutes=window_minutes,
+        used_percent=0.0, capacity_credits=0.0, used_credits=0.0, reset_at=reset_at, window_minutes=window_minutes
     )
 
 
 def used_credits_from_percent(used_percent: float | None, capacity_credits: float | None) -> float | None:
     if used_percent is None or capacity_credits is None:
         return None
-    return (capacity_credits * used_percent) / 100.0
+    return capacity_credits * used_percent / 100.0
 
 
 def remaining_percent_from_used(used_percent: float | None) -> float | None:
@@ -112,19 +100,13 @@ def remaining_percent_from_used(used_percent: float | None) -> float | None:
     return max(0.0, 100.0 - float(used_percent))
 
 
-def remaining_credits_from_used(
-    used_credits: float | None,
-    capacity_credits: float | None,
-) -> float | None:
+def remaining_credits_from_used(used_credits: float | None, capacity_credits: float | None) -> float | None:
     if used_credits is None or capacity_credits is None:
         return None
     return max(0.0, float(capacity_credits) - float(used_credits))
 
 
-def remaining_credits_from_percent(
-    used_percent: float | None,
-    capacity_credits: float | None,
-) -> float | None:
+def remaining_credits_from_percent(used_percent: float | None, capacity_credits: float | None) -> float | None:
     used_credits = used_credits_from_percent(used_percent, capacity_credits)
     return remaining_credits_from_used(used_credits, capacity_credits)
 
@@ -140,15 +122,12 @@ def normalize_usage_window(summary: UsageWindowSummary) -> UsageWindowSnapshot:
 
 
 def summarize_usage_window(
-    usage_rows: Iterable[UsageWindowRow],
-    account_map: Mapping[str, Account],
-    window: str,
+    usage_rows: Iterable[UsageWindowRow], account_map: Mapping[str, Account], window: str
 ) -> UsageWindowSummary:
     total_capacity = 0.0
     total_used = 0.0
     reset_candidates: list[int] = []
     window_minutes_values: set[int] = set()
-
     for row in usage_rows:
         if row.reset_at is not None:
             reset_candidates.append(row.reset_at)
@@ -159,13 +138,11 @@ def summarize_usage_window(
         if row.used_percent is None or capacity is None:
             continue
         total_capacity += capacity
-        total_used += (capacity * float(row.used_percent)) / 100.0
-
+        total_used += capacity * float(row.used_percent) / 100.0
     window_minutes = _resolve_window_minutes(window, window_minutes_values)
-
     overall = None
     if total_capacity > 0:
-        overall = (total_used / total_capacity) * 100.0
+        overall = total_used / total_capacity * 100.0
     reset_at_value = min(reset_candidates) if reset_candidates else None
     return UsageWindowSummary(
         used_percent=float(overall) if overall is not None else None,
@@ -233,10 +210,7 @@ def is_primary_window_minutes(window_minutes: int | None) -> bool:
     return window_minutes == primary_default
 
 
-def should_use_weekly_primary(
-    primary_row: UsageWindowRow,
-    secondary_row: UsageWindowRow | None,
-) -> bool:
+def should_use_weekly_primary(primary_row: UsageWindowRow, secondary_row: UsageWindowRow | None) -> bool:
     if not is_weekly_window_minutes(primary_row.window_minutes):
         return False
     if secondary_row is None:
@@ -244,16 +218,22 @@ def should_use_weekly_primary(
     return _should_prefer_primary_row(primary_row, secondary_row)
 
 
-def normalize_weekly_only_rows(
-    primary_rows: Iterable[UsageWindowRow],
-    secondary_rows: Iterable[UsageWindowRow],
-) -> tuple[list[UsageWindowRow], list[UsageWindowRow]]:
+def expire_elapsed_window_rows(rows: Iterable[UsageWindowRow], *, now_epoch: int) -> list[UsageWindowRow]:
+    expired: list[UsageWindowRow] = []
+    for row in rows:
+        if row.reset_at is not None and row.reset_at <= now_epoch:
+            expired.append(replace(row, used_percent=0.0, reset_at=None))
+        else:
+            expired.append(row)
+    return expired
 
+
+def normalize_weekly_only_rows(
+    primary_rows: Iterable[UsageWindowRow], secondary_rows: Iterable[UsageWindowRow]
+) -> tuple[list[UsageWindowRow], list[UsageWindowRow]]:
     primary_by_account = {row.account_id: row for row in primary_rows}
     normalized_secondary_by_account = {row.account_id: row for row in secondary_rows}
-
     normalized_primary: list[UsageWindowRow] = []
-
     for account_id, primary_row in primary_by_account.items():
         if is_weekly_window_minutes(primary_row.window_minutes):
             secondary_row = normalized_secondary_by_account.get(account_id)
@@ -261,8 +241,16 @@ def normalize_weekly_only_rows(
                 normalized_secondary_by_account[account_id] = primary_row
             continue
         normalized_primary.append(primary_row)
+    return (normalized_primary, list(normalized_secondary_by_account.values()))
 
-    return normalized_primary, list(normalized_secondary_by_account.values())
+
+def _has_real_quota_metadata(row: UsageWindowRow) -> bool:
+    return row.window_minutes is not None and row.window_minutes > 0 and (row.reset_at is not None)
+
+
+def _is_no_data_placeholder(row: UsageWindowRow) -> bool:
+    has_window = row.window_minutes is not None and row.window_minutes > 0
+    return not has_window and row.reset_at is None
 
 
 def _should_prefer_primary_row(primary_row: UsageWindowRow, secondary_row: UsageWindowRow) -> bool:
@@ -270,12 +258,14 @@ def _should_prefer_primary_row(primary_row: UsageWindowRow, secondary_row: Usage
     secondary_recorded_at = _normalize_recorded_at(secondary_row.recorded_at)
     if primary_recorded_at is not None and secondary_recorded_at is not None:
         if primary_recorded_at != secondary_recorded_at:
-            return primary_recorded_at > secondary_recorded_at
-    elif primary_recorded_at is not None:
+            delta_seconds = abs((primary_recorded_at - secondary_recorded_at).total_seconds())
+            if delta_seconds > SIBLING_FETCH_MARGIN_SECONDS:
+                return primary_recorded_at > secondary_recorded_at
+    primary_has_real = _has_real_quota_metadata(primary_row)
+    if primary_has_real and _is_no_data_placeholder(secondary_row):
         return True
-    elif secondary_recorded_at is not None:
+    if _has_real_quota_metadata(secondary_row) and _is_no_data_placeholder(primary_row):
         return False
-
     if primary_row.reset_at is not None and secondary_row.reset_at is not None:
         if primary_row.reset_at != secondary_row.reset_at:
             return primary_row.reset_at > secondary_row.reset_at
@@ -283,7 +273,6 @@ def _should_prefer_primary_row(primary_row: UsageWindowRow, secondary_row: Usage
         return True
     elif secondary_row.reset_at is not None:
         return False
-
     return True
 
 
@@ -323,11 +312,7 @@ def parse_usage_summary(
     if monthly_window is not None:
         monthly = normalize_usage_window(monthly_window)
     return UsageSummaryPayload(
-        primary_window=primary,
-        secondary_window=secondary,
-        monthly_window=monthly,
-        cost=cost,
-        metrics=metrics,
+        primary_window=primary, secondary_window=secondary, monthly_window=monthly, cost=cost, metrics=metrics
     )
 
 

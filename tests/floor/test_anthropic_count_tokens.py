@@ -9,7 +9,13 @@ import app.modules.proxy.anthropic_service as anthropic_proxy_module
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory
 from app.db.request_models import RequestLog
 from app.db.session import SessionLocal
-from tests.floor.anthropic_proxy_support import ANTHROPIC_JSON_BYTES, ANTHROPIC_SSE_BYTES, _FakeResponse, _FakeResponseContext, _insert_account  # noqa: I001  # fmt: skip
+from tests.floor.anthropic_proxy_support import (  # noqa: I001  # fmt: skip
+    ANTHROPIC_JSON_BYTES,
+    ANTHROPIC_SSE_BYTES,
+    _FakeResponse,
+    _FakeResponseContext,
+    _insert_account,
+)
 
 pytestmark = pytest.mark.integration
 

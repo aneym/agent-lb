@@ -44,6 +44,8 @@ def configure_static_routes(app: FastAPI) -> None:
         if normalized:
             candidate = resolve_static_asset_path(static_root, normalized)
             if candidate is not None:
+                if normalized.startswith("assets/"):
+                    return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
                 return FileResponse(candidate)
             if _is_static_asset_path(normalized):
                 raise HTTPException(status_code=404, detail="Not Found")

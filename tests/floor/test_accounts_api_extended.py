@@ -10,6 +10,7 @@ from app.core.utils.time import utcnow
 from app.db.models import Account
 from app.db.request_models import RequestLog
 from app.db.session import SessionLocal
+from app.modules.accounts.deletion import run_account_deletion_pass
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from tests.floor.accounts_api_helpers import _make_account as _make_account
@@ -472,6 +473,9 @@ async def test_delete_account_soft_deletes_request_logs(async_client, db_setup):
 
     delete = await async_client.delete("/api/accounts/acc_delete_logs")
     assert delete.status_code == 200
+    accounts = await async_client.get("/api/accounts")
+    assert all(account["accountId"] != "acc_delete_logs" for account in accounts.json()["accounts"])
+    assert (await run_account_deletion_pass())["acc_delete_logs"] == "finalized"
 
     async with SessionLocal() as session:
         row = (
@@ -510,6 +514,9 @@ async def test_delete_account_with_delete_history_hard_deletes_request_logs(asyn
     delete = await async_client.delete("/api/accounts/acc_hard_delete?delete_history=true")
     assert delete.status_code == 200
     assert delete.json()["status"] == "deleted"
+    accounts = await async_client.get("/api/accounts")
+    assert all(account["accountId"] != "acc_hard_delete" for account in accounts.json()["accounts"])
+    assert (await run_account_deletion_pass())["acc_hard_delete"] == "finalized"
 
     async with SessionLocal() as session:
         result = await session.execute(select(RequestLog).where(RequestLog.request_id == "req_hard_delete_1"))

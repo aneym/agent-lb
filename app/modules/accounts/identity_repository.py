@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 from sqlalchemy import delete, or_, select, text, update
@@ -8,20 +7,32 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.providers import normalize_provider_name
+from app.db.account_identity_lock import advisory_lock_key
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, DashboardSettings, UsageHistory
 from app.db.request_models import AccountLimitWarmup, ApiKeyAccountAssignment, RequestLog
+from app.db.session import sqlite_writer_section
 from app.db.session_models import HttpBridgeSessionRecord, StickySession
-
-_SETTINGS_ROW_ID = 1
-_DUPLICATE_ACCOUNT_SUFFIX = "__copy"
+from app.modules.accounts.identity_values import _DUPLICATE_ACCOUNT_SUFFIX as _DUPLICATE_ACCOUNT_SUFFIX
+from app.modules.accounts.identity_values import _SETTINGS_ROW_ID as _SETTINGS_ROW_ID
+from app.modules.accounts.identity_values import _advisory_lock_key as _advisory_lock_key
+from app.modules.accounts.identity_values import _apply_account_updates as _apply_account_updates
+from app.modules.accounts.identity_values import _can_reuse_email_fallback as _can_reuse_email_fallback
+from app.modules.accounts.identity_values import (
+    _is_workspace_less_reauth_for_known_slot as _is_workspace_less_reauth_for_known_slot,
+)
+from app.modules.accounts.identity_values import _same_unknown_workspace_identity as _same_unknown_workspace_identity
+from app.modules.accounts.identity_values import _slot_lock_keys as _slot_lock_keys
+from app.modules.accounts.identity_values import _workspace_slot_identity as _workspace_slot_identity
+from app.modules.accounts.identity_values import _workspace_slot_key as _workspace_slot_key
+from app.modules.accounts.usage_rollup import lock_fold_state, merge_rollups_into
+from app.modules.accounts.usage_time_rollup import merge_time_rollups_into
 
 
 class AccountIdentityConflictError(Exception):
     def __init__(self, email: str) -> None:
         self.email = email
         super().__init__(
-            f"Cannot overwrite account for email '{email}' because multiple matching accounts exist. "
-            "Remove duplicates or enable import without overwrite."
+            f"Cannot overwrite account for email '{email}' because multiple matching accounts exist. Remove duplicates or enable import without overwrite."
         )
 
 
@@ -43,81 +54,15 @@ class AccountIdentityRepository:
         return result.scalar_one_or_none()
 
     async def upsert(
-        self,
-        account: Account,
-        *,
-        merge_by_email: bool | None = None,
-        merge_by_chatgpt_identity: bool = False,
+        self, account: Account, *, merge_by_email: bool | None = None, merge_by_chatgpt_identity: bool = False
     ) -> Account:
         account.provider = normalize_provider_name(account.provider)
-        dialect_name = self._dialect_name()
-        sqlite_lock_acquired = False
-        if merge_by_email is None:
-            if dialect_name == "sqlite":
-                await self._acquire_sqlite_merge_lock()
-                sqlite_lock_acquired = True
-            merge_by_email = await self._merge_by_email_enabled()
-
-        if dialect_name == "sqlite" and not sqlite_lock_acquired:
-            await self._acquire_sqlite_merge_lock()
-        elif dialect_name == "postgresql":
-            identity_locked = False
-            if merge_by_chatgpt_identity and account.chatgpt_account_id:
-                await self._acquire_postgresql_identity_lock(f"chatgpt:{account.chatgpt_account_id}")
-                identity_locked = True
-            if merge_by_email:
-                await self._acquire_postgresql_merge_lock(account.email)
-            elif not identity_locked:
-                await self._acquire_postgresql_identity_lock(account.id)
-
-        if merge_by_chatgpt_identity and account.chatgpt_account_id:
-            canonical = await self._account_by_chatgpt_identity(
-                account.chatgpt_account_id,
-                workspace_id=account.workspace_id,
+        async with sqlite_writer_section():
+            return await self._upsert_unlocked(
+                account, merge_by_email=merge_by_email, merge_by_chatgpt_identity=merge_by_chatgpt_identity
             )
-            if canonical is not None:
-                _apply_account_updates(canonical, account)
-                await self._clear_exchange_intent_for_reauth(canonical.id)
-                await self._reconcile_chatgpt_identity_duplicates(
-                    canonical=canonical,
-                    chatgpt_account_id=account.chatgpt_account_id,
-                    workspace_id=account.workspace_id,
-                )
-                await self._session.commit()
-                await self._session.refresh(canonical)
-                return canonical
-
-        existing = await self._session.get(Account, account.id)
-        if existing:
-            if merge_by_email or _is_workspace_less_reauth_for_known_slot(
-                existing,
-                account,
-                merge_by_chatgpt_identity=merge_by_chatgpt_identity,
-            ):
-                _apply_account_updates(existing, account)
-                await self._clear_exchange_intent_for_reauth(existing.id)
-                await self._session.commit()
-                await self._session.refresh(existing)
-                return existing
-            account.id = await self._next_available_account_id(account.id)
-
-        if merge_by_email:
-            existing_by_email = await self._single_account_by_email(account.email)
-            if existing_by_email:
-                _apply_account_updates(existing_by_email, account)
-                await self._clear_exchange_intent_for_reauth(existing_by_email.id)
-                await self._session.commit()
-                await self._session.refresh(existing_by_email)
-                return existing_by_email
-
-        self._session.add(account)
-        await self._session.commit()
-        await self._session.refresh(account)
-        return account
 
     async def upsert_reauthorized(self, account: Account) -> Account:
-        if account.chatgpt_account_id:
-            return await self.upsert(account, merge_by_email=False, merge_by_chatgpt_identity=True)
         return await self.upsert_account_slot(account, preserve_unknown_workspace_duplicates=False)
 
     async def upsert_account_slot(
@@ -125,88 +70,53 @@ class AccountIdentityRepository:
         account: Account,
         *,
         preserve_unknown_workspace_duplicates: bool | None = None,
+        preserve_identity_slots: bool = False,
     ) -> Account:
-        if preserve_unknown_workspace_duplicates is None:
-            preserve_unknown_workspace_duplicates = not await self._merge_by_email_enabled()
-        dialect_name = self._dialect_name()
-        if dialect_name == "sqlite":
-            await self._acquire_sqlite_merge_lock()
-        elif dialect_name == "postgresql":
-            for lock_key in sorted(
-                _slot_lock_keys(
-                    account,
-                    preserve_unknown_workspace_duplicates=preserve_unknown_workspace_duplicates,
-                )
-            ):
-                await self._acquire_postgresql_identity_lock(lock_key)
-
-        existing = await self._account_by_slot_identity(account)
-        if existing:
-            _apply_account_updates(existing, account)
-            await self._clear_exchange_intent_for_reauth(existing.id)
-            await self._session.commit()
-            await self._session.refresh(existing)
-            return existing
-
-        existing_by_id = await self._session.get(Account, account.id)
-        if existing_by_id:
-            if _same_unknown_workspace_identity(existing_by_id, account) and not preserve_unknown_workspace_duplicates:
-                _apply_account_updates(existing_by_id, account)
-                await self._clear_exchange_intent_for_reauth(existing_by_id.id)
-                await self._session.commit()
-                await self._session.refresh(existing_by_id)
-                return existing_by_id
-            account.id = await self._next_available_account_id(account.id)
-        elif not preserve_unknown_workspace_duplicates:
-            existing_by_email = (
-                await self._single_unknown_workspace_account_by_email(account.email)
-                if account.workspace_id
-                else await self._single_account_by_email(account.email)
-                if not account.workspace_id
-                else None
+        account.provider = normalize_provider_name(account.provider)
+        async with sqlite_writer_section():
+            return await self._upsert_account_slot_unlocked(
+                account,
+                preserve_unknown_workspace_duplicates=preserve_unknown_workspace_duplicates,
+                preserve_identity_slots=preserve_identity_slots,
             )
-            if existing_by_email and not _can_reuse_email_fallback(existing_by_email, account):
-                existing_by_email = None
-            if existing_by_email:
-                _apply_account_updates(existing_by_email, account)
-                await self._clear_exchange_intent_for_reauth(existing_by_email.id)
-                await self._session.commit()
-                await self._session.refresh(existing_by_email)
-                return existing_by_email
-
-        self._session.add(account)
-        await self._session.commit()
-        await self._session.refresh(account)
-        return account
 
     async def _account_by_chatgpt_identity(
-        self,
-        chatgpt_account_id: str,
-        *,
-        workspace_id: str | None,
+        self, chatgpt_account_id: str, *, workspace_id: str | None, email: str | None, provider: str = "openai"
     ) -> Account | None:
-
-        stmt = select(Account).where(Account.chatgpt_account_id == chatgpt_account_id)
+        stmt = select(Account).where(Account.chatgpt_account_id == chatgpt_account_id, Account.provider == provider)
         order_by: list[Any] = [Account.created_at.asc(), Account.id.asc()]
         if workspace_id:
             stmt = stmt.where(or_(Account.workspace_id == workspace_id, Account.workspace_id.is_(None)))
             order_by.insert(0, Account.workspace_id.is_(None).asc())
         else:
             stmt = stmt.where(Account.workspace_id.is_(None))
-
-        result = await self._session.execute(stmt.order_by(*order_by).limit(1))
-        return result.scalar_one_or_none()
+        result = await self._session.execute(stmt.order_by(*order_by))
+        candidates = list(result.scalars().all())
+        if not candidates:
+            return None
+        if not email:
+            return candidates[0]
+        for candidate in candidates:
+            if candidate.email == email:
+                return candidate
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
 
     async def _reconcile_chatgpt_identity_duplicates(
         self,
         canonical: Account,
         chatgpt_account_id: str,
         workspace_id: str | None,
-    ) -> None:
+        email: str | None,
+    ) -> bool:
         duplicate_stmt = select(Account.id).where(
             Account.chatgpt_account_id == chatgpt_account_id,
             Account.id != canonical.id,
+            Account.provider == canonical.provider,
         )
+        if email:
+            duplicate_stmt = duplicate_stmt.where(Account.email == email)
         if workspace_id is None:
             duplicate_stmt = duplicate_stmt.where(Account.workspace_id.is_(None))
         else:
@@ -214,8 +124,8 @@ class AccountIdentityRepository:
         duplicate_accounts = (await self._session.execute(duplicate_stmt)).scalars().all()
         duplicate_ids = list(duplicate_accounts)
         if not duplicate_ids:
-            return
-
+            return False
+        await lock_fold_state(self._session)
         duplicate_api_key_ids = (
             (
                 await self._session.execute(
@@ -226,7 +136,6 @@ class AccountIdentityRepository:
             .all()
         )
         existing_api_key_ids = set(duplicate_api_key_ids)
-
         duplicate_assignments = (
             (
                 await self._session.execute(
@@ -242,7 +151,6 @@ class AccountIdentityRepository:
             else:
                 assignment.account_id = canonical.id
                 existing_api_key_ids.add(assignment.api_key_id)
-
         await self._session.execute(
             update(UsageHistory).where(UsageHistory.account_id.in_(duplicate_ids)).values(account_id=canonical.id)
         )
@@ -263,7 +171,10 @@ class AccountIdentityRepository:
             .where(HttpBridgeSessionRecord.account_id.in_(duplicate_ids))
             .values(account_id=canonical.id)
         )
+        await merge_rollups_into(self._session, canonical.id, duplicate_ids)
+        await merge_time_rollups_into(self._session, canonical.id, duplicate_ids)
         await self._session.execute(delete(Account).where(Account.id.in_(duplicate_ids)))
+        return True
 
     async def _reconcile_limit_warmups(self, canonical_account_id: str, duplicate_ids: list[str]) -> None:
         existing_keys = {
@@ -307,9 +218,12 @@ class AccountIdentityRepository:
             sequence += 1
         return candidate
 
-    async def _single_account_by_email(self, email: str) -> Account | None:
+    async def _single_account_by_email(self, email: str, *, provider: str = "openai") -> Account | None:
         result = await self._session.execute(
-            select(Account).where(Account.email == email).order_by(Account.created_at.asc(), Account.id.asc()).limit(2)
+            select(Account)
+            .where(Account.email == email, Account.provider == provider)
+            .order_by(Account.created_at.asc(), Account.id.asc())
+            .limit(2)
         )
         matches = list(result.scalars().all())
         if not matches:
@@ -318,11 +232,14 @@ class AccountIdentityRepository:
             raise AccountIdentityConflictError(email)
         return matches[0]
 
-    async def _single_unknown_workspace_account_by_email(self, email: str) -> Account | None:
+    async def _single_unknown_workspace_account_by_email(
+        self, email: str, *, provider: str = "openai"
+    ) -> Account | None:
         result = await self._session.execute(
             select(Account)
-            .where(Account.email == email)
+            .where(Account.email == email, Account.provider == provider)
             .where(Account.workspace_id.is_(None))
+            .where(Account.workspace_label.is_(None))
             .order_by(Account.created_at.asc(), Account.id.asc())
             .limit(2)
         )
@@ -334,21 +251,40 @@ class AccountIdentityRepository:
         return matches[0]
 
     async def _account_by_slot_identity(self, account: Account) -> Account | None:
-        if account.chatgpt_account_id and account.workspace_id:
+        workspace_slot = _workspace_slot_identity(account)
+        if account.chatgpt_account_id and account.email and workspace_slot:
+            column, value = workspace_slot
             result = await self._session.execute(
                 select(Account)
+                .where(Account.provider == account.provider)
                 .where(Account.chatgpt_account_id == account.chatgpt_account_id)
-                .where(Account.workspace_id == account.workspace_id)
+                .where(Account.email == account.email)
+                .where(column == value)
                 .order_by(Account.created_at.asc(), Account.id.asc())
                 .limit(1)
             )
             if matched := result.scalar_one_or_none():
                 return matched
-        if account.workspace_id and account.email:
+        if account.chatgpt_account_id and account.email and account.workspace_id and account.workspace_label:
             result = await self._session.execute(
                 select(Account)
+                .where(Account.provider == account.provider)
+                .where(Account.chatgpt_account_id == account.chatgpt_account_id)
                 .where(Account.email == account.email)
-                .where(Account.workspace_id == account.workspace_id)
+                .where(Account.workspace_id.is_(None))
+                .where(Account.workspace_label == account.workspace_label)
+                .order_by(Account.created_at.asc(), Account.id.asc())
+                .limit(1)
+            )
+            if matched := result.scalar_one_or_none():
+                return matched
+        if workspace_slot and account.email:
+            column, value = workspace_slot
+            result = await self._session.execute(
+                select(Account)
+                .where(Account.provider == account.provider)
+                .where(Account.email == account.email)
+                .where(column == value)
                 .order_by(Account.created_at.asc(), Account.id.asc())
                 .limit(1)
             )
@@ -367,93 +303,12 @@ class AccountIdentityRepository:
             message = str(exc).lower()
             if "within a transaction" not in message:
                 raise
-
             await self._session.execute(text("UPDATE accounts SET id = id WHERE 1 = 0"))
 
     async def _acquire_postgresql_merge_lock(self, email: str) -> None:
-        lock_key = _advisory_lock_key("merge-email", email)
-        await self._session.execute(
-            text("SELECT pg_advisory_xact_lock(:lock_key)"),
-            {"lock_key": lock_key},
-        )
+        lock_key = advisory_lock_key("merge-email", email)
+        await self._session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
 
     async def _acquire_postgresql_identity_lock(self, account_id: str) -> None:
-        lock_key = _advisory_lock_key("account-id", account_id)
-        await self._session.execute(
-            text("SELECT pg_advisory_xact_lock(:lock_key)"),
-            {"lock_key": lock_key},
-        )
-
-
-def _apply_account_updates(target: Account, source: Account) -> None:
-    target.provider = normalize_provider_name(source.provider)
-    if source.chatgpt_account_id is not None:
-        target.chatgpt_account_id = source.chatgpt_account_id
-    target.email = source.email
-    if source.workspace_id is not None or target.workspace_id is None:
-        target.workspace_id = source.workspace_id
-        target.workspace_label = source.workspace_label
-        target.seat_type = source.seat_type
-    target.plan_type = source.plan_type
-    target.access_token_encrypted = source.access_token_encrypted
-    target.refresh_token_encrypted = source.refresh_token_encrypted
-    target.id_token_encrypted = source.id_token_encrypted
-    target.last_refresh = source.last_refresh
-    target.access_expires_at = source.access_expires_at
-    target.status = source.status
-    target.deactivation_reason = source.deactivation_reason
-    target.reset_at = source.reset_at
-    target.blocked_at = source.blocked_at
-
-
-def _slot_lock_keys(account: Account, *, preserve_unknown_workspace_duplicates: bool = True) -> tuple[str, ...]:
-    keys: list[str] = []
-    if account.chatgpt_account_id and account.workspace_id:
-        keys.append(f"slot:{account.chatgpt_account_id}:{account.workspace_id}")
-    if account.email and account.workspace_id:
-        keys.append(f"slot-email:{account.email}:{account.workspace_id}")
-        if not preserve_unknown_workspace_duplicates:
-            keys.append(f"slot-email-unknown:{account.email}")
-    if keys:
-        return tuple(keys)
-    if account.email and not preserve_unknown_workspace_duplicates:
-        return (f"slot-email-unknown:{account.email}",)
-    return (f"slot-local:{account.id}",)
-
-
-def _same_unknown_workspace_identity(existing: Account, incoming: Account) -> bool:
-    return (
-        not existing.workspace_id
-        and not incoming.workspace_id
-        and existing.chatgpt_account_id == incoming.chatgpt_account_id
-        and existing.email == incoming.email
-    )
-
-
-def _is_workspace_less_reauth_for_known_slot(
-    existing: Account,
-    incoming: Account,
-    *,
-    merge_by_chatgpt_identity: bool,
-) -> bool:
-    return (
-        merge_by_chatgpt_identity
-        and existing.workspace_id is not None
-        and incoming.workspace_id is None
-        and incoming.chatgpt_account_id is not None
-        and existing.chatgpt_account_id == incoming.chatgpt_account_id
-        and existing.email == incoming.email
-    )
-
-
-def _can_reuse_email_fallback(existing: Account, incoming: Account) -> bool:
-    return (
-        not incoming.chatgpt_account_id
-        or not existing.chatgpt_account_id
-        or existing.chatgpt_account_id == incoming.chatgpt_account_id
-    )
-
-
-def _advisory_lock_key(scope: str, value: str) -> int:
-    digest = hashlib.sha256(f"{scope}:{value}".encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], byteorder="big", signed=True)
+        lock_key = advisory_lock_key("account-id", account_id)
+        await self._session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})

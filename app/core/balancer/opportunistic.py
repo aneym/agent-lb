@@ -17,11 +17,7 @@ from app.db.models import AccountStatus
 
 
 def _routing_policy(state: AccountState) -> str:
-    if state.routing_policy in {
-        ROUTING_POLICY_BURN_FIRST,
-        ROUTING_POLICY_NORMAL,
-        ROUTING_POLICY_PRESERVE,
-    }:
+    if state.routing_policy in {ROUTING_POLICY_BURN_FIRST, ROUTING_POLICY_NORMAL, ROUTING_POLICY_PRESERVE}:
         return state.routing_policy
     return ROUTING_POLICY_NORMAL
 
@@ -54,11 +50,9 @@ def _weekly_pace_floor_pct(state: AccountState, current: float) -> float:
     used_pct = _used_pct(state, secondary=True)
     if remaining_seconds is None or used_pct is None:
         return 100.0
-
     elapsed_seconds = max(0.0, SECONDS_PER_WEEK - remaining_seconds)
-    expected_used_pct = min(100.0, (elapsed_seconds / SECONDS_PER_WEEK) * 100.0)
+    expected_used_pct = min(100.0, elapsed_seconds / SECONDS_PER_WEEK * 100.0)
     behind_pace = used_pct + 5.0 < expected_used_pct
-
     if remaining_seconds <= 6 * SECONDS_PER_HOUR and behind_pace:
         pace_floor = 0.0
     elif remaining_seconds <= SECONDS_PER_DAY and behind_pace:
@@ -67,10 +61,8 @@ def _weekly_pace_floor_pct(state: AccountState, current: float) -> float:
         pace_floor = 5.0
     else:
         pace_floor = 15.0
-
     if _recent_foreground_activity(state, current):
         pace_floor = max(pace_floor, 25.0)
-
     return max(PRESERVE_MIN_WEEKLY_FLOOR_PCT, pace_floor)
 
 
@@ -101,11 +93,9 @@ def _preserve_allows_opportunistic_burn(state: AccountState, current: float, *, 
 
 
 def _has_other_usable_foreground_capacity(
-    candidate: AccountState,
-    available: list[AccountState],
-    current: float,
+    candidate: AccountState, available: list[AccountState], current: float
 ) -> bool:
-    preserve_count = sum(1 for state in available if _routing_policy(state) == ROUTING_POLICY_PRESERVE)
+    preserve_count = sum((1 for state in available if _routing_policy(state) == ROUTING_POLICY_PRESERVE))
     for other in available:
         if other.account_id == candidate.account_id:
             continue
@@ -131,14 +121,12 @@ def _above_emergency_floor(state: AccountState) -> bool:
 
 
 def _filter_opportunistic_candidates(
-    available: list[AccountState],
-    current: float,
+    available: list[AccountState], current: float
 ) -> tuple[list[AccountState], str | None]:
     burn_first: list[AccountState] = []
     normal: list[AccountState] = []
     preserve: list[AccountState] = []
-    preserve_count = sum(1 for state in available if _routing_policy(state) == ROUTING_POLICY_PRESERVE)
-
+    preserve_count = sum((1 for state in available if _routing_policy(state) == ROUTING_POLICY_PRESERVE))
     for state in available:
         policy = _routing_policy(state)
         if policy == ROUTING_POLICY_BURN_FIRST:
@@ -147,13 +135,10 @@ def _filter_opportunistic_candidates(
         elif policy == ROUTING_POLICY_PRESERVE:
             if _preserve_allows_opportunistic_burn(state, current, preserve_count=preserve_count):
                 preserve.append(state)
-        else:
-            if _has_other_usable_foreground_capacity(state, available, current) or _above_emergency_floor(state):
-                normal.append(state)
-
+        elif _has_other_usable_foreground_capacity(state, available, current) or _above_emergency_floor(state):
+            normal.append(state)
     if burn_first or normal or preserve:
-        return [*burn_first, *normal, *preserve], None
-
-    if any(_routing_policy(state) == ROUTING_POLICY_PRESERVE for state in available):
-        return [], "preserve floor or stale usage data blocks opportunistic burn"
-    return [], "no expendable account has emergency foreground reserve"
+        return ([*burn_first, *normal, *preserve], None)
+    if any((_routing_policy(state) == ROUTING_POLICY_PRESERVE for state in available)):
+        return ([], "preserve floor or stale usage data blocks opportunistic burn")
+    return ([], "no expendable account has emergency foreground reserve")

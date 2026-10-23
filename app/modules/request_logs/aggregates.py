@@ -7,7 +7,14 @@ from sqlalchemy import Integer, and_, case, cast, false, func, literal_column, o
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate, UsageCostByModel, UsageCostSummary, UsageMetricsSummary  # noqa: I001  # fmt: skip
+from app.core.usage.logs import CANCELLED_STATUS, NON_ERROR_STATUSES
+from app.core.usage.types import (  # noqa: I001  # fmt: skip
+    BucketModelAggregate,
+    RequestActivityAggregate,
+    UsageCostByModel,
+    UsageCostSummary,
+    UsageMetricsSummary,
+)
 from app.db.models import Account
 from app.db.request_models import RequestKind, RequestLog
 from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS
@@ -208,9 +215,10 @@ class RequestLogAggregates:
 
         overall_stmt = select(
             func.count().label("request_count"),
-            func.coalesce(func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)), 0).label(
+            func.coalesce(func.sum(cast(RequestLog.status.not_in(NON_ERROR_STATUSES), Integer)), 0).label(
                 "error_count"
             ),
+            func.coalesce(func.sum(cast(RequestLog.status == CANCELLED_STATUS, Integer)), 0).label("cancelled_count"),
             func.coalesce(func.sum(tokens_expr), 0).label("tokens_sum"),
             func.coalesce(func.sum(cached_expr), 0).label("cached_tokens_sum"),
         ).where(and_(*conditions))
@@ -225,7 +233,7 @@ class RequestLogAggregates:
 
         top_error_stmt = (
             select(RequestLog.error_code, func.count().label("error_count"))
-            .where(and_(*conditions, RequestLog.status != "success", RequestLog.error_code.is_not(None)))
+            .where(and_(*conditions, RequestLog.status.not_in(NON_ERROR_STATUSES), RequestLog.error_code.is_not(None)))
             .group_by(RequestLog.error_code)
             .order_by(func.count().desc(), RequestLog.error_code.asc())
             .limit(1)
@@ -241,6 +249,7 @@ class RequestLogAggregates:
             cached_tokens_secondary_window=int(overall_row.cached_tokens_sum),
             error_rate_7d=error_rate,
             top_error=top_error,
+            cancelled_7d=int(overall_row.cancelled_count),
         )
 
         total_cost = 0.0

@@ -5,15 +5,20 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate
-from app.db.models import Account, AdditionalUsageHistory, DashboardSettings, UsageHistory
-from app.db.request_models import AccountLimitWarmup, RequestLog
+from app.core.usage.types import BucketConversationAggregate, BucketModelAggregate, RequestActivityAggregate
+from app.db.models import (
+    Account,
+    AccountLimitWarmup,
+    AdditionalUsageHistory,
+    DashboardSettings,
+    RequestLog,
+    UsageHistory,
+)
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.settings.repository import SettingsRepository
-from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
-from app.modules.usage.sqlite_history import UsageHistorySnapshot
+from app.modules.usage.repository import AdditionalUsageRepository, UsageHistorySnapshot, UsageRepository
 
 
 class DashboardRepository:
@@ -44,8 +49,19 @@ class DashboardRepository:
         account_ids: list[str],
         window: str,
         since: datetime,
+        *,
+        cutoffs: dict[str, datetime] | None = None,
+        per_account_row_cap: int | None = None,
+        uncapped_recent_floor: datetime | None = None,
     ) -> dict[str, list[UsageHistorySnapshot]]:
-        return await self._usage_repo.bulk_history_since(account_ids, window, since)
+        return await self._usage_repo.bulk_history_since(
+            account_ids,
+            window,
+            since,
+            cutoffs=cutoffs,
+            per_account_row_cap=per_account_row_cap,
+            uncapped_recent_floor=uncapped_recent_floor,
+        )
 
     async def latest_window_minutes(self, window: str) -> int | None:
         return await self._usage_repo.latest_window_minutes(window)
@@ -117,3 +133,27 @@ class DashboardRepository:
 
     async def get_settings(self) -> DashboardSettings:
         return await self._settings_repo.get_or_create()
+
+    async def aggregate_conversations_by_bucket(
+        self,
+        since: datetime,
+        bucket_seconds: int = 21600,
+        *,
+        exclude_canceled_subscription_accounts: bool = False,
+    ) -> list[BucketConversationAggregate]:
+        return await self._logs_repo.aggregate_conversations_by_bucket(since, bucket_seconds, exclude_canceled_subscription_accounts=exclude_canceled_subscription_accounts)
+
+    async def aggregate_activity_between(
+        self,
+        since: datetime,
+        until: datetime,
+        *,
+        exclude_canceled_subscription_accounts: bool = False,
+    ) -> RequestActivityAggregate:
+        return await self._logs_repo.aggregate_activity_between(since, until, exclude_canceled_subscription_accounts=exclude_canceled_subscription_accounts)
+
+    async def top_error_between(self, since: datetime, until: datetime, *, exclude_canceled_subscription_accounts: bool = False) -> str | None:
+        return await self._logs_repo.top_error_between(since, until, exclude_canceled_subscription_accounts=exclude_canceled_subscription_accounts)
+
+    async def earliest_activity_at(self) -> datetime | None:
+        return await self._logs_repo.earliest_activity_at()

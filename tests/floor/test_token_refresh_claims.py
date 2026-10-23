@@ -1,0 +1,151 @@
+"""Cross-replica token-refresh serialization regressions.
+
+Two replicas are simulated as two independent AsyncSessions/AuthManagers over
+one database with distinct refresh-claim claimant identities — the established
+multi-replica pattern from ``tests/integration/test_multi_replica.py``.
+
+Before the ``account_refresh_claims`` serialization landed, the concurrent-race
+tests here failed with the loser calling upstream a second time, receiving a
+permanent ``refresh_token_reused`` error, and writing ``REAUTH_REQUIRED`` (also
+deleting the account's sticky sessions).
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from tests.floor.token_refresh_claims_budgets import (
+    test_claim_poll_sleep_capped_to_remaining_caller_budget as test_claim_poll_sleep_capped_to_remaining_caller_budget,
+)
+from tests.floor.token_refresh_claims_budgets import (
+    test_claim_wait_exhausting_budget_fails_fast_without_exchange as test_claim_wait_exhausting_budget_fails_fast_without_exchange,
+)
+from tests.floor.token_refresh_claims_budgets import (
+    test_claim_wait_then_exchange_caps_to_remaining_budget as test_claim_wait_then_exchange_caps_to_remaining_budget,
+)
+from tests.floor.token_refresh_claims_budgets import (
+    test_saturated_admission_fails_fast_and_releases_claim_within_budget as test_saturated_admission_fails_fast_and_releases_claim_within_budget,
+)
+from tests.floor.token_refresh_claims_compact import (
+    test_compact_post_401_forced_refresh_claim_timeout_does_not_penalize_account_health as test_compact_post_401_forced_refresh_claim_timeout_does_not_penalize_account_health,
+)
+from tests.floor.token_refresh_claims_compact import (
+    test_compact_post_401_forced_refresh_claim_timeout_exhaustion_reports_upstream_unavailable as test_compact_post_401_forced_refresh_claim_timeout_exhaustion_reports_upstream_unavailable,
+)
+from tests.floor.token_refresh_claims_compact import (
+    test_compact_post_401_forced_refresh_claim_timeout_fails_over as test_compact_post_401_forced_refresh_claim_timeout_fails_over,
+)
+from tests.floor.token_refresh_claims_compact import (
+    test_compact_preflight_claim_timeout_does_not_penalize_account_health as test_compact_preflight_claim_timeout_does_not_penalize_account_health,
+)
+from tests.floor.token_refresh_claims_compact import (
+    test_compact_preflight_claim_timeout_fails_over_and_releases_lease as test_compact_preflight_claim_timeout_fails_over_and_releases_lease,
+)
+from tests.floor.token_refresh_claims_coordination import (
+    test_concurrent_cross_replica_refresh_runs_one_upstream_exchange as test_concurrent_cross_replica_refresh_runs_one_upstream_exchange,
+)
+from tests.floor.token_refresh_claims_coordination import (
+    test_expired_foreign_claim_is_taken_over as test_expired_foreign_claim_is_taken_over,
+)
+from tests.floor.token_refresh_claims_coordination import (
+    test_unexpired_foreign_claim_times_out_transient_and_is_not_cached as test_unexpired_foreign_claim_times_out_transient_and_is_not_cached,
+)
+from tests.floor.token_refresh_claims_credential_cas import (
+    test_permanent_failure_cas_loses_to_rotation_committed_during_status_write as test_permanent_failure_cas_loses_to_rotation_committed_during_status_write,
+)
+from tests.floor.token_refresh_claims_credential_cas import (
+    test_permanent_failure_cas_retries_when_same_plaintext_re_encrypted as test_permanent_failure_cas_retries_when_same_plaintext_re_encrypted,
+)
+from tests.floor.token_refresh_claims_credential_cas import (
+    test_refresh_persists_user_identity_and_access_expiry as test_refresh_persists_user_identity_and_access_expiry,
+)
+from tests.floor.token_refresh_claims_credential_cas import (
+    test_rotate_tokens_cas_rejects_stale_writer as test_rotate_tokens_cas_rejects_stale_writer,
+)
+from tests.floor.token_refresh_claims_credential_cas import (
+    test_rotate_tokens_requires_cas_predicate_no_unguarded_write as test_rotate_tokens_requires_cas_predicate_no_unguarded_write,
+)
+from tests.floor.token_refresh_claims_credential_cas import (
+    test_update_account_metadata_cannot_touch_token_material as test_update_account_metadata_cannot_touch_token_material,
+)
+from tests.floor.token_refresh_claims_credential_cas import (
+    test_update_status_if_current_rejects_stale_refresh_token_material as test_update_status_if_current_rejects_stale_refresh_token_material,
+)
+from tests.floor.token_refresh_claims_ownership import (
+    test_claim_coordinator_win_lose_release_semantics as test_claim_coordinator_win_lose_release_semantics,
+)
+from tests.floor.token_refresh_claims_ownership import (
+    test_claim_owner_is_per_refresh_not_process_wide as test_claim_owner_is_per_refresh_not_process_wide,
+)
+from tests.floor.token_refresh_claims_proxy_admission import (
+    test_proxy_401_with_foreign_claim_fails_over_without_reauth_write as test_proxy_401_with_foreign_claim_fails_over_without_reauth_write,
+)
+from tests.floor.token_refresh_claims_proxy_admission import (
+    test_proxy_preflight_claim_timeout_fails_over_and_releases_lease as test_proxy_preflight_claim_timeout_fails_over_and_releases_lease,
+)
+from tests.floor.token_refresh_claims_proxy_admission import (
+    test_proxy_preflight_permanent_refresh_releases_lease_before_failover as test_proxy_preflight_permanent_refresh_releases_lease_before_failover,
+)
+from tests.floor.token_refresh_claims_proxy_exhaustion import (
+    test_proxy_pinned_stream_claim_timeout_stays_on_owner_and_reports_upstream_unavailable as test_proxy_pinned_stream_claim_timeout_stays_on_owner_and_reports_upstream_unavailable,
+)
+from tests.floor.token_refresh_claims_proxy_exhaustion import (
+    test_proxy_pinned_stream_post_401_claim_timeout_stays_on_owner_and_reports_upstream_unavailable as test_proxy_pinned_stream_post_401_claim_timeout_stays_on_owner_and_reports_upstream_unavailable,
+)
+from tests.floor.token_refresh_claims_proxy_exhaustion import (
+    test_proxy_post_401_forced_refresh_claim_timeout_exhaustion_reports_upstream_unavailable as test_proxy_post_401_forced_refresh_claim_timeout_exhaustion_reports_upstream_unavailable,
+)
+from tests.floor.token_refresh_claims_proxy_permanent import (
+    test_proxy_post_401_permanent_refresh_releases_lease_before_failover as test_proxy_post_401_permanent_refresh_releases_lease_before_failover,
+)
+from tests.floor.token_refresh_claims_proxy_permanent import (
+    test_proxy_preflight_claim_timeout_exhaustion_reports_upstream_unavailable as test_proxy_preflight_claim_timeout_exhaustion_reports_upstream_unavailable,
+)
+from tests.floor.token_refresh_claims_recovery import (
+    test_claim_winner_rejects_rotation_transferred_to_foreign_custody as test_claim_winner_rejects_rotation_transferred_to_foreign_custody,
+)
+from tests.floor.token_refresh_claims_recovery import (
+    test_permanent_failure_guard_sees_committed_rotation_despite_identity_map as test_permanent_failure_guard_sees_committed_rotation_despite_identity_map,
+)
+from tests.floor.token_refresh_claims_recovery import (
+    test_winner_adopts_peer_rotation_that_repaired_a_reauth_account as test_winner_adopts_peer_rotation_that_repaired_a_reauth_account,
+)
+from tests.floor.token_refresh_claims_recovery import (
+    test_winner_adopts_rotation_committed_before_its_claim as test_winner_adopts_rotation_committed_before_its_claim,
+)
+from tests.floor.token_refresh_claims_recovery import (
+    test_winner_honors_persist_conflict_reauth_on_unchanged_token as test_winner_honors_persist_conflict_reauth_on_unchanged_token,
+)
+from tests.floor.token_refresh_claims_recovery import (
+    test_winner_honors_prior_holder_permanent_reauth_on_unchanged_token as test_winner_honors_prior_holder_permanent_reauth_on_unchanged_token,
+)
+from tests.floor.token_refresh_claims_stream_transport import (
+    test_proxy_post_401_forced_refresh_genuine_transport_error_penalizes_account as test_proxy_post_401_forced_refresh_genuine_transport_error_penalizes_account,
+)
+from tests.floor.token_refresh_claims_stream_transport import (
+    test_proxy_preflight_genuine_transport_error_penalizes_account as test_proxy_preflight_genuine_transport_error_penalizes_account,
+)
+from tests.floor.token_refresh_claims_stream_transport import (
+    test_proxy_preflight_genuine_transport_error_releases_lease_before_failover as test_proxy_preflight_genuine_transport_error_releases_lease_before_failover,
+)
+from tests.floor.token_refresh_claims_support import _clear_refresh_state as _clear_refresh_state
+from tests.floor.token_refresh_claims_transport_cleanup import (
+    test_compact_post_401_forced_refresh_genuine_transport_error_penalizes_account as test_compact_post_401_forced_refresh_genuine_transport_error_penalizes_account,
+)
+from tests.floor.token_refresh_claims_transport_cleanup import (
+    test_compact_preflight_genuine_transport_error_penalizes_account as test_compact_preflight_genuine_transport_error_penalizes_account,
+)
+from tests.floor.token_refresh_claims_transport_cleanup import (
+    test_proxy_post_401_forced_refresh_genuine_transport_error_releases_lease_before_failover as test_proxy_post_401_forced_refresh_genuine_transport_error_releases_lease_before_failover,
+)
+from tests.floor.token_refresh_claims_unary import (
+    test_proxy_previsible_unary_claim_timeout_exhaustion_reports_upstream_unavailable as test_proxy_previsible_unary_claim_timeout_exhaustion_reports_upstream_unavailable,
+)
+from tests.floor.token_refresh_claims_unary import (
+    test_proxy_previsible_unary_claim_timeout_fails_over_without_health_penalty as test_proxy_previsible_unary_claim_timeout_fails_over_without_health_penalty,
+)
+from tests.floor.token_refresh_claims_unary import (
+    test_proxy_previsible_unary_genuine_transport_error_penalizes_account as test_proxy_previsible_unary_genuine_transport_error_penalizes_account,
+)
+
+pytestmark = pytest.mark.integration

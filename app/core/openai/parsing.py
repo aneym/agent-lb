@@ -16,13 +16,32 @@ _EVENT_ADAPTER = TypeAdapter(OpenAIEvent)
 _ERROR_ADAPTER = TypeAdapter(OpenAIErrorEnvelope)
 _RESPONSE_ADAPTER = TypeAdapter(OpenAIResponsePayload)
 _COMPACT_RESPONSE_ADAPTER = TypeAdapter(CompactResponsePayload)
+_LIFECYCLE_EVENT_TYPES = frozenset(
+    {"response.created", "response.completed", "response.incomplete", "response.failed", "error"}
+)
+
+
+def classify_event_type(payload: JsonValue | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    payload_type = payload.get("type")
+    if isinstance(payload_type, str):
+        return payload_type
+    if isinstance(payload.get("error"), dict):
+        return "error"
+    return None
 
 
 def parse_sse_event(line: str) -> OpenAIEvent | None:
     return parse_sse_event_payload(parse_sse_data_json(line))
 
 
-def parse_sse_event_payload(payload: dict[str, JsonValue] | None) -> OpenAIEvent | None:
+def parse_sse_event_payload(payload: JsonValue | None) -> OpenAIEvent | None:
+    """Validate an already-parsed SSE data payload.
+
+    Hot streaming paths parse each event's JSON exactly once and reuse the
+    payload here instead of re-parsing the raw line per consumer.
+    """
     if payload is None:
         return None
     try:

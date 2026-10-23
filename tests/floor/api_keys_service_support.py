@@ -9,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.utils.time import utcnow
 from app.db.models import Account, UsageHistory
 from app.db.request_models import ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType
-from app.modules.api_keys.repository_data import _UNSET, ApiKeyUsageSummary, ReservationResult, UsageReservationData, UsageReservationItemData, _Unset  # noqa: I001  # fmt: skip
+from app.modules.api_keys.repository_data import (  # noqa: I001  # fmt: skip
+    _UNSET,
+    ApiKeyUsageSummary,
+    ReservationResult,
+    UsageReservationData,
+    UsageReservationItemData,
+    _Unset,
+)
 from app.modules.api_keys.repository_protocol import ApiKeysRepositoryProtocol
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyCreateData, LimitRuleInput
@@ -51,6 +58,9 @@ class _FakeApiKeysRepository(ApiKeysRepositoryProtocol):
             row.account_assignments = self._account_assignments.get(key_id, [])
         return row
 
+    async def get_for_limit_enforcement(self, key_id: str) -> ApiKey | None:
+        return await self.get_by_id(key_id)
+
     async def get_by_hash(self, key_hash: str) -> ApiKey | None:
         for row in self.rows.values():
             if row.key_hash == key_hash:
@@ -86,9 +96,13 @@ class _FakeApiKeysRepository(ApiKeysRepositoryProtocol):
         apply_to_codex_model: bool | _Unset = _UNSET,
         enforced_model: str | None | _Unset = _UNSET,
         enforced_reasoning_effort: str | None | _Unset = _UNSET,
+        allowed_reasoning_efforts: str | None | _Unset = _UNSET,
         enforced_service_tier: str | None | _Unset = _UNSET,
         traffic_class: str | _Unset = _UNSET,
+        transport_policy_override: str | None | _Unset = _UNSET,
+        usage_sections: str | _Unset = _UNSET,
         account_assignment_scope_enabled: bool | _Unset = _UNSET,
+        source_assignment_scope_enabled: bool | _Unset = _UNSET,
         expires_at: datetime | None | _Unset = _UNSET,
         is_active: bool | _Unset = _UNSET,
         key_hash: str | _Unset = _UNSET,
@@ -106,9 +120,13 @@ class _FakeApiKeysRepository(ApiKeysRepositoryProtocol):
             "apply_to_codex_model": apply_to_codex_model,
             "enforced_model": enforced_model,
             "enforced_reasoning_effort": enforced_reasoning_effort,
+            "allowed_reasoning_efforts": allowed_reasoning_efforts,
             "enforced_service_tier": enforced_service_tier,
             "traffic_class": traffic_class,
+            "transport_policy_override": transport_policy_override,
+            "usage_sections": usage_sections,
             "account_assignment_scope_enabled": account_assignment_scope_enabled,
+            "source_assignment_scope_enabled": source_assignment_scope_enabled,
             "expires_at": expires_at,
             "is_active": is_active,
             "key_hash": key_hash,

@@ -1,37 +1,84 @@
 from __future__ import annotations
 
+import gzip
 import json
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from datetime import datetime, timezone
 from hashlib import sha256
-from typing import TypeVar, cast
+from pathlib import Path
+from typing import Any, TypeVar, cast
+from uuid import uuid4
 
 from app.core.clients.proxy import (
+    CODEX_INSTALLATION_ID_HEADER,
     ImageFetchSession,
     ProxyResponseError,
+    _finalize_responses_lite_reasoning_context,
     _inline_content_images,
+    _normalize_responses_lite_websocket_client_metadata,
+    _payload_has_responses_lite_websocket_marker,
+    _payload_uses_responses_lite,
+    apply_codex_installation_metadata,
 )
-from app.core.config.settings import get_settings
+from app.core.config.settings import DEFAULT_HOME_DIR, get_settings
 from app.core.errors import OpenAIErrorEnvelope, openai_error
 from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_mapping
-from app.modules.proxy._service.response_create_diagnostics import _service_global_or, _write_response_create_dump
-from app.modules.proxy._service.support import _WebSocketRequestState
+from app.modules.proxy._service.response_create_diagnostics import _service_global_or
+from app.modules.proxy._service.support import (
+    _PENDING_TOOL_CALL_ITEM_TYPES,
+    _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPE_BY_CALL_TYPE,
+    _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPES,
+    _WebSocketRequestState,
+)
 
 logger = logging.getLogger("app.modules.proxy.service")
+
+
 T = TypeVar("T")
 
+
 _UPSTREAM_RESPONSE_CREATE_MAX_BYTES = get_settings().upstream_response_create_max_bytes
+
+
 _UPSTREAM_RESPONSE_CREATE_WARN_BYTES = int(_UPSTREAM_RESPONSE_CREATE_MAX_BYTES * 0.8)
+
+
 _RESPONSE_CREATE_HISTORY_OMISSION_NOTICE = (
     "[agent-lb omitted {count} historical input items to fit upstream websocket budget]"
 )
+
+
 _RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE = (
     "[agent-lb omitted historical tool output ({bytes} bytes) to fit upstream websocket budget]"
 )
+
+
 _RESPONSE_CREATE_IMAGE_OMISSION_NOTICE = "[agent-lb omitted historical inline image to fit upstream websocket budget]"
+
+
+_RESPONSE_CREATE_DUMP_SUFFIX = ".response-create.json.gz"
+
+
+_RESPONSE_CREATE_META_SUFFIX = ".meta.json"
+
+
+_RESPONSE_CREATE_DUMP_SHA_SLUG_LEN = 16
+
+
+_RESPONSE_CREATE_DUMP_MAX_PAIRS = 20
+
+
+_RESPONSE_CREATE_COMPATIBILITY_METADATA_HEADERS = (
+    "x-codex-turn-metadata",
+    "x-openai-subagent",
+    "x-codex-parent-thread-id",
+    "x-codex-window-id",
+)
 
 
 def _upstream_response_create_max_bytes() -> int:
@@ -41,6 +88,52 @@ def _upstream_response_create_max_bytes() -> int:
 def _upstream_response_create_warn_bytes() -> int:
     fallback = int(_upstream_response_create_max_bytes() * 0.8)
     return int(_service_global_or("_UPSTREAM_RESPONSE_CREATE_WARN_BYTES", fallback))
+
+
+def _response_create_dump_max_pairs() -> int:
+    return int(_service_global_or("_RESPONSE_CREATE_DUMP_MAX_PAIRS", _RESPONSE_CREATE_DUMP_MAX_PAIRS))
+
+
+def _existing_response_create_dump(dump_dir: Path, sha_slug: str) -> Path | None:
+    """Return an existing *complete* dump for the same payload fingerprint.
+
+    A dump only counts as existing when both the payload and its ``.meta.json``
+    sibling are present. A lone payload file (e.g. a crash or disk-full failure
+    between the two writes) is treated as absent so a retry can recreate the
+    missing meta instead of permanently suppressing the capture operators are
+    trying to diagnose.
+    """
+    try:
+        matches = sorted(dump_dir.glob(f"*-{sha_slug}{_RESPONSE_CREATE_DUMP_SUFFIX}"))
+    except OSError:
+        return None
+    for dump_path in matches:
+        dump_id = dump_path.name[: -len(_RESPONSE_CREATE_DUMP_SUFFIX)]
+        meta_path = dump_dir / f"{dump_id}{_RESPONSE_CREATE_META_SUFFIX}"
+        if meta_path.exists():
+            return dump_path
+    return None
+
+
+def _prune_response_create_dumps(dump_dir: Path, *, max_pairs: int) -> None:
+    """Drop the oldest dump pairs so at most ``max_pairs`` remain.
+
+    Dump ids are timestamp-prefixed, so lexicographic order is chronological.
+    """
+    try:
+        dump_paths = sorted(dump_dir.glob(f"*{_RESPONSE_CREATE_DUMP_SUFFIX}"))
+    except OSError:
+        return
+    excess = len(dump_paths) - max_pairs
+    if excess <= 0:
+        return
+    for dump_path in dump_paths[:excess]:
+        dump_id = dump_path.name[: -len(_RESPONSE_CREATE_DUMP_SUFFIX)]
+        for stale_path in (dump_path, dump_dir / f"{dump_id}{_RESPONSE_CREATE_META_SUFFIX}"):
+            try:
+                stale_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Failed to prune response.create dump path=%s", stale_path, exc_info=True)
 
 
 def _fingerprint_input_items(items: Sequence[JsonValue]) -> str:
@@ -91,6 +184,13 @@ def _response_create_text(
         upstream_payload["type"] = "response.create"
     if client_metadata:
         upstream_payload["client_metadata"] = client_metadata
+    _finalize_responses_lite_reasoning_context(
+        upstream_payload,
+        responses_lite=(
+            _payload_uses_responses_lite(upstream_payload)
+            or _payload_has_responses_lite_websocket_marker(upstream_payload)
+        ),
+    )
     return json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
 
 
@@ -109,6 +209,13 @@ def _response_create_text_with_size_guard(
         upstream_payload["type"] = "response.create"
     if client_metadata:
         upstream_payload["client_metadata"] = client_metadata
+    _finalize_responses_lite_reasoning_context(
+        upstream_payload,
+        responses_lite=(
+            _payload_uses_responses_lite(upstream_payload)
+            or _payload_has_responses_lite_websocket_marker(upstream_payload)
+        ),
+    )
     text_data = json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
     payload_size = len(text_data.encode("utf-8"))
     max_bytes = _upstream_response_create_max_bytes()
@@ -156,6 +263,31 @@ def _response_create_text_with_size_guard(
     return text_data
 
 
+def _response_create_text_with_account_installation_id(
+    text_data: str,
+    *,
+    account: Any,
+) -> str:
+    installation_id = getattr(account, "codex_installation_id", None)
+    if not isinstance(installation_id, str) or not installation_id.strip():
+        installation_id = str(uuid4())
+        try:
+            setattr(account, "codex_installation_id", installation_id)
+        except Exception:
+            pass
+
+    try:
+        raw_payload = json.loads(text_data)
+    except json.JSONDecodeError:
+        return text_data
+    if not isinstance(raw_payload, dict) or raw_payload.get("type") != "response.create":
+        return text_data
+    upstream_payload = cast(dict[str, JsonValue], raw_payload)
+
+    apply_codex_installation_metadata(upstream_payload, installation_id)
+    return json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
+
+
 def _slim_response_create_payload_for_upstream(
     payload: dict[str, JsonValue],
     *,
@@ -199,7 +331,7 @@ def _slim_response_create_payload_for_upstream(
 def _function_call_output_call_ids(input_items: list[JsonValue]) -> set[str]:
     call_ids: set[str] = set()
     for item in input_items:
-        if not isinstance(item, dict) or item.get("type") != "function_call_output":
+        if not isinstance(item, dict) or item.get("type") not in _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPES:
             continue
         call_id = item.get("call_id")
         if isinstance(call_id, str) and call_id:
@@ -218,37 +350,64 @@ def _missing_function_call_outputs_for_previous_response(
     return [call_id for call_id in pending_call_ids if call_id not in present_call_ids]
 
 
-def _synthetic_interrupted_function_call_output(call_id: str) -> dict[str, JsonValue]:
-    return {
-        "type": "function_call_output",
+def _synthetic_interrupted_function_call_output(
+    call_id: str,
+    *,
+    call_type: str = "function_call",
+) -> dict[str, JsonValue]:
+    output_type = _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPE_BY_CALL_TYPE.get(call_type, "function_call_output")
+    item: dict[str, JsonValue] = {
+        "type": output_type,
         "call_id": call_id,
         "output": (
             "Tool call was not executed because the previous turn was interrupted before tool output was available."
         ),
     }
+    if output_type == "apply_patch_call_output":
+        item["status"] = "failed"
+    return item
 
 
 def _inject_missing_interrupted_function_call_outputs(
     input_items: list[JsonValue],
     *,
     missing_call_ids: list[str],
+    pending_call_types: Mapping[str, str] | None = None,
 ) -> list[JsonValue]:
     if not missing_call_ids:
         return input_items
+    call_types = pending_call_types or {}
     return [
-        *[_synthetic_interrupted_function_call_output(call_id) for call_id in missing_call_ids],
+        *[
+            _synthetic_interrupted_function_call_output(
+                call_id,
+                call_type=call_types.get(call_id, "function_call"),
+            )
+            for call_id in missing_call_ids
+        ],
         *input_items,
     ]
 
 
-def _response_output_item_done_function_call_id(payload: dict[str, JsonValue] | None) -> str | None:
+def _response_output_item_done_tool_call(payload: dict[str, JsonValue] | None) -> tuple[str, str] | None:
+    """Return ``(call_id, item_type)`` for a completed tool-call output item.
+
+    Covers every tool-call item type that upstream requires a matching output
+    item for on the next anchored request: ``function_call``,
+    ``custom_tool_call``, and ``apply_patch_call``.
+    """
     if not isinstance(payload, dict) or payload.get("type") != "response.output_item.done":
         return None
     item = payload.get("item")
-    if not isinstance(item, dict) or item.get("type") != "function_call":
+    if not isinstance(item, dict):
+        return None
+    item_type = item.get("type")
+    if not isinstance(item_type, str) or item_type not in _PENDING_TOOL_CALL_ITEM_TYPES:
         return None
     call_id = item.get("call_id")
-    return call_id if isinstance(call_id, str) and call_id else None
+    if not isinstance(call_id, str) or not call_id:
+        return None
+    return call_id, item_type
 
 
 def _response_create_too_large_error_envelope(
@@ -289,14 +448,19 @@ def _slim_historical_response_input_item(item: JsonValue) -> tuple[JsonValue, in
     images_slimmed = 0
 
     item_type = item_mapping.get("type")
-    if item_type == "function_call_output":
+    if isinstance(item_type, str) and item_type in _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPES:
         output = item_mapping.get("output")
-        output_text = output if isinstance(output, str) else None
-        if output_text is not None and _should_slim_historical_tool_output(output_text):
-            item_mapping["output"] = _RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(
-                bytes=len(output_text.encode("utf-8"))
-            )
-            tool_outputs_slimmed += 1
+        if isinstance(output, str):
+            if _should_slim_historical_tool_output(output):
+                item_mapping["output"] = _RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(
+                    bytes=len(output.encode("utf-8"))
+                )
+                tool_outputs_slimmed += 1
+        else:
+            slimmed_output, output_images_slimmed = _slim_historical_response_content(output)
+            if output_images_slimmed > 0:
+                item_mapping["output"] = slimmed_output
+                images_slimmed += output_images_slimmed
 
     content = item_mapping.get("content")
     slimmed_content, content_images_slimmed = _slim_historical_response_content(content)
@@ -304,7 +468,7 @@ def _slim_historical_response_input_item(item: JsonValue) -> tuple[JsonValue, in
         item_mapping["content"] = slimmed_content
         images_slimmed += content_images_slimmed
 
-    if item_mapping.get("type") == "input_image" and _is_inline_image_reference(item_mapping.get("image_url")):
+    if item_type == "input_image" and _is_inline_image_reference(item_mapping.get("image_url")):
         return _response_create_inline_image_notice_item(), tool_outputs_slimmed, images_slimmed + 1
 
     return item_mapping, tool_outputs_slimmed, images_slimmed
@@ -459,29 +623,279 @@ def _enforce_response_create_size_limit(request_state: _WebSocketRequestState) -
         error_message=error.get("message"),
         log_prefix="guarded",
     )
+    # 400, not 413: the Codex client surfaces 400 immediately as a non-retryable
+    # invalid request, while 413 burns five full-payload retries and then pins the
+    # session to HTTP transport.
     raise ProxyResponseError(
-        413,
+        400,
         payload,
         failure_phase="validation",
         failure_detail=f"response.create_bytes={payload_size}",
     )
 
 
+def _write_response_create_dump(
+    request_state: _WebSocketRequestState,
+    *,
+    account_id_value: str | None,
+    error_code: str,
+    error_message: str | None,
+    log_prefix: str,
+) -> bool:
+    request_text = request_state.request_text
+    if not request_text:
+        return False
+
+    payload_bytes = request_text.encode("utf-8")
+    request_sha = sha256(payload_bytes).hexdigest()
+    sha_slug = request_sha[:_RESPONSE_CREATE_DUMP_SHA_SLUG_LEN]
+    dump_dir = _oversized_response_create_dump_dir()
+
+    existing_dump_path = _existing_response_create_dump(dump_dir, sha_slug)
+    if existing_dump_path is not None:
+        logger.warning(
+            (
+                "Skipped duplicate %s response.create dump request_id=%s request_log_id=%s "
+                "request_text_sha256=%s existing_dump_path=%s bytes=%s"
+            ),
+            log_prefix,
+            request_state.request_id,
+            request_state.request_log_id,
+            request_sha,
+            existing_dump_path,
+            len(payload_bytes),
+        )
+        return False
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    dump_id = "-".join(
+        (
+            timestamp,
+            _safe_dump_slug(request_state.transport, fallback="transport"),
+            _safe_dump_slug(request_state.model, fallback="model"),
+            _safe_dump_slug(
+                request_state.request_log_id or request_state.response_id or request_state.request_id,
+                fallback="request",
+            ),
+            sha_slug,
+        )
+    )
+    dump_path = dump_dir / f"{dump_id}{_RESPONSE_CREATE_DUMP_SUFFIX}"
+    meta_path = dump_dir / f"{dump_id}{_RESPONSE_CREATE_META_SUFFIX}"
+
+    meta: dict[str, JsonValue] = {
+        "dump_id": dump_id,
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "reason": {
+            "error_code": error_code,
+            "error_message": error_message,
+        },
+        "request": {
+            "account_id": account_id_value,
+            "request_id": request_state.request_id,
+            "request_log_id": request_state.request_log_id,
+            "response_id": request_state.response_id,
+            "transport": request_state.transport,
+            "model": request_state.model,
+            "reasoning_effort": request_state.reasoning_effort,
+            "service_tier": request_state.service_tier,
+            "requested_service_tier": request_state.requested_service_tier,
+            "actual_service_tier": request_state.actual_service_tier,
+            "previous_response_id": request_state.previous_response_id,
+            "awaiting_response_created": request_state.awaiting_response_created,
+            "replay_count": request_state.replay_count,
+            "request_text_bytes": len(payload_bytes),
+            "request_text_chars": len(request_text),
+            "request_text_sha256": request_sha,
+        },
+        "paths": {
+            "dump_path": str(dump_path),
+            "meta_path": str(meta_path),
+        },
+    }
+
+    try:
+        parsed_payload = json.loads(request_text)
+    except json.JSONDecodeError as exc:
+        meta["parse_error"] = str(exc)
+    else:
+        if isinstance(parsed_payload, dict):
+            meta["summary"] = _summarize_response_create_payload(parsed_payload)
+        else:
+            meta["summary"] = {"payload_type": type(parsed_payload).__name__}
+
+    max_pairs = _response_create_dump_max_pairs()
+    # Trim any pre-existing over-cap backlog before the new write. If the volume
+    # is already full, the write below raises and returns without pruning, so a
+    # directory left above the bound (e.g. after an upgrade that lowers the cap)
+    # would otherwise stay full on the exact failure the cap is meant to bound.
+    _prune_response_create_dumps(dump_dir, max_pairs=max_pairs)
+
+    try:
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        with gzip.open(dump_path, "wt", encoding="utf-8") as handle:
+            handle.write(request_text)
+        meta_path.write_text(
+            json.dumps(meta, ensure_ascii=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        logger.exception(
+            "Failed to dump %s response.create payload request_id=%s request_log_id=%s",
+            log_prefix,
+            request_state.request_id,
+            request_state.request_log_id,
+        )
+        return False
+
+    _prune_response_create_dumps(dump_dir, max_pairs=max_pairs)
+
+    logger.warning(
+        "Saved %s response.create dump request_id=%s request_log_id=%s dump_path=%s meta_path=%s bytes=%s",
+        log_prefix,
+        request_state.request_id,
+        request_state.request_log_id,
+        dump_path,
+        meta_path,
+        len(payload_bytes),
+    )
+    return True
+
+
+def _summarize_response_create_input(input_value: JsonValue) -> dict[str, JsonValue] | None:
+    if not isinstance(input_value, list):
+        return None
+
+    input_items = cast(list[JsonValue], input_value)
+    role_counts: dict[str, int] = {}
+    item_type_counts: dict[str, int] = {}
+    content_part_type_counts: dict[str, int] = {}
+    largest_items: list[dict[str, JsonValue]] = []
+
+    for index, item in enumerate(input_items):
+        item_summary: dict[str, JsonValue] = {
+            "index": index,
+            "size_bytes": _json_size_bytes(item),
+        }
+        if isinstance(item, dict):
+            item_object = item
+            role = item_object.get("role")
+            if isinstance(role, str):
+                item_summary["role"] = role
+                role_counts[role] = role_counts.get(role, 0) + 1
+            item_type = item_object.get("type")
+            if isinstance(item_type, str):
+                item_summary["type"] = item_type
+                item_type_counts[item_type] = item_type_counts.get(item_type, 0) + 1
+            content = item_object.get("content")
+            if isinstance(content, list):
+                item_summary["content_parts"] = len(content)
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    part_object = part
+                    part_type = part_object.get("type")
+                    if isinstance(part_type, str):
+                        content_part_type_counts[part_type] = content_part_type_counts.get(part_type, 0) + 1
+        largest_items.append(item_summary)
+
+    largest_items.sort(key=lambda item: cast(int, item["size_bytes"]), reverse=True)
+    summary: dict[str, JsonValue] = {
+        "count": len(input_value),
+        "role_counts": cast(JsonValue, role_counts),
+        "item_type_counts": cast(JsonValue, item_type_counts),
+        "content_part_type_counts": cast(JsonValue, content_part_type_counts),
+        "largest_items": cast(JsonValue, largest_items[: _oversized_response_create_largest_items()]),
+    }
+    return summary
+
+
 def _response_create_client_metadata(
     payload: Mapping[str, JsonValue],
     *,
     headers: Mapping[str, str],
+    codex_installation_id: str | None = None,
+    preserve_existing_responses_lite: bool = False,
 ) -> Mapping[str, JsonValue] | None:
     raw_value = payload.get("client_metadata")
     client_metadata: dict[str, JsonValue] = {}
     if is_json_mapping(raw_value):
         for key, value in raw_value.items():
-            if isinstance(key, str):
+            if isinstance(key, str) and key.lower() != CODEX_INSTALLATION_ID_HEADER:
                 client_metadata[key] = value
 
     normalized_headers = {key.lower(): value for key, value in headers.items()}
-    turn_metadata = normalized_headers.get("x-codex-turn-metadata")
-    if isinstance(turn_metadata, str) and turn_metadata.strip():
-        client_metadata.setdefault("x-codex-turn-metadata", turn_metadata)
+    for header_name in _RESPONSE_CREATE_COMPATIBILITY_METADATA_HEADERS:
+        metadata_value = normalized_headers.get(header_name)
+        if isinstance(metadata_value, str) and metadata_value.strip():
+            client_metadata.setdefault(header_name, metadata_value)
 
+    metadata_container: dict[str, JsonValue] = {"client_metadata": client_metadata}
+    apply_codex_installation_metadata(metadata_container, codex_installation_id)
+    normalized_metadata = metadata_container.get("client_metadata")
+    client_metadata = dict(normalized_metadata) if is_json_mapping(normalized_metadata) else {}
+    client_metadata = _normalize_responses_lite_websocket_client_metadata(
+        payload,
+        client_metadata,
+        preserve_existing=preserve_existing_responses_lite,
+    )
     return client_metadata or None
+
+
+def _json_size_bytes(value: JsonValue) -> int:
+    return len(json.dumps(value, ensure_ascii=True, separators=(",", ":")).encode("utf-8"))
+
+
+def _oversized_response_create_dump_dir() -> Path:
+    configured_dir = _service_global_or("_OVERSIZED_RESPONSE_CREATE_DUMP_DIR", _OVERSIZED_RESPONSE_CREATE_DUMP_DIR)
+    if configured_dir is not None:
+        return configured_dir
+    settings_factory = _service_global_or("get_settings", get_settings)
+    data_dir = getattr(settings_factory(), "data_dir", DEFAULT_HOME_DIR)
+    return data_dir / "debug" / "response-create-dumps"
+
+
+def _oversized_response_create_largest_items() -> int:
+    return int(
+        _service_global_or(
+            "_OVERSIZED_RESPONSE_CREATE_LARGEST_ITEMS",
+            _OVERSIZED_RESPONSE_CREATE_LARGEST_ITEMS,
+        )
+    )
+
+
+def _safe_dump_slug(value: str | None, *, fallback: str) -> str:
+    if not value:
+        return fallback
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
+    if not normalized:
+        return fallback
+    return normalized[:80]
+
+
+def _summarize_response_create_payload(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    field_sizes = sorted(
+        (
+            {
+                "key": key,
+                "size_bytes": _json_size_bytes(value),
+            }
+            for key, value in payload.items()
+        ),
+        key=lambda item: int(item["size_bytes"]),
+        reverse=True,
+    )
+    summary: dict[str, JsonValue] = {
+        "top_level_keys": list(payload.keys()),
+        "top_level_field_sizes": cast(JsonValue, field_sizes),
+    }
+    input_summary = _summarize_response_create_input(payload.get("input"))
+    if input_summary is not None:
+        summary["input"] = input_summary
+    return summary
+
+
+_OVERSIZED_RESPONSE_CREATE_DUMP_DIR: Path | None = None
+
+
+_OVERSIZED_RESPONSE_CREATE_LARGEST_ITEMS = 10

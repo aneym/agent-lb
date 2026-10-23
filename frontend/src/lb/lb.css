@@ -180,3 +180,5 @@ html.dark .lb img.logo[src$="kimi-color.svg"] {
 .lb .tint.bad {
   color: var(--bad);
 }
+
+.write-controls { border: 0; padding: 0; margin: 0; min-width: 0; }

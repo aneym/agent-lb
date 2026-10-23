@@ -3,14 +3,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import socket
 import ssl
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from types import TracebackType
 
 import aiohttp
 import certifi
+from aiohappyeyeballs.types import AddrInfoType
 from aiohttp_retry import RetryClient
+from aiohttp_socks import ProxyConnector
 
 from app.core.config.settings import get_settings
 
@@ -22,6 +27,12 @@ class HttpClient:
     session: aiohttp.ClientSession
     websocket_session: aiohttp.ClientSession
     retry_client: RetryClient
+
+
+@dataclass(frozen=True, slots=True)
+class _SocksProxyConfig:
+    connector_url: str
+    rdns: bool | None = None
 
 
 @dataclass(slots=True, eq=False)
@@ -37,12 +48,82 @@ _http_client: _ManagedHttpClient | None = None
 _http_client_lock = asyncio.Lock()
 _retired_http_clients: list[_ManagedHttpClient] = []
 _closing_http_clients: list[_ManagedHttpClient] = []
+_last_generationless_network_rotation_at: float | None = None
+_GENERATIONLESS_NETWORK_ROTATION_COOLDOWN_SECONDS = 1.0
+_TCP_KEEPALIVE_IDLE_SECONDS = 30
+_TCP_KEEPALIVE_INTERVAL_SECONDS = 10
+_TCP_KEEPALIVE_PROBE_COUNT = 6
+
+
+def _socks_proxy_config(environ: Mapping[str, str | None] = os.environ) -> _SocksProxyConfig | None:
+    request_method_set = bool(environ.get("REQUEST_METHOD"))
+    for var in (
+        "SOCKS_PROXY",
+        "socks_proxy",
+        "ALL_PROXY",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "all_proxy",
+        "https_proxy",
+        "http_proxy",
+    ):
+        if request_method_set and var in ("HTTP_PROXY", "http_proxy"):
+            continue
+        val = (environ.get(var) or "").strip()
+        lowered = val.lower()
+        if var in ("SOCKS_PROXY", "socks_proxy") and lowered.startswith("http://"):
+            val = f"socks5://{val.split('://', 1)[1]}"
+            lowered = val.lower()
+        if lowered.startswith(("socks5://", "socks5h://", "socks4://", "socks4a://")):
+            if lowered.startswith("socks5h://"):
+                return _SocksProxyConfig(connector_url="socks5://" + val[len("socks5h://") :], rdns=True)
+            elif lowered.startswith("socks4a://"):
+                return _SocksProxyConfig(connector_url="socks4://" + val[len("socks4a://") :], rdns=True)
+            return _SocksProxyConfig(connector_url=val)
+    return None
+
+
+def _socks_proxy_url(environ: Mapping[str, str | None] = os.environ) -> str | None:
+    config = _socks_proxy_config(environ)
+    return config.connector_url if config else None
 
 
 def _build_ssl_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
     context.load_verify_locations(cafile=certifi.where())
     return context
+
+
+def _apply_tcp_keepalive(sock: socket.socket) -> None:
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except OSError:
+        logger.debug("Upstream socket rejected SO_KEEPALIVE", exc_info=True)
+        return
+    for option_name, option_value in (
+        ("TCP_KEEPIDLE", _TCP_KEEPALIVE_IDLE_SECONDS),
+        ("TCP_KEEPALIVE", _TCP_KEEPALIVE_IDLE_SECONDS),
+        ("TCP_KEEPINTVL", _TCP_KEEPALIVE_INTERVAL_SECONDS),
+        ("TCP_KEEPCNT", _TCP_KEEPALIVE_PROBE_COUNT),
+    ):
+        option = getattr(socket, option_name, None)
+        if option is None:
+            continue
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, option, option_value)
+        except OSError:
+            logger.debug("Upstream socket rejected %s", option_name, exc_info=True)
+
+
+def _keepalive_socket_factory(addr_info: AddrInfoType) -> socket.socket:
+    family, socket_type, proto = (addr_info[0], addr_info[1], addr_info[2])
+    sock = socket.socket(family=family, type=socket_type, proto=proto)
+    try:
+        _apply_tcp_keepalive(sock)
+    except BaseException:
+        sock.close()
+        raise
+    return sock
 
 
 class HttpClientLease:
@@ -55,10 +136,7 @@ class HttpClientLease:
         return self.client
 
     async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
     ) -> None:
         await self.close()
 
@@ -71,31 +149,58 @@ class HttpClientLease:
 
 async def _build_http_client() -> HttpClient:
     settings = get_settings()
-    connector = aiohttp.TCPConnector(
-        limit=settings.http_connector_limit,
-        limit_per_host=settings.http_connector_limit_per_host,
-        ssl=_build_ssl_context(),
+    ssl_context = _build_ssl_context()
+    proxy_env = (
+        settings.upstream_websocket_proxy_env() if hasattr(settings, "upstream_websocket_proxy_env") else os.environ
     )
+    socks_config = _socks_proxy_config(proxy_env)
+    if socks_config:
+        connector = ProxyConnector.from_url(
+            socks_config.connector_url,
+            limit=settings.http_connector_limit,
+            limit_per_host=settings.http_connector_limit_per_host,
+            ssl=ssl_context,
+            rdns=socks_config.rdns,
+            socket_factory=_keepalive_socket_factory,
+        )
+    else:
+        connector = aiohttp.TCPConnector(
+            limit=settings.http_connector_limit,
+            limit_per_host=settings.http_connector_limit_per_host,
+            ssl=ssl_context,
+            keepalive_timeout=90,
+            ttl_dns_cache=300,
+            socket_factory=_keepalive_socket_factory,
+        )
     session = aiohttp.ClientSession(
-        connector=connector,
-        timeout=aiohttp.ClientTimeout(total=None),
-        trust_env=True,
+        connector=connector, timeout=aiohttp.ClientTimeout(total=None), trust_env=not socks_config
     )
     try:
-        websocket_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(ssl=_build_ssl_context()),
-            timeout=aiohttp.ClientTimeout(total=None),
-            trust_env=settings.upstream_websocket_trust_env,
-        )
-    except Exception:
-        await session.close()
+        if socks_config and settings.upstream_websocket_trust_env:
+            ws_connector: aiohttp.TCPConnector | ProxyConnector = ProxyConnector.from_url(
+                socks_config.connector_url,
+                ssl=ssl_context,
+                rdns=socks_config.rdns,
+                socket_factory=_keepalive_socket_factory,
+            )
+            ws_trust_env = False
+        else:
+            ws_connector = aiohttp.TCPConnector(
+                ssl=ssl_context, keepalive_timeout=90, ttl_dns_cache=300, socket_factory=_keepalive_socket_factory
+            )
+            ws_trust_env = settings.upstream_websocket_trust_env
+        try:
+            websocket_session = aiohttp.ClientSession(
+                connector=ws_connector, timeout=aiohttp.ClientTimeout(total=None), trust_env=ws_trust_env
+            )
+        except BaseException:
+            await asyncio.shield(ws_connector.close())
+            raise
+    except BaseException:
+        await asyncio.shield(session.close())
         raise
     retry_client = RetryClient(client_session=session, raise_for_status=False)
-    return HttpClient(
-        session=session,
-        websocket_session=websocket_session,
-        retry_client=retry_client,
-    )
+    return HttpClient(session=session, websocket_session=websocket_session, retry_client=retry_client)
 
 
 async def _close_client(client: HttpClient) -> None:
@@ -137,7 +242,7 @@ def _start_client_close_locked(managed_client: _ManagedHttpClient) -> asyncio.Ta
 
 def _request_client_close_locked(managed_client: _ManagedHttpClient, *, force: bool = False) -> None:
     managed_client.close_requested = True
-    if managed_client.active_leases > 0 and not force:
+    if managed_client.active_leases > 0 and (not force):
         if managed_client not in _retired_http_clients:
             _retired_http_clients.append(managed_client)
         return
@@ -171,9 +276,7 @@ async def lease_http_client() -> AsyncIterator[HttpClient]:
 
 
 @contextlib.asynccontextmanager
-async def lease_http_session(
-    session: aiohttp.ClientSession | None = None,
-) -> AsyncIterator[aiohttp.ClientSession]:
+async def lease_http_session(session: aiohttp.ClientSession | None = None) -> AsyncIterator[aiohttp.ClientSession]:
     if session is not None:
         yield session
         return
@@ -182,9 +285,7 @@ async def lease_http_session(
 
 
 @contextlib.asynccontextmanager
-async def lease_retry_client(
-    client: RetryClient | None = None,
-) -> AsyncIterator[RetryClient]:
+async def lease_retry_client(client: RetryClient | None = None) -> AsyncIterator[RetryClient]:
     if client is not None:
         yield client
         return
@@ -214,16 +315,40 @@ async def refresh_http_client() -> HttpClient:
     return replacement_client
 
 
+async def refresh_http_client_after_network_failure(*, failed_session: aiohttp.ClientSession | None = None) -> str:
+    global _http_client, _last_generationless_network_rotation_at
+    async with _http_client_lock:
+        current = _http_client
+        if current is None:
+            return "not_initialized"
+        if (
+            failed_session is not None
+            and failed_session is not current.client.session
+            and (failed_session is not current.client.websocket_session)
+        ):
+            return "already_rotated"
+        now = time.monotonic()
+        if (
+            failed_session is None
+            and _last_generationless_network_rotation_at is not None
+            and (now - _last_generationless_network_rotation_at < _GENERATIONLESS_NETWORK_ROTATION_COOLDOWN_SECONDS)
+        ):
+            return "coalesced"
+        replacement_client = await _build_http_client()
+        replacement = _ManagedHttpClient(client=replacement_client)
+        _http_client = replacement
+        _last_generationless_network_rotation_at = now
+        _request_client_close_locked(current)
+        return "rotated"
+
+
 async def close_http_client() -> None:
-    global _http_client
+    global _http_client, _last_generationless_network_rotation_at
     async with _http_client_lock:
         client = _http_client
         _http_client = None
-        clients = (
-            *((client,) if client is not None else ()),
-            *_retired_http_clients,
-            *_closing_http_clients,
-        )
+        _last_generationless_network_rotation_at = None
+        clients = (*((client,) if client is not None else ()), *_retired_http_clients, *_closing_http_clients)
         for managed_client in clients:
             _request_client_close_locked(managed_client, force=True)
     if clients:
@@ -231,7 +356,6 @@ async def close_http_client() -> None:
 
 
 def get_http_client() -> HttpClient:
-
     if _http_client is None:
         raise RuntimeError("HTTP client not initialized")
     return _http_client.client

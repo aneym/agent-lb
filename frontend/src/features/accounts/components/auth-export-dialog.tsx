@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Download } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { AlertMessage } from "@/components/alert-message";
 import { CopyButton } from "@/components/copy-button";
@@ -47,12 +48,8 @@ function codexAuthPreview(exportData: AccountAuthExportResponse): string {
       OPENAI_API_KEY: exportData.codexAuthJson.OPENAI_API_KEY,
       tokens: {
         id_token: truncateSecret(exportData.codexAuthJson.tokens.id_token),
-        access_token: truncateSecret(
-          exportData.codexAuthJson.tokens.access_token,
-        ),
-        refresh_token: truncateSecret(
-          exportData.codexAuthJson.tokens.refresh_token,
-        ),
+        access_token: truncateSecret(exportData.codexAuthJson.tokens.access_token),
+        refresh_token: truncateSecret(exportData.codexAuthJson.tokens.refresh_token),
         account_id: exportData.codexAuthJson.tokens.account_id,
       },
       last_refresh: exportData.codexAuthJson.last_refresh,
@@ -76,14 +73,8 @@ function opencodeAuthPreview(exportData: AccountAuthExportResponse): string {
   )}\n`;
 }
 
-function downloadAuthJson(
-  exportData: AccountAuthExportResponse,
-  format: AuthFormat,
-): void {
-  const content =
-    format === "codex"
-      ? codexAuthString(exportData)
-      : `${JSON.stringify(exportData.opencodeAuthJson, null, 2)}\n`;
+function downloadAuthJson(exportData: AccountAuthExportResponse, format: AuthFormat): void {
+  const content = format === "codex" ? codexAuthString(exportData) : `${JSON.stringify(exportData.opencodeAuthJson, null, 2)}\n`;
   const blob = new Blob([content], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -105,48 +96,44 @@ function AuthExportDialogBody({
   exportData: AccountAuthExportResponse;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const blurred = usePrivacyStore((s) => s.blurred);
   const [format, setFormat] = useState<AuthFormat>("codex");
 
-  const authPreview =
-    format === "codex"
-      ? codexAuthPreview(exportData)
-      : opencodeAuthPreview(exportData);
+  const authPreview = format === "codex" ? codexAuthPreview(exportData) : opencodeAuthPreview(exportData);
 
   const authJson =
-    format === "codex"
-      ? codexAuthString(exportData)
-      : `${JSON.stringify(exportData.opencodeAuthJson, null, 2)}\n`;
+    format === "codex" ? codexAuthString(exportData) : `${JSON.stringify(exportData.opencodeAuthJson, null, 2)}\n`;
 
   const tokenPreviewRows =
     format === "codex"
       ? [
           {
-            label: "ID token",
+            label: t("accounts.authExport.idToken"),
             value: exportData.codexAuthJson.tokens.id_token,
-            copyLabel: "Copy ID token",
+            copyLabel: t("accounts.authExport.copyIdToken"),
           },
           {
-            label: "Access token",
+            label: t("accounts.authExport.accessToken"),
             value: exportData.codexAuthJson.tokens.access_token,
-            copyLabel: "Copy access token",
+            copyLabel: t("accounts.authExport.copyAccessToken"),
           },
           {
-            label: "Refresh token",
+            label: t("accounts.authExport.refreshToken"),
             value: exportData.codexAuthJson.tokens.refresh_token,
-            copyLabel: "Copy refresh token",
+            copyLabel: t("accounts.authExport.copyRefreshToken"),
           },
         ]
       : [
           {
-            label: "Access token",
+            label: t("accounts.authExport.accessToken"),
             value: exportData.opencodeAuthJson.openai.access,
-            copyLabel: "Copy access token",
+            copyLabel: t("accounts.authExport.copyAccessToken"),
           },
           {
-            label: "Refresh token",
+            label: t("accounts.authExport.refreshToken"),
             value: exportData.opencodeAuthJson.openai.refresh,
-            copyLabel: "Copy refresh token",
+            copyLabel: t("accounts.authExport.copyRefreshToken"),
           },
         ];
 
@@ -154,33 +141,23 @@ function AuthExportDialogBody({
     <>
       <div className="space-y-4">
         <AlertMessage variant="warning">
-          This payload contains raw access and refresh tokens. Store it only on
-          machines you trust.
+          {t("accounts.authExport.warning")}
         </AlertMessage>
 
         <div className="rounded-lg border bg-muted/20 p-3 text-xs">
-          <div className="font-medium">Exported account</div>
+          <div className="font-medium">{t("accounts.authExport.exportedAccount")}</div>
           <div className="mt-1 text-muted-foreground">
-            <span className={blurred ? "privacy-blur" : undefined}>
-              {exportData.account.email}
-            </span>
+            <span className={blurred ? "privacy-blur" : undefined}>{exportData.account.email}</span>
           </div>
           <div className="mt-1 font-mono text-muted-foreground">
-            {exportData.account.chatgptAccountId ??
-              exportData.account.accountId}
+            {exportData.account.chatgptAccountId ?? exportData.account.accountId}
           </div>
         </div>
 
         <div className="space-y-2">
-          <Label id="auth-export-format-label">Format</Label>
-          <Select
-            value={format}
-            onValueChange={(v) => setFormat(v as AuthFormat)}
-          >
-            <SelectTrigger
-              className="w-[180px]"
-              aria-labelledby="auth-export-format-label"
-            >
+          <Label id="auth-export-format-label">{t("accounts.authExport.format")}</Label>
+          <Select value={format} onValueChange={(v) => setFormat(v as AuthFormat)}>
+            <SelectTrigger className="w-[180px]" aria-labelledby="auth-export-format-label">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -192,10 +169,9 @@ function AuthExportDialogBody({
 
         <div className="space-y-2">
           <div>
-            <div className="text-sm font-medium">Token preview</div>
+            <div className="text-sm font-medium">{t("accounts.authExport.tokenPreview")}</div>
             <div className="text-xs text-muted-foreground">
-              Truncated on screen for readability. Copy buttons still use the
-              full token.
+              {t("accounts.authExport.tokenPreviewDescription")}
             </div>
           </div>
 
@@ -208,12 +184,10 @@ function AuthExportDialogBody({
                 }`}
               >
                 <div className="min-w-0">
-                  <div className="text-xs font-medium text-muted-foreground">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                     {row.label}
                   </div>
-                  <div className="truncate font-mono text-xs">
-                    {truncateSecret(row.value)}
-                  </div>
+                  <div className="truncate font-mono text-xs">{truncateSecret(row.value)}</div>
                 </div>
                 <CopyButton value={row.value} label={row.copyLabel} iconOnly />
               </div>
@@ -224,7 +198,7 @@ function AuthExportDialogBody({
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <div className="text-sm font-medium">auth.json</div>
-            <CopyButton value={authJson} label="Copy auth.json" />
+            <CopyButton value={authJson} label={t("accounts.authExport.copyAuthJson")} />
           </div>
           <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-muted/20 p-3 text-xs">
             {authPreview}
@@ -233,20 +207,12 @@ function AuthExportDialogBody({
       </div>
 
       <DialogFooter>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => onOpenChange(false)}
-        >
-          Close
+        <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          {t("common.actions.close")}
         </Button>
-        <Button
-          type="button"
-          className="gap-1.5"
-          onClick={() => downloadAuthJson(exportData, format)}
-        >
+        <Button type="button" className="gap-1.5" onClick={() => downloadAuthJson(exportData, format)}>
           <Download className="h-4 w-4" />
-          Download
+          {t("common.actions.download")}
         </Button>
       </DialogFooter>
     </>
@@ -258,13 +224,14 @@ export function AuthExportDialog({
   exportData,
   onOpenChange,
 }: AuthExportDialogProps) {
+  const { t } = useTranslation();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Auth Export</DialogTitle>
+          <DialogTitle>{t("accounts.authExport.title")}</DialogTitle>
           <DialogDescription>
-            Download or copy this account as an auth.json file.
+            {t("accounts.authExport.description")}
           </DialogDescription>
         </DialogHeader>
 

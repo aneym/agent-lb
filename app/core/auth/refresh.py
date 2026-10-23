@@ -15,6 +15,7 @@ from app.core.auth import (
     clean_account_identity_part,
     extract_id_token_claims,
     normalize_seat_type,
+    resolve_seat_identity,
 )
 from app.core.auth.exchange_phase import ExchangePhase, aiohttp_exchange_phase
 from app.core.auth.models import OAuthTokenPayload
@@ -27,17 +28,21 @@ from app.core.clients.codex import (
 )
 from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
+from app.core.resilience.network_recovery import (
+    PROCESS_NETWORK_UNAVAILABLE_CODE,
+    is_pre_dispatch_connection_failure,
+    is_proxy_endpoint_failure,
+    process_network_error_code,
+)
 from app.core.types import JsonObject
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import to_utc_naive, utcnow
 
 TOKEN_REFRESH_INTERVAL_DAYS = 8
-
 logger = logging.getLogger(__name__)
 _TOKEN_REFRESH_TIMEOUT_OVERRIDE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
-    "token_refresh_timeout_override",
-    default=None,
+    "token_refresh_timeout_override", default=None
 )
 
 
@@ -52,6 +57,7 @@ class TokenRefreshResult:
     workspace_id: str | None = None
     workspace_label: str | None = None
     seat_type: str | None = None
+    chatgpt_user_id: str | None = None
     expires_in: int | None = None
 
 
@@ -66,6 +72,9 @@ class RefreshError(Exception):
         upstream_proxy_fail_closed_reason: str | None = None,
         phase: ExchangePhase = ExchangePhase.AMBIGUOUS,
         status_code: int | None = None,
+        transport_error_code: str | None = None,
+        retryable_same_contract: bool = False,
+        failed_session: aiohttp.ClientSession | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -73,8 +82,38 @@ class RefreshError(Exception):
         self.status_code = status_code
         self.is_permanent = bool(is_permanent or _is_permanent_refresh_error_code(code))
         self.transport_error = transport_error
+        self.transport_error_code = transport_error_code
+        self.retryable_same_contract = retryable_same_contract
+        self.failed_session = failed_session
         self.upstream_proxy_fail_closed_reason = upstream_proxy_fail_closed_reason
         self.phase = phase
+
+
+REFRESH_CLAIM_CONTENTION_CODES: frozenset[str] = frozenset({"refresh_claim_timeout"})
+REFRESH_PERSIST_CONFLICT_CODES: frozenset[str] = frozenset({"token_persist_conflict", "status_downgrade_conflict"})
+TRANSIENT_REFRESH_CONTENTION_CODES: frozenset[str] = REFRESH_CLAIM_CONTENTION_CODES | REFRESH_PERSIST_CONFLICT_CODES
+
+
+def is_refresh_claim_contention(exc: RefreshError) -> bool:
+    return exc.transport_error and exc.code in REFRESH_CLAIM_CONTENTION_CODES
+
+
+def is_refresh_persist_conflict(exc: RefreshError) -> bool:
+    return exc.transport_error and exc.code in REFRESH_PERSIST_CONFLICT_CODES
+
+
+def is_transient_refresh_contention(exc: RefreshError) -> bool:
+    return exc.transport_error and exc.code in TRANSIENT_REFRESH_CONTENTION_CODES
+
+
+def refresh_contention_kind(exc: RefreshError) -> str | None:
+    if not exc.transport_error:
+        return None
+    if exc.code in REFRESH_CLAIM_CONTENTION_CODES:
+        return "claim_contention"
+    if exc.code in REFRESH_PERSIST_CONFLICT_CODES:
+        return "persist_conflict"
+    return None
 
 
 def should_refresh(last_refresh: datetime, now: datetime | None = None) -> bool:
@@ -112,16 +151,14 @@ async def refresh_access_token(
         "scope": settings.oauth_scope,
     }
     timeout = aiohttp.ClientTimeout(total=_effective_token_refresh_timeout(settings.token_refresh_timeout_seconds))
-
     headers: dict[str, str] = {}
     request_id = get_request_id()
     if request_id:
         headers["x-request-id"] = request_id
     require_route_or_direct_egress_opt_in(
-        route=route,
-        allow_direct_egress=allow_direct_egress,
-        operation="token refresh",
+        route=route, allow_direct_egress=allow_direct_egress, operation="token refresh"
     )
+    failed_session: aiohttp.ClientSession | None = None
     exchange_started = False
 
     def start_exchange() -> None:
@@ -166,6 +203,7 @@ async def refresh_access_token(
         else:
             try:
                 async with lease_http_session(session) as client_session:
+                    failed_session = client_session
                     start_exchange()
                     async with client_session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
                         try:
@@ -192,7 +230,7 @@ async def refresh_access_token(
     except RefreshError:
         raise
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError, CodexTransportError) as exc:
-        if isinstance(exc, CodexTransportError) and exc.status_code is not None and exc.status_code >= 200:
+        if isinstance(exc, CodexTransportError) and exc.status_code is not None and (exc.status_code >= 200):
             if exc.status_code < 400:
                 raise RefreshError("invalid_response", "Refresh response unreadable", False) from exc
             raise RefreshError(
@@ -203,17 +241,34 @@ async def refresh_access_token(
                 status_code=exc.status_code,
             ) from exc
         message = str(exc) or exc.__class__.__name__
+        transport_error_code = (
+            exc.error_code
+            if isinstance(exc, CodexTransportError) and exc.error_code is not None
+            else process_network_error_code(
+                exc,
+                fallback="transport_error",
+                include_permanent_dns=route is None and not is_proxy_endpoint_failure(exc),
+            )
+        )
+        retryable_same_contract = (
+            exc.retryable_same_contract
+            if isinstance(exc, CodexTransportError)
+            else is_pre_dispatch_connection_failure(exc)
+        )
         raise RefreshError(
             "transport_error",
             f"Transport error during token refresh: {message}",
             False,
             transport_error=True,
             phase=exc.phase if isinstance(exc, CodexTransportError) else aiohttp_exchange_phase(exc),
+            transport_error_code=transport_error_code
+            if transport_error_code == PROCESS_NETWORK_UNAVAILABLE_CODE
+            else None,
+            retryable_same_contract=retryable_same_contract,
+            failed_session=failed_session if route is None else None,
         ) from exc
-
-    if not payload_data.access_token or not payload_data.refresh_token or not payload_data.id_token:
+    if not payload_data.access_token or not payload_data.refresh_token or (not payload_data.id_token):
         raise RefreshError("invalid_response", "Refresh response missing tokens", False)
-
     claims = extract_id_token_claims(payload_data.id_token)
     auth_claims = claims.auth or OpenAIAuthClaims()
     account_id = auth_claims.chatgpt_account_id or claims.chatgpt_account_id
@@ -222,7 +277,7 @@ async def refresh_access_token(
     workspace_id = clean_account_identity_part(auth_claims.workspace_id or claims.workspace_id)
     workspace_label = clean_account_identity_part(auth_claims.workspace_label or claims.workspace_label)
     seat_type = normalize_seat_type(auth_claims.seat_type or claims.seat_type)
-
+    chatgpt_user_id = resolve_seat_identity(claims, auth_claims)
     return TokenRefreshResult(
         access_token=payload_data.access_token,
         refresh_token=payload_data.refresh_token,
@@ -233,6 +288,7 @@ async def refresh_access_token(
         workspace_id=workspace_id,
         workspace_label=workspace_label,
         seat_type=seat_type,
+        chatgpt_user_id=chatgpt_user_id,
     )
 
 
@@ -242,6 +298,10 @@ def push_token_refresh_timeout_override(timeout_seconds: float | None) -> contex
 
 def pop_token_refresh_timeout_override(token: contextvars.Token[float | None]) -> None:
     _TOKEN_REFRESH_TIMEOUT_OVERRIDE.reset(token)
+
+
+def get_token_refresh_timeout_override() -> float | None:
+    return _TOKEN_REFRESH_TIMEOUT_OVERRIDE.get()
 
 
 async def _safe_json(resp: aiohttp.ClientResponse) -> JsonObject:

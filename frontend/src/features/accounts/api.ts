@@ -2,6 +2,9 @@ import { del, get, patch, post, put } from "@/lib/api-client";
 
 import {
   AccountActionResponseSchema,
+  AccountSubscriptionCheckResponseSchema,
+  AccountSubscriptionUpdateRequestSchema,
+  AccountSubscriptionUpdateResponseSchema,
   AccountAliasRequestSchema,
   AccountAliasResponseSchema,
   AccountAuthExportResponseSchema,
@@ -12,13 +15,13 @@ import {
   AccountsResponseSchema,
   AccountRoutingPolicyUpdateRequestSchema,
   AccountRoutingPolicyUpdateResponseSchema,
-  AccountSubscriptionCheckResponseSchema,
-  AccountSubscriptionUpdateRequestSchema,
-  AccountSubscriptionUpdateResponseSchema,
+  AccountUsageResetConsumeRequestSchema,
+  AccountUsageResetConsumeResponseSchema,
+  AccountUsageResetCreditsResponseSchema,
+  AccountTrendsResponseSchema,
   AccountProbeRequestSchema,
   AccountProbeResponseSchema,
-  AccountResetCreditConsumeRequestSchema,
-  AccountResetCreditConsumeResponseSchema,
+  ConsumeRateLimitResetCreditResponseSchema,
   ManualOauthCallbackRequestSchema,
   ManualOauthCallbackResponseSchema,
   OauthCompleteRequestSchema,
@@ -26,15 +29,18 @@ import {
   OauthStartRequestSchema,
   OauthStartResponseSchema,
   OauthStatusResponseSchema,
+  RateLimitResetCreditsSnapshotSchema,
+  RuntimeConnectAddressResponseSchema,
 } from "@/features/accounts/schemas";
-import type { AccountRoutingPolicy } from "@/features/accounts/schemas";
+import type {
+  AccountRoutingPolicy,
+  AccountUsageResetConsumeRequest,
+} from "@/features/accounts/schemas";
 
 const ACCOUNTS_BASE_PATH = "/api/accounts";
 const OAUTH_BASE_PATH = "/api/oauth";
 
 export function listAccounts() {
-
-
   return get(`${ACCOUNTS_BASE_PATH}?fresh=1`, AccountsResponseSchema);
 }
 
@@ -87,13 +93,8 @@ export function updateAccountLimitWarmup(accountId: string, enabled: boolean) {
   );
 }
 
-export function updateAccountRoutingPolicy(
-  accountId: string,
-  routingPolicy: AccountRoutingPolicy,
-) {
-  const payload = AccountRoutingPolicyUpdateRequestSchema.parse({
-    routingPolicy,
-  });
+export function updateAccountRoutingPolicy(accountId: string, routingPolicy: AccountRoutingPolicy) {
+  const payload = AccountRoutingPolicyUpdateRequestSchema.parse({ routingPolicy });
   return put(
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/routing-policy`,
     AccountRoutingPolicyUpdateResponseSchema,
@@ -101,27 +102,35 @@ export function updateAccountRoutingPolicy(
   );
 }
 
-export function updateAccountSubscription(accountId: string, payload: unknown) {
-  const validated = AccountSubscriptionUpdateRequestSchema.parse(payload);
-  return put(
-    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/subscription`,
-    AccountSubscriptionUpdateResponseSchema,
-    { body: validated },
+export function getAccountTrends(accountId: string) {
+  return get(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/trends`,
+    AccountTrendsResponseSchema,
   );
 }
 
-export function checkAccountSubscription(accountId: string) {
+export function getAccountUsageResetCredits(accountId: string) {
+  return get(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/usage-reset-credits`,
+    AccountUsageResetCreditsResponseSchema,
+  );
+}
+
+export function consumeAccountUsageResetCredit(
+  accountId: string,
+  payload?: AccountUsageResetConsumeRequest,
+) {
+  const validated =
+    payload === undefined ? undefined : AccountUsageResetConsumeRequestSchema.parse(payload);
   return post(
-    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/subscription/check`,
-    AccountSubscriptionCheckResponseSchema,
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/usage-reset-credits/consume`,
+    AccountUsageResetConsumeResponseSchema,
+    validated ? { body: validated } : undefined,
   );
 }
 
 export function probeAccount(accountId: string, payload?: unknown) {
-  const validated =
-    payload === undefined
-      ? undefined
-      : AccountProbeRequestSchema.parse(payload);
+  const validated = payload === undefined ? undefined : AccountProbeRequestSchema.parse(payload);
   return post(
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/probe`,
     AccountProbeResponseSchema,
@@ -129,29 +138,30 @@ export function probeAccount(accountId: string, payload?: unknown) {
   );
 }
 
-
-
-
-
-
-export function consumeAccountResetCredit(
-  accountId: string,
-  creditId?: string,
-) {
-  const validated = AccountResetCreditConsumeRequestSchema.parse(
-    creditId ? { creditId } : {},
-  );
-  return post(
-    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/rate-limit-reset-credits/consume`,
-    AccountResetCreditConsumeResponseSchema,
-    { body: validated },
-  );
-}
-
 export function exportAccountAuth(accountId: string) {
   return post(
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/export/auth`,
     AccountAuthExportResponseSchema,
+  );
+}
+
+export function getRateLimitResetCredits(accountId: string) {
+  return get(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/rate-limit-reset-credits`,
+    RateLimitResetCreditsSnapshotSchema.nullable(),
+  );
+}
+
+export function consumeRateLimitResetCredit(
+  accountId: string,
+  payload?: AccountUsageResetConsumeRequest,
+) {
+  const validated =
+    payload === undefined ? undefined : AccountUsageResetConsumeRequestSchema.parse(payload);
+  return post(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/rate-limit-reset-credits/consume`,
+    ConsumeRateLimitResetCreditResponseSchema,
+    validated ? { body: validated } : undefined,
   );
 }
 
@@ -184,11 +194,27 @@ export function completeOauth(payload?: unknown) {
 
 export function submitManualOauthCallback(payload: unknown) {
   const validated = ManualOauthCallbackRequestSchema.parse(payload);
+  return post(`${OAUTH_BASE_PATH}/manual-callback`, ManualOauthCallbackResponseSchema, {
+    body: validated,
+  });
+}
+
+export function getRuntimeConnectAddress() {
+  return get("/api/settings/runtime/connect-address", RuntimeConnectAddressResponseSchema);
+}
+
+export function updateAccountSubscription(accountId: string, payload: unknown) {
+  const validated = AccountSubscriptionUpdateRequestSchema.parse(payload);
+  return put(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/subscription`,
+    AccountSubscriptionUpdateResponseSchema,
+    { body: validated },
+  );
+}
+
+export function checkAccountSubscription(accountId: string) {
   return post(
-    `${OAUTH_BASE_PATH}/manual-callback`,
-    ManualOauthCallbackResponseSchema,
-    {
-      body: validated,
-    },
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/subscription/check`,
+    AccountSubscriptionCheckResponseSchema,
   );
 }

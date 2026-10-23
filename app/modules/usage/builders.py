@@ -6,14 +6,42 @@ from datetime import datetime, timezone
 
 from app.core import usage as usage_core
 from app.core.providers import OPENAI_PROVIDER_NAME
-from app.core.usage.logs import cached_input_tokens_from_log, cost_from_log, total_tokens_from_log
-from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate, UsageCostByModel, UsageCostSummary, UsageMetricsSummary, UsageSummaryPayload, UsageWindowRow, UsageWindowSnapshot  # noqa: I001  # fmt: skip
+from app.core.usage.logs import (
+    CANCELLED_STATUS,
+    NON_ERROR_STATUSES,
+    cached_input_tokens_from_log,
+    cost_from_log,
+    total_tokens_from_log,
+)
+from app.core.usage.types import (
+    BucketConversationAggregate,
+    BucketModelAggregate,
+    RequestActivityAggregate,
+    UsageCostByModel,
+    UsageCostSummary,
+    UsageMetricsSummary,
+    UsageSummaryLogsAggregate,
+    UsageSummaryPayload,
+    UsageWindowRow,
+    UsageWindowSnapshot,
+)
 from app.core.utils.time import from_epoch_seconds
-from app.db.models import Account, AdditionalUsageHistory
-from app.db.request_models import RequestLog
-from app.modules.usage.schemas import MetricsTrends, TrendPoint, UsageCost, UsageHistoryItem, UsageHistoryResponse, UsageMetrics, UsageSummaryResponse, UsageWindow, UsageWindowResponse  # noqa: I001  # fmt: skip
+from app.db.models import Account, AdditionalUsageHistory, RequestLog
+from app.modules.usage.schemas import (
+    MetricsTrends,
+    TrendPoint,
+    UsageCost,
+    UsageHistoryItem,
+    UsageHistoryResponse,
+    UsageMetrics,
+    UsageSummaryResponse,
+    UsageWindow,
+    UsageWindowResponse,
+)
 
 _BUCKET_COUNT = 28
+
+
 _BUCKET_SECONDS = 21600
 
 
@@ -31,7 +59,10 @@ class ActivityMetricsSummary:
     cached_input_tokens: int | None = None
     error_rate: float | None = None
     error_count: int | None = None
+    cancelled_count: int | None = None
     top_error: str | None = None
+    conversation_count: int = 0
+    conversation_request_count: int = 0
 
 
 def align_bucket_window_start(
@@ -55,8 +86,11 @@ def build_trends_from_buckets(
     bucket_seconds: int = _BUCKET_SECONDS,
     bucket_count: int = _BUCKET_COUNT,
     top_error: str | None = None,
+    conversation_rows: list[BucketConversationAggregate] | None = None,
 ) -> tuple[MetricsTrends, ActivityMetricsSummary, ActivityCostSummary]:
-
+    # Align slots so the last slot contains "now" (since + window).
+    # Use floor to snap since to a bucket boundary, then shift by 1
+    # so that recent data falls within the slot range.
     first_bucket = align_bucket_window_start(since, bucket_seconds)
     first_bucket_epoch = (
         int(first_bucket.replace(tzinfo=timezone.utc).timestamp())
@@ -66,14 +100,17 @@ def build_trends_from_buckets(
     slots = [first_bucket_epoch + i * bucket_seconds for i in range(bucket_count)]
     slot_set = set(slots)
 
+    # Accumulate per-bucket values
     bucket_requests: dict[int, int] = defaultdict(int)
     bucket_errors: dict[int, int] = defaultdict(int)
     bucket_tokens: dict[int, int] = defaultdict(int)
     bucket_costs: dict[int, float] = defaultdict(float)
+    bucket_conversations: dict[int, int] = defaultdict(int)
     total_costs_by_model: dict[str, float] = defaultdict(float)
 
     total_requests = 0
     total_errors = 0
+    total_cancelled = 0
     total_tokens = 0
     total_cached_tokens = 0
     total_cost_usd = 0.0
@@ -90,14 +127,20 @@ def build_trends_from_buckets(
 
         total_requests += row.request_count
         total_errors += row.error_count
+        total_cancelled += row.cancelled_count
         total_tokens += row.input_tokens + row.output_tokens
         total_cached_tokens += row.cached_input_tokens
         total_cost_usd += float(row.cost_usd)
+
+    for row in conversation_rows or []:
+        if row.bucket_epoch in slot_set:
+            bucket_conversations[row.bucket_epoch] += row.conversation_count
 
     requests_points: list[TrendPoint] = []
     tokens_points: list[TrendPoint] = []
     cost_points: list[TrendPoint] = []
     error_rate_points: list[TrendPoint] = []
+    conversations_points: list[TrendPoint] = []
 
     for epoch in slots:
         t = datetime.fromtimestamp(epoch, tz=timezone.utc)
@@ -105,6 +148,7 @@ def build_trends_from_buckets(
         err = bucket_errors.get(epoch, 0)
         tok = bucket_tokens.get(epoch, 0)
         cost_value = bucket_costs.get(epoch, 0.0)
+        conversations = bucket_conversations.get(epoch, 0)
 
         err_rate = (err / req) if req > 0 else 0.0
 
@@ -112,12 +156,14 @@ def build_trends_from_buckets(
         tokens_points.append(TrendPoint(t=t, v=float(tok)))
         cost_points.append(TrendPoint(t=t, v=round(cost_value, 6)))
         error_rate_points.append(TrendPoint(t=t, v=round(err_rate, 4)))
+        conversations_points.append(TrendPoint(t=t, v=float(conversations)))
 
     trends = MetricsTrends(
         requests=requests_points,
         tokens=tokens_points,
         cost=cost_points,
         error_rate=error_rate_points,
+        conversations=conversations_points,
     )
 
     error_rate_total: float | None = None
@@ -130,6 +176,7 @@ def build_trends_from_buckets(
         cached_input_tokens=total_cached_tokens,
         error_rate=error_rate_total,
         error_count=total_errors,
+        cancelled_count=total_cancelled,
         top_error=top_error,
     )
 
@@ -162,7 +209,10 @@ def build_activity_summaries(
             cached_input_tokens=aggregate.cached_input_tokens,
             error_rate=error_rate,
             error_count=aggregate.error_count,
+            cancelled_count=aggregate.cancelled_count,
             top_error=top_error,
+            conversation_count=aggregate.conversation_count,
+            conversation_request_count=aggregate.conversation_request_count,
         ),
         ActivityCostSummary(
             currency="USD",
@@ -270,6 +320,38 @@ def _build_account_history(
     return results
 
 
+def build_usage_metrics_from_aggregate(aggregate: UsageSummaryLogsAggregate | None) -> UsageMetricsSummary:
+    """SQL-aggregate twin of `_usage_metrics`; `None` mirrors an empty window."""
+    if aggregate is None or aggregate.request_count == 0:
+        requests = aggregate.request_count if aggregate else 0
+        return UsageMetricsSummary(
+            requests_7d=requests,
+            tokens_secondary_window=aggregate.total_tokens if aggregate else 0,
+            cached_tokens_secondary_window=aggregate.cached_input_tokens if aggregate else 0,
+            error_rate_7d=None,
+            top_error=aggregate.top_error if aggregate else None,
+            cancelled_7d=aggregate.cancelled_count if aggregate else 0,
+        )
+    return UsageMetricsSummary(
+        requests_7d=aggregate.request_count,
+        tokens_secondary_window=aggregate.total_tokens,
+        cached_tokens_secondary_window=aggregate.cached_input_tokens,
+        error_rate_7d=aggregate.error_count / aggregate.request_count,
+        top_error=aggregate.top_error,
+        cancelled_7d=aggregate.cancelled_count,
+    )
+
+
+def build_usage_cost_from_aggregate(aggregate: UsageSummaryLogsAggregate | None) -> UsageCostSummary:
+    """SQL-aggregate twin of `_cost_summary_from_logs`."""
+    by_model = aggregate.cost_by_model if aggregate else []
+    return UsageCostSummary(
+        currency="USD",
+        total_usd_7d=round(sum(cost for _, cost in by_model), 6),
+        by_model=[UsageCostByModel(model=model, usd=round(cost, 6)) for model, cost in sorted(by_model)],
+    )
+
+
 def _cost_summary_from_logs(logs: list[RequestLog]) -> UsageCostSummary:
     total = 0.0
     by_model: dict[str, float] = defaultdict(float)
@@ -288,7 +370,11 @@ def _cost_summary_from_logs(logs: list[RequestLog]) -> UsageCostSummary:
 
 def _usage_metrics(logs_secondary: list[RequestLog]) -> UsageMetricsSummary:
     total_requests = len(logs_secondary)
-    error_logs = [log for log in logs_secondary if log.status != "success"]
+    # Cancelled terminals are normal client disconnects, not upstream
+    # failures — they leave the error numerator (and top_error) but stay in
+    # the request total (#1552).
+    error_logs = [log for log in logs_secondary if log.status not in NON_ERROR_STATUSES]
+    cancelled_count = sum(1 for log in logs_secondary if log.status == CANCELLED_STATUS)
     error_rate: float | None = None
     if total_requests > 0:
         error_rate = len(error_logs) / total_requests
@@ -301,6 +387,7 @@ def _usage_metrics(logs_secondary: list[RequestLog]) -> UsageMetricsSummary:
         cached_tokens_secondary_window=cached_tokens_secondary,
         error_rate_7d=error_rate,
         top_error=top_error,
+        cancelled_7d=cancelled_count,
     )
 
 
@@ -370,6 +457,7 @@ def _metrics_summary_to_model(metrics: UsageMetricsSummary) -> UsageMetrics:
             "cached_tokens_secondary_window": metrics.cached_tokens_secondary_window,
             "error_rate_7d": metrics.error_rate_7d,
             "top_error": metrics.top_error,
+            "cancelled_7d": metrics.cancelled_7d,
         }
     )
 

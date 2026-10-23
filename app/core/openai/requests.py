@@ -1,92 +1,168 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from app.core.eval_guard import is_eval_request, strip_eval_web_tools
+from app.core.eval_guard import strip_eval_web_tools
+from app.core.openai.compact_budget import _COMPACT_SIDE_EFFECT_TOOL_ITEM_TYPES as _COMPACT_SIDE_EFFECT_TOOL_ITEM_TYPES
+from app.core.openai.compact_budget import _COMPACT_STATE_TOOL_NAMES as _COMPACT_STATE_TOOL_NAMES
+from app.core.openai.compact_budget import (
+    _COMPACT_UPSTREAM_HEAD_ESTIMATED_TOKENS as _COMPACT_UPSTREAM_HEAD_ESTIMATED_TOKENS,
+)
+from app.core.openai.compact_budget import _PLAN_MODE_CONTEXT_PREFIX as _PLAN_MODE_CONTEXT_PREFIX
+from app.core.openai.compact_budget import (
+    _compact_discard_consumed_continuity_output_pairs as _compact_discard_consumed_continuity_output_pairs,
+)
+from app.core.openai.compact_budget import (
+    _compact_item_has_elidable_inline_image as _compact_item_has_elidable_inline_image,
+)
+from app.core.openai.compact_budget import _compact_item_is_state_anchor as _compact_item_is_state_anchor
+from app.core.openai.compact_budget import _compact_required_indices as _compact_required_indices
+from app.core.openai.compact_budget import _compact_required_terminal_indices as _compact_required_terminal_indices
+from app.core.openai.compact_budget import _compact_state_anchor_indices as _compact_state_anchor_indices
+from app.core.openai.compact_budget import (
+    _compact_terminal_item_is_side_effect as _compact_terminal_item_is_side_effect,
+)
+from app.core.openai.compact_budget import _compact_terminal_required_indices as _compact_terminal_required_indices
+from app.core.openai.compact_budget import _compact_trim_prefix_count as _compact_trim_prefix_count
+from app.core.openai.compact_budget import _compact_trim_suffix_indices as _compact_trim_suffix_indices
+from app.core.openai.compact_budget import _is_preserved_non_message_directive as _is_preserved_non_message_directive
+from app.core.openai.compact_context import _COMPACT_TOOL_CALL_ITEM_TYPES as _COMPACT_TOOL_CALL_ITEM_TYPES
+from app.core.openai.compact_context import _compact_elide_inline_images as _compact_elide_inline_images
+from app.core.openai.compact_context import (
+    _compact_elide_required_tool_output_images as _compact_elide_required_tool_output_images,
+)
+from app.core.openai.compact_context import (
+    _compact_fit_selected_indices_to_wire_budget as _compact_fit_selected_indices_to_wire_budget,
+)
+from app.core.openai.compact_context import _compact_has_continuity_anchor as _compact_has_continuity_anchor
+from app.core.openai.compact_context import _compact_item_is_side_effect_anchor as _compact_item_is_side_effect_anchor
+from app.core.openai.compact_context import _compact_matching_tool_call_index as _compact_matching_tool_call_index
+from app.core.openai.compact_context import (
+    _compact_reconciled_tool_call_indices as _compact_reconciled_tool_call_indices,
+)
+from app.core.openai.compact_context import _compact_side_effect_anchor_indices as _compact_side_effect_anchor_indices
+from app.core.openai.compact_context import _compact_trim_marker as _compact_trim_marker
+from app.core.openai.compact_context import _compact_trimmed_input_with_markers as _compact_trimmed_input_with_markers
+from app.core.openai.compact_context import _estimated_json_array_item_tokens as _estimated_json_array_item_tokens
+from app.core.openai.request_compatibility import _TOOL_TYPE_ALIASES as _TOOL_TYPE_ALIASES
+from app.core.openai.request_compatibility import UNSUPPORTED_TOOL_TYPES as UNSUPPORTED_TOOL_TYPES
+from app.core.openai.request_compatibility import _canonicalize_tools as _canonicalize_tools
+from app.core.openai.request_compatibility import _compact_losslessly_trim_input as _compact_losslessly_trim_input
+from app.core.openai.request_compatibility import (
+    _contains_explicit_prompt_cache_breakpoint as _contains_explicit_prompt_cache_breakpoint,
+)
+from app.core.openai.request_compatibility import _is_responses_lite_input as _is_responses_lite_input
+from app.core.openai.request_compatibility import _json_parts as _json_parts
+from app.core.openai.request_compatibility import _merge_responses_instructions as _merge_responses_instructions
+from app.core.openai.request_compatibility import (
+    _normalize_compaction_trigger_singleton as _normalize_compaction_trigger_singleton,
+)
+from app.core.openai.request_compatibility import (
+    _normalize_responses_input_instructions as _normalize_responses_input_instructions,
+)
+from app.core.openai.request_compatibility import (
+    _responses_instruction_content_text as _responses_instruction_content_text,
+)
+from app.core.openai.request_compatibility import _responses_instruction_item_text as _responses_instruction_item_text
+from app.core.openai.request_compatibility import _sort_keys_recursive as _sort_keys_recursive
+from app.core.openai.request_compatibility import (
+    _split_responses_instruction_item_content as _split_responses_instruction_item_content,
+)
+from app.core.openai.request_compatibility import _strip_compact_unsupported_fields as _strip_compact_unsupported_fields
+from app.core.openai.request_compatibility import _tool_sort_key as _tool_sort_key
+from app.core.openai.request_compatibility import _trim_compact_input_for_upstream as _trim_compact_input_for_upstream
+from app.core.openai.request_compatibility import canonicalized_tools as canonicalized_tools
+from app.core.openai.request_compatibility import normalize_tool_type as normalize_tool_type
+from app.core.openai.request_compatibility import responses_input_uses_lite_tools as responses_input_uses_lite_tools
 from app.core.openai.request_input import (
-    _json_list_or_none,
-    _json_mapping_or_none,
-    _normalize_input_text,
-    _sanitize_input_items,
+    InputImageFileReference as InputImageFileReference,
+)
+from app.core.openai.request_input import _normalize_input_text, _sanitize_input_items
+from app.core.openai.request_input import (
+    extract_input_file_ids as extract_input_file_ids,
+)
+from app.core.openai.request_input import (
+    extract_input_image_file_references as extract_input_image_file_references,
+)
+from app.core.openai.request_payload_tools import _RESPONSES_INCLUDE_ALLOWLIST as _RESPONSES_INCLUDE_ALLOWLIST
+from app.core.openai.request_payload_tools import normalize_tool_choice as normalize_tool_choice
+from app.core.openai.request_payload_tools import validate_tool_types as validate_tool_types
+from app.core.openai.request_payload_values import (
+    _COMPACT_INLINE_IMAGE_DATA_URL_RE as _COMPACT_INLINE_IMAGE_DATA_URL_RE,
+)
+from app.core.openai.request_payload_values import (
+    _COMPACT_OMITTED_INLINE_IMAGE_TEXT as _COMPACT_OMITTED_INLINE_IMAGE_TEXT,
+)
+from app.core.openai.request_payload_values import (
+    _COMPACT_TOOL_CALL_OUTPUT_ITEM_TYPES as _COMPACT_TOOL_CALL_OUTPUT_ITEM_TYPES,
+)
+from app.core.openai.request_payload_values import (
+    _COMPACT_TOOL_CALL_TYPE_BY_OUTPUT_TYPE as _COMPACT_TOOL_CALL_TYPE_BY_OUTPUT_TYPE,
+)
+from app.core.openai.request_payload_values import _ESTIMATED_CHARS_PER_TOKEN as _ESTIMATED_CHARS_PER_TOKEN
+from app.core.openai.request_payload_values import (
+    _EXPLICIT_PROMPT_CACHE_CONTENT_TYPES as _EXPLICIT_PROMPT_CACHE_CONTENT_TYPES,
+)
+from app.core.openai.request_payload_values import (
+    _GOAL_CONTINUATION_CONTEXT_PREFIX as _GOAL_CONTINUATION_CONTEXT_PREFIX,
+)
+from app.core.openai.request_payload_values import (
+    _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS as _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS,
+)
+from app.core.openai.request_payload_values import (
+    _POISONED_LOCAL_COMPACT_FALLBACK_TEXT as _POISONED_LOCAL_COMPACT_FALLBACK_TEXT,
+)
+from app.core.openai.request_payload_values import _TOOL_CALL_ITEM_TYPES as _TOOL_CALL_ITEM_TYPES
+from app.core.openai.request_payload_values import _UNSUPPORTED_UPSTREAM_FIELDS as _UNSUPPORTED_UPSTREAM_FIELDS
+from app.core.openai.request_payload_values import MutableJsonObject as MutableJsonObject
+from app.core.openai.request_payload_values import _compact_item_texts as _compact_item_texts
+from app.core.openai.request_payload_values import _estimated_json_tokens as _estimated_json_tokens
+from app.core.openai.request_payload_values import (
+    _is_poisoned_local_compact_fallback_message as _is_poisoned_local_compact_fallback_message,
+)
+from app.core.openai.request_payload_values import (
+    _normalize_openai_compatible_aliases as _normalize_openai_compatible_aliases,
+)
+from app.core.openai.request_payload_values import (
+    _normalize_service_tier_alias_value as _normalize_service_tier_alias_value,
+)
+from app.core.openai.request_payload_values import _normalize_service_tier_aliases as _normalize_service_tier_aliases
+from app.core.openai.request_payload_values import _normalize_thinking_alias as _normalize_thinking_alias
+from app.core.openai.request_payload_values import (
+    _sanitize_interleaved_reasoning_input as _sanitize_interleaved_reasoning_input,
+)
+from app.core.openai.request_payload_values import (
+    _strip_poisoned_local_compact_fallback_items as _strip_poisoned_local_compact_fallback_items,
+)
+from app.core.openai.request_payload_values import (
+    _strip_subscription_prompt_cache_breakpoints as _strip_subscription_prompt_cache_breakpoints,
+)
+from app.core.openai.request_payload_values import (
+    _strip_subscription_prompt_cache_controls as _strip_subscription_prompt_cache_controls,
+)
+from app.core.openai.request_payload_values import _strip_unsupported_fields as _strip_unsupported_fields
+from app.core.openai.request_payload_values import normalize_reasoning_aliases as normalize_reasoning_aliases
+from app.core.openai.request_payload_values import (
+    responses_input_contains_goal_continuation_context as responses_input_contains_goal_continuation_context,
+)
+from app.core.openai.request_payload_values import (
+    strip_replayed_tool_call_namespaces_from_payload as strip_replayed_tool_call_namespaces_from_payload,
+)
+from app.core.openai.request_payload_values import (
+    validate_compact_input_wire_budget as validate_compact_input_wire_budget,
 )
 from app.core.types import JsonObject, JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
-type MutableJsonObject = dict[str, JsonValue]
-
-_RESPONSES_INCLUDE_ALLOWLIST = {
-    "code_interpreter_call.outputs",
-    "computer_call_output.output.image_url",
-    "file_search_call.results",
-    "message.input_image.image_url",
-    "message.output_text.logprobs",
-    "reasoning.encrypted_content",
-    "web_search_call.action.sources",
-}
-
-UNSUPPORTED_TOOL_TYPES = {
-    "file_search",
-    "code_interpreter",
-    "computer_use",
-    "computer_use_preview",
-    "image_generation",
-}
-
-_TOOL_TYPE_ALIASES = {
-    "web_search_preview": "web_search",
-}
-
-
-def normalize_tool_type(tool_type: str) -> str:
-    if is_eval_request() and tool_type.startswith("web_search"):
-        return tool_type
-    return _TOOL_TYPE_ALIASES.get(tool_type, tool_type)
-
-
-def normalize_tool_choice(choice: JsonValue | None) -> JsonValue | None:
-    if not is_json_mapping(choice):
-        return choice
-    choice_mapping = choice
-    tool_type = choice_mapping.get("type")
-    if isinstance(tool_type, str):
-        normalized_type = normalize_tool_type(tool_type)
-        if normalized_type != tool_type:
-            updated = dict(choice_mapping)
-            updated["type"] = normalized_type
-            return updated
-    return choice
-
-
-def validate_tool_types(tools: list[JsonValue], *, allow_builtin_tools: bool = False) -> list[JsonValue]:
-    normalized_tools: list[JsonValue] = []
-    for tool in tools:
-        if not is_json_mapping(tool):
-            normalized_tools.append(tool)
-            continue
-        tool_mapping = tool
-        tool_type = tool_mapping.get("type")
-        if isinstance(tool_type, str):
-            normalized_type = normalize_tool_type(tool_type)
-            if normalized_type != tool_type:
-                tool = dict(tool_mapping)
-                tool["type"] = normalized_type
-                tool_type = normalized_type
-            if not allow_builtin_tools and tool_type in UNSUPPORTED_TOOL_TYPES:
-                raise ValueError(f"Unsupported tool type: {tool_type}")
-        normalized_tools.append(tool)
-    return normalized_tools
-
 
 class ResponsesReasoning(BaseModel):
     model_config = ConfigDict(extra="allow")
-
     effort: str | None = None
     summary: str | None = None
 
 
 class ResponsesTextFormat(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True, serialize_by_alias=True)
-
     type: str | None = None
     strict: bool | None = None
     schema_: JsonValue | None = Field(default=None, alias="schema")
@@ -95,13 +171,19 @@ class ResponsesTextFormat(BaseModel):
 
 class ResponsesTextControls(BaseModel):
     model_config = ConfigDict(extra="allow")
-
     verbosity: str | None = None
     format: ResponsesTextFormat | None = None
 
 
 class ResponsesRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
+    _codex_lb_client_reasoning_effort: str | None = PrivateAttr(default=None)
+    _codex_lb_provider_reasoning_effort_materialized: bool = PrivateAttr(default=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _move_input_instruction_messages(cls, data: JsonValue) -> JsonValue:
+        return _normalize_responses_input_instructions(data)
 
     model: str = Field(min_length=1)
     instructions: str
@@ -123,7 +205,6 @@ class ResponsesRequest(BaseModel):
     @field_validator("input")
     @classmethod
     def _validate_input_type(cls, value: JsonValue) -> JsonValue:
-
         if isinstance(value, str):
             normalized = _normalize_input_text(value)
             return _sanitize_input_items(normalized)
@@ -186,13 +267,29 @@ class ResponsesRequest(BaseModel):
             raise ValueError("Provide either 'conversation' or 'previous_response_id', not both.")
         return self
 
-    def to_payload(self) -> JsonObject:
+    def model_dump_for_forwarding(self) -> MutableJsonObject:
         payload: MutableJsonObject = self.model_dump(mode="json", exclude_none=True)
-        return strip_eval_web_tools(_strip_unsupported_fields(payload), "openai")[0]
+        if "tools" not in self.model_fields_set:
+            payload.pop("tools", None)
+        return payload
+
+    def to_payload(self) -> JsonObject:
+        payload = _strip_unsupported_fields(self.model_dump_for_forwarding())
+        _normalize_compaction_trigger_singleton(payload)
+        return strip_eval_web_tools(payload, "openai")[0]
+
+    def to_replay_safety_payload(self) -> JsonObject:
+        return _strip_unsupported_fields(self.model_dump_for_forwarding(), strip_replayed_tool_call_namespaces=False)
 
 
 class ResponsesCompactRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
+    _codex_lb_client_reasoning_effort: str | None = PrivateAttr(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _move_input_instruction_messages(cls, data: JsonValue) -> JsonValue:
+        return _normalize_responses_input_instructions(data)
 
     model: str = Field(min_length=1)
     instructions: str
@@ -205,7 +302,6 @@ class ResponsesCompactRequest(BaseModel):
     @field_validator("input")
     @classmethod
     def _validate_input_type(cls, value: JsonValue) -> JsonValue:
-
         if isinstance(value, str):
             normalized = _normalize_input_text(value)
             return _sanitize_input_items(normalized)
@@ -236,190 +332,17 @@ class ResponsesCompactRequest(BaseModel):
         return _strip_compact_unsupported_fields(payload)
 
 
-_UNSUPPORTED_UPSTREAM_FIELDS = {
-    "max_output_tokens",
-    "metadata",
-    "prompt_cache_retention",
-    "safety_identifier",
-    "temperature",
-    "top_p",
-    "truncation",
-    "user",
-}
+def responses_request_has_explicit_prompt_cache_controls(payload: ResponsesRequest) -> bool:
+    extra = payload.model_extra
+    if isinstance(extra, dict) and "prompt_cache_options" in extra:
+        return True
+    return _contains_explicit_prompt_cache_breakpoint(payload.input)
 
 
-def _strip_unsupported_fields(payload: MutableJsonObject) -> MutableJsonObject:
-    _normalize_openai_compatible_aliases(payload)
-    _normalize_service_tier_aliases(payload)
-    _sanitize_interleaved_reasoning_input(payload)
-    _canonicalize_tools(payload)
-    for key in _UNSUPPORTED_UPSTREAM_FIELDS:
-        payload.pop(key, None)
-    return payload
-
-
-def _canonicalize_tools(payload: MutableJsonObject) -> None:
-    tools = payload.get("tools")
-    if not is_json_list(tools):
-        return
-    tool_list = tools
-    if not tool_list:
-        return
-    sorted_tools = sorted(tool_list, key=_tool_sort_key)
-    payload["tools"] = [_sort_keys_recursive(t) for t in sorted_tools]
-
-
-def _tool_sort_key(tool: JsonValue) -> str:
-    if not is_json_mapping(tool):
-        return ""
-    tool_map = tool
-    name = tool_map.get("name")
-    if isinstance(name, str):
-        return name
-    func = tool_map.get("function")
-    if is_json_mapping(func):
-        func_name = func.get("name")
-        if isinstance(func_name, str):
-            return func_name
-    return ""
-
-
-def _sort_keys_recursive(value: JsonValue) -> JsonValue:
-    if is_json_mapping(value):
-        mapping = value
-        return {k: _sort_keys_recursive(v) for k, v in sorted(mapping.items())}
-    if is_json_list(value):
-        return [_sort_keys_recursive(item) for item in value]
-    return value
-
-
-def _strip_compact_unsupported_fields(payload: MutableJsonObject) -> MutableJsonObject:
-    payload = _strip_unsupported_fields(payload)
-    payload.pop("store", None)
-    payload.pop("tools", None)
-    payload.pop("tool_choice", None)
-    payload.pop("parallel_tool_calls", None)
-    return payload
-
-
-def _sanitize_interleaved_reasoning_input(payload: MutableJsonObject) -> None:
-    input_value = payload.get("input")
-    input_items = _json_list_or_none(input_value)
-    if input_items is None:
-        return
-    payload["input"] = _sanitize_input_items(input_items)
-
-
-def normalize_reasoning_aliases(payload: MutableJsonObject) -> None:
-    reasoning_effort = payload.pop("reasoningEffort", None)
-    reasoning_summary = payload.pop("reasoningSummary", None)
-    provider_thinking = payload.pop("thinking", None)
-    provider_enable_thinking = payload.pop("enable_thinking", None)
-
-    reasoning_payload = _json_mapping_or_none(payload.get("reasoning"))
-    if reasoning_payload is not None:
-        reasoning_map: MutableJsonObject = dict(reasoning_payload.items())
-    else:
-        reasoning_map = {}
-
-    if isinstance(reasoning_effort, str) and "effort" not in reasoning_map:
-        reasoning_map["effort"] = reasoning_effort
-    if isinstance(reasoning_summary, str) and "summary" not in reasoning_map:
-        reasoning_map["summary"] = reasoning_summary
-
-    provider_reasoning = _normalize_thinking_alias(
-        provider_thinking,
-        enable_thinking=provider_enable_thinking,
-    )
-    if provider_reasoning is not None:
-        if "effort" not in reasoning_map and "effort" in provider_reasoning:
-            reasoning_map["effort"] = provider_reasoning["effort"]
-        if "summary" not in reasoning_map and "summary" in provider_reasoning:
-            reasoning_map["summary"] = provider_reasoning["summary"]
-
-    if reasoning_map:
-        payload["reasoning"] = reasoning_map
-
-
-def _normalize_thinking_alias(
-    thinking: JsonValue,
-    *,
-    enable_thinking: JsonValue,
-) -> MutableJsonObject | None:
-    if isinstance(thinking, bool):
-        return {"effort": "medium"} if thinking else None
-    if isinstance(thinking, str):
-        normalized = thinking.strip().lower()
-        if normalized in {"low", "medium", "high", "xhigh"}:
-            return {"effort": normalized}
-        if normalized in {"enabled", "true", "on"}:
-            return {"effort": "medium"}
-        if normalized in {"disabled", "false", "off"}:
-            return None
-    thinking_mapping = _json_mapping_or_none(thinking)
-    if thinking_mapping is not None:
-        normalized: MutableJsonObject = {}
-        effort = thinking_mapping.get("effort")
-        summary = thinking_mapping.get("summary")
-        if isinstance(effort, str) and effort.strip():
-            normalized["effort"] = effort.strip().lower()
-        if isinstance(summary, str) and summary.strip():
-            normalized["summary"] = summary.strip()
-        if normalized:
-            return normalized
-        thinking_type = thinking_mapping.get("type")
-        if isinstance(thinking_type, str):
-            normalized_type = thinking_type.strip().lower()
-            if normalized_type == "enabled":
-                return {"effort": "medium"}
-            if normalized_type == "disabled":
-                return None
-        enabled = thinking_mapping.get("enabled")
-        if isinstance(enabled, bool):
-            return {"effort": "medium"} if enabled else None
-
-    if isinstance(enable_thinking, bool):
-        return {"effort": "medium"} if enable_thinking else None
-    return None
-
-
-def _normalize_openai_compatible_aliases(payload: MutableJsonObject) -> None:
-    text_verbosity = payload.pop("textVerbosity", None)
-    top_level_verbosity = payload.pop("verbosity", None)
-    prompt_cache_key = payload.pop("promptCacheKey", None)
-    prompt_cache_retention = payload.pop("promptCacheRetention", None)
-
-    if isinstance(prompt_cache_key, str) and "prompt_cache_key" not in payload:
-        payload["prompt_cache_key"] = prompt_cache_key
-    if isinstance(prompt_cache_retention, str) and "prompt_cache_retention" not in payload:
-        payload["prompt_cache_retention"] = prompt_cache_retention
-
-    normalize_reasoning_aliases(payload)
-
-    text_payload = _json_mapping_or_none(payload.get("text"))
-    if text_payload is not None:
-        text_map: MutableJsonObject = dict(text_payload.items())
-    else:
-        text_map = {}
-
-    if isinstance(text_verbosity, str) and "verbosity" not in text_map:
-        text_map["verbosity"] = text_verbosity
-    if isinstance(top_level_verbosity, str) and "verbosity" not in text_map:
-        text_map["verbosity"] = top_level_verbosity
-    if text_map:
-        payload["text"] = text_map
-
-
-def _normalize_service_tier_aliases(payload: MutableJsonObject) -> None:
-    service_tier = payload.get("service_tier")
-    normalized = _normalize_service_tier_alias_value(service_tier)
-    if isinstance(normalized, str):
-        payload["service_tier"] = normalized
-
-
-def _normalize_service_tier_alias_value(value: JsonValue) -> JsonValue:
-    if not isinstance(value, str):
-        return value
-    if value.strip().lower() == "fast":
-        return "priority"
-    return value
+def responses_request_contains_goal_continuation_context(payload: ResponsesRequest) -> bool:
+    instructions = payload.instructions
+    if isinstance(instructions, str) and any(
+        (line.lstrip().startswith(_GOAL_CONTINUATION_CONTEXT_PREFIX) for line in instructions.splitlines())
+    ):
+        return True
+    return responses_input_contains_goal_continuation_context(payload.input)

@@ -1,3 +1,4 @@
+import { WriteControls } from "@/lb/kit/write-controls";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -418,7 +419,9 @@ export function PipelineTab() {
       <MenuSection />
       <div className="two sec">
         <PaceLimits />
-        <AccountSelection />
+        <WriteControls>
+          <AccountSelection />
+        </WriteControls>
       </div>
     </>
   );

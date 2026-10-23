@@ -22,6 +22,7 @@ from app.core.config.settings import get_settings
 from app.core.utils.time import utcnow
 from app.db.request_models import RequestLog
 from app.db.session import SessionLocal
+from app.dependencies import get_proxy_service_for_app
 from app.modules.team.service import reset_team_usage_cache
 
 pytestmark = pytest.mark.integration
@@ -267,6 +268,7 @@ async def test_member_header_chatgpt_bearer_is_not_upstream_or_persisted(
     assert not any(name.lower() == "x-api-key" for name in captured_headers[0])
     assert sentinel not in json.dumps(captured_headers)
 
+    assert await get_proxy_service_for_app(app_instance).drain_persistence_tasks(timeout_seconds=5)
     async with SessionLocal() as session:
         logs = (await session.execute(select(RequestLog))).scalars().all()
         assert len(logs) == 1

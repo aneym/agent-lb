@@ -1,6 +1,6 @@
 [project]
 name = "agent-lb"
-version = "1.20.0-beta.3"
+version = "1.24.0"
 description = "ChatGPT and Claude account load balancer & proxy with usage tracking, dashboard, and OpenAI/Anthropic-compatible endpoints"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -43,6 +43,7 @@ requires-python = ">=3.13"
 dependencies = [
     "aiohttp>=3.13.4",
     "aiohttp-retry>=2.9.1",
+    "aiohttp-socks>=0.10.1",
     "alembic>=1.16.5",
     "aiosqlite>=0.22.1",
     "asyncpg>=0.30.0",
@@ -66,6 +67,7 @@ dependencies = [
     "segno>=1.6.6",
     "sqlalchemy>=2.0.45",
     "urllib3>=2.7.0",
+    "uvicorn>=0.47.0",
     "websockets>=16.0",
     "zstandard>=0.25.0",
 ]
@@ -94,6 +96,10 @@ dev = [
     "pytest-timeout>=2.4.0",
     "httpx>=0.28.1",
     "openai>=2.16.0",
+    "ruff>=0.14.13",
+    "pytest-xdist>=3.8.0",
+    "pytest-cov>=7.1.0",
+    "hypothesis>=6.165.3",
 ]
 
 [tool.pytest.ini_options]

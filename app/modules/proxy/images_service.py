@@ -5,7 +5,7 @@ import binascii
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from typing import Final, cast
 
 from app.core.config.settings import get_settings
@@ -16,16 +16,15 @@ from app.core.openai.images import (
     V1ImageResponse,
     V1ImagesEditsForm,
     V1ImagesGenerationsRequest,
+    V1ImageUsage,
     is_supported_image_model,
     validate_image_request_parameters,
 )
 from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_mapping
-from app.modules.proxy.image_stream import (
-    collect_responses_stream_for_images,
-    translate_responses_stream_to_images_stream,
-)
+from app.core.utils.sse import format_sse_event, parse_sse_data_json
+from app.modules.proxy.image_stream import collect_responses_stream_for_images
 from app.modules.proxy.image_usage import _extract_image_usage
 
 logger = logging.getLogger(__name__)
@@ -213,8 +212,9 @@ def resolve_public_image_model(requested: str | None) -> str:
 
 
 def validate_generations_payload(payload: V1ImagesGenerationsRequest) -> V1ImagesGenerationsRequest:
-
-    settings = get_settings()
+    """Apply the cross-field validation matrix and return the payload with
+    ``model`` populated to the configured default when the client omitted it.
+    """
     resolved_model = resolve_public_image_model(payload.model)
 
     validate_image_request_parameters(
@@ -229,7 +229,6 @@ def validate_generations_payload(payload: V1ImagesGenerationsRequest) -> V1Image
         n=payload.n,
         partial_images=payload.partial_images,
         output_compression=payload.output_compression,
-        images_max_partial_images=settings.images_max_partial_images,
     )
     if payload.model != resolved_model:
         return payload.model_copy(update={"model": resolved_model})
@@ -237,8 +236,9 @@ def validate_generations_payload(payload: V1ImagesGenerationsRequest) -> V1Image
 
 
 def validate_edits_payload(payload: V1ImagesEditsForm) -> V1ImagesEditsForm:
-
-    settings = get_settings()
+    """Apply the cross-field validation matrix and return the payload with
+    ``model`` populated to the configured default when the client omitted it.
+    """
     resolved_model = resolve_public_image_model(payload.model)
     validate_image_request_parameters(
         model=resolved_model,
@@ -252,7 +252,6 @@ def validate_edits_payload(payload: V1ImagesEditsForm) -> V1ImagesEditsForm:
         n=payload.n,
         partial_images=payload.partial_images,
         output_compression=payload.output_compression,
-        images_max_partial_images=settings.images_max_partial_images,
     )
     if payload.model != resolved_model:
         return payload.model_copy(update={"model": resolved_model})
@@ -333,6 +332,196 @@ def images_response_from_responses(response: Mapping[str, JsonValue]) -> V1Image
     )
 
 
+async def translate_responses_stream_to_images_stream(
+    upstream: AsyncIterator[str],
+    *,
+    captured: dict[str, object] | None = None,
+    is_edit: bool = False,
+) -> AsyncIterator[str]:
+    """Convert a Responses SSE event stream into an OpenAI Images SSE stream.
+
+    Yields formatted SSE event blocks (terminated by ``\\n\\n``) suitable
+    for streaming directly to the client. Always emits exactly one terminal
+    event (``image_generation.completed`` / ``image_edit.completed`` or
+    ``error``) followed by ``data: [DONE]``.
+
+    The ``is_edit`` flag selects the canonical OpenAI event prefix:
+    ``/v1/images/generations`` callers leave it ``False`` and receive
+    ``image_generation.partial_image`` / ``image_generation.completed``;
+    ``/v1/images/edits`` callers pass ``True`` and receive
+    ``image_edit.partial_image`` / ``image_edit.completed`` so SDKs that
+    listen for the edit-specific event names see the stream.
+
+    When ``captured`` is provided, the translator stores the upstream
+    Responses ``id`` (under the ``response_id`` key) the first time it sees
+    one, so route handlers can correlate the resulting request log with the
+    public effective model after the stream completes.
+    """
+    partial_event_type = _EDIT_PARTIAL_EVENT if is_edit else _GENERATION_PARTIAL_EVENT
+    completed_event_type = _EDIT_COMPLETED_EVENT if is_edit else _GENERATION_COMPLETED_EVENT
+    terminal_emitted = False
+    completion_pending = True
+    # The Responses backend emits ``response.output_item.done`` for each
+    # ``image_generation_call`` *before* the final ``response.completed``
+    # event that carries ``tool_usage``. We buffer prepared completed
+    # events so we can attach ``usage`` once ``response.completed``
+    # arrives, and we keep them in arrival order so multi-image responses
+    # do not silently drop earlier completions. If the upstream stream
+    # ends without a ``response.completed`` we still flush whatever we
+    # have buffered (without ``usage``).
+    pending_completed_events: list[dict[str, JsonValue]] = []
+
+    async for line in upstream:
+        if not line:
+            continue
+        stripped = line.strip()
+        if stripped == "data: [DONE]":
+            # We emit our own [DONE] after a terminal event below.
+            continue
+        payload = parse_sse_data_json(line)
+        if payload is None:
+            continue
+        event_type = payload.get("type")
+        if not isinstance(event_type, str):
+            continue
+
+        # Capture the upstream Responses id once so the route handler can
+        # rewrite the request log with the public effective model after the
+        # stream completes.
+        if captured is not None and "response_id" not in captured:
+            response_value = payload.get("response")
+            if is_json_mapping(response_value):
+                response_id = response_value.get("id")
+                if isinstance(response_id, str) and response_id:
+                    captured["response_id"] = response_id
+
+        if event_type == _UPSTREAM_PARTIAL_IMAGE_EVENT:
+            event = _build_partial_image_event(payload, event_type=partial_event_type)
+            if event is not None:
+                yield format_sse_event(event)
+            continue
+
+        if event_type == _UPSTREAM_OUTPUT_ITEM_DONE_EVENT:
+            item = payload.get("item")
+            if not is_json_mapping(item):
+                continue
+            if item.get("type") != "image_generation_call":
+                continue
+            status = item.get("status")
+            if isinstance(status, str) and status == "failed":
+                if captured is not None:
+                    captured["image_stream_outcome"] = "image_error"
+                yield format_sse_event(_failed_image_item_error_event(item))
+                terminal_emitted = True
+                completion_pending = False
+                break
+            event = _build_completed_event(item, event_type=completed_event_type)
+            if event is not None:
+                # Buffer every completion (NOT a single overwrite-on-update
+                # variable) so multi-image responses do not silently drop
+                # earlier images. Flushing is deferred until the trailing
+                # ``response.completed`` arrives so we can attach
+                # ``tool_usage.image_gen`` as ``usage`` to the final event,
+                # matching the canonical OpenAI Images streaming shape.
+                pending_completed_events.append(event)
+            continue
+
+        if event_type == _UPSTREAM_RESPONSE_COMPLETED_EVENT:
+            response_obj = payload.get("response")
+            usage = _extract_image_usage(response_obj) if is_json_mapping(response_obj) else None
+            # Stash the usage tokens on ``captured`` so the route handler
+            # can post-hoc record them against the API key (the
+            # standard stream settlement only sees ``response.usage``,
+            # which is typically empty for the image_generation tool
+            # path).
+            if captured is not None and usage is not None:
+                _stash_image_usage_tokens(captured, usage)
+            if pending_completed_events:
+                # Emit every buffered completion in arrival order so
+                # multi-image responses do not silently drop earlier
+                # images. Only the last completion carries ``usage``.
+                last_index = len(pending_completed_events) - 1
+                for idx, event in enumerate(pending_completed_events):
+                    if idx == last_index and usage is not None:
+                        event["usage"] = usage.model_dump(mode="json", exclude_none=True)
+                    yield format_sse_event(event)
+                pending_completed_events.clear()
+                terminal_emitted = True
+                if captured is not None:
+                    captured["image_stream_outcome"] = "success"
+            elif not terminal_emitted:
+                if captured is not None:
+                    captured["image_stream_outcome"] = "image_error"
+                yield format_sse_event(
+                    _build_error_event(
+                        "image_generation_failed",
+                        "Upstream stream completed without an image_generation_call result",
+                    )
+                )
+                terminal_emitted = True
+            completion_pending = False
+            break
+
+        if event_type == _UPSTREAM_RESPONSE_INCOMPLETE_EVENT:
+            if not terminal_emitted:
+                if captured is not None:
+                    captured["image_stream_outcome"] = "image_error"
+                yield format_sse_event(
+                    _build_error_event(
+                        "image_generation_failed",
+                        "Upstream stream ended before the image was generated",
+                    )
+                )
+                terminal_emitted = True
+            completion_pending = False
+            break
+
+        if event_type == _UPSTREAM_RESPONSE_FAILED_EVENT:
+            if captured is not None:
+                captured["image_stream_outcome"] = "image_error"
+            yield format_sse_event(_response_failed_to_error_event(payload))
+            terminal_emitted = True
+            completion_pending = False
+            break
+
+        if event_type == _UPSTREAM_ERROR_EVENT:
+            if captured is not None:
+                captured["image_stream_outcome"] = "image_error"
+            yield format_sse_event(_error_event_to_error_event(payload))
+            terminal_emitted = True
+            completion_pending = False
+            break
+
+        # All other event types (response.created, reasoning, content_part,
+        # output_text, image_generation_call.in_progress / .generating,
+        # codex.rate_limits, etc.) are intentionally dropped.
+        continue
+
+    # If the upstream stream ended without a ``response.completed`` (e.g.
+    # truncation), still flush whatever we have buffered so the client sees
+    # a terminal event before [DONE]. ``usage`` is unknown in this case so
+    # we omit it.
+    if pending_completed_events and not terminal_emitted:
+        for event in pending_completed_events:
+            yield format_sse_event(event)
+        pending_completed_events.clear()
+        terminal_emitted = True
+        if captured is not None:
+            captured["image_stream_outcome"] = "truncated_with_image"
+
+    if completion_pending and not terminal_emitted:
+        if captured is not None:
+            captured["image_stream_outcome"] = "truncated"
+        yield format_sse_event(
+            _build_error_event(
+                "image_generation_failed",
+                "Upstream stream truncated before a terminal image event",
+            )
+        )
+
+    yield "data: [DONE]\n\n"
+
+
 def decode_data_url(data_url: str) -> tuple[bytes, str | None]:
 
     match = _DATA_URL_PATTERN.match(data_url.strip())
@@ -375,3 +564,185 @@ __all__ = [
     "validate_edits_payload",
     "validate_generations_payload",
 ]
+
+
+_EDIT_COMPLETED_EVENT: Final[str] = "image_edit.completed"
+
+
+_EDIT_PARTIAL_EVENT: Final[str] = "image_edit.partial_image"
+
+
+_GENERATION_COMPLETED_EVENT: Final[str] = "image_generation.completed"
+
+
+_GENERATION_PARTIAL_EVENT: Final[str] = "image_generation.partial_image"
+
+
+_UPSTREAM_ERROR_EVENT: Final[str] = "error"
+
+
+_UPSTREAM_OUTPUT_ITEM_DONE_EVENT: Final[str] = "response.output_item.done"
+
+
+_UPSTREAM_PARTIAL_IMAGE_EVENT: Final[str] = "response.image_generation_call.partial_image"
+
+
+_UPSTREAM_RESPONSE_COMPLETED_EVENT: Final[str] = "response.completed"
+
+
+_UPSTREAM_RESPONSE_FAILED_EVENT: Final[str] = "response.failed"
+
+
+_UPSTREAM_RESPONSE_INCOMPLETE_EVENT: Final[str] = "response.incomplete"
+
+
+def _build_completed_event(item: Mapping[str, JsonValue], *, event_type: str) -> dict[str, JsonValue] | None:
+    if item.get("type") != "image_generation_call":
+        return None
+    result = item.get("result")
+    if not isinstance(result, str) or not result:
+        return None
+    event: dict[str, JsonValue] = {
+        "type": event_type,
+        "b64_json": result,
+        # See ``_build_partial_image_event`` for the rationale: keep the
+        # upstream ``created_at`` if it is present, otherwise synthesize
+        # so the OpenAI Images stream-event schema validates.
+        "created_at": _coerce_created_at(item.get("created_at")),
+    }
+    for key in ("revised_prompt", "size", "quality", "background", "output_format"):
+        value = item.get(key)
+        if value is not None:
+            event[key] = value
+    return event
+
+
+def _build_error_event(
+    code: str,
+    message: str,
+    *,
+    error_type: str = "server_error",
+    param: str | None = None,
+) -> dict[str, JsonValue]:
+    envelope = openai_error(code, message, error_type=error_type)
+    if param:
+        envelope["error"]["param"] = param
+    event: dict[str, JsonValue] = {"type": _DOWNSTREAM_ERROR_EVENT}
+    for key, value in envelope.items():
+        event[key] = cast(JsonValue, value)
+    return event
+
+
+def _build_partial_image_event(payload: Mapping[str, JsonValue], *, event_type: str) -> dict[str, JsonValue] | None:
+    partial_b64 = payload.get("partial_image_b64")
+    if not isinstance(partial_b64, str) or not partial_b64:
+        return None
+    event: dict[str, JsonValue] = {
+        "type": event_type,
+        "b64_json": partial_b64,
+        # OpenAI Images stream event schemas expose ``created_at`` on
+        # both partial and completed events. Forward the upstream value
+        # if present, otherwise stamp a synthesized one so consumers
+        # that deserialize against the official model do not reject the
+        # event for a missing field.
+        "created_at": _coerce_created_at(payload.get("created_at")),
+    }
+    for key in ("partial_image_index", "size", "quality", "background", "output_format", "output_index"):
+        value = payload.get(key)
+        if value is not None:
+            event[key] = value
+    return event
+
+
+def _error_event_to_error_event(payload: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    error_value = payload.get("error")
+    if is_json_mapping(error_value):
+        code = error_value.get("code")
+        message = error_value.get("message")
+        error_type = error_value.get("type")
+        return _build_error_event(
+            code if isinstance(code, str) and code else "upstream_error",
+            message if isinstance(message, str) and message else "Upstream image generation failed",
+            error_type=error_type if isinstance(error_type, str) and error_type else "server_error",
+        )
+    return _build_error_event("upstream_error", "Upstream image generation failed")
+
+
+def _failed_image_item_error_event(item: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    error_value = item.get("error")
+    if is_json_mapping(error_value):
+        code = error_value.get("code")
+        message = error_value.get("message")
+        error_type = error_value.get("type")
+        return _build_error_event(
+            code if isinstance(code, str) and code else "image_generation_failed",
+            message if isinstance(message, str) and message else "Image generation failed",
+            error_type=error_type if isinstance(error_type, str) and error_type else "server_error",
+        )
+    return _build_error_event(
+        "image_generation_failed",
+        "Upstream image_generation_call reported status=failed",
+    )
+
+
+def _response_failed_to_error_event(payload: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    response = payload.get("response")
+    if is_json_mapping(response):
+        error_value = response.get("error")
+        if is_json_mapping(error_value):
+            code = error_value.get("code")
+            message = error_value.get("message")
+            error_type = error_value.get("type")
+            return _build_error_event(
+                code if isinstance(code, str) and code else "upstream_error",
+                message if isinstance(message, str) and message else "Upstream image generation failed",
+                error_type=error_type if isinstance(error_type, str) and error_type else "server_error",
+            )
+    return _build_error_event("upstream_error", "Upstream image generation failed")
+
+
+def _stash_image_usage_tokens(captured: dict[str, object], usage: V1ImageUsage) -> None:
+    """Persist the ``tool_usage.image_gen`` token counts on ``captured``
+    so the route handler can post-hoc record them against the API key.
+
+    Stored under explicit ``image_input_tokens`` / ``image_output_tokens``
+    / ``image_cached_input_tokens`` keys (alongside the existing
+    ``response_id``) so the route handler does not have to re-parse the
+    SSE stream or know the V1ImageUsage shape. Cached tokens are pulled
+    from ``input_tokens_details.cached_tokens`` when upstream reports
+    them so cached requests are not billed as fully uncached input.
+    """
+    if usage.input_tokens is not None:
+        captured["image_input_tokens"] = int(usage.input_tokens)
+    if usage.output_tokens is not None:
+        captured["image_output_tokens"] = int(usage.output_tokens)
+    cached = _extract_cached_input_tokens(usage)
+    if cached is not None:
+        captured["image_cached_input_tokens"] = cached
+
+
+_DOWNSTREAM_ERROR_EVENT: Final[str] = "error"
+
+
+def _coerce_created_at(value: JsonValue | None) -> int:
+    """Return ``value`` as an int when upstream supplied it, otherwise
+    a synthesized current Unix timestamp."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return int(time.time())
+
+
+def _extract_cached_input_tokens(usage: V1ImageUsage) -> int | None:
+    details = usage.input_tokens_details
+    if not isinstance(details, Mapping):
+        return None
+    raw = details.get("cached_tokens")
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        return int(raw)
+    return None

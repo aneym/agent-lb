@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List
 
-from pydantic import Field, SecretStr
+from pydantic import Field, PrivateAttr, SecretStr, field_validator
 
 from app.modules.accounts.subscription_status import SUBSCRIPTION_STATUS_PATTERN
 from app.modules.shared.schemas import DashboardModel
@@ -33,6 +33,15 @@ class AccountRequestUsage(DashboardModel):
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
     total_cost_usd: float = 0.0
+
+
+class AccountUsageResetCredits(DashboardModel):
+    available_count: int = Field(ge=0)
+
+
+class AccountUsageResetCreditsResponse(DashboardModel):
+    account_id: str
+    rate_limit_reset_credits: AccountUsageResetCredits
 
 
 class AccountTokenStatus(DashboardModel):
@@ -73,7 +82,7 @@ class AccountAdditionalQuota(DashboardModel):
     limit_name: str
     metered_feature: str
     display_label: str | None = None
-    routing_policy: str = Field(default="inherit", pattern=r"^(inherit|normal|burn_first|preserve)$")
+    routing_policy: str = Field(default="inherit", pattern="^(inherit|normal|burn_first|preserve)$")
     model_ids: list[str] = Field(default_factory=list)
     primary_window: AccountAdditionalWindow | None = None
     secondary_window: AccountAdditionalWindow | None = None
@@ -112,6 +121,7 @@ class AccountProblem(DashboardModel):
 class AccountSummary(DashboardModel):
     problems: list[AccountProblem] = Field(default_factory=list)
     account_id: str
+    chatgpt_account_id: str | None = None
     provider: str = "openai"
     email: str
     alias: str | None = None
@@ -120,12 +130,10 @@ class AccountSummary(DashboardModel):
     workspace_label: str | None = None
     seat_type: str | None = None
     plan_type: str
-    routing_policy: str = Field(default="normal", pattern=r"^(normal|burn_first|preserve)$")
+    routing_policy: str = Field(default="normal", pattern="^(normal|burn_first|preserve)$")
     status: str
     security_work_authorized: bool = False
-
     fable_eligible: bool | None = None
-
     fable_scoped_weekly: AccountFableScopedWeekly | None = None
     usage: AccountUsage | None = None
     reset_at_primary: datetime | None = None
@@ -136,6 +144,7 @@ class AccountSummary(DashboardModel):
     window_minutes_secondary: int | None = None
     window_minutes_monthly: int | None = None
     last_refresh_at: datetime | None = None
+    usage_refreshed_at: datetime | None = Field(default=None, exclude=True)
     capacity_credits_primary: float | None = None
     remaining_credits_primary: float | None = None
     capacity_credits_secondary: float | None = None
@@ -157,11 +166,10 @@ class AccountSummary(DashboardModel):
     limit_warmup_enabled: bool = False
     limit_warmup: AccountLimitWarmupStatus | None = None
     last_primed_at: datetime | None = None
-
     is_email_duplicate: bool = False
-
+    available_reset_credits: int = 0
+    reset_credit_nearest_expires_at: datetime | None = None
     identity_mismatch: AccountIdentityMismatch | None = None
-
     owner_instance: str | None = None
     is_locally_owned: bool = True
     owner_label: str | None = None
@@ -212,7 +220,7 @@ class AccountImportResponse(DashboardModel):
 
 
 class AccountApiKeyImportRequest(DashboardModel):
-    provider: str = Field(default="glm", pattern=r"^(glm|kimi|openrouter)$")
+    provider: str = Field(default="glm", pattern="^(glm|kimi|openrouter)$")
     api_key: SecretStr = Field(min_length=1)
     refresh_token: SecretStr | None = Field(default=None, min_length=1)
     email: str | None = Field(default=None, min_length=3, max_length=320)
@@ -274,7 +282,7 @@ class AccountLimitWarmupUpdateResponse(DashboardModel):
 
 
 class AccountRoutingPolicyUpdateRequest(DashboardModel):
-    routing_policy: str = Field(pattern=r"^(normal|burn_first|preserve)$")
+    routing_policy: str = Field(pattern="^(normal|burn_first|preserve)$")
 
 
 class AccountRoutingPolicyUpdateResponse(DashboardModel):
@@ -318,16 +326,46 @@ class AccountExportResponse(DashboardModel):
 class AccountProbeRequest(DashboardModel):
     model: str | None = Field(
         default=None,
-        description=(
-            "Optional model slug for the probe request. Defaults to the service's configured fallback when omitted."
-        ),
+        description="Optional model slug for the probe request. Defaults to the service's configured fallback when omitted.",
     )
 
 
 class AccountProbeResponse(DashboardModel):
+    _usage_refresh_fetch_succeeded: bool | None = PrivateAttr(default=None)
     status: str
     account_id: str
     probe_status_code: int
+    primary_used_percent_before: float | None = None
+    primary_used_percent_after: float | None = None
+    secondary_used_percent_before: float | None = None
+    secondary_used_percent_after: float | None = None
+    account_status_before: str
+    account_status_after: str
+
+    def usage_refresh_ready_for_probe_settlement(self) -> bool:
+        return self._usage_refresh_fetch_succeeded is True
+
+
+class AccountUsageResetConsumeRequest(DashboardModel):
+    redeem_request_id: str | None = None
+
+    @field_validator("redeem_request_id")
+    @classmethod
+    def normalize_redeem_request_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("redeem_request_id must not be empty")
+        return normalized
+
+
+class AccountUsageResetConsumeResponse(DashboardModel):
+    status: str
+    account_id: str
+    code: str
+    windows_reset: int = 0
+    usage_written: bool
     primary_used_percent_before: float | None = None
     primary_used_percent_after: float | None = None
     secondary_used_percent_before: float | None = None
@@ -354,14 +392,13 @@ class AccountResetCreditsResponse(DashboardModel):
     ineligible_reason: str | None = None
 
 
-class AccountResetCreditConsumeRequest(DashboardModel):
+class AccountResetCreditConsumeRequest(AccountUsageResetConsumeRequest):
     credit_id: str | None = Field(
         default=None,
         description="Optional reset-credit id to redeem. Upstream picks the next available credit when omitted.",
     )
     override_daily_limit: bool = Field(
-        default=False,
-        description="Explicit manual Claude override of the local rolling 24-hour reset limit.",
+        default=False, description="Explicit manual Claude override of the local rolling 24-hour reset limit."
     )
 
 
@@ -387,19 +424,13 @@ class CodexAuthTokens(DashboardModel):
     id_token: str = Field(serialization_alias="id_token", validation_alias="id_token")
     access_token: str = Field(serialization_alias="access_token", validation_alias="access_token")
     refresh_token: str = Field(serialization_alias="refresh_token", validation_alias="refresh_token")
-    account_id: str | None = Field(
-        default=None,
-        serialization_alias="account_id",
-        validation_alias="account_id",
-    )
+    account_id: str | None = Field(default=None, serialization_alias="account_id", validation_alias="account_id")
 
 
 class CodexAuthJson(DashboardModel):
     auth_mode: str = Field(default="chatgpt", serialization_alias="auth_mode", validation_alias="auth_mode")
     openai_api_key: str | None = Field(
-        default=None,
-        serialization_alias="OPENAI_API_KEY",
-        validation_alias="OPENAI_API_KEY",
+        default=None, serialization_alias="OPENAI_API_KEY", validation_alias="OPENAI_API_KEY"
     )
     tokens: CodexAuthTokens
     last_refresh: str = Field(serialization_alias="last_refresh", validation_alias="last_refresh")

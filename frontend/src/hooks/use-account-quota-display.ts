@@ -41,3 +41,7 @@ export const useAccountQuotaDisplayStore = create<AccountQuotaDisplayState>((set
     set({ quotaDisplay: preference });
   },
 }));
+
+export function getAccountQuotaDisplayPreference(): AccountQuotaDisplayPreference {
+  return useAccountQuotaDisplayStore.getState().quotaDisplay;
+}

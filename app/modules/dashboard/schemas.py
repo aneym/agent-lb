@@ -27,10 +27,24 @@ class DashboardUsageCost(DashboardModel):
 class DashboardUsageMetrics(DashboardModel):
     requests: int | None = None
     tokens: int | None = None
+    conversations: int = 0
+    conversation_requests: int = 0
     cached_input_tokens: int | None = Field(default=None, alias="cachedInputTokens")
     error_rate: float | None = Field(default=None, alias="errorRate")
     error_count: int | None = Field(default=None, alias="errorCount")
+    cancelled_count: int | None = Field(default=None, alias="cancelledCount")
     top_error: str | None = None
+
+
+class DashboardMetricsComparisonPrevious(DashboardModel):
+    requests: int
+    tokens: int
+    cost_usd: float = Field(alias="costUsd")
+
+
+class DashboardMetricsComparison(DashboardModel):
+    can_compare: bool = Field(alias="canCompare")
+    previous: DashboardMetricsComparisonPrevious
 
 
 class DashboardOverviewSummary(DashboardModel):
@@ -38,6 +52,7 @@ class DashboardOverviewSummary(DashboardModel):
     secondary_window: UsageWindow | None = None
     cost: DashboardUsageCost
     metrics: DashboardUsageMetrics | None = None
+    comparison: DashboardMetricsComparison | None = None
 
 
 class DashboardUsageWindows(DashboardModel):
@@ -60,6 +75,8 @@ class DepletionResponse(DashboardModel):
 
 
 WeeklyCreditPaceStatus = Literal["behind", "on_track", "ahead", "danger"]
+
+
 WeeklyCreditPaceConfidence = Literal["high", "medium", "low"]
 
 
@@ -71,7 +88,10 @@ class WeeklyCreditPaceResponse(DashboardModel):
     scheduled_used_percent: float
     delta_percent: float
     schedule_gap_credits: float
-
+    smoothed_delta_percent: float
+    smoothed_schedule_gap_credits: float
+    pace_gap_smoothing_minutes: int
+    # Legacy frontend field name kept as an alias-compatible value for one release.
     over_plan_credits: float
     projected_shortfall_credits: float
     pause_for_break_even_hours: float | None = None

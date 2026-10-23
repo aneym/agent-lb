@@ -9,9 +9,16 @@ from sqlalchemy.exc import OperationalError
 
 from app.core.utils.time import utcnow
 from app.db.request_models import ApiKey, LimitType
+from app.modules.api_keys.last_used_coalescer import ApiKeyLastUsedCoalescer
 from app.modules.api_keys.repository_data import UsageReservationItemData
 from app.modules.api_keys.service import ApiKeysService
-from app.modules.api_keys.service_data import ApiKeyCreateData, ApiKeyInvalidError, ApiKeyRateLimitExceededError, ApiKeyRequestUsageBudget, LimitRuleInput  # noqa: I001  # fmt: skip
+from app.modules.api_keys.service_data import (  # noqa: I001  # fmt: skip
+    ApiKeyCreateData,
+    ApiKeyInvalidError,
+    ApiKeyRateLimitExceededError,
+    ApiKeyRequestUsageBudget,
+    LimitRuleInput,
+)
 from tests.floor.api_keys_service_support import _async_noop, _FakeApiKeysRepository
 
 pytestmark = pytest.mark.unit
@@ -373,14 +380,43 @@ async def test_enforce_limits_retries_sqlite_busy_reservation_commit(monkeypatch
     repo = _BusyRepo()
     service = ApiKeysService(repo)
     monkeypatch.setattr("app.modules.api_keys.reservation_service.asyncio.sleep", _async_noop)
-    created = await service.create_key(ApiKeyCreateData(name="busy-retry-key", allowed_models=None, expires_at=None))
+    created = await service.create_key(
+        ApiKeyCreateData(
+            name="busy-retry-key",
+            allowed_models=None,
+            expires_at=None,
+            limits=[LimitRuleInput(limit_type="total_tokens", limit_window="weekly", max_value=1_000_000)],
+        )
+    )
     initial_commit_count = repo.commit_count
 
     reservation = await service.enforce_limits_for_request(created.id, request_model="gpt-5.1")
 
+    assert reservation is not None
     assert reservation.key_id == created.id
     assert repo.create_usage_reservation_calls == 3
     assert repo.commit_count == initial_commit_count + 1
+
+
+@pytest.mark.asyncio
+async def test_enforce_limits_without_limits_closes_transaction_and_records_last_used() -> None:
+    repo = _FakeApiKeysRepository()
+    coalescer = ApiKeyLastUsedCoalescer()
+    service = ApiKeysService(repo, last_used_coalescer=coalescer)
+    created = await service.create_key(ApiKeyCreateData(name="unlimited-key", allowed_models=None, expires_at=None))
+    initial_commit_count = repo.commit_count
+    initial_rollback_calls = repo.rollback_calls
+
+    reservation = await service.enforce_limits_for_request(created.id, request_model="gpt-5.1")
+
+    assert reservation is None
+    assert repo._reservations == {}
+    # Close the read transaction without expiring objects in shared sessions.
+    assert repo.commit_count == initial_commit_count + 1
+    assert repo.rollback_calls == initial_rollback_calls
+    pending = coalescer.pending_snapshot()
+    assert set(pending) == {created.id}
+    assert pending[created.id] <= utcnow()
 
 
 @pytest.mark.asyncio

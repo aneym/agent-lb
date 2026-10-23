@@ -9,6 +9,7 @@ type RequestOptions = {
   signal?: AbortSignal;
   credentials?: RequestCredentials;
   cache?: RequestCache;
+  suppressUnauthorizedHandler?: boolean;
 };
 
 const JSON_CONTENT_TYPE = "application/json";
@@ -37,6 +38,11 @@ export class ApiError extends Error {
 }
 
 let unauthorizedHandler: (() => void) | null = null;
+let dashboardWriteAllowed = true;
+
+export function setDashboardWriteAllowed(allowed: boolean): void {
+  dashboardWriteAllowed = allowed;
+}
 
 export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
@@ -132,6 +138,11 @@ async function request<T>(
   schema: ZodType<T> | null,
   options?: RequestOptions,
 ): Promise<T | void> {
+  const authenticationRequest =
+    /^\/api\/dashboard-auth\/(password\/(login|setup)|guest\/login|logout|totp\/verify)$/.test(url);
+  if (method !== "GET" && !dashboardWriteAllowed && !authenticationRequest) {
+    throw new ApiError({ status: 403, code: "read_only", message: "Guest access is read only" });
+  }
   const requestBody = buildRequestBody(options?.body);
   const headers = new Headers(options?.headers);
   if (requestBody.contentType && !headers.has("Content-Type")) {
@@ -160,7 +171,7 @@ async function request<T>(
     });
   }
 
-  if (response.status === 401) {
+  if (response.status === 401 && !options?.suppressUnauthorizedHandler) {
     unauthorizedHandler?.();
   }
 
@@ -197,47 +208,24 @@ async function request<T>(
   return parsed.data;
 }
 
-export function get<T>(
-  url: string,
-  schema: ZodType<T>,
-  options?: RequestOptions,
-): Promise<T> {
+export function get<T>(url: string, schema: ZodType<T>, options?: RequestOptions): Promise<T> {
   return request("GET", url, schema, options);
 }
 
-export function post<T>(
-  url: string,
-  schema: ZodType<T>,
-  options?: RequestOptions,
-): Promise<T> {
+export function post<T>(url: string, schema: ZodType<T>, options?: RequestOptions): Promise<T> {
   return request("POST", url, schema, options);
 }
 
-export function patch<T>(
-  url: string,
-  schema: ZodType<T>,
-  options?: RequestOptions,
-): Promise<T> {
+export function patch<T>(url: string, schema: ZodType<T>, options?: RequestOptions): Promise<T> {
   return request("PATCH", url, schema, options);
 }
 
-export function put<T>(
-  url: string,
-  schema: ZodType<T>,
-  options?: RequestOptions,
-): Promise<T> {
+export function put<T>(url: string, schema: ZodType<T>, options?: RequestOptions): Promise<T> {
   return request("PUT", url, schema, options);
 }
 
-export function del(
-  url: string,
-  options?: RequestOptions,
-): Promise<void>;
-export function del<T>(
-  url: string,
-  schema: ZodType<T>,
-  options?: RequestOptions,
-): Promise<T>;
+export function del(url: string, options?: RequestOptions): Promise<void>;
+export function del<T>(url: string, schema: ZodType<T>, options?: RequestOptions): Promise<T>;
 export function del<T>(
   url: string,
   schemaOrOptions?: ZodType<T> | RequestOptions,

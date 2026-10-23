@@ -3,12 +3,21 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import Integer, and_, cast, func, select, true
+from sqlalchemy import Integer, and_, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Account
+from app.db.models import RequestUsageHourlyRollup
 from app.db.request_models import RequestLog
-from app.modules.api_keys.repository_data import ApiKeyAccountCost, ApiKeyTrendBucket, ApiKeyUsageSummary, ApiKeyUsageTotals  # noqa: I001  # fmt: skip
+from app.modules.accounts.usage_rollup import api_key_usage_aggregate_stmt, read_api_key_rollup_state
+from app.modules.accounts.usage_time_rollup import HOURLY_BUCKET_SECONDS, WARMUP_REQUEST_KINDS, to_dimension
+from app.modules.accounts.usage_time_rollup_read import RawWindow, raw_windows_clause, read_hourly_window
+from app.modules.api_keys.repository_data import (
+    ApiKeyAccountCost,
+    ApiKeyTrendBucket,
+    ApiKeyUsageSummary,
+    ApiKeyUsageTotals,
+)
+from app.modules.api_keys.usage_window import read_api_key_usage_window
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 
@@ -19,7 +28,6 @@ class ApiKeyUsageQueries:
     def _build_account_costs(rows: Sequence[object]) -> list[ApiKeyAccountCost]:
         account_costs: list[ApiKeyAccountCost] = []
         deleted_cost = 0.0
-
         for row in rows:
             cost = round(float(getattr(row, "cost_usd", 0.0) or 0.0), 6)
             if cost <= 0:
@@ -36,45 +44,31 @@ class ApiKeyUsageQueries:
                     is_deleted=False,
                 )
             )
-
         if deleted_cost > 0:
             account_costs.append(
-                ApiKeyAccountCost(
-                    account_id=None,
-                    email=None,
-                    cost_usd=round(deleted_cost, 6),
-                    is_deleted=True,
-                )
+                ApiKeyAccountCost(account_id=None, email=None, cost_usd=round(deleted_cost, 6), is_deleted=True)
             )
-
         account_costs.sort(key=lambda item: item.cost_usd, reverse=True)
         return account_costs
 
     @staticmethod
     def _exclude_warmup_clause():
-        return and_(
-            RequestLog.request_kind.not_in(("warmup", "limit_warmup")),
-            exclude_forwarded_edge_logs(),
-        )
+        return and_(RequestLog.request_kind.not_in(("warmup", "limit_warmup")), exclude_forwarded_edge_logs())
 
-    async def list_usage_summary_by_key(self) -> dict[str, ApiKeyUsageSummary]:
-        stmt = (
-            select(
-                RequestLog.api_key_id,
-                func.count(RequestLog.id).label("request_count"),
-                func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
-                func.coalesce(
-                    func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)),
-                    0,
-                ).label("output_tokens"),
-                func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
-                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
-            )
-            .where(RequestLog.api_key_id.is_not(None), self._exclude_warmup_clause())
-            .group_by(RequestLog.api_key_id)
-        )
-        result = await self._session.execute(stmt)
-        summaries: dict[str, ApiKeyUsageSummary] = {}
+    async def list_usage_summary_by_key(self, api_key_ids: list[str] | None = None) -> dict[str, ApiKeyUsageSummary]:
+        folded, watermark = await read_api_key_rollup_state(self._session, api_key_ids)
+        merged: dict[str, list[float]] = {
+            key_id: [
+                sums.request_count,
+                sums.input_tokens,
+                sums.output_tokens,
+                sums.cached_input_tokens,
+                sums.total_cost_usd,
+            ]
+            for key_id, sums in folded.items()
+        }
+        tail_stmt = api_key_usage_aggregate_stmt(api_key_ids=api_key_ids, after_exclusive=watermark)
+        result = await self._session.execute(tail_stmt)
         for (
             api_key_id,
             request_count,
@@ -85,72 +79,36 @@ class ApiKeyUsageQueries:
         ) in result.all():
             if not api_key_id:
                 continue
-            input_sum = int(input_tokens or 0)
-            output_sum = int(output_tokens or 0)
-            cached_sum = int(cached_input_tokens or 0)
-            cached_sum = max(0, min(cached_sum, input_sum))
-            summaries[api_key_id] = ApiKeyUsageSummary(
-                request_count=int(request_count or 0),
-                total_tokens=input_sum + output_sum,
-                cached_input_tokens=cached_sum,
-                total_cost_usd=round(float(total_cost_usd or 0.0), 6),
-            )
+            totals = merged.setdefault(api_key_id, [0, 0, 0, 0, 0.0])
+            totals[0] += int(request_count or 0)
+            totals[1] += int(input_tokens or 0)
+            totals[2] += int(output_tokens or 0)
+            totals[3] += int(cached_input_tokens or 0)
+            totals[4] += float(total_cost_usd or 0.0)
 
+        summaries: dict[str, ApiKeyUsageSummary] = {}
+        for api_key_id, (request_count, input_sum, output_sum, cached_sum, total_cost_usd) in merged.items():
+            input_total = int(input_sum)
+            output_total = int(output_sum)
+            cached_total = max(0, min(int(cached_sum), input_total))
+            summaries[api_key_id] = ApiKeyUsageSummary(
+                request_count=int(request_count),
+                total_tokens=input_total + output_total,
+                cached_input_tokens=cached_total,
+                total_cost_usd=round(float(total_cost_usd), 6),
+            )
         return summaries
 
     async def get_usage_summary_by_key_id(self, key_id: str) -> ApiKeyUsageSummary:
-
-        stmt = select(
-            func.count(RequestLog.id).label("request_count"),
-            func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
-            func.coalesce(
-                func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)),
-                0,
-            ).label("output_tokens"),
-            func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
-            func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
-        ).where(
-            RequestLog.api_key_id == key_id,
-            self._exclude_warmup_clause(),
-        )
-        result = await self._session.execute(stmt)
-        row = result.one()
-        input_sum = int(row.input_tokens or 0)
-        output_sum = int(row.output_tokens or 0)
-        cached_sum = int(row.cached_input_tokens or 0)
-        cached_sum = max(0, min(cached_sum, input_sum))
-        return ApiKeyUsageSummary(
-            request_count=int(row.request_count or 0),
-            total_tokens=input_sum + output_sum,
-            cached_input_tokens=cached_sum,
-            total_cost_usd=round(float(row.total_cost_usd or 0.0), 6),
+        """Return aggregate usage totals for a single API key (zeroes if no logs)."""
+        summaries = await self.list_usage_summary_by_key([key_id])
+        return summaries.get(
+            key_id,
+            ApiKeyUsageSummary(request_count=0, total_tokens=0, cached_input_tokens=0, total_cost_usd=0.0),
         )
 
-    async def usage_7d_by_account(
-        self,
-        key_id: str,
-        since: datetime,
-        until: datetime,
-    ) -> list[ApiKeyAccountCost]:
-        deleted_expr = func.coalesce(RequestLog.deleted_at.is_not(None), False)
-        stmt = (
-            select(
-                RequestLog.account_id,
-                Account.email,
-                deleted_expr.label("is_deleted"),
-                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
-            )
-            .outerjoin(Account, Account.id == RequestLog.account_id)
-            .where(
-                RequestLog.api_key_id == key_id,
-                RequestLog.requested_at >= since,
-                RequestLog.requested_at < until,
-                self._exclude_warmup_clause(),
-            )
-            .group_by(RequestLog.account_id, Account.email, deleted_expr)
-        )
-        result = await self._session.execute(stmt)
-        return self._build_account_costs(result.all())
+    async def usage_7d_by_account(self, key_id: str, since: datetime, until: datetime) -> list[ApiKeyAccountCost]:
+        return (await read_api_key_usage_window(self._session, key_id, since, until)).account_costs
 
     async def trends_by_key(
         self,
@@ -159,108 +117,80 @@ class ApiKeyUsageQueries:
         until: datetime,
         bucket_seconds: int = 3600,
     ) -> list[ApiKeyTrendBucket]:
-        bind = self._session.get_bind()
-        dialect = bind.dialect.name if bind else "sqlite"
-        if dialect == "postgresql":
-            bucket_expr = func.floor(func.extract("epoch", RequestLog.requested_at) / bucket_seconds) * bucket_seconds
-        else:
-            epoch_col = cast(func.strftime("%s", RequestLog.requested_at), Integer)
-            bucket_expr = cast(epoch_col / bucket_seconds, Integer) * bucket_seconds
-        bucket_col = bucket_expr.label("bucket_epoch")
+        # Folded history from the hourly rollups (the api_key_id dimension
+        # and the output-or-reasoning measure were folded for exactly this
+        # read); raw only covers the un-folded complement. Non-hour-multiple
+        # bucket sizes degrade to the full raw scan.
+        merged: dict[int, list[float]] = {}
 
-        stmt = (
-            select(
-                bucket_col,
-                func.coalesce(func.sum(RequestLog.input_tokens), 0).label("total_input_tokens"),
-                func.coalesce(
-                    func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)),
-                    0,
-                ).label("total_output_tokens"),
-                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
+        def _add(bucket_epoch: int, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
+            entry = merged.setdefault(bucket_epoch, [0, 0, 0.0])
+            entry[0] += input_tokens
+            entry[1] += output_tokens
+            entry[2] += cost_usd
+
+        raw_windows: list[RawWindow] = [(since, until)]
+        if bucket_seconds > 0 and bucket_seconds % HOURLY_BUCKET_SECONDS == 0:
+            rollup_rows, raw_windows = await read_hourly_window(
+                self._session,
+                since,
+                until,
+                filters=(
+                    RequestUsageHourlyRollup.api_key_id == to_dimension(key_id),
+                    RequestUsageHourlyRollup.request_kind.not_in(WARMUP_REQUEST_KINDS),
+                ),
             )
-            .where(
-                RequestLog.api_key_id == key_id,
-                RequestLog.requested_at >= since,
-                RequestLog.requested_at < until,
-                self._exclude_warmup_clause(),
+            for rollup in rollup_rows:
+                _add(
+                    rollup.bucket_epoch // bucket_seconds * bucket_seconds,
+                    rollup.input_tokens,
+                    rollup.output_or_reasoning_tokens,
+                    rollup.cost_usd,
+                )
+        if raw_windows:
+            bind = self._session.get_bind()
+            dialect = bind.dialect.name if bind else "sqlite"
+            if dialect == "postgresql":
+                bucket_expr = (
+                    func.floor(func.extract("epoch", RequestLog.requested_at) / bucket_seconds) * bucket_seconds
+                )
+            else:
+                epoch_col = cast(func.strftime("%s", RequestLog.requested_at), Integer)
+                bucket_expr = cast(epoch_col / bucket_seconds, Integer) * bucket_seconds
+            bucket_col = bucket_expr.label("bucket_epoch")
+
+            stmt = (
+                select(
+                    bucket_col,
+                    func.coalesce(func.sum(RequestLog.input_tokens), 0).label("total_input_tokens"),
+                    func.coalesce(
+                        func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)),
+                        0,
+                    ).label("total_output_tokens"),
+                    func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
+                )
+                .where(
+                    RequestLog.api_key_id == key_id,
+                    raw_windows_clause(raw_windows),
+                    self._exclude_warmup_clause(),
+                )
+                .group_by(bucket_col)
             )
-            .group_by(bucket_col)
-            .order_by(bucket_col)
-        )
-        result = await self._session.execute(stmt)
+            for row in (await self._session.execute(stmt)).all():
+                _add(
+                    int(row.bucket_epoch),
+                    int(row.total_input_tokens or 0),
+                    int(row.total_output_tokens or 0),
+                    float(row.total_cost_usd or 0.0),
+                )
         return [
             ApiKeyTrendBucket(
-                bucket_epoch=int(row.bucket_epoch),
-                total_tokens=int((row.total_input_tokens or 0) + (row.total_output_tokens or 0)),
-                total_cost_usd=round(float(row.total_cost_usd or 0.0), 6),
+                bucket_epoch=bucket_epoch,
+                total_tokens=int(entry[0] + entry[1]),
+                total_cost_usd=round(float(entry[2]), 6),
             )
-            for row in result.all()
+            for bucket_epoch, entry in sorted(merged.items())
         ]
 
     async def usage_7d(self, key_id: str, since: datetime, until: datetime) -> ApiKeyUsageTotals:
-        filtered_logs = (
-            select(
-                RequestLog.id.label("id"),
-                RequestLog.account_id.label("account_id"),
-                RequestLog.deleted_at.label("deleted_at"),
-                RequestLog.input_tokens.label("input_tokens"),
-                RequestLog.output_tokens.label("output_tokens"),
-                RequestLog.reasoning_tokens.label("reasoning_tokens"),
-                RequestLog.cached_input_tokens.label("cached_input_tokens"),
-                RequestLog.cost_usd.label("cost_usd"),
-            )
-            .where(
-                RequestLog.api_key_id == key_id,
-                RequestLog.requested_at >= since,
-                RequestLog.requested_at < until,
-                self._exclude_warmup_clause(),
-            )
-            .cte("filtered_logs")
-        )
-        usage_totals = select(
-            func.count(filtered_logs.c.id).label("total_requests"),
-            func.coalesce(func.sum(filtered_logs.c.input_tokens), 0).label("total_input_tokens"),
-            func.coalesce(
-                func.sum(func.coalesce(filtered_logs.c.output_tokens, filtered_logs.c.reasoning_tokens, 0)),
-                0,
-            ).label("total_output_tokens"),
-            func.coalesce(func.sum(filtered_logs.c.cached_input_tokens), 0).label("cached_input_tokens"),
-            func.coalesce(func.sum(filtered_logs.c.cost_usd), 0.0).label("total_cost_usd"),
-        ).cte("usage_totals")
-        deleted_expr = func.coalesce(filtered_logs.c.deleted_at.is_not(None), False)
-        usage_grouped = (
-            select(
-                filtered_logs.c.account_id.label("account_id"),
-                Account.email.label("email"),
-                deleted_expr.label("is_deleted"),
-                func.coalesce(func.sum(filtered_logs.c.cost_usd), 0.0).label("cost_usd"),
-            )
-            .select_from(filtered_logs.outerjoin(Account, Account.id == filtered_logs.c.account_id))
-            .group_by(filtered_logs.c.account_id, Account.email, deleted_expr)
-            .cte("usage_grouped")
-        )
-        stmt = select(
-            usage_totals.c.total_requests,
-            usage_totals.c.total_input_tokens,
-            usage_totals.c.total_output_tokens,
-            usage_totals.c.cached_input_tokens,
-            usage_totals.c.total_cost_usd,
-            usage_grouped.c.account_id,
-            usage_grouped.c.email,
-            usage_grouped.c.is_deleted,
-            usage_grouped.c.cost_usd,
-        ).select_from(usage_totals.outerjoin(usage_grouped, true()))
-        result = await self._session.execute(stmt)
-        rows = result.all()
-        row = rows[0]
-        input_sum = int(row.total_input_tokens or 0)
-        output_sum = int(row.total_output_tokens or 0)
-        cached_sum = int(row.cached_input_tokens or 0)
-        cached_sum = max(0, min(cached_sum, input_sum))
-        return ApiKeyUsageTotals(
-            total_requests=int(row.total_requests),
-            total_tokens=input_sum + output_sum,
-            cached_input_tokens=cached_sum,
-            total_cost_usd=round(float(row.total_cost_usd or 0.0), 6),
-            account_costs=self._build_account_costs(rows),
-        )
+        return await read_api_key_usage_window(self._session, key_id, since, until)

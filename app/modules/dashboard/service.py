@@ -18,6 +18,8 @@ from app.modules.dashboard.builders import (
 )
 from app.modules.dashboard.repository import DashboardRepository
 from app.modules.dashboard.schemas import (
+    DashboardMetricsComparison,
+    DashboardMetricsComparisonPrevious,
     DashboardOverviewResponse,
     DashboardOverviewTimeframeKey,
     DashboardProjectionsResponse,
@@ -40,7 +42,12 @@ from app.modules.usage.depletion_service import (
 from app.modules.usage.mappers import usage_history_to_window_row
 
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
+
+
 _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
+
+
+_PROJECTION_HISTORY_PER_ACCOUNT_ROW_CAP = 4320
 
 
 def _parse_weekly_pace_working_days(value: str) -> set[int]:
@@ -114,23 +121,35 @@ class DashboardService:
             overview_timeframe.bucket_seconds,
             exclude_canceled_subscription_accounts=True,
         )
+        conversation_bucket_rows = await self._repo.aggregate_conversations_by_bucket(
+            bucket_query_since,
+            overview_timeframe.bucket_seconds,
+            exclude_canceled_subscription_accounts=True,
+        )
         trends, _, _ = build_trends_from_buckets(
             bucket_rows,
             bucket_since,
             bucket_seconds=overview_timeframe.bucket_seconds,
             bucket_count=overview_timeframe.bucket_count,
+            conversation_rows=conversation_bucket_rows,
         )
-        activity_aggregate = await self._repo.aggregate_activity_since(
-            bucket_since,
-            exclude_canceled_subscription_accounts=True,
-        )
-        top_error = await self._repo.top_error_since(
-            bucket_since,
-            exclude_canceled_subscription_accounts=True,
-        )
+        previous_window_start = bucket_since - timedelta(minutes=overview_timeframe.window_minutes)
+        activity_aggregate = await self._repo.aggregate_activity_between(bucket_since, now, exclude_canceled_subscription_accounts=True)
+        previous_activity_aggregate = await self._repo.aggregate_activity_between(previous_window_start, bucket_since, exclude_canceled_subscription_accounts=True)
+        top_error = await self._repo.top_error_between(bucket_since, now, exclude_canceled_subscription_accounts=True)
+        earliest_activity_at = await self._repo.earliest_activity_at()
         activity_metrics, activity_cost = build_activity_summaries(
             activity_aggregate,
             top_error=top_error,
+        )
+        previous_metrics, previous_cost = build_activity_summaries(previous_activity_aggregate)
+        comparison = DashboardMetricsComparison(
+            canCompare=earliest_activity_at is not None and earliest_activity_at <= previous_window_start,
+            previous=DashboardMetricsComparisonPrevious(
+                requests=previous_metrics.requests or 0,
+                tokens=previous_metrics.tokens or 0,
+                costUsd=previous_cost.total_usd,
+            ),
         )
 
         summary = build_dashboard_overview_summary(
@@ -139,6 +158,7 @@ class DashboardService:
             secondary_rows=secondary_rows,
             activity_metrics=activity_metrics,
             activity_cost=activity_cost,
+            comparison=comparison,
         )
 
         secondary_minutes = usage_core.resolve_window_minutes("secondary", secondary_rows)
@@ -194,11 +214,13 @@ class DashboardService:
             encryptor=self._encryptor,
             include_auth=False,
         )
+        dashboard_settings = await self._repo.get_settings()
         primary_history, secondary_history = await _load_projection_histories(
             self._repo,
             primary_usage,
             secondary_usage,
             now,
+            smoothing_window_minutes=dashboard_settings.weekly_pace_smoothing_minutes,
         )
         pri_depletion, sec_depletion, pri_by_provider, sec_by_provider = _build_depletion_by_window(
             primary_history,
@@ -208,7 +230,6 @@ class DashboardService:
             emails_by_account={account.id: account.email for account in accounts},
         )
         settings = get_settings()
-        dashboard_settings = await self._repo.get_settings()
         weekly_credit_pace = build_weekly_credit_pace(
             accounts=accounts,
             account_summaries=account_summaries,
@@ -216,6 +237,7 @@ class DashboardService:
             now=now,
             usage_refresh_interval_seconds=settings.usage_refresh_interval_seconds,
             working_days=_parse_weekly_pace_working_days(dashboard_settings.weekly_pace_working_days),
+            smoothing_window_minutes=dashboard_settings.weekly_pace_smoothing_minutes,
         )
         return DashboardProjectionsResponse(
             depletion_primary=pri_depletion,
@@ -231,8 +253,11 @@ async def _load_projection_histories(
     primary_usage: dict[str, UsageHistory],
     secondary_usage: dict[str, UsageHistory],
     now: datetime,
+    *,
+    smoothing_window_minutes: int,
 ) -> tuple[dict[str, list[UsageHistory]], dict[str, list[UsageHistory]]]:
-
+    # Compute depletion separately for primary-window and secondary-window
+    # accounts so the aggregate is not skewed by mixing different window durations.
     primary_rows_raw = _rows_from_latest(primary_usage)
     secondary_rows_raw = _rows_from_latest(secondary_usage)
     primary_rows, _ = usage_core.normalize_weekly_only_rows(
@@ -242,6 +267,8 @@ async def _load_projection_histories(
     normalized_primary_ids = {row.account_id for row in primary_rows}
     all_account_ids = set(primary_usage.keys()) | set(secondary_usage.keys())
 
+    # Batch fetch: collect account IDs and determine the widest lookback per
+    # window so we can issue at most 2 bulk queries instead of O(N).
     pri_fetch_ids: list[str] = []
     sec_fetch_ids: list[str] = []
     pri_since = now
@@ -296,8 +323,35 @@ async def _load_projection_histories(
             if acct_since < sec_since:
                 sec_since = acct_since
 
-    all_pri_rows = await repo.bulk_usage_history_since(pri_fetch_ids, "primary", pri_since) if pri_fetch_ids else {}
-    all_sec_rows = await repo.bulk_usage_history_since(sec_fetch_ids, "secondary", sec_since) if sec_fetch_ids else {}
+    # The weekly-pace smoothing mean weighs every sample in its window
+    # equally, so rows inside the configured smoothing window are exempt from
+    # the row cap (ingestion writes per fingerprint change; a burst could
+    # otherwise out-write the cap and silently shift the smoothed values).
+    smoothing_floor = now - timedelta(minutes=smoothing_window_minutes)
+    all_pri_rows = (
+        await repo.bulk_usage_history_since(
+            pri_fetch_ids,
+            "primary",
+            pri_since,
+            cutoffs=pri_cutoffs,
+            per_account_row_cap=_PROJECTION_HISTORY_PER_ACCOUNT_ROW_CAP,
+            uncapped_recent_floor=smoothing_floor,
+        )
+        if pri_fetch_ids
+        else {}
+    )
+    all_sec_rows = (
+        await repo.bulk_usage_history_since(
+            sec_fetch_ids,
+            "secondary",
+            sec_since,
+            cutoffs=sec_cutoffs,
+            per_account_row_cap=_PROJECTION_HISTORY_PER_ACCOUNT_ROW_CAP,
+            uncapped_recent_floor=smoothing_floor,
+        )
+        if sec_fetch_ids
+        else {}
+    )
 
     primary_history: dict[str, list[UsageHistory]] = {}
     secondary_history: dict[str, list[UsageHistory]] = {}

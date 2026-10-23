@@ -9,7 +9,7 @@ from app.db.models import AccountStatus
 SECONDS_PER_DAY = 60 * 60 * 24
 SECONDS_PER_HOUR = 60 * 60
 SECONDS_PER_WEEK = 7 * SECONDS_PER_DAY
-UNKNOWN_RESET_BUCKET_DAYS = 10_000
+UNKNOWN_RESET_BUCKET_DAYS = 10000
 UNKNOWN_RESET_FALLBACK_SECONDS = 7 * SECONDS_PER_DAY
 RELATIVE_AVAILABILITY_MIN_DIVISOR_SECONDS = 5 * 60
 RELATIVE_AVAILABILITY_MIN_WEIGHT_FRACTION = 0.1
@@ -65,6 +65,7 @@ class AccountState:
     used_percent: float | None = None
     reset_at: float | None = None
     primary_reset_at: int | None = None
+    primary_window_minutes: int | None = None
     blocked_at: float | None = None
     cooldown_until: float | None = None
     secondary_used_percent: float | None = None
@@ -86,7 +87,6 @@ class AccountState:
     leased_tokens: float = 0.0
     routing_policy: str = ROUTING_POLICY_NORMAL
     ignore_standard_quota: bool = False
-
     raw_used_percent: float | None = None
     raw_secondary_used_percent: float | None = None
 
@@ -95,6 +95,8 @@ class AccountState:
 class SelectionResult:
     account: AccountState | None
     error_message: str | None
+    error_code: str | None = None
+    resets_at: int | None = None
     excluded_accounts: list[ExcludedAccount] = field(default_factory=list)
     retry_at: datetime | None = None
 

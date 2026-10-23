@@ -21,6 +21,7 @@ class OAuthState:
     provider: str = OPENAI_PROVIDER_NAME
     error_message: str | None = None
     state_token: str | None = None
+    intended_account_id: str | None = None
     code_verifier: str | None = None
     device_auth_id: str | None = None
     user_code: str | None = None
@@ -40,10 +41,8 @@ class OAuthStateStore:
         self._state_token_index: dict[str, str] = {}
         self._callback_server: OAuthCallbackServer | None = None
         self._callback_server_stop_task: asyncio.Task[None] | None = None
-
         self._callback_server_start_lock = asyncio.Lock()
         self._callback_server_bound_at: float | None = None
-
         self._callback_server_bind_tasks: set[asyncio.Task[None]] = set()
 
     @property
@@ -83,6 +82,7 @@ class OAuthStateStore:
             status=flow.status,
             method=flow.method,
             provider=flow.provider,
+            intended_account_id=flow.intended_account_id,
             error_message=flow.error_message,
             state_token=flow.state_token,
             code_verifier=flow.code_verifier,
@@ -104,13 +104,14 @@ class OAuthStateStore:
             self.prune_terminal_flows_locked()
 
     def pending_flow_ages_locked(self) -> list[float]:
-
         self.prune_expired_pending_browser_flows_locked()
         now = time.time()
         ages = sorted(
-            round(now - (flow.started_at or now), 1)
-            for flow in self._flows.values()
-            if flow.status == "pending" and (flow.expires_at is None or flow.expires_at > now)
+            (
+                round(now - (flow.started_at or now), 1)
+                for flow in self._flows.values()
+                if flow.status == "pending" and (flow.expires_at is None or flow.expires_at > now)
+            )
         )
         if not ages and (self._callback_server is not None or self._callback_server_stop_task is not None):
             ages = [round(now - (self._callback_server_bound_at or now), 1)]
@@ -118,7 +119,7 @@ class OAuthStateStore:
 
     def has_pending_browser_flows_locked(self) -> bool:
         self.prune_expired_pending_browser_flows_locked()
-        return any(flow.method == "browser" and flow.status == "pending" for flow in self._flows.values())
+        return any((flow.method == "browser" and flow.status == "pending" for flow in self._flows.values()))
 
     async def reset(self) -> None:
         server: OAuthCallbackServer | None = None
@@ -131,7 +132,7 @@ class OAuthStateStore:
     def _cleanup_locked(self, *, clear_callback_server: bool = True) -> OAuthCallbackServer | None:
         for flow in self._flows.values():
             task = flow.poll_task
-            if task and not task.done():
+            if task and (not task.done()):
                 task.cancel()
         server = self._callback_server
         if clear_callback_server:
@@ -150,7 +151,6 @@ class OAuthStateStore:
         extra_count = len(terminal_flows) - _MAX_RETAINED_TERMINAL_OAUTH_FLOWS
         if extra_count <= 0:
             return
-
         terminal_flows.sort(key=lambda flow: flow.finished_at or 0)
         for flow in terminal_flows[:extra_count]:
             self.remove_flow_locked(flow)
@@ -162,8 +162,8 @@ class OAuthStateStore:
             for flow in self._flows.values()
             if flow.method == "browser"
             and flow.status == "pending"
-            and flow.expires_at is not None
-            and flow.expires_at <= now
+            and (flow.expires_at is not None)
+            and (flow.expires_at <= now)
         ]
         for flow in expired_flows:
             self.remove_flow_locked(flow)
@@ -174,7 +174,7 @@ class OAuthStateStore:
         ]
         for flow in pending_device_flows:
             task = flow.poll_task
-            if task and not task.done():
+            if task and (not task.done()):
                 task.cancel()
             self.remove_flow_locked(flow)
 
@@ -191,19 +191,13 @@ class OAuthStateStore:
         if not self._flows:
             self._state = OAuthState(status="idle")
             return
-        latest_flow = max(
-            self._flows.values(),
-            key=lambda flow: flow.finished_at or flow.expires_at or 0,
-        )
+        latest_flow = max(self._flows.values(), key=lambda flow: flow.finished_at or flow.expires_at or 0)
         self.set_latest_flow_locked(latest_flow)
 
 
 class OAuthCallbackServer:
     def __init__(
-        self,
-        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
-        host: str = "127.0.0.1",
-        port: int = 1455,
+        self, handler: Callable[[web.Request], Awaitable[web.StreamResponse]], host: str = "127.0.0.1", port: int = 1455
     ) -> None:
         self._handler = handler
         self._host = host

@@ -12,7 +12,15 @@ from app.core.utils.time import from_epoch_seconds, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, UsageHistory
 from app.db.request_models import AccountLimitWarmup
 from app.modules.accounts.credits import OPENROUTER_CREDITS_QUOTA_KEY
-from app.modules.accounts.schemas import AccountAdditionalQuota, AccountAuthStatus, AccountFableScopedWeekly, AccountIdentityMismatch, AccountLimitWarmupStatus, AccountSubscriptionLedger, AccountTokenStatus  # noqa: I001  # fmt: skip
+from app.modules.accounts.schemas import (
+    AccountAdditionalQuota,
+    AccountAuthStatus,
+    AccountFableScopedWeekly,
+    AccountIdentityMismatch,
+    AccountLimitWarmupStatus,
+    AccountSubscriptionLedger,
+    AccountTokenStatus,
+)
 from app.modules.accounts.subscription_status import is_subscription_usable, normalize_subscription_status
 from app.modules.usage.additional_quota_keys import raw_model_ids_for_quota_key
 from app.modules.usage.identity_mismatch import get_identity_mismatch
@@ -24,7 +32,6 @@ _FABLE_SCOPED_FRESH_SECONDS = 21600
 
 
 def _duplicate_detection_keys_appearing_more_than_once(accounts: list[Account]) -> set[tuple[str, str, str | None]]:
-
     counts: dict[tuple[str, str, str | None], int] = {}
     for account in accounts:
         key = _duplicate_detection_key(account)
@@ -39,16 +46,14 @@ def _duplicate_detection_key(account: Account) -> tuple[str, str, str | None] | 
     chatgpt_account_id = account.chatgpt_account_id
     if not _is_duplicate_detection_email(email) or not chatgpt_account_id:
         return None
-    return email, chatgpt_account_id, account.workspace_id
+    return (email, chatgpt_account_id, account.workspace_id or account.workspace_label)
 
 
 def _is_duplicate_detection_email(email: str | None) -> bool:
     return bool(email and email.strip()) and email != DEFAULT_EMAIL
 
 
-def _openrouter_additional_quotas(
-    existing: list[AccountAdditionalQuota] | None,
-) -> list[AccountAdditionalQuota]:
+def _openrouter_additional_quotas(existing: list[AccountAdditionalQuota] | None) -> list[AccountAdditionalQuota]:
     model_ids = list(raw_model_ids_for_quota_key(OPENROUTER_CREDITS_QUOTA_KEY))
     quotas = list(existing or [])
     for index, quota in enumerate(quotas):
@@ -85,11 +90,11 @@ def _account_subscription_ledger(account: Account) -> AccountSubscriptionLedger 
     if (
         account.subscription_status is None
         and account.subscription_next_charge_at is None
-        and account.subscription_current_period_end_at is None
-        and account.subscription_amount is None
-        and account.subscription_currency is None
-        and account.subscription_last_verified_at is None
-        and account.subscription_notes is None
+        and (account.subscription_current_period_end_at is None)
+        and (account.subscription_amount is None)
+        and (account.subscription_currency is None)
+        and (account.subscription_last_verified_at is None)
+        and (account.subscription_notes is None)
     ):
         return None
     return AccountSubscriptionLedger(
@@ -110,11 +115,8 @@ def _normalize_account_routing_policy(value: str | None) -> str:
 
 
 def _fable_eligible(
-    account: Account,
-    secondary_used_percent: float | None,
-    fable_scoped_weekly: AdditionalUsageHistory | None = None,
+    account: Account, secondary_used_percent: float | None, fable_scoped_weekly: AdditionalUsageHistory | None = None
 ) -> bool | None:
-
     if account.provider != ANTHROPIC_PROVIDER_NAME:
         return None
     if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED):
@@ -131,10 +133,8 @@ def _fable_eligible(
 
 
 def _fable_scoped_weekly_summary(
-    account: Account,
-    fable_scoped_weekly: AdditionalUsageHistory | None,
+    account: Account, fable_scoped_weekly: AdditionalUsageHistory | None
 ) -> AccountFableScopedWeekly | None:
-
     if account.provider != ANTHROPIC_PROVIDER_NAME or fable_scoped_weekly is None:
         return None
     return AccountFableScopedWeekly(
@@ -186,15 +186,11 @@ def _effective_status_from_usage(
 ) -> AccountStatus:
     long_window_usage = monthly_usage or secondary_usage
     long_window_used_percent = monthly_used_percent if monthly_usage is not None else secondary_used_percent
-
     credit_override_enabled = account.provider != ANTHROPIC_PROVIDER_NAME
     if not credit_override_enabled:
-        credits_has, credits_unlimited, credits_balance = None, None, None
-    elif credits_has is None and credits_unlimited is None and credits_balance is None:
-        credits_has, credits_unlimited, credits_balance = _extract_credit_status(
-            primary_usage,
-            long_window_usage,
-        )
+        credits_has, credits_unlimited, credits_balance = (None, None, None)
+    elif credits_has is None and credits_unlimited is None and (credits_balance is None):
+        credits_has, credits_unlimited, credits_balance = _extract_credit_status(primary_usage, long_window_usage)
     status, _, _ = apply_usage_quota(
         status=status_seed,
         primary_used=primary_used_percent,
@@ -211,12 +207,10 @@ def _effective_status_from_usage(
         if runtime_reset is None and allow_missing_runtime_reset_recovery:
             return status
         if _has_credit_override(
-            credits_has=credits_has,
-            credits_unlimited=credits_unlimited,
-            credits_balance=credits_balance,
+            credits_has=credits_has, credits_unlimited=credits_unlimited, credits_balance=credits_balance
         ):
             return status
-        if account.blocked_at is None and account.reset_at is not None and account.reset_at <= utcnow().timestamp():
+        if account.blocked_at is None and account.reset_at is not None and (account.reset_at <= utcnow().timestamp()):
             return status
         return account.status
     if account.status == AccountStatus.QUOTA_EXCEEDED:
@@ -224,23 +218,18 @@ def _effective_status_from_usage(
         primary_exhausted = primary_used_percent is not None and primary_used_percent >= 100.0
         long_window_available = long_window_used_percent is not None and long_window_used_percent < 100.0
         runtime_reset_elapsed = runtime_reset is not None and runtime_reset <= now
-        if runtime_reset_elapsed and long_window_available and not primary_exhausted:
+        if runtime_reset_elapsed and long_window_available and (not primary_exhausted):
             return AccountStatus.ACTIVE
     return status
 
 
 def _has_credit_override(
-    *,
-    credits_has: bool | None,
-    credits_unlimited: bool | None,
-    credits_balance: float | None,
+    *, credits_has: bool | None, credits_unlimited: bool | None, credits_balance: float | None
 ) -> bool:
     from app.core.usage.quota import _has_credit_override as quota_has_credit_override
 
     return quota_has_credit_override(
-        credits_has=credits_has,
-        credits_unlimited=credits_unlimited,
-        credits_balance=credits_balance,
+        credits_has=credits_has, credits_unlimited=credits_unlimited, credits_balance=credits_balance
     )
 
 
@@ -269,27 +258,25 @@ def _usage_refresh_interval_seconds() -> int:
 
 
 def _effective_usage_windows(
-    primary_usage: UsageHistory | None,
-    secondary_usage: UsageHistory | None,
+    primary_usage: UsageHistory | None, secondary_usage: UsageHistory | None
 ) -> tuple[UsageHistory | None, UsageHistory | None]:
     if primary_usage is None:
-        return None, secondary_usage
+        return (None, secondary_usage)
     if not usage_core.is_weekly_window_minutes(primary_usage.window_minutes):
-        return primary_usage, secondary_usage
+        return (primary_usage, secondary_usage)
     if secondary_usage is None:
-        return None, primary_usage
+        return (None, primary_usage)
     if usage_core.should_use_weekly_primary(
         usage_history_to_window_row(primary_usage), usage_history_to_window_row(secondary_usage)
     ):
-        return None, primary_usage
-    return None, secondary_usage
+        return (None, primary_usage)
+    return (None, secondary_usage)
 
 
 def _build_auth_status(account: Account, encryptor: TokenEncryptor) -> AccountAuthStatus:
     access_token = _decrypt_token(encryptor, account.access_token_encrypted)
     refresh_token = _decrypt_token(encryptor, account.refresh_token_encrypted)
     id_token = _decrypt_token(encryptor, account.id_token_encrypted)
-
     access_expires = _token_expiry(access_token)
     refresh_state = "stored" if refresh_token else "missing"
     id_state = "unknown"
@@ -297,7 +284,6 @@ def _build_auth_status(account: Account, encryptor: TokenEncryptor) -> AccountAu
         claims = extract_id_token_claims(id_token)
         if claims.model_dump(exclude_none=True):
             id_state = "parsed"
-
     return AccountAuthStatus(
         access=AccountTokenStatus(expires_at=access_expires),
         refresh=AccountTokenStatus(state=refresh_state),
@@ -329,19 +315,14 @@ def _normalize_used_percent(entry: UsageHistory | None) -> float | None:
     return entry.used_percent
 
 
-def _extract_credit_status(
-    *entries: UsageHistory | None,
-) -> tuple[bool | None, bool | None, float | None]:
+def _extract_credit_status(*entries: UsageHistory | None) -> tuple[bool | None, bool | None, float | None]:
     credit_entries = [
         entry
         for entry in entries
         if entry is not None
-        and not (entry.credits_has is None and entry.credits_unlimited is None and entry.credits_balance is None)
+        and (not (entry.credits_has is None and entry.credits_unlimited is None and (entry.credits_balance is None)))
     ]
     if not credit_entries:
-        return None, None, None
-    entry = max(
-        credit_entries,
-        key=lambda item: item.recorded_at if item.recorded_at is not None else datetime.min,
-    )
-    return entry.credits_has, entry.credits_unlimited, entry.credits_balance
+        return (None, None, None)
+    entry = max(credit_entries, key=lambda item: item.recorded_at if item.recorded_at is not None else datetime.min)
+    return (entry.credits_has, entry.credits_unlimited, entry.credits_balance)

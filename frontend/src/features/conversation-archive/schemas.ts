@@ -5,12 +5,12 @@ export const ConversationArchiveFileSchema = z.object({
   date: z.string().nullable(),
   sizeBytes: z.number().int().nonnegative(),
   compressed: z.boolean(),
-  modifiedAt: z.string().datetime({ offset: true }),
+  modifiedAt: z.iso.datetime({ offset: true }),
 });
 
-export const ConversationArchiveRecordSchema = z.object({
+const ConversationArchiveRecordSchema = z.object({
   fileName: z.string().nullable().default(null),
-  timestamp: z.string().datetime({ offset: true }).nullable(),
+  timestamp: z.iso.datetime({ offset: true }).nullable(),
   requestId: z.string().nullable(),
   direction: z.string().nullable(),
   kind: z.string().nullable(),
@@ -32,4 +32,6 @@ export const ConversationArchiveRecordsResponseSchema = z.object({
 
 export type ConversationArchiveFile = z.infer<typeof ConversationArchiveFileSchema>;
 export type ConversationArchiveRecord = z.infer<typeof ConversationArchiveRecordSchema>;
-export type ConversationArchiveRecordsResponse = z.infer<typeof ConversationArchiveRecordsResponseSchema>;
+export type ConversationArchiveRecordsResponse = z.infer<
+  typeof ConversationArchiveRecordsResponseSchema
+>;

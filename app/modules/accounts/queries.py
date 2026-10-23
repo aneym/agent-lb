@@ -132,9 +132,17 @@ class AccountsQueries:
         self._reset_attempts: ResetCreditAttemptsRepository | None = None
 
     async def list_accounts(
-        self, *, include_request_usage: bool = False, owner_source_names: dict[str, str] | None = None
+        self,
+        *,
+        include_request_usage: bool = False,
+        owner_source_names: dict[str, str] | None = None,
+        account_ids: list[str] | None = None,
     ) -> list[AccountSummary]:
-        accounts = await self._repo.list_accounts()
+        accounts = (
+            await self._repo.list_accounts_by_ids(account_ids)
+            if account_ids is not None
+            else await self._repo.list_accounts()
+        )
         if not accounts:
             return []
         account_ids = [account.id for account in accounts]
@@ -276,7 +284,7 @@ class AccountsQueries:
         return result
 
     async def get_account_trends(self, account_id: str) -> AccountTrendsResponse | None:
-        account = await self._repo.get_by_id(account_id)
+        account = await self._get_visible_account(account_id)
         if not account or not self._usage_repo:
             return None
         now = utcnow()

@@ -5,7 +5,11 @@ import logging
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse
 
-from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
+from app.core.auth.dependencies import (
+    require_dashboard_write_access,
+    set_dashboard_error_format,
+    validate_dashboard_session,
+)
 from app.core.clients.oauth import OAuthError
 from app.core.config.settings import get_settings
 from app.core.errors import dashboard_error
@@ -44,6 +48,7 @@ def _require_oauth_owner() -> None:
 @router.post("/start", response_model=OauthStartResponse)
 async def start_oauth(
     request: OauthStartRequest,
+    _write_access=Depends(require_dashboard_write_access),
     context: OauthContext = Depends(get_oauth_context),
 ) -> OauthStartResponse | JSONResponse:
     _require_oauth_owner()
@@ -72,6 +77,7 @@ async def oauth_status(
 @router.post("/complete", response_model=OauthCompleteResponse)
 async def complete_oauth(
     request: OauthCompleteRequest | None = Body(default=None),
+    _write_access=Depends(require_dashboard_write_access),
     context: OauthContext = Depends(get_oauth_context),
 ) -> OauthCompleteResponse | JSONResponse:
     _require_oauth_owner()
@@ -87,6 +93,7 @@ async def complete_oauth(
 @router.post("/manual-callback", response_model=ManualCallbackResponse)
 async def manual_callback(
     request: ManualCallbackRequest,
+    _write_access=Depends(require_dashboard_write_access),
     context: OauthContext = Depends(get_oauth_context),
 ) -> ManualCallbackResponse | JSONResponse:
     _require_oauth_owner()

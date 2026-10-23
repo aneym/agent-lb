@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib
-import logging
+import time
 from dataclasses import dataclass, field
 from datetime import timezone
-from typing import AsyncIterator, Protocol, cast
+from typing import cast
 
 from app.core.audit.service import AuditDetails, AuditService
 from app.core.auth.refresh import RefreshError
@@ -14,9 +14,38 @@ from app.core.balancer import TOKENS_LOST_REASON
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME, OPENAI_PROVIDER_NAME
-from app.core.usage import capacity_for_plan
+from app.core.usage.refresh_leader import UsageLeaderRefresh as UsageLeaderRefresh
+from app.core.usage.refresh_recovery import _BLOCK_RESET_MATCH_TOLERANCE_SECONDS as _BLOCK_RESET_MATCH_TOLERANCE_SECONDS
+from app.core.usage.refresh_recovery import _RECOVERABLE_ACCOUNT_STATUSES as _RECOVERABLE_ACCOUNT_STATUSES
+from app.core.usage.refresh_recovery import _T as _T
+from app.core.usage.refresh_recovery import _background_accounts_repo as _background_accounts_repo
+from app.core.usage.refresh_recovery import _BackgroundLimitWarmupRepository as _BackgroundLimitWarmupRepository
+from app.core.usage.refresh_recovery import _BackgroundRequestLogsRepository as _BackgroundRequestLogsRepository
+from app.core.usage.refresh_recovery import (
+    _confirmed_free_monthly_reset_recovery as _confirmed_free_monthly_reset_recovery,
+)
+from app.core.usage.refresh_recovery import _invalidate_usage_refresh_caches as _invalidate_usage_refresh_caches
+from app.core.usage.refresh_recovery import (
+    _latest_confirmed_reset_transition_after_baseline as _latest_confirmed_reset_transition_after_baseline,
+)
+from app.core.usage.refresh_recovery import _LatestUsageRepository as _LatestUsageRepository
+from app.core.usage.refresh_recovery import _LeaderElectionLike as _LeaderElectionLike
+from app.core.usage.refresh_recovery import _MonthlyResetEvidence as _MonthlyResetEvidence
+from app.core.usage.refresh_recovery import _openai_accounts as _openai_accounts
+from app.core.usage.refresh_recovery import _ordered_usage_refresh_accounts as _ordered_usage_refresh_accounts
+from app.core.usage.refresh_recovery import _RecoverableAccountsRepository as _RecoverableAccountsRepository
+from app.core.usage.refresh_recovery import _resolve_monthly_reset_evidence as _resolve_monthly_reset_evidence
+from app.core.usage.refresh_recovery import _select_long_window_entries as _select_long_window_entries
+from app.core.usage.refresh_recovery import _select_long_window_entry as _select_long_window_entry
+from app.core.usage.refresh_recovery import _usage_refresh_accounts as _usage_refresh_accounts
+from app.core.usage.refresh_recovery import _usage_refresh_slice_seconds as _usage_refresh_slice_seconds
+from app.core.usage.refresh_recovery import _warmup_eligible_accounts as _warmup_eligible_accounts
+from app.core.usage.refresh_recovery import logger as logger
+from app.core.usage.refresh_recovery import (
+    reconcile_recoverable_account_statuses as reconcile_recoverable_account_statuses,
+)
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts.auth_manager import (
     AuthManager,
@@ -29,7 +58,6 @@ from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.limit_warmup.service import LimitWarmupService, StreamingLimitWarmupSender
 from app.modules.proxy.account_cache import get_account_selection_cache
-from app.modules.proxy.load_balancer import background_recovery_state_from_account
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.quota_planner.repository import QuotaPlannerRepository
 from app.modules.request_logs.repository import RequestLogsRepository
@@ -38,34 +66,6 @@ from app.modules.usage.refresh_rules import USAGE_REFRESH_SINGLEFLIGHT
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 from app.modules.usage.updater import UsageUpdater
 
-logger = logging.getLogger(__name__)
-
-_RECOVERABLE_ACCOUNT_STATUSES = frozenset({AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED})
-
-
-class _LeaderElectionLike(Protocol):
-    async def try_acquire(self) -> bool: ...
-
-
-class _RecoverableAccountsRepository(Protocol):
-    async def update_status_if_current(
-        self,
-        account_id: str,
-        status: AccountStatus,
-        deactivation_reason: str | None = None,
-        reset_at: int | None = None,
-        blocked_at: int | None | object = None,
-        *,
-        expected_status: AccountStatus,
-        expected_deactivation_reason: str | None = None,
-        expected_reset_at: int | None = None,
-        expected_blocked_at: int | None | object = None,
-    ) -> bool: ...
-
-
-class _LatestUsageRepository(Protocol):
-    async def latest_by_account(self, window: str | None = None) -> dict[str, UsageHistory]: ...
-
 
 def _get_leader_election() -> _LeaderElectionLike:
     module = importlib.import_module("app.core.scheduling.leader_election")
@@ -73,9 +73,10 @@ def _get_leader_election() -> _LeaderElectionLike:
 
 
 @dataclass(slots=True)
-class UsageRefreshScheduler:
+class UsageRefreshScheduler(UsageLeaderRefresh):
     interval_seconds: int
     enabled: bool
+    _next_account_index: int = 0
     _task: asyncio.Task[None] | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -83,7 +84,7 @@ class UsageRefreshScheduler:
     async def start(self) -> None:
         if not self.enabled:
             return
-        if self._task and not self._task.done():
+        if self._task and (not self._task.done()):
             return
         self._stop.clear()
         self._task = asyncio.create_task(self._run_loop())
@@ -99,15 +100,26 @@ class UsageRefreshScheduler:
 
     async def _run_loop(self) -> None:
         while not self._stop.is_set():
-            await self._refresh_once()
+            started_at = time.monotonic()
+            delay = await self._refresh_once()
+            remaining_delay = max(0.0, delay - (time.monotonic() - started_at))
+            if remaining_delay <= 0:
+                continue
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self.interval_seconds)
+                await asyncio.wait_for(self._stop.wait(), timeout=remaining_delay)
             except asyncio.TimeoutError:
                 continue
 
-    async def _refresh_once(self) -> None:
-        if not await _get_leader_election().try_acquire():
-            return
+    async def _refresh_once(self) -> float:
+        delay = await _get_leader_election().run_if_leader(self._refresh_cycle)
+        return float(self.interval_seconds) if delay is None else delay
+
+    async def _refresh_cycle(self) -> float:
+        has_anthropic_accounts = await self._refresh_fork_accounts()
+        delay = await self._refresh_as_leader()
+        return min(delay, 10.0) if has_anthropic_accounts else delay
+
+    async def _refresh_fork_accounts(self) -> bool:
         async with self._lock:
             audit_events: list[tuple[str, AuditDetails]] = []
             try:
@@ -118,10 +130,7 @@ class UsageRefreshScheduler:
                     settings_repo = SettingsRepository(session)
                     warmup_repo = LimitWarmupRepository(session)
                     request_logs_repo = RequestLogsRepository(session)
-                    before_primary = await usage_repo.latest_by_account(window="primary")
-                    before_secondary = await usage_repo.latest_by_account(window="secondary")
                     all_accounts = await accounts_repo.list_accounts()
-                    accounts = _usage_refresh_accounts(all_accounts)
                     uncertain_accounts = [
                         Account(**{column.key: getattr(account, column.key) for column in Account.__table__.columns})
                         for account in all_accounts
@@ -151,8 +160,7 @@ class UsageRefreshScheduler:
                                     }
                                     if result.outcome == "reset":
                                         logger.info(
-                                            "Uncertain exchange auto-reset account_id=%s attempt=%d "
-                                            "prior_replay=%s prior_reason=%s",
+                                            "Uncertain exchange auto-reset account_id=%s attempt=%d prior_replay=%s prior_reason=%s",
                                             account.id,
                                             result.attempt,
                                             result.prior_replay,
@@ -161,8 +169,7 @@ class UsageRefreshScheduler:
                                         audit_events.append(("account_exchange_auto_reset", details))
                                     elif result.outcome == "exhausted":
                                         logger.warning(
-                                            "Uncertain exchange auto-recovery exhausted account_id=%s; "
-                                            "exchange-reset or re-login needed",
+                                            "Uncertain exchange auto-recovery exhausted account_id=%s; exchange-reset or re-login needed",
                                             account.id,
                                         )
                                         audit_events.append(("account_exchange_auto_exhausted", details))
@@ -174,8 +181,7 @@ class UsageRefreshScheduler:
                                             expected_refresh_token_encrypted=account.refresh_token_encrypted,
                                         )
                                         logger.warning(
-                                            "Uncertain exchange tokens lost before saving account_id=%s provider=%s; "
-                                            "consumed refresh token not replayed, re-login required",
+                                            "Uncertain exchange tokens lost before saving account_id=%s provider=%s; consumed refresh token not replayed, re-login required",
                                             account.id,
                                             account.provider,
                                         )
@@ -191,51 +197,59 @@ class UsageRefreshScheduler:
                                 logger.warning(
                                     "Uncertain exchange recovery failed account_id=%s", account.id, exc_info=True
                                 )
-
-                        accounts = _usage_refresh_accounts(await accounts_repo.list_accounts(refresh_existing=True))
+                        all_accounts = await accounts_repo.list_accounts(refresh_existing=True)
+                    accounts = [a for a in all_accounts if a.provider == ANTHROPIC_PROVIDER_NAME]
+                    if not accounts:
+                        return False
+                    account_ids = [a.id for a in accounts]
+                    before_primary = await usage_repo.latest_by_account(window="primary", account_ids=account_ids)
+                    before_secondary = await usage_repo.latest_by_account(window="secondary", account_ids=account_ids)
                     updater = UsageUpdater(usage_repo, accounts_repo, additional_usage_repo)
                     now_epoch = utcnow().replace(tzinfo=timezone.utc).timestamp()
                     near_anthropic_reset = any(
-                        account.provider == ANTHROPIC_PROVIDER_NAME
-                        and is_subscription_usable(account)
-                        and account.limit_warmup_enabled
-                        and account.status in {AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED}
-                        and (entry := before_primary.get(account.id)) is not None
-                        and entry.reset_at is not None
-                        and now_epoch - 60 <= entry.reset_at <= now_epoch + 180
-                        for account in accounts
+                        (
+                            account.provider == ANTHROPIC_PROVIDER_NAME
+                            and is_subscription_usable(account)
+                            and account.limit_warmup_enabled
+                            and (account.status in {AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED})
+                            and ((entry := before_primary.get(account.id)) is not None)
+                            and (entry.reset_at is not None)
+                            and (now_epoch - 60 <= entry.reset_at <= now_epoch + 180)
+                            for account in accounts
+                        )
                     )
                     for account in accounts:
                         entry = before_primary.get(account.id)
                         if (
                             account.provider == ANTHROPIC_PROVIDER_NAME
                             and is_subscription_usable(account)
-                            and entry is not None
-                            and entry.reset_at is not None
-                            and entry.reset_at + 3 <= now_epoch
-                            and entry.recorded_at.replace(tzinfo=timezone.utc).timestamp() < entry.reset_at + 3
+                            and (entry is not None)
+                            and (entry.reset_at is not None)
+                            and (entry.reset_at + 3 <= now_epoch)
+                            and (entry.recorded_at.replace(tzinfo=timezone.utc).timestamp() < entry.reset_at + 3)
                         ):
                             await updater.force_refresh(account)
-
                     ordinary_usage_written = False
                     if not near_anthropic_reset:
                         ordinary_usage_written = await updater.refresh_accounts(
-                            accounts, await usage_repo.latest_by_account(window="primary")
+                            accounts, await usage_repo.latest_by_account(window="primary", account_ids=account_ids)
                         )
-                    after_primary = await usage_repo.latest_by_account(window="primary")
-                    after_secondary = await usage_repo.latest_by_account(window="secondary")
+                    after_primary = await usage_repo.latest_by_account(window="primary", account_ids=account_ids)
+                    after_secondary = await usage_repo.latest_by_account(window="secondary", account_ids=account_ids)
                     anthropic_standard = await additional_usage_repo.latest_by_account("anthropic_standard", "primary")
-                    refreshed_accounts = _usage_refresh_accounts(
-                        await accounts_repo.list_accounts(refresh_existing=True),
-                    )
+                    refreshed_accounts = [
+                        a
+                        for a in await accounts_repo.list_accounts(refresh_existing=True)
+                        if a.provider == ANTHROPIC_PROVIDER_NAME
+                    ]
                     await reconcile_recoverable_account_statuses(
-                        accounts_repo=accounts_repo,
-                        usage_repo=usage_repo,
-                        accounts=refreshed_accounts,
+                        accounts_repo=accounts_repo, usage_repo=usage_repo, accounts=refreshed_accounts
                     )
-                    refreshed_accounts = _usage_refresh_accounts(
-                        await accounts_repo.list_accounts(refresh_existing=True),
-                    )
+                    refreshed_accounts = [
+                        a
+                        for a in await accounts_repo.list_accounts(refresh_existing=True)
+                        if a.provider == ANTHROPIC_PROVIDER_NAME
+                    ]
                     warmup_accounts = _warmup_eligible_accounts(refreshed_accounts)
                     if not ordinary_usage_written:
                         warmup_accounts = [
@@ -261,8 +275,7 @@ class UsageRefreshScheduler:
                             warmup_repo,
                             request_logs_repo,
                             sender=StreamingLimitWarmupSender(
-                                accounts_repo,
-                                accounts_repo_factory=_background_accounts_repo,
+                                accounts_repo, accounts_repo_factory=_background_accounts_repo
                             ),
                             confirm_anthropic_prime=confirm_anthropic_prime,
                         )
@@ -283,99 +296,20 @@ class UsageRefreshScheduler:
             finally:
                 for action, details in audit_events:
                     AuditService.log_async(action, details=details)
+        return True
+
+    def _select_next_account(self, accounts: list[Account]) -> tuple[Account | None, bool]:
+        if not accounts:
+            self._next_account_index = 0
+            return (None, True)
+        index = self._next_account_index % len(accounts)
+        next_index = (index + 1) % len(accounts)
+        self._next_account_index = next_index
+        return (accounts[index], next_index == 0)
 
 
 def build_usage_refresh_scheduler() -> UsageRefreshScheduler:
     settings = get_settings()
     return UsageRefreshScheduler(
-        interval_seconds=min(settings.usage_refresh_interval_seconds, 10),
-        enabled=settings.usage_refresh_enabled,
+        interval_seconds=min(settings.usage_refresh_interval_seconds, 10), enabled=settings.usage_refresh_enabled
     )
-
-
-def _openai_accounts(accounts: list[Account]) -> list[Account]:
-    return [account for account in accounts if account.provider == OPENAI_PROVIDER_NAME]
-
-
-def _usage_refresh_accounts(accounts: list[Account]) -> list[Account]:
-    return [account for account in accounts if account.provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME}]
-
-
-def _warmup_eligible_accounts(accounts: list[Account]) -> list[Account]:
-
-    return [account for account in accounts if account.provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME}]
-
-
-@contextlib.asynccontextmanager
-async def _background_accounts_repo() -> AsyncIterator[AccountsRepository]:
-    async with get_background_session() as session:
-        yield AccountsRepository(session)
-
-
-async def reconcile_recoverable_account_statuses(
-    *,
-    accounts_repo: _RecoverableAccountsRepository,
-    usage_repo: _LatestUsageRepository,
-    accounts: list[Account],
-) -> int:
-    candidates = [account for account in accounts if account.status in _RECOVERABLE_ACCOUNT_STATUSES]
-    if not candidates:
-        return 0
-
-    latest_primary = await usage_repo.latest_by_account(window="primary")
-    latest_secondary = await usage_repo.latest_by_account(window="secondary")
-    latest_monthly = await usage_repo.latest_by_account(window="monthly")
-
-    recovered = 0
-    for account in candidates:
-        state = background_recovery_state_from_account(
-            account=account,
-            primary_entry=latest_primary.get(account.id),
-            secondary_entry=_select_long_window_entry(
-                account=account,
-                monthly_entry=latest_monthly.get(account.id),
-                secondary_entry=latest_secondary.get(account.id),
-            ),
-        )
-        if state.status != AccountStatus.ACTIVE:
-            continue
-        reset_at = int(state.reset_at) if state.reset_at else None
-        blocked_at = int(state.blocked_at) if state.blocked_at else None
-        deactivation_reason = None
-        if (
-            state.status == account.status
-            and deactivation_reason == account.deactivation_reason
-            and reset_at == account.reset_at
-            and blocked_at == account.blocked_at
-        ):
-            continue
-        updated = await accounts_repo.update_status_if_current(
-            account.id,
-            state.status,
-            deactivation_reason,
-            reset_at,
-            blocked_at=blocked_at,
-            expected_status=account.status,
-            expected_deactivation_reason=account.deactivation_reason,
-            expected_reset_at=account.reset_at,
-            expected_blocked_at=account.blocked_at,
-        )
-        if not updated:
-            continue
-        account.status = state.status
-        account.deactivation_reason = deactivation_reason
-        account.reset_at = reset_at
-        account.blocked_at = blocked_at
-        recovered += 1
-    return recovered
-
-
-def _select_long_window_entry(
-    *,
-    account: Account,
-    monthly_entry: UsageHistory | None,
-    secondary_entry: UsageHistory | None,
-) -> UsageHistory | None:
-    if monthly_entry is not None and capacity_for_plan(account.plan_type, "monthly") is not None:
-        return monthly_entry
-    return secondary_entry

@@ -1,9 +1,14 @@
 import app.db.access_models  # noqa: F401
 import app.db.account_state_models  # noqa: F401
+import app.db.automation_models  # noqa: F401
+import app.db.bridge_operation_models  # noqa: F401
 import app.db.federation_models  # noqa: F401
 import app.db.model_indexes  # noqa: F401
 import app.db.models  # noqa: F401
+import app.db.oauth_state_models  # noqa: F401
 import app.db.quota_models  # noqa: F401
 import app.db.request_models  # noqa: F401
+import app.db.rollup_models  # noqa: F401
 import app.db.session_models  # noqa: F401
 import app.db.settings_models  # noqa: F401
+import app.db.source_models  # noqa: F401
