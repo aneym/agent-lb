@@ -16,6 +16,21 @@ describe("AccountListItem", () => {
     vi.useRealTimers();
   });
 
+  it.each([
+    ["studio", "Owner: studio"],
+    ["peer-instance", "Owner: peer-instance"],
+    [null, "Owner: Local"],
+    [undefined, "Owner: Local"],
+  ])("shows the owning instance for %s", (ownerInstance, label) => {
+    const account = createAccountSummary({ ownerInstance });
+
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
+
+    expect(screen.getByText(label)).toBeVisible();
+  });
+
   it("renders the full email as the row title", () => {
     const account = createAccountSummary();
 

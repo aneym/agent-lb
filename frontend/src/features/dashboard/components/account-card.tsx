@@ -1,3 +1,4 @@
+import { OwnerInstanceBadge } from "@/features/accounts/components/owner-instance-badge";
 import { ExternalLink, Play, RotateCcw, Zap } from "lucide-react";
 
 import { usePrivacyStore } from "@/hooks/use-privacy";
@@ -136,6 +137,8 @@ export function AccountCard({
         </div>
         <StatusGlyph status={account.status} className="shrink-0" />
       </div>
+
+      <OwnerInstanceBadge ownerInstance={account.ownerInstance} />
 
       {/* Quota bars */}
       <div

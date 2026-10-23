@@ -1,3 +1,4 @@
+import { OwnerInstanceBadge } from "@/features/accounts/components/owner-instance-badge";
 import { ShieldCheck, User } from "lucide-react";
 
 import { StatusGlyph } from "@/components/ui/status-glyph";
@@ -141,6 +142,7 @@ export function AccountDetail({
         <p className="text-xs text-muted-foreground">
           {contextParts.join(" · ")}
         </p>
+        <OwnerInstanceBadge ownerInstance={account.ownerInstance} />
         <AccountAliasForm
           account={account}
           busy={busy}
