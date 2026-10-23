@@ -29,7 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import usage as usage_core
-from app.core.anthropic.models import AnthropicMessageRequest
+from app.core.anthropic.models import AnthropicMessageRequest, AnthropicServerToolDefinition
 from app.core.audit.service import AuditService
 from app.core.auth.dependencies import (
     set_openai_error_format,
@@ -816,6 +816,13 @@ async def v1_ccdex_messages(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
     """Run Claude Code's Messages protocol through the locked Codex Sol profile."""
+    for tool in payload.tools or []:
+        if isinstance(tool, AnthropicServerToolDefinition):
+            return _anthropic_error_response(
+                400,
+                "invalid_request_error",
+                f"Anthropic server tool '{tool.type}' ({tool.name}) is not supported by the Codex bridge",
+            )
     responses_payload = claude_to_responses(payload)
     forwarded_headers = {
         key: value

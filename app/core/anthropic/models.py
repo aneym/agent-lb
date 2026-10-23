@@ -75,9 +75,17 @@ class AnthropicToolChoice(BaseModel):
 class AnthropicToolDefinition(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    type: Literal["custom"] | None = None
     name: StrictStr
     description: StrictStr | None = None
     input_schema: JsonObject
+
+
+class AnthropicServerToolDefinition(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: StrictStr = Field(pattern=r"^[a-z][a-z0-9_]*_[0-9]{8}$")
+    name: StrictStr
 
 
 class AnthropicMessageRequest(BaseModel):
@@ -94,7 +102,7 @@ class AnthropicMessageRequest(BaseModel):
     temperature: StrictFloat | StrictInt | None = None
     thinking: JsonObject | None = None
     tool_choice: AnthropicToolChoice | None = None
-    tools: list[AnthropicToolDefinition] | None = None
+    tools: list[AnthropicToolDefinition | AnthropicServerToolDefinition] | None = None
     top_k: StrictInt | None = None
     top_p: StrictFloat | StrictInt | None = None
 
