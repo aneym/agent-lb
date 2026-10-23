@@ -816,6 +816,15 @@ async def v1_ccdex_messages(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
     """Run Claude Code's Messages protocol through the locked Codex Sol profile."""
+    # The Codex bridge only translates custom function tools. Fail closed on an
+    # Anthropic server tool rather than drop it and answer without it.
+    server_tools = sorted({tool.type or tool.name for tool in payload.tools or [] if tool.is_server_tool})
+    if server_tools:
+        return _anthropic_error_response(
+            400,
+            "invalid_request_error",
+            f"Server tools are not supported on the Codex bridge: {', '.join(server_tools)}",
+        )
     responses_payload = claude_to_responses(payload)
     forwarded_headers = {
         key: value

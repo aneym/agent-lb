@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, model_validator
 
 from app.core.types import JsonObject
 
@@ -72,12 +72,30 @@ class AnthropicToolChoice(BaseModel):
     disable_parallel_tool_use: StrictBool | None = None
 
 
+CUSTOM_TOOL_TYPE = "custom"
+
+
 class AnthropicToolDefinition(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    # Custom (client) tools omit `type` or send "custom" and must carry an
+    # input_schema. Anthropic-defined server tools send a versioned type such as
+    # "web_search_20250305" plus tool-specific fields and no input_schema; those
+    # pass through to Anthropic unchanged.
+    type: StrictStr | None = None
     name: StrictStr
     description: StrictStr | None = None
-    input_schema: JsonObject
+    input_schema: JsonObject | None = None
+
+    @model_validator(mode="after")
+    def _require_schema_for_custom_tools(self) -> AnthropicToolDefinition:
+        if not self.is_server_tool and self.input_schema is None:
+            raise ValueError("input_schema is required for custom tools")
+        return self
+
+    @property
+    def is_server_tool(self) -> bool:
+        return self.type is not None and self.type != CUSTOM_TOOL_TYPE
 
 
 class AnthropicMessageRequest(BaseModel):
