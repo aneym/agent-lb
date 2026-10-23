@@ -215,7 +215,14 @@ def resolve(open_dispatches: list, digests: list, names: list, seat: str):
         if candidates:
             # Several open dispatches with one prompt and no telling name: any pick
             # may be the sibling's, so say so rather than claim an exact join.
-            return candidates[0], "prompt_hash" if len(candidates) == 1 else "prompt_hash_ambiguous"
+            if len(candidates) == 1:
+                return candidates[0], "prompt_hash"
+            shared = {}
+            for key in ("task_class", "subagent_type", "model"):
+                value = candidates[0].get(key)
+                if all(record.get(key) == value for record in candidates):
+                    shared[key] = value
+            return shared, "prompt_hash_ambiguous"
     for name in names:
         for record in reversed(open_dispatches):
             if name and str(record.get("name") or "").lower() == name.lower():
@@ -242,7 +249,7 @@ def match(records: list, session_id, agent_type: str, agent_name: str, digests: 
         if record.get("event") == "dispatch" and not record.get("denied"):
             open_dispatches.append(record)
         elif record.get("event") == "closeout":
-            if record.get("match") == "prompt_hash_ambiguous":
+            if record.get("match") == "prompt_hash_ambiguous" and record.get("matched") is False:
                 # It claimed no dispatch, so replaying it must not close one either.
                 continue
             closed, _ = resolve(
@@ -283,8 +290,7 @@ def main() -> None:
     dispatch, how = match(tail(), session_id, agent_type, agent_name, digests)
     shared = None
     if how == "prompt_hash_ambiguous":
-        # Siblings with one prompt share class, seat and model, but which of them
-        # stopped is unknown: keep those shared facts and attribute to none of them.
+        # Keep only facts shared by every sibling and attribute to none of them.
         shared, dispatch = dispatch, None
     ok = bool(last.strip()) and not FAILURE.search(last)
     record = {
@@ -295,7 +301,11 @@ def main() -> None:
         # dispatch had one. The seat, model and class are the dispatch's own, so
         # S3's `route report` can group closeouts by seat at all.
         "agent_type": agent_type or None,
-        "subagent_type": (dispatch or shared or {}).get("subagent_type") or agent_type.lower() or None,
+        "subagent_type": (
+            shared.get("subagent_type")
+            if shared is not None
+            else (dispatch or {}).get("subagent_type") or agent_type.lower() or None
+        ),
         "name": (dispatch or {}).get("name") or agent_name or None,
         "agent_id": payload.get("agent_id"),
         "task_class": (dispatch or shared or {}).get("task_class"),
