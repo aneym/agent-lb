@@ -61,7 +61,7 @@ def _selection_failure(
             account_id=state.account_id,
             status=state.status.value,
             reset_at=_timestamp_as_utc(state.reset_at if state.reset_at is not None else state.primary_reset_at),
-            cooldown_until=_timestamp_as_utc(state.cooldown_until),
+            cooldown_until=_timestamp_as_utc(state.error_rule_cooldown_until or state.cooldown_until),
             deactivation_reason=state.deactivation_reason,
             plan_type=state.plan_type,
             transient_backoff_until=_timestamp_as_utc(
@@ -113,6 +113,7 @@ def select_account(
     current = now or time.time()
     available: list[AccountState] = []
     in_error_backoff: list[AccountState] = []
+    cooled: list[AccountState] = []
     all_states = list(states)
     bypass_account_ids = None if bypass_quota_exceeded_account_ids is None else set(bypass_quota_exceeded_account_ids)
 
@@ -139,12 +140,17 @@ def select_account(
                 state.reset_at = None
             elif not bypass_standard_quota:
                 continue
+        if state.error_rule_cooldown_until is not None:
+            if current < state.error_rule_cooldown_until:
+                continue
+            state.error_rule_cooldown_until = None
         if state.cooldown_until and current >= state.cooldown_until:
             state.cooldown_until = None
             state.last_error_at = None
             if state.blocked_at is None:
                 state.error_count = 0
         if state.cooldown_until and current < state.cooldown_until:
+            cooled.append(state)
             continue
         if state.error_count >= 3 and state.blocked_at is None:
             backoff = min(300, 30 * (2 ** (state.error_count - 3)))
@@ -163,8 +169,8 @@ def select_account(
         available = opportunistic_available
 
     if not available:
-        if allow_backoff_fallback and in_error_backoff:
-            available.append(min(in_error_backoff, key=lambda s: (s.error_count, s.last_error_at or 0.0)))
+        if allow_backoff_fallback and (in_error_backoff or cooled):
+            available.append(min(in_error_backoff + cooled, key=lambda s: (s.error_count, s.last_error_at or 0.0)))
             if traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC:
                 opportunistic_available, reason = _filter_opportunistic_candidates(available, current)
                 if not opportunistic_available:
@@ -213,7 +219,12 @@ def select_account(
                 if reset_candidates:
                     wait_seconds = max(0, min(reset_candidates) - int(current))
                     return _selection_failure(_format_retry_hint(wait_seconds), all_states, current=current)
-            cooldowns = [s.cooldown_until for s in all_states if s.cooldown_until and s.cooldown_until > current]
+            cooldowns = [
+                deadline
+                for s in all_states
+                for deadline in (s.error_rule_cooldown_until, s.cooldown_until)
+                if deadline and deadline > current
+            ]
             if cooldowns:
                 wait_seconds = max(0.0, min(cooldowns) - current)
                 return _selection_failure(_format_retry_hint(wait_seconds), all_states, current=current)

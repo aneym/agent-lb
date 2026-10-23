@@ -60,10 +60,45 @@ def serve() -> None:
     from app.core.forensics import register_stack_dump_signal
 
     register_stack_dump_signal(Path(os.environ["AGENT_LB_DATA_DIR"]) / "forensics")
-    uvicorn.run("app.main:app", host="127.0.0.1", port=int(sys.argv[2]), log_level="error", access_log=False)
+    from app.main import app
+
+    if os.environ.get("ERROR_RULES_STANDARD_COOLDOWN") == "1":
+        from contextlib import asynccontextmanager
+        from typing import AsyncIterator
+
+        from fastapi import FastAPI
+
+        from app.db.session import SessionLocal
+        from app.dependencies import get_anthropic_proxy_service_for_app
+        from app.modules.accounts.repository import AccountsRepository
+
+        lifespan = app.router.lifespan_context
+
+        @asynccontextmanager
+        async def with_cooldown(app: FastAPI) -> AsyncIterator[None]:
+            async with lifespan(app):
+                async with SessionLocal() as session:
+                    account = await AccountsRepository(session).get_by_id("error-rules-proof")
+                    if account is None:
+                        raise RuntimeError("proof account missing")
+                    balancer = get_anthropic_proxy_service_for_app(app)._load_balancer
+                    await balancer.cool_down(account, 60)
+                yield None
+
+        app.router.lifespan_context = with_cooldown
+    uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[2]), log_level="error", access_log=False)
 
 
-async def scenario(name, provider, upstream_status, error, expected, rules=(), cooldown_seconds: float | None = None):
+async def scenario(
+    name,
+    provider,
+    upstream_status,
+    error,
+    expected,
+    rules=(),
+    cooldown_seconds: float | None = None,
+    standard_cooldown: bool = False,
+):
     data = ROOT / ".local" / "error-rules" / name
     data.mkdir(parents=True, exist_ok=True)
     database = data / "store.db"
@@ -124,6 +159,7 @@ async def scenario(name, provider, upstream_status, error, expected, rules=(), c
         settings[f"{feature}_enabled"] = "false"
     env.update({f"AGENT_LB_{key.upper()}": value for key, value in settings.items()})
     env["ERROR_RULES_UPSTREAM_PORT"] = str(upstream_port)
+    env["ERROR_RULES_STANDARD_COOLDOWN"] = "1" if standard_cooldown else "0"
     env["NO_PROXY"] = "*"
     with (data / "server.log").open("w") as log:
         child = subprocess.Popen(
@@ -207,6 +243,15 @@ async def scenario(name, provider, upstream_status, error, expected, rules=(), c
 
 
 async def main():
+    await scenario(
+        "ordinary-cooldown-fallback",
+        "glm",
+        400,
+        {"code": "ordinary-proof"},
+        ("active", None),
+        [{"provider": "glm", "http_status": 400, "action": "fail_request", "reason": "selected upstream"}],
+        standard_cooldown=True,
+    )
     await scenario("glm-1113", "glm", 400, {"code": 1113}, ("paused", "balance_exhausted: 1113"))
     await scenario(
         "kimi-balance",

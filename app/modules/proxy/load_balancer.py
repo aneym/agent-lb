@@ -9,7 +9,7 @@ import time
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Iterable, Literal
+from typing import TYPE_CHECKING, Iterable
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,6 +67,7 @@ from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.request_policy import resolve_model_alias
+from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind, RuntimeState
 from app.modules.quota_planner.logic import PlannerSettings, build_routing_costs
 from app.modules.usage.additional_quota_keys import (
     canonicalize_additional_quota_key,
@@ -107,35 +108,6 @@ _ROUTING_POLICY_NORMAL = "normal"
 _ACCOUNT_ROUTING_POLICIES = frozenset({_ROUTING_POLICY_NORMAL, ROUTING_POLICY_BURN_FIRST, ROUTING_POLICY_PRESERVE})
 _ADDITIONAL_QUOTA_ROUTING_POLICIES = _ACCOUNT_ROUTING_POLICIES | frozenset({"inherit"})
 OPPORTUNISTIC_BURN_WINDOW_CLOSED = "opportunistic_burn_window_closed"
-
-AccountLeaseKind = Literal["response_create", "stream"]
-
-
-@dataclass
-class RuntimeState:
-    reset_at: float | None = None
-    cooldown_until: float | None = None
-    last_error_at: float | None = None
-    last_selected_at: float | None = None
-    error_count: int = 0
-    version: int = 0
-    blocked_at: float | None = None
-    health_tier: int = 0
-    drain_entered_at: float | None = None
-    probe_success_streak: int = 0
-    inflight_response_creates: int = 0
-    inflight_streams: int = 0
-    leased_tokens: float = 0.0
-    leases: dict[str, "AccountLease"] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class AccountLease:
-    lease_id: str
-    account_id: str
-    kind: AccountLeaseKind
-    acquired_at: float
-    estimated_tokens: float = 0.0
 
 
 @dataclass
@@ -1588,13 +1560,16 @@ class LoadBalancer:
                 await self._persist_state(repos.accounts, account, state)
             self._selection_inputs_cache.invalidate()
 
-    async def cool_down(self, account: Account, seconds: float) -> None:
+    async def cool_down(self, account: Account, seconds: float, *, error_rule: bool = False) -> None:
         async with await self._get_account_lock(account.id):
             state = self._state_for(account)
             now = time.time()
-            state.error_count += 1
-            state.last_error_at = now
-            state.cooldown_until = max(state.cooldown_until or 0.0, now + seconds)
+            if error_rule:
+                state.error_rule_cooldown_until = now + seconds
+            else:
+                state.error_count += 1
+                state.last_error_at = now
+                state.cooldown_until = max(state.cooldown_until or 0.0, now + seconds)
             self._sync_runtime_state(account, state)
             self._selection_inputs_cache.invalidate()
 
@@ -1638,6 +1613,7 @@ class LoadBalancer:
             primary_reset_at=None,
             blocked_at=float(account.blocked_at) if account.blocked_at is not None else runtime.blocked_at,
             cooldown_until=runtime.cooldown_until,
+            error_rule_cooldown_until=runtime.error_rule_cooldown_until,
             secondary_used_percent=None,
             secondary_reset_at=None,
             last_error_at=runtime.last_error_at,
@@ -1671,6 +1647,9 @@ class LoadBalancer:
             dirty = True
         if runtime.cooldown_until != state.cooldown_until:
             runtime.cooldown_until = state.cooldown_until
+            dirty = True
+        if runtime.error_rule_cooldown_until != state.error_rule_cooldown_until:
+            runtime.error_rule_cooldown_until = state.error_rule_cooldown_until
             dirty = True
         if runtime.blocked_at != state.blocked_at:
             runtime.blocked_at = state.blocked_at
@@ -2191,6 +2170,7 @@ def _state_from_account(
         primary_reset_at=primary_reset,
         blocked_at=next_blocked_at,
         cooldown_until=effective_cooldown_until,
+        error_rule_cooldown_until=runtime.error_rule_cooldown_until,
         secondary_used_percent=effective_secondary_used_percent,
         secondary_reset_at=secondary_reset,
         last_error_at=runtime.last_error_at,
