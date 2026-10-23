@@ -17,7 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.core.auth import generate_unique_account_id
 from app.core.cache.invalidation import NAMESPACE_RESET_CREDITS, CacheInvalidationPoller
@@ -399,15 +399,23 @@ async def test_dashboard_consume_outliving_the_lease_keeps_the_claim(async_clien
     await get_rate_limit_reset_credits_store().set(account_id, _snapshot([only]))
 
     request = asyncio.create_task(async_client.post(f"/api/accounts/{account_id}/rate-limit-reset-credits/consume"))
-    await asyncio.wait_for(consume_entered.wait(), timeout=10)
-
-    # Hold the critical section past the original 0.5s lease; a second
-    # process's takeover attempt must fail because the heartbeat renewed it.
-    await asyncio.sleep(1.0)
-    assert await try_acquire_redeem_claim(account_id, "intruder") is False
-
-    consume_release.set()
-    response = await request
+    try:
+        await asyncio.wait_for(consume_entered.wait(), timeout=10)
+        await asyncio.sleep(1.0)
+        async with SessionLocal() as session:
+            if session.get_bind().dialect.name == "postgresql":
+                # PostgreSQL uses a transaction advisory lock rather than
+                # SQLite's renewable claim row. Prove the active route holds it.
+                claimed = await session.scalar(
+                    text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                    {"key": f"reset-credit-redeem:{account_id}"},
+                )
+                assert claimed is False
+            else:
+                assert await try_acquire_redeem_claim(account_id, "intruder") is False
+    finally:
+        consume_release.set()
+        response = await asyncio.wait_for(request, timeout=10)
     assert response.status_code == 200, response.text
     assert consume_calls == ["credit-slow"]
 

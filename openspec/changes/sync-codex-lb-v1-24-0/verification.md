@@ -40,6 +40,7 @@ The final PR comment identifies the published commit and final run counts.
 | Frontend Vitest | 1,152 passed in 147 files |
 | Frontend frozen dependency install, typecheck and production build | Passed |
 | Built dashboard + real isolated FastAPI browser smoke | Passed, no API/page/console errors |
+| Consolidated floor candidate | 1,817 passed; 19 skipped; 3 expected failures; eight hook-dispatcher files and two original-fork policy tests excluded |
 | E2E | 27 passed; installed-Codex profile skipped by its explicit opt-in |
 | Proxy bridge suite extracted from the pinned release | All 640 cases passed across suite and harness retry |
 | Capability route suite | 152 passed |
@@ -53,7 +54,7 @@ The final PR comment identifies the published commit and final run counts.
 | Seeded SQLite fork upgrade | Account/provider/custody bytes, key/member, request attribution/cache counters, caps and settings preserved |
 | Empty and existing-fork PostgreSQL upgrades | Single head; migration policy passes; no schema drift; synthetic Anthropic account preserved |
 | Ruff application checks, compile and proxy architecture ratchets | Passed without relaxing ratchets |
-| Wheel and sdist | Built as 1.24.0; packaged static assets match the frontend build |
+| Wheel and sdist | Built as 1.24.0; packaged static assets match the frontend build; isolated wheel installation and CLI/migration help smoke passed |
 | Strict OpenSpec change validation | Passed |
 
 The full floor run and PostgreSQL concurrency run are recorded separately in the
@@ -67,10 +68,12 @@ It was not a run of the upstream suite unmodified.
 - `factory-lint` and `trivy` are absent. `local_ci.py doctor` fails, so there is
   no complete coordinator exact-SHA CI receipt. Frontend ESLint configuration
   is absent in this inherited tree; a passing full lint gate is not claimed.
-- Two policy tests fail unchanged at original fork `21582308`: the installer
+- Two policy tests failed unchanged at original fork `21582308`: the installer
   revision test cannot import `policy_files`, and the core obligation test
   expects the missing `rails merge path` text. Both failures were reproduced
-  from an isolated archive of the original commit.
+  from an isolated archive of the original commit. After merging current `main`,
+  the installer test passes; the remaining policy obligation failure persists
+  (post-merge focused policy/route suite: 35 passed, 1 failed).
 - Eight hook-dispatcher test files were omitted from the consolidated local
   floor run. An earlier installer/parity run spawned excessive child processes;
   these need an isolated runner with its policy infrastructure.

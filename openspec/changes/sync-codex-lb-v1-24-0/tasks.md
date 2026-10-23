@@ -38,7 +38,7 @@
 
 ## Remaining readiness gates
 
-- [ ] Resolve the two policy tests that also fail at the original fork commit.
+- [ ] Resolve the remaining core-policy obligation test; the installer test was fixed by the maintainer main update.
 - [ ] Run the eight hook-dispatcher test files on an isolated equipped runner.
 - [ ] Obtain the required cross-vendor custody/spend-cap review.
 - [ ] Review the imported file-size overages listed in `size-overages.tsv`.
