@@ -227,6 +227,9 @@ class SettingsFields(BaseSettings):
     images_default_model: str = "gpt-image-2"
     images_max_partial_images: int = Field(default=3, ge=0, le=3)
 
+    model_aliases: dict[str, str] = Field(default_factory=dict)
+    excluded_model_patterns: list[str] = Field(default_factory=list)
+
     model_registry_enabled: bool = True
     model_registry_refresh_interval_seconds: int = Field(default=300, gt=0)
     model_registry_client_version: str = "0.101.0"

@@ -48,6 +48,7 @@ def to_request_log_entry(log: RequestLog, *, api_key_name: str | None = None) ->
         request_id=log.request_id,
         request_kind=log.request_kind,
         model=log.model,
+        requested_model_alias=log.requested_model_alias,
         source=log.source,
         useragent=log.useragent,
         useragent_group=log.useragent_group,

@@ -13,6 +13,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.core.context_parts.capture import measured_parts
 from app.core.eval_guard import eval_guard_state
 from app.core.identity import RequestIdentity, identity_for_log
+from app.core.model_aliases import requested_model_alias
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
 from app.core.utils.client_session import get_caller_seat, get_client_session_id, get_dispatch_id, get_job_id, get_lane, get_room  # noqa: I001  # fmt: skip
 from app.core.utils.request_id import ensure_request_id
@@ -144,6 +145,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
             guard = eval_guard_state.get()
             log = RequestLog(
                 stripped_tools=json.dumps(guard.removed) if guard is not None and guard.removed else None,
+                requested_model_alias=requested_model_alias.get(),
                 account_id=account_id,
                 provider=provider,
                 api_key_id=api_key_id,

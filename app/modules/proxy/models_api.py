@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, Response, Security
 from fastapi.responses import JSONResponse
 
 from app.core.auth.dependencies import set_openai_error_format, validate_proxy_api_key
+from app.core.config.settings import get_settings
 from app.core.errors import openai_error
+from app.core.model_aliases import model_is_visible
 from app.core.openai.model_registry import get_model_registry, is_public_model
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy.schemas import ModelListItem, ModelListResponse
@@ -100,8 +102,21 @@ async def build_models_catalog(api_key: ApiKeyData | None) -> ModelListResponse:
                 }
             )
         )
+    items = [item for item in items if model_is_visible(item.id)]
+    by_id = {item.id: item for item in items}
+    for alias, target in get_settings().model_aliases.items():
+        if not model_is_visible(alias) or (allowed_models is not None and target not in allowed_models):
+            continue
+        if alias in by_id:
+            items = [item for item in items if item.id != alias]
+        entry = by_id.get(target, ModelListItem(id=target, created=created, owned_by="agent-lb"))
+        items.append(entry.model_copy(update={"id": alias, "target_model": target}))
     await _release_reservation(reservation)
     return ModelListResponse(
         data=items,
-        models=_codex_model_entries(models, allowed_models, visibility_allowed_models),
+        models=[
+            entry
+            for entry in _codex_model_entries(models, allowed_models, visibility_allowed_models)
+            if model_is_visible(entry.slug)
+        ],
     )

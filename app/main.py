@@ -32,6 +32,7 @@ from app.core.middleware import (
 from app.core.middleware.client_session import ClientSessionMiddleware
 from app.core.middleware.identity import IdentityMiddleware
 from app.core.middleware.inflight import InFlightMiddleware
+from app.core.model_aliases import Aliases
 from app.core.openai.model_refresh_scheduler import build_model_refresh_scheduler
 from app.core.resilience.backpressure import BackpressureMiddleware
 from app.core.resilience.bulkhead import BulkheadMiddleware, get_bulkhead
@@ -63,7 +64,7 @@ from app.modules.pools import api as pools_api
 from app.modules.pools.seat_quota_scheduler import build_seat_quota_scheduler
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy import meta_service as meta_api
-from app.modules.proxy.models_api import router as models_router
+from app.modules.proxy.models_api import router as models
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.proxy.ring_membership import (
     RING_HEARTBEAT_INTERVAL_SECONDS,
@@ -209,7 +210,7 @@ async def lifespan(app: FastAPI):
                 break
             except Exception:
                 delay = min(5.0 * (2 ** min(attempt - 1, 5)), 60.0)
-                logger.warning("Ring registration attempt %d failed, retrying in %.0fs", attempt, delay, exc_info=True)
+                logger.warning("Ring attempt %d failed; retry in %.0fs", attempt, delay, exc_info=True)
                 await asyncio.sleep(delay)
         await _heartbeat_only(svc, iid)
 
@@ -357,6 +358,7 @@ def configure_app(app: FastAPI, settings) -> None:
     app.add_middleware(cast(Any, ClientSessionMiddleware))
     app.add_middleware(cast(Any, IdentityMiddleware))
     add_dashboard_auth_proxy_middleware(app)
+    app.add_middleware(Aliases)
     add_request_decompression_middleware(app)
     add_request_id_middleware(app)
     add_api_firewall_middleware(app)
@@ -398,7 +400,7 @@ def configure_app(app: FastAPI, settings) -> None:
         proxy_api.usage_router,
     ):
         app.include_router(router)
-    app.include_router(models_router)
+    app.include_router(models)
     app.include_router(meta_api.router)
     app.include_router(meta_api.provider_router)
     app.include_router(audit_api.router)
