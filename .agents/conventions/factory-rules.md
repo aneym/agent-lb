@@ -34,9 +34,8 @@ examples of each surface, not a closed list. When in doubt, it is on the money p
    `scripts/front-hot-swap.mjs`, `scripts/install-front.sh`, `scripts/watchdog.sh`,
    `scripts/install-service.sh`, `scripts/sync-runtime.sh`. Why: before lb-restart, restarts
    held new connections for 45 to 95 s (2026-09-25).
-7. **Seat routing and the tool boundary:** `clients/route` (admission and auditor choice)
-   and `config/coding-agents/hooks/seat-guard.py`. Why: admission and auditor choice decide
-   who reviews whom, and the seat guard fails open, so its bugs are silent. The routing
+7. **Seat routing and the tool boundary:** `clients/route` (admission and auditor choice).
+   Why: admission and auditor choice decide who reviews whom. The routing
    table and verify-routing are not on the money path; verify-routing is their check.
 
 ### Traces: every request names a person and a machine (2026-09-26)

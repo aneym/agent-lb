@@ -123,7 +123,7 @@ atomically. Re-running is a no-op: a demotion already recorded is not written tw
 | `~/.agent-lb/managed/coding-agents/routing-table.json` | the installed table the CLI reads by default | `install-policy.py` |
 | `~/.claude/routing-state.json` | contract C4 state: seats, pools, probes | `route doctor --write` |
 | `~/.claude/routing-ALERT` | degraded-routing alert | `route doctor --write` |
-| `~/.claude/logs/dispatch.jsonl` | contract C2 ledger | `seat-guard.py`, `subagent-closeout.py` |
+| `~/.claude/logs/dispatch.jsonl` | contract C2 ledger | `subagent-closeout.py` |
 
 ### Environment
 

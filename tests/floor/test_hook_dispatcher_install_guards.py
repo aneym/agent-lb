@@ -12,7 +12,6 @@ import pytest
 
 from tests.floor.hook_dispatcher_guard_support import (
     DANGEROUS,
-    LEGACY_SEAT,
     RAILWAY,
 )
 from tests.floor.hook_dispatcher_support import (
@@ -179,7 +178,7 @@ def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path)
     assert refused.returncode != 0 and "direct exec" in refused.stderr, refused.stdout + refused.stderr
     assert (home / ".claude/settings.json").read_bytes() == before
     assert not (home / ".claude/hooks/dispatch/registry.json").exists()
-    settings["hooks"]["PreToolUse"][-1]["hooks"] = [{"type": "command", "command": LEGACY_SEAT, "timeout": 5}]
+    settings["hooks"]["PreToolUse"].pop()
     settings["hooks"]["PreToolUse"].append({"matcher": "Bash", "hooks": [{"type": "command", "command": DANGEROUS}]})
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install("--hook-dispatcher", "on")
@@ -188,9 +187,8 @@ def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path)
     commands = [hook["command"] for hooks in registry["entries"]["PreToolUse"].values() for hook in hooks] + [
         hook["command"] for group in hooks_of(home)["PreToolUse"] for hook in group["hooks"]
     ]
-    assert '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"' in commands
     assert '"$HOME/.claude/hooks/dangerous-command-guard.sh"' in commands
-    assert LEGACY_SEAT not in commands and DANGEROUS not in commands
+    assert DANGEROUS not in commands
 
 
 def test_install_refuses_entries_of_different_revs_without_writing(tmp_path: Path) -> None:

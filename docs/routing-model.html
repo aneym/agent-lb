@@ -94,8 +94,8 @@ explicitly — inheriting the driver model is hook-denied.</p>
 </div>
 <table>
   <tr><th>Layer</th><th>Mechanism</th><th>Behavior</th></tr>
-  <tr><td>prevent</td><td class="mono">~/.claude/hooks/seat-guard.py<br>(global PreToolUse · Agent)</td>
-      <td>Denies expensive ad-hoc dispatches — explicit fable/opus overrides, or catch-all types inheriting the driver — with a corrective reason naming the seats. Fail-open, &lt;30&nbsp;ms.</td></tr>
+  <tr><td>prevent</td><td class="mono">clients/route + routing rules</td>
+      <td>Agents choose seats from the routing rules; clients/route resolves the requested class without hook-based rewriting.</td></tr>
   <tr><td>nudge</td><td class="mono">~/.claude/hooks/routing-pulse.py<br>(global UserPromptSubmit)</td>
       <td>Injects the session's own driver-vs-seat numbers from the session map when the ratio degrades (25+ driver reqs, seats &lt; 25%). Throttled 15&nbsp;min; silent when healthy or LB down.</td></tr>
   <tr><td>correct</td><td class="mono">/route-fix &nbsp;<span style="font-family:inherit">skill</span></td>
@@ -139,7 +139,7 @@ counts need client-side transcript enrichment (fleet-audit analyzer is the prior
   <tr><th>Thing</th><th>Path</th></tr>
   <tr><td>Canon (source → installed)</td><td class="mono">agent-lb/config/coding-agents/ROUTING.md → ~/.agents/policy/coding-agents/</td></tr>
   <tr><td>Seat definitions</td><td class="mono">~/.claude/agents/{Explore,implementer,verifier}.md</td></tr>
-  <tr><td>Hooks</td><td class="mono">~/.claude/hooks/{seat-guard,routing-pulse}.py + ~/.claude/settings.json</td></tr>
+  <tr><td>Hooks</td><td class="mono">~/.claude/hooks/routing-pulse.py + ~/.claude/settings.json</td></tr>
   <tr><td>Correction skill</td><td class="mono">~/.claude/skills/route-fix/SKILL.md</td></tr>
   <tr><td>Fleet audit</td><td class="mono">~/.claude/tools/fleet-audit/ + ~/Library/LaunchAgents/com.aneyman.fleet-audit.plist</td></tr>
   <tr><td>Session map</td><td class="mono">agent-lb commits 7e86c190 (map, /s/, statusline) · 4ddd1552 (analytics, seat attribution) · OpenSpec: add-claude-session-map, add-session-analytics</td></tr>

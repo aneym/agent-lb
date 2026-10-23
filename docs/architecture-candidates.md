@@ -16,16 +16,16 @@ Deletion test: imagine deleting the module. If its complexity reappears across m
 
 ## 1. Routing policy reader
 
-Files: `config/coding-agents/routing-table.json`, `app/core/routing_table.py`, `clients/route` (`resolve_alias`, `readmitted_patterns`, `resolve_claude_family`), `clients/seat` (`resolve_model`), `clients/claude-lb-launch`, `clients/muse-lb-launch`, `config/coding-agents/hooks/seat-guard.py`, `config/coding-agents/hooks/workflow-seat-guard.py`, `app/modules/proxy/meta_service.py`, `app/modules/proxy/request_policy.py`, `app/core/usage/pricing.py`, `app/core/anthropic/pricing.py`.
+Files: `config/coding-agents/routing-table.json`, `app/core/routing_table.py`, `clients/route` (`resolve_alias`, `readmitted_patterns`, `resolve_claude_family`), `clients/seat` (`resolve_model`), `clients/claude-lb-launch`, `clients/muse-lb-launch`, `app/modules/proxy/meta_service.py`, `app/modules/proxy/request_policy.py`, `app/core/usage/pricing.py`, `app/core/anthropic/pricing.py`.
 
-Problem: nine readers find the table themselves (`ROUTE_TABLE`, then the managed copy, then a repo or `~/.agents` fallback, in orders that differ), and seven functions resolve an alias. A rule change to retired or readmitted models has to land in each one.
+Problem: the readers find the table themselves (`ROUTE_TABLE`, then the managed copy, then a repo or `~/.agents` fallback, in orders that differ), and seven functions resolve an alias. A rule change to retired or readmitted models has to land in each one.
 
 Interface: one stdlib-only module `clients/routing_policy.py` that both `app` and the client scripts import:
 `load(path=None) -> Policy`; `Policy.resolve(alias) -> Resolved(model, vendor, effort, retired, readmitted)`; `Policy.aliases() -> Mapping[str, str]`; `Policy.source -> Path`. `app/core/routing_table.py` becomes the import of it.
 
-Deletion test today: deleting `app/core/routing_table.py` moves about 20 lines into two callers, so it is shallow. Deleting the proposed module would scatter path lookup and alias rules back into nine files, so it is deep.
+Deletion test today: deleting `app/core/routing_table.py` moves about 20 lines into two callers, so it is shallow. Deleting the proposed module would scatter path lookup and alias rules back into the callers, so it is deep.
 
-Slice: add `routing_policy.py` and move the readers in `clients/route`, `clients/seat` and both hooks onto it. Behavior is unchanged. Check: `uv run pytest -q tests/floor/test_policy_core.py tests/floor/test_seat_guard_quota_swap.py`
+Slice: add `routing_policy.py` and move the readers in `clients/route`, `clients/seat` onto it. Behavior is unchanged. Check: `uv run pytest -q tests/floor/test_policy_core.py`
 
 ## 2. Seat and route run record
 
@@ -55,7 +55,7 @@ Slice: move the session-route claim and the two private helpers behind the gatew
 
 Files: `config/coding-agents/install-policy.py` (91 KB, 62 functions), `config/coding-agents/verify-routing` (37 KB), `config/coding-agents/hooks/hook-dispatch.py` (55 KB), `config/coding-agents/hooks/hook-dispatch-parity.py` (66 KB).
 
-Problem: install, check, preview and uninstall are flag branches inside one `main()`. Hook classification (`is_owned_hook`, `is_seat_guard_hook`, `is_dispatch_hook`, `foldable_groups` and others) lives in the installer, while `hook-dispatch.py` holds the runtime view of the same hook set. The parity fixture exists because the two can disagree.
+Problem: install, check, preview and uninstall are flag branches inside one `main()`. Hook classification (`is_owned_hook`, `is_dispatch_hook`, `foldable_groups` and others) lives in the installer, while `hook-dispatch.py` holds the runtime view of the same hook set. The parity fixture exists because the two can disagree.
 
 Interface: `config/coding-agents/policy_plan.py` with `plan(source, home) -> Plan` (a list of `FileChange` and `SettingsChange`), `Plan.apply(checkpoint=True)`, `Plan.check() -> list[Problem]` and `hook_registry() -> list[HookSpec]`, which both the installer and the dispatcher read. `install-policy.py` becomes argument parsing plus `plan(...).apply()` or `.check()`.
 

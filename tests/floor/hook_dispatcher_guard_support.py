@@ -9,18 +9,6 @@ from tests.floor.hook_dispatcher_support import (
     dispatcher_home,
 )
 
-SEAT_FALLBACK = (
-    ' 2>/dev/null || { printf %s \'{"hookSpecificOutput":{"hookEventName":"PreToolUse",'
-    '"additionalContext":"seat-guard advisory: routing telemetry unavailable"}}\'; }'
-)
-
-LEGACY_SEAT = (
-    '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || '
-    '{ printf %s \'{"hookSpecificOutput":'
-    '{"hookEventName":"PreToolUse","additionalContext":"seat-guard advisory: routing telemetry unavailable; '
-    "dispatch was not blocked. Check agent-lb status.\"}}'; }"
-)
-
 DANGEROUS = (
     'bash -c \'CMD=$(cat | jq -r ".tool_input.command // empty"); [ -z "$CMD" ] && exit 0; '
     'echo "$CMD" | grep -qiE "rm\\s+-rf\\s+/|DROP\\s+(DATABASE|TABLE)" && { echo "BLOCKED: '
@@ -54,16 +42,6 @@ FLOOR_LEAVES = {
         ".claude/hooks/workflow-relay-guard.py",
         "py",
     ),
-    "seat-guard.py": (
-        '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"' + SEAT_FALLBACK,
-        ".claude/hooks/seat-guard.py",
-        "py",
-    ),
-    "workflow-seat-guard.py": (
-        '/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"' + SEAT_FALLBACK,
-        ".claude/hooks/workflow-seat-guard.py",
-        "py",
-    ),
     "plutil-guard.sh": ('"$HOME/.claude/hooks/plutil-guard.sh"', ".claude/hooks/plutil-guard.sh", "sh"),
     "dangerous-command-guard.sh": (
         '"$HOME/.claude/hooks/dangerous-command-guard.sh"',
@@ -72,38 +50,7 @@ FLOOR_LEAVES = {
     ),
     "dangerous-command-guard.sh:legacy inline": (DANGEROUS, ".claude/hooks/dangerous-command-guard.sh", "sh"),
     "dangerous-command:inline copy": (DANGEROUS + " ", None, "sh"),
-    "seat-guard.py:legacy wrapper": (LEGACY_SEAT, ".claude/hooks/seat-guard.py", "py"),
-    "seat-guard.py:bash -c": (
-        "bash -c 'python3 \"$HOME/.claude/hooks/seat-guard.py\" || true'",
-        ".claude/hooks/seat-guard.py",
-        "py",
-    ),
     "wide-scan-guard.sh": ('"$HOME/.claude/hooks/wide-scan-guard.sh"', ".claude/hooks/wide-scan-guard.sh", "sh"),
-    "seat-guard.py:python3 -u": (
-        'python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true',
-        ".claude/hooks/seat-guard.py",
-        "py",
-    ),
-    "seat-guard.py:|| true;": (
-        'python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true;',
-        ".claude/hooks/seat-guard.py",
-        "py",
-    ),
-    "seat-guard.py:||true &": (
-        '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" ||true & ',
-        ".claude/hooks/seat-guard.py",
-        "py",
-    ),
-    "seat-guard.py:|| true # comment": (
-        'python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true # advisory',
-        ".claude/hooks/seat-guard.py",
-        "py",
-    ),
-    "seat-guard.py:|| exit 0": (
-        'python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || exit 0',
-        ".claude/hooks/seat-guard.py",
-        "py",
-    ),
     "agent-lb-bootout-guard.sh": (
         '"$HOME/.claude/hooks/agent-lb-bootout-guard.sh"',
         ".claude/hooks/agent-lb-bootout-guard.sh",

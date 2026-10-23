@@ -31,7 +31,7 @@ def test_a_floor_guard_that_fails_refuses_the_call(tmp_path: Path, leaf: str, mo
     home, env = failing_guard_home(tmp_path, command, rel, kind, mode)
     call = {"tool_name": "Bash", "tool_input": {"command": REACHES_PREFILTERS}, "hook_event_name": "PreToolUse"}
     result = run_owned(DISPATCH_BASH, call, env, 30)
-    if leaf.startswith(("seat-guard.py", "workflow-seat-guard.py", "workflow-relay-guard.py", "wide-scan-guard.sh")):
+    if leaf.startswith(("workflow-relay-guard.py", "wide-scan-guard.sh")):
         if mode == "missing" and kind == "py" and not any(x in command for x in ("||", "bash -c")):
             assert result is not None and result.returncode == 2
         else:
@@ -67,7 +67,7 @@ def test_a_floor_guards_block_stands_under_its_fallback_wrapper(tmp_path: Path) 
     rel = ".agent-rails/factory-runtime/bin/rm-dynamic-deny"
     home, env = failing_guard_home(tmp_path, command, rel, "py", "crash")
     (home / rel).write_text(
-        "import sys\nsys.stdin.read()\nsys.stderr.write('seat-guard: blocked model\\n')\nsys.exit(2)\n"
+        "import sys\nsys.stdin.read()\nsys.stderr.write('rm-dynamic-deny: blocked removal\\n')\nsys.exit(2)\n"
     )
     call = {
         "tool_name": "Agent",
