@@ -10,6 +10,7 @@ from app.core.config.settings import get_settings
 from app.core.errors import openai_error
 from app.core.model_aliases import model_is_visible
 from app.core.openai.model_registry import get_model_registry, is_public_model
+from app.core.providers.anthropic_compat import ANTHROPIC_COMPAT_PROFILES
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy.schemas import ModelListItem, ModelListResponse
 
@@ -77,6 +78,12 @@ async def build_models_catalog(api_key: ApiKeyData | None) -> ModelListResponse:
         for model in ("deepseek-flash", "deepseek-flash-floor")
         if allowed_models is None or model in allowed_models
     ]
+    items.extend(
+        ModelListItem(id=model, created=created, owned_by=profile.provider_name)
+        for profile in ANTHROPIC_COMPAT_PROFILES
+        for model in profile.listed_models
+        if allowed_models is None or model in allowed_models
+    )
     for slug, model in models.items():
         if not is_public_model(model, allowed_models):
             continue

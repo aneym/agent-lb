@@ -118,6 +118,7 @@ class KimiProvider:
         token_data: KimiTokenResponse = data
         access_token = token_data.get("access_token")
         rotated_refresh_token = token_data.get("refresh_token")
+        expires_in = token_data.get("expires_in")
         if not isinstance(access_token, str) or not access_token:
             raise RefreshError("invalid_response", "Kimi token refresh response missing access_token", False)
         if not isinstance(rotated_refresh_token, str) or not rotated_refresh_token:
@@ -130,6 +131,7 @@ class KimiProvider:
             account_id=None,
             plan_type=KIMI_DEFAULT_PLAN,
             email=None,
+            expires_in=expires_in if isinstance(expires_in, int) and expires_in > 0 else None,
         )
 
     def account_metadata_from_id_token(self, id_token: str | None) -> AccountMetadata:

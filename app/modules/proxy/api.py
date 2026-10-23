@@ -87,7 +87,7 @@ from app.core.openai.parsing import parse_response_payload
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesReasoning, ResponsesRequest
 from app.core.openai.v1_requests import V1ResponsesCompactRequest, V1ResponsesRequest
 from app.core.providers import get_anthropic_compat_profile
-from app.core.providers.openrouter import is_deepseek_model
+from app.core.providers.anthropic_compat import routes_openai_chat
 from app.core.resilience.overload import is_local_overload_error_code, merge_retry_after_headers
 from app.core.runtime_logging import log_error_response
 from app.core.types import JsonValue
@@ -2422,12 +2422,11 @@ async def v1_chat_completions(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
     effective_model = _effective_model_for_api_key(api_key, payload.model)
-    if is_deepseek_model(effective_model):
+    if routes_openai_chat(effective_model):
         from app.modules.proxy.openrouter_api import chat_response
 
         return await chat_response(request, effective_model, payload.stream, api_key)
     cursor_compat_client = _is_cursor_compat_client(request, api_key)
-    effective_model = _effective_model_for_api_key(api_key, payload.model)
     validate_model_access(api_key, effective_model)
 
     rate_limit_headers = await context.service.rate_limit_headers()

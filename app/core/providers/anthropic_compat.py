@@ -1,10 +1,18 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any
 
 from app.core.auth.refresh import TokenRefreshResult
+
+_KIMI_SUSPENDED_MARKERS = ("suspended", "unauthenticated:")
+_KIMI_BALANCE_MARKERS = (
+    "insufficient balance",
+    "insufficient_balance",
+    "balance is insufficient",
+    "extra usage balance has run out",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +21,11 @@ class AnthropicCompatImportDefaults:
     alias: str
     plan_type: str
     account_id_seed: str
+
+    def identity_for(self, api_key: str) -> tuple[str, str]:
+        tag = sha256(api_key.encode()).hexdigest()[:8]
+        local, domain = self.email.split("@", 1)
+        return f"{local}+{tag}@{domain}", f"{self.account_id_seed}_{tag}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +49,10 @@ class AnthropicCompatProfile:
 
     supports_oauth_bundle_import: bool = False
 
+    serves_openai_chat: bool = False
+
+    listed_models: tuple[str, ...] = ()
+
     def balance_exhausted_code(self, payload: Any) -> str | None:
         if self.provider_name not in {"glm", "kimi"} or not isinstance(payload, dict):
             return None
@@ -47,11 +64,12 @@ class AnthropicCompatProfile:
             return "1113" if str(code) == "1113" else None
         message = str(error.get("message", "")).casefold()
         normalized_code = str(code or "").casefold()
-        if normalized_code in {"suspended", "account_suspended", "insufficient_balance"} or any(
-            marker in message for marker in ("suspended", "insufficient balance", "insufficient_balance")
+        if normalized_code in {"suspended", "account_suspended"} or any(
+            marker in message for marker in _KIMI_SUSPENDED_MARKERS
         ):
-            fallback = "suspended" if "suspended" in message else "insufficient_balance"
-            return re.sub(r"[^a-zA-Z0-9_-]", "_", str(code))[:40] if code is not None else fallback
+            return "suspended"
+        if normalized_code == "insufficient_balance" or any(marker in message for marker in _KIMI_BALANCE_MARKERS):
+            return "insufficient_balance"
         return None
 
     @property
@@ -111,7 +129,7 @@ ANTHROPIC_COMPAT_PROFILES: tuple[AnthropicCompatProfile, ...] = (
         quota_cooldown_code="kimi_quota_cooldown",
         other_provider_routing_message="OpenAI and Anthropic accounts are not eligible for Kimi routing.",
         upstream_settings_attr="kimi_anthropic_upstream_base_url",
-        default_probe_model="kimi-k3",
+        default_probe_model="kimi-for-coding",
         import_defaults=AnthropicCompatImportDefaults(
             email="kimi@moonshot.ai",
             alias="Kimi Coding Plan",
@@ -120,6 +138,8 @@ ANTHROPIC_COMPAT_PROFILES: tuple[AnthropicCompatProfile, ...] = (
         ),
         supports_upstream_count_tokens=False,
         supports_oauth_bundle_import=True,
+        serves_openai_chat=True,
+        listed_models=("kimi-for-coding",),
     ),
     AnthropicCompatProfile(
         provider_name="openrouter",
@@ -142,6 +162,7 @@ ANTHROPIC_COMPAT_PROFILES: tuple[AnthropicCompatProfile, ...] = (
             account_id_seed="openrouter",
         ),
         supports_upstream_count_tokens=False,
+        serves_openai_chat=True,
     ),
 )
 
@@ -176,3 +197,7 @@ def provider_name_for_anthropic_model(model: str) -> str:
         if profile.model_prefixes and normalized.startswith(profile.model_prefixes):
             return profile.provider_name
     return "anthropic"
+
+
+def routes_openai_chat(model: str) -> bool:
+    return get_anthropic_compat_profile(provider_name_for_anthropic_model(model)).serves_openai_chat

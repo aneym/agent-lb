@@ -191,8 +191,9 @@ class AccountsTransfer(AccountsQueries):
             refresh_material = payload.refresh_token.get_secret_value().strip()
             if not refresh_material:
                 raise ValueError("refreshToken must not be blank")
-        email = (payload.email or defaults.email).strip().lower()
-        raw_account_id = (payload.account_id or defaults.account_id_seed).strip()
+        default_email, default_account_id = defaults.identity_for(api_key)
+        email = (payload.email or default_email).strip().lower()
+        raw_account_id = (payload.account_id or default_account_id).strip()
         account_id = generate_unique_account_id(raw_account_id, email)
         plan_type = coerce_account_plan_type(payload.plan_type, defaults.plan_type)
         credits_window = None

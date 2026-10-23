@@ -160,6 +160,29 @@ scripts/openai-auth.sh start
 even when an OpenAI account is already in the pool. Use the same command to reauthenticate
 an existing account.
 
+### Kimi Coding Plan — API key
+
+1. Create a key in the Kimi Code console (starts `sk-kimi-`; Moonshot platform keys fail).
+2. Dashboard: Providers, Add account, Kimi, paste the key. Each key becomes its own
+   account; pasting the same key again updates it. Or, with the key in `$KIMI_KEY`:
+
+   ```bash
+   jq -n --arg k "$KIMI_KEY" '{provider:"kimi",apiKey:$k}' | curl -s -X POST \
+     http://127.0.0.1:2455/api/accounts/import/api-key -H 'content-type: application/json' -d @-
+   ```
+
+3. Probe it: `POST /api/accounts/{accountId}/probe` must return `probeStatusCode: 200`
+   (model `kimi-for-coding`). A 401 for a known-good key means the other region: set `AGENT_LB_KIMI_ANTHROPIC_UPSTREAM_BASE_URL` to
+   `https://api.kimi.ai/coding` (overseas) or `https://api.kimi.com/coding` (default) and
+   restart with `lb-restart`, then `POST /api/accounts/{accountId}/reactivate`.
+4. Serve: send `kimi-for-coding` (every plan), `k3`, `k3-256k` or `k3.1-pro` (higher plans) to
+   `/v1/messages` or `/v1/chat/completions`. A plan that lacks a model returns 403 to the
+   caller without benching the account.
+
+A kimi-cli login can be imported instead with `{"provider":"kimi","apiKey":<access_token>,
+"refreshToken":<refresh_token>}` from `~/.kimi/credentials/kimi-code.json`; stop using that
+kimi-cli login afterwards, because both sides rotate the same refresh token.
+
 ## 5. Wire up clients
 
 ### Claude Code

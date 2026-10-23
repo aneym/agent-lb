@@ -69,6 +69,7 @@ from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, o
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
 from app.modules.proxy.anthropic_transport import AnthropicTransport
 from app.modules.proxy.claude_codex_bridge import estimate_claude_input_tokens
+from app.modules.proxy.compat_errors import STOP_STATUS, reads_balance, refresh_due, refuses_plan, rejects_key
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
 from app.modules.proxy.openrouter_usage import chat_usage, collect_chat_usage
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
@@ -105,7 +106,6 @@ _FRAME_UNAVAILABLE_STATUSES = frozenset(
 _ANTHROPIC_PLANNER_MODEL = "claude-opus-5-5"
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
 _ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
-_COUNT_TOKENS_TIMEOUT_SECONDS = 30.0
 
 
 _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER = "anthropic-ratelimit-unified-overage-in-use"
@@ -604,9 +604,7 @@ class AnthropicProxyService(AnthropicTransport):
                                     unified_7d_utilization = _parse_unified_utilization(
                                         resp.headers.get("anthropic-ratelimit-unified-7d-utilization")
                                     )
-                                if (provider_name == "glm" and resp.status >= 400) or (
-                                    provider_name == "kimi" and resp.status in {402, 403, 429}
-                                ):
+                                if reads_balance(provider_name, resp.status):
                                     raw_error = await resp.read()
                                     try:
                                         error_payload = json.loads(raw_error)
@@ -647,44 +645,43 @@ class AnthropicProxyService(AnthropicTransport):
                                 if resp.status in {401, 403}:
                                     error_message = await _read_error_message(resp)
                                     error_code = f"upstream_{resp.status}"
-                                    if provider_name == ANTHROPIC_PROVIDER_NAME:
-                                        if resp.status == 401 and account.id not in auth_retried_account_ids:
-                                            auth_retried_account_ids.add(account.id)
-                                            try:
-                                                await self._fresh_access_token(
-                                                    account, rejected_access_token=access_token
-                                                )
-                                            except AnthropicProxyError as exc:
-                                                error_code = exc.code or error_code
-                                                error_message = exc.message
-                                            else:
-                                                account_override = account
-                                                continue
-                                        if resp.status == 403 and (
-                                            "oauth authentication is currently not allowed for this organization"
-                                            in error_message.lower()
-                                        ):
-                                            async with self._repo_factory() as repos:
-                                                await repos.accounts.update_status_if_current(
-                                                    account.id,
-                                                    account.status,
-                                                    ANTHROPIC_OAUTH_ORGANIZATION_BLOCK,
-                                                    account.reset_at,
-                                                    blocked_at=account.blocked_at,
-                                                    expected_status=account.status,
-                                                    expected_deactivation_reason=account.deactivation_reason,
-                                                    expected_reset_at=account.reset_at,
-                                                    expected_blocked_at=account.blocked_at,
-                                                )
-                                        elif error_code == "mirror_token_unavailable":
-                                            await self._load_balancer.cool_down(
-                                                account, _MIRROR_TOKEN_UNAVAILABLE_COOLDOWN_SECONDS
-                                            )
+                                    if refresh_due(provider_name, resp.status, account.id, auth_retried_account_ids):
+                                        auth_retried_account_ids.add(account.id)
+                                        try:
+                                            await self._fresh_access_token(account, rejected_access_token=access_token)
+                                        except AnthropicProxyError as exc:
+                                            error_code = exc.code or error_code
+                                            error_message = exc.message
                                         else:
-                                            await self._load_balancer.record_error(account)
-                                    else:
+                                            account_override = account
+                                            continue
+                                    if rejects_key(provider_name, resp.status, error_code):
                                         error_code = "invalid_api_key"
                                         await self._load_balancer.mark_permanent_failure(account, error_code)
+                                    elif resp.status == 403 and (
+                                        "oauth authentication is currently not allowed for this organization"
+                                        in error_message.lower()
+                                    ):
+                                        async with self._repo_factory() as repos:
+                                            await repos.accounts.update_status_if_current(
+                                                account.id,
+                                                account.status,
+                                                ANTHROPIC_OAUTH_ORGANIZATION_BLOCK,
+                                                account.reset_at,
+                                                blocked_at=account.blocked_at,
+                                                expected_status=account.status,
+                                                expected_deactivation_reason=account.deactivation_reason,
+                                                expected_reset_at=account.reset_at,
+                                                expected_blocked_at=account.blocked_at,
+                                            )
+                                    elif refuses_plan(provider_name, resp.status, error_message):
+                                        error_code = "permission_error"
+                                    elif error_code == "mirror_token_unavailable":
+                                        await self._load_balancer.cool_down(
+                                            account, _MIRROR_TOKEN_UNAVAILABLE_COOLDOWN_SECONDS
+                                        )
+                                    else:
+                                        await self._load_balancer.record_error(account)
                                     await self._persist_request_log(
                                         account=account,
                                         provider_name=provider_name,
@@ -704,8 +701,10 @@ class AnthropicProxyService(AnthropicTransport):
                                         unified_headers=unified_headers,
                                         quota_observed_at=quota_observed_at,
                                     )
-                                    if error_code == "mirror_token_unavailable":
-                                        raise AnthropicProxyError(503, error_message, code=error_code)
+                                    if error_code in STOP_STATUS:
+                                        raise AnthropicProxyError(
+                                            STOP_STATUS[error_code], error_message, code=error_code
+                                        )
                                     last_error_status = resp.status
                                     last_error_message = error_message
                                     continue
