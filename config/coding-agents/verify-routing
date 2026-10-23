@@ -42,7 +42,7 @@ try:
 except json.JSONDecodeError:
     settings = {}
     check(False, f"{settings_path} contains valid JSON")
-check(settings.get("model") == "fable", "direct Claude Code default is Fable 5")
+check(settings.get("model") == "opus", "direct Claude Code default is Opus 5.5")
 check(settings.get("effortLevel") == "high", "direct Claude Code default effort is high")
 
 designer_source = REPO / "config" / "coding-agents" / "agents" / "frontend-designer.md"

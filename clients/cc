@@ -10,9 +10,7 @@ from pathlib import Path
 
 def main() -> None:
     argv = list(sys.argv[1:])
-    if not any(arg == "--autocompact" or arg.startswith("--autocompact=") for arg in argv):
-        argv = ["--autocompact", "1m", *argv]
-    launcher = Path(__file__).resolve().with_name("claude-lb-launch")
+    launcher = Path(__file__).resolve().with_name("opus")
     os.execv(launcher, [str(launcher), *argv])
 
 
