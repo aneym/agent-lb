@@ -48,6 +48,9 @@ The final PR comment identifies the published commit and final run counts.
 | Source routing, settlement, cost caps and lifecycle batch | 130 passed; 12 added source-price admission regressions passed |
 | Provider usage + atomic snapshot/rollup batch | 68 passed; 4 PostgreSQL-only skips in SQLite run |
 | API-key retention, rollups and cost/settlement batch | 79 passed |
+| PostgreSQL deletion, refresh claims, usage rollups, reset-credit replica safety and provider summary | 126 passed |
+| PostgreSQL durability, UTC sessions, live-ingest identity locking and migration serialization | 39 passed |
+| Final SQLite live-ingest regressions | 11 passed; 4 PostgreSQL-only skips |
 | Final targeted deletion/reset/scheduler regressions | 59 passed; 3 PostgreSQL-only skips in SQLite run |
 | Migration floor on SQLite | 14 passed; 2 PostgreSQL-only skips |
 | Empty and existing-fork SQLite upgrades | Single head; migration policy passes; no schema drift |
@@ -57,8 +60,13 @@ The final PR comment identifies the published commit and final run counts.
 | Wheel and sdist | Built as 1.24.0; packaged static assets match the frontend build; isolated wheel installation and CLI/migration help smoke passed |
 | Strict OpenSpec change validation | Passed |
 
-The full floor run and PostgreSQL concurrency run are recorded separately in the
-final PR verification comment, including their exclusions and any failures.
+The PostgreSQL opposite-identity-move regression patches the extracted slot
+repository where token rotation resolves its lock helper. Both concurrent moves
+reach that seam and complete while preserving their distinct account rows.
+The SQLite reset-credit regression also passes separately (16 passed).
+
+The full floor run and PostgreSQL concurrency runs are recorded separately in the
+final PR verification comment, including their exclusions and readiness gaps.
 The extracted upstream bridge harness used disposable fixtures and minor import,
 identity-field, startup-env and heartbeat-patch adaptations for the fork layout.
 It was not a run of the upstream suite unmodified.

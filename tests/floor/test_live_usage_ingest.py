@@ -18,7 +18,7 @@ from app.core.usage.live_snapshots import LiveRateLimitSnapshot, LiveUsageWindow
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import SessionLocal
-from app.modules.accounts import repository as accounts_repository_module
+from app.modules.accounts import slot_repository as account_slots_repository_module
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.usage import live_ingest
 from app.modules.usage import repository as usage_repository_module
@@ -741,7 +741,7 @@ async def test_postgresql_opposite_identity_moves_use_one_sorted_lock_order(
         await repo.upsert(first, merge_by_email=False)
         await repo.upsert(second, merge_by_email=False)
 
-    real_identity_lock = accounts_repository_module.lock_postgresql_account_identities
+    real_identity_lock = account_slots_repository_module.lock_postgresql_account_identities
     arrival_guard = asyncio.Lock()
     both_arrived = asyncio.Event()
     arrival_count = 0
@@ -755,7 +755,7 @@ async def test_postgresql_opposite_identity_moves_use_one_sorted_lock_order(
         await asyncio.wait_for(both_arrived.wait(), timeout=5.0)
         return await real_identity_lock(session, identities)
 
-    monkeypatch.setattr(accounts_repository_module, "lock_postgresql_account_identities", _synchronized_identity_lock)
+    monkeypatch.setattr(account_slots_repository_module, "lock_postgresql_account_identities", _synchronized_identity_lock)
 
     async def _move(account: Account, incoming_identity: str) -> bool:
         async with SessionLocal() as session:
@@ -775,6 +775,7 @@ async def test_postgresql_opposite_identity_moves_use_one_sorted_lock_order(
     )
     assert moved_first is True
     assert moved_second is True
+    assert arrival_count == 2
 
     async with SessionLocal() as session:
         identities = {

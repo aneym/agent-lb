@@ -86,7 +86,7 @@ tests/floor/test_conversations_api.py	61147	0	0
 tests/floor/test_dashboard_overview.py	51054	17735	0
 tests/floor/test_daybreak_capability_routes.py	32746	0	0
 tests/floor/test_fleet_summary_api.py	47361	0	0
-tests/floor/test_live_usage_ingest.py	38266	0	0
+tests/floor/test_live_usage_ingest.py	38316	0	0
 tests/floor/test_model_registry_replication.py	43316	0	0
 tests/floor/test_model_source_routing.py	119644	0	0
 tests/floor/test_proxy_realtime_live.py	45427	0	0

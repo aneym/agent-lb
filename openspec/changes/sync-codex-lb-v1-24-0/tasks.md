@@ -33,7 +33,8 @@
 - [x] Review telemetry consent, settings defaults, retention, and environment compatibility.
 - [x] Build frontend and package; verify installed CLI, assets, health, and migration entry points.
 - [x] Reconcile conflicted upstream surfaces and document intentional fork-specific alternatives.
-- [ ] Run strict OpenSpec validation and full exact-SHA local CI on the equipped coordinator.
+- [x] Run strict OpenSpec change validation.
+- [ ] Run full exact-SHA local CI on the equipped coordinator.
 - [ ] Obtain maintainer review, finish the integration, and then update release metadata.
 
 ## Remaining readiness gates
