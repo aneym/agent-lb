@@ -65,6 +65,8 @@ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservation
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_cache import get_account_selection_cache
+from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, overloaded_backoff_jitter
+from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
 from app.modules.proxy.anthropic_transport import AnthropicTransport
 from app.modules.proxy.claude_codex_bridge import estimate_claude_input_tokens
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
@@ -115,15 +117,6 @@ _ANTHROPIC_UNIFIED_STATUS_HEADERS = (
 _ANTHROPIC_UNIFIED_ALLOWED_STATUSES = frozenset({"allowed", "allowed_warning"})
 
 
-_OVERLOADED_BACKOFF_BASE_SECONDS = 0.25
-_OVERLOADED_BACKOFF_MAX_SECONDS = 2.0
-_OVERLOADED_BACKOFF_MAX_JITTER_SECONDS = 0.25
-
-
-def _default_overloaded_backoff_jitter() -> float:
-    return random.uniform(0.0, _OVERLOADED_BACKOFF_MAX_JITTER_SECONDS)
-
-
 _OVERLOADED_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 
@@ -134,12 +127,6 @@ _CONNECT_ERRORS: tuple[type[BaseException], ...] = (
     aiohttp.ClientOSError,
     asyncio.TimeoutError,
 )
-_CONNECT_BACKOFF_BASE_SECONDS = 0.5
-_CONNECT_BACKOFF_MAX_SECONDS = 4.0
-
-
-def _connect_backoff_seconds(attempt: int) -> float:
-    return min(_CONNECT_BACKOFF_BASE_SECONDS * (2**attempt), _CONNECT_BACKOFF_MAX_SECONDS)
 
 
 @asynccontextmanager
@@ -295,7 +282,7 @@ class _ConnectRetryingResponse:
                     exc,
                 )
                 if attempt + 1 < self._attempts:
-                    await _CONNECT_RETRY_SLEEP(_connect_backoff_seconds(attempt))
+                    await _CONNECT_RETRY_SLEEP(connect_backoff_seconds(attempt))
                 continue
             self._context = context
             return response
@@ -311,11 +298,11 @@ class _ConnectRetryingResponse:
         return await self._context.__aexit__(exc_type, exc, tb)
 
 
-_OVERLOADED_RETRY_JITTER: Callable[[], float] = _default_overloaded_backoff_jitter
+_OVERLOADED_RETRY_JITTER: Callable[[], float] = overloaded_backoff_jitter
 
 
 def _overloaded_backoff_seconds(attempt: int) -> float:
-    base = min(_OVERLOADED_BACKOFF_BASE_SECONDS * (2**attempt), _OVERLOADED_BACKOFF_MAX_SECONDS)
+    base = min(0.25 * (2**attempt), 2.0)
     return base + _OVERLOADED_RETRY_JITTER()
 
 
@@ -753,7 +740,7 @@ class AnthropicProxyService(AnthropicTransport):
                                     last_error_status = resp.status
                                     last_error_message = error_message
                                     continue
-                                if resp.status == 529:
+                                if resp.status in TRANSIENT_UPSTREAM_STATUSES:
                                     error_message = await _read_error_message(resp)
                                     await self._load_balancer.record_error(account)
                                     await self._persist_request_log(
@@ -764,7 +751,7 @@ class AnthropicProxyService(AnthropicTransport):
                                         reasoning_effort=reasoning_effort,
                                         started_at=started_at,
                                         status="error",
-                                        error_code="upstream_529",
+                                        error_code=f"upstream_{resp.status}",
                                         error_message=error_message,
                                         api_key=api_key,
                                         session_id=session_id,
@@ -779,6 +766,8 @@ class AnthropicProxyService(AnthropicTransport):
                                     last_error_message = error_message
                                     if attempt + 1 < _MAX_SELECTION_ATTEMPTS:
                                         await _OVERLOADED_RETRY_SLEEP(_overloaded_backoff_seconds(attempt))
+                                    elif resp.status != 529:
+                                        break
                                     continue
                                 if resp.status >= 400:
                                     error_details = await _read_error_details(resp)
@@ -1073,19 +1062,18 @@ class AnthropicProxyService(AnthropicTransport):
                         raise
                     if last_stall is not None:
                         raise AnthropicProxyError(529, str(last_stall), code="overloaded_error") from exc
-
+                    if last_error_status in TRANSIENT_UPSTREAM_STATUSES:
+                        raise AnthropicProxyError(
+                            last_error_status,
+                            last_error_message or "Upstream unavailable",
+                            code=exhausted_error_code(last_error_status, _no_available_accounts_code(provider_name)),
+                        ) from exc
                     if not streamed_bytes and _pool_wait_should_hold(
                         exc, wait_enabled=wait_enabled, deadline=wait_deadline
                     ):
                         pending_wait_error = exc
                         account_override = None
                         continue
-                    if last_error_status == 529 and exc.retry_at is None:
-                        raise AnthropicProxyError(
-                            529,
-                            last_error_message or "Upstream overloaded",
-                            code="overloaded_error",
-                        ) from exc
                     raise
 
                 if last_stall is not None:
@@ -1094,15 +1082,11 @@ class AnthropicProxyService(AnthropicTransport):
                 message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
 
                 eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=payload.model)
-
-                exhausted_code = (
-                    "overloaded_error" if last_error_status == 529 else _no_available_accounts_code(provider_name)
-                )
                 exhausted_error = AnthropicProxyError(
                     last_error_status or 503,
                     message,
-                    code=exhausted_code,
-                    retry_at=eligibility.next_reset_at,
+                    code=exhausted_error_code(last_error_status, _no_available_accounts_code(provider_name)),
+                    retry_at=None if last_error_status in TRANSIENT_UPSTREAM_STATUSES else eligibility.next_reset_at,
                 )
                 if _pool_wait_should_hold(exhausted_error, wait_enabled=wait_enabled, deadline=wait_deadline):
                     pending_wait_error = exhausted_error
@@ -1117,7 +1101,7 @@ class AnthropicProxyService(AnthropicTransport):
                     reasoning_effort=reasoning_effort,
                     started_at=started_at,
                     status="error",
-                    error_code=_no_available_accounts_code(provider_name),
+                    error_code=exhausted_error.code,
                     error_message=message,
                     api_key=api_key,
                     session_id=session_id,
