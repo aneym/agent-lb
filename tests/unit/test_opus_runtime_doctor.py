@@ -227,7 +227,45 @@ def test_transient_definition_failure_heals_on_single_retry(monkeypatch: pytest.
     assert len(receipt["attempts"]) == 2
 
 
-def test_probe_timeout_kills_owned_process_group(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("soft", "hard", "expected"),
+    [(256, 8192, 8192), (256, 4096, 4096), (16384, -1, 16384),
+     (256, -1, 8192), (-1, -1, -1), (8192, 8192, 8192)],
+)
+def test_raise_fd_soft_limit_never_lowers_existing_limit(
+    monkeypatch: pytest.MonkeyPatch, soft: int, hard: int, expected: int
+) -> None:
+    doctor = load_script("opus-runtime-doctor")
+    limits = [soft, hard]
+    monkeypatch.setattr(doctor.resource, "getrlimit", lambda which: tuple(limits))
+    monkeypatch.setattr(doctor.resource, "RLIM_INFINITY", -1)
+
+    def set_limit(which, value):
+        assert soft != -1 and value[0] > soft
+        assert value[1] == hard
+        limits[:] = value
+
+    monkeypatch.setattr(doctor.resource, "setrlimit", set_limit)
+    assert doctor.raise_fd_soft_limit() == expected
+    assert limits == [expected, hard]
+
+
+@pytest.mark.parametrize("error", [OSError("denied"), ValueError("unsupported")])
+def test_raise_fd_soft_limit_tolerates_failed_raise(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    doctor = load_script("opus-runtime-doctor")
+    monkeypatch.setattr(doctor.resource, "getrlimit", lambda which: (256, 8192))
+
+    def set_limit(which, value):
+        raise error
+
+    monkeypatch.setattr(doctor.resource, "setrlimit", set_limit)
+    assert doctor.raise_fd_soft_limit() == 256
+
+
+@pytest.mark.parametrize("kill_error", [None, ProcessLookupError(), OSError("fd limit")])
+def test_probe_timeout_kills_owned_process_group(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kill_error: OSError | None
+) -> None:
     doctor = load_script("opus-runtime-doctor")
     monkeypatch.setenv("CLAUDE_LB_DOCTOR_STATE_DIR", str(tmp_path))
 
@@ -235,6 +273,10 @@ def test_probe_timeout_kills_owned_process_group(monkeypatch: pytest.MonkeyPatch
         pid = 43210
         returncode = None
         calls = 0
+        killed = False
+
+        def kill(self):
+            self.killed = True
 
         def communicate(self, timeout=None):
             self.calls += 1
@@ -245,15 +287,23 @@ def test_probe_timeout_kills_owned_process_group(monkeypatch: pytest.MonkeyPatch
                 "Operation not permitted; secret details omitted",
             )
 
+    monkeypatch.setattr(doctor.resource, "getrlimit", lambda which: (16384, 16384))
     process = Process()
     killed: list[tuple[int, int]] = []
     monkeypatch.setattr(doctor.subprocess, "Popen", lambda *args, **kwargs: process)
-    monkeypatch.setattr(doctor.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+    def kill_group(pid, sig):
+        killed.append((pid, sig))
+        if kill_error is not None:
+            raise kill_error
+
+    monkeypatch.setattr(doctor.os, "killpg", kill_group)
 
     outcome = doctor.run_probe()
     assert outcome.error_class == "timeout"
     assert killed == [(process.pid, doctor.signal.SIGKILL)]
+    assert process.killed is (kill_error is not None and not isinstance(kill_error, ProcessLookupError))
     assert outcome.evidence == {
+        "fd_soft_limit": 16384,
         "event_count": 1,
         "malformed_lines": 0,
         "init_model": "claude-fable-5-1",

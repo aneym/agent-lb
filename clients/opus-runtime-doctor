@@ -380,6 +380,7 @@ def _probe_command(fable: Path, prompt: str, session_id: str) -> list[str]:
 
 def run_probe(*, canonical_retry: bool = False) -> ProbeOutcome:
     started = time.monotonic()
+    fd_soft_limit = raise_fd_soft_limit()
     expected_model = os.environ.get("AGENT_LB_OPUS_MODEL") or EXPECTED_MODEL_DEFAULT
     nonce = secrets.token_hex(16)
     directory = state_dir()
@@ -434,11 +435,13 @@ def run_probe(*, canonical_retry: bool = False) -> ProbeOutcome:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            except OSError:
+                process.kill()
             stdout, stderr = process.communicate()
             return ProbeOutcome(
                 "FAIL",
                 "timeout",
-                stream_diagnostics(stdout, stderr),
+                {**stream_diagnostics(stdout, stderr), "fd_soft_limit": fd_soft_limit},
                 time.monotonic() - started,
             )
         if process.returncode != 0:
@@ -601,18 +604,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _raise_fd_soft_limit() -> None:
+def raise_fd_soft_limit() -> int:
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    target = 8192 if hard == resource.RLIM_INFINITY else hard
+    if soft == resource.RLIM_INFINITY or soft >= target:
+        return soft
     try:
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        target = 10240 if hard == resource.RLIM_INFINITY else min(10240, hard)
-        if soft != resource.RLIM_INFINITY and soft < target:
-            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
     except (OSError, ValueError):
-        pass
+        return soft
+    return target
 
 
 def main(argv: list[str] | None = None) -> int:
-    _raise_fd_soft_limit()
+    raise_fd_soft_limit()
     args = parse_args(sys.argv[1:] if argv is None else argv)
     if args.schedule:
         return schedule()
