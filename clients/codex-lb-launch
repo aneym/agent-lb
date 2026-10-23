@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+# codex-lb-launch — launch Codex behind a local loopback CONNECT proxy that
+# paces aggregate tunnel bandwidth and caps concurrent tunnels, so one Codex
+# session cannot grow sockets, threads and memory without bound.
+# Vendored, dependency-free (stdlib only).
+#
+# Usage:
+#   clients/codex-lb-launch [codex args...]
+#
+# Env:
+#   CODEX_LB_TUNNEL_RATE_MBPS  aggregate up+down relay rate in megabits/s
+#                              (default 40; <=0 or non-finite disables pacing)
+#   CODEX_LB_MAX_TUNNELS       concurrent tunnel cap (default 256; <=0 disables);
+#                              a CONNECT past the cap gets 503 and no upstream socket
+
+from __future__ import annotations
+
+import http.server
+import math
+import os
+import select
+import socket
+import socketserver
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+DEFAULT_RATE_MBPS = 40.0
+DEFAULT_MAX_TUNNELS = 256
+SMALL_WRITE_BYTES = 8192
+RELAY_CHUNK_BYTES = 65536
+CLIENT_IDLE_TIMEOUT_SECONDS = 600
+PROXY_READY_TIMEOUT_SECONDS = 10.0
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+class TunnelBucket:
+    """Earliest-departure-time pacing shared by every tunnel in the proxy.
+
+    Each chunk books its slot under the lock and sleeps until it, so admission
+    is FIFO across tunnels and no chunk size can stall forever.
+    """
+
+    def __init__(self, rate_bytes_per_second: float, burst_bytes: float | None = None) -> None:
+        self.rate = rate_bytes_per_second
+        capacity = max(rate_bytes_per_second, 2.0 * RELAY_CHUNK_BYTES) if burst_bytes is None else burst_bytes
+        self.burst_seconds = capacity / rate_bytes_per_second if rate_bytes_per_second > 0 else 0.0
+        self.next_free = time.monotonic() - self.burst_seconds
+        self.lock = threading.Lock()
+
+    def throttle(self, nbytes: int) -> None:
+        if self.rate <= 0:
+            return
+        with self.lock:
+            now = time.monotonic()
+            base = max(self.next_free, now - self.burst_seconds)
+            wait = base - now
+            self.next_free = base + nbytes / self.rate
+        if nbytes <= SMALL_WRITE_BYTES and wait <= self.burst_seconds:
+            return
+        while wait > 0:
+            step = min(wait, 0.5)
+            time.sleep(step)
+            wait -= step
+
+
+def tunnel_bucket_from_env() -> TunnelBucket | None:
+    rate_mbps = _env_float("CODEX_LB_TUNNEL_RATE_MBPS", DEFAULT_RATE_MBPS)
+    if not math.isfinite(rate_mbps) or rate_mbps <= 0:
+        return None
+    return TunnelBucket(rate_mbps * 125_000.0)
+
+
+class TunnelGate:
+    """Hard cap on concurrently open tunnels; admission never blocks."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.active = 0
+        self.lock = threading.Lock()
+
+    def try_acquire(self) -> bool:
+        with self.lock:
+            if self.limit > 0 and self.active >= self.limit:
+                return False
+            self.active += 1
+            return True
+
+    def release(self) -> None:
+        with self.lock:
+            if self.active > 0:
+                self.active -= 1
+
+
+def tunnel_gate_from_env() -> TunnelGate:
+    return TunnelGate(_env_int("CODEX_LB_MAX_TUNNELS", DEFAULT_MAX_TUNNELS))
+
+
+def _valid_connect_target(target: str) -> tuple[str, int] | None:
+    host, sep, port_text = target.rpartition(":")
+    if not sep or not port_text.isdigit():
+        return None
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    port = int(port_text)
+    if not host or not 1 <= port <= 65535:
+        return None
+    return host, port
+
+
+def _splice(a: socket.socket, b: socket.socket, bucket: TunnelBucket | None) -> None:
+    ends = (a, b)
+    try:
+        while True:
+            readable, _, errored = select.select(ends, [], ends, 300)
+            if errored:
+                return
+            for src in readable:
+                dst = b if src is a else a
+                try:
+                    data = src.recv(RELAY_CHUNK_BYTES)
+                except OSError:
+                    return
+                if not data:
+                    return
+                if bucket is not None:
+                    bucket.throttle(len(data))
+                try:
+                    dst.sendall(data)
+                except OSError:
+                    return
+    finally:
+        for sock in ends:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
+class _ProxyHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    timeout = CLIENT_IDLE_TIMEOUT_SECONDS
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+    def _reply(self, status: bytes) -> None:
+        try:
+            self.connection.sendall(b"HTTP/1.1 " + status + b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        except OSError:
+            pass
+        self.close_connection = True
+
+    def do_CONNECT(self) -> None:
+        target = _valid_connect_target(self.path)
+        if target is None:
+            self._reply(b"400 Bad Request")
+            return
+        gate: TunnelGate = self.server.tunnel_gate
+        if not gate.try_acquire():
+            self._reply(b"503 Service Unavailable")
+            return
+        try:
+            try:
+                upstream = socket.create_connection(target, timeout=20)
+            except OSError:
+                self._reply(b"502 Bad Gateway")
+                return
+            upstream.settimeout(None)
+            try:
+                self.connection.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            except OSError:
+                upstream.close()
+                return
+            self.close_connection = True
+            _splice(self.connection, upstream, self.server.tunnel_bucket)
+        finally:
+            gate.release()
+
+    def do_GET(self) -> None:
+        self._reply(b"405 Method Not Allowed")
+
+    do_POST = do_PUT = do_DELETE = do_HEAD = do_GET
+
+
+class _ProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def handle_error(self, request: object, client_address: object) -> None:
+        return
+
+
+def _parent_alive(parent_pid: int) -> bool:
+    try:
+        os.kill(parent_pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def run_proxy(ready_path: Path, parent_pid: int) -> None:
+    server = _ProxyServer(("127.0.0.1", 0), _ProxyHandler)
+    server.tunnel_bucket = tunnel_bucket_from_env()
+    server.tunnel_gate = tunnel_gate_from_env()
+
+    def stop_when_parent_exits() -> None:
+        while _parent_alive(parent_pid):
+            time.sleep(2.0)
+        server.shutdown()
+
+    threading.Thread(target=stop_when_parent_exits, daemon=True).start()
+    tmp = ready_path.with_name(ready_path.name + ".tmp")
+    tmp.write_text(f"{server.server_address[1]}\n")
+    os.replace(tmp, ready_path)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+
+
+def _start_proxy() -> str:
+    ready_dir = Path(tempfile.mkdtemp(prefix="codex-lb-proxy-"))
+    ready_path = ready_dir / "port"
+    subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "--proxy", str(ready_path), str(os.getpid())],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + PROXY_READY_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            port = int(ready_path.read_text().strip())
+        except (OSError, ValueError):
+            time.sleep(0.05)
+            continue
+        return f"http://127.0.0.1:{port}"
+    raise SystemExit("codex-lb-launch: local proxy did not start")
+
+
+def _append_no_proxy(hosts: tuple[str, ...]) -> None:
+    for name in ("NO_PROXY", "no_proxy"):
+        existing = [entry for entry in os.environ.get(name, "").split(",") if entry]
+        existing.extend(host for host in hosts if host not in existing)
+        os.environ[name] = ",".join(existing)
+
+
+def main(argv: list[str]) -> None:
+    if len(argv) == 3 and argv[0] == "--proxy":
+        run_proxy(Path(argv[1]), int(argv[2]))
+        return
+    for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        if os.environ.get(name):
+            raise SystemExit(f"codex-lb-launch refuses to replace existing {name}")
+    proxy_url = _start_proxy()
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        os.environ[name] = proxy_url
+    _append_no_proxy(("127.0.0.1", "localhost", "::1"))
+    os.execvp("codex", ["codex", *argv])
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
