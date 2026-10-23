@@ -193,7 +193,7 @@ def prompt_digests(payload: dict) -> list:
     return [hashlib.sha256(reading.encode("utf-8")).hexdigest() for reading in readings]
 
 
-def resolve(open_dispatches: list, digests: list, names: list, seat: str):
+def resolve(open_dispatches: list, digests: list, names: list, seat: str, *, replay: bool = False):
     """One dispatch out of those still open, newest first, and how it was found.
 
     Order: the prompt hash, then the caller-given name, then the seat. Claude
@@ -215,7 +215,8 @@ def resolve(open_dispatches: list, digests: list, names: list, seat: str):
         if candidates:
             # Several open dispatches with one prompt and no telling name: any pick
             # may be the sibling's, so say so rather than claim an exact join.
-            if len(candidates) == 1:
+            if len(candidates) == 1 or replay:
+                # Historical matched closeouts pinned the newest matching sibling.
                 return candidates[0], "prompt_hash"
             shared = {}
             for key in ("task_class", "subagent_type", "model"):
@@ -257,6 +258,7 @@ def match(records: list, session_id, agent_type: str, agent_name: str, digests: 
                 [str(record.get("prompt_sha256") or "")],
                 [str(record.get("name") or "")],
                 str(record.get("subagent_type") or record.get("agent_type") or ""),
+                replay=True,
             )
             if closed is not None:
                 open_dispatches.remove(closed)
@@ -302,7 +304,7 @@ def main() -> None:
         # S3's `route report` can group closeouts by seat at all.
         "agent_type": agent_type or None,
         "subagent_type": (
-            shared.get("subagent_type")
+            shared.get("subagent_type") or agent_type.lower() or None
             if shared is not None
             else (dispatch or {}).get("subagent_type") or agent_type.lower() or None
         ),
