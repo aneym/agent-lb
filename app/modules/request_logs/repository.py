@@ -14,7 +14,15 @@ from app.core.context_parts.capture import measured_parts
 from app.core.eval_guard import eval_guard_state
 from app.core.identity import RequestIdentity, identity_for_log
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
-from app.core.utils.client_session import get_caller_seat, get_client_session_id, get_dispatch_id, get_job_id, get_lane, get_room  # noqa: I001  # fmt: skip
+from app.core.utils.client_session import (  # noqa: I001  # fmt: skip
+    FACTORY_ATTRIBUTION,
+    get_caller_seat,
+    get_client_session_id,
+    get_dispatch_id,
+    get_job_id,
+    get_lane,
+    get_room,
+)
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account
@@ -132,6 +140,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
     ) -> RequestLog:
         parts = await measured_parts()
         caller = identity_for_log(identity)
+        factory = FACTORY_ATTRIBUTION.get()
         async with sqlite_writer_section(self._session):
             resolved_request_id = ensure_request_id(request_id)
             resolved_plan_type = plan_type
@@ -154,6 +163,10 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
                 caller_machine=caller.caller_machine,
                 caller_machine_source=caller.caller_machine_source,
                 caller_seat=get_caller_seat(),
+                factory_project=factory.project,
+                factory_owner=factory.owner,
+                factory_host=factory.host,
+                factory_job=factory.job,
                 room=get_room(),
                 lane=get_lane(),
                 job_id=get_job_id(),

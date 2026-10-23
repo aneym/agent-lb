@@ -9,6 +9,8 @@ from app.core.context_parts.capture import context_parts_state, wrap_receive
 from app.core.eval_guard import EvalGuardState, eval_guard_state, is_eval_proxy_path
 from app.core.exceptions import DashboardForbiddenError, ProxyAuthError
 from app.core.utils.client_session import (
+    FACTORY_ATTRIBUTION,
+    factory_attribution_from_scope,
     reset_attribution,
     reset_caller_seat,
     reset_client_session_id,
@@ -36,6 +38,7 @@ class ClientSessionMiddleware:
         seat = set_caller_seat_from_scope(scope)
         room = set_room_from_scope(scope)
         attribution = set_attribution_from_scope(scope)
+        factory_token = FACTORY_ATTRIBUTION.set(factory_attribution_from_scope(scope))
         receive, parts_token = wrap_receive(scope, receive)
         try:
             if not is_eval_proxy_path(scope["path"]):
@@ -54,6 +57,7 @@ class ClientSessionMiddleware:
             if parts_token is not None:
                 context_parts_state.reset(parts_token)
             eval_guard_state.reset(guard)
+            FACTORY_ATTRIBUTION.reset(factory_token)
             reset_attribution(attribution)
             reset_room(room)
             reset_caller_seat(seat)

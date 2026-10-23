@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from contextvars import ContextVar, Token
+from dataclasses import dataclass
 
 from starlette.types import Scope
 
@@ -10,6 +11,36 @@ _CLIENT_SESSION_HEADERS = (b"session-id", b"session_id", b"x-codex-session-id", 
 _MAX_LENGTH = 128
 
 _CLIENT_SESSION_ID: ContextVar[str | None] = ContextVar("client_session_id", default=None)
+
+_FACTORY_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class FactoryAttribution:
+    project: str | None = None
+    owner: str | None = None
+    host: str | None = None
+    job: str | None = None
+
+
+FACTORY_ATTRIBUTION: ContextVar[FactoryAttribution] = ContextVar("factory_attribution", default=FactoryAttribution())
+
+
+def factory_attribution_from_scope(scope: Scope) -> FactoryAttribution:
+    headers = dict(scope.get("headers") or ())
+    project = headers.get(b"x-factory-project", b"").decode("latin-1").strip()
+    job = headers.get(b"x-factory-job", b"").decode("latin-1").strip()
+    if not (_FACTORY_VALUE.fullmatch(project) and _FACTORY_VALUE.fullmatch(job)):
+        return FactoryAttribution()
+    from app.core.config.settings import get_settings
+
+    settings = get_settings()
+    return FactoryAttribution(
+        project=project,
+        owner=settings.identity_owner,
+        host=settings.identity_local_machine or settings.local_instance_id,
+        job=job,
+    )
 
 
 _SEAT_HEADER = b"x-agent-lb-seat"
