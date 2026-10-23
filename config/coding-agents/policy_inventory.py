@@ -35,6 +35,11 @@ MANAGED_SEATS = (
     "computer-use-local",
 )
 ADOPTED_KEEP_NAMES = (
+    "no-chrome-guard.sh",
+    "no_chrome_classify.py",
+    "no_chrome_shell.py",
+    "no_chrome_argv.py",
+    "no_chrome_python.py",
     "wide-scan-guard.sh",
     "hook_wide_scan_shell.py",
     "railway-vars-guard.sh",
@@ -45,6 +50,11 @@ ADOPTED_KEEP_NAMES = (
 )
 
 MANAGED_HOOKS = (
+    "no-chrome-guard.sh",
+    "no_chrome_classify.py",
+    "no_chrome_shell.py",
+    "no_chrome_argv.py",
+    "no_chrome_python.py",
     "claude-grind-pulse.py",
     "idle-agents.py",
     "claude-bash-hands-nudge.py",

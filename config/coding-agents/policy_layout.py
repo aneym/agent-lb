@@ -239,6 +239,7 @@ REV_KEEP_SECONDS = 30 * 86400
 
 
 DERIVED_PINS = (
+    "no-chrome-guard.sh",
     "poll-loop-warn.py",
     "wide-scan-guard.sh",
     "agent-lb-bootout-guard.sh",

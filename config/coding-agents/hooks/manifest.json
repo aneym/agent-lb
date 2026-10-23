@@ -3,6 +3,16 @@
   "hooks": [
     {
       "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "\"$HOME/.claude/hooks/no-chrome-guard.sh\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
       "matcher": "SendMessage",
       "hook": {
         "type": "command",

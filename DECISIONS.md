@@ -292,3 +292,22 @@ records both names. Fix retains its never-explore and Grok exclusion rules.
 Implement, mechanical, explore and research default to Sol. On exhaustion they
 try eligible non-Claude table arms, then wait; this supersedes the cross-vendor
 Claude fallback for those classes. Opus authority classes retain their policy.
+
+## Browser guard classifies execution, not brief words (October 23, 2026)
+
+Alex's 02:42Z factory request authorizes fixing false browser-floor refusals.
+The owner-browser and profile floor is unchanged. Browser names, `open`, and
+ordinary Library log/plist paths in briefs and message arguments are data,
+not browser launches. Shell wrappers, substitutions, executable heredocs,
+profile reads/copies, AppleScript browser control and CDP attaches still
+refuse; unreadable input or unparseable commands fail closed.
+
+agent-lb now owns the hook and its existing Python shell/argv classifier via
+install-policy, replacing the old factory-runtime symlink atomically. The
+classifier, rather than a whole-command keyword regex, decides both the hook
+and dispatcher prefilter. Explicit headless Playwright launches without
+profile overrides use a fresh context; persistent contexts need a literal
+agent-owned profile, never the owner's Library or copied profile state.
+page-shot, acct-browser and Rails test-account sessions remain sanctioned.
+Real hook-input subprocess cases cover refusals and legitimate proof/brief
+commands; the existing Open Factory browser-floor replay is kept unchanged.

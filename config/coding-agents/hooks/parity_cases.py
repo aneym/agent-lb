@@ -87,6 +87,18 @@ def builtin_cases():
         dict(bash('open -a "Google Chrome" https://example.com'), name="deny-no-chrome", expect=deny),
         dict(bash("ssh pc 'start " + "chrome chrome://extensions'"), name="deny-no-chrome-pc", expect=deny),
         dict(bash("ssh pc chr'" + "ome'"), name="deny-no-chrome-pc-quote-split", expect=deny),
+        dict(bash('codex exec "open" "-a" "Safari"'), name="allow-browser-brief-data", expect="allow"),
+        dict(bash('git commit -m "open the room"'), name="allow-browser-commit-data", expect="allow"),
+        dict(bash("tail ~/Library/Logs/x.log"), name="allow-browser-log-path", expect="allow"),
+        dict(bash("page-shot https://app.rails.so"), name="allow-browser-page-shot", expect="allow"),
+        dict(
+            bash("python3 -c 'pw.chromium.launch(headless=True)'"), name="allow-browser-isolated-python", expect="allow"
+        ),
+        dict(
+            bash("node -e 'pw.chromium.connectOverCDP(\"http://localhost:9222\")'"),
+            name="deny-browser-cdp-attach",
+            expect=deny,
+        ),
         dict(bash("ssh pc 'dir'"), name="allow-ssh-pc", expect="allow"),
         dict(bash("gh pr merge 5 --squash"), name="deny-no-direct-merge", expect=None),
         dict(bash("open -a 'Herdr Shell'"), name="deny-herdr-shell-host", expect=None),

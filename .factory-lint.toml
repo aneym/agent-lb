@@ -15,3 +15,8 @@ globs = ["**/*.sh", "scripts/**"]
 name = "proxy-architecture"
 cmd = [".venv/bin/python", "scripts/check_proxy_architecture.py"]
 globs = ["app/modules/proxy/service.py", "app/modules/proxy/_service/**", "scripts/check_proxy_architecture.py"]
+
+[[custom]]
+name = "no-chrome-floor"
+cmd = ["python3", "config/coding-agents/floor/no-chrome-guard-check.py"]
+globs = ["config/coding-agents/hooks/no*chrome*", "config/coding-agents/hooks/hook_prefilters.py", "config/coding-agents/floor/no-chrome-guard-check.py"]
