@@ -27,6 +27,7 @@ from policy_hook_install import dispatch_worth, managed_hooks, pin_inproc  # typ
 from policy_hook_registry import fold_hooks, folded_rev, is_folded, read_registry, registry_rev, unfold_hooks  # type: ignore[missing-import]  # fmt: skip
 from policy_layout import CORE_SOURCE, DISPATCH_EVENTS, DISPATCH_REGISTRY, DISPATCH_SCRIPT, HAIKU_ENV, MODELS_FULL, MODELS_MARKER, POLICY_DIR, RETIRED_HOOKS, REV_FILE, REV_KEEP_SECONDS, SONNET_MODEL  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 from policy_lock import locked_main, parse_args  # type: ignore[missing-import]
+from policy_registry_retirement import retire_hook_registries  # type: ignore[missing-import]
 from policy_plan import plan_managed_files  # type: ignore[missing-import]
 from policy_settings import check_policy, internal_hook_commands, policy_snapshot, reconcile_settings, resolve_sol, snapshot_model  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
@@ -319,6 +320,7 @@ def main() -> int:
         args, source, snapshot, keep_fold, changes
     )
 
+    retire_hook_registries(args.home, changes)
     validate_hook_changes(args.home, changes, nxt)
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
