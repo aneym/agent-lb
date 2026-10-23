@@ -2519,13 +2519,11 @@ async def v1_chat_completions(
     stream_with_first = _prepend_first(first, stream)
     result = await collect_chat_completion(stream_with_first, model=responses_payload.model)
     if isinstance(result, OpenAIErrorEnvelopeModel):
-        error = result.error
-        code = error.code if error else None
-        status_code = 503 if code in _UNAVAILABLE_SELECTION_ERROR_CODES else 502
+        status_code, envelope = _mask_previous_response_not_found_error(result)
         return _logged_error_json_response(
             request,
             status_code,
-            content=result.model_dump(mode="json", exclude_none=True),
+            content=envelope.model_dump(mode="json", exclude_none=True),
             headers=rate_limit_headers,
         )
     if cursor_compat_client and isinstance(result, ChatCompletion):
