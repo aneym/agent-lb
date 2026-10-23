@@ -117,7 +117,6 @@ RETIRED_HOOKS = (
     "poll-loop-warn.py",
     "workflow-relay-guard.py",
     "claude-bash-hands-nudge.py",
-    "seat-guard.py",
     "seat_guard_advisory.py",
     "seat_hands.py",
     "workflow-seat-guard.py",

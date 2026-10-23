@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 
+from hook_current_settings import current_entry  # type: ignore[missing-import]
 from hook_dispatch_planning import HERE  # type: ignore[missing-import]
 
 
@@ -47,6 +48,10 @@ def load_entry(event, key, rev=None):
             return registry, entry_hooks(registry, event, key), path
         except ValueError as exc:
             errors.append("%s: %s" % (os.path.basename(path), exc))
+    if not os.environ.get("HOOK_DISPATCH_REGISTRY"):
+        current = current_entry(event, key)
+        if current is not None:
+            return current
     raise ValueError("; ".join(errors))
 
 

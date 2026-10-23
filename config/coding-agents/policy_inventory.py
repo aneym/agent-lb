@@ -89,6 +89,8 @@ MANAGED_HOOKS = (
     "hook_dispatch_planning.py",
     "hook_dispatch_processes.py",
     "hook_dispatch_registry.py",
+    "hook_current_settings.py",
+    "seat-guard.py",
     "hook-dispatch-parity.py",
 )
 
