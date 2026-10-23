@@ -642,7 +642,7 @@ class AnthropicProxyService(AnthropicTransport):
                                         )
                                         if rule.action == "fail_request":
                                             raise AnthropicProxyError(resp.status, rule.reason, code="upstream_rule")
-                                        last_error_status = 503
+                                        last_error_status = None
                                         last_error_message = rule_client_message(rule, _provider_label(provider_name))
                                         continue
                                 if resp.status in {401, 403}:
@@ -1082,7 +1082,6 @@ class AnthropicProxyService(AnthropicTransport):
                     await self._release_api_key_reservation(api_key_reservation)
                     raise AnthropicProxyError(529, str(last_stall), code="overloaded_error")
                 message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
-
                 eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=payload.model)
                 exhausted_error = AnthropicProxyError(
                     last_error_status or 503,
