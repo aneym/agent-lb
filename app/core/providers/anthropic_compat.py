@@ -2,17 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any
 
 from app.core.auth.refresh import TokenRefreshResult
-
-_KIMI_SUSPENDED_MARKERS = ("suspended", "unauthenticated:")
-_KIMI_BALANCE_MARKERS = (
-    "insufficient balance",
-    "insufficient_balance",
-    "balance is insufficient",
-    "extra usage balance has run out",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,25 +43,6 @@ class AnthropicCompatProfile:
     serves_openai_chat: bool = False
 
     listed_models: tuple[str, ...] = ()
-
-    def balance_exhausted_code(self, payload: Any) -> str | None:
-        if self.provider_name not in {"glm", "kimi"} or not isinstance(payload, dict):
-            return None
-        error = payload.get("error", payload)
-        if not isinstance(error, dict):
-            error = payload
-        code = error.get("code", error.get("type", payload.get("code")))
-        if self.provider_name == "glm":
-            return "1113" if str(code) == "1113" else None
-        message = str(error.get("message", "")).casefold()
-        normalized_code = str(code or "").casefold()
-        if normalized_code in {"suspended", "account_suspended"} or any(
-            marker in message for marker in _KIMI_SUSPENDED_MARKERS
-        ):
-            return "suspended"
-        if normalized_code == "insufficient_balance" or any(marker in message for marker in _KIMI_BALANCE_MARKERS):
-            return "insufficient_balance"
-        return None
 
     @property
     def supports_api_key_import(self) -> bool:

@@ -3,15 +3,8 @@ from __future__ import annotations
 from app.core.anthropic.oauth import ANTHROPIC_PROVIDER_NAME
 from app.core.providers.kimi import KIMI_PROVIDER_NAME
 
-_KIMI_BALANCE_STATUSES = frozenset({401, 402, 403, 429, 500})
 _KIMI_PLAN_REFUSAL_MARKERS = ("does not have access to", "plan supports only")
 STOP_STATUS = {"mirror_token_unavailable": 503, "permission_error": 403}
-
-
-def reads_balance(provider_name: str, status: int) -> bool:
-    if provider_name == "glm":
-        return status >= 400
-    return provider_name == KIMI_PROVIDER_NAME and status in _KIMI_BALANCE_STATUSES
 
 
 def refresh_due(provider_name: str, status: int, account_id: str, retried_account_ids: set[str]) -> bool:

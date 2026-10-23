@@ -31,6 +31,7 @@ from app.core.anthropic.quota_headers import capture_unified_headers
 from app.core.anthropic.quota_headers import parse_unified_utilization as _parse_unified_utilization
 from app.core.anthropic.quota_keys import model_quota_key
 from app.core.auth.refresh import RefreshError, classify_refresh_error
+from app.core.balancer.error_rules import match_error_rule
 from app.core.balancer.types import UpstreamError
 from app.core.clients import upstream_body
 from app.core.clients.http import lease_http_session
@@ -58,7 +59,6 @@ from app.modules.accounts.credits import (
     credits_exhausted,
     window_from_usage,
 )
-from app.modules.accounts.service import AccountsService
 from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
@@ -69,7 +69,13 @@ from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, o
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
 from app.modules.proxy.anthropic_transport import AnthropicTransport
 from app.modules.proxy.claude_codex_bridge import estimate_claude_input_tokens
-from app.modules.proxy.compat_errors import STOP_STATUS, reads_balance, refresh_due, refuses_plan, rejects_key
+from app.modules.proxy.compat_errors import STOP_STATUS, refresh_due, refuses_plan, rejects_key
+from app.modules.proxy.error_rule_actions import (
+    apply_error_rule,
+    rule_client_message,
+    rule_error_code,
+    rule_error_message,
+)
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
 from app.modules.proxy.openrouter_usage import chat_usage, collect_chat_usage
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
@@ -604,20 +610,17 @@ class AnthropicProxyService(AnthropicTransport):
                                     unified_7d_utilization = _parse_unified_utilization(
                                         resp.headers.get("anthropic-ratelimit-unified-7d-utilization")
                                     )
-                                if reads_balance(provider_name, resp.status):
+                                if resp.status >= 400:
                                     raw_error = await resp.read()
                                     try:
                                         error_payload = json.loads(raw_error)
                                     except (UnicodeDecodeError, json.JSONDecodeError):
                                         error_payload = None
-                                    balance_code = get_anthropic_compat_profile(provider_name).balance_exhausted_code(
-                                        error_payload
+                                    rule = match_error_rule(
+                                        provider_name, resp.status, error_payload, get_settings().upstream_error_rules
                                     )
-                                    if balance_code is not None:
-                                        async with self._repo_factory() as repos:
-                                            await AccountsService(repos.accounts).pause_account(
-                                                account.id, reason=f"balance_exhausted: {balance_code}"
-                                            )
+                                    if rule is not None:
+                                        await apply_error_rule(rule, account, self._repo_factory, self._load_balancer)
                                         await self._persist_request_log(
                                             account=account,
                                             provider_name=provider_name,
@@ -626,8 +629,8 @@ class AnthropicProxyService(AnthropicTransport):
                                             reasoning_effort=reasoning_effort,
                                             started_at=started_at,
                                             status="error",
-                                            error_code="balance_exhausted",
-                                            error_message=f"No balance ({balance_code})",
+                                            error_code=rule_error_code(rule),
+                                            error_message=rule_error_message(rule),
                                             api_key=api_key,
                                             session_id=session_id,
                                             useragent=useragent,
@@ -637,10 +640,10 @@ class AnthropicProxyService(AnthropicTransport):
                                             unified_headers=unified_headers,
                                             quota_observed_at=quota_observed_at,
                                         )
+                                        if rule.action == "fail_request":
+                                            raise AnthropicProxyError(resp.status, rule.reason, code="upstream_rule")
                                         last_error_status = 503
-                                        last_error_message = (
-                                            f"No balance for {_provider_label(provider_name)} ({balance_code})"
-                                        )
+                                        last_error_message = rule_client_message(rule, _provider_label(provider_name))
                                         continue
                                 if resp.status in {401, 403}:
                                     error_message = await _read_error_message(resp)

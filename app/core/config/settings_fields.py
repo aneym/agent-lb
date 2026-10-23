@@ -8,6 +8,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.core.auth.dashboard_mode import DashboardAuthMode
+from app.core.config.error_rule_schema import ErrorRule
 from app.core.config.settings_defaults import (
     DEFAULT_CONVERSATION_ARCHIVE_DIR,
     DEFAULT_DATABASE_URL,
@@ -267,6 +268,8 @@ class SettingsFields(BaseSettings):
     circuit_breaker_enabled: bool = False
     circuit_breaker_failure_threshold: int = 5
     circuit_breaker_recovery_timeout_seconds: int = 60
+
+    upstream_error_rules: tuple[ErrorRule, ...] = ()
 
     soft_drain_enabled: bool = True
     deterministic_failover_enabled: bool = True
