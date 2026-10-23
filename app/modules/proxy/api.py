@@ -821,7 +821,7 @@ async def v1_ccdex_messages(
             return _anthropic_error_response(
                 400,
                 "invalid_request_error",
-                f"Anthropic server tool '{tool.type}' ({tool.name}) is not supported by the Codex bridge",
+                "Anthropic-defined tools are not supported by the ccdex compatibility route",
             )
     responses_payload = claude_to_responses(payload)
     forwarded_headers = {
