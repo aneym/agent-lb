@@ -181,7 +181,9 @@ fi
 for name in "${CLIENT_NAMES[@]}"; do
   preflight_link "$BIN_DIR/$name" "$CURRENT/clients/$name"
 done
-preflight_link "$POLICY_DIR/coding-agents" "$CURRENT/config/coding-agents"
+if [[ "$MODE" != "clients-only" ]]; then
+  preflight_link "$POLICY_DIR/coding-agents" "$CURRENT/config/coding-agents"
+fi
 if [[ -e "$CURRENT" || -L "$CURRENT" ]]; then
   if [[ ! -L "$CURRENT" || "$(readlink "$CURRENT")" != "$RUNTIME_DIR/versions/"* ]]; then
     echo "error: refusing to replace unmanaged runtime path $CURRENT" >&2
@@ -215,7 +217,9 @@ mkdir -p "$BIN_DIR" "$POLICY_DIR"
 for name in "${CLIENT_NAMES[@]}"; do
   install_link "$BIN_DIR/$name" "$CURRENT/clients/$name"
 done
-install_link "$POLICY_DIR/coding-agents" "$CURRENT/config/coding-agents"
+if [[ "$MODE" != "clients-only" ]]; then
+  install_link "$POLICY_DIR/coding-agents" "$CURRENT/config/coding-agents"
+fi
 
 if [[ "$MODE" != "clients-only" ]]; then
   remove_retired_artifacts
