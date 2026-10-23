@@ -10,7 +10,7 @@ from app.modules.request_logs.mappers import (
     to_request_log_entry,
 )
 from app.modules.request_logs.repository import RequestLogsRepository
-from app.modules.request_logs.schemas import RequestLogEntry
+from app.modules.request_logs.schemas import FactoryUsageEntry, FactoryUsageResponse, RequestLogEntry
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +52,30 @@ class RequestLogsPage:
 class RequestLogsService:
     def __init__(self, repo: RequestLogsRepository) -> None:
         self._repo = repo
+
+    async def list_factory_usage(
+        self, *, project: str, limit: int, offset: int = 0, before_id: int | None = None
+    ) -> FactoryUsageResponse:
+        logs = await self._repo.list_factory_usage(project=project, limit=limit, offset=offset, before_id=before_id)
+        rows = logs[:limit]
+        has_more = len(logs) > limit
+        return FactoryUsageResponse(
+            requests=[
+                FactoryUsageEntry(
+                    id=row.id,
+                    requested_at=row.requested_at,
+                    factory_project=row.factory_project,
+                    factory_owner=row.factory_owner,
+                    factory_host=row.factory_host,
+                    factory_job=row.factory_job,
+                    tokens=to_request_log_entry(row).tokens or 0,
+                )
+                for row in rows
+            ],
+            has_more=has_more,
+            next_offset=offset + len(rows),
+            next_before_id=rows[-1].id if has_more else None,
+        )
 
     async def list_recent(
         self,

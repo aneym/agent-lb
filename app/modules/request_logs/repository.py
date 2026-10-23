@@ -16,6 +16,7 @@ from app.core.identity import RequestIdentity, identity_for_log
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
 from app.core.utils.client_session import (  # noqa: I001  # fmt: skip
     FACTORY_ATTRIBUTION,
+    FactoryAttribution,
     get_caller_seat,
     get_client_session_id,
     get_dispatch_id,
@@ -132,6 +133,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
         cache_creation_tier: str | None = None,
         cache_read_tokens: int | None = None,
         identity: RequestIdentity | None = None,
+        factory_attribution: FactoryAttribution | None = None,
         unified_5h_utilization: float | None = None,
         unified_7d_utilization: float | None = None,
         unified_headers: dict[str, str] | None = None,
@@ -140,7 +142,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
     ) -> RequestLog:
         parts = await measured_parts()
         caller = identity_for_log(identity)
-        factory = FACTORY_ATTRIBUTION.get()
+        factory = factory_attribution if factory_attribution is not None else FACTORY_ATTRIBUTION.get()
         async with sqlite_writer_section(self._session):
             resolved_request_id = ensure_request_id(request_id)
             resolved_plan_type = plan_type

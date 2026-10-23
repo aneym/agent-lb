@@ -47,6 +47,7 @@ from app.core.clients.codex import (
 )
 from app.core.clients.codex_pool import acquire_codex_client, release_codex_client
 from app.core.clients.http import acquire_http_client, lease_http_session
+from app.core.clients.proxy_headers import IGNORE_INBOUND_HEADERS
 from app.core.config.settings import Settings, get_settings
 from app.core.conversation_archive import archive_json, archive_text
 from app.core.errors import (
@@ -75,24 +76,6 @@ from app.core.upstream_proxy import ResolvedUpstreamRoute
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import format_sse_event
-
-IGNORE_INBOUND_HEADERS = {
-    "authorization",
-    "x-api-key",
-    "chatgpt-account-id",
-    "content-length",
-    "host",
-    "forwarded",
-    "x-real-ip",
-    "true-client-ip",
-    "x-agent-lb-machine",
-    "x-agent-lb-intent",
-    "x-agent-lb-lane",
-    "x-agent-lb-seat",
-    "x-agent-lb-room",
-    "x-agent-lb-job",
-    "x-agent-lb-dispatch",
-}
 
 _ERROR_TYPE_CODE_MAP = {
     "rate_limit_exceeded": "rate_limit_exceeded",

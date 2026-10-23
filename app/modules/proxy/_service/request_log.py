@@ -8,6 +8,7 @@ from typing import Protocol, cast
 import anyio
 
 from app.core.identity import RequestIdentity, attach_member, get_request_identity
+from app.core.utils.client_session import FACTORY_ATTRIBUTION, FactoryAttribution
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 
@@ -26,6 +27,31 @@ def _normalize_session_id(session_id: str | None) -> str | None:
         return None
     stripped = session_id.strip()
     return stripped or None
+
+
+class WebSocketRequestLogState(Protocol):
+    actual_service_tier: str | None
+    client_session_id: str | None
+    factory_attribution: FactoryAttribution
+    identity: RequestIdentity | None
+    latency_first_token_ms: int | None
+    model: str | None
+    reasoning_effort: str | None
+    request_id: str
+    request_log_id: str | None
+    requested_service_tier: str | None
+    service_tier: str | None
+    session_id: str | None
+    skip_request_log: bool
+    started_at: float
+    transport: str
+    upstream_proxy_endpoint_id: str | None
+    upstream_proxy_fail_closed_reason: str | None
+    upstream_proxy_fallback_used: bool | None
+    upstream_proxy_pool_id: str | None
+    upstream_proxy_route_mode: str | None
+    useragent: str | None
+    useragent_group: str | None
 
 
 class _RequestLogMixin:
@@ -97,10 +123,14 @@ class _RequestLogMixin:
         useragent: str | None = None,
         useragent_group: str | None = None,
         identity: RequestIdentity | None = None,
+        factory_attribution: FactoryAttribution | None = None,
     ) -> None:
         task = asyncio.create_task(
             self._persist_request_log(
                 identity=identity if identity is not None else get_request_identity(),
+                factory_attribution=factory_attribution
+                if factory_attribution is not None
+                else FACTORY_ATTRIBUTION.get(),
                 api_key_member_id=api_key.member_id if api_key else None,
                 account_id=account_id,
                 api_key_id=api_key.id if api_key else None,
@@ -178,6 +208,7 @@ class _RequestLogMixin:
         self,
         *,
         identity: RequestIdentity | None = None,
+        factory_attribution: FactoryAttribution | None = None,
         api_key_member_id: str | None = None,
         account_id: str | None,
         api_key_id: str | None,
@@ -219,6 +250,7 @@ class _RequestLogMixin:
             async with proxy._repo_factory() as repos:
                 await repos.request_logs.add_log(
                     identity=identity,
+                    factory_attribution=factory_attribution,
                     account_id=account_id,
                     api_key_id=api_key_id,
                     session_id=_normalize_session_id(session_id),
@@ -260,6 +292,46 @@ class _RequestLogMixin:
                 request_id,
                 exc_info=True,
             )
+
+    async def _write_websocket_connect_failure(
+        self,
+        *,
+        account_id: str | None,
+        api_key: ApiKeyData | None,
+        request_state: WebSocketRequestLogState,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        if request_state.skip_request_log:
+            return
+        await self._write_request_log(
+            identity=request_state.identity,
+            factory_attribution=request_state.factory_attribution,
+            account_id=account_id,
+            api_key=api_key,
+            request_id=request_state.request_log_id or request_state.request_id,
+            model=request_state.model or "",
+            latency_ms=int((time.monotonic() - request_state.started_at) * 1000),
+            status="error",
+            error_code=error_code,
+            error_message=error_message,
+            reasoning_effort=request_state.reasoning_effort,
+            transport=request_state.transport,
+            service_tier=request_state.service_tier,
+            requested_service_tier=request_state.requested_service_tier,
+            actual_service_tier=request_state.actual_service_tier,
+            latency_first_token_ms=request_state.latency_first_token_ms,
+            session_id=request_state.client_session_id or request_state.session_id,
+            upstream_proxy_route_mode=request_state.upstream_proxy_route_mode,
+            upstream_proxy_pool_id=request_state.upstream_proxy_pool_id,
+            upstream_proxy_endpoint_id=request_state.upstream_proxy_endpoint_id,
+            upstream_proxy_fallback_used=(
+                request_state.upstream_proxy_fallback_used if request_state.upstream_proxy_endpoint_id else None
+            ),
+            upstream_proxy_fail_closed_reason=request_state.upstream_proxy_fail_closed_reason,
+            useragent=request_state.useragent,
+            useragent_group=request_state.useragent_group,
+        )
 
     async def _write_stream_preflight_error(
         self,
