@@ -123,23 +123,29 @@ so they approve from the right login.
 
 After adding an account with a paid plan, record it with `agent-lb subscriptions set <email> --plan <plan> --renews-on YYYY-MM-DD --payment card|single-use|none`.
 
-### Claude (Anthropic) — manual code paste-back
+### Claude (Anthropic) — registered browser profile
+
+For an agent operating on Studio, use the
+[account enrollment workflow](.agents/skills/agent-lb-account-operator/SKILL.md#enroll-a-subscription-account).
+It includes purchasing a plan when requested, phone verification, enrollment and
+live readiness checks. Do not ask for an OAuth code when CDP can collect the callback.
 
 ```bash
-scripts/anthropic-auth.sh start
+agent-lb profiles list --json
+agent-lb profiles add EMAIL --provider anthropic
+agent-lb profiles open EMAIL
+agent-lb reauth EMAIL --provider anthropic --timeout 180 --json
 ```
 
-1. Print the returned auth URL as plain text and note the `flowId`.
-2. Tell the human: open the URL in a browser **logged into the Claude account being
-   connected**, approve, and paste back the `code#state` string Claude shows them.
-3. Wait for the paste, then immediately (codes expire quickly):
+Skip `profiles add` when already registered. The registered directory may differ
+from the email; `reauth --dry-run` shows the exact path and port. Verify the signed-in
+website email, authorize Claude Code, then let `reauth` collect the callback.
+Check the new account with `POST /api/accounts/{accountId}/probe`; `active` alone
+only confirms stored authorization, not working upstream access.
 
-```bash
-scripts/anthropic-auth.sh complete <flowId> '<code#state>'
-```
-
-4. Confirm with `scripts/anthropic-auth.sh accounts` — the account should be `active`.
-5. Repeat from `start` for the next Claude account.
+When browser automation is unavailable, `scripts/anthropic-auth.sh start` and
+`complete <flowId> '<code#state>'` remain the manual fallback. Never print or save
+credentials or callback codes in reports.
 
 ### ChatGPT (OpenAI) — automatic browser callback
 
