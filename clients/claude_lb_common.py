@@ -37,16 +37,30 @@ class LaunchConfig:
     base_url = (os.environ.get("CLAUDE_LB_BASE_URL") or default_remote_url()).rstrip("/")
 
 
+def arg_value(argv: list[str], *names: str) -> str | None:
+    for index, value in enumerate(argv):
+        for name in names:
+            if value == name and index + 1 < len(argv):
+                return argv[index + 1]
+            prefix = f"{name}="
+            if value.startswith(prefix):
+                return value[len(prefix) :]
+    return None
+
+
 MODE_FILE = Path.home() / ".config/agent-lb/top-level-mode"
 
 
 TOP_LEVEL_MODE = MODE_FILE.read_text().strip() if MODE_FILE.exists() else "claude"
 
 
-CCGPT_MODE = TOP_LEVEL_MODE == "sol" or os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
+REQUESTED_MODEL = arg_value(sys.argv[1:], "--model", "-m") or os.environ.get("ANTHROPIC_MODEL", "")
+CCGPT_MODE = (
+    TOP_LEVEL_MODE == "sol" or os.environ.get("CLAUDE_LB_CODEX_MODE") == "1" or REQUESTED_MODEL.startswith("gpt-")
+)
 
 
-CCGPT_MODEL = "sol-latest"
+CCGPT_MODEL = REQUESTED_MODEL if REQUESTED_MODEL.startswith("gpt-") else "sol-latest"
 
 
 CCGPT_MODEL_NAME = re.compile(r"^(?:gpt-[\w.-]+|[a-z]+-latest(?:-(?:low|medium|high|xhigh))?)$")
@@ -246,17 +260,6 @@ def is_retryable_shim_connect_error(error: BaseException) -> bool:
         return False
     reason = getattr(error, "reason", None)
     return isinstance(error, ConnectionError) or isinstance(reason, ConnectionError)
-
-
-def arg_value(argv: list[str], *names: str) -> str | None:
-    for index, value in enumerate(argv):
-        for name in names:
-            if value == name and index + 1 < len(argv):
-                return argv[index + 1]
-            prefix = f"{name}="
-            if value.startswith(prefix):
-                return value[len(prefix) :]
-    return None
 
 
 def has_permission_option(argv: list[str]) -> bool:

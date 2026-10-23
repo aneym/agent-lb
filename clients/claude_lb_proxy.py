@@ -178,6 +178,7 @@ def spawn_lb_proxy(ready: Path, session_id: str, parent_pid: int, upstream_base_
     ]
     subprocess.Popen(
         command,
+        env={**os.environ, "CLAUDE_LB_CODEX_MODE": "1"} if CCGPT_MODE else None,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

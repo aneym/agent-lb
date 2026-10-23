@@ -171,6 +171,8 @@ def main() -> None:
             file=sys.stderr,
         )
         return
+    if routed and CCGPT_MODE and arg_value(argv, "--output-format") == "stream-json":
+        sys.exit(run_gpt_stream(command))
     if routed and not CCGPT_MODE and headless_invocation(argv):
         if auto_resume_enabled():
             model = requested_model(argv)
@@ -185,8 +187,6 @@ def main() -> None:
                 session_id=claude_session_id,
             )
         )
-    if routed and CCGPT_MODE and arg_value(argv, "--output-format") == "stream-json":
-        sys.exit(run_gpt_stream(command))
     os.execvp(command[0], command)
 
 
