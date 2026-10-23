@@ -89,6 +89,16 @@ def cases():
             2,
             'vs=(open -a Safari); seat-run --bg --name proof -- ${vs[@]+"${vs[@]}"} codex exec "open Chrome Safari"',
         ),
+        ("uv-python-cdp", 2, "uv run python3 -c 'pw.chromium.connect_over_cdp(\"http://localhost:9222\")'"),
+        ("uv-codex-profile-data", 0, 'uv run --no-sync codex exec "$HOME/Library/Application Support/Google/Chrome"'),
+        (
+            "uv-python-heredoc",
+            2,
+            "uv run --no-sync python3 - <<'PY'\npw.chromium.connect_over_cdp('http://localhost:9222')\nPY",
+        ),
+        ("uv-codex-data", 0, 'uv run codex exec "/Applications/Safari.app/Contents/MacOS/Safari"'),
+        ("unknown-brief-data", 0, 'verifier --brief "open" "-a" "Safari"'),
+        ("wrapped-browser", 2, "launcher chromium --user-data-dir=/tmp/not-headless"),
         ("unknown-wrapper", 2, 'seat-run --bg --name proof -- ${vs[@]+"${vs[@]}"} codex exec "open Chrome Safari"'),
         ("seat-run-launch", 2, "seat-run --bg --name proof -- open -a Safari"),
         (

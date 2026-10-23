@@ -444,6 +444,19 @@ def classify(text, depth=0):
         elif name == "find":
             for segment in find_execs(argv[1:]):
                 found.add(classify(shlex.join(segment), depth + 1))
+        elif name not in DATA_READERS | INTERPRETERS | {"ssh", "scp", "seat-run"}:
+            for i in range(1, len(argv)):
+                if argv[i - 1] in ("--brief", "--prompt", "--message", "-m"):
+                    continue
+                child = os.path.basename(argv[i])
+                if child in INTERPRETERS | SHELLS | OPENERS | {
+                    "eval",
+                    "codex",
+                    "claude",
+                    "codex-seat",
+                } or MAC_BIN.search(dedot(argv[i])):
+                    found.add(classify(shlex.join(argv[i:]), depth + 1))
+                    break
         for body in here if reads_stdin(name, argv[1:], False) else []:
             if name in SHELLS:
                 found.add(classify(body, depth + 1))

@@ -58,7 +58,11 @@ class Sandbox(object):
                     else:
                         os.symlink(source, target)
         helpers = os.path.join(real_home, ".claude", "hooks")
-        for name in sorted(os.listdir(helpers)) if os.path.isdir(helpers) else []:
+        helper_names = set(os.listdir(helpers)) if os.path.isdir(helpers) else set()
+        helper_names.update(
+            os.path.basename(rel) for rel in OVERLAY if os.path.dirname(rel) == os.path.join(".claude", "hooks")
+        )
+        for name in sorted(helper_names):
             rel = os.path.join(".claude", "hooks", name)
             target = os.path.join(home, rel)
             source = OVERLAY.get(rel) or os.path.join(helpers, name)

@@ -88,6 +88,48 @@ def normalize(argv):
             argv = argv[1:]
             continue
         name = os.path.basename(argv[0])
+        if name == "uv" and argv[1:2] == ["run"]:
+            i = 2
+            while i < len(argv) and argv[i].startswith("-"):
+                option, equals, _value = argv[i].partition("=")
+                if option == "--":
+                    i += 1
+                    break
+                if option in {
+                    "--python",
+                    "-p",
+                    "--project",
+                    "--directory",
+                    "--env-file",
+                    "--with",
+                    "--package",
+                    "--extra",
+                    "--group",
+                }:
+                    i += 1 if equals else 2
+                elif (
+                    option
+                    in {
+                        "--no-sync",
+                        "--frozen",
+                        "--locked",
+                        "--offline",
+                        "--no-project",
+                        "--no-dev",
+                        "--all-extras",
+                        "--all-groups",
+                        "--quiet",
+                        "-q",
+                    }
+                    and not equals
+                ):
+                    i += 1
+                else:
+                    raise Doubt
+            argv = argv[i:]
+            if not argv:
+                raise Doubt
+            continue
         if name not in WRAPPERS:
             if name == "xargs" or argv[0].startswith("-") or any(c in argv[0] for c in "$`\\"):
                 raise Doubt
