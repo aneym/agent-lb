@@ -31,7 +31,7 @@ def test_a_floor_guard_that_fails_refuses_the_call(tmp_path: Path, leaf: str, mo
     home, env = failing_guard_home(tmp_path, command, rel, kind, mode)
     call = {"tool_name": "Bash", "tool_input": {"command": REACHES_PREFILTERS}, "hook_event_name": "PreToolUse"}
     result = run_owned(DISPATCH_BASH, call, env, 30)
-    if leaf.startswith(("workflow-relay-guard.py", "wide-scan-guard.sh")):
+    if leaf.startswith("wide-scan-guard.sh"):
         if mode == "missing" and kind == "py" and not any(x in command for x in ("||", "bash -c")):
             assert result is not None and result.returncode == 2
         else:
@@ -81,16 +81,17 @@ def test_a_floor_guards_block_stands_under_its_fallback_wrapper(tmp_path: Path) 
 
 def test_a_floor_guard_allows_only_with_its_receipt(tmp_path: Path) -> None:
 
-    hook = {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-relay-guard.py"'}
+    hook = {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/host-credential-guard.py"'}
     home, env = dispatcher_home(tmp_path, [hook])
-    guard = home / ".claude/hooks/workflow-relay-guard.py"
-    shutil.copy(SOURCE / "hooks/workflow-relay-guard.py", guard)
-    call = {"tool_name": "Workflow", "tool_input": {"script": "agent('x')"}, "hook_event_name": "PreToolUse"}
+    guard = home / ".claude/hooks/host-credential-guard.py"
+    shutil.copy(SOURCE / "hooks/host-credential-guard.py", guard)
+    call = {"tool_name": "Bash", "tool_input": {"command": "git status"}, "hook_event_name": "PreToolUse"}
     answer = run_hook(DISPATCH_BASH, call, env)
     assert answer.returncode == 0 and "floor-ok" not in answer.stdout, answer
-    assert "RELAYED-REQUEST-GUARD" in json.loads(answer.stdout)["hookSpecificOutput"]["additionalContext"]
     assert "floor-ok" not in run_hook(hook["command"], call, env).stdout
     guard.write_text(guard.read_text().replace("print(RECEIPT)", "pass"))
     refused = run_hook(DISPATCH_BASH, call, env)
-    assert refused.returncode == 0, refused
-    assert "RELAYED-REQUEST-GUARD" in json.loads(refused.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert refused.returncode == 2, refused
+    reason = json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "floor guard host-credential-guard.py" in reason
+    assert "refused" in reason

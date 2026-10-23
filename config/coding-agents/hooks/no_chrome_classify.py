@@ -494,4 +494,4 @@ if __name__ == "__main__":
     try:
         print(classify(sys.argv[1]))
     except (Doubt, ValueError, OSError):
-        print("browser")
+        sys.exit(2)

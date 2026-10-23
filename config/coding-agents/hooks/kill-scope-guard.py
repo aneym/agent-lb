@@ -442,9 +442,7 @@ def main():
         return 0
     start = os.getppid()
     own = descendants(table, session_root(table, start))
-    session = str(payload.get("session_id") or "")
     foreign = []
-    warned = False
     live = set()
     for pid, (_, argv) in table.items():
         words = argv.split()
@@ -486,9 +484,6 @@ def main():
                     re.I,
                 )
             )
-            marked = len(session) >= 8 and bool(
-                re.search(r"(?:--session[-_]id(?:=|\s+)|session_id=)" + re.escape(session) + r"(?:\s|$)", argv)
-            )
             words = argv.split()
             interactive_shell = executable.lstrip("-") in SHELLS and (
                 executable.startswith("-")
@@ -499,8 +494,6 @@ def main():
             )
             if gui or shared or executable in {"launchd", "WindowServer", "loginwindow", "Dock", "Finder"}:
                 others.append(pid)
-            elif pid not in own and not marked:
-                warned = True
         if others:
             foreign.append((sel, others))
     if not foreign:

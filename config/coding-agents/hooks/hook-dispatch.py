@@ -54,7 +54,6 @@ try:
     from hook_failure_recovery import deny_reason, parse_json  # type: ignore[missing-import]
     from hook_prefilters import (  # type: ignore[missing-import]
         COMMAND_PREFILTERS,
-        INPROC_PREFILTERS,
         SCRIPT_NEEDS,
         SCRIPT_PREFILTERS,
         escapes_in_input,
@@ -258,7 +257,6 @@ def plan_hook(hook, inproc_names, script_pins=None):
         return plan
     plan.script, plan.interp, plan.source = script, interp, source
     plan.argv = [script] + match.group("args").split()
-    plan.prefilter = INPROC_PREFILTERS.get(name)
     plan.kind = "inproc"
     plan.reason = "same interpreter" if same_interpreter(interp) else "other interpreter"
     return plan

@@ -311,7 +311,9 @@ def substitutions(text):
             continue
         if c in "'\"" and (quote is None or quote == c):
             quote = None if quote else c
-        if quote != "'" and (c == "`" or text.startswith("$(", i)):
+        if quote != "'" and (
+            c == "`" or text.startswith("$(", i) or (quote is None and text[i : i + 2] in {"<(", ">("})
+        ):
             backtick = c == "`"
             start = i + (1 if backtick else 2)
             k, level, inner = start, 1, None
