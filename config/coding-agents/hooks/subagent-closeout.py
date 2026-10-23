@@ -242,8 +242,10 @@ def match(records: list, session_id, agent_type: str, agent_name: str, digests: 
         if record.get("event") == "dispatch" and not record.get("denied"):
             open_dispatches.append(record)
         elif record.get("event") == "closeout":
-            if record.get("match") == "prompt_hash_ambiguous":
+            if record.get("match") == "prompt_hash_ambiguous" and not record.get("matched"):
                 # It claimed no dispatch, so replaying it must not close one either.
+                # An older hook pinned ambiguous stops on the newest sibling and
+                # said so with `matched`; those still close that sibling here.
                 continue
             closed, _ = resolve(
                 open_dispatches,
@@ -253,7 +255,17 @@ def match(records: list, session_id, agent_type: str, agent_name: str, digests: 
             )
             if closed is not None:
                 open_dispatches.remove(closed)
-    return resolve(open_dispatches, digests, [agent_name, agent_type], agent_type)
+    dispatch, how = resolve(open_dispatches, digests, [agent_name, agent_type], agent_type)
+    if how == "prompt_hash_ambiguous":
+        # Which sibling stopped is unknown, so report only what all of them agree
+        # on: identical prompts sent to different seats or models share no seat.
+        digest = dispatch.get("prompt_sha256")
+        siblings = [record for record in open_dispatches if record.get("prompt_sha256") == digest]
+        dispatch = {
+            key: siblings[0].get(key) if all(record.get(key) == siblings[0].get(key) for record in siblings) else None
+            for key in ("subagent_type", "task_class", "model")
+        }
+    return dispatch, how
 
 
 def duration(dispatch) -> float:
@@ -283,8 +295,7 @@ def main() -> None:
     dispatch, how = match(tail(), session_id, agent_type, agent_name, digests)
     shared = None
     if how == "prompt_hash_ambiguous":
-        # Siblings with one prompt share class, seat and model, but which of them
-        # stopped is unknown: keep those shared facts and attribute to none of them.
+        # `match` returned only the facts the siblings share; attribute to none of them.
         shared, dispatch = dispatch, None
     ok = bool(last.strip()) and not FAILURE.search(last)
     record = {
