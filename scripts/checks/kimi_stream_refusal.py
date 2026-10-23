@@ -62,7 +62,9 @@ def serve(port: int) -> None:
     asyncio.run(seed())
     import uvicorn
 
-    uvicorn.run("app.main:app", host="127.0.0.1", port=port, log_level="error", access_log=False)
+    uvicorn.run(
+        "app.main:app", host="127.0.0.1", port=port, log_level="error", access_log=False, timeout_graceful_shutdown=2
+    )
 
 
 async def check() -> None:
@@ -75,6 +77,8 @@ async def check() -> None:
         "usage": {"prompt_tokens": 4, "completion_tokens": 1, "total_tokens": 5},
     }
     calls = 0
+    delayed_started = asyncio.Event()
+    delayed_closed = asyncio.Event()
     body = (
         b'data: {"id":"fake","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"}}]}\n\n'
         b'data: {"id":"fake","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}\n\n'
@@ -88,6 +92,17 @@ async def check() -> None:
             return web.json_response({"error": {"message": "Your plan supports only kimi-for-coding"}}, status=403)
         if mode == "server-error":
             return web.json_response({"error": {"message": "fixture unavailable"}}, status=500)
+        if mode == "delayed":
+            response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+            await response.prepare(request)
+            transport = request.transport
+            assert transport is not None
+            delayed_started.set()
+            async with asyncio.timeout(10):
+                while not transport.is_closing():
+                    await asyncio.sleep(0.01)
+            delayed_closed.set()
+            return response
         if mode == "disconnect":
             response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
             await response.prepare(request)
@@ -237,6 +252,50 @@ async def check() -> None:
                             == "active"
                         )
                         print("PASS successful stream bytes preserved and account remains active", flush=True)
+                        mode = "delayed"
+                        _, writer = await asyncio.open_connection("127.0.0.1", port)
+                        payload = json.dumps(
+                            {
+                                "model": "kimi-for-coding",
+                                "stream": True,
+                                "messages": [{"role": "user", "content": "hello"}],
+                                "max_tokens": 10,
+                            }
+                        ).encode()
+                        wire_headers = (
+                            f"POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                            f"Authorization: {headers['Authorization']}\r\n"
+                            f"Content-Type: application/json\r\nContent-Length: {len(payload)}\r\n\r\n"
+                        ).encode()
+                        try:
+                            writer.write(wire_headers + payload)
+                            await writer.drain()
+                            await asyncio.wait_for(delayed_started.wait(), timeout=5)
+                            assert (
+                                db.execute(
+                                    "select count(*) from api_key_usage_reservations where status='reserved'"
+                                ).fetchone()[0]
+                                == 1
+                            )
+                        finally:
+                            writer.close()
+                            await writer.wait_closed()
+                        await asyncio.wait_for(delayed_closed.wait(), timeout=3)
+                        for _ in range(100):
+                            if (
+                                db.execute(
+                                    "select count(*) from api_key_usage_reservations where status='reserved'"
+                                ).fetchone()[0]
+                                == 0
+                            ):
+                                break
+                            await asyncio.sleep(0.05)
+                        else:
+                            raise AssertionError("client disconnect before first event leaked reservation")
+                        print(
+                            "PASS client disconnect before first event closes upstream and releases reservation",
+                            flush=True,
+                        )
                         mode = "disconnect"
                         async with client.post(
                             base + "/v1/chat/completions",

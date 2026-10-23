@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncGenerator, AsyncIterator
 
 from anyio import CancelScope
 from fastapi import Request, Response
@@ -10,6 +11,31 @@ from app.core.anthropic.models import AnthropicMessageRequest
 from app.dependencies import get_anthropic_proxy_context
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy.anthropic_service import AnthropicProxyError
+
+
+async def _prime_stream(request: Request, body: AsyncIterator[bytes]) -> bytes | None:
+    async def wait_for_disconnect() -> None:
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+
+    first = asyncio.ensure_future(anext(body))
+    disconnected = asyncio.create_task(wait_for_disconnect())
+    primed = False
+    try:
+        await asyncio.wait((first, disconnected), return_when=asyncio.FIRST_COMPLETED)
+        if disconnected.done():
+            disconnected.result()
+            return None
+        chunk = first.result()
+        primed = True
+        return chunk
+    finally:
+        first.cancel()
+        disconnected.cancel()
+        with CancelScope(shield=True):
+            await asyncio.gather(first, disconnected, return_exceptions=True)
+            if not primed and isinstance(body, AsyncGenerator):
+                await body.aclose()
 
 
 async def chat_response(
@@ -62,7 +88,10 @@ async def chat_response(
         )
         if stream_requested:
             try:
-                first = await anext(stream.body)
+                first = await _prime_stream(request, stream.body)
+                if first is None:
+                    await _release_reservation(reservation)
+                    return Response(status_code=499)
             except StopAsyncIteration:
                 await _release_reservation(reservation)
                 return Response(content=b"", media_type=stream.media_type)
