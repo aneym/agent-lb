@@ -814,6 +814,13 @@ class AnthropicProxyService:
                         )
                     )
                 )
+            # Historical paid-usage signals stop gating once subscription
+            # headroom recovers, including transient request-cooldown recovery.
+            extra_usage_tripwire_cooldowns = {
+                account_id: cooldown
+                for account_id, cooldown in extra_usage_tripwire_cooldowns.items()
+                if account_id in primary_exhaustion
+            }
             weekly_usage_used_percent: dict[str, float] = {}
             secondary_exhaustion: dict[str, int | None] = {}
             if extra_usage_gate or fable_routing:
