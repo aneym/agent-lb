@@ -62,4 +62,4 @@ fi
 if [ "$mode" != staged ]; then
   run_step 'filecap check' filecap check --rev HEAD
 fi
-run_step 'feature-map check' /Volumes/StudioExt/repos/agent-plugin-kit/bin/feature-map check --repo .
+run_step 'feature-map check' "${KIT_ROOT:-$HOME/.agent-rails/kit-runtime/current}/bin/feature-map" check --repo .

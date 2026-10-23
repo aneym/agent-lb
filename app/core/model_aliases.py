@@ -5,9 +5,11 @@ from contextvars import ContextVar
 from fnmatch import fnmatchcase
 
 from starlette.responses import JSONResponse
+from starlette.routing import Match
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.config.settings import get_settings
+from app.core.model_payloads import rewrite_models
 
 requested_model_alias: ContextVar[str | None] = ContextVar("requested_model_alias", default=None)
 
@@ -31,25 +33,25 @@ def model_error(model: str, anthropic: bool = False) -> JSONResponse:
     return JSONResponse({"error": {**error, "code": "model_not_allowed", "param": "model"}}, status_code=400)
 
 
+class ModelExcluded(ValueError):
+    pass
+
+
 class Aliases:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = scope.get("path", "").rstrip("/")
-        paths = {
-            "/v1/responses",
-            "/v1/responses/compact",
-            "/v1/messages",
-            "/v1/messages/count_tokens",
-            "/v1/chat/completions",
-            "/v1/ccgpt/messages",
-            "/v1/ccgpt/messages/count_tokens",
-            "/v1/images/generations",
-            "/backend-api/codex/responses",
-            "/backend-api/codex/responses/compact",
-        }
-        if path not in paths or scope["type"] not in {"http", "websocket"}:
+        if scope["type"] not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+        route_scope = {**scope, "path": path}
+        if not any(
+            getattr(getattr(route, "endpoint", None), "__module__", "").startswith("app.modules.proxy.")
+            and route.matches(route_scope)[0] == Match.FULL
+            for route in scope["app"].routes
+        ):
             await self.app(scope, receive, send)
             return
         token = requested_model_alias.set(None)
@@ -106,22 +108,25 @@ class Aliases:
                 if not message.get("more_body", False):
                     break
             raw = bytes(chunks)
-            try:
-                body = json.loads(raw)
-            except (ValueError, UnicodeDecodeError):
-                body = None
-            if isinstance(body, dict) and isinstance(body.get("model"), str):
-                model = body["model"]
+
+            def rewrite(model: str) -> str:
                 if not model_is_visible(model):
-                    await model_error(model, "/messages" in path)(scope, receive, send)
-                    return
+                    raise ModelExcluded(model)
                 target = resolve_model(model)
                 if target != model:
                     requested_model_alias.set(model)
-                    body["model"] = target
-                    raw = json.dumps(body).encode()
-                    scope["headers"] = [(k, v) for k, v in scope["headers"] if k.lower() != b"content-length"]
-                    scope["headers"].append((b"content-length", str(len(raw)).encode()))
+                return target
+
+            content_type = next((v for k, v in scope["headers"] if k.lower() == b"content-type"), b"")
+            try:
+                rewritten = rewrite_models(raw, content_type, rewrite)
+            except ModelExcluded as exc:
+                await model_error(str(exc), "/messages" in path)(scope, receive, send)
+                return
+            if rewritten != raw:
+                raw = rewritten
+                scope["headers"] = [(k, v) for k, v in scope["headers"] if k.lower() != b"content-length"]
+                scope["headers"].append((b"content-length", str(len(raw)).encode()))
             delivered = False
 
             async def receive_body() -> Message:
