@@ -354,16 +354,18 @@ def _probe_command(fable: Path, prompt: str, session_id: str) -> list[str]:
 
 
 def raise_fd_soft_limit() -> int | None:
-    soft = None
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        limit = min(8192, hard) if hard >= 0 else 8192
-        if soft < limit:
-            resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard))
-            soft = limit
-    except OSError:
-        pass
-    return soft
+    except (OSError, ValueError):
+        return None
+    target = 8192 if hard == resource.RLIM_INFINITY else min(8192, hard)
+    if soft == resource.RLIM_INFINITY or soft >= target:
+        return soft
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (OSError, ValueError):
+        return soft
+    return target
 
 
 def run_probe(*, canonical_retry: bool = False) -> ProbeOutcome:

@@ -299,6 +299,52 @@ def test_probe_command_disables_slash_commands() -> None:
     assert "--disable-slash-commands" in command
 
 
+@pytest.mark.parametrize(("start_soft", "expected"), [(256, 8192), (8292, 8292)])
+def test_fd_soft_limit_only_raises_against_real_rlimits(start_soft: int, expected: int) -> None:
+    import resource
+
+    _soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if hard != resource.RLIM_INFINITY and hard < max(start_soft, 8192):
+        pytest.skip("hard fd limit too low for this case")
+    script = (
+        "import importlib.machinery, importlib.util, resource, sys\n"
+        "hard = resource.getrlimit(resource.RLIMIT_NOFILE)[1]\n"
+        "resource.setrlimit(resource.RLIMIT_NOFILE, (int(sys.argv[2]), hard))\n"
+        "loader = importlib.machinery.SourceFileLoader('doctor', sys.argv[1])\n"
+        "module = importlib.util.module_from_spec(importlib.util.spec_from_loader('doctor', loader))\n"
+        "sys.modules['doctor'] = module\n"
+        "loader.exec_module(module)\n"
+        "print(module.raise_fd_soft_limit(), resource.getrlimit(resource.RLIMIT_NOFILE)[0])\n"
+    )
+    doctor_path = str(ROOT / "clients" / "opus-runtime-doctor")
+    completed = subprocess.run(
+        [sys.executable, "-c", script, doctor_path, str(start_soft)], text=True, capture_output=True, check=True
+    )
+    assert completed.stdout.split() == [str(expected), str(expected)]
+
+
+@pytest.mark.parametrize("error", [OSError("denied"), ValueError("not allowed")])
+def test_fd_soft_limit_tolerates_failed_raise(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    doctor = load_script("opus-runtime-doctor")
+    monkeypatch.setattr(doctor.resource, "getrlimit", lambda _which: (256, doctor.resource.RLIM_INFINITY))
+
+    def refuse(_which, _limits):
+        raise error
+
+    monkeypatch.setattr(doctor.resource, "setrlimit", refuse)
+    assert doctor.raise_fd_soft_limit() == 256
+
+
+def test_fd_soft_limit_never_lowers_unlimited_soft(monkeypatch: pytest.MonkeyPatch) -> None:
+    doctor = load_script("opus-runtime-doctor")
+    unlimited = doctor.resource.RLIM_INFINITY
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(doctor.resource, "getrlimit", lambda _which: (unlimited, unlimited))
+    monkeypatch.setattr(doctor.resource, "setrlimit", lambda _which, limits: calls.append(limits))
+    assert doctor.raise_fd_soft_limit() == unlimited
+    assert calls == []
+
+
 def test_schedule_claims_before_detach_and_gates_six_hours(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     doctor = load_script("opus-runtime-doctor")
     monkeypatch.setenv("CLAUDE_LB_DOCTOR_STATE_DIR", str(tmp_path))
