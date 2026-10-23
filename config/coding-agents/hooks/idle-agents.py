@@ -23,7 +23,7 @@ ORCH_DIR = Path(
     os.environ.get("IDLE_AGENT_ORCH_DIR") or HOME / ".agent-rails" / "scoping" / "factory-program" / "CONTEXT"
 )
 
-IDLE_MIN = float(os.environ.get("IDLE_AGENT_MIN", "20"))
+IDLE_MIN = float(os.environ.get("IDLE_AGENT_MIN", "6"))
 DRY_RUN = os.environ.get("IDLE_REAPER_DRY_RUN", "0") == "1"
 TAIL_BYTES = 256 * 1024
 
@@ -255,7 +255,7 @@ def decide(session_id: str, session_dir: Path, reg: dict) -> list[dict]:
         if marked and last_ts and marked > last_ts:
             state, last_ts = "idle", marked
         idle_for = (t - last_ts) / 60 if last_ts else None
-        row["idle_min"] = round(idle_for, 1) if idle_for is not None else None
+        row["idle_min"] = idle_for
         msg_ts = lead_msgs.get(name)
         inbox = inbox_recent(team, name, cutoff)
         if state == "running":
@@ -318,6 +318,63 @@ def nudge_line(stops: list[dict]) -> str:
     if len(names.encode("utf-8")) > budget:
         names = names.encode("utf-8")[: budget - 3].decode("utf-8", "ignore") + "..."
     return prefix + names + suffix
+
+
+def last_closeout_tokens(session_id: str, agent_id: str) -> int:
+    path = HOME / ".claude" / "logs" / "dispatch.jsonl"
+    try:
+        with path.open("rb") as handle:
+            position = handle.seek(0, os.SEEK_END)
+            pending = b""
+            while position:
+                size = min(position, TAIL_BYTES)
+                position -= size
+                handle.seek(position)
+                lines = (handle.read(size) + pending).split(b"\n")
+                pending = lines.pop(0) if position else b""
+                for raw in reversed(lines):
+                    try:
+                        entry = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    if (
+                        entry.get("event") == "closeout"
+                        and entry.get("session_id") == session_id
+                        and entry.get("agent_id") == agent_id
+                    ):
+                        tokens = entry.get("tokens_in")
+                        return tokens if isinstance(tokens, int) and not isinstance(tokens, bool) else 0
+    except OSError:
+        pass
+    return 0
+
+
+def mode_pre(payload: dict) -> None:
+    if payload.get("agent_id") or payload.get("tool_name") != "SendMessage":
+        return
+    target = (payload.get("tool_input") or {}).get("to")
+    session_id = payload.get("session_id")
+    session_dir = session_dir_for(payload)
+    if not (isinstance(target, str) and session_id and session_dir):
+        return
+    with Registry() as reg:
+        rows = decide(session_id, session_dir, reg.data)
+        reg.save()
+    for row in rows:
+        if row["name"] != target or row["action"] != "stop":
+            continue
+        if row["idle_min"] <= 6 or last_closeout_tokens(session_id, row["agent_id"]) <= 150_000:
+            return
+        name = " ".join(target.split())[:120]
+        line = (
+            f"Resume fresh: {name} is idle over 6 min with last closeout tokens_in over 150k; "
+            f"write a handoff to the lane dir, TaskStop {name}, spawn {name}-2 with the handoff. "
+            "Advisory only; this SendMessage is not blocked."
+        )
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": line}}))
+        return
 
 
 def mode_post(payload: dict) -> None:
@@ -454,7 +511,7 @@ def main() -> None:
         return
     payload = read_payload()
     try:
-        {"mark": mode_mark, "post": mode_post, "stop": mode_stop}[mode](payload)
+        {"mark": mode_mark, "pre": mode_pre, "post": mode_post, "stop": mode_stop}[mode](payload)
     except Exception as exc:
         log(f"error mode={mode}: {exc!r}")
 
