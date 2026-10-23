@@ -781,10 +781,6 @@ class AnthropicProxyService:
                     _ANTHROPIC_COOLDOWN_WINDOW,
                     account_ids=account_ids,
                 )
-                extra_usage_tripwire_cooldowns = {
-                    account_id: (float(entry.used_percent), entry.reset_at)
-                    for account_id, entry in extra_usage_tripwire_latest.items()
-                }
             # A persisted primary window with reset_at=None must not gate an
             # account out of routing indefinitely. Only a bounded, still-future
             # reset counts as an active exhaustion here; a None reset re-admits
@@ -814,13 +810,15 @@ class AnthropicProxyService:
                         )
                     )
                 )
-            # Historical paid-usage signals stop gating once subscription
-            # headroom recovers, including transient request-cooldown recovery.
-            extra_usage_tripwire_cooldowns = {
-                account_id: cooldown
-                for account_id, cooldown in extra_usage_tripwire_cooldowns.items()
-                if account_id in primary_exhaustion
-            }
+                # Only a newer primary snapshot can establish recovery from
+                # a paid-usage response; older headroom cannot clear a fresh tripwire.
+                extra_usage_tripwire_cooldowns = {
+                    account_id: (float(entry.used_percent), entry.reset_at)
+                    for account_id, entry in extra_usage_tripwire_latest.items()
+                    if account_id in primary_exhaustion
+                    or (primary_entry := primary_usage.get(account_id)) is None
+                    or primary_entry.recorded_at <= entry.recorded_at
+                }
             weekly_usage_used_percent: dict[str, float] = {}
             secondary_exhaustion: dict[str, int | None] = {}
             if extra_usage_gate or fable_routing:

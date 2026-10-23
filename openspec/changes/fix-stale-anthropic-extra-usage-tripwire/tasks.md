@@ -1,9 +1,11 @@
 ## 1. Implementation
-- [x] 1.1 Restrict effective extra-usage markers to current primary exhaustion for normal routing and transient recovery.
+- [x] 1.1 Retain extra-usage tripwires until a strictly newer primary snapshot confirms recovery, for normal routing and transient recovery.
+- [x] 1.2 Preserve fresh credit-billing tripwires when primary usage is missing, older, or recorded at the same time.
 
 ## 2. Validation
-- [ ] 2.1 Run the supplied acceptance check successfully (attempt returned 127: supplied script absent on this box).
-- [ ] 2.2 Pass focused Anthropic proxy coverage (66 passed, one legacy expectation failed: tripwire blocks without a primary-exhaustion snapshot). Ruff, service import, and diff checks passed.
-- [x] 2.3 Validate the OpenSpec change strictly.
+- [ ] 2.1 Run the supplied acceptance check successfully (exit 127: supplied Mac script absent on this box).
+- [x] 2.2 Pass focused Anthropic proxy coverage: 67 integration tests and 16 API tests passed, including credit-billing response rotation. Forensics output was redirected to a disposable directory through the existing registration API because the default home directory is read-only. No tests were modified.
+- [x] 2.3 Ruff and git diff checks passed.
+- [x] 2.4 Strict validation of this OpenSpec change passed.
 
-Repository-wide strict spec validation reports existing long-requirement warnings: 17 passed, 20 failed. Acceptance and integration validation remain incomplete; this change is unarchived.
+No test files are admitted by this brief; existing HTTP regression coverage exercises the fresh-tripwire failure. The acceptance runner supplies additional stale-tripwire regression coverage externally. Acceptance validation remains incomplete; this change is unarchived.
