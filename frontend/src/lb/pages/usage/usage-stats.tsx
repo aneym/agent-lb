@@ -129,29 +129,32 @@ export function SubscriptionQuota({ pools, failed }: { pools?: Pool[]; failed: b
         className="stats"
         style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))" }}
       >
-        {pools?.map((pool) => (
-          <div className="stat" key={pool.id} data-pool={pool.id}>
-            <h3>{pool.id}</h3>
-            <p>
-              5h: {quota(pool.fiveHourRemainingPercent)} · reset {reset(pool.fiveHourResetAt)}
-            </p>
-            <p>
-              Weekly: {quota(pool.weeklyRemainingPercent)} · reset {reset(pool.weeklyResetAt)}
-            </p>
-            {pool.windows?.map((window) => (
-              <p key={window.id}>
-                {window.label} ({window.kind}): {quota(window.remainingPercent, window.usedPercent)}{" "}
-                · reset {reset(window.resetsAt)}
-              </p>
-            ))}
-            {pool.percentUsed != null && !pool.windows?.length && (
+        {pools
+          ?.filter((pool) => pool.id !== "anthropic-fable")
+          .map((pool) => (
+            <div className="stat" key={pool.id} data-pool={pool.id}>
+              <h3>{pool.id}</h3>
               <p>
-                Cycle: {quota(null, pool.percentUsed)} · reset{" "}
-                {reset(pool.cycleResetAt ?? pool.resetAt)}
+                5h: {quota(pool.fiveHourRemainingPercent)} · reset {reset(pool.fiveHourResetAt)}
               </p>
-            )}
-          </div>
-        ))}
+              <p>
+                Weekly: {quota(pool.weeklyRemainingPercent)} · reset {reset(pool.weeklyResetAt)}
+              </p>
+              {pool.windows?.map((window) => (
+                <p key={window.id}>
+                  {window.label} ({window.kind}):{" "}
+                  {quota(window.remainingPercent, window.usedPercent)} · reset{" "}
+                  {reset(window.resetsAt)}
+                </p>
+              ))}
+              {pool.percentUsed != null && !pool.windows?.length && (
+                <p>
+                  Cycle: {quota(null, pool.percentUsed)} · reset{" "}
+                  {reset(pool.cycleResetAt ?? pool.resetAt)}
+                </p>
+              )}
+            </div>
+          ))}
       </div>
     </section>
   );

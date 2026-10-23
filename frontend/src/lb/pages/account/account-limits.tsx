@@ -16,7 +16,9 @@ export function Limits({ account }: { account: AccountSummary }) {
         ),
       )
     : undefined;
-  const quotas = account.additionalQuotas || [];
+  const quotas = (account.additionalQuotas || []).filter(
+    (q) => q.quotaKey !== "anthropic_fable_scoped_weekly",
+  );
   const maxUsed = Math.ceil(
     Math.max(
       0,
