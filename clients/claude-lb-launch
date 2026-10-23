@@ -8,13 +8,34 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from claude_lb_common import CA_CERT, CCGPT_MODE, EXIT_TEMPFAIL, LaunchConfig, SHIM_START_TIMEOUT_DEFAULT, STALL_TIMEOUT_DEFAULT, env_float, raise_fd_soft_limit, activity_path, headless_invocation, proxy_ready_path  # pyrefly: ignore[missing-import]
+from claude_lb_common import (  # pyrefly: ignore[missing-import]
+    CA_CERT,
+    CCGPT_MODE,
+    EXIT_TEMPFAIL,
+    SHIM_START_TIMEOUT_DEFAULT,
+    STALL_TIMEOUT_DEFAULT,
+    LaunchConfig,
+    activity_path,
+    arg_value,
+    env_float,
+    headless_invocation,
+    proxy_ready_path,
+    raise_fd_soft_limit,
+)
 from claude_lb_endpoints import prepare_ccgpt_endpoint, prepare_interactive_endpoint, print_lb_banner  # pyrefly: ignore[missing-import]
+from claude_lb_gpt_stream import run_gpt_stream
 from claude_lb_network import bypass_anthropic_proxy, lb_enabled, run_opus_doctor, schedule_opus_doctor  # pyrefly: ignore[missing-import]
-from claude_lb_process import auto_resume_enabled, build_command, claude_session_args, derive_session_id, run_headless_with_resume, run_supervised  # pyrefly: ignore[missing-import]
+from claude_lb_process import (  # pyrefly: ignore[missing-import]
+    auto_resume_enabled,
+    build_command,
+    claude_session_args,
+    derive_session_id,
+    run_headless_with_resume,
+    run_supervised,
+)
 from claude_lb_proxy import run_lb_proxy, start_lb_proxy  # pyrefly: ignore[missing-import]
 from claude_lb_quota import anthropic_quota_key, requested_effort, requested_model  # pyrefly: ignore[missing-import]
-from claude_lb_tags import safe_tag, resolve_lane_tags, tag_headers  # pyrefly: ignore[missing-import]
+from claude_lb_tags import resolve_lane_tags, safe_tag, tag_headers  # pyrefly: ignore[missing-import]
 
 
 def check_working_directory() -> None:
@@ -39,11 +60,7 @@ def main() -> None:
         run_lb_proxy(sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5])
         return
     if len(sys.argv) >= 2 and sys.argv[1] == "--desktop-proxy":
-
-
-        listen_port = int(
-            sys.argv[2] if len(sys.argv) >= 3 else os.environ.get("CLAUDE_LB_DESKTOP_PROXY_PORT", "2458")
-        )
+        listen_port = int(sys.argv[2] if len(sys.argv) >= 3 else os.environ.get("CLAUDE_LB_DESKTOP_PROXY_PORT", "2458"))
         upstream = (sys.argv[3] if len(sys.argv) >= 4 else LaunchConfig.base_url).rstrip("/")
         run_lb_proxy(
             str(proxy_ready_path("desktop")),
@@ -70,9 +87,7 @@ def main() -> None:
         os.environ.setdefault("CLAUDE_CODE_NO_FLICKER", "1")
     tag_reason = resolve_lane_tags(argv)
     resolved_tags = tag_headers(os.environ)
-    custom_tags = {
-        name: value for name, value in resolved_tags.items() if "\r" not in value and "\n" not in value
-    }
+    custom_tags = {name: value for name, value in resolved_tags.items() if "\r" not in value and "\n" not in value}
     if custom_tags:
         custom_headers = [
             line
@@ -95,10 +110,8 @@ def main() -> None:
             try:
                 proxy_url = start_lb_proxy(session_id)
 
-
                 os.environ["HTTPS_PROXY"] = proxy_url
                 os.environ["https_proxy"] = proxy_url
-
 
                 for name in ("NO_PROXY", "no_proxy"):
                     exclusions = [entry.strip() for entry in os.environ.get(name, "").split(",") if entry.strip()]
@@ -107,15 +120,12 @@ def main() -> None:
                             exclusions.append(host)
                     os.environ[name] = ",".join(exclusions)
 
-
                 os.environ["NODE_EXTRA_CA_CERTS"] = str(CA_CERT)
-
 
                 os.environ.pop("ANTHROPIC_BASE_URL", None)
                 os.environ.pop("ANTHROPIC_UNIX_SOCKET", None)
                 os.environ.pop("_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL", None)
                 os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
-
 
                 os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
                 os.environ.pop("ANTHROPIC_API_KEY", None)
@@ -150,7 +160,6 @@ def main() -> None:
     if not routed:
         bypass_anthropic_proxy()
 
-
     os.environ.pop("AGENT_LB_INTENT", None)
     os.environ.pop("AGENT_LB_LANE", None)
     command = build_command(argv)
@@ -168,15 +177,18 @@ def main() -> None:
             quota_key, _ = anthropic_quota_key(model, requested_effort(argv))
             sys.exit(run_headless_with_resume(command, argv, session_id, model, quota_key))
         command, claude_session_id = claude_session_args(argv, command)
-        sys.exit(run_supervised(
-            command, activity_path(session_id, os.getpid()),
-            env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT),
-            session_id=claude_session_id,
-        ))
+        sys.exit(
+            run_supervised(
+                command,
+                activity_path(session_id, os.getpid()),
+                env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT),
+                session_id=claude_session_id,
+            )
+        )
+    if routed and CCGPT_MODE and arg_value(argv, "--output-format") == "stream-json":
+        sys.exit(run_gpt_stream(command))
     os.execvp(command[0], command)
 
 
 if __name__ == "__main__":
     main()
-
-
