@@ -35,7 +35,13 @@ class LaunchConfig:
     base_url = (os.environ.get("CLAUDE_LB_BASE_URL") or default_remote_url()).rstrip("/")
 
 
-CCGPT_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
+MODE_FILE = Path.home() / ".config/agent-lb/top-level-mode"
+
+
+TOP_LEVEL_MODE = MODE_FILE.read_text().strip() if MODE_FILE.exists() else "claude"
+
+
+CCGPT_MODE = TOP_LEVEL_MODE == "sol" or os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
 
 
 CCGPT_MODEL = "sol-latest"
