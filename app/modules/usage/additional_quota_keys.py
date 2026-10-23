@@ -68,6 +68,7 @@ def _default_registry_path() -> Path:
     return Path(__file__).resolve().parents[3] / "config" / "additional_quota_registry.json"
 
 
+@lru_cache(maxsize=1)
 def _registry_path() -> Path:
     configured = os.environ.get("AGENT_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", "").strip()
     if configured:
@@ -213,6 +214,7 @@ def _definition_maps_for_path(
 
 
 def clear_additional_quota_registry_cache() -> None:
+    _registry_path.cache_clear()
     _definitions_for_path.cache_clear()
     _definition_maps_for_path.cache_clear()
 
