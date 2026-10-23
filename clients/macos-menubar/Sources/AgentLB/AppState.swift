@@ -65,6 +65,7 @@ final class AppState {
       while !Task.isCancelled {
         if !popoverIsOpen {
           await checkHealth()
+          await fetchAccountsSilently()
           if tick.isMultiple(of: 4) {
 
 
@@ -74,7 +75,6 @@ final class AppState {
 
 
             await fetchSummarySilently()
-            await fetchAccountsSilently()
             await fetchMakerData(silently: true)
             await fetchRecentSilently()
             await withDiscardingTaskGroup { group in

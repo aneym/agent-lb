@@ -29,7 +29,7 @@ struct AccountRow: View {
       return .deactivated(reauth: reauth)
     }
     if account.status == "rate_limited" || account.status == "quota_exceeded" {
-      return .rateLimited(account.rateLimitResetAt)
+      return .rateLimited(account.displayRateLimitResetAt)
     }
     return .active
   }

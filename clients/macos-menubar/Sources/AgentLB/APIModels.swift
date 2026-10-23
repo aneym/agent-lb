@@ -46,6 +46,17 @@ struct Account: Decodable, Identifiable, Sendable, Equatable {
 }
 
 extension Account {
+  var displayRateLimitResetAt: Date? {
+    var exhaustedResets: [Date] = rateLimitResetAt.map { [$0] } ?? []
+    if let remaining = usage.primaryRemainingPercent, remaining <= 0, let resetAtPrimary {
+      exhaustedResets.append(resetAtPrimary)
+    }
+    if let remaining = usage.secondaryRemainingPercent, remaining <= 0, let resetAtSecondary {
+      exhaustedResets.append(resetAtSecondary)
+    }
+    return exhaustedResets.max()
+  }
+
   var fableAvailability: FableAvailability? {
     guard provider.lowercased() == "anthropic", let fableEligible else { return nil }
     return fableEligible ? .available : .out

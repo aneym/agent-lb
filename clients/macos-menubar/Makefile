@@ -36,6 +36,7 @@ bundle: build
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp $(BIN) $(APP)/Contents/MacOS/AgentLB
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Add :AgentLBSourceRevision string $$(git rev-parse HEAD)" $(APP)/Contents/Info.plist
 	codesign --force --deep --sign - $(APP)
 
 run: bundle

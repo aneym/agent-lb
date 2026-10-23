@@ -1,0 +1,4 @@
+- [x] Inspect quota/reset mapping and installed Studio/Book app provenance.
+- [x] Refresh accounts on every closed-panel tick and stamp bundle source revision.
+- [ ] Build, verify signature, and install identical bundle on Studio and Book.
+- [ ] Verify launchd running binary and preserved API base URL on both machines.
