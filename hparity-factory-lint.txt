@@ -1,0 +1,142 @@
+COMMAND: factory-lint fix --changed
+EXIT CODE: 2
+STDOUT:
+
+STDERR:
+factory-lint: ruff fix failed: error: Failed to initialize cache at /srv/cow/cache/ruff: Read-only file system (os error 30)
+ruff failed
+  Cause: Failed to create temporary file
+  Cause: No such file or directory (os error 2) at path "/srv/cow/cache/ruff/0.17.1/.tmpjPyO2Y"
+COMMAND: factory-lint check --changed --format json
+EXIT CODE: 2
+STDOUT:
+{
+  "schema": "factory-lint/1",
+  "repo": "seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7",
+  "head": "6435e05674430b18c16d4986ad431ed34ef3c7f9",
+  "base": "1215efe68223418ff82d0aed60a5151f611afb4e",
+  "mode": "changed",
+  "status": "error",
+  "elapsed_ms": 7819,
+  "base_tree_elapsed_ms": 0,
+  "tools": [
+    {
+      "name": "ruff",
+      "version": "0.17.1",
+      "scope": "file",
+      "files": 7,
+      "elapsed_ms": 1212,
+      "peak_rss_mb": null,
+      "status": "error",
+      "error": "Expecting value: line 1 column 1 (char 0)"
+    },
+    {
+      "name": "ruff-base",
+      "version": "0.17.1",
+      "scope": "file",
+      "files": 6,
+      "elapsed_ms": 145,
+      "peak_rss_mb": null,
+      "status": "error",
+      "error": "Expecting value: line 1 column 1 (char 0)"
+    },
+    {
+      "name": "pyrefly",
+      "version": "1.4.0",
+      "scope": "project",
+      "files": 7,
+      "elapsed_ms": 4643,
+      "peak_rss_mb": null,
+      "status": "findings",
+      "error": null
+    },
+    {
+      "name": "ruff-format",
+      "version": "0.17.1",
+      "scope": "file",
+      "files": 7,
+      "elapsed_ms": 541,
+      "peak_rss_mb": null,
+      "status": "error",
+      "error": "ruff-format exited 2 without parsed findings: error: Failed to initialize cache at /srv/cow/cache/ruff: Read-only file system (os error 30)\nruff failed\n  Cause: Failed to create temporary file\n  Cause: No such file or directory (os error 2) at path \"/srv/cow/cache/ruff/0.17.1/.tmphPw5ML\"\n"
+    },
+    {
+      "name": "ruff-format-base",
+      "version": "0.17.1",
+      "scope": "file",
+      "files": 6,
+      "elapsed_ms": 404,
+      "peak_rss_mb": null,
+      "status": "error",
+      "error": "ruff-format exited 2 without parsed findings: error: Failed to initialize cache at /srv/cow/cache/ruff: Read-only file system (os error 30)\nruff failed\n  Cause: Failed to create temporary file\n  Cause: No such file or directory (os error 2) at path \"/srv/cow/cache/ruff/0.17.1/.tmp5h6yKF\"\n"
+    },
+    {
+      "name": "shellcheck",
+      "version": "0.11.0",
+      "scope": "file",
+      "files": 18,
+      "elapsed_ms": 3667,
+      "peak_rss_mb": null,
+      "status": "findings",
+      "error": null
+    },
+    {
+      "name": "custom:timer-intervals",
+      "version": null,
+      "scope": "custom",
+      "files": 144,
+      "elapsed_ms": 2470,
+      "peak_rss_mb": null,
+      "status": "ok",
+      "error": null
+    }
+  ],
+  "summary": {
+    "new": 2,
+    "existing": 4,
+    "fixable_safe": 0,
+    "fixed": 0,
+    "truncated": false
+  },
+  "findings": [
+    {
+      "tool": "shellcheck",
+      "rule": "SC2155",
+      "severity": "warning",
+      "path": ".hparity-base-home.J1yJHqpb/.claude/hooks/codex-local.sh",
+      "line": 135,
+      "col": 8,
+      "end_line": 135,
+      "end_col": 31,
+      "message": "Declare and assign separately to avoid masking return values.",
+      "new": true,
+      "fix": {
+        "safety": "none",
+        "applied": false
+      },
+      "fingerprint": "db99c334cf03c3cd0f0ae026147f7e9cb7492e60",
+      "doc_url": "https://www.shellcheck.net/wiki/SC2155"
+    },
+    {
+      "tool": "shellcheck",
+      "rule": "SC2155",
+      "severity": "warning",
+      "path": ".hparity-branch-home.nPVtKbdP/.claude/hooks/codex-local.sh",
+      "line": 135,
+      "col": 8,
+      "end_line": 135,
+      "end_col": 31,
+      "message": "Declare and assign separately to avoid masking return values.",
+      "new": true,
+      "fix": {
+        "safety": "none",
+        "applied": false
+      },
+      "fingerprint": "f25e1e3ec00c3d84cf1284a5291218546c58f8b1",
+      "doc_url": "https://www.shellcheck.net/wiki/SC2155"
+    }
+  ]
+}
+
+STDERR:
+

@@ -1,0 +1,15 @@
+COMMAND: python3 -m pytest -q -n 4 -p no:cacheprovider tests/floor/test_hook_dispatcher*.py tests/floor/test_policy_core.py tests/floor/test_gh_write_guard.py tests/floor/test_plutil_guard.py tests/floor/test_provider_cli_guard.py tests/floor/test_host_credential_guard.py tests/floor/test_seat_guard_enforcement.py tests/floor/test_seat_guard_quota_swap.py
+EXIT CODE: 4
+STDOUT:
+
+STDERR:
+/usr/lib/python3/dist-packages/_pytest/config/__init__.py:331: PluggyTeardownRaisedWarning: A plugin raised an exception during an old-style hookwrapper teardown.
+Plugin: helpconfig, Hook: pytest_cmdline_parse
+ConftestImportFailure: ModuleNotFoundError: No module named 'pytest_asyncio' (from /srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/tests/conftest.py)
+For more information see https://pluggy.readthedocs.io/en/stable/api_reference.html#pluggy.PluggyTeardownRaisedWarning
+  config = pluginmanager.hook.pytest_cmdline_parse(
+ImportError while loading conftest '/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/tests/conftest.py'.
+tests/conftest.py:10: in <module>
+    import pytest_asyncio
+E   ModuleNotFoundError: No module named 'pytest_asyncio'
+

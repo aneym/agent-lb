@@ -1,0 +1,22 @@
+{
+  "base": {
+    "root": "/Volumes/StudioExt/repos/agent-lb-wt/verify-hbase-1215efe6",
+    "check_rc": 0,
+    "parity-help_rc": 0,
+    "home": "/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/.hparity-base-home.J1yJHqpb",
+    "install_rc": 1,
+    "setup_rc": 0,
+    "parity_rc": 1,
+    "pytest_rc": 4
+  },
+  "branch": {
+    "root": "/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7",
+    "check_rc": 2,
+    "parity-help_rc": 0,
+    "home": "/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/.hparity-branch-home.nPVtKbdP",
+    "install_rc": 1,
+    "setup_rc": 0,
+    "parity_rc": 1,
+    "pytest_rc": 4
+  }
+}

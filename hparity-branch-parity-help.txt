@@ -1,0 +1,32 @@
+COMMAND: python3 config/coding-agents/hooks/hook-dispatch-parity.py --help
+EXIT CODE: 0
+STDOUT:
+usage: hook-dispatch-parity.py [-h] [--home HOME] [--registry REGISTRY]
+                               [--dispatcher DISPATCHER] [--out OUT]
+                               [--workdir WORKDIR] [--keep]
+                               [--overlay REL=PATH] [--only ONLY]
+                               [--jobs JOBS] [--require-process-count]
+                               [--no-process-count] [--lock-held]
+                               [--require-expectations]
+
+hook-dispatch.py parity fixture
+
+options:
+  -h, --help            show this help message and exit
+  --home HOME
+  --registry REGISTRY
+  --dispatcher DISPATCHER
+  --out OUT
+  --workdir WORKDIR     sandbox parent (default: a new temp dir)
+  --keep                keep the sandbox
+  --overlay REL=PATH    run PATH in place of HOME/REL (repeatable)
+  --only ONLY           regex: run only cases whose name matches
+  --jobs JOBS           cases run at once
+  --require-process-count
+  --no-process-count    skip the process count
+  --lock-held           the caller holds the install lock
+  --require-expectations
+                        also require each expected decision
+
+STDERR:
+

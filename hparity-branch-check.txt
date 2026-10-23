@@ -1,0 +1,43 @@
+COMMAND: ./check
+EXIT CODE: 2
+STDOUT:
+{"findings": [], "count": 0}
+{
+  "cycles": [
+    "app",
+    "bin",
+    "clients",
+    "config",
+    "deploy",
+    "docs",
+    "features",
+    "frontend",
+    "openspec",
+    "patches",
+    "scripts",
+    "tests"
+  ],
+  "errors": [],
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+factory-lint check --changed
+ruff: error: Expecting value: line 1 column 1 (char 0)
+ruff-base: error: Expecting value: line 1 column 1 (char 0)
+ruff-format: error: ruff-format exited 2 without parsed findings: error: Failed to initialize cache at /srv/cow/cache/ruff: Read-only file system (os error 30)
+ruff failed
+  Cause: Failed to create temporary file
+  Cause: No such file or directory (os error 2) at path "/srv/cow/cache/ruff/0.17.1/.tmpPd6THz"
+
+ruff-format-base: error: ruff-format exited 2 without parsed findings: error: Failed to initialize cache at /srv/cow/cache/ruff: Read-only file system (os error 30)
+ruff failed
+  Cause: Failed to create temporary file
+  Cause: No such file or directory (os error 2) at path "/srv/cow/cache/ruff/0.17.1/.tmpJVhIFm"
+
+error: 0 new, 4 existing, 0 files fixed (10501 ms)
+make lint: 12 s
+
+STDERR:
+make: *** [Makefile:32: lint] Error 2
+

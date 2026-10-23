@@ -1,0 +1,140 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'Bash' 053695bd3256",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/seat-guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Seat guard"
+          }
+        ],
+        "matcher": "Agent"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-seat-guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Workflow seat guard"
+          }
+        ],
+        "matcher": "Workflow"
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'Edit|Write' 053695bd3256",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" PreToolUse 'Read' 053695bd3256",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/gh-write-guard.py\" --session-env",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/factory-context.py\" 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "Factory context"
+          }
+        ],
+        "matcher": "compact|resume"
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/subagent-closeout.py\" 2>/dev/null || true",
+            "timeout": 5,
+            "statusMessage": "Dispatch closeout"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.agents/policy/coding-agents/hooks/focus-steal-check.py\" subagent-stop",
+            "timeout": 15,
+            "statusMessage": "Focus steal check"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14\"; [ -x \"$P\" ] || P=python3; exec \"$P\" -I -S \"$HOME/.claude/hooks/hook-dispatch.py\" PostToolUse '*' 053695bd3256",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-readback.py\"",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Workflow"
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$HOME/.claude/hooks/compact-checkpoint.py\"",
+            "timeout": 10,
+            "statusMessage": "Compact checkpoint"
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5"
+  },
+  "model": "opus",
+  "effortLevel": "medium"
+}

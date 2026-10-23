@@ -1,0 +1,129 @@
+Suite results
+
+No individual failing case names: parity stopped before cases; pytest stopped loading tests/conftest.py.
+
+base check: exit 0; 1 command passed, 0 failed; no test-case counts emitted
+Output tail:
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+factory-lint check --changed
+pass: 0 new, 0 existing, 0 files fixed (1827 ms)
+make lint: 5 s
+filecap: checked 0 files; exempt 0; over the limit and held by no-grow 0.
+filecap check: 2 s
+ok: True
+notes: {"features": ["accounts", "module-support-accounts"], "file": "app/modules/accounts/api.py", "problem": "overlapping paths", "product": "agent-lb"}
+notes: {"features": ["accounts", "module-support-accounts"], "file": "app/modules/accounts/availability_api.py", "problem": "overlapping paths", "product": "agent-lb"}
+feature-map check: 4 s
+
+STDERR:
+
+
+base parity: exit 1; 0 cases passed, 0 cases failed; startup/tooling error (no case results)
+Output tail:
+EXIT CODE: 1
+STDOUT:
+
+STDERR:
+Traceback (most recent call last):
+  File "/srv/cow/trees/agent-lb-wt/verify-hbase-1215efe6/config/coding-agents/hooks/hook-dispatch-parity.py", line 201, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/srv/cow/trees/agent-lb-wt/verify-hbase-1215efe6/config/coding-agents/hooks/hook-dispatch-parity.py", line 73, in main
+    lock = None if args.lock_held else install_lock(home)
+                                       ^^^^^^^^^^^^^^^^^^
+  File "/srv/cow/trees/agent-lb-wt/verify-hbase-1215efe6/config/coding-agents/hooks/hook-dispatch-parity.py", line 28, in install_lock
+    handle = open(os.path.join(lock_dir, "agent-lb-install-policy-%d-%s.lock" % (os.getuid(), digest)), "a")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/tmp/agent-lb-install-policy-1000-f4a09ff9a6ff289f.lock'
+
+
+base pytest: exit 4; 0 cases passed, 0 cases failed; startup/tooling error (no case results)
+Output tail:
+COMMAND: python3 -m pytest -q -n 4 -p no:cacheprovider tests/floor/test_hook_dispatcher*.py tests/floor/test_policy_core.py tests/floor/test_gh_write_guard.py tests/floor/test_plutil_guard.py tests/floor/test_provider_cli_guard.py tests/floor/test_host_credential_guard.py tests/floor/test_seat_guard_enforcement.py tests/floor/test_seat_guard_quota_swap.py
+EXIT CODE: 4
+STDOUT:
+
+STDERR:
+/usr/lib/python3/dist-packages/_pytest/config/__init__.py:331: PluggyTeardownRaisedWarning: A plugin raised an exception during an old-style hookwrapper teardown.
+Plugin: helpconfig, Hook: pytest_cmdline_parse
+ConftestImportFailure: ModuleNotFoundError: No module named 'pytest_asyncio' (from /srv/cow/trees/agent-lb-wt/verify-hbase-1215efe6/tests/conftest.py)
+For more information see https://pluggy.readthedocs.io/en/stable/api_reference.html#pluggy.PluggyTeardownRaisedWarning
+  config = pluginmanager.hook.pytest_cmdline_parse(
+ImportError while loading conftest '/srv/cow/trees/agent-lb-wt/verify-hbase-1215efe6/tests/conftest.py'.
+tests/conftest.py:10: in <module>
+    import pytest_asyncio
+E   ModuleNotFoundError: No module named 'pytest_asyncio'
+
+
+branch check: exit 2; 0 commands passed, 1 failed; no test-case counts emitted
+Output tail:
+ruff-format: error: ruff-format exited 2 without parsed findings: error: Failed to initialize cache at /srv/cow/cache/ruff: Read-only file system (os error 30)
+ruff failed
+  Cause: Failed to create temporary file
+  Cause: No such file or directory (os error 2) at path "/srv/cow/cache/ruff/0.17.1/.tmpPd6THz"
+
+ruff-format-base: error: ruff-format exited 2 without parsed findings: error: Failed to initialize cache at /srv/cow/cache/ruff: Read-only file system (os error 30)
+ruff failed
+  Cause: Failed to create temporary file
+  Cause: No such file or directory (os error 2) at path "/srv/cow/cache/ruff/0.17.1/.tmpJVhIFm"
+
+error: 0 new, 4 existing, 0 files fixed (10501 ms)
+make lint: 12 s
+
+STDERR:
+make: *** [Makefile:32: lint] Error 2
+
+
+branch parity: exit 1; 0 cases passed, 0 cases failed; startup/tooling error (no case results)
+Output tail:
+EXIT CODE: 1
+STDOUT:
+
+STDERR:
+Traceback (most recent call last):
+  File "/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/config/coding-agents/hooks/hook-dispatch-parity.py", line 201, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/config/coding-agents/hooks/hook-dispatch-parity.py", line 73, in main
+    lock = None if args.lock_held else install_lock(home)
+                                       ^^^^^^^^^^^^^^^^^^
+  File "/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/config/coding-agents/hooks/hook-dispatch-parity.py", line 28, in install_lock
+    handle = open(os.path.join(lock_dir, "agent-lb-install-policy-%d-%s.lock" % (os.getuid(), digest)), "a")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/tmp/agent-lb-install-policy-1000-f6e8fa84af823c56.lock'
+
+
+branch pytest: exit 4; 0 cases passed, 0 cases failed; startup/tooling error (no case results)
+Output tail:
+COMMAND: python3 -m pytest -q -n 4 -p no:cacheprovider tests/floor/test_hook_dispatcher*.py tests/floor/test_policy_core.py tests/floor/test_gh_write_guard.py tests/floor/test_plutil_guard.py tests/floor/test_provider_cli_guard.py tests/floor/test_host_credential_guard.py tests/floor/test_seat_guard_enforcement.py tests/floor/test_seat_guard_quota_swap.py
+EXIT CODE: 4
+STDOUT:
+
+STDERR:
+/usr/lib/python3/dist-packages/_pytest/config/__init__.py:331: PluggyTeardownRaisedWarning: A plugin raised an exception during an old-style hookwrapper teardown.
+Plugin: helpconfig, Hook: pytest_cmdline_parse
+ConftestImportFailure: ModuleNotFoundError: No module named 'pytest_asyncio' (from /srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/tests/conftest.py)
+For more information see https://pluggy.readthedocs.io/en/stable/api_reference.html#pluggy.PluggyTeardownRaisedWarning
+  config = pluginmanager.hook.pytest_cmdline_parse(
+ImportError while loading conftest '/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/tests/conftest.py'.
+tests/conftest.py:10: in <module>
+    import pytest_asyncio
+E   ModuleNotFoundError: No module named 'pytest_asyncio'
+
+
+BRANCH poll-loop parity lines: none; parity failed acquiring its lock before executing cases.
+
+Sandbox fallback: hparity-sandbox-setup.py copies repository hook assets and uses reconcile_settings, fold_hooks, dispatch_worth, pin_inproc identically on both sides. Setup passed (BASE 15 groups; BRANCH 16 groups).
+Both installer attempts exited 1: could not fetch origin/main; refusing policy installation.
+
+Output delivery errors:
+[Errno 30] Read-only file system: '/Volumes/StudioExt/repos/agent-lb-wt/verify-hbase-1215efe6/TEST-OUTPUT-base.txt'
+[Errno 30] Read-only file system: '/Volumes/StudioExt/repos/agent-lb-wt/.verify-runs/hparity-base-check.txt'
+[Errno 30] Read-only file system: '/Volumes/StudioExt/repos/agent-lb-wt/.verify-runs/hparity-base-parity.txt'
+[Errno 30] Read-only file system: '/Volumes/StudioExt/repos/agent-lb-wt/.verify-runs/hparity-base-pytest.txt'
+[Errno 30] Read-only file system: '/Volumes/StudioExt/repos/agent-lb-wt/.verify-runs/hparity-branch-check.txt'
+[Errno 30] Read-only file system: '/Volumes/StudioExt/repos/agent-lb-wt/.verify-runs/hparity-branch-parity.txt'
+[Errno 30] Read-only file system: '/Volumes/StudioExt/repos/agent-lb-wt/.verify-runs/hparity-branch-pytest.txt'

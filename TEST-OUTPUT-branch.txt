@@ -1,0 +1,122 @@
+COMMAND: ./check
+EXIT CODE: 2
+STDOUT:
+{"findings": [], "count": 0}
+{
+  "cycles": [
+    "app",
+    "bin",
+    "clients",
+    "config",
+    "deploy",
+    "docs",
+    "features",
+    "frontend",
+    "openspec",
+    "patches",
+    "scripts",
+    "tests"
+  ],
+  "errors": [],
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+factory-lint check --changed
+ruff: error: Expecting value: line 1 column 1 (char 0)
+ruff-base: error: Expecting value: line 1 column 1 (char 0)
+ruff-format: error: ruff-format exited 2 without parsed findings: error: Failed to initialize cache at /srv/cow/cache/ruff: Read-only file system (os error 30)
+ruff failed
+  Cause: Failed to create temporary file
+  Cause: No such file or directory (os error 2) at path "/srv/cow/cache/ruff/0.17.1/.tmpPd6THz"
+
+ruff-format-base: error: ruff-format exited 2 without parsed findings: error: Failed to initialize cache at /srv/cow/cache/ruff: Read-only file system (os error 30)
+ruff failed
+  Cause: Failed to create temporary file
+  Cause: No such file or directory (os error 2) at path "/srv/cow/cache/ruff/0.17.1/.tmpJVhIFm"
+
+error: 0 new, 4 existing, 0 files fixed (10501 ms)
+make lint: 12 s
+
+STDERR:
+make: *** [Makefile:32: lint] Error 2
+
+COMMAND: python3 config/coding-agents/hooks/hook-dispatch-parity.py --help
+EXIT CODE: 0
+STDOUT:
+usage: hook-dispatch-parity.py [-h] [--home HOME] [--registry REGISTRY]
+                               [--dispatcher DISPATCHER] [--out OUT]
+                               [--workdir WORKDIR] [--keep]
+                               [--overlay REL=PATH] [--only ONLY]
+                               [--jobs JOBS] [--require-process-count]
+                               [--no-process-count] [--lock-held]
+                               [--require-expectations]
+
+hook-dispatch.py parity fixture
+
+options:
+  -h, --help            show this help message and exit
+  --home HOME
+  --registry REGISTRY
+  --dispatcher DISPATCHER
+  --out OUT
+  --workdir WORKDIR     sandbox parent (default: a new temp dir)
+  --keep                keep the sandbox
+  --overlay REL=PATH    run PATH in place of HOME/REL (repeatable)
+  --only ONLY           regex: run only cases whose name matches
+  --jobs JOBS           cases run at once
+  --require-process-count
+  --no-process-count    skip the process count
+  --lock-held           the caller holds the install lock
+  --require-expectations
+                        also require each expected decision
+
+STDERR:
+
+COMMAND: python3 config/coding-agents/install-policy.py --home /srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/.hparity-branch-home.nPVtKbdP --no-box-sync --force --reason sandbox
+EXIT CODE: 1
+STDOUT:
+
+STDERR:
+error: could not fetch origin/main; refusing policy installation
+
+COMMAND: python3 /srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/hparity-sandbox-setup.py /srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/.hparity-branch-home.nPVtKbdP
+EXIT CODE: 0
+STDOUT:
+registry: /srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/.hparity-branch-home.nPVtKbdP/.claude/hooks/dispatch/registry.json
+hook groups: 16
+
+STDERR:
+
+COMMAND: python3 config/coding-agents/hooks/hook-dispatch-parity.py --home /srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/.hparity-branch-home.nPVtKbdP --registry /srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/.hparity-branch-home.nPVtKbdP/.claude/hooks/dispatch/registry.json --no-process-count --jobs 4 --out /srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/hparity-branch-report.json
+EXIT CODE: 1
+STDOUT:
+
+STDERR:
+Traceback (most recent call last):
+  File "/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/config/coding-agents/hooks/hook-dispatch-parity.py", line 201, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/config/coding-agents/hooks/hook-dispatch-parity.py", line 73, in main
+    lock = None if args.lock_held else install_lock(home)
+                                       ^^^^^^^^^^^^^^^^^^
+  File "/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/config/coding-agents/hooks/hook-dispatch-parity.py", line 28, in install_lock
+    handle = open(os.path.join(lock_dir, "agent-lb-install-policy-%d-%s.lock" % (os.getuid(), digest)), "a")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/tmp/agent-lb-install-policy-1000-f6e8fa84af823c56.lock'
+
+COMMAND: python3 -m pytest -q -n 4 -p no:cacheprovider tests/floor/test_hook_dispatcher*.py tests/floor/test_policy_core.py tests/floor/test_gh_write_guard.py tests/floor/test_plutil_guard.py tests/floor/test_provider_cli_guard.py tests/floor/test_host_credential_guard.py tests/floor/test_seat_guard_enforcement.py tests/floor/test_seat_guard_quota_swap.py
+EXIT CODE: 4
+STDOUT:
+
+STDERR:
+/usr/lib/python3/dist-packages/_pytest/config/__init__.py:331: PluggyTeardownRaisedWarning: A plugin raised an exception during an old-style hookwrapper teardown.
+Plugin: helpconfig, Hook: pytest_cmdline_parse
+ConftestImportFailure: ModuleNotFoundError: No module named 'pytest_asyncio' (from /srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/tests/conftest.py)
+For more information see https://pluggy.readthedocs.io/en/stable/api_reference.html#pluggy.PluggyTeardownRaisedWarning
+  config = pluginmanager.hook.pytest_cmdline_parse(
+ImportError while loading conftest '/srv/cow/trees/box-jobs-wt/seat-codex-test-runner-hparity-1792713858-43b2a5a8-ed80-0f6911b7/tests/conftest.py'.
+tests/conftest.py:10: in <module>
+    import pytest_asyncio
+E   ModuleNotFoundError: No module named 'pytest_asyncio'
+
