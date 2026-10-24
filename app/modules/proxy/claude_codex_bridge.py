@@ -13,6 +13,7 @@ from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonObject, JsonValue
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.proxy.claude_codex_response import ClaudeStreamState, anthropic_error_payload
+from app.modules.proxy.claude_model_identity import correct_generated_model_identity, route_model_identity
 
 CCGPT_MODEL = "gpt-6.1-sol"
 CCGPT_WORKER_MODEL = "gpt-6.1-sol"
@@ -22,9 +23,9 @@ CCGPT_SERVICE_TIER = "priority"
 _SIGNATURE_PREFIX = "codex:"
 
 
-def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
+def claude_to_responses(payload: AnthropicMessageRequest, model: str = CCGPT_MODEL) -> ResponsesRequest:
 
-    raw = payload.model_dump(mode="json", exclude_none=True)
+    raw = correct_generated_model_identity(payload, model).model_dump(mode="json", exclude_none=True)
     input_items: list[JsonValue] = []
 
     for message in _seat_messages(cast(list[JsonObject], raw.get("messages", []))):
@@ -105,8 +106,8 @@ def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
         tools.append(converted)
 
     return ResponsesRequest(
-        model=CCGPT_MODEL,
-        instructions=_system_text(raw.get("system")),
+        model=model,
+        instructions=_system_text(raw.get("system")) + "\n\n" + route_model_identity(model),
         input=input_items,
         tools=tools,
         tool_choice=_tool_choice(raw.get("tool_choice")),
@@ -364,7 +365,8 @@ async def collect_claude_message(source: AsyncIterator[str]) -> JsonObject:
             if delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
                 block["text"] = str(block.get("text", "")) + cast(str, delta["text"])
             elif delta.get("type") == "input_json_delta" and isinstance(delta.get("partial_json"), str):
-                block["input"] = str(block.get("input", "")) + cast(str, delta["partial_json"])
+                previous = block.get("input")
+                block["input"] = (previous if isinstance(previous, str) else "") + cast(str, delta["partial_json"])
         elif event_type == "message_delta":
             delta = event.get("delta")
             usage = event.get("usage")

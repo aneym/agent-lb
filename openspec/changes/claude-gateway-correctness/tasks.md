@@ -1,0 +1,4 @@
+- [x] Correct generated identity reminders only at non-Claude inference boundaries.
+- [x] Preserve tool arguments in streamed completion fallback and collected responses.
+- [x] Provide repo-owned Desktop catalog/transport using canonical route resolution.
+- [x] Verify HTTP/client behavior and focused checks; deployment remains with the lead.

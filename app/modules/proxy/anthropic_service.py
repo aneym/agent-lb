@@ -70,6 +70,7 @@ from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, o
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
 from app.modules.proxy.anthropic_transport import AnthropicTransport
 from app.modules.proxy.claude_codex_bridge import estimate_claude_input_tokens
+from app.modules.proxy.claude_model_identity import with_route_model_identity
 from app.modules.proxy.compat_errors import STOP_STATUS, refresh_due, refuses_plan, rejects_key
 from app.modules.proxy.error_rule_actions import (
     apply_error_rule,
@@ -1125,15 +1126,13 @@ class AnthropicProxyService(AnthropicTransport):
         payload: AnthropicMessageRequest,
     ) -> AnthropicResolvedMessageRequest:
         requested_model = payload.model
-        provider_name = _messages_provider_name(payload)
-        quota_key = _messages_quota_key(payload, provider_name=provider_name)
         effective_model = _resolve_planner_model(requested_model)
         if effective_model != requested_model:
             payload = payload.model_copy(update={"model": effective_model})
-            provider_name = _messages_provider_name(payload)
-            quota_key = _messages_quota_key(payload, provider_name=provider_name)
+        provider_name = _messages_provider_name(payload)
+        quota_key = _messages_quota_key(payload, provider_name=provider_name)
         return AnthropicResolvedMessageRequest(
-            payload=payload,
+            payload=with_route_model_identity(payload),
             provider_name=provider_name,
             quota_key=quota_key,
         )

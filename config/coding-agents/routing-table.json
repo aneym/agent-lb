@@ -642,6 +642,7 @@
     "2026-10-20 routing-use: Opus-authority classes run on the reserved Claude pool and wait (exit 3) only when no Anthropic account is eligible; codex-swap never moves them (models.md 2026-10-16)."
   ],
   "aliases": {
+    "kimi-latest": {"vendor": "kimi", "family": "kimi", "pinned": "k3.1-pro"},
     "deepseek-flash": {"vendor": "openrouter", "family": "deepseek", "pinned": "deepseek/deepseek-v4.1-flash-1017"},
     "muse-latest": {
       "vendor": "muse",
@@ -654,7 +655,7 @@
       "family": "opus",
       "pinned": "claude-opus-5-5",
       "harness": "opus",
-      "note": "The newest claude-opus-N[-N] on the upstream Anthropic list (LB /api/models/anthropic); pinned, then Claude Code's opus alias, when no list is reachable (2026-09-28)"
+      "note": "Newest upstream Opus; pin then harness fallback when offline."
     },
     "sonnet-latest": {
       "vendor": "anthropic",

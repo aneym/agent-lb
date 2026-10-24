@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import http.client
+import json
+import os
+import ssl
+import subprocess
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlsplit
+
+
+class Gateway(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    catalog: dict[str, dict] = {}
+    upstream = ""
+    policy_models: dict[str, dict] = {}
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+    def respond(self, status: int, payload: dict) -> None:
+        data = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self) -> None:
+        path = urlsplit(self.path).path.rstrip("/")
+        rows = [
+            {"id": alias, "type": "model", "display_name": item["model"], "created_at": "2026-10-23T00:00:00Z"}
+            for alias, item in self.catalog.items()
+        ]
+        if path in ("/v1/models", "/models"):
+            self.respond(200, {"data": rows, "has_more": False})
+        elif path.startswith("/v1/models/"):
+            match = next((row for row in rows if row["id"] == path.rsplit("/", 1)[1]), None)
+            self.respond(200 if match else 404, match or {"error": {"type": "not_found_error", "message": "Unknown model"}})
+        elif path == "/health":
+            self.respond(200, {"status": "ok", "routes": self.catalog})
+        else:
+            self.respond(404, {"error": {"type": "not_found_error", "message": "Unknown endpoint"}})
+
+    def do_POST(self) -> None:
+        connection = None
+        try:
+            path = urlsplit(self.path).path.rstrip("/")
+            if path not in ("/v1/messages", "/messages", "/v1/messages/count_tokens", "/messages/count_tokens"):
+                self.respond(404, {"error": {"type": "not_found_error", "message": "Unknown endpoint"}})
+                return
+            payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            alias = payload.get("model", "")
+            route = self.catalog.get(alias)
+            if route is None:
+                route = self.policy_models.get(alias)
+            if route is None:
+                self.respond(400, {"error": {"type": "invalid_request_error", "message": "Select a configured gateway model"}})
+                return
+            payload["model"] = route["model"]
+            if route["model"].startswith(("kimi-", "k3")):
+                payload["thinking"] = {"type": "adaptive"}
+            payload.setdefault("output_config", {}).setdefault("effort", route["effort"])
+            upstream = urlsplit(self.upstream)
+            if upstream.scheme == "https":
+                connection = http.client.HTTPSConnection(upstream.hostname, upstream.port, timeout=240, context=ssl.create_default_context())
+            else:
+                connection = http.client.HTTPConnection(upstream.hostname, upstream.port, timeout=240)
+            headers = {
+                key: value for key, value in self.headers.items()
+                if key.lower() not in {"host", "content-length", "connection", "transfer-encoding"}
+            }
+            headers["Content-Type"] = "application/json"
+            token = os.environ.get("AGENT_LB_API_KEY")
+            if token:
+                headers["x-api-key"] = token
+            endpoint = "/v1/messages/count_tokens" if path.endswith("/count_tokens") else "/v1/messages"
+            connection.request("POST", upstream.path.rstrip("/") + endpoint, body=json.dumps(payload).encode(), headers=headers)
+            result = connection.getresponse()
+            print(json.dumps({
+                "time": time.time(), "route": alias, "target": route["model"], "status": result.status,
+                "effort": payload.get("output_config", {}).get("effort"), "stream": payload.get("stream", False),
+                "tools": [tool.get("name", tool.get("type", "")) for tool in payload.get("tools", [])],
+            }), flush=True)
+            content_type = result.getheader("Content-Type", "application/json")
+            if "text/event-stream" not in content_type:
+                body = json.loads(result.read())
+                if isinstance(body, dict) and "model" in body:
+                    body["model"] = alias
+                self.respond(result.status, body)
+                return
+            self.send_response(result.status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            while line := result.readline():
+                if line.startswith(b"data: "):
+                    try:
+                        event = json.loads(line[6:])
+                        if isinstance(event.get("message"), dict) and "model" in event["message"]:
+                            event["message"]["model"] = alias
+                        line = b"data: " + json.dumps(event).encode() + b"\n"
+                    except (ValueError, AttributeError):
+                        pass
+                self.wfile.write(line)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as error:
+            if not self.close_connection:
+                self.respond(502, {"error": {"type": "api_error", "message": f"Gateway request failed: {type(error).__name__}"}})
+        finally:
+            if connection:
+                connection.close()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=2466)
+    parser.add_argument("--upstream", default=os.environ.get("AGENT_LB_BASE_URL", "http://127.0.0.1:2455"))
+    parser.add_argument("--route", default=str(Path.home() / ".agent-lb/bin/route"))
+    parser.add_argument("--print", action="store_true")
+    args = parser.parse_args()
+    if args.host not in ("127.0.0.1", "::1", "localhost"):
+        parser.error("gateway must listen on loopback; use an authenticated transport for remote access")
+    result = subprocess.run([args.route, "workflow-args"], capture_output=True, text=True, timeout=60)
+    workflow = json.loads(result.stdout)
+    parent = workflow["stages"]["orchestrator"]
+    helper = workflow["seats"]["implement"]
+    kimi_result = subprocess.run([args.route, "resolve", "kimi-latest", "--json"], capture_output=True, text=True, timeout=30)
+    kimi = json.loads(kimi_result.stdout)
+    Gateway.catalog = {
+        "claude-opus-5-5": {"model": parent["model"], "effort": parent["effort"], "role": "parent"},
+        "claude-opus-4-6": {"model": helper["model"], "effort": helper["effort"], "role": "helper"},
+        "claude-sonnet-4-6": {"model": kimi["model"], "effort": "medium", "role": "explicit"},
+    }
+    groups = [workflow.get("stages", {}), workflow.get("seats", {}), workflow.get("review_for", {})]
+    entries = [row for group in groups for row in group.values() if isinstance(row, dict)]
+    entries.extend(Gateway.catalog.values())
+    Gateway.policy_models = {
+        row["model"]: {"model": row["model"], "effort": row.get("effort") or "medium"}
+        for row in entries if row.get("model") and str(row["model"]).startswith(("claude-", "gpt-", "kimi-", "k3"))
+    }
+    Gateway.upstream = args.upstream
+    if args.print:
+        print(json.dumps({"host": args.host, "port": args.port, "upstream": args.upstream, "routes": Gateway.catalog}, indent=2))
+        return
+    ThreadingHTTPServer((args.host, args.port), Gateway).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

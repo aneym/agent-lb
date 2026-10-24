@@ -99,8 +99,8 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str], seat: str |
     family = spec.get("family")
     if not isinstance(family, str) or not family:
         return None, f"alias {name} has no family"
-    if spec.get("vendor") == "openrouter":
-        return spec["pinned"], "pinned OpenRouter model"
+    if spec.get("vendor") in {"openrouter", "kimi"}:
+        return spec["pinned"], f"pinned {spec['vendor']} model"
     if spec.get("vendor") == "muse":
         pinned = spec.get("pinned")
         if not isinstance(pinned, str) or not re.fullmatch(rf"{re.escape(family)}-\d+(?:\.\d+)*", pinned):

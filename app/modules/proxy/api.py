@@ -1021,18 +1021,18 @@ async def _ccgpt_messages_response(
         return _anthropic_error_response(
             400,
             "invalid_request_error",
-            "thread: message threads are not supported by the ccgpt compatibility route",
+            "thread: threads unsupported by the ccgpt compatibility route",
             details={"error_code": "thread_unsupported_request"},
         )
     if payload.tools and any(isinstance(tool, AnthropicDefinedToolDefinition) for tool in payload.tools):
         return _anthropic_error_response(
             400,
             "invalid_request_error",
-            "Anthropic-defined tools are not supported by the ccgpt compatibility route",
+            "Anthropic-defined tools are unsupported by the ccgpt compatibility route",
         )
     locked_model = locked_model or (resolve_ccgpt_model("sol-latest") or (CCGPT_MODEL, None))[0]
     client_session_id = _anthropic_request_session_id(payload, request.headers)
-    responses_payload = claude_to_responses(payload)
+    responses_payload = claude_to_responses(payload, locked_model)
     responses_payload.model = locked_model
     if client_session_id:
         agent_id = request.headers.get("x-claude-code-agent-id", "").strip()

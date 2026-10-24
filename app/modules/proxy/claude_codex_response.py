@@ -73,6 +73,7 @@ class ClaudeStreamState:
     saw_terminal: bool = False
     emitted_text: bool = False
     emitted_tool: bool = False
+    emitted_arguments: bool = False
 
     input_tokens_estimate: int = 0
 
@@ -119,7 +120,8 @@ class ClaudeStreamState:
                     )
         elif event_type == "response.function_call_arguments.delta" and self.open_block == "tool_use":
             delta = event.get("delta")
-            if isinstance(delta, str):
+            if isinstance(delta, str) and delta:
+                self.emitted_arguments = True
                 output.append(
                     {
                         "type": "content_block_delta",
@@ -146,15 +148,20 @@ class ClaudeStreamState:
                                 "content_block": {"type": "tool_use", "id": call_id, "name": name, "input": {}},
                             }
                         )
-                        arguments = item.get("arguments")
-                        if isinstance(arguments, str) and arguments:
-                            output.append(
-                                {
-                                    "type": "content_block_delta",
-                                    "index": self.block_index,
-                                    "delta": {"type": "input_json_delta", "partial_json": arguments},
-                                }
-                            )
+                arguments = item.get("arguments")
+                if (
+                    self.open_block == "tool_use"
+                    and not self.emitted_arguments
+                    and isinstance(arguments, str)
+                    and arguments
+                ):
+                    output.append(
+                        {
+                            "type": "content_block_delta",
+                            "index": self.block_index,
+                            "delta": {"type": "input_json_delta", "partial_json": arguments},
+                        }
+                    )
                 output.extend(self._close_block())
             elif isinstance(item, dict) and item.get("type") == "message" and not self.emitted_text:
                 text = _message_output_text(item)
@@ -221,6 +228,7 @@ class ClaudeStreamState:
         self.block_index += 1
         self.open_block = None
         self.open_call_id = None
+        self.emitted_arguments = False
         return output
 
     def _complete(self, response: Mapping[str, JsonValue]) -> list[JsonObject]:
