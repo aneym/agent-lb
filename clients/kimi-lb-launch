@@ -53,7 +53,7 @@ def main() -> None:
         )
     env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "1048576" if "[1m]" in model or model == "kimi-for-coding" else "262144"
     env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]
-    env["CLAUDE_CODE_EFFORT_LEVEL"] = "max"
+    env["CLAUDE_CODE_EFFORT_LEVEL"] = "medium"
     env.setdefault("ENABLE_TOOL_SEARCH", "true")
     env.setdefault("CLAUDE_CODE_WORKFLOWS", "1")
     env.setdefault("API_TIMEOUT_MS", "3000000")
