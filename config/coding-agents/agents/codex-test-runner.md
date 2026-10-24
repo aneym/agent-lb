@@ -1,6 +1,6 @@
 ---
 name: codex-test-runner
-description: Runs a test suite for a verification, in a disposable worktree checked out at the PR head, and captures the output to a file the codex-verifier seat reads as evidence. Use when a verification needs a suite actually executed — codex-verifier is read-only by construction and cannot run one itself.
+description: "Execute a verification's test suite in a disposable worktree at the PR head; save output for codex-verifier. Use when a suite must actually run: codex-verifier is read-only and cannot run it."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]

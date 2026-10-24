@@ -1,6 +1,6 @@
 ---
 name: plan-reviewer
-description: Adversarial review of a plan, PRD, spec, or design doc before implementation starts — validates the plan's claims against the actual codebase, hunts unstated assumptions, missing acceptance criteria, wrong decomposition, and serialization that should fan out. Read-only; never edits code or the plan. Use after a plan is drafted and before dispatching implementation seats.
+description: "Read-only adversarial review of plans, PRDs, specs and design docs before implementation. Check claims against code, expose assumptions/missing acceptance criteria, decomposition errors and needless serialization. Never edits code or the plan."
 tools: [Read, Grep, Glob, Bash]
 disallowedTools: [Write, Edit]
 model: opus

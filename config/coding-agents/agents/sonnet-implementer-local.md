@@ -1,6 +1,6 @@
 ---
 name: sonnet-implementer-local
-description: Studio-only copy of sonnet-implementer that runs in this process. Use only for Mac-only work (xcodebuild, simctl, Aside, herdr, keychain, TCC, screenshots, the League or PC link); every other brief goes to sonnet-implementer, which runs on the box with the most measured room.
+description: "Studio-only sonnet-implementer for Mac-only work: xcodebuild/simctl, Aside/herdr, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use sonnet-implementer on the factory box with most measured headroom."
 model: sonnet
 effort: high
 tools: [Read, Edit, Write, Bash, Grep, Glob]

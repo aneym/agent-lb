@@ -1,6 +1,6 @@
 ---
 name: gpt-explorer
-description: Read-only code exploration seat on GPT (newest Sol via sol-latest, low effort), placed on the factory box with the most measured room; bills the Codex pool, not Anthropic. Use for finding files, tracing code, and answering questions about a codebase. Mac-only briefs use gpt-explorer-local.
+description: "Read-only code exploration on Sol (sol-latest low), placed by measured factory-box headroom; Codex quota, not Anthropic. Use to find files, trace code or answer codebase questions. Mac-only work uses gpt-explorer-local."
 model: claude-sonnet-5-5
 tools: [Bash]
 effort: low

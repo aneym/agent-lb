@@ -1,6 +1,6 @@
 ---
 name: opus-seat
-description: General-purpose seat on the newest Opus (Claude Code's `opus` alias), placed on the factory box with the most measured room; Mac-only briefs forward to Studio. Use for any subagent work that must run on Opus rather than the session model. Callers pass a descriptive kebab-case `name`.
+description: "General-purpose newest-Opus seat (opus alias), placed by measured factory-box headroom; Mac-only briefs forward to Studio. Use when subagent work must run on Opus, not the session model. Pass a descriptive kebab-case name."
 model: opus
 tools: [Bash, Read, Write, Edit, Grep, Glob, ToolSearch, Skill, Monitor, SendMessage, TaskStop, ListAgents, WebFetch, WebSearch, mcp__unblock__unblock_file, mcp__unblock__unblock_check, mcp__unblock__unblock_peek, mcp__unblock__unblock_update, mcp__unblock__unblock_park, mcp__unblock__unblock_cancel, mcp__exa__web_search_exa, mcp__exa__web_fetch_exa]
 ---

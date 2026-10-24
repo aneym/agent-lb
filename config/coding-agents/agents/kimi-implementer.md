@@ -1,6 +1,6 @@
 ---
 name: kimi-implementer
-description: Code-to-spec and mechanical implementation on Kimi K3.1 Pro through agent-lb, saving Opus quota. Spread work with gpt-implementer by measured pool headroom. Currently Studio-local because seat-exec has no Kimi box harness. Not for plans, specs, reviews, verdicts, UI-critical, trust-boundary or money-path work.
+description: "Kimi K3.1 Pro code-to-spec/mechanical hands via agent-lb; spread with gpt-implementer by measured headroom. Currently Studio-local. Never plans, specs, reviews, verdicts, UI-critical, trust-boundary or money-path work."
 model: claude-sonnet-5-5
 tools: [Bash]
 effort: low

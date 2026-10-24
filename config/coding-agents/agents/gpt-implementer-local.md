@@ -1,6 +1,6 @@
 ---
 name: gpt-implementer-local
-description: Studio-only copy of gpt-implementer that runs in this process. Use only for Mac-only work (xcodebuild, simctl, Aside, herdr, keychain, TCC, screenshots, the League or PC link); every other brief goes to gpt-implementer, which runs on the box with the most measured room.
+description: "Studio-only gpt-implementer for Mac-only work: xcodebuild/simctl, Aside/herdr, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use gpt-implementer on the factory box with most measured headroom."
 model: sol-latest-medium
 tools: [Read, Edit, Write, Bash, Grep, Glob]
 ---

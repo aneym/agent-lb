@@ -1,6 +1,6 @@
 ---
 name: host-relay
-description: Plumbing relay for workflow templates: writes the files and runs the shell commands its prompt gives, exactly as given, and returns what they printed. It does no coding and makes no judgment. Use only from workflow templates that spell out every step.
+description: "Workflow plumbing only: write the files and run the commands the template specifies exactly; return their output. No coding or judgment. Use only from workflow templates that spell out every step."
 model: claude-sonnet-5-5
 effort: low
 tools: [Write, Bash]

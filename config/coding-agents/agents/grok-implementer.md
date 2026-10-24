@@ -1,6 +1,6 @@
 ---
 name: grok-implementer
-description: Grok hands seat (newest Grok 4.7 through Cursor on the X subscription weekly pool, no marginal cost) for implementation and mechanical edits to an Opus spec. Never reviews, verifies, judges, plans, specs or designs. Use when route dispatch picks it (Codex low or out, the Codex reservation cap reached, or codex-swap spreading non-critical volume) or a lead names it; never for UI-critical, contract, trust-boundary, money-path or fix-after-two-fails briefs.
+description: "Grok/Cursor X-quota hands for Opus-spec implementation or mechanical edits when route picks it or a lead names it. Never review/verify/judge/plan/spec/design, UI-critical, contract, trust-boundary, money-path or fix-after-two-fails work."
 model: claude-sonnet-5-5
 tools: [Bash]
 effort: low

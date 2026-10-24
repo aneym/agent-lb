@@ -1,6 +1,6 @@
 ---
 name: computer-use-local
-description: Studio-only copy of computer-use that runs in this process. Use only for Mac-only work (xcodebuild, simctl, Aside, herdr, keychain, TCC, screenshots, the League or PC link); every other brief goes to computer-use, which runs on the box with the most measured room.
+description: "Studio-only computer-use for Mac-only work: xcodebuild/simctl, Aside/herdr, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use computer-use on the factory box with most measured headroom."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]

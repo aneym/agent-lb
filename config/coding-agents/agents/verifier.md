@@ -1,6 +1,6 @@
 ---
 name: verifier
-description: Independent verification of executor claims, placed on the factory box with the most measured room. Use after any dispatched implementation (implementation seat, workflow lane) to confirm the work is real and in-scope before the orchestrator accepts it. Mac-only briefs use verifier-local.
+description: "Independently verify dispatched implementation/workflow claims before acceptance: confirm work is real and in scope. Placed by measured factory-box headroom; Mac-only work uses verifier-local."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]

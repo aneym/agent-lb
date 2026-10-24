@@ -1,6 +1,6 @@
 ---
 name: frontend-designer
-description: Design direction and visual critique for UI work — aesthetic direction, information hierarchy, design tokens, layout/interaction specs, and ranked screenshot critiques. Produces specs and crit lists that an implementation seat builds from; never writes product code. Use for new UI surfaces, redesigns, "make it feel better/bolder/quieter", and design review of built UI.
+description: "UI design direction and visual critique: hierarchy, tokens, layout/interaction specs and ranked screenshot critiques. Use for new UI, redesigns, feel/bolder/quieter requests or built-UI review. Produces specs and critique, never product code."
 tools: [Read, Grep, Glob, Bash, Skill]
 model: opus
 ---

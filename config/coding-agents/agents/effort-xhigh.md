@@ -1,6 +1,6 @@
 ---
 name: effort-xhigh
-description: General-purpose executor pinned to xhigh reasoning effort; inherits the session model. Use for hard, bounded problems (subtle bugs, tricky algorithms, races) or when a brief asks for an xhigh-effort subagent, since the Agent tool has no per-call effort parameter. Callers pass a descriptive kebab-case name on the Agent call.
+description: "General executor at xhigh effort on the session model. Use for hard bounded bugs, algorithms or races, or a brief requesting xhigh: Agent has no per-call effort setting. Pass a descriptive kebab-case name."
 effort: xhigh
 model: inherit
 tools: [Read, Edit, Write, Bash, Grep, Glob]

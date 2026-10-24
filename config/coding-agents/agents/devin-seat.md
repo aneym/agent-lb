@@ -1,6 +1,6 @@
 ---
 name: devin-seat
-description: Forward a scoped contract to the Devin CLI on SWE-2, which is free on the Devin subscription. Does not do the work in Claude Code. Use for mechanical and volume work and read-only exploration when the Claude pools are tight, as the fallback behind cursor-seat. Runs only in a directory Devin trusts. The brief names a model family alias; the default is `swe-latest` (the newest SWE on Devin, high).
+description: "Forward mechanical/volume work or read-only exploration to Devin CLI (SWE-2 subscription; default swe-latest high). Use behind cursor-seat when Claude pools are tight. Requires a Devin-trusted directory; work is not done in Claude Code."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]

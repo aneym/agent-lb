@@ -1,6 +1,6 @@
 ---
 name: opus-seat-local
-description: Studio-only copy of opus-seat that runs in this process. Use only for Mac-only work (xcodebuild, simctl, Aside, herdr, keychain, TCC, screenshots, the League or PC link); every other brief goes to opus-seat, which runs on the box with the most measured room.
+description: "Studio-only opus-seat for Mac-only work: xcodebuild/simctl, Aside/herdr, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use opus-seat on the factory box with most measured headroom."
 model: opus
 tools: [Bash, Read, Write, Edit, Grep, Glob, ToolSearch, Skill, Monitor, SendMessage, TaskStop, ListAgents, WebFetch, WebSearch, mcp__unblock__unblock_file, mcp__unblock__unblock_check, mcp__unblock__unblock_peek, mcp__unblock__unblock_update, mcp__unblock__unblock_park, mcp__unblock__unblock_cancel, mcp__exa__web_search_exa, mcp__exa__web_fetch_exa]
 ---

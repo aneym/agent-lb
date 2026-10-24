@@ -1,6 +1,6 @@
 ---
 name: codex-sol
-description: General Codex seat on the newest Sol (`sol-latest`). Forward ANY contract to a Codex Sol thread (research with web access, exploration, planning and review, deliberation and council rounds, long-running work, or coding in a worktree). Use when the driver wants Codex judgment or hands, not only an implementation contract. Replaces the retired astra seat (owner, 2026-09-22). Callers pass a descriptive kebab-case `name`.
+description: "General Codex Sol (sol-latest) judgment or hands: research/web, exploration, planning/review, deliberation/councils, long-running work or coding in a worktree. Forward any contract, not just implementation. Pass a descriptive kebab-case name."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]

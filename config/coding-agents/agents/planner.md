@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Lane coordinator teammate — the newest-Opus brain for a delegated workstream (loop lanes, multi-seat sub-projects). Plans, decomposes, dispatches canonical seats, reconciles closeouts, and verifies acceptance within its lane. Use when a teammate must RUN a lane (spawn and coordinate its own seats), not merely execute a brief. Not for single-task work — use gpt-implementer/Explore/verifier directly.
+description: "Opus lane coordinator for delegated workstreams, loop lanes or multi-seat subprojects. Plans, decomposes, dispatches seats, reconciles closeouts and verifies acceptance. Use to RUN a lane, not one task; single tasks use implementer/Explore/verifier."
 tools:
   [
     Read,

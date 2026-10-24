@@ -1,6 +1,6 @@
 ---
 name: gpt-implementer
-description: Scoped coding seat on GPT (newest Sol via sol-latest, medium effort), placed on the factory box with the most measured room; bills the Codex pool, not Anthropic. Use for implementation to a spec: edit the named files in the given worktree, run the named check, report the diff and output. Mac-only briefs use gpt-implementer-local.
+description: "Code to a spec on Sol (sol-latest medium), placed by measured factory-box headroom; Codex quota. Edit named files in the supplied worktree, run the named check, report changes/output. Mac-only work uses gpt-implementer-local."
 model: claude-sonnet-5-5
 tools: [Bash]
 effort: low

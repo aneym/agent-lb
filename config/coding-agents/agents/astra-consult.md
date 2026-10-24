@@ -1,6 +1,6 @@
 ---
 name: astra-consult
-description: Second-opinion seat on GPT Astra (newest Astra via astra-latest, high effort) through the agent-lb bridge; bills the Codex pool. Use for Fable or Opus to consult on plans, architecture and specs. One consult per plan, a brief under 2k tokens. It reads code and critiques; it never edits.
+description: "Read-only second opinion on GPT Astra (astra-latest, high) via agent-lb/Codex quota. Use for Fable or Opus plan, architecture and spec critiques; one consult per plan, brief under 2k tokens. Never edits."
 model: astra-latest-high
 tools: [Read, Grep, Glob, Bash]
 ---

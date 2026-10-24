@@ -1,6 +1,6 @@
 ---
 name: fable-orchestrator
-description: Orchestrator and lead seat on the newest Fable (Claude Code's `fable` alias, fable-latest). Use for orchestrator or lead tabs Alex talks to, or the factory decider, only when Alex or a dispatch asks for Fable; those tabs default to Opus medium with ultracode on (2026-10-07). It decides and delegates; seats on the ladder do the volume work. Not an implementer.
+description: "Fable lead/orchestrator (fable-latest) only when Alex or dispatch requests Fable: user-facing lead tabs or factory decider. Otherwise leads default to Opus medium/ultracode. Decides and delegates; never implements."
 model: inherit
 effort: medium
 tools: "*"

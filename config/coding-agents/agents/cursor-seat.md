@@ -1,6 +1,6 @@
 ---
 name: cursor-seat
-description: Forward a scoped contract to the Cursor CLI on the Cursor Ultra account (the X subscription weekly pool, `grok` in route pools). Does not do the work in Claude Code. Routed Grok implementation and mechanical work goes through grok-implementer; use this seat when a brief names a Cursor model directly. The brief names a model family alias; the default is `grok-latest` (the newest Grok on Cursor, medium). Grok and Composer never review, verify, judge, plan, spec or design.
+description: "Forward explicit Cursor-model briefs to Cursor CLI (Ultra/X quota; default grok-latest medium). Routed Grok/mechanical work uses grok-implementer. Grok/Composer never review, verify, judge, plan, spec or design."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]

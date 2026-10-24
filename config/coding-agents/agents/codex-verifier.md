@@ -1,6 +1,6 @@
 ---
 name: codex-verifier
-description: Cross-vendor verification. Forwards a verification contract to Codex on the newest Sol (`sol-latest`, policy-selected effort) in read-only mode and returns its verdict. Use whenever the diff under review was authored by an Anthropic model, so the verifier does not share a vendor with the author.
+description: "Cross-vendor read-only verification via Codex Sol (sol-latest, policy effort). Forward the verification contract and return its verdict. Use for Anthropic-authored diffs so reviewer and author differ in vendor."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
