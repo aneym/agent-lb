@@ -16,6 +16,7 @@ HERE=$(cd "$(dirname "$0")" && pwd -P) || refuse "could not resolve the classifi
 PC_KIND=$(/usr/bin/python3 -I "$HERE/no_chrome_classify.py" "$CMD") || refuse "could not parse the command"
 case "$PC_KIND" in
   none|pc) allow ;;
+  doubt) ;;
   browser|mac|macpc) ;;
   *) refuse "could not classify the command" ;;
 esac
@@ -31,6 +32,17 @@ deny() {
   echo "BLOCKED (floor: the owner's own browser and accounts): agents never launch or drive the owner's browsers themselves (the owner, 2026-09-25/26; Chrome on his PC included, 2026-10-07).${1:+ $1} To look at a page, run: page-shot <url> [--widths 1440,390] [--themes light,dark]. It is windowless and prints JSON with the PNG paths. Rails test-account proofs: rails-browser signin --url <url> with the lane test-account packet. Business-account admin work: acct-browser start <account> / acct-browser-run <account> <script.py>. For one call on the owner's own browser: file an unblock permission ask (purpose permission, permission.tool Bash, permission.command = the exact command), and once the owner picks Allow once, run that command with ' # unblock-ask: <ticket>' appended. Each ticket allows one call. Or append ' # owner-approval: ~/.open-factory/approvals/owner-<topic>-2026-<date>.md' (a first-hand the owner quote with a time)." >&2
   exit 2
 }
+if [ "$PC_KIND" = doubt ]; then
+  DOUBT_HOME=${FACTORY_HOME:-$HOME/.agent-rails/factory}/state
+  SESSION=$(printf '%s' "$PAYLOAD" | "$JQ" -r '.session_id // "none" | tostring | gsub("[^A-Za-z0-9_-]"; "_")' 2>/dev/null) || SESSION=none
+  mkdir -p "$DOUBT_HOME/no-chrome-guard-doubt" 2>/dev/null
+  "$JQ" -cn --arg cmd "$CMD" --arg session "$SESSION" --arg pane "${HERDR_PANE_ID:-}" '{at: (now | todate), decision: "pass-unparsed", session: $session, pane: $pane, command: $cmd}' >>"$DOUBT_HOME/no-chrome-guard-doubt.jsonl" 2>/dev/null
+  if [ ! -e "$DOUBT_HOME/no-chrome-guard-doubt/$SESSION" ]; then
+    : >"$DOUBT_HOME/no-chrome-guard-doubt/$SESSION" 2>/dev/null
+    "$JQ" -cn '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: "no-chrome-guard could not fully parse this command and found no browser action in it, so it ran. Warned once per session; unparsed calls are logged to factory state/no-chrome-guard-doubt.jsonl."}}'
+  fi
+  allow
+fi
 approved && allow
 ASK=$(printf '%s' "$CMD" | sed -nE '$s/^(.*[[:space:]])?#[[:space:]]*unblock-ask:[[:space:]]*(ub_[A-Za-z0-9]+)[[:space:]]*$/\2/p')
 [ -z "$ASK" ] && deny

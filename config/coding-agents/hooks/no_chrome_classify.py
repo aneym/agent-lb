@@ -6,6 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from no_chrome_argv import parse  # type: ignore
+from no_chrome_doubt import kind  # type: ignore[missing-import]
 from no_chrome_python import isolated_launches  # type: ignore[missing-import]
 from no_chrome_shell import (  # type: ignore
     INTERPRETERS,
@@ -494,4 +495,4 @@ if __name__ == "__main__":
     try:
         print(classify(sys.argv[1]))
     except (Doubt, ValueError, OSError):
-        sys.exit(2)
+        print(kind(sys.argv[1]))
