@@ -16,6 +16,8 @@ MANAGED_SEATS = (
     "codex-test-runner",
     "verifier",
     "gpt-implementer",
+    "kimi-implementer",
+    "kimi-implementer-local",
     "grok-implementer",
     "gpt-explorer",
     "sol-consult",

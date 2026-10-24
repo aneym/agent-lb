@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+
+def run(worktree, prompt):
+    model = "k3.1-pro"
+    env = dict(os.environ)
+    env.update(
+        ANTHROPIC_BASE_URL="http://127.0.0.1:2455",
+        ANTHROPIC_MODEL=model,
+        ANTHROPIC_SMALL_FAST_MODEL=model,
+        ANTHROPIC_DEFAULT_OPUS_MODEL=model,
+        ANTHROPIC_DEFAULT_SONNET_MODEL=model,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL=model,
+        CLAUDE_CODE_SUBAGENT_MODEL=model,
+        ANTHROPIC_CUSTOM_HEADERS="x-agent-lb-seat: kimi-implementer",
+    )
+    env.pop("ANTHROPIC_API_KEY", None)
+    started = time.time()
+    print(f"KIMI_MODEL={model} seat=kimi-implementer worktree={worktree}", flush=True)
+    try:
+        with Path(str(prompt) + ".json").open("w") as output, Path(str(prompt) + ".log").open("w") as log:
+            result = subprocess.run(
+                [str(Path.home() / ".local/bin/claude"), "-p", "--model", model,
+                 "--output-format", "json", "--no-session-persistence"],
+                input=prompt.read_text(), text=True, cwd=worktree, env=env,
+                stdout=output, stderr=log, timeout=3600,
+            )
+        rc = result.returncode
+        data = json.loads(Path(str(prompt) + ".json").read_text())
+        final = data.get("result", "")
+        Path(str(prompt) + ".last").write_text(final)
+        print(f"KIMI_SESSION={data.get('session_id', '')}", flush=True)
+        print(final, flush=True)
+        if not final or "HANDOFF\n" not in final or "END HANDOFF" not in final:
+            rc = rc or 65
+        if data.get("is_error"):
+            rc = rc or 1
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        print(f"KIMI_ERROR={error}", flush=True)
+        rc = 1
+    print(f"KIMI_RC={rc} elapsed={int(time.time() - started)}", flush=True)
+    Path(str(prompt) + ".rc").write_text(str(rc))
+    return rc
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("action", choices=("start", "run", "wait"))
+    parser.add_argument("--worktree", type=Path)
+    parser.add_argument("--prompt-file", type=Path, required=True)
+    args = parser.parse_args()
+    prompt = args.prompt_file.resolve(strict=True)
+    if args.action == "wait":
+        deadline = time.monotonic() + 240
+        receipt = Path(str(prompt) + ".rc")
+        while not receipt.exists() and time.monotonic() < deadline:
+            time.sleep(2)
+        if not receipt.exists():
+            print("KIMI_RUNNING")
+            return 3
+        rc = int(receipt.read_text())
+        print(f"KIMI_DONE rc={rc}")
+        print(Path(str(prompt) + ".out").read_text()[-12000:])
+        return rc
+    if not args.worktree or not args.worktree.is_dir():
+        parser.error("--worktree must name an existing directory")
+    worktree = args.worktree.resolve()
+    if args.action == "run":
+        return run(worktree, prompt)
+    if any(Path(str(prompt) + suffix).exists() for suffix in (".out", ".rc", ".json")):
+        parser.error("prompt already launched; use a fresh contract")
+    with Path(str(prompt) + ".out").open("x") as output:
+        process = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "run", "--worktree", str(worktree),
+             "--prompt-file", str(prompt)], cwd=worktree, stdin=subprocess.DEVNULL,
+            stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
+        )
+    print(f"KIMI_STARTED pid={process.pid} contract={prompt}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
