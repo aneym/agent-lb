@@ -46,6 +46,12 @@ def resolved_model(model):
     return resolve_model_alias(model)
 
 
+def policy_effort(model: str | None, effort: str | None) -> str | None:
+    if model == "gpt-6.1-sol" and effort == "high":
+        return "medium"
+    return effort
+
+
 def run(args):
     try:
         args.caller_seat = args.caller_seat.strip().lower()
@@ -57,6 +63,7 @@ def run(args):
                 raise ValueError("--since must be an ISO timestamp.") from None
             since = since.replace(tzinfo=UTC) if since.tzinfo is None else since.astimezone(UTC)
         model = resolved_model(args.model)
+        expected_effort = policy_effort(model, args.effort)
         import psycopg
         from psycopg.rows import dict_row
 
@@ -80,9 +87,10 @@ def run(args):
             "unknown"
             if not rows
             else (
-                "match"
+                "accepted"
                 if all(
-                    row["model"] == model and (args.effort is None or row["effort"] == args.effort) for row in forwarded
+                    row["model"] == model and (expected_effort is None or row["effort"] == expected_effort)
+                    for row in forwarded
                 )
                 else "mismatch"
             )
