@@ -87,8 +87,9 @@ class LbApiHandler(http.server.BaseHTTPRequestHandler):
             for key, value in self.headers.items()
             if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host"
         }
-        if routes_to_lb and session_id:
-            headers["x-claude-session-id"] = session_id
+        if routes_to_lb:
+            if session_id:
+                headers["x-claude-session-id"] = session_id
             if not shared:
                 headers.update(getattr(self.server, "tag_headers", {}))
 
