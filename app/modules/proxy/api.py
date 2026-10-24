@@ -154,6 +154,7 @@ from app.modules.proxy.claude_codex_bridge import (
     responses_to_claude_events,
     split_startup_error,
 )
+from app.modules.proxy.classifier_route import classifier_payload
 from app.modules.proxy.helpers import _rate_limit_details
 from app.modules.proxy.http_bridge_forwarding import parse_forwarded_request
 from app.modules.proxy.model_families import default_ccgpt_model, resolve_ccgpt_model
@@ -240,6 +241,9 @@ _PUBLIC_RESPONSE_STREAM_TERMINAL_TYPES = frozenset(
     {"response.completed", "response.incomplete", "response.failed", "error"}
 )
 _PUBLIC_RESPONSES_PRE_CREATED_BUFFER_LIMIT = 64
+_SSE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {"content": {"text/event-stream": {"schema": {"type": "string"}}}}
+}
 
 router = APIRouter(
     prefix="/backend-api/codex",
@@ -649,15 +653,7 @@ async def wham_agent_identities_jwks(
 
 @router.post(
     "/responses",
-    responses={
-        200: {
-            "content": {
-                "text/event-stream": {
-                    "schema": {"type": "string"},
-                }
-            }
-        }
-    },
+    responses=_SSE_RESPONSES,
 )
 async def responses(
     request: Request,
@@ -791,6 +787,7 @@ async def v1_messages(
     context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
+    payload = classifier_payload(payload, request.headers)
     ccgpt_model = resolve_ccgpt_model(payload.model)
     if ccgpt_model and (claude_model := server_tool_claude_model(payload)):
         payload = payload.model_copy(update={"model": claude_model})
@@ -1105,15 +1102,7 @@ async def v1_ccgpt_messages_count_tokens(
 @v1_router.post(
     "/responses",
     response_model=OpenAIResponseResult,
-    responses={
-        200: {
-            "content": {
-                "text/event-stream": {
-                    "schema": {"type": "string"},
-                }
-            }
-        }
-    },
+    responses=_SSE_RESPONSES,
 )
 async def v1_responses(
     request: Request,
@@ -1155,15 +1144,7 @@ async def v1_responses(
 @internal_router.post(
     "/responses",
     include_in_schema=False,
-    responses={
-        200: {
-            "content": {
-                "text/event-stream": {
-                    "schema": {"type": "string"},
-                }
-            }
-        }
-    },
+    responses=_SSE_RESPONSES,
 )
 async def internal_bridge_responses(
     request: Request,
@@ -2396,15 +2377,7 @@ def _to_model_metadata(model: UpstreamModel) -> ModelMetadata:
 @v1_router.post(
     "/chat/completions",
     response_model=ChatCompletionResult,
-    responses={
-        200: {
-            "content": {
-                "text/event-stream": {
-                    "schema": {"type": "string"},
-                }
-            }
-        }
-    },
+    responses=_SSE_RESPONSES,
 )
 async def v1_chat_completions(
     request: Request,
