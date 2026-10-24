@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -11,7 +12,20 @@ from urllib.parse import urlsplit
 
 def main() -> None:
     argv = sys.argv[1:]
-    model = os.environ.get("AGENT_LB_KIMI_MODEL", "kimi-for-coding")
+    model = os.environ.get("AGENT_LB_KIMI_MODEL")
+    if not model:
+        source = Path(__file__).resolve()
+        route_env = dict(os.environ)
+        route_env.setdefault("ROUTE_TABLE", str(source.parents[1] / "config/coding-agents/routing-table.json"))
+        resolved = subprocess.run(
+            [str(source.with_name("route")), "resolve", "kimi-latest", "--json"],
+            env=route_env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        model = json.loads(resolved.stdout)["model"]
     for index, arg in enumerate(argv):
         if arg in {"--model", "-m"} and index + 1 < len(argv):
             model = argv[index + 1]
@@ -40,6 +54,8 @@ def main() -> None:
     env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "1048576" if "[1m]" in model or model == "kimi-for-coding" else "262144"
     env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]
     env["CLAUDE_CODE_EFFORT_LEVEL"] = "max"
+    env.setdefault("ENABLE_TOOL_SEARCH", "true")
+    env.setdefault("CLAUDE_CODE_WORKFLOWS", "1")
     env.setdefault("API_TIMEOUT_MS", "3000000")
     claude = str(Path.home() / ".local/bin/claude")
     scoped_env = {
