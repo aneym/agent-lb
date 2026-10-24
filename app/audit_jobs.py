@@ -19,9 +19,9 @@ TOKENS = (
     "reasoning_tokens",
 )
 QUERY = """
-SELECT job_id, requested_at, latency_ms, latency_first_token_ms, model, provider, status,
- input_tokens, output_tokens, cached_input_tokens, cache_read_tokens, cache_creation_tokens,
- reasoning_tokens, cost_usd
+SELECT job_id, lane, caller_seat, dispatch_id, requested_at, latency_ms, latency_first_token_ms,
+ model, provider, status, input_tokens, output_tokens, cached_input_tokens, cache_read_tokens,
+ cache_creation_tokens, reasoning_tokens, cost_usd
 FROM request_logs
 WHERE deleted_at IS NULL AND requested_at >= %s AND requested_at < %s AND job_id = ANY(%s)
 ORDER BY job_id, requested_at, id
@@ -53,6 +53,9 @@ def report(rows, since, until, limit):
         if name not in jobs:
             jobs[name] = {
                 "job_id": name,
+                "lanes": {},
+                "seats": {},
+                "dispatches": {},
                 "requests": 0,
                 **dict.fromkeys(TOKENS, 0),
                 "cost_usd": 0.0,
@@ -69,7 +72,13 @@ def report(rows, since, until, limit):
         for key in TOKENS:
             job[key] += row[key] or 0
         job["cost_usd"] += float(row["cost_usd"] or 0)
-        for field, counts in (("model", "models"), ("provider", "providers")):
+        for field, counts in (
+            ("model", "models"),
+            ("provider", "providers"),
+            ("lane", "lanes"),
+            ("caller_seat", "seats"),
+            ("dispatch_id", "dispatches"),
+        ):
             value = row[field]
             if value is not None:
                 job[counts][value] = job[counts].get(value, 0) + 1
@@ -79,6 +88,9 @@ def report(rows, since, until, limit):
         job["calls"].append(
             {
                 "end_at": end,
+                "lane": row["lane"],
+                "seat": row["caller_seat"],
+                "dispatch_id": row["dispatch_id"],
                 "latency_ms": row["latency_ms"],
                 "first_token_ms": row["latency_first_token_ms"],
                 "model": row["model"],
