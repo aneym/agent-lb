@@ -113,9 +113,7 @@ def fallback_commands(text, cwd):
         target = match.group("target")
         if action == "push":
             if re.search(r"--force|(?:^|\s)-[a-zA-Z]*f|(?:^|\s)\+", args):
-                found.append(
-                    ("push denied: Cannot safely classify force push; use an explicit owned feature branch.", None)
-                )
+                found.append(("push denied: " + FORCE_PUSH, None))
             continue
         if re.search(r"(?:^|[;\n|&])\s*(?:cd|pushd|popd)\b", text[: match.start()]):
             found.append((action, None))
@@ -138,19 +136,14 @@ def fallback_commands(text, cwd):
     return found
 
 
-def git_output(cwd, *args):
-    if not cwd:
-        return ""
-    try:
-        result = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=3, check=False)
-        return result.stdout.strip() if result.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
-        return ""
+FORCE_PUSH = (
+    "Force pushes (--force, -f, --force-with-lease, --force-if-includes, --mirror, +refspec) are a kept floor; "
+    "push rebased work to a new branch instead."
+)
 
 
-def push_reason(args, cwd):
-    plain, lease, broad, operands, expects = False, False, False, [], []
-    options, skip = True, False
+def push_reason(args):
+    force, options, skip, operands = False, True, False, []
     for arg in args:
         if skip:
             skip = False
@@ -158,75 +151,13 @@ def push_reason(args, cwd):
         if options and arg == "--":
             options = False
         elif options and arg.startswith("-"):
-            plain |= arg == "--force" or bool(re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", arg))
-            broad |= arg in {"--all", "--mirror", "--branches", "--tags"}
-            if arg == "--force-with-lease" or arg.startswith("--force-with-lease="):
-                lease = True
-                if "=" in arg:
-                    expects.append(arg.split("=", 1)[1].split(":", 1)[0])
+            force |= arg in {"--force", "--mirror"} or bool(re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", arg))
+            force |= arg.startswith(("--force-with-lease", "--force-if-includes"))
             skip = arg in {"--repo", "--receive-pack", "--exec", "--push-option", "-o"}
-            if arg.startswith("--repo="):
-                operands.insert(0, arg.split("=", 1)[1])
-            elif arg == "--repo":
-                operands.insert(0, "configured-remote")
         else:
             operands.append(arg)
-    specs = operands[1:]
-    plain |= any(spec.startswith("+") for spec in specs)
-    if plain:
-        return "Plain force pushes (--force, -f, +refspec) can lose work; use --force-with-lease on your own feature branch."
-    if not lease and "--mirror" not in args:
-        return None
-    if broad or not cwd:
-        return "Cannot establish one owned feature branch for force push; specify your own non-default branch."
-    current = git_output(cwd, "symbolic-ref", "--quiet", "--short", "HEAD")
-    remote = operands[0] if operands else git_output(cwd, "config", f"branch.{current}.remote") or "origin"
-    default = git_output(cwd, "symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote}/HEAD")
-    defaults = {"main", "master", git_output(cwd, "config", "init.defaultBranch")}
-    if default:
-        defaults.add(default.removeprefix(f"{remote}/"))
-    checkout = git_output(cwd, "worktree", "list", "--porcelain").split("\n\n", 1)[0]
-    defaults.update(
-        line.removeprefix("branch refs/heads/")
-        for line in checkout.splitlines()
-        if line.startswith("branch refs/heads/")
-    )
-    if not specs:
-        specs = git_output(cwd, "config", "--get-all", f"remote.{remote}.push").splitlines()
-    if not specs:
-        mode = git_output(cwd, "config", "push.default") or "simple"
-        upstream = git_output(cwd, "config", f"branch.{current}.merge")
-        if mode in {"matching", "nothing"}:
-            return "Force push has no explicit owned feature branch; specify its refspec."
-        specs = [upstream if mode in {"simple", "upstream"} and upstream else current]
-    destinations = []
-    for spec in specs + expects:
-        destination = spec.split(":", 1)[-1].removeprefix("refs/heads/")
-        if destination in {"HEAD", "@"}:
-            destination = current
-        if not destination or any(char in destination for char in "*$`?") or destination.startswith("refs/"):
-            return "Force push destination is not a known owned feature branch."
-        if destination in defaults:
-            return f"Force pushes to default branch {destination} are forbidden, including --force-with-lease."
-        destinations.append(destination)
-    worktrees = git_output(cwd, "worktree", "list", "--porcelain")
-    owners = {}
-    for record in worktrees.split("\n\n"):
-        path = next((line[9:] for line in record.splitlines() if line.startswith("worktree ")), "")
-        branch = next((line[18:] for line in record.splitlines() if line.startswith("branch refs/heads/")), "")
-        if branch:
-            owners[branch] = path
-    for branch in destinations:
-        owner = owners.get(branch)
-        if owner and not Path(cwd).resolve().is_relative_to(Path(owner).resolve()):
-            return f"Force push to {branch} is forbidden: another lane's worktree owns this ref."
-        if branch != current and git_output(cwd, "show-ref", "--verify", f"refs/heads/{branch}"):
-            return f"Force push to {branch} is forbidden: this is not your worktree's branch."
-    print(
-        f"branch-guard warning: --force-with-lease updates feature branch {', '.join(dict.fromkeys(destinations))}",
-        file=sys.stderr,
-    )
-    return None
+    force |= any(operand.startswith("+") for operand in operands)
+    return FORCE_PUSH if force else None
 
 
 def commands(text, cwd, depth=0):
@@ -297,7 +228,7 @@ def commands(text, cwd, depth=0):
             if args:
                 action, rest = args[0], args[1:]
                 if action == "push":
-                    reason = push_reason(rest, where)
+                    reason = push_reason(rest)
                     if reason:
                         found.append(("push denied: " + reason, None))
                 if action == "commit":
