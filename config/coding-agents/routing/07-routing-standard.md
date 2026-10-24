@@ -24,7 +24,7 @@ Precedence, in order:
 | verify | verifier, sonnet-latest high; codex-verifier sol-latest high for Claude authors | sol-latest xhigh 10% for Claude authors | E15 Sonnet 16/16 at $0.101 vs $0.216; DeepSWE low 16/20 vs xhigh 17/20 at a third of the cost |
 | decide (factory decider ticks, lookback scoring) | decider, sonnet-latest high (was Fable every 30 min on ax42) | haiku-latest 10% | E20 Sonnet high 12/20, Sol 12/20, Opus medium 11/20, exploration evidence only; a routing failure skips the tick |
 | digest | sonnet-latest medium | haiku-latest 20% | no decision authority |
-| relay (forwarding wrappers) | sonnet-latest low, full ids in seat files | haiku-latest low 30% | |
+| relay (forwarding wrappers) | sol-latest low, full ids in seat files | haiku-latest low 30% | |
 | classify | Jev first; haiku-latest low when a model is needed | none | |
 | computer, council | computer-use sol-latest medium; codex-sol sol-latest high | none | |
 

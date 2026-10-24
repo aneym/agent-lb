@@ -90,10 +90,10 @@
       "seat": "host-relay",
       "model": "sonnet-latest",
       "effort": "low",
-      "wrapper_model": "sonnet-latest",
+      "wrapper_model": "sol-latest",
       "explore": true,
       "authority": "none",
-      "evidence": "forwarding wrappers carry no decision; seat files name full ids so the background pin no longer redirects them",
+      "evidence": "wrappers carry no decision; Sol serves them, not Sonnet (E1, 2026-10-24)",
       "since": "2026-10-16"
     },
     "decide": {
@@ -670,6 +670,7 @@
     "sol-latest": {
       "vendor": "openai",
       "family": "sol",
+      "pinned": "gpt-6.1-sol",
       "note": "newest non-retired gpt-*-sol the LB serves"
     },
     "sol-latest-low": {"vendor": "openai", "family": "sol"},

@@ -315,3 +315,7 @@ commands; the existing Open Factory browser-floor replay is kept unchanged.
 ## 2026-10-23: Requested seats are not hook policy
 
 Pick the seat by the routing rules; hooks never rewrite seats. Removed Agent and Workflow seat guards, their hands classifier and Bash steering nudge, and the OPUS-REASON exception. The policy installer retires their installed files and hook registrations. Mac-only Opus forwarding keeps Opus rather than selecting Sol. Kept-floor guards are unchanged.
+
+## 2026-10-24: Relay wrappers run on Sol
+
+Forwarding wrapper seats (host-relay, codex-*, gpt-*, verifier and the rest of RELAY_SEATS) render `model: gpt-6.1-sol` from the relay standard's `wrapper_model: sol-latest`. They carry no decision, and on Sonnet they were the remaining helper rows in the E1 quota matrix (lane goal-quota-routing, receipt S7b-E1). `sol-latest` pins `gpt-6.1-sol` for the workflow relay seat, matching open-factory's alias pin.
