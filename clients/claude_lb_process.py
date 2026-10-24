@@ -4,6 +4,7 @@ import hashlib
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -73,6 +74,17 @@ def claude_executable() -> str:
     return "claude"
 
 
+def claude_launch_executable() -> str:
+    launcher = shutil.which("claude-launch")
+    if launcher is not None:
+        return launcher
+    kit = Path(os.environ.get("AGENT_PLUGIN_KIT") or Path.home() / ".agent-rails/installed-runtime/agent-plugin-kit")
+    candidate = kit / "bin/claude-launch"
+    if not os.access(candidate, os.X_OK):
+        raise SystemExit("cc: claude-launch is missing; install the reviewed agent-plugin-kit release")
+    return str(candidate)
+
+
 def build_command(argv: list[str]) -> list[str]:
     command = [claude_executable()]
     if CCGPT_MODE:
@@ -99,7 +111,7 @@ def build_command(argv: list[str]) -> list[str]:
     if permission_mode:
         command.extend(["--permission-mode", permission_mode])
     command.extend(argv)
-    return command
+    return [claude_launch_executable(), "--", *command]
 
 
 def derive_session_id(argv: list[str]) -> str:
@@ -138,7 +150,7 @@ def build_resume_command(argv: list[str], claude_session_id: str) -> list[str]:
             "You were interrupted by a usage limit that has now reset. Continue the task exactly where you left off.",
         ]
     )
-    return command
+    return [claude_launch_executable(), "--", *command]
 
 
 def stop_child(child: subprocess.Popen[bytes], *, interrupt: bool = False) -> None:
