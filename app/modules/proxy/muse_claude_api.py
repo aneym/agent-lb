@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.auth.dependencies import validate_proxy_api_key
+from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.proxy.claude_codex_bridge import (
     anthropic_error_from_response,
     claude_to_responses,
@@ -67,7 +68,7 @@ async def messages(request: Request, payload: AnthropicMessageRequest) -> JSONRe
             yield bytes(chunk) if isinstance(chunk, memoryview) else chunk
 
     events = responses_to_claude_events(
-        source(),
+        ordered_muse_events(source()),
         model=MODEL,
         input_tokens_estimate=estimate_claude_input_tokens(payload.model_dump(mode="json", exclude_none=True)),
     )
@@ -92,3 +93,28 @@ def muse_schema(value):
         for key, item in value.items()
         if not (key == "pattern" and isinstance(item, str) and "\\0" in item)
     }
+
+
+async def ordered_muse_events(source: AsyncIterator[bytes | str]) -> AsyncIterator[str]:
+    buffer = ""
+    finished_calls: set[str] = set()
+    async for chunk in source:
+        buffer += chunk.decode("utf-8", "replace") if isinstance(chunk, bytes) else chunk
+        while "\n\n" in buffer:
+            block, buffer = buffer.split("\n\n", 1)
+            event = parse_sse_data_json(block)
+            if event is None:
+                continue
+            kind = event.get("type")
+            item = event.get("item")
+            if kind == "response.function_call_arguments.delta" or kind == "response.function_call_arguments.done":
+                continue
+            if isinstance(item, dict) and item.get("type") == "function_call":
+                if kind == "response.output_item.added":
+                    continue
+                call_id = item.get("call_id") or item.get("id")
+                if kind == "response.output_item.done" and isinstance(call_id, str):
+                    if call_id in finished_calls:
+                        continue
+                    finished_calls.add(call_id)
+            yield format_sse_event(event)
