@@ -125,16 +125,18 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=2466)
     parser.add_argument("--upstream", default=os.environ.get("AGENT_LB_BASE_URL", "http://127.0.0.1:2455"))
-    parser.add_argument("--route", default=str(Path.home() / ".agent-lb/bin/route"))
+    parser.add_argument("--route", default=str(Path(__file__).resolve().with_name("route")))
     parser.add_argument("--print", action="store_true")
     args = parser.parse_args()
     if args.host not in ("127.0.0.1", "::1", "localhost"):
         parser.error("gateway must listen on loopback; use an authenticated transport for remote access")
-    result = subprocess.run([args.route, "workflow-args"], capture_output=True, text=True, timeout=60)
+    env = os.environ.copy()
+    env.setdefault("ROUTE_TABLE", str(Path(__file__).resolve().parents[1] / "config/coding-agents/routing-table.json"))
+    result = subprocess.run([args.route, "workflow-args"], env=env, capture_output=True, text=True, timeout=60)
     workflow = json.loads(result.stdout)
     parent = workflow["stages"]["orchestrator"]
     helper = workflow["seats"]["implement"]
-    kimi_result = subprocess.run([args.route, "resolve", "kimi-latest", "--json"], capture_output=True, text=True, timeout=30)
+    kimi_result = subprocess.run([args.route, "resolve", "kimi-latest", "--json"], env=env, capture_output=True, text=True, timeout=30)
     kimi = json.loads(kimi_result.stdout)
     Gateway.catalog = {
         "claude-opus-5-5": {"model": parent["model"], "effort": parent["effort"], "role": "parent"},
