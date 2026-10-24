@@ -27,20 +27,25 @@ def main() -> None:
         ANTHROPIC_MODEL=model,
         ANTHROPIC_DEFAULT_OPUS_MODEL=model,
         ANTHROPIC_DEFAULT_FABLE_MODEL=model,
+        ANTHROPIC_DEFAULT_SONNET_MODEL=model,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL=model,
+        CLAUDE_CODE_SUBAGENT_MODEL=model,
     )
+    env.pop("ANTHROPIC_API_KEY", None)
     for name in ("NO_PROXY", "no_proxy"):
         env[name] = ",".join(
             value for value in (urlsplit(base_url).hostname, "127.0.0.1", "localhost", env.get(name)) if value
         )
-    env.setdefault("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "240000")
+    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "1048576" if "[1m]" in model or model == "kimi-for-coding" else "262144"
+    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]
+    env["CLAUDE_CODE_EFFORT_LEVEL"] = "max"
     env.setdefault("API_TIMEOUT_MS", "3000000")
     claude = str(Path.home() / ".local/bin/claude")
     command = [claude]
     if not any(arg in {"--model", "-m"} or arg.startswith("--model=") for arg in argv):
         command.extend(["--model", model])
     if not any(
-        arg in {"--permission-mode", "--dangerously-skip-permissions"}
-        or arg.startswith("--permission-mode=")
+        arg in {"--permission-mode", "--dangerously-skip-permissions"} or arg.startswith("--permission-mode=")
         for arg in argv
     ):
         command.extend(["--permission-mode", "bypassPermissions"])
