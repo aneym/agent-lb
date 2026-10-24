@@ -10,7 +10,8 @@ from pathlib import Path
 
 
 def arguments(parser):
-    parser.add_argument("--caller-seat", required=True)
+    parser.add_argument("--caller-seat")
+    parser.add_argument("--job")
     parser.add_argument("--model", required=True)
     parser.add_argument("--effort")
     parser.add_argument("--since", help="ISO timestamp (default: 24 hours ago).")
@@ -54,7 +55,9 @@ def policy_effort(model: str | None, effort: str | None) -> str | None:
 
 def run(args):
     try:
-        args.caller_seat = args.caller_seat.strip().lower()
+        if not args.caller_seat and not args.job:
+            raise ValueError("--caller-seat or --job is required.")
+        args.caller_seat = args.caller_seat.strip().lower() if args.caller_seat else None
         since = datetime.now(UTC) - timedelta(hours=24)
         if args.since:
             try:
@@ -77,15 +80,21 @@ def run(args):
                 cursor.execute(
                     """SELECT model, reasoning_effort AS effort, count(*) AS count
                     FROM request_logs
-                    WHERE (lower(caller_seat) = lower(%s) OR lower(dispatch_id) = lower(%s)
-                           OR lower(unified_headers->>'x-agent-lb-dispatch') = lower(%s))
+                    WHERE (
+                        (%s IS NOT NULL AND (lower(caller_seat) = lower(%s) OR lower(dispatch_id) = lower(%s)
+                         OR lower(unified_headers->>'x-agent-lb-dispatch') = lower(%s)))
+                        OR (%s IS NOT NULL AND job_id = %s)
+                    )
                     AND requested_at >= %s AND deleted_at IS NULL
                     GROUP BY model, reasoning_effort
                     ORDER BY model, reasoning_effort""",
                     (
                         args.caller_seat,
-                        args.caller_seat.removeprefix("dcn:"),
-                        args.caller_seat.removeprefix("dcn:"),
+                        args.caller_seat,
+                        args.caller_seat.removeprefix("dcn:") if args.caller_seat else None,
+                        args.caller_seat.removeprefix("dcn:") if args.caller_seat else None,
+                        args.job,
+                        args.job,
                         since.replace(tzinfo=None),
                     ),
                 )
@@ -106,6 +115,7 @@ def run(args):
         report = dict(
             label="requested_vs_forwarded",
             caller_seat=args.caller_seat,
+            job=args.job,
             requested=dict(model=model, effort=args.effort),
             forwarded=forwarded,
             rows=rows,
