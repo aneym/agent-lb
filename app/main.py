@@ -41,6 +41,7 @@ from app.core.resilience.memory_monitor import configure as configure_memory_mon
 from app.core.usage.refresh_scheduler import build_usage_refresh_scheduler
 from app.db.session import SessionLocal, close_db, init_background_db, init_db
 from app.metrics_startup import start_metrics_server
+from app.muse_routes import register_muse_routes
 from app.modules.account_schedule import api as account_schedule_api
 from app.modules.account_schedule.scheduler import build_account_resume_scheduler
 from app.modules.accounts import api as accounts_api
@@ -63,7 +64,6 @@ from app.modules.oauth import api as oauth_api
 from app.modules.pools import api as pools_api
 from app.modules.pools.seat_quota_scheduler import build_seat_quota_scheduler
 from app.modules.proxy import api as proxy_api
-from app.modules.proxy import meta_service as meta_api
 from app.modules.proxy.models_api import router as models
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.proxy.ring_membership import (
@@ -401,8 +401,7 @@ def configure_app(app: FastAPI, settings) -> None:
     ):
         app.include_router(router)
     app.include_router(models)
-    app.include_router(meta_api.router)
-    app.include_router(meta_api.provider_router)
+    register_muse_routes(app)
     app.include_router(audit_api.router)
     app.include_router(accounts_api.router)
     app.include_router(availability_router)

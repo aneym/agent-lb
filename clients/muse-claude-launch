@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+
+
+def main() -> None:
+    argv = sys.argv[1:]
+    model = "muse-wonder-full-1.0"
+    for index, arg in enumerate(argv):
+        if arg in {"--model", "-m"} and index + 1 < len(argv):
+            model = argv[index + 1]
+        elif arg.startswith("--model="):
+            model = arg.partition("=")[2]
+    if model != "muse-wonder-full-1.0":
+        raise SystemExit("Muse Claude Code requires muse-wonder-full-1.0")
+    base_url = os.environ.get("AGENT_LB_MUSE_BASE_URL", "http://127.0.0.1:2455/muse/claude")
+    env = os.environ.copy()
+    env.update(
+        ANTHROPIC_BASE_URL=base_url,
+        ANTHROPIC_AUTH_TOKEN=os.environ.get("AGENT_LB_API_KEY")
+        or os.environ.get("AGENT_LB_PROXY_API_KEY", "local-muse"),
+        ANTHROPIC_MODEL=model,
+        ANTHROPIC_DEFAULT_OPUS_MODEL=model,
+        ANTHROPIC_DEFAULT_FABLE_MODEL=model,
+        ANTHROPIC_DEFAULT_SONNET_MODEL=model,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL=model,
+        CLAUDE_CODE_SUBAGENT_MODEL=model,
+    )
+    env.pop("ANTHROPIC_API_KEY", None)
+    for name in ("NO_PROXY", "no_proxy"):
+        env[name] = ",".join(
+            value for value in (urlsplit(base_url).hostname, "127.0.0.1", "localhost", env.get(name)) if value
+        )
+    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "1000000"
+    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]
+    env["CLAUDE_CODE_EFFORT_LEVEL"] = "high"
+    env.setdefault("ENABLE_TOOL_SEARCH", "true")
+    env.setdefault("CLAUDE_CODE_WORKFLOWS", "1")
+    env.setdefault("API_TIMEOUT_MS", "3000000")
+    claude = str(Path.home() / ".local/bin/claude")
+    scoped_env = {
+        key: value
+        for key, value in env.items()
+        if key
+        in {
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        }
+        or key
+        in {
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            "CLAUDE_CODE_EFFORT_LEVEL",
+        }
+    }
+    scoped_env["ANTHROPIC_API_KEY"] = ""
+    command = [claude, "--settings", json.dumps({"env": scoped_env})]
+    if not any(arg in {"--model", "-m"} or arg.startswith("--model=") for arg in argv):
+        command.extend(["--model", model])
+    if not any(
+        arg in {"--permission-mode", "--dangerously-skip-permissions"} or arg.startswith("--permission-mode=")
+        for arg in argv
+    ):
+        command.extend(["--permission-mode", "bypassPermissions"])
+    os.execve(claude, [*command, *argv], env)
+
+
+if __name__ == "__main__":
+    main()
