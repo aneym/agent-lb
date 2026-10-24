@@ -191,7 +191,11 @@ def commands(text, cwd, depth=0):
                 "sudo",
                 "nohup",
                 "time",
+                "timeout",
             }:
+                rest = segment[git_index + 1 :]
+                if "push" in rest and push_reason(rest[rest.index("push") + 1 :]):
+                    found.append(("push denied: " + FORCE_PUSH, None))
                 continue
             args, where = segment[git_index + 1 :], cwd
             bypass = False
