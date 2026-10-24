@@ -75,7 +75,6 @@ struct AccountRow: View {
   }
 
   private var ringPercent: Double? {
-    if account.provider.lowercased() == "kimi" { return nil }
     return isCodex
       ? account.usage.secondaryRemainingPercent
       : account.usage.primaryRemainingPercent
@@ -302,7 +301,9 @@ struct AccountRow: View {
 
   @ViewBuilder
   private var windowGrid: some View {
-    if account.provider.lowercased() == "kimi" {
+    if account.provider.lowercased() == "kimi"
+      && account.usage.primaryRemainingPercent == nil
+      && account.usage.monthlyRemainingPercent == nil {
       Text("Kimi · quota not reported")
         .font(.system(size: 10, design: .monospaced))
         .foregroundStyle(.secondary)
@@ -322,13 +323,18 @@ struct AccountRow: View {
         resetAt: account.resetAtPrimary
       ))
     }
-    cells.append(RowWindow(
-      id: "secondary",
-      label: "WK",
-      percent: account.usage.secondaryRemainingPercent,
-      knownFull: ResetDisplay.isKnownFull(account, window: .secondary),
-      resetAt: account.resetAtSecondary
-    ))
+    if account.provider.lowercased() == "kimi", let monthly = account.usage.monthlyRemainingPercent {
+      cells.append(RowWindow(id: "monthly", label: "MO", percent: monthly,
+                             knownFull: monthly >= 100, resetAt: account.resetAtMonthly))
+    } else if account.provider.lowercased() != "kimi" || account.usage.secondaryRemainingPercent != nil {
+      cells.append(RowWindow(
+        id: "secondary",
+        label: "WK",
+        percent: account.usage.secondaryRemainingPercent,
+        knownFull: ResetDisplay.isKnownFull(account, window: .secondary),
+        resetAt: account.resetAtSecondary
+      ))
+    }
     return RowWindowGrid(cells: cells, now: now)
   }
 

@@ -198,5 +198,21 @@
     "limit_name_aliases": [
       "anthropic_opus_thinking"
     ]
+  },
+  {
+    "quota_key": "kimi_month_total",
+    "display_label": "Kimi monthly total",
+    "routing_policy": "normal",
+    "limit_name_aliases": [
+      "kimi_month_total"
+    ]
+  },
+  {
+    "quota_key": "kimi_month_code",
+    "display_label": "Kimi monthly coding",
+    "routing_policy": "normal",
+    "limit_name_aliases": [
+      "kimi_month_code"
+    ]
   }
 ]

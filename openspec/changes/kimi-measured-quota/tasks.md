@@ -1,0 +1,5 @@
+- [x] Confirm official Kimi usage endpoint and window semantics with a real read-only response.
+- [x] Implement provider client and scheduled/operator refresh without invented fallback capacity.
+- [x] Render measured native quota/reset values while preserving unknown states.
+- [x] Run isolated actual HTTP quota regression and focused checks.
+- [ ] Deploy backend and sync signed menubar bundle to Studio and Book.

@@ -265,8 +265,12 @@ class AccountsLifecycle(AccountsTransfer):
                 model=probe_model,
             )
 
-        if self._usage_repo and self._usage_updater and provider == OPENAI_PROVIDER_NAME:
+        if self._usage_repo and self._usage_updater and provider in {OPENAI_PROVIDER_NAME, "kimi"}:
             await self._usage_updater.force_refresh(probe_account)
+            if provider == "kimi":
+                from app.modules.accounts.service_caches import invalidate_additional_quotas_cache
+
+                invalidate_additional_quotas_cache()
             get_account_selection_cache().invalidate()
 
         refreshed = await self._repo.reload_by_id(account_id) or account

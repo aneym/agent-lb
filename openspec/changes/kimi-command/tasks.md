@@ -1,0 +1,2 @@
+- [x] Add a portable versioned Kimi launcher and include it in client installation.
+- [ ] Verify the real installed command on Studio and Book and preserve unrelated shell configuration.

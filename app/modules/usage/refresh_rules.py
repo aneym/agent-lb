@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from app.core.balancer import PERMANENT_FAILURE_CODES, QUOTA_EXCEEDED_COOLDOWN_SECONDS
 from app.core.clients.anthropic_usage import fetch_anthropic_usage
+from app.core.clients.kimi_usage import fetch_kimi_usage
 from app.core.clients.usage import UsageFetchError, fetch_usage
 from app.core.config.settings import get_settings
 from app.core.plan_types import account_plan_matches_allowed, coerce_account_plan_type
@@ -53,7 +54,7 @@ _USAGE_REFRESH_RATE_LIMIT_BASE_SECONDS = 60.0
 _USAGE_REFRESH_RATE_LIMIT_MAX_SECONDS = 900.0
 
 
-USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME})
+USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, "kimi"})
 
 
 ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
@@ -172,6 +173,8 @@ async def fetch_usage_payload(
 ) -> UsagePayload:
     if account.provider == ANTHROPIC_PROVIDER_NAME:
         return await fetch_anthropic_usage(access_token=access_token, account_id=account.id)
+    if account.provider == "kimi":
+        return await fetch_kimi_usage(access_token=access_token)
     route = await _resolve_upstream_route_for_account(account, operation="usage_refresh")
     return await fetch_usage(
         access_token=access_token,

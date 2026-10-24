@@ -63,7 +63,7 @@ class UsageAccountRefresh(UsageAccountSync):
             mark_usage_refresh_auth_cooldown(account.id, 0)
             return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
         except UsageFetchError as exc:
-            if should_deactivate_for_usage_error(exc):
+            if account.provider != "kimi" and should_deactivate_for_usage_error(exc):
                 await self._deactivate_for_client_error(account, exc)
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
             if exc.status_code != 401 or not self._auth_manager:
@@ -90,7 +90,7 @@ class UsageAccountRefresh(UsageAccountSync):
                 mark_usage_refresh_auth_cooldown(account.id, 0)
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
             except UsageFetchError as retry_exc:
-                if should_deactivate_for_usage_error(retry_exc):
+                if account.provider != "kimi" and should_deactivate_for_usage_error(retry_exc):
                     await self._deactivate_for_client_error(account, retry_exc)
                 else:
                     mark_usage_refresh_auth_cooldown(account.id, retry_exc.status_code)
@@ -230,7 +230,7 @@ class UsageAccountRefresh(UsageAccountSync):
         )
         primary = normalized_windows.primary
         secondary = normalized_windows.secondary
-        monthly = normalized_windows.monthly
+        monthly = rate_limit.monthly_window or normalized_windows.monthly
         if primary is None and secondary is None:
             if monthly is None:
                 additional_synced = (

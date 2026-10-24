@@ -83,11 +83,15 @@ def _account_to_summary(
         secondary_usage,
     )
 
-    if monthly_usage is not None and usage_core.capacity_for_plan(plan_type, "monthly") is None:
+    if (
+        monthly_usage is not None
+        and account.provider != "kimi"
+        and usage_core.capacity_for_plan(plan_type, "monthly") is None
+    ):
         monthly_usage = None
     monthly_used_percent = _normalize_used_percent(monthly_usage)
     monthly_remaining_percent = usage_core.remaining_percent_from_used(monthly_used_percent)
-    if monthly_usage is not None:
+    if monthly_usage is not None and account.provider != "kimi":
         effective_primary_usage = None
         effective_secondary_usage = None
 
@@ -105,7 +109,7 @@ def _account_to_summary(
     if (
         primary_remaining_percent is None
         and not weekly_only_usage
-        and normalize_provider_name(account.provider) not in (ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME)
+        and normalize_provider_name(account.provider) not in (ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, "kimi")
     ):
         primary_remaining_percent = 100.0
 

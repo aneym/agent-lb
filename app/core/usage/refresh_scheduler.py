@@ -376,6 +376,8 @@ def _select_long_window_entry(
     monthly_entry: UsageHistory | None,
     secondary_entry: UsageHistory | None,
 ) -> UsageHistory | None:
-    if monthly_entry is not None and capacity_for_plan(account.plan_type, "monthly") is not None:
+    if monthly_entry is not None and (
+        account.provider == "kimi" or capacity_for_plan(account.plan_type, "monthly") is not None
+    ):
         return monthly_entry
     return secondary_entry

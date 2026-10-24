@@ -17,6 +17,7 @@ class RateLimitPayload(BaseModel):
 
     primary_window: UsageWindow | None = None
     secondary_window: UsageWindow | None = None
+    monthly_window: UsageWindow | None = None
 
 
 class CreditsPayload(BaseModel):

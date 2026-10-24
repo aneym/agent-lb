@@ -51,6 +51,9 @@ extension Account {
     if let remaining = usage.primaryRemainingPercent, remaining <= 0, let resetAtPrimary {
       exhaustedResets.append(resetAtPrimary)
     }
+    if let remaining = usage.monthlyRemainingPercent, remaining <= 0, let resetAtMonthly {
+      exhaustedResets.append(resetAtMonthly)
+    }
     if let remaining = usage.secondaryRemainingPercent, remaining <= 0, let resetAtSecondary {
       exhaustedResets.append(resetAtSecondary)
     }

@@ -1,0 +1,1 @@
+Use the subscribed Kimi Coding Plan through the local Claude Code harness. Default to kimi-for-coding, preserve explicit model/base URL/token overrides, and load no machine-specific plugin path. Install a versioned launcher on Studio and Book and make their kimi shell functions call it. Real quota limits remain enforced.
