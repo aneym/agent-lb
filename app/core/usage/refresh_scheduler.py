@@ -34,7 +34,7 @@ from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.quota_planner.repository import QuotaPlannerRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.settings.repository import SettingsRepository
-from app.modules.usage.refresh_rules import USAGE_REFRESH_SINGLEFLIGHT
+from app.modules.usage.refresh_rules import USAGE_REFRESH_PROVIDERS, USAGE_REFRESH_SINGLEFLIGHT
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 from app.modules.usage.updater import UsageUpdater
 
@@ -298,7 +298,7 @@ def _openai_accounts(accounts: list[Account]) -> list[Account]:
 
 
 def _usage_refresh_accounts(accounts: list[Account]) -> list[Account]:
-    return [account for account in accounts if account.provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME}]
+    return [account for account in accounts if account.provider in USAGE_REFRESH_PROVIDERS]
 
 
 def _warmup_eligible_accounts(accounts: list[Account]) -> list[Account]:
