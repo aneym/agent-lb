@@ -525,6 +525,8 @@
     "computer-use-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "high"},
     "opus-seat-local": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "medium"},
     "sonnet-implementer-local": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "high"},
+    "kimi-implementer": {"vendor": "kimi", "box": null, "model": "kimi-latest", "effort": "low"},
+    "kimi-implementer-local": {"vendor": "kimi", "box": null, "model": "kimi-latest", "effort": "low"},
     "verifier-local": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "high"}
   },
   "pools": {
@@ -550,8 +552,8 @@
       "accounts": {"cursor-main": {"plan": "cursor-ultra"}, "cursor-gmail": {"plan": "cursor-ultra"}},
       "fast_multiplier": 3,
       "pools": [
-        {"id": "cursor-models", "label": "Cursor models", "models": ["composer-*", "grok-*", "cursor-grok-*"], "budget_usd_by_tier": {"Ultra": 3123}, "note": "2026-09-30 calibration: shared cursor-main + cursor-gmail plan current-cycle service tally $62.46 / 0.02, rounded to $3123 (minimum $200), matches dashboard 2% used."},
-        {"id": "cursor-other", "label": "Other models", "models": ["*"], "budget_usd_by_tier": {"Ultra": 223, "Pro+": 70, "Pro": 20}, "note": "2026-09-30 calibration: shared cursor-main + cursor-gmail plan current-cycle service tally $222.73 rounded to $223; dashboard Other models limit hit (100% used)."}
+        {"id": "cursor-models", "label": "Cursor models", "models": ["composer-*", "grok-*", "cursor-grok-*"], "budget_usd_by_tier": {"Ultra": 3123}},
+        {"id": "cursor-other", "label": "Other models", "models": ["*"], "budget_usd_by_tier": {"Ultra": 223, "Pro+": 70, "Pro": 20}}
       ],
       "prices_usd_per_mtok": [
         ["composer-2.5-fast", [3, 3, 15]],

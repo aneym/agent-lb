@@ -25,7 +25,7 @@ def tracked_main(path):
         return None
     repo = Path(common.stdout.strip()).parent
     root = (
-        Path(os.environ.get("REPOS_ROOT") or os.environ.get("GIT_GUARD_REPOS_ROOT") or "/Volumes/StudioExt/repos")
+        Path(os.environ.get("REPOS_ROOT") or os.environ.get("GIT_GUARD_REPOS_ROOT") or repo.parent)
         .expanduser()
         .resolve()
     )
