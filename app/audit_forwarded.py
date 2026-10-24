@@ -76,10 +76,18 @@ def run(args):
             with connection.cursor() as cursor:
                 cursor.execute(
                     """SELECT model, reasoning_effort AS effort, count(*) AS count
-                    FROM request_logs WHERE caller_seat = %s AND requested_at >= %s
-                    AND deleted_at IS NULL GROUP BY model, reasoning_effort
+                    FROM request_logs
+                    WHERE (caller_seat = %s OR dispatch_id = %s
+                           OR unified_headers->>'x-agent-lb-dispatch' = %s)
+                    AND requested_at >= %s AND deleted_at IS NULL
+                    GROUP BY model, reasoning_effort
                     ORDER BY model, reasoning_effort""",
-                    (args.caller_seat, since.replace(tzinfo=None)),
+                    (
+                        args.caller_seat,
+                        args.caller_seat.removeprefix("dcn:"),
+                        args.caller_seat.removeprefix("dcn:"),
+                        since.replace(tzinfo=None),
+                    ),
                 )
                 forwarded = cursor.fetchall()
         rows = sum(row["count"] for row in forwarded)
