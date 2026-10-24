@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -41,7 +42,28 @@ def main() -> None:
     env["CLAUDE_CODE_EFFORT_LEVEL"] = "max"
     env.setdefault("API_TIMEOUT_MS", "3000000")
     claude = str(Path.home() / ".local/bin/claude")
-    command = [claude]
+    scoped_env = {
+        key: value
+        for key, value in env.items()
+        if key
+        in {
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        }
+        or key
+        in {
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            "CLAUDE_CODE_EFFORT_LEVEL",
+        }
+    }
+    scoped_env["ANTHROPIC_API_KEY"] = ""
+    command = [claude, "--settings", json.dumps({"env": scoped_env})]
     if not any(arg in {"--model", "-m"} or arg.startswith("--model=") for arg in argv):
         command.extend(["--model", model])
     if not any(
