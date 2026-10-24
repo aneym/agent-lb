@@ -206,7 +206,10 @@ def consumer_of(prefix):
         words = shlex.split(part, comments=False)
     except ValueError:
         words = part.split()
-    return normalize(words)
+    try:
+        return normalize(words)
+    except Doubt:
+        return words
 
 
 def host_of(destination):
