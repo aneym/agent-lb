@@ -77,8 +77,8 @@ def run(args):
                 cursor.execute(
                     """SELECT model, reasoning_effort AS effort, count(*) AS count
                     FROM request_logs
-                    WHERE (caller_seat = %s OR dispatch_id = %s
-                           OR unified_headers->>'x-agent-lb-dispatch' = %s)
+                    WHERE (lower(caller_seat) = lower(%s) OR lower(dispatch_id) = lower(%s)
+                           OR lower(unified_headers->>'x-agent-lb-dispatch') = lower(%s))
                     AND requested_at >= %s AND deleted_at IS NULL
                     GROUP BY model, reasoning_effort
                     ORDER BY model, reasoning_effort""",
