@@ -81,9 +81,9 @@ def run(args):
                     """SELECT model, reasoning_effort AS effort, count(*) AS count
                     FROM request_logs
                     WHERE (
-                        (%s IS NOT NULL AND (lower(caller_seat) = lower(%s) OR lower(dispatch_id) = lower(%s)
-                         OR lower(unified_headers->>'x-agent-lb-dispatch') = lower(%s)))
-                        OR (%s IS NOT NULL AND job_id = %s)
+                        (%s::text IS NOT NULL AND (lower(caller_seat) = lower(%s::text) OR lower(dispatch_id) = lower(%s::text)
+                         OR lower(unified_headers->>'x-agent-lb-dispatch') = lower(%s::text)))
+                        OR (%s::text IS NOT NULL AND job_id = %s::text)
                     )
                     AND requested_at >= %s AND deleted_at IS NULL
                     GROUP BY model, reasoning_effort
