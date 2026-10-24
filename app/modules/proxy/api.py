@@ -31,7 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import usage as usage_core
-from app.core.anthropic.models import AnthropicDefinedToolDefinition, AnthropicMessageRequest
+from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.audit.service import AuditService
 from app.core.auth.dependencies import (
     select_member_key_authorization,
@@ -143,7 +143,6 @@ from app.modules.proxy.anthropic_service import (
 )
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.claude_codex_bridge import (
-    CCGPT_MODEL,
     CCGPT_REASONING_EFFORT,
     CCGPT_SERVICE_TIER,
     anthropic_error_from_response,
@@ -157,7 +156,7 @@ from app.modules.proxy.claude_codex_bridge import (
 )
 from app.modules.proxy.helpers import _rate_limit_details
 from app.modules.proxy.http_bridge_forwarding import parse_forwarded_request
-from app.modules.proxy.model_families import resolve_ccgpt_model
+from app.modules.proxy.model_families import default_ccgpt_model, resolve_ccgpt_model
 from app.modules.proxy.request_policy import (
     apply_api_key_enforcement,
     enforce_strict_function_tools_format,
@@ -188,6 +187,7 @@ from app.modules.proxy.schemas import (
     WarmupSubmittedAccount,
 )
 from app.modules.proxy.selection_diagnostics import retry_after_seconds_from_error_detail
+from app.modules.proxy.server_tool_route import carries_server_tools, server_tool_claude_model
 from app.modules.proxy.types import (
     CreditStatusDetailsData,
     RateLimitStatusPayloadData,
@@ -792,15 +792,11 @@ async def v1_messages(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
     ccgpt_model = resolve_ccgpt_model(payload.model)
-    if ccgpt_model is not None:
-        locked_model, alias_effort = ccgpt_model
+    if ccgpt_model and (claude_model := server_tool_claude_model(payload)):
+        payload = payload.model_copy(update={"model": claude_model})
+    elif ccgpt_model:
         return await _ccgpt_messages_response(
-            request,
-            payload,
-            get_proxy_context(request),
-            api_key,
-            alias_effort=alias_effort,
-            locked_model=locked_model,
+            request, payload, get_proxy_context(request), api_key, ccgpt_model[1], ccgpt_model[0]
         )
     from app.modules.proxy import stand_in
 
@@ -854,12 +850,7 @@ async def v1_messages(
             return _anthropic_proxy_error_response(exc)
         locked_model, alias_effort = resolved
         response = await _ccgpt_messages_response(
-            request,
-            payload,
-            get_proxy_context(request),
-            api_key,
-            locked_model=locked_model,
-            alias_effort=alias_effort,
+            request, payload, get_proxy_context(request), api_key, alias_effort, locked_model
         )
         if response.status_code < 400 and session_id:
             try:
@@ -995,13 +986,14 @@ async def v1_ccgpt_messages(
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-
+    if carries_server_tools(payload):
+        return await v1_messages(request, payload, get_anthropic_proxy_context(request), api_key)
     resolved = resolve_ccgpt_model(payload.model)
     if resolved is None and not payload.model.startswith("claude-"):
         return _anthropic_error_response(
             400, "invalid_request_error", f"model {payload.model} is not a served GPT model"
         )
-    locked_model, alias_effort = resolved or resolve_ccgpt_model("sol-latest") or (CCGPT_MODEL, None)
+    locked_model, alias_effort = resolved or default_ccgpt_model()
     return await _ccgpt_messages_response(
         request, payload, context, api_key, alias_effort=alias_effort, locked_model=locked_model
     )
@@ -1015,7 +1007,6 @@ async def _ccgpt_messages_response(
     alias_effort: str | None = None,
     locked_model: str | None = None,
 ) -> Response:
-
     thread = (payload.model_extra or {}).get("thread")
     if thread is not None:
         return _anthropic_error_response(
@@ -1024,13 +1015,13 @@ async def _ccgpt_messages_response(
             "thread: threads unsupported by the ccgpt compatibility route",
             details={"error_code": "thread_unsupported_request"},
         )
-    if payload.tools and any(isinstance(tool, AnthropicDefinedToolDefinition) for tool in payload.tools):
+    if carries_server_tools(payload):
         return _anthropic_error_response(
             400,
             "invalid_request_error",
             "Anthropic-defined tools are unsupported by the ccgpt compatibility route",
         )
-    locked_model = locked_model or (resolve_ccgpt_model("sol-latest") or (CCGPT_MODEL, None))[0]
+    locked_model = locked_model or default_ccgpt_model()[0]
     client_session_id = _anthropic_request_session_id(payload, request.headers)
     responses_payload = claude_to_responses(payload, locked_model)
     responses_payload.model = locked_model
@@ -1107,7 +1098,7 @@ async def v1_ccgpt_messages_count_tokens(
     payload: dict[str, JsonValue] = Body(...),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    validate_model_access(api_key, (resolve_ccgpt_model("sol-latest") or (CCGPT_MODEL, None))[0])
+    validate_model_access(api_key, default_ccgpt_model()[0])
     return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
 
 

@@ -35,3 +35,7 @@ def resolve_ccgpt_model(name: str | None) -> tuple[str, str | None] | None:
     if not versions:
         return None
     return max(versions)[1], effort or None
+
+
+def default_ccgpt_model() -> tuple[str, str | None]:
+    return resolve_ccgpt_model("sol-latest") or (CCGPT_MODEL, None)
