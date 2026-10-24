@@ -31,7 +31,7 @@ esac
 
 
 
-CLIENT_NAMES=(cc fable opus claude-lb-launch kimi-lb-launch agent-defs-doctor claude-desktop-gateway)
+CLIENT_NAMES=(cc fable opus claude-lb-launch kimi-lb-launch agent-defs-doctor claude-desktop-gateway claude-artifact-bridge)
 BUNDLE_NAMES=("${CLIENT_NAMES[@]}" opus-runtime-doctor route)
 POLICY_SOURCE="$REPO_DIR/config/coding-agents"
 POLICY_INSTALLER="$POLICY_SOURCE/install-policy.py"
