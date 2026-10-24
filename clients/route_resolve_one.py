@@ -277,6 +277,11 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
     model = entry.get("model")
     alias = entry.get("alias") or model
     effort = entry.get("effort") if "effort" in entry else chain_effort(table, class_name, seat)
+    seat_spec = (table.get("seats") or {}).get(seat)
+    pinned_alias = seat_spec.get("model") if isinstance(seat_spec, dict) else None
+    if pinned_alias == "opus-latest":
+        model, _ = resolve_alias(table, pinned_alias, [], seat)
+        alias = pinned_alias
     if model and is_retired(model, retired_patterns(table)):
         raise ValueError(f"{seat} picked retired model {model}")
     opts = seat_opts(seat, model, alias, effort)
