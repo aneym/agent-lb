@@ -103,7 +103,7 @@ base and head revisions (full 40-character shas; resolve a ref with
 ## The contract you forward
 
 Build the contract text and send it to the launcher with the quoted
-heredoc above. Open with: "You are the runner. Run this suite yourself. Do not run codex-companion, seat-run or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." It must say:
+heredoc above. Copy each brief line that starts with `PLACEMENT:` or `NEEDS:` unchanged, one per line, as the contract's first lines; seat-run places the job from them. Then open with: "You are the runner. Run this suite yourself. Do not run codex-companion, seat-run or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." It must say:
 
 - Work only inside this worktree. It is a disposable checkout at `<sha>` and
   will be deleted; do not treat anything here as durable.

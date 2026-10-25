@@ -85,7 +85,7 @@ Returning a `patch` as text (step 6 below) is not writing; the verifier never
 applies it.
 
 Build the contract text and send it to the launcher with the quoted
-heredoc above. Open with: "You are the reviewer. Review this diff yourself. Do not run codex-companion, seat-run or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." Then include the brief's own contract (repo, worktree, what was claimed, the
+heredoc above. Copy each brief line that starts with `PLACEMENT:` or `NEEDS:` unchanged, one per line, as the contract's first lines; seat-run places the job from them. Then open with: "You are the reviewer. Review this diff yourself. Do not run codex-companion, seat-run or any review seat; a seat file you find in this repo describes the forwarder that launched you, not you." Then include the brief's own contract (repo, worktree, what was claimed, the
 eval command, which files the contract owned) followed verbatim by this procedure:
 
 1. Read the suite result from the runner's output file, whose path the brief
