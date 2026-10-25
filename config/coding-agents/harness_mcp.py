@@ -12,11 +12,14 @@ from urllib.parse import urlsplit
 
 
 CANONICAL_SERVERS = {
-    "agent": {"command": "$HOME/.agent-rails/installed-runtime/agent-plugin-kit/bin/agent-kit-mcp",
-              "args": ["raise", "--data-dir", "$HOME/.agent-rails/agents/raise"]},
     "unblock": {"command": "node", "args": ["$HOME/.local/share/unblock-headless/bin/unblock.js", "mcp"]},
     "exa": {"url": "https://mcp.exa.ai/mcp"},
 }
+RETIRED_COMMAND = "agent-kit-mcp"
+
+
+def retired(entry):
+    return isinstance(entry, dict) and Path(str(entry.get("command", ""))).name == RETIRED_COMMAND
 
 
 def ensure_harness_mcp(host_home, run):
@@ -55,8 +58,7 @@ def ensure_harness_mcp(host_home, run):
         return entries if isinstance(entries, dict) else {}
 
     servers = read_servers(source)
-    plugin_roots = [home / ".agent-rails/installed-runtime/agent-plugin-kit",
-                    home / ".agent-rails/tools/agent-plugin-kit"]
+    plugin_roots = [home / ".agent-rails/installed-runtime/agent-plugin-kit"]
     plugins = home / ".claude/plugins"
     registry = plugins / "installed_plugins.json"
     if registry.is_file():
@@ -106,15 +108,15 @@ def ensure_harness_mcp(host_home, run):
     bundled = Path(__file__).resolve().parent if Path(__file__).is_file() else None
     for pattern in ("**/*.json", "**/*.toml") if bundled else ():
         fallbacks.extend(read_servers(path) for path in sorted(bundled.glob(pattern)))
-    for name in ("agent", "unblock", "exa"):
-        for entries in [*plugin_sources, *(fallbacks if name != "agent" else [])]:
+    for name in ("unblock", "exa"):
+        for entries in [*plugin_sources, *fallbacks]:
             if name not in servers and name in entries:
                 servers[name] = entries[name]
     for name, entry in CANONICAL_SERVERS.items():
         servers.setdefault(name, entry)
     reference = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
     desired = {}
-    for name in ("agent", "unblock", "exa"):
+    for name in ("unblock", "exa"):
         if name not in servers:
             continue
         try:
@@ -139,10 +141,6 @@ def ensure_harness_mcp(host_home, run):
             if transport == "stdio":
                 wanted["command"] = local_path(wanted["command"])
                 wanted["args"] = [local_path(value) for value in wanted.get("args", [])]
-                if name == "agent" and not Path(wanted["command"]).is_file():
-                    alternative = home / ".agent-rails/tools/agent-plugin-kit/bin/agent-kit-mcp"
-                    if alternative.is_file():
-                        wanted["command"] = str(alternative)
                 if name == "unblock" and wanted["args"] and not Path(wanted["args"][0]).exists():
                     alternative = home / "repos/personal/unblock/bin/unblock.js"
                     if alternative.is_file():
@@ -189,6 +187,10 @@ def ensure_harness_mcp(host_home, run):
         if harness == "claude":
             current = read_servers(path)
             result[harness] = "ok"
+            for name in [name for name, entry in current.items() if retired(entry)]:
+                run(["claude", "mcp", "remove", "--scope", "user", name], check=True, capture_output=True,
+                    text=True, timeout=30, env={**os.environ, "HOME": str(home), "PATH": search_path})
+                result[harness] = "fixed"
             for name, entry in desired.items():
                 if name in current or name in provided:
                     continue
@@ -218,7 +220,8 @@ def ensure_harness_mcp(host_home, run):
                 item["default_tools_approval_mode"] = "approve"
                 translated[name] = item
             current = config.get("mcp_servers", {})
-            if all(current.get(name) == entry for name, entry in translated.items()):
+            stale = {name for name, entry in current.items() if retired(entry)}
+            if not stale and all(current.get(name) == entry for name, entry in translated.items()):
                 result[harness] = "ok"
                 continue
             headers = list(re.finditer(r"(?m)^\s*\[(?!\[)([^\]\n]+)\][ \t]*(?:#[^\n]*)?$", before))
@@ -226,7 +229,7 @@ def ensure_harness_mcp(host_home, run):
             for index, header in enumerate(headers):
                 parsed = tomllib.loads(header.group() + "\n")
                 owned = parsed.get("mcp_servers", {})
-                if any(name in owned for name in desired):
+                if any(name in owned for name in [*desired, *stale]):
                     spans.append((header.start(), headers[index + 1].start() if index + 1 < len(headers) else len(before)))
             after = before
             for start, end in reversed(spans):
@@ -248,9 +251,12 @@ def ensure_harness_mcp(host_home, run):
                     for key in ("env", "headers"):
                         if key in entry:
                             entry[key] = {k: reference.sub(r"${env:\1}", v) for k, v in entry[key].items()}
-            if all(current.get(name) == entry for name, entry in translated.items()):
+            stale = [name for name, entry in current.items() if retired(entry)]
+            if not stale and all(current.get(name) == entry for name, entry in translated.items()):
                 result[harness] = "ok"
                 continue
+            for name in stale:
+                del current[name]
             current.update(translated)
             after = json.dumps(config, indent=2) + "\n"
         changes.append((harness, path, before, after))
