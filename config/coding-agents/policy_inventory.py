@@ -38,6 +38,7 @@ MANAGED_SEATS = (
 )
 ADOPTED_KEEP_NAMES = (
     "no-chrome-guard.sh",
+    "no_chrome_guard.py",
     "no_chrome_classify.py",
     "no_chrome_shell.py",
     "no_chrome_argv.py",
@@ -53,6 +54,7 @@ ADOPTED_KEEP_NAMES = (
 
 MANAGED_HOOKS = (
     "no-chrome-guard.sh",
+    "no_chrome_guard.py",
     "no_chrome_classify.py",
     "no_chrome_shell.py",
     "no_chrome_argv.py",

@@ -5,11 +5,13 @@ import re
 import shlex
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path("/Volumes") / "StudioExt" / "repos"
 
 
+@lru_cache(maxsize=128)
 def first_checkout(cwd):
     try:
         result = subprocess.run(
