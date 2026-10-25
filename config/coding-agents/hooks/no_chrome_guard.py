@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from no_chrome_classify import classify  # type: ignore[missing-import]
+from no_chrome_doubt import kind as doubt_kind  # type: ignore[missing-import]
 from no_chrome_shell import Doubt  # type: ignore[missing-import]
 
 
@@ -141,7 +142,41 @@ def main():
     try:
         kind = classify(command)
     except (Doubt, ValueError, OSError):
-        kind = "browser"
+        kind = doubt_kind(command)
+    if kind == "doubt":
+        home = Path(os.environ.get("FACTORY_HOME") or Path.home() / ".agent-rails/factory") / "state"
+        session = re.sub(r"[^A-Za-z0-9_-]", "_", str(payload.get("session_id") or "none"))
+        try:
+            directory = home / "no-chrome-guard-doubt"
+            directory.mkdir(parents=True, exist_ok=True)
+            with (home / "no-chrome-guard-doubt.jsonl").open("a") as log:
+                log.write(
+                    json.dumps(
+                        {
+                            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "decision": "pass-unparsed",
+                            "session": session,
+                            "pane": os.environ.get("HERDR_PANE_ID", ""),
+                            "command": command,
+                        }
+                    )
+                    + "\n"
+                )
+            with (directory / session).open("x"):
+                pass
+            print(
+                json.dumps(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "additionalContext": "no-chrome-guard could not fully parse this command and found no browser action in it, so it ran. Warned once per session; unparsed calls are logged to factory state/no-chrome-guard-doubt.jsonl.",
+                        }
+                    }
+                )
+            )
+        except OSError:
+            pass
+        return allow()
     if kind in {"none", "pc"} or approved(command):
         return allow()
     match = re.search(r"(?:^|\s)#[ \t]*unblock-ask:[ \t]*(ub_[A-Za-z0-9]+)[ \t]*$", command)
