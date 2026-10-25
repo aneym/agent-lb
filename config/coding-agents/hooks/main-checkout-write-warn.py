@@ -10,20 +10,31 @@ from pathlib import Path
 WRITES = re.compile(r">|\btee\b|\bsed\s+[^\n;]*-[^\s]*i|\bgit\s+(?:apply|commit|add)\b")
 
 
-def tracked_main(path):
+def main_checkout(path):
+    for parent in path.parents:
+        dotgit = parent / ".git"
+        if dotgit.is_dir():
+            return parent
+        if dotgit.exists():
+            return None
+    return None
+
+
+def on_main(repo):
+    try:
+        head = (repo / ".git" / "HEAD").read_text().strip()
+    except OSError:
+        return False
+    return head in {"ref: refs/heads/main", "ref: refs/heads/master"}
+
+
+def candidate_repo(path):
     path = path.expanduser().resolve()
     if path.is_dir():
         return None
-    common = subprocess.run(
-        ["git", "-C", str(path.parent), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=False,
-    )
-    if common.returncode:
+    repo = main_checkout(path)
+    if repo is None:
         return None
-    repo = Path(common.stdout.strip()).parent
     root = (
         Path(os.environ.get("REPOS_ROOT") or os.environ.get("GIT_GUARD_REPOS_ROOT") or repo.parent)
         .expanduser()
@@ -33,31 +44,35 @@ def tracked_main(path):
         parts = path.relative_to(root).parts
     except ValueError:
         return None
-    if len(parts) < 2 or parts[0].endswith("-wt") or root / parts[0] != repo:
+    if len(parts) < 2 or parts[0].endswith("-wt") or root / parts[0] != repo or ".git" in parts:
         return None
-    if not (repo / ".git").is_dir():
-        return None
-    branch = subprocess.run(
-        ["git", "-C", str(repo), "symbolic-ref", "--short", "HEAD"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=False,
-    )
-    if branch.returncode or branch.stdout.strip() not in {"main", "master"}:
-        return None
-    tracked = subprocess.run(
-        ["git", "-C", str(repo), "ls-files", "--", str(path)],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=False,
-    )
-    return repo if tracked.returncode == 0 and tracked.stdout else None
+    return (repo, path) if on_main(repo) else None
 
 
-def refusal(path):
-    repo = tracked_main(path)
+def first_tracked(paths):
+    found = {}
+    for index, path in enumerate(paths):
+        hit = candidate_repo(path)
+        if hit:
+            found.setdefault(hit[0], {}).setdefault(hit[1], index)
+    tracked = []
+    for repo, wanted in found.items():
+        listed = subprocess.run(
+            ["git", "-C", str(repo), "ls-files", "-z", "--full-name", "--", *map(str, wanted)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if listed.returncode:
+            continue
+        names = {repo / name for name in listed.stdout.split("\0") if name}
+        tracked.extend((wanted[path], repo) for path in wanted if path in names)
+    return min(tracked)[1] if tracked else None
+
+
+def refusal(paths):
+    repo = first_tracked(paths)
     if repo is None:
         return None
     return (
@@ -75,7 +90,7 @@ def check(payload):
     cwd = Path(payload.get("cwd") or Path.cwd())
     if tool in {"Edit", "Write"}:
         name = data.get("file_path")
-        return refusal(cwd / name) if isinstance(name, str) else None
+        return refusal([cwd / name]) if isinstance(name, str) else None
     if tool != "Bash":
         return None
     command = data.get("command")
@@ -93,11 +108,7 @@ def check(payload):
             candidates.append(cwd / word.lstrip(">"))
         for name in re.findall(r"[\"']([^\"'\n]+)[\"']", word):
             candidates.append(cwd / name)
-    for path in candidates:
-        message = refusal(path)
-        if message:
-            return message
-    return None
+    return refusal(candidates)
 
 
 def main():
