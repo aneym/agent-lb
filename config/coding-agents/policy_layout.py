@@ -129,6 +129,9 @@ RETIRED_HOOKS = (
 )
 
 
+UNREGISTERED_HOOKS = ("hooks/seat-guard.py",)
+
+
 ROUTING_TABLE = Path(".agent-lb/managed/coding-agents/routing-table.json")
 
 

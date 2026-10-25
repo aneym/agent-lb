@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from policy_layout import DISPATCH_DROPPED, DISPATCH_HOOK_KEYS, DISPATCH_SCRIPT, DISPATCH_SKIP_MATCHERS, HOOK_MANIFEST, NAME_LIST, RETIRED_HOOKS, SIMPLE_MATCHER, TOOL_ALIASES  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
+from policy_layout import DISPATCH_DROPPED, DISPATCH_HOOK_KEYS, DISPATCH_SCRIPT, DISPATCH_SKIP_MATCHERS, HOOK_MANIFEST, NAME_LIST, RETIRED_HOOKS, SIMPLE_MATCHER, TOOL_ALIASES, UNREGISTERED_HOOKS  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
 
 def is_owned_hook(command: Any) -> bool:
@@ -218,7 +218,9 @@ def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 name = None
                 if isinstance(command, str):
                     name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
-                    name = name or next((n for n in (*RETIRED_HOOKS, "/_root/hooks/") if n in command), None)
+                    name = name or next(
+                        (n for n in (*RETIRED_HOOKS, *UNREGISTERED_HOOKS, "/_root/hooks/") if n in command), None
+                    )
                     if (
                         (
                             event == "PostToolUse"
