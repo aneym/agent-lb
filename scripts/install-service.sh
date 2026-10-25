@@ -58,6 +58,7 @@ gen_plist() {
   INSTALL_AGENT_LB_LABEL="$LABEL" \
     INSTALL_AGENT_LB_BIN="$BIN" \
     INSTALL_AGENT_LB_REPO_DIR="$REPO_DIR" \
+    INSTALL_AGENT_LB_WORK_DIR="${AGENT_LB_RUNTIME_DIR:-$HOME/.agent-lb/runtime/agent-lb}" \
     INSTALL_AGENT_LB_PLIST="$PLIST" \
     INSTALL_AGENT_LB_LOG_DIR="$LOG_DIR" \
     "$PYTHON_BIN" <<'PY'
@@ -91,7 +92,6 @@ def _program_args(value: Any, *, bin_path: str) -> list[str]:
 
 label = os.environ["INSTALL_AGENT_LB_LABEL"]
 bin_path = os.environ["INSTALL_AGENT_LB_BIN"]
-repo_dir = os.environ["INSTALL_AGENT_LB_REPO_DIR"]
 plist_path = Path(os.environ["INSTALL_AGENT_LB_PLIST"])
 log_dir = os.environ["INSTALL_AGENT_LB_LOG_DIR"]
 
@@ -121,7 +121,7 @@ env.setdefault("AGENT_LB_METRICS_PORT", "9090")
 plist: dict[str, Any] = {
     "Label": label,
     "ProgramArguments": _program_args(existing.get("ProgramArguments"), bin_path=bin_path),
-    "WorkingDirectory": repo_dir,
+    "WorkingDirectory": os.environ["INSTALL_AGENT_LB_WORK_DIR"],
     "RunAtLoad": True,
     "KeepAlive": True,
 
