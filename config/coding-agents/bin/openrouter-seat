@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+
+from seat_launcher import main
+
+
+if __name__ == "__main__":
+    raise SystemExit(main("openrouter-seat", "deepseek/deepseek-v4.1-flash-1017", "OPENROUTER"))
