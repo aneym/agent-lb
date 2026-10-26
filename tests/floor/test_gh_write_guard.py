@@ -56,3 +56,19 @@ def test_gh_account_floor_cli(tool, tool_input, expected):
     assert result.returncode == expected, result.stderr
     if expected == 2:
         assert "Alex's credentials" in result.stderr
+
+
+@pytest.mark.parametrize("command", ["echo 'unfinished", "cat <<EOF\nno end", "echo $(date"])
+def test_unparsable_command_fails_closed_without_credential_claim(command):
+    env = {key: value for key, value in os.environ.items() if key not in {"GH_TOKEN", "GITHUB_TOKEN", "GH_APP"}}
+    result = subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=json.dumps({"tool_name": "Bash", "tool_input": {"command": command}}),
+        text=True,
+        capture_output=True,
+        env=env,
+        timeout=15,
+    )
+    assert result.returncode == 2, result.stderr
+    assert "could not parse" in result.stderr
+    assert "Alex's credentials" not in result.stderr

@@ -20,6 +20,7 @@ WRITES = {
     "variable": {"set", "delete"},
 }
 REFUSAL = "BLOCKED: kept floor \"Alex's credentials\": gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN)."
+PARSE_REFUSAL = "BLOCKED: gh-write-guard could not parse this command ({}), so it fails closed. No gh write was found. Split it into simpler commands, or use the Edit and Write tools."
 
 
 def token_login(token, env):
@@ -350,8 +351,11 @@ def main():
         if not isinstance(command, str):
             raise ValueError("command is not text")
         check(command)
-    except (ValueError, TypeError, AttributeError, PermissionError):
+    except PermissionError:
         print(REFUSAL, file=sys.stderr)
+        return 2
+    except (ValueError, TypeError, AttributeError) as exc:
+        print(PARSE_REFUSAL.format(exc), file=sys.stderr)
         return 2
     if os.environ.get("HOOK_FLOOR_RECEIPT"):
         print("floor-ok gh-write-guard.py")
