@@ -39,8 +39,8 @@ contract:
    one real request through the relevant proxy surface; for `/v1` clients,
    discover a model from `/v1/models` first) and a short status summary. A
    probe 403 "OAuth authentication is currently not allowed" means the
-   account's subscription lapsed — billing, not auth; see the "Account health
-   model" section of GETTING-STARTED.md before recommending a fix.
+   account's subscription lapsed — billing, not auth; see docs/account-health.md
+   before recommending a fix.
 7. For SDK/app wiring, keep guidance server-side: Anthropic-compatible SDKs use
    the root Messages API base URL, OpenAI-compatible SDKs and Vercel AI SDK use
    `/v1`, and deployed apps can use the LB through a reachable backend base URL,

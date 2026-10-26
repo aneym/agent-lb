@@ -37,7 +37,7 @@ GETTING-STARTED.md. Follow it top to bottom to set me up:
    use the agent-lb base URL or launcher only so subscription billing stays intact.
 4. Wire up my CLI clients (show exact dotfile edits and ask before applying them).
 5. Finish by probing every account with a real request and telling me each account's
-   state per the "Account health model" (usable / unsubscribed / disconnected),
+   state per [docs/account-health.md](docs/account-health.md) (usable / unsubscribed / disconnected),
    plus a short status summary of service, accounts, and wired clients.
 
 If anything is already installed or running, detect it and skip ahead.
