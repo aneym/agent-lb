@@ -33,6 +33,7 @@ try:
         hazardous,
         interpreter_of,
         python_like,
+        real_tool,
         same_interpreter,
         sha256_file,
         sibling_sources,
@@ -179,7 +180,7 @@ def plan_hook(hook, inproc_names, script_pins=None):
             return plan
         command = legacy_floor(command) or command
     if command.strip() in REWRITERS:
-        if not which(command.split()[0]):
+        if not real_tool(command.split()[0]):
             plan.kind, plan.prefilter, plan.reason = "filtered", never, "rewriter is not on PATH, so it cannot rewrite"
             return plan
         plan.kind, plan.reason = "rewriter", "side-effect free rewriter"

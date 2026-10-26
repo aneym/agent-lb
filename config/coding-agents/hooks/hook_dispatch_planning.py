@@ -85,6 +85,16 @@ def which(name):
     return shutil.which(name, path=os.environ.get("PATH", os.defpath))
 
 
+def real_tool(name):
+    for folder in os.environ.get("PATH", os.defpath).split(os.pathsep):
+        candidate = os.path.join(folder or ".", name)
+        if os.path.basename(os.path.dirname(os.path.realpath(candidate))) == "agent-shims":
+            continue
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def utf8_locale():
     for key in ("LC_ALL", "LC_CTYPE", "LANG"):
         value = os.environ.get(key)
