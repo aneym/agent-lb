@@ -35,10 +35,22 @@ export const money = (value: number) =>
     currency: "USD",
     maximumFractionDigits: Math.abs(value) >= 1 ? 0 : 2,
   }).format(value);
-export function pace(value: number | null | undefined) {
-  if (value == null) return "—";
-  if (Math.abs(value) < 0.5) return "on pace";
-  return value > 0 ? `${Math.round(value)}% to spare` : `${Math.round(-value)}% short`;
+const TIER_TEXT: Record<string, string> = {
+  critical: "Critical",
+  behind: "Behind",
+  on_pace: "On pace",
+  ahead: "Ahead",
+  rich: "Rich",
+};
+export type PaceTier = { tier?: string | null; rho?: number | null; b_star?: number | null };
+export function tierText(pace: PaceTier | null | undefined) {
+  return pace?.tier ? (TIER_TEXT[pace.tier] ?? pace.tier) : "—";
+}
+export function paceDetail(pace: PaceTier | null | undefined) {
+  if (!pace?.tier) return "";
+  const rho = pace.rho == null ? "ρ —" : `ρ ${pace.rho.toFixed(2)}`;
+  const bStar = pace.b_star == null ? "" : ` · b* ${pace.b_star.toFixed(1)}/h`;
+  return `${rho}${bStar}`;
 }
 export function relative(value: string | number | Date) {
   const ms = Math.max(0, Date.now() - date(value).getTime());

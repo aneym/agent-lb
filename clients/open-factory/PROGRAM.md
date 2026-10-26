@@ -276,7 +276,7 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
 | Q6 | Decider: static table vs Jev vs CLM vs hindsight bound? | Jev with host fallback | policy replay on the matrix + A3 live subset (D9) |
 | Q7 | Jev thresholds (confidence 0.35, fit 0.8) and capability blurbs? | keel's values, decider.json v1 | replay sweeps on dev only; held-out confirms |
 | Q8 | Fallback order when a pick fails re-check or a pool runs dry? | `route pick` chain, then driver | fallback rate and success of fallen-back runs |
-| Q9 | Pace gates (Opus `min_pace` -10, low band = 2 eligible accounts)? | table values | replay with gates on/off vs pool burn per window |
+| Q9 | Pace gates (Opus `min_tier` behind, shadow only; low band = 2 eligible accounts)? | table values | replay with gates on/off vs pool burn per window |
 | Q10 | Cross-vendor audit on implement: worth its cost? | optional (ROUTING.md 2026-09-25) | A3 with/without audit: defects caught vs tokens and time |
 
 ### Milestones (status)

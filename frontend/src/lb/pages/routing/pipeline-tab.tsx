@@ -257,9 +257,7 @@ function PaceLimits() {
                 <ProviderMark id={poolProvider(name)} size={20} />
                 <span className="n">{displayNames[name] ?? name}</span>
               </span>
-              <span className="c-st">
-                {poolPaceText(name, pool.weeklyPacePercent, poolById.get(name))}
-              </span>
+              <span className="c-st">{poolPaceText(name, pool.pace, poolById.get(name))}</span>
               <span className="c-gate muted">{admission(name, pool.status)}</span>
             </div>
           ))}

@@ -5,7 +5,6 @@ import hashlib
 import json
 import math
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,14 +19,11 @@ from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     READ_TIMEOUT_SECONDS,
     ROUTABLE_STATUSES,
     SEAT_NAME,
-    WEEKLY_CYCLE_HOURS,
-    account_weekly_pace,
     add_pool_refills,
     base_url,
     class_seat_entries,
     fixture_file,
     now_iso,
-    parse_ts,
     policy_git,
     pool_ids,
     pool_snapshot_path,
@@ -200,7 +196,6 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
         )
         provider = members[0].get("provider") if members else None
         weekly_members = [account for account in routable if account.get("status") in ROUTABLE_STATUSES]
-        weekly_paces = [account_weekly_pace(account) for account in weekly_members]
         pools.append(
             {
                 "id": pool_id,
@@ -234,7 +229,7 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
                     if weekly_members
                     else None
                 ),
-                "weeklyPacePercent": round(statistics.fmean(weekly_paces), 1) if weekly_paces else None,
+                "pace": None,
             }
         )
     return {"generatedAt": now_iso(), "pools": pools, "source": "accounts_fallback"}
@@ -351,14 +346,6 @@ def command_stand_ins(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def pool_pace(pool: dict[str, Any], cycle_hours: float) -> float | None:
-
-    pace = pool.get("weeklyPacePercent")
-    if isinstance(pace, (int, float)) and not isinstance(pace, bool):
-        return float(pace)
-    return None
-
-
 def pace_number(value: Any) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
         return float(value)
@@ -369,19 +356,3 @@ def pool_remaining(pool: dict[str, Any]) -> float | None:
     key = "monthlyRemainingPercent" if pool.get("windowLabel") == "month" else "weeklyRemainingPercent"
     remaining = pace_number(pool.get(key))
     return remaining if remaining is not None else pace_number(pool.get("aggregateRemainingPercent"))
-
-
-def pace_timestamp(value: Any) -> datetime | None:
-    stamp = parse_ts(value)
-    return stamp if stamp is not None and stamp.tzinfo is not None else None
-
-
-def accounts_pace(pool_id: str) -> float | None:
-
-    result = http_get("/api/accounts", timeout=3.0)
-    if not result.ok or result.body is None:
-        return None
-    for pool in pools_from_accounts(result.body).get("pools", []):
-        if pool.get("id") == pool_id:
-            return pool_pace(pool, WEEKLY_CYCLE_HOURS)
-    return None

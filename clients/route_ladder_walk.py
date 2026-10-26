@@ -10,13 +10,11 @@ from typing import Any
 from route_anthropic_models import percent, read_state  # pyrefly: ignore [missing-import]
 from route_class_candidates import DispatchContext, alias_vendor, class_candidates  # pyrefly: ignore [missing-import]
 from route_grok import rung_block  # pyrefly: ignore [missing-import]
+from route_pace import pace_words, shadow_pace  # pyrefly: ignore [missing-import]
 from route_pace_state import (  # pyrefly: ignore [missing-import]
     lease_unavailable,
-    load_pool_history,
-    pace_state,
     pick_leases,
     record_caller_choice,
-    record_pool_history,
     seat_is_up,
     state_age_seconds,
 )
@@ -40,7 +38,6 @@ def ladder_walk(
     pools: dict,
     seats: Any,
     served: ServedModels,
-    history: list[dict],
     now: datetime,
     author: str | None = None,
     skip_ids: list[str] | None = None,
@@ -52,36 +49,16 @@ def ladder_walk(
     wanted = model
     author = "cognition" if author == "devin" else author
     entries = apply_overrides(ladder_entries(table, class_name, author) or [], table.get("overrides"), class_name)
-    policy = table.get("policy") or {}
-    guarded_pools = (policy.get("pace") or {}).get("guarded_pools")
-    pace = {
-        pool: pace_state(pools.get(pool, {}), history, policy, now)
-        for entry in entries
-        if (pool := rung_pool(table, entry, pools))
-    }
-    for pool in pace:
-        if pool_exhausted(pools.get(pool, {})):
-            pace[pool]["state"] = "exhausted"
+    pace = {pool: shadow_pace(pools.get(pool, {})) for entry in entries if (pool := rung_pool(table, entry, pools))}
     reserve = reserve_state(table, pools, class_name)
-    ordered = [
-        entry
-        for entry in entries
-        if (entry["id"] != "sonnet-cursor-high" or (reserve and reserve["active"]))
-        and entry.get("promote") == pace.get(rung_pool(table, entry, pools), {}).get("state")
-        and entry.get("promote")
-    ]
-    ordered += [entry for entry in entries if entry not in ordered]
     rows, opened, soft, skipped = [], [], [], []
     intended = None
-    for entry in ordered:
+    for entry in entries:
         pool = rung_pool(table, entry, pools)
-        state = pace.get(pool, {}).get("state", "unknown")
         gate = entry.get("gate") or {}
         reason = None
         if "gate" in entry and gate.get("open") is not True:
             reason = f"gated: {gate.get('until')}"
-        elif entry.get("when") and entry["when"] != state:
-            reason = f"when {entry['when']}: {pool} is {state}"
         if intended is None and reason is None:
             intended = entry["id"]
         if reason is None and entry["id"] == "sonnet-cursor-high" and not (reserve and reserve["active"]):
@@ -129,7 +106,7 @@ def ladder_walk(
         audit_gap = None
 
         if reason is None and class_name in ("implement", "mechanical"):
-            review = ladder_walk(table, "verify", pools, seats, served, history, now, entry["maker"], leases=leases)
+            review = ladder_walk(table, "verify", pools, seats, served, now, entry["maker"], leases=leases)
             audit = review["chosen"]
             primary = pools.get("anthropic-general", {})
             eligible = primary.get("eligibleAccounts")
@@ -182,18 +159,12 @@ def ladder_walk(
             row["model_pending"] = True
         if waived:
             row["waived"] = waived
+        if pool in pace:
+            row["pace_tier"] = pace[pool]["tier"]
         if reason:
             row.update(status="skipped", reason=reason)
         else:
             reasons = []
-            if state == "low" and (guarded_pools is None or pool in guarded_pools):
-                facts = pace[pool]
-                empties, reset = facts.get("empties_in_h"), facts.get("hours_left")
-                reasons.append(
-                    f"running low: empties in {empties:.3g} h, resets in {reset:.3g} h"
-                    if empties is not None and reset is not None
-                    else "running low: pace below policy"
-                )
             if reserve and reserve["active"] and not reserve["admitted"] and pool == reserve["pool"]:
                 reasons.append(f"reserved for orchestrators: {reserve['why']}")
             if entry.get("same_vendor_fallback"):
@@ -212,9 +183,7 @@ def ladder_walk(
     default = (
         chosen
         if prefer is None
-        else ladder_walk(table, class_name, pools, seats, served, history, now, author, skip_ids, leases=leases)[
-            "chosen"
-        ]
+        else ladder_walk(table, class_name, pools, seats, served, now, author, skip_ids, leases=leases)["chosen"]
     )
     refused = None
     if prefer is not None:
@@ -258,10 +227,7 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
     stale = bool(state) and (age is None or age > STATE_MAX_AGE_SECONDS)
     document, error = fetch_pools(timeout=3.0)
     now = datetime.now(timezone.utc)
-    history = load_pool_history(now)
-    if document is not None:
-        record_pool_history(document, now)
-    elif isinstance(state.get("pools"), dict):
+    if document is None and isinstance(state.get("pools"), dict):
         document = state["pools"]
     pools = pools_by_id(document)
     leases = pick_leases()
@@ -271,7 +237,6 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
         pools,
         None if stale else state.get("seats"),
         ServedModels(),
-        history,
         now,
         args.author_vendor,
         args.skip,
@@ -319,13 +284,7 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
         for pool, facts in result["pace"].items():  # pyrefly: ignore [missing-attribute]
             label = pool.replace("-general", "").replace("-codex", "")
             label = "cursor" if pool in ("cursor-models", "cursor-other") else label
-            words = {
-                "low": "running low",
-                "rich": "running rich",
-                "on_pace": "on pace",
-                "exhausted": "empty",
-                "unknown": "unknown",
-            }[facts["state"]]
+            words = pace_words(facts["state"])
             detail = f"remaining {percent(facts['remaining'])}"
             print(f"{label:<12}{words:<14}{detail}")
         for entry in result["skipped"]:  # pyrefly: ignore [not-iterable]

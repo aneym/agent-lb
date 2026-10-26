@@ -366,18 +366,6 @@ def remaining(account: dict[str, Any]) -> float:
 
 ROUTABLE_STATUSES = frozenset({"active", "rate_limited", "quota_exceeded"})
 
-WEEKLY_CYCLE_HOURS = 168.0
-
-
-def account_weekly_pace(account: dict[str, Any]) -> float:
-
-    remaining = route_heal.window(account.get("usage"), "secondaryRemainingPercent", 100.0)
-    reset_at = parse_ts(account.get("resetAtSecondary"))
-    hours_left = WEEKLY_CYCLE_HOURS
-    if reset_at is not None:
-        hours_left = max(0.0, (reset_at - datetime.now(timezone.utc)).total_seconds() / 3600)
-    return remaining - min(100.0, hours_left / WEEKLY_CYCLE_HOURS * 100)
-
 
 def pool_ids(account: dict[str, Any]) -> list[str]:
     provider = account.get("provider")

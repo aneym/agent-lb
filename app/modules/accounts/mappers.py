@@ -262,6 +262,7 @@ def _account_to_summary(
         window_minutes_primary=window_minutes_primary,
         window_minutes_secondary=window_minutes_secondary,
         window_minutes_monthly=window_minutes_monthly,
+        quota_observed_at=effective_secondary_usage.recorded_at if effective_secondary_usage else None,
         last_refresh_at=account.last_refresh,
         capacity_credits_primary=capacity_primary,
         remaining_credits_primary=remaining_credits_primary,

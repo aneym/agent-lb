@@ -13,7 +13,7 @@ import {
   CircleOff,
 } from "lucide-react";
 import { toast } from "sonner";
-import { clock, dayTime, duration, pct } from "../format";
+import { clock, dayTime, duration, paceDetail, pct, tierText, type PaceTier } from "../format";
 import { ProviderMark } from "./provider-mark";
 import { modelMark } from "./provider-mark-helpers";
 
@@ -114,11 +114,11 @@ export function LimitMeter({
             ? "not started"
             : out
               ? null
-            : resetAt
-              ? unit === "5h"
-                ? duration(new Date(resetAt).getTime() - now)
-                : dayTime(resetAt)
-              : null}
+              : resetAt
+                ? unit === "5h"
+                  ? duration(new Date(resetAt).getTime() - now)
+                  : dayTime(resetAt)
+                : null}
         </span>
       </div>
       <div className="bar">
@@ -248,13 +248,11 @@ export function PoolState({
     </div>
   );
 }
-export function Pace({ value }: { value?: number | null }) {
+export function Pace({ pace }: { pace?: PaceTier | null }) {
   return (
-    <div className="pace">
-      <span className="num">{value == null ? "—" : `${Math.round(Math.abs(value))}%`}</span>
-      {value != null && (
-        <span className="s">{value < -0.5 ? "short" : value > 0.5 ? "to spare" : "on pace"}</span>
-      )}
+    <div className="pace" title="Shadow pace: reported, not enforced">
+      <span className="num">{tierText(pace)}</span>
+      {pace?.tier && <span className="s">{paceDetail(pace)}</span>}
     </div>
   );
 }

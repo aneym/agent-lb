@@ -20,7 +20,7 @@ def main():
         env = {**os.environ, "HOME": directory}
         for name in (
             "ROUTE_TABLE", "ROUTE_STATE", "ROUTE_DECISIONS_LOG", "ROUTE_OUTCOMES",
-            "ROUTE_LEDGER", "ROUTE_ALERT", "ROUTE_POOL_SNAPSHOT", "ROUTE_POOL_HISTORY",
+            "ROUTE_LEDGER", "ROUTE_ALERT", "ROUTE_POOL_SNAPSHOT",
             "ROUTE_MODELS_CACHE", "ROUTE_QUOTA_MODE_STATE",
         ):
             env[name] = str(temp / name.lower())

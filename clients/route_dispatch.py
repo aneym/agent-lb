@@ -39,10 +39,8 @@ from route_ladder_walk import (  # pyrefly: ignore [missing-import]
 from route_learning_text import learning_outcomes  # noqa: F401  # pyrefly: ignore [missing-import]
 from route_pace_state import (  # pyrefly: ignore [missing-import]
     append_ledger,
-    load_pool_history,
     pick_leases,  # noqa: F401  # pyrefly: ignore [missing-import]
     record_explicit_model,
-    record_pool_history,
     state_age_seconds,
 )
 from route_quota import authority_fallback, quota_swap_state, swapped_standard  # pyrefly: ignore [missing-import]
@@ -92,15 +90,12 @@ def build_menu(class_names: list[str] | None = None) -> dict[str, Any]:
     seats = None if stale else state.get("seats")
     accounts = http_get("/api/accounts", timeout=3.0)
     document, pools_error = fetch_pools(timeout=3.0, accounts=accounts, refills=True)
-    if document is not None:
-        record_pool_history(document, datetime.now(timezone.utc))
     if document is None and isinstance(state.get("pools"), dict):
         document = state["pools"]
     pools = pools_by_id(document)
     windows = five_hour_windows(accounts.body) if accounts.json_ok else {}
 
     now = datetime.now(timezone.utc)
-    history = load_pool_history(now)
     served = ServedModels()
     menu_classes: dict[str, Any] = {}
     used_pools: set[str] = set()
@@ -112,7 +107,7 @@ def build_menu(class_names: list[str] | None = None) -> dict[str, Any]:
             menu_classes[class_name] = {"driver": True, "crossVendor": False, "seats": [], "excluded": []}
             continue
         if ladder_entries(table, class_name) is not None:
-            walk = ladder_walk(table, class_name, pools, seats, served, history, now)
+            walk = ladder_walk(table, class_name, pools, seats, served, now)
             used_pools.update(walk["pace"])
             menu_classes[class_name] = {
                 "driver": False,

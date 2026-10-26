@@ -56,6 +56,7 @@ ROUTE_FILES = (
     "route_ladder_walk.py",
     "route_learn.py",
     "route_learning_text.py",
+    "route_pace.py",
     "route_pace_state.py",
     "route_pick.py",
     "route_probe_model.py",

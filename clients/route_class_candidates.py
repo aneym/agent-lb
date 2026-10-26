@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from route_anthropic_models import LOW_BAND_MAX_ELIGIBLE, cursor_models, family_alias  # pyrefly: ignore [missing-import]
+from route_pace import TIERS, shadow_pace  # pyrefly: ignore [missing-import]
 from route_pace_state import lease_unavailable, reservation_request, seat_is_up  # pyrefly: ignore [missing-import]
 from route_reserve_state import apply_overrides, pool_for_model, pools_by_id, reserve_state, vendor_for  # pyrefly: ignore [missing-import]
 from route_resolve_one import ServedModels, decisions_path, resolve_alias, workflow_seat  # pyrefly: ignore [missing-import]
-from route_seat import accounts_pace, fetch_pools, fetch_stand_ins, pool_pace, print_stand_in  # pyrefly: ignore [missing-import]
+from route_seat import fetch_pools, fetch_stand_ins, print_stand_in  # pyrefly: ignore [missing-import]
 from route_seat_states import pinned_model  # pyrefly: ignore [missing-import]
 from route_versioned_rules import EXIT_OK, READ_TIMEOUT_SECONDS, env_path, parse_ts, pool_exhausted, table_path  # pyrefly: ignore [missing-import]
 
@@ -40,8 +41,6 @@ def class_candidates(
     def skip(seat: str, alias: str, reason: str) -> None:
         skipped.append({"seat": seat, "alias": alias, "reason": reason})
 
-    pace_policy = (table.get("policy") or {}).get("pace") if isinstance(table.get("policy"), dict) else None
-    cycle_hours = float((pace_policy or {}).get("cycle_hours") or 168)
     for entry in ordered:
         seat = entry.get("seat")
         alias = entry.get("model")
@@ -68,23 +67,16 @@ def class_candidates(
         if lease_reason:
             skip(seat, alias, lease_reason)
             continue
-        min_pace = entry.get("min_pace")
-        if isinstance(min_pace, (int, float)) and not isinstance(min_pace, bool):
-            pace = pool_pace(pool_doc, cycle_hours) if pool_doc else None
-            if pace is None and pool_doc and pool:
-                pace = accounts_pace(pool)
-            if pace is None:
-                skip(seat, alias, f"pool {pool} pace unknown")
-                continue
+        min_tier = entry.get("min_tier")
+        if min_tier in TIERS:
             eligible = pool_doc.get("eligibleAccounts")
             if isinstance(eligible, int) and eligible <= LOW_BAND_MAX_ELIGIBLE:
                 band = "critical" if eligible <= 1 else "low"
                 skip(seat, alias, f"pool {pool} {band}: {eligible} eligible account(s)")
                 continue
-            if pace < min_pace:
-                skip(seat, alias, f"pool {pool} behind pace: {pace:+.1f} < {min_pace:+g}")
-                continue
-            paced.append(f"{seat} admitted: pool {pool} pace {pace:+.1f} >= {min_pace:+g}")
+            tier = shadow_pace(pool_doc)["tier"]
+            verdict = "meets" if tier in TIERS and TIERS.index(tier) >= TIERS.index(min_tier) else "below"
+            paced.append(f"{seat} admitted: shadow pace, pool {pool} tier {tier or 'unknown'} {verdict} {min_tier}")
 
         codex_pool = pools.get("openai-codex", {})
         codex_eligible = codex_pool.get("eligibleAccounts")

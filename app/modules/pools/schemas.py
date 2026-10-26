@@ -70,7 +70,7 @@ class PoolSummary(DashboardModel):
     weekly_remaining_percent: float | None = None
     weekly_reset_at: datetime | None = None
 
-    weekly_pace_percent: float | None = None
+    pace: dict | None = None
 
     observed_runs: int | None = None
     observed_tokens: int | None = None

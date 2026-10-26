@@ -14,10 +14,8 @@ from route_grok import hands_refusal, hands_seat  # pyrefly: ignore [missing-imp
 from route_ladder_walk import command_ladder_pick, ladder_walk  # pyrefly: ignore [missing-import]
 from route_pace_state import (  # pyrefly: ignore [missing-import]
     append_ledger,
-    load_pool_history,
     pick_leases,
     record_caller_choice,
-    record_pool_history,
     reservation_request,
     state_age_seconds,
 )
@@ -94,10 +92,7 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
     stale = bool(state) and (age is None or age > STATE_MAX_AGE_SECONDS)
     document, _error = fetch_pools(timeout=3.0)
     now = datetime.now(timezone.utc)
-    history = load_pool_history(now)
-    if document is not None:
-        record_pool_history(document, now)
-    elif isinstance(state.get("pools"), dict):
+    if document is None and isinstance(state.get("pools"), dict):
         document = state["pools"]
     pools = pools_by_id(document)
     policy = (table.get("policy") or {}).get("concurrency") or {}
@@ -112,7 +107,6 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
             pools,
             None if stale else state.get("seats"),
             ServedModels(),
-            history,
             now,
             args.author_vendor,
             skip,
@@ -272,8 +266,6 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
     seats = None if stale else state.get("seats")
 
     document, pools_error = fetch_pools(timeout=3.0)
-    if document is not None:
-        record_pool_history(document, datetime.now(timezone.utc))
     if document is None and isinstance(state.get("pools"), dict):
         document = state["pools"]
     pools = pools_by_id(document)

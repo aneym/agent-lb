@@ -8,7 +8,6 @@ from typing import Any
 
 from route_anthropic_models import http_get, ledger_now_iso, read_state  # pyrefly: ignore [missing-import]
 from route_build_outcomes import apply_cli_seat_holds, probe_command, probe_lb_health, probe_pools  # pyrefly: ignore [missing-import]
-from route_pace_state import record_pool_history  # pyrefly: ignore [missing-import]
 from route_quota import print_equivalent_note, print_report_quota  # pyrefly: ignore [missing-import]
 from route_reserve_state import pools_by_id  # pyrefly: ignore [missing-import]
 from route_resolve_one import IMPLEMENT_EVENT, RowKey  # pyrefly: ignore [missing-import]
@@ -127,8 +126,6 @@ def command_doctor(args: argparse.Namespace) -> int:
     table = load_table()
     probes: list[dict[str, Any]] = [probe_lb_health()]
     pools_probe, pools_document = probe_pools()
-    if args.write and pools_document is not None:
-        record_pool_history(pools_document, datetime.now(timezone.utc))
     probes.append(pools_probe)
     probes.append(probe_command("cursor-agent", cursor_command(), CURSOR_TIMEOUT_SECONDS))
     probes.append(probe_command("devin", devin_command(), DEVIN_TIMEOUT_SECONDS))

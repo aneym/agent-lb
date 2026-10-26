@@ -3,23 +3,13 @@ import { useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "r
 import { useNavigate } from "react-router-dom";
 import { useAccounts } from "@/features/accounts/hooks/use-accounts";
 import type { AccountSummarySchema } from "@/features/accounts/schemas";
-import {
-  type Pool,
-  type SeatAccount,
-  type SeatQuotaWindow,
-} from "../../api";
+import { type Pool, type SeatAccount, type SeatQuotaWindow } from "../../api";
 import { accountLabel, compact, money } from "../../format";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 
 import { ProviderMark } from "../../kit/provider-mark";
 import { poolProvider, providerMark, vendorName } from "../../kit/provider-mark-helpers";
-import {
-  AccountState,
-  LimitMeter,
-  Pace,
-  PoolState,
-  RowMenu,
-} from "../../kit/primitives";
+import { AccountState, LimitMeter, Pace, PoolState, RowMenu } from "../../kit/primitives";
 import { PausePopover } from "../../kit/pause-popover";
 import type { z } from "zod";
 
@@ -67,9 +57,15 @@ const isFiveHour = (w: { kind: string; durationMins?: number | null }) =>
   w.kind === "session" && (w.durationMins == null || w.durationMins <= 300);
 const unitFor = (kind: string): "wk" | "mo" | undefined =>
   kind === "weekly" ? "wk" : kind === "monthly" ? "mo" : undefined;
-function sourceNote(source: string | null | undefined, observedAt: string | null | undefined, stale: boolean, now: number) {
+function sourceNote(
+  source: string | null | undefined,
+  observedAt: string | null | undefined,
+  stale: boolean,
+  now: number,
+) {
   if (source === "estimate") return "est.";
-  if ((source === "vendor_observed" || stale) && observedAt) return `as of ${etWhen(observedAt, now)}`;
+  if ((source === "vendor_observed" || stale) && observedAt)
+    return `as of ${etWhen(observedAt, now)}`;
   return null;
 }
 function isSeatPool(pool: Pool) {
@@ -121,7 +117,9 @@ function seatPoolMeters(pool: Pool, now: number) {
             key={w.id}
             remaining={w.remainingPercent}
             resetAt={w.resetsAt}
-            out={pool.status === "exhausted" || (w.remainingPercent != null && w.remainingPercent <= 0)}
+            out={
+              pool.status === "exhausted" || (w.remainingPercent != null && w.remainingPercent <= 0)
+            }
             unit={unitFor(w.kind)}
             empty={unavailableText(vendor, pool.unavailableReason)}
             detail={[
@@ -155,12 +153,13 @@ export function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: strin
   const [now] = useState(() => Date.now());
   const seatPool = isSeatPool(pool);
   const seatMeters = seatPool ? seatPoolMeters(pool, now) : null;
-  const no5h = seatPool ? !seatMeters?.session : ["openai", "kimi", "openrouter"].includes(pool.provider);
-  const long = pool.weeklyRemainingPercent ?? (pool.windowLabel ? pool.aggregateRemainingPercent : null);
+  const no5h = seatPool
+    ? !seatMeters?.session
+    : ["openai", "kimi", "openrouter"].includes(pool.provider);
+  const long =
+    pool.weeklyRemainingPercent ?? (pool.windowLabel ? pool.aggregateRemainingPercent : null);
   const reset = pool.weeklyResetAt || pool.resetAt;
   const longLabel = pool.windowLabel === "month" ? "mo" : "wk";
-  const paceTick =
-    pool.weeklyPacePercent != null && long != null ? long - pool.weeklyPacePercent : undefined;
   return (
     <div className="row link">
       <div className="c-who who">
@@ -168,7 +167,8 @@ export function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: strin
         <div className="t">
           <span className="n">{poolName[pool.id] || pool.id}</span>
           <span className="s">
-            {poolModels[pool.id] || (seatPool ? `${vendorName(pool.provider)} seat` : pool.provider)}
+            {poolModels[pool.id] ||
+              (seatPool ? `${vendorName(pool.provider)} seat` : pool.provider)}
           </span>
         </div>
       </div>
@@ -183,8 +183,6 @@ export function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: strin
             remaining={long}
             out={pool.status === "exhausted" || (long != null && long <= 0)}
             resetAt={reset}
-            paceTick={paceTick}
-            paceDelta={pool.weeklyPacePercent}
             empty={["glm", "kimi"].includes(pool.provider) ? "No cap" : "No reading"}
             unit={longLabel}
           />
@@ -203,8 +201,8 @@ export function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: strin
           />
         )}
       </div>
-      <div className={`c-pace ${pool.weeklyPacePercent == null ? "none" : ""}`}>
-        <Pace value={pool.weeklyPacePercent} />
+      <div className={`c-pace ${pool.pace?.tier ? "" : "none"}`}>
+        <Pace pace={pool.pace} />
       </div>
     </div>
   );
@@ -281,7 +279,9 @@ export function ProxyAccountRow({
   const hideEmails = usePrivacyStore((state) => state.blurred);
   const [pauseOpen, setPauseOpen] = useState(false);
   const { resumeMutation, probeMutation } = useAccounts();
-  const no5h = ["openai", "kimi", "cursor", "devin", "muse", "openrouter"].includes(a.provider || "");
+  const no5h = ["openai", "kimi", "cursor", "devin", "muse", "openrouter"].includes(
+    a.provider || "",
+  );
   const has5h = !no5h && a.windowMinutesPrimary === 300;
   const secondary = a.usage?.secondaryRemainingPercent;
   const reset = a.resetAtSecondary;
@@ -348,7 +348,11 @@ export function ProxyAccountRow({
             label={`Actions for ${accountName(a)}`}
             items={[
               { label: "Open", onSelect: () => navigate(rowLink) },
-              { label: "Pause…", hidden: a.status === "paused", onSelect: () => setPauseOpen(true) },
+              {
+                label: "Pause…",
+                hidden: a.status === "paused",
+                onSelect: () => setPauseOpen(true),
+              },
               {
                 label: "Resume",
                 hidden: a.status !== "paused",
@@ -438,7 +442,13 @@ export function SeatAccountRow({ a }: { a: SeatAccount }) {
   const meter = (w: SeatQuotaWindow) => {
     const expected =
       w.durationMins && w.resetsAt && w.kind !== "session"
-        ? Math.max(0, Math.min(100, ((new Date(w.resetsAt).getTime() - now) / (w.durationMins * 60000)) * 100))
+        ? Math.max(
+            0,
+            Math.min(
+              100,
+              ((new Date(w.resetsAt).getTime() - now) / (w.durationMins * 60000)) * 100,
+            ),
+          )
         : undefined;
     return (
       <LimitMeter
@@ -448,7 +458,9 @@ export function SeatAccountRow({ a }: { a: SeatAccount }) {
         out={w.remainingPercent != null && w.remainingPercent <= 0}
         unit={unitFor(w.kind)}
         paceTick={w.remainingPercent != null ? expected : undefined}
-        paceDelta={w.remainingPercent != null && expected != null ? w.remainingPercent - expected : undefined}
+        paceDelta={
+          w.remainingPercent != null && expected != null ? w.remainingPercent - expected : undefined
+        }
         empty={unavailableText(a.vendor, quota?.unavailableReason)}
         detail={[w.label, w.resetsAt ? `resets ${etWhen(w.resetsAt, now)}` : null, note(w)]
           .filter(Boolean)
@@ -456,9 +468,7 @@ export function SeatAccountRow({ a }: { a: SeatAccount }) {
       />
     );
   };
-  const reasonText = quota
-    ? unavailableText(a.vendor, quota.unavailableReason)
-    : "No reading";
+  const reasonText = quota ? unavailableText(a.vendor, quota.unavailableReason) : "No reading";
   const limit =
     status === "reauth_required" ? (
       <LimitMeter remaining={null} empty="Sign in to read usage" />
@@ -493,9 +503,7 @@ export function SeatAccountRow({ a }: { a: SeatAccount }) {
       name={seatName(a)}
       sub={
         <>
-          {a.email && (
-            <span className={hideEmails ? "privacy-blur" : undefined}>{a.email} · </span>
-          )}
+          {a.email && <span className={hideEmails ? "privacy-blur" : undefined}>{a.email} · </span>}
           <span className="mono id">{a.id}</span>
         </>
       }

@@ -241,31 +241,14 @@ def _weekly_pool(
     if not usable:
         return pool.model_copy(update={"refills": []})
     resets = [summary.reset_at_secondary for summary in usable if summary.reset_at_secondary is not None]
-    paces = [_weekly_pace(summary, now) for summary in usable]
     return pool.model_copy(
         update={
             "refills": _weekly_refills(usable, now),
             "weekly_empty_accounts": sum(_secondary_remaining(summary) <= 0 for summary in usable),
             "weekly_remaining_percent": sum(_secondary_remaining(summary) for summary in usable) / len(usable),
             "weekly_reset_at": min(resets) if resets else None,
-            "weekly_pace_percent": sum(paces) / len(paces),
         }
     )
-
-
-_WEEKLY_CYCLE_HOURS = 168.0
-
-
-def _weekly_pace(summary: AccountSummary, now: datetime) -> float:
-
-    reset_at = summary.reset_at_secondary
-    if reset_at is None:
-        hours_left = _WEEKLY_CYCLE_HOURS
-    else:
-        if reset_at.tzinfo is None:
-            reset_at = reset_at.replace(tzinfo=timezone.utc)
-        hours_left = max(0.0, (reset_at - now).total_seconds() / 3600)
-    return _secondary_remaining(summary) - min(100.0, hours_left / _WEEKLY_CYCLE_HOURS * 100.0)
 
 
 def _primary_window_pool(

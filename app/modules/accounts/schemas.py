@@ -135,6 +135,7 @@ class AccountSummary(DashboardModel):
     window_minutes_primary: int | None = None
     window_minutes_secondary: int | None = None
     window_minutes_monthly: int | None = None
+    quota_observed_at: datetime | None = None
     last_refresh_at: datetime | None = None
     capacity_credits_primary: float | None = None
     remaining_credits_primary: float | None = None

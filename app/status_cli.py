@@ -67,8 +67,8 @@ def observe(
     *, base_url: str, timeout: float, provider: str | None, model: str | None, thinking: bool = False
 ) -> dict[str, Any]:
     base_url = _validated_base_url(base_url)
-    health = _get_json(base_url + "/health/ready", timeout)
-    accounts_response = _get_json(base_url + "/api/accounts", timeout)
+    health = get_status_json(base_url + "/health/ready", timeout)
+    accounts_response = get_status_json(base_url + "/api/accounts", timeout)
     if not isinstance(health, dict) or not isinstance(accounts_response, dict):
         raise StatusObservationError("service returned a malformed status response")
     health_status = _optional_text(health.get("status"))
@@ -93,7 +93,7 @@ def observe(
         "availability_note": "Snapshot only; it is not a dispatch reservation or availability guarantee.",
     }
     try:
-        cache_summary = _get_json(base_url + "/api/request-logs/anthropic-cache-summary", timeout)
+        cache_summary = get_status_json(base_url + "/api/request-logs/anthropic-cache-summary", timeout)
         result["anthropic_cache"] = _anthropic_cache_observation(cache_summary)
     except StatusObservationError:
         result["anthropic_cache"] = _unknown_anthropic_cache()
@@ -113,7 +113,7 @@ HTTP_STATUS_WINDOW_MINUTES = 60
 
 def _optional_get(url: str, timeout: float) -> Any:
     try:
-        return _get_json(url, timeout)
+        return get_status_json(url, timeout)
     except StatusObservationError:
         return None
 
@@ -179,7 +179,7 @@ def _validated_base_url(value: str) -> str:
     return value
 
 
-def _get_json(url: str, timeout: float) -> Any:
+def get_status_json(url: str, timeout: float) -> Any:
     headers = {"Accept": "application/json"}
 
     if cookie := os.getenv("AGENT_LB_STATUS_COOKIE"):

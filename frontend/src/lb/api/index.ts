@@ -17,6 +17,12 @@ export const PoolWindowSchema = z.object({
   source: z.string().nullable(),
 });
 export type PoolWindow = z.infer<typeof PoolWindowSchema>;
+export const PoolPaceSchema = z.object({
+  tier: z.string().nullable().optional(),
+  rho: maybeNumber,
+  b_star: maybeNumber,
+  stale: z.boolean().nullable().optional(),
+});
 export const PoolSchema = z.object({
   id: z.string(),
   provider: z.string(),
@@ -30,7 +36,7 @@ export const PoolSchema = z.object({
   fiveHourResetAt: maybeDate,
   weeklyRemainingPercent: maybeNumber,
   weeklyResetAt: maybeDate,
-  weeklyPacePercent: maybeNumber,
+  pace: PoolPaceSchema.nullable().optional(),
   windowLabel: z.string().nullable().optional(),
   resetAt: maybeDate,
   percentUsed: maybeNumber,
@@ -64,7 +70,14 @@ export const SeatQuotaSchema = z.object({
   observedAt: z.string().nullable(),
   stale: z.boolean(),
   unavailableReason: z
-    .enum(["not_reported", "auth_unsupported", "credential_unavailable", "vendor_error", "vendor_parse", "not_collected"])
+    .enum([
+      "not_reported",
+      "auth_unsupported",
+      "credential_unavailable",
+      "vendor_error",
+      "vendor_parse",
+      "not_collected",
+    ])
     .nullable(),
   primaryWindowId: z.string().nullable(),
   windows: z.array(SeatQuotaWindowSchema),

@@ -5,9 +5,11 @@ from fastapi.responses import JSONResponse
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.errors import dashboard_error
+from app.core.utils.time import utcnow
 from app.dependencies import AccountsContext, get_accounts_context
 from app.modules.pools import reservations
 from app.modules.pools.cli_seats import SeatAccountsResponse, read_seat_accounts
+from app.modules.pools.pace_service import build_pace
 from app.modules.pools.plan import build_plan, load_plan_inputs
 from app.modules.pools.schemas import PoolsResponse
 from app.modules.pools.service import PoolsService
@@ -25,7 +27,23 @@ router = APIRouter(
 async def list_pools(
     context: AccountsContext = Depends(get_accounts_context),
 ) -> PoolsResponse:
-    return await PoolsService(context.service, RequestLogsRepository(context.session)).get_pools()
+    response = await PoolsService(context.service, RequestLogsRepository(context.session)).get_pools()
+    shadow = await build_pace(await context.service.list_accounts(), context.session, response.generated_at)
+    return response.model_copy(
+        update={
+            "pools": [
+                pool.model_copy(update={"pace": shadow["pools"][pool.provider]})
+                if pool.id in {"anthropic-general", "openai-codex"}
+                else pool
+                for pool in response.pools
+            ]
+        }
+    )
+
+
+@router.get("/pace")
+async def shadow_pace(context: AccountsContext = Depends(get_accounts_context)):
+    return await build_pace(await context.service.list_accounts(), context.session, utcnow())
 
 
 @router.get("/plan")

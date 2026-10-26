@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { get, put } from "@/lib/api-client";
 import type { Pool } from "@/lb/api";
-import { pace } from "@/lb/format";
+import { paceDetail, tierText, type PaceTier } from "@/lb/format";
 import { vendorName } from "@/lb/kit/provider-mark-helpers";
 
 const nullableString = z.string().nullable();
@@ -72,7 +72,17 @@ const Menu = z.object({
   ),
   pools: z.record(
     z.string(),
-    z.object({ weeklyPacePercent: nullableNumber.optional(), status: z.string().optional() }),
+    z.object({
+      pace: z
+        .object({
+          tier: nullableString.optional(),
+          rho: nullableNumber.optional(),
+          b_star: nullableNumber.optional(),
+        })
+        .nullable()
+        .optional(),
+      status: z.string().optional(),
+    }),
   ),
 });
 const PolicyVersions = z.object({
@@ -141,10 +151,10 @@ const KIND_TEXT: Record<string, string> = {
 const SEAT_PROVIDERS = ["cursor", "devin", "muse"];
 export function poolPaceText(
   name: string,
-  weeklyPacePercent: number | null | undefined,
+  shadow: PaceTier | null | undefined,
   pool?: Pool,
 ): string {
-  if (weeklyPacePercent != null) return pace(weeklyPacePercent);
+  if (shadow?.tier) return `${tierText(shadow)} · ${paceDetail(shadow)} (shadow)`;
   const provider = pool?.provider ?? name.split("-")[0];
   const measured = (pool?.windows ?? []).filter((w) => w.remainingPercent != null);
   if (measured.length) {

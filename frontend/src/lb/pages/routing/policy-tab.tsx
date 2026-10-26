@@ -132,15 +132,16 @@ function summary(
   }
   if (section === "Pace limits") {
     const pace = record(record(table.policy).pace);
-    const ahead = pace.ahead_gt;
-    const behind = pace.behind_lt;
-    const cycle = pace.cycle_hours;
+    const tiers = record(pace.tiers);
+    const bars = Object.entries(tiers)
+      .filter(([, bar]) => typeof bar === "number")
+      .map(([tier, bar]) => `${tier.replace("_", " ")} from ρ ${bar}`);
     const sentences = [
-      typeof ahead === "number" &&
-        `More than ${ahead}% to spare: the pool also takes lighter work.`,
-      typeof behind === "number" &&
-        `More than ${Math.abs(behind)}% short: it takes judgment work only.`,
-      typeof cycle === "number" && `Pace is measured over each ${cycle / 24}-day cycle.`,
+      bars.length > 0 && `Tiers: ${bars.join(", ")}; critical below.`,
+      bars.length > 0 &&
+        (pace.enforced === true
+          ? "Tiers gate admission."
+          : "Shadow only: tiers are reported, never enforced."),
     ].filter(Boolean);
     return (
       <span className="muted">
