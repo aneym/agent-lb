@@ -27,6 +27,10 @@ if [ "$mac_only" = yes ]; then
   chosen=opus-seat-local
 fi
 r=$(route resolve "$family" --json) || exit $?
+if printf '%s' "$r" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("degraded_from") else 1)'; then
+  printf 'ROUTE-VIOLATION: opus seat degraded across vendors; refusing fallback\n' >&2
+  exit 78
+fi
 printf 'seat routing: %s\n' "$r"
 python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" --routing-json "$r" --role "$HOME/.claude/agents/$role.md" -- seat-run "$@" --bg --name "$k" --timeout 3600 -- seat-exec --seat "$chosen" --prompt-file @contract <<'CONTRACT_EOF'
 <the brief, verbatim>
