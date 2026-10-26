@@ -29,10 +29,8 @@ ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
 VARIABLE_REF = re.compile(r"\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?")
 RAILWAY_CLI = re.compile(r"(?:@railway/cli|railway)(?:@[^/]+)?")
 RAILWAY_WORD = re.compile(r"\brailway\b")
-UNPARSED_FLOOR = re.compile(r"DROP|TRUNCATE|launchctl[^\S\n]+disable", re.I)
-DESTRUCTIVE_SQL = re.compile(
-    r"(DROP[^\S\n]+(DATABASE|TABLE)|TRUNCATE[^\S\n]+(TABLE[^\S\n]+)?[A-Za-z_])", re.I
-)
+UNPARSED_FLOOR = "DROP|TRUNCATE|launchctl[[:space:]]+disable"
+DESTRUCTIVE_SQL = "(DROP[[:space:]]+(DATABASE|TABLE)|TRUNCATE[[:space:]]+(TABLE[[:space:]]+)?[A-Za-z_])"
 REF_COMMENT = re.compile(r"#\s*alex-approval:\s*(\S+)\s*")
 REF_NAME = re.compile(r"alex-.+-2026-.+\.md")
 REF_TIME = re.compile(r"\b\d{1,2}:\d{2}\b")
@@ -45,6 +43,35 @@ def on_path(name):
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return True
     return False
+
+
+def grep(pattern, text):
+    read_end, write_end = os.pipe()
+    try:
+        pid = os.posix_spawnp(
+            "grep",
+            ["grep", "-qiE", pattern],
+            os.environ,
+            file_actions=[
+                (os.POSIX_SPAWN_DUP2, read_end, 0),
+                (os.POSIX_SPAWN_CLOSE, read_end),
+                (os.POSIX_SPAWN_CLOSE, write_end),
+            ],
+        )
+    except OSError:
+        os.close(read_end)
+        os.close(write_end)
+        return 127
+    os.close(read_end)
+    data = (text + "\n").encode("utf-8", "surrogateescape")
+    try:
+        while data:
+            data = data[os.write(write_end, data) :]
+    except BrokenPipeError:
+        pass
+    finally:
+        os.close(write_end)
+    return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
 
 
 def refuse(why):
@@ -429,13 +456,17 @@ def main():
     try:
         sql = sql_text(cmd)
     except Exception:
-        if on_path("grep") and UNPARSED_FLOOR.search(cmd):
+        match = grep(UNPARSED_FLOOR, cmd)
+        if match not in (0, 1):
+            refuse("could not match the command (grep exit %d: missing or failed)" % match)
+        if match == 0:
             refuse("could not parse a kept-floor command")
         sys.stderr.write("WARNING: destructive-data guard could not parse executable argv; allowing command.\n")
         allow()
-    if not on_path("grep"):
-        refuse("could not match the command (grep exit 127: missing or failed)")
-    if DESTRUCTIVE_SQL.search(sql) and not approved(cmd):
+    match = grep(DESTRUCTIVE_SQL, sql)
+    if match not in (0, 1):
+        refuse("could not match the command (grep exit %d: missing or failed)" % match)
+    if match == 0 and not approved(cmd):
         sys.stderr.write(
             "BLOCKED: Dangerous command requires explicit user approval (%s). Approved: append "
             "' # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-<topic>-2026-<date>.md' "

@@ -87,6 +87,9 @@ SOL_ID = re.compile(r"gpt-\d+(?:\.\d+)*-sol")
 MANAGED_DIR = Path(".agent-lb/managed/coding-agents")
 
 
+POLICY_HOOKS_RECORD = MANAGED_DIR / "policy-hooks"
+
+
 def managed(target_dir: str, template: str, name: str | None = None) -> tuple[Path, Path, str, Path]:
     source = Path(template)
     owner = name or source.stem

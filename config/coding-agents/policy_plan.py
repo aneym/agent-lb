@@ -7,7 +7,7 @@ from pathlib import Path
 from policy_documents import read_text  # type: ignore[missing-import]
 from policy_files import desired_routing_table  # type: ignore[missing-import]
 from policy_hook_groups import installed_manifest  # type: ignore[missing-import]
-from policy_layout import ADOPTED_KEEP, DISPATCH_SCRIPT, HOOK_MANIFEST, MANAGED_AGENTS, MANAGED_DIR, POLICY_DIR, POLICY_FILES, POLICY_SNAPSHOT, RETIRED_AGENTS, RETIRED_HOOKS, ROUTE_FILES, ROUTING_TABLE, ROUTING_TABLE_OWNER  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
+from policy_layout import ADOPTED_KEEP, DISPATCH_SCRIPT, HOOK_MANIFEST, MANAGED_AGENTS, MANAGED_DIR, POLICY_DIR, POLICY_FILES, POLICY_HOOKS_RECORD, POLICY_SNAPSHOT, RETIRED_AGENTS, RETIRED_HOOKS, ROUTE_FILES, ROUTING_TABLE, ROUTING_TABLE_OWNER  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 from policy_inventory import MANAGED_SEATS  # type: ignore[missing-import]
 from policy_settings import seat_template  # type: ignore[missing-import]
 
@@ -35,13 +35,28 @@ def evict_shadows(home, changes):
 
 def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link):
     shipped = {path.name for path in (source / "hooks").iterdir() if path.is_file()}
+    settings = "".join(read_text(home / ".claude" / name) or "" for name in ("settings.json", "settings.local.json"))
+    record = home / POLICY_HOOKS_RECORD
+    recorded = read_text(record) or ""
+    header = "agent-lb:policy-hooks:v1\n"
+    owned = set(recorded.splitlines()[1:]) if recorded.startswith(header) else set()
     hooks = policy_dir / "hooks"
     copied = replace_policy_link or policy_dir.resolve() != source
     for path in sorted(hooks.iterdir()) if copied and hooks.is_dir() and not hooks.is_symlink() else []:
-        if path.suffix in (".py", ".sh") and path.is_file() and not path.is_symlink() and path.name not in shipped:
+        if (
+            path.suffix in (".py", ".sh")
+            and path.is_file()
+            and not path.is_symlink()
+            and path.name not in shipped
+            and path.name in owned
+            and path.name not in settings
+        ):
             changes[path] = None
+    if copied:
+        wanted = header + "".join(f"{name}\n" for name in sorted(shipped) if name.endswith((".py", ".sh")))
+        if recorded != wanted:
+            changes[record] = wanted
     owners = {owner.name for _target, owner, _marker, _template in MANAGED_AGENTS}
-    settings = read_text(home / ".claude/settings.json") or ""
     markers = home / MANAGED_DIR
     for marker in sorted(markers.iterdir()) if markers.is_dir() else []:
         if (
@@ -51,14 +66,15 @@ def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link
             or read_text(marker) != f"agent-lb:{marker.name}:v1\n"
         ):
             continue
-        for suffix in (".py", ".sh"):
-            name = marker.name + suffix
-            hook = home / ".claude/hooks" / name
-            if name in shipped or f"/.claude/hooks/{name}" in settings:
-                break
-            if hook.is_file() and not hook.is_symlink():
-                changes[hook] = None
-                changes[marker] = None
+        names = [marker.name + suffix for suffix in (".py", ".sh")]
+        if any(name in shipped or name in settings for name in names):
+            continue
+        stale = [home / ".claude/hooks" / name for name in names]
+        stale = [hook for hook in stale if hook.is_file() and not hook.is_symlink()]
+        for hook in stale:
+            changes[hook] = None
+        if stale:
+            changes[marker] = None
 
 
 def plan_managed_files(args, source, snapshot, keep_fold, changes):
@@ -103,8 +119,9 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes):
                 changes[owner_path] = owner_marker
 
     if args.uninstall:
-        if (args.home / POLICY_SNAPSHOT).exists():
-            changes[args.home / POLICY_SNAPSHOT] = None
+        for relative in (POLICY_SNAPSHOT, POLICY_HOOKS_RECORD):
+            if (args.home / relative).exists():
+                changes[args.home / relative] = None
     else:
         wanted_snapshot = json.dumps(snapshot, indent=2) + "\n"
         if read_text(args.home / POLICY_SNAPSHOT) != wanted_snapshot:
