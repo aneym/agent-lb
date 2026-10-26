@@ -153,7 +153,7 @@ MENU_POOL_FIELDS = (
     "eligibleAccounts",
     "headroomPercent",
     "weeklyRemainingPercent",
-    "weeklyPacePercent",
+    "admissionPacePercent",
     "pace",
     "weeklyResetAt",
     "resetAt",

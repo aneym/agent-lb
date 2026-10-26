@@ -91,6 +91,7 @@ async def build_pace(summaries: list[AccountSummary], session: AsyncSession, now
             fast=fast,
             slow=slow,
             ungoverned=unlinked / 2 if measured else None,
+            incomplete=len(accounts) != len(members),
             previous=_PREVIOUS.get(provider),
             tick=now.replace(minute=now.minute // 5 * 5, second=0, microsecond=0).isoformat(),
         )

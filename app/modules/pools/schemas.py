@@ -71,7 +71,7 @@ class PoolSummary(DashboardModel):
     weekly_reset_at: datetime | None = None
 
     pace: dict | None = None
-    weekly_pace_percent: float | None = None
+    admission_pace_percent: float | None = None
 
     observed_runs: int | None = None
     observed_tokens: int | None = None
