@@ -229,7 +229,7 @@ def unsafe(args, depth, cwd):
         if name == 'fd':
             content = any(arg in ('-x', '-X', '--exec', '--exec-batch') for arg in args)
         if name == 'find':
-            content = any(arg in ('-exec', '-execdir', '-ok', '-okdir') for arg in args) or bool(re.search(r'\bxargs\b[^;]*\bcat\b', os.environ['SCAN_COMMAND']))
+            content = any(arg in ('-exec', '-execdir', '-ok', '-okdir') for arg in args) or bool(re.search(r'\bxargs\b[^;]*\b(?:cat|grep|rg|ack|ag|ugrep)\b', os.environ['SCAN_COMMAND']))
         if recursive:
             for path in (roots or ['.']):
                 resolved = resolve_path(path, cwd)
