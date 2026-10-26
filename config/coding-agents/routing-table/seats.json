@@ -1,0 +1,221 @@
+{
+  "background_model": "sonnet-latest",
+  "autocompact_window": {
+    "tab": 300000,
+    "lane": 180000,
+    "box": 300000
+  },
+  "seats": {
+    "planner": {
+      "vendor": "anthropic",
+      "box": null
+    },
+    "plan-reviewer": {
+      "vendor": "anthropic",
+      "box": null
+    },
+    "codex-sol": {
+      "vendor": "openai",
+      "box": null
+    },
+    "sol-consult": {
+      "vendor": "openai",
+      "box": null
+    },
+    "astra-consult": {
+      "vendor": "openai",
+      "box": null,
+      "model": "astra-latest",
+      "effort": "high"
+    },
+    "fable-orchestrator": {
+      "vendor": "anthropic",
+      "box": null,
+      "model": "fable-latest",
+      "effort": "medium"
+    },
+    "gpt-explorer": {
+      "vendor": "openai",
+      "box": null
+    },
+    "Explore": {
+      "vendor": "anthropic",
+      "box": null,
+      "model": "sonnet-latest",
+      "effort": "medium"
+    },
+    "gpt-implementer": {
+      "vendor": "openai",
+      "box": {
+        "adapter": "codex"
+      }
+    },
+    "opus-seat": {
+      "vendor": "anthropic",
+      "box": {
+        "adapter": "claude-code"
+      }
+    },
+    "opus-seat-full": {
+      "vendor": "anthropic",
+      "box": {
+        "adapter": "claude-code"
+      },
+      "model": "opus-latest",
+      "effort": "medium"
+    },
+    "cursor-seat": {
+      "vendor": "cursor",
+      "box": {
+        "adapter": "cursor"
+      },
+      "model": "grok-latest",
+      "effort": "medium"
+    },
+    "grok-implementer": {
+      "vendor": "cursor",
+      "maker": "xai",
+      "roles": [
+        "implement",
+        "mechanical"
+      ],
+      "box": {
+        "adapter": "cursor"
+      }
+    },
+    "devin-seat": {
+      "vendor": "devin",
+      "box": {
+        "adapter": "devin"
+      }
+    },
+    "muse-seat": {
+      "vendor": "muse",
+      "box": null,
+      "model": "muse-latest",
+      "effort": "low"
+    },
+    "pi-durable-seat": {
+      "vendor": "openai",
+      "box": null,
+      "model": "sol-latest",
+      "effort": "low"
+    },
+    "muse-seat-local": {
+      "vendor": "muse",
+      "box": null,
+      "model": "muse-latest",
+      "effort": "low"
+    },
+    "verifier": {
+      "vendor": "anthropic",
+      "box": null,
+      "needs_test_run": false
+    },
+    "codex-verifier": {
+      "vendor": "openai",
+      "box": null,
+      "needs_test_run": true
+    },
+    "computer-use": {
+      "vendor": "openai",
+      "box": null
+    },
+    "codex-test-runner": {
+      "vendor": "openai",
+      "box": null,
+      "model": "sol-latest",
+      "effort": "medium"
+    },
+    "frontend-designer": {
+      "vendor": "anthropic",
+      "box": null,
+      "model": "opus-latest",
+      "effort": "medium"
+    },
+    "sonnet-implementer": {
+      "vendor": "anthropic",
+      "box": null,
+      "model": "sonnet-latest",
+      "effort": "high"
+    },
+    "effort-xhigh": {
+      "vendor": "anthropic",
+      "box": null,
+      "model": "opus-latest",
+      "effort": "xhigh"
+    },
+    "host-relay": {
+      "vendor": "anthropic",
+      "box": null,
+      "model": "sonnet-latest",
+      "effort": "low"
+    },
+    "gpt-implementer-local": {
+      "vendor": "openai",
+      "box": null,
+      "model": "sol-latest",
+      "effort": "medium"
+    },
+    "gpt-explorer-local": {
+      "vendor": "openai",
+      "box": null,
+      "model": "sol-latest",
+      "effort": "low"
+    },
+    "codex-sol-local": {
+      "vendor": "openai",
+      "box": null,
+      "model": "sol-latest",
+      "effort": "high"
+    },
+    "codex-test-runner-local": {
+      "vendor": "openai",
+      "box": null,
+      "model": "sol-latest",
+      "effort": "medium"
+    },
+    "codex-verifier-local": {
+      "vendor": "openai",
+      "box": null,
+      "model": "sol-latest",
+      "effort": "high"
+    },
+    "computer-use-local": {
+      "vendor": "openai",
+      "box": null,
+      "model": "sol-latest",
+      "effort": "high"
+    },
+    "opus-seat-local": {
+      "vendor": "anthropic",
+      "box": null,
+      "model": "opus-latest",
+      "effort": "medium"
+    },
+    "sonnet-implementer-local": {
+      "vendor": "anthropic",
+      "box": null,
+      "model": "sonnet-latest",
+      "effort": "high"
+    },
+    "kimi-implementer": {
+      "vendor": "kimi",
+      "box": null,
+      "model": "kimi-latest",
+      "effort": "low"
+    },
+    "kimi-implementer-local": {
+      "vendor": "kimi",
+      "box": null,
+      "model": "kimi-latest",
+      "effort": "low"
+    },
+    "verifier-local": {
+      "vendor": "anthropic",
+      "box": null,
+      "model": "sonnet-latest",
+      "effort": "high"
+    }
+  }
+}

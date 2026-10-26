@@ -1,0 +1,177 @@
+{
+  "aliases": {
+    "kimi-latest": {
+      "vendor": "kimi",
+      "family": "kimi",
+      "pinned": "k3.1-pro"
+    },
+    "deepseek-flash": {
+      "vendor": "openrouter",
+      "family": "deepseek",
+      "pinned": "deepseek/deepseek-v4.1-flash-1017"
+    },
+    "muse-latest": {
+      "vendor": "muse",
+      "family": "muse-wonder",
+      "pinned": "muse-wonder-full-1.0",
+      "note": "muse-wonder-full-1.0 stays unresolved and is not substituted to muse-wonder-1.0 (2026-10-26)."
+    },
+    "opus-latest": {
+      "vendor": "anthropic",
+      "family": "opus",
+      "pinned": "claude-opus-5-5",
+      "harness": "opus"
+    },
+    "sonnet-latest": {
+      "vendor": "anthropic",
+      "family": "sonnet",
+      "pinned": "claude-sonnet-5-5",
+      "harness": "sonnet"
+    },
+    "haiku-latest": {
+      "vendor": "anthropic",
+      "family": "haiku",
+      "pinned": "claude-haiku-5-5",
+      "harness": "haiku"
+    },
+    "sol-latest": {
+      "vendor": "openai",
+      "family": "sol",
+      "pinned": "gpt-6.1-sol"
+    },
+    "sol-latest-low": {
+      "vendor": "openai",
+      "family": "sol"
+    },
+    "sol-latest-medium": {
+      "vendor": "openai",
+      "family": "sol"
+    },
+    "sol-latest-high": {
+      "vendor": "openai",
+      "family": "sol"
+    },
+    "sol-latest-xhigh": {
+      "vendor": "openai",
+      "family": "sol"
+    },
+    "terra-latest": {
+      "vendor": "openai",
+      "family": "terra"
+    },
+    "luna-latest": {
+      "vendor": "openai",
+      "family": "luna"
+    },
+    "sonnet-latest-low": {
+      "vendor": "cursor",
+      "family": "claude-sonnet",
+      "variant": "low"
+    },
+    "sonnet-latest-medium": {
+      "vendor": "cursor",
+      "family": "claude-sonnet",
+      "variant": "medium"
+    },
+    "sonnet-latest-high": {
+      "vendor": "cursor",
+      "family": "claude-sonnet",
+      "variant": "high"
+    },
+    "sonnet-latest-xhigh": {
+      "vendor": "cursor",
+      "family": "claude-sonnet",
+      "variant": "xhigh"
+    },
+    "opus-latest-low": {
+      "vendor": "cursor",
+      "family": "claude-opus",
+      "variant": "low"
+    },
+    "opus-latest-medium": {
+      "vendor": "cursor",
+      "family": "claude-opus",
+      "variant": "medium"
+    },
+    "opus-latest-high": {
+      "vendor": "cursor",
+      "family": "claude-opus",
+      "variant": "high"
+    },
+    "opus-latest-xhigh": {
+      "vendor": "cursor",
+      "family": "claude-opus",
+      "variant": "xhigh"
+    },
+    "grok-latest": {
+      "vendor": "cursor",
+      "family": "grok",
+      "variant": "medium"
+    },
+    "grok-latest-low": {
+      "vendor": "cursor",
+      "family": "grok",
+      "variant": "low"
+    },
+    "composer-latest": {
+      "vendor": "cursor",
+      "family": "composer"
+    },
+    "swe-latest-medium": {
+      "vendor": "devin",
+      "family": "swe",
+      "variant": "medium"
+    },
+    "swe-latest": {
+      "vendor": "devin",
+      "family": "swe",
+      "variant": "high"
+    },
+    "fable-latest": {
+      "vendor": "anthropic",
+      "family": "fable",
+      "pinned": "claude-fable-5-1",
+      "harness": "fable",
+      "fallback": "opus-latest"
+    },
+    "astra-latest": {
+      "vendor": "openai",
+      "family": "astra"
+    }
+  },
+  "retired": [
+    "claude-fable-*",
+    "fable",
+    "claude-planner",
+    "claude-opus-5",
+    "claude-opus-4-*",
+    "claude-sonnet-5",
+    "claude-sonnet-4-*",
+    "gpt-*-astra",
+    "gpt-*-astra-*",
+    "astra",
+    "gpt-5.6*",
+    "gpt-5.5*",
+    "gpt-5.4*",
+    "gpt-5-*",
+    "gpt-5"
+  ],
+  "blocked": [
+    "claude-planner",
+    "gpt-5.4*",
+    "gpt-5-*",
+    "gpt-5"
+  ],
+  "readmitted": {
+    "astra-consult": {
+      "alias": "astra-latest",
+      "patterns": [
+        "gpt-*-astra",
+        "gpt-*-astra-*",
+        "astra"
+      ]
+    }
+  },
+  "off_default": [],
+  "older_allowed": {}
+}

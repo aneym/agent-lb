@@ -37,7 +37,7 @@ def learning_outcomes(since: datetime, until: datetime, source: str = "prod") ->
 
 
 def write_learning_table(table: dict[str, Any]) -> None:
-    canonical = Path(__file__).resolve().parent.parent / "config/coding-agents/routing-table.json"
+    canonical = Path(__file__).resolve().parent.parent / "config/coding-agents/routing-table"
     if table_path().resolve() == canonical:
         fail("learning writes require a managed routing table, set ROUTE_TABLE to its path")
     atomic_write(table_path(), json.dumps(table, indent=2) + "\n")

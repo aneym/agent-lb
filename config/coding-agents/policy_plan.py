@@ -147,7 +147,7 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes):
                     changes[args.home / relative] = None
         evict_shadows(args.home, changes)
         table_path = args.home / ROUTING_TABLE
-        desired_table = desired_routing_table(source / "routing-table.json", table_path)
+        desired_table = desired_routing_table(source / "routing-table", table_path)
         if desired_table != read_text(table_path):
             changes[table_path] = desired_table
         owner_path, owner_marker = ROUTING_TABLE_OWNER
@@ -180,6 +180,9 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes):
         if replace_policy_link or policy_dir.resolve() != source:
             policy_sources = [Path(name) for name in POLICY_FILES]
             policy_sources += [path.relative_to(source) for path in sorted((source / "routing").glob("*.md"))]
+            policy_sources += [path.relative_to(source) for path in sorted((source / "routing-table").glob("*.json"))]
+            if (policy_dir / "routing-table.json").is_file():
+                changes[policy_dir / "routing-table.json"] = None
             policy_sources += [path.relative_to(source) for path in sorted((source / "agents").glob("*.md"))]
 
             policy_sources += [

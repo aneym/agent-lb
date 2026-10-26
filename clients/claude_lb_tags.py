@@ -77,11 +77,15 @@ def resolve_lane_tags(argv: list[str]) -> str:
         try:
             home = Path.home()
             managed = home / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
-            fallback = home / ".agents" / "policy" / "coding-agents" / "routing-table.json"
+            fallback = home / ".agents" / "policy" / "coding-agents" / "routing-table"
             configured = (os.environ.get("ROUTE_TABLE") or "").strip()
             registry = home / ".agent-rails" / "workflows" / "kinds" / f"{tab.replace(':', '_')}.json"
             table = Path(configured).expanduser() if configured else managed if managed.is_file() else fallback
-            rollout = json.loads(table.read_text()).get("policy", {}).get("stand_in_rollout", {})
+            rollout = (
+                json.loads((table / "policy.json" if table.is_dir() else table).read_text())
+                .get("policy", {})
+                .get("stand_in_rollout", {})
+            )
             stage = rollout.get("stage", "off")
             if stage not in {"canary", "half", "all"}:
                 result.append(("", "", "rollout off"))

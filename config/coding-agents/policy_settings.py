@@ -25,7 +25,7 @@ def resolve_sol(source: Path, home: Path) -> str:
             text=True,
             timeout=60,
             check=False,
-            env=os.environ | {"ROUTE_TABLE": str(source / "routing-table.json")},
+            env=os.environ | {"ROUTE_TABLE": str(source / "routing-table")},
         )
     except (OSError, subprocess.SubprocessError):
         return SOL_MODEL
@@ -44,7 +44,7 @@ def policy_snapshot(source: Path, home: Path) -> dict[str, Any]:
             text=True,
             timeout=60,
             check=True,
-            env=os.environ | {"ROUTE_TABLE": str(source / "routing-table.json")},
+            env=os.environ | {"ROUTE_TABLE": str(source / "routing-table")},
         )
         snapshot = json.loads(result.stdout)
         for key in ("policy_rev", "table_sha256", "seats", "standards"):

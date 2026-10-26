@@ -1,0 +1,313 @@
+{
+  "class_aliases": {
+    "implementation": "implement",
+    "fix": "implement",
+    "fix-forward": "implement",
+    "migration": "implement",
+    "sweep": "mechanical",
+    "probe": "mechanical",
+    "test-run": "mechanical",
+    "investigation": "explore",
+    "exploration": "explore"
+  },
+  "mission_critical": [
+    "plan",
+    "lane",
+    "scope",
+    "spec",
+    "contract",
+    "architecture",
+    "design",
+    "review",
+    "verdict",
+    "judge",
+    "audit",
+    "plan-review",
+    "synthesis",
+    "orchestrator",
+    "lane-tab",
+    "ui-critical",
+    "trust-boundary",
+    "money-path"
+  ],
+  "implement_default": "gpt-implementer",
+  "classes": {
+    "plan": {
+      "chain": [
+        {
+          "seat": "planner",
+          "model": "opus-latest",
+          "vendor": "anthropic",
+          "effort": "medium"
+        }
+      ],
+      "second_opinion": {
+        "seat": "astra-consult",
+        "model": "astra-latest",
+        "vendor": "openai",
+        "effort": "high",
+        "when": "complex or risky plans, before the work is split"
+      }
+    },
+    "review": {
+      "chain": [
+        {
+          "seat": "plan-reviewer",
+          "model": "opus-latest",
+          "vendor": "anthropic",
+          "effort": "medium"
+        }
+      ]
+    },
+    "explore": {
+      "chain": [
+        {
+          "seat": "gpt-explorer",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "low"
+        },
+        {
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "medium"
+        }
+      ]
+    },
+    "research": {
+      "chain": [
+        {
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        }
+      ]
+    },
+    "implement": {
+      "chain": [
+        {
+          "seat": "gpt-implementer",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "medium"
+        },
+        {
+          "seat": "sonnet-implementer",
+          "model": "sonnet-latest",
+          "vendor": "anthropic",
+          "effort": "high"
+        },
+        {
+          "seat": "opus-seat",
+          "model": "opus-latest",
+          "vendor": "anthropic",
+          "effort": "medium",
+          "min_pace": -10
+        }
+      ],
+      "audit": {
+        "required": false,
+        "mode": "on_request",
+        "by_author_vendor": {
+          "openai": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "cursor": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "devin": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "glm": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "kimi": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "xai": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high",
+            "then": {
+              "seat": "codex-verifier",
+              "model": "sol-latest",
+              "vendor": "openai",
+              "effort": "high"
+            }
+          },
+          "anthropic": {
+            "seat": "codex-verifier",
+            "model": "sol-latest",
+            "vendor": "openai",
+            "effort": "high"
+          }
+        },
+        "fresh_per_unit": true,
+        "release_facts": true
+      },
+      "escalation": {
+        "seat": "opus-seat",
+        "at_fix_round": 2,
+        "since": "2026-09-27",
+        "evidence": "ROUTING.md 2026-09-26: work the default implementer fails twice goes to opus-seat as a new piece. Q0 keeps this judgment hand-off; only Opus chain overflow is gone."
+      },
+      "note": "Q0: use the interim Grok/Devin/Sol ladder. Anthropic overflow removed while quota is critical."
+    },
+    "mechanical": {
+      "chain": [
+        {
+          "seat": "gpt-implementer",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "medium"
+        },
+        {
+          "seat": "sonnet-implementer",
+          "model": "sonnet-latest",
+          "vendor": "anthropic",
+          "effort": "high"
+        },
+        {
+          "seat": "grok-implementer",
+          "model": "grok-latest-low",
+          "vendor": "cursor"
+        },
+        {
+          "seat": "devin-seat",
+          "model": "swe-latest",
+          "vendor": "devin"
+        }
+      ],
+      "audit": {
+        "required": false,
+        "mode": "on_request",
+        "by_author_vendor": {
+          "openai": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "cursor": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "devin": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "glm": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "kimi": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "xai": {
+            "seat": "verifier",
+            "model": "sonnet-latest",
+            "vendor": "anthropic",
+            "effort": "high",
+            "then": {
+              "seat": "codex-verifier",
+              "model": "sol-latest",
+              "vendor": "openai",
+              "effort": "high"
+            }
+          },
+          "anthropic": {
+            "seat": "codex-verifier",
+            "model": "sol-latest",
+            "vendor": "openai",
+            "effort": "high"
+          }
+        },
+        "fresh_per_unit": true,
+        "release_facts": true
+      }
+    },
+    "verify": {
+      "cross_vendor": true,
+      "chain": [
+        {
+          "seat": "verifier",
+          "model": "sonnet-latest",
+          "vendor": "anthropic",
+          "effort": "high"
+        },
+        {
+          "seat": "verifier",
+          "model": "opus-latest",
+          "vendor": "anthropic",
+          "effort": "high"
+        },
+        {
+          "seat": "codex-verifier",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        }
+      ]
+    },
+    "computer": {
+      "chain": [
+        {
+          "seat": "computer-use",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "medium"
+        },
+        {
+          "seat": "opus-seat",
+          "model": "opus-latest",
+          "vendor": "anthropic",
+          "effort": "medium"
+        }
+      ]
+    },
+    "council": {
+      "chain": [
+        {
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        },
+        {
+          "seat": "opus-seat",
+          "model": "opus-latest",
+          "vendor": "anthropic",
+          "effort": "high"
+        }
+      ]
+    }
+  },
+  "overrides": []
+}

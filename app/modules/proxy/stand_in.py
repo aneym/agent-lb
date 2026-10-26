@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.core.routing_table import routing_table_path
+from app.core.routing_table import routing_table_parts
 
 logger = logging.getLogger(__name__)
 _LOCK = threading.Lock()
@@ -25,7 +25,7 @@ def stand_in_model(intent: str | None) -> str | None:
     if not intent:
         return None
     try:
-        table = json.loads(routing_table_path().read_text())
+        table = routing_table_parts("policy")
         models = table.get("policy", {}).get("stand_in", _DEFAULT_MODELS)
     except (OSError, ValueError, AttributeError):
         return None

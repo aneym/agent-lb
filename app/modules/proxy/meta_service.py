@@ -85,7 +85,7 @@ def resolve_model(model: str) -> str:
     if model and model != "muse-latest":
         return model
     try:
-        alias = read_routing_table()["aliases"]["muse-latest"]
+        alias = read_routing_table("models")["aliases"]["muse-latest"]
         pinned = alias.get("pinned")
         if isinstance(pinned, str) and pinned:
             return pinned

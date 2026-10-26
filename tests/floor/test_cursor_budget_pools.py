@@ -20,9 +20,9 @@ from app.modules.pools.schemas import PoolSummary
 
 
 def test_naive_utc_budget_time_is_independent_of_host_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = json.loads((Path(__file__).resolve().parents[2] / "config/coding-agents/routing-table.json").read_text())[
-        "cli_pools"
-    ]
+    config = json.loads(
+        (Path(__file__).resolve().parents[2] / "config/coding-agents/routing-table/pools.json").read_text()
+    )["cli_pools"]
 
     config["cursor"]["pools"][1]["budget_usd_by_tier"]["Ultra"] = 400
     stamp = datetime(2026, 9, 30, 0, tzinfo=timezone.utc)

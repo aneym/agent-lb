@@ -51,7 +51,11 @@ def _read_state(path: Path) -> dict[str, Any] | None:
 
 
 def _usage(record: dict[str, Any], since: datetime) -> SeatAccountUsage:
-    runs = [run for run in record.get("runs") or [] if isinstance(run, dict) and (parse_seat_timestamp(run.get("ts")) or since) > since]
+    runs = [
+        run
+        for run in record.get("runs") or []
+        if isinstance(run, dict) and (parse_seat_timestamp(run.get("ts")) or since) > since
+    ]
     return SeatAccountUsage(
         runs=len(runs),
         ok=sum(1 for run in runs if run.get("ok") is True),
@@ -314,7 +318,7 @@ def cli_seat_pools(seats: SeatAccountsResponse) -> list[PoolSummary]:
 
 
 def seat_pricing_config() -> dict:
-    return read_routing_table().get("cli_pools") or {}
+    return read_routing_table("pools").get("cli_pools") or {}
 
 
 def seat_activity(accounts: list[SeatAccount], current: datetime, *, days: int = 7) -> SeatToday:

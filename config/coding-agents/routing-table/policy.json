@@ -1,0 +1,164 @@
+{
+  "version": 2,
+  "policy_rev": "2026-10-26.q0",
+  "precedence": [
+    "explicit",
+    "constraints",
+    "sticky",
+    "explore",
+    "standard"
+  ],
+  "policy": {
+    "concurrency": {
+      "per_account": {
+        "devin": 1,
+        "cursor": 2,
+        "openai": 3,
+        "anthropic": 4,
+        "kimi": 2,
+        "glm": 2
+      },
+      "default": 2,
+      "ttl_s": 120,
+      "heartbeat_s": 30,
+      "note": "2026-10-06 (A4): live reservations per capacity key may not exceed eligible accounts x per_account. 2026-10-06 (a4d-6): a 120 s TTL renewed every 30 s is the backstop for a hold whose run could not be confirmed gone."
+    },
+    "mode": "adaptive",
+    "grok": {
+      "pool": "grok",
+      "max_weekly_used_percent": 80,
+      "codex_error_minutes": 30,
+      "never_tags": [
+        "ui-critical",
+        "contract",
+        "trust-boundary",
+        "money-path",
+        "fix"
+      ]
+    },
+    "stand_in_rollout": {
+      "stage": "canary",
+      "tabs": [
+        "w5H:tC8"
+      ],
+      "lanes": []
+    },
+    "reserve": {
+      "pool": "anthropic-general",
+      "min_eligible": 2,
+      "headroom_min_percent": 40,
+      "admit_classes": [
+        "orchestrator",
+        "lane-tab",
+        "plan",
+        "council",
+        "lane",
+        "spec",
+        "scope",
+        "contract",
+        "architecture",
+        "design",
+        "review",
+        "verdict",
+        "judge",
+        "audit",
+        "plan-review",
+        "synthesis"
+      ]
+    },
+    "auditor_via": {
+      "anthropic-general": {
+        "pool": "cursor-other",
+        "vendor": "cursor",
+        "model": "claude-sonnet-5-5-high"
+      }
+    },
+    "pace": {
+      "guarded_pools": [
+        "anthropic-general",
+        "anthropic-fable",
+        "openai-codex"
+      ],
+      "ahead_gt": 15,
+      "behind_lt": -10,
+      "cycle_hours": 168
+    },
+    "bands": {
+      "ok": "eligible>=3",
+      "low": "eligible==2",
+      "critical": "eligible==1",
+      "exhausted": "eligible==0"
+    },
+    "judgment_classes": [
+      "plan",
+      "review",
+      "verify",
+      "design",
+      "audit"
+    ],
+    "lineup": {
+      "drivers": [
+        "opus-latest",
+        "sol-latest"
+      ],
+      "retired": "see top-level `retired`: Fable, the whole Astra family, the gpt-5.6 generation and older",
+      "implementation": "Q0: Grok first for bounded hands; Kimi mechanical only, Devin and Sol follow. Opus retains authority; Q4 owns tier-aware admission."
+    },
+    "review": {
+      "timing": "on_request",
+      "fresh_per_unit": true,
+      "cross_vendor": true,
+      "release_facts": false,
+      "never_after_fail": false,
+      "max_fix_rounds": 1,
+      "money_path": {
+        "lenses": 1,
+        "timing": "on_request"
+      }
+    },
+    "stage_effort": {
+      "bands": {
+        "relay": [
+          "low"
+        ],
+        "explore": [
+          "low",
+          "medium"
+        ],
+        "research": [
+          "medium",
+          "high"
+        ],
+        "implement": [
+          "medium",
+          "high"
+        ],
+        "mechanical": [
+          "medium",
+          "high"
+        ],
+        "plan": [
+          "medium",
+          "high"
+        ],
+        "review": [
+          "medium",
+          "high"
+        ],
+        "council": [
+          "high"
+        ],
+        "verify": [
+          "high",
+          "xhigh"
+        ],
+        "computer": [
+          "medium"
+        ],
+        "money_path": [
+          "xhigh"
+        ]
+      }
+    }
+  }
+}

@@ -119,7 +119,7 @@ atomically. Re-running is a no-op: a demotion already recorded is not written tw
 | path | what | written by |
 |---|---|---|
 | `clients/route` | the CLI | this lane |
-| `config/coding-agents/routing-table.json` | contract C3: classes, chains, pools, overrides | this lane; `overrides` by `route learn --apply` |
+| `config/coding-agents/routing-table/*.json` | contract C3, one file per responsibility (classes, explore, ladders, models, policy, pools, seats, standards); `route` and `install-policy.py` read the directory | this lane; `overrides` by `route learn --apply` |
 | `~/.agent-lb/managed/coding-agents/routing-table.json` | the installed table the CLI reads by default | `install-policy.py` |
 | `~/.claude/routing-state.json` | contract C4 state: seats, pools, probes | `route doctor --write` |
 | `~/.claude/routing-ALERT` | degraded-routing alert | `route doctor --write` |
@@ -178,10 +178,10 @@ From the repo root:
 
 ```bash
 uv run pytest tests/unit/test_route_cli.py -q            # 15 tests, all five C4 behaviours
-ROUTE_TABLE=config/coding-agents/routing-table.json clients/route pools
-ROUTE_TABLE=config/coding-agents/routing-table.json clients/route pick implement
-ROUTE_TABLE=config/coding-agents/routing-table.json clients/route pick verify --author-vendor anthropic
-ROUTE_TABLE=config/coding-agents/routing-table.json clients/route doctor        # exit 1 while a seat is down
+ROUTE_TABLE=config/coding-agents/routing-table clients/route pools
+ROUTE_TABLE=config/coding-agents/routing-table clients/route pick implement
+ROUTE_TABLE=config/coding-agents/routing-table clients/route pick verify --author-vendor anthropic
+ROUTE_TABLE=config/coding-agents/routing-table clients/route doctor        # exit 1 while a seat is down
 ```
 
 `pick verify --author-vendor anthropic` must never return an Anthropic seat; that is the

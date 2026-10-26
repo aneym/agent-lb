@@ -349,7 +349,7 @@ class PoolsService:
                 pool.model_copy(update={"observed_tokens": muse_tokens}) if pool.id == "muse" else pool
                 for pool in seat_pools
             ]
-        config = read_routing_table().get("cli_pools", {})
+        config = read_routing_table("pools").get("cli_pools", {})
         budget_pools = cursor_budget_pools(seats, config, now=response.generated_at) if isinstance(config, dict) else []
         cursor_config = config.get("cursor") if isinstance(config, dict) else None
         grouping = cursor_config.get("accounts") if isinstance(cursor_config, dict) else None

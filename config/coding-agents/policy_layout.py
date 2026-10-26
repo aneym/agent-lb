@@ -158,7 +158,6 @@ POLICY_FILES = (
     "policy_verification.py",
     "routing-legacy-sha256.json",
     "verify-routing",
-    "routing-table.json",
     "quota-swap.json",
     "codex-seat-home.py",
     "codex-AGENTS.md",

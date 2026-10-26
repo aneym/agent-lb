@@ -7,16 +7,15 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.core.routing_table import routing_table_path
+from app.core.routing_table import routing_table_parts, routing_table_path
 from app.modules.pools.schemas import PoolsResponse
 
 _CONFIG = Path(__file__).resolve().parents[3] / "config/coding-agents"
 
 
 def load_plan_inputs() -> tuple[dict, list[dict]]:
-    table_path = routing_table_path()
-    table = json.loads(table_path.read_text(encoding="utf-8"))
-    costs_path = table_path.with_name("model-costs.json")
+    table = routing_table_parts("classes", "ladders", "models", "seats")
+    costs_path = routing_table_path().with_name("model-costs.json")
     costs = json.loads(
         (costs_path if costs_path.is_file() else _CONFIG / "model-costs.json").read_text(encoding="utf-8")
     )

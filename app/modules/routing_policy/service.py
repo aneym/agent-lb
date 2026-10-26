@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.core.routing_table import routing_table_path
+from app.core.routing_table import routing_table_parts
 from app.db.settings_models import RoutingPolicyVersion
 from app.modules.routing_policy.repository import RoutingPolicyRepository
 from app.modules.routing_policy.schemas import PolicyCounts, PolicyDetail, PolicyDiff, PolicySummary
@@ -16,13 +16,12 @@ from app.modules.routing_policy.schemas import PolicyCounts, PolicyDetail, Polic
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _live_paths() -> tuple[Path, Path]:
-    table = routing_table_path()
+def _live_decider() -> Path:
     if os.environ.get("OF_DECIDER_JSON"):
-        return table, Path(os.environ["OF_DECIDER_JSON"]).expanduser()
+        return Path(os.environ["OF_DECIDER_JSON"]).expanduser()
     managed_decider = Path.home() / ".agent-lb/managed/coding-agents/decider.json"
     if _readable(managed_decider):
-        return table, managed_decider
+        return managed_decider
 
     launcher = Path.home() / ".local/bin/open-factory"
     installed = launcher.resolve().parents[1] / "open_factory/decider.json" if launcher.exists() else None
@@ -31,7 +30,7 @@ def _live_paths() -> tuple[Path, Path]:
         if installed and _readable(installed)
         else _REPO_ROOT / "clients/open-factory/open_factory/decider.json"
     )
-    return table, decider
+    return decider
 
 
 def _readable(path: Path) -> bool:
@@ -113,8 +112,8 @@ def detail(row: RoutingPolicyVersion, active: RoutingPolicyVersion | None) -> Po
 
 
 async def observe(repo: RoutingPolicyRepository) -> RoutingPolicyVersion:
-    table_path, decider_path = _live_paths()
-    table = _serialize(json.loads(table_path.read_text()))
+    decider_path = _live_decider()
+    table = _serialize(routing_table_parts())
     decider = _serialize(json.loads(decider_path.read_text() if _readable(decider_path) else "{}"))
     digest = _digest(table, decider)
     active = await repo.active()

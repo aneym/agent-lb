@@ -1,0 +1,263 @@
+{
+  "standards": {
+    "story": {
+      "seat": "story-driver",
+      "model": "deepseek-flash",
+      "effort": "low",
+      "explore": false,
+      "authority": "bounded",
+      "chain": [
+        "deepseek-flash",
+        "luna-latest"
+      ]
+    },
+    "plan": {
+      "seat": "planner",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "architecture",
+      "evidence": "E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted; Sol fallback removed, under reserve plans WAIT"
+    },
+    "lane": {
+      "seat": "lane-lead",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "architecture",
+      "evidence": "models.md 2026-10-14: top-level tabs, lane leads and workflow orchestrators run opus-latest medium"
+    },
+    "review": {
+      "seat": "plan-reviewer",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "verdict",
+      "evidence": "E19 Opus medium 9/20 = high 9/20; verdict authority stays on Opus"
+    },
+    "design": {
+      "seat": "frontend-designer",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "architecture",
+      "evidence": "Alex 2026-10-14 ~21:00 ET: opus must ALWAYS be the architect and design"
+    },
+    "audit": {
+      "seat": "plan-reviewer",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "verdict",
+      "evidence": "verdict authority stays on Opus (Astra review 2026-10-16)"
+    },
+    "implement": {
+      "seat": "gpt-implementer",
+      "model": "sol-latest",
+      "effort": "medium",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "bounded",
+      "evidence": {
+        "note": "E17 Sol 19/20 $0.64 per accepted, Grok 20/20; Muse 9/9 clean exits only, no acceptance evidence",
+        "aa": {
+          "fetched": "2026-10-20",
+          "source": "artificialanalysis.ai api/v2/data/llms/models; context from /leaderboards/models",
+          "fields": [
+            "intelligence_index",
+            "terminalbench_v4",
+            "scicode",
+            "output_tps",
+            "ttft_s",
+            "context_k"
+          ],
+          "coding_field": "terminalbench_v4",
+          "note": "AA coding_index is null for every row; Grok 4.7 medium is unpublished (high shown)",
+          "grok-4.7-high": [
+            46.3,
+            0.247,
+            0.578,
+            77.7,
+            18.25,
+            500
+          ],
+          "gpt-6.1-sol-medium": [
+            47.8,
+            0.48,
+            0.532,
+            43.6,
+            11.03,
+            1000
+          ],
+          "claude-opus-5-5-medium": [
+            51.2,
+            0.525,
+            0.593,
+            75.1,
+            15.5,
+            1000
+          ],
+          "claude-sonnet-5-5-high": [
+            46.8,
+            0.439,
+            0.537,
+            103.6,
+            9.03,
+            1000
+          ]
+        }
+      }
+    },
+    "mechanical": {
+      "seat": "gpt-implementer",
+      "model": "sol-latest",
+      "effort": "low",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "bounded",
+      "evidence": {
+        "note": "orch-lab E10 and E12; quota tight 2026-10-13",
+        "aa": {
+          "fetched": "2026-10-20",
+          "source": "artificialanalysis.ai api/v2/data/llms/models; context from /leaderboards/models",
+          "fields": [
+            "intelligence_index",
+            "terminalbench_v4",
+            "scicode",
+            "output_tps",
+            "ttft_s",
+            "context_k"
+          ],
+          "coding_field": "terminalbench_v4",
+          "note": "AA coding_index is null for every row; Grok 4.7 medium is unpublished (high shown)",
+          "grok-4.7-low": [
+            42.2,
+            0.162,
+            0.549,
+            63.5,
+            3.99,
+            500
+          ],
+          "gpt-6.1-sol-low": [
+            42.1,
+            0.308,
+            0.532,
+            41.6,
+            1.55,
+            1000
+          ],
+          "claude-opus-5-5-low": [
+            42.3,
+            0.313,
+            0.586,
+            76.1,
+            7.24,
+            1000
+          ],
+          "claude-sonnet-5-5-medium": [
+            40.8,
+            0.298,
+            0.529,
+            93.2,
+            0.94,
+            1000
+          ]
+        }
+      }
+    },
+    "explore": {
+      "seat": "gpt-explorer",
+      "model": "sol-latest",
+      "effort": "low",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "none",
+      "evidence": "Sol low default; Haiku unmeasured"
+    },
+    "research": {
+      "seat": "codex-sol",
+      "model": "sol-latest",
+      "effort": "high",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "bounded",
+      "evidence": "codex-sol research default; Sonnet Explore arm unmeasured"
+    },
+    "verify": {
+      "seat": "verifier",
+      "model": "sonnet-latest",
+      "effort": "high",
+      "wrapper_model": "sonnet-latest",
+      "explore": true,
+      "authority": "bounded",
+      "by_author_vendor": {
+        "anthropic": {
+          "seat": "codex-verifier",
+          "model": "sol-latest",
+          "effort": "high"
+        }
+      },
+      "money_path_effort": "xhigh",
+      "evidence": "E15 Sonnet 16/16 seeded like Opus, $0.101 vs $0.216; DeepSWE low 16/20 vs xhigh 17/20 at 1/3 cost"
+    },
+    "computer": {
+      "seat": "computer-use",
+      "model": "sol-latest",
+      "effort": "medium",
+      "wrapper_model": "sonnet-latest",
+      "explore": false,
+      "authority": "bounded",
+      "evidence": "computer-use default on Sol medium"
+    },
+    "council": {
+      "seat": "codex-sol",
+      "model": "sol-latest",
+      "effort": "high",
+      "wrapper_model": "sonnet-latest",
+      "explore": false,
+      "authority": "bounded",
+      "evidence": "council round on Sol high; Opus synthesizes"
+    },
+    "relay": {
+      "seat": "host-relay",
+      "model": "sonnet-latest",
+      "effort": "low",
+      "wrapper_model": "sol-latest",
+      "explore": true,
+      "authority": "none",
+      "evidence": "wrappers carry no decision; Sol serves them, not Sonnet (E1, 2026-10-24)"
+    },
+    "decide": {
+      "seat": "decider",
+      "model": "sonnet-latest",
+      "effort": "high",
+      "explore": true,
+      "authority": "bounded",
+      "evidence": "E20 Sonnet high 12/20, Sol 12/20, Opus medium 11/20, read as exploration evidence, not equivalence; was Fable every 30 min on ax42; a routing failure skips the tick"
+    },
+    "digest": {
+      "seat": "digest",
+      "model": "sonnet-latest",
+      "effort": "medium",
+      "explore": true,
+      "authority": "none",
+      "evidence": "digests and summaries carry no decision authority"
+    },
+    "judge": {
+      "seat": "general-purpose",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "verdict",
+      "evidence": "Astra review 2026-10-16: verdict authority stays Opus; E19 4/6 too small for an arm"
+    },
+    "classify": {
+      "seat": "jev",
+      "model": "haiku-latest",
+      "effort": "low",
+      "explore": false,
+      "authority": "bounded",
+      "evidence": "Jev first; haiku-latest low when a model is needed"
+    }
+  }
+}
