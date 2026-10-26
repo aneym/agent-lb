@@ -24,6 +24,11 @@ def _next_backup_path(source: Path, timestamp: datetime) -> Path:
         sequence += 1
 
 
+def _file_state(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_size, stat.st_mtime_ns
+
+
 def list_sqlite_pre_migration_backups(source: Path) -> list[Path]:
     pattern = f"{source.stem}.pre-migrate-*{source.suffix}"
     return sorted((path for path in source.parent.glob(pattern) if path.is_file()))
@@ -40,11 +45,18 @@ def create_sqlite_pre_migration_backup(
     if not source.exists():
         raise FileNotFoundError(f"sqlite database not found: {source}")
 
-    timestamp = now or datetime.now(timezone.utc)
-    backup_path = _next_backup_path(source, timestamp)
+    state = _file_state(source)
+    backups = list_sqlite_pre_migration_backups(source)
+    same = [path for path in backups if _file_state(path) == state]
+    if same:
+        backup_path = same[-1]
+    else:
+        timestamp = now or datetime.now(timezone.utc)
+        backup_path = _next_backup_path(source, timestamp)
+        shutil.copy2(source, backup_path)
 
-    shutil.copy2(source, backup_path)
-
+    for duplicate in same[:-1]:
+        duplicate.unlink()
     backups = list_sqlite_pre_migration_backups(source)
     excess = len(backups) - max_files
     if excess > 0:

@@ -10,6 +10,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if op.get_bind().dialect.name == "sqlite":
+        return
     op.alter_column(
         "request_logs",
         "job_id",
@@ -20,6 +22,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if op.get_bind().dialect.name == "sqlite":
+        return
     op.alter_column(
         "request_logs",
         "job_id",
