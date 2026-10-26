@@ -58,17 +58,18 @@ a detached checkout is pieceless and never capped.
 The launcher owns contract creation. Reuse only its printed `contract=` path
 on a retry; never choose, list or glob a contract file.
 
-Then call `$HOME/.local/bin/seat-run --wait K` in separate Bash calls, each
-with `timeout: 600000`; repeat on exit 3 (queued or running), at most 8 waits. No output-file
-sleep/poll loops. `--wait` prints the last 40 lines of the finished command's
+Then call `$HOME/.local/bin/seat-run --wait K --max 240` in separate Bash calls,
+each with `timeout: 300000` (no call blocks past 270 s); repeat while it exits 3
+(queued or running), with no cap on the number of waits: the launch's `--timeout 4320`
+ends the job, and seat-run then exits 124. No output-file sleep/poll loops. `--wait` prints the last 40 lines of the finished command's
 `$SEAT_RUN_DIR/K.log` (default `~/.agent-rails/jobs/seat-run/K.log`) and its
 exit code. Read the completed log if the full stdout (including identifiers)
 exceeds that tail. Continue with the procedure below on success. On 69/124/125/127,
 report `infra_error` and the code, never a verdict; 69 is `infra_error: no box`,
 never still running. Exit 3 with a `REVIEW-CAP` line (from the launch or the
 wait) is reported to the driver as `review_cap` with the printed text, and
-the review is never relaunched under another name. After eight 75s, report
-still running as unverified, not a verdict. If seat-run is missing, report `infra_error: no seat-run` and stop.
+the review is never relaunched under another name. Never report a review as still
+running: keep waiting until `--wait` exits with something other than 3. If seat-run is missing, report `infra_error: no seat-run` and stop.
 
 `route resolve sol-latest` prints the newest Sol the LB serves (never a
 retired model), so a new release needs no edit here. The reasoning effort is
@@ -92,9 +93,9 @@ eval command, which files the contract owned) followed verbatim by this procedur
    gives you. You do not run the suite: this seat's sandbox is `read-only` and
    has NO writable temp directory, so pytest and most build tooling die before
    collecting a single test. Execution belongs to the `codex-test-runner` seat,
-   which runs it in a disposable worktree at the PR head and leaves the captured
-   output at `<repo>-wt/.verify-runs/pr<pr>-<sha8>.txt`.
-   `cat` that file and quote its tail.
+   which runs it in a disposable worktree at the PR head and prints the path of
+   the captured output. Use only a path the brief names; never write in a default
+   or guessed path. `cat` that file and quote its tail.
    **Never claim a suite ran unless the runner's output file is present.** If
    the brief names no such file, or the file is absent or empty, say
    `EVAL-NOT-RUN` and name which it was. Do not infer a result from the brief's

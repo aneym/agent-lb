@@ -162,6 +162,15 @@ def shell_words(text, heredoc=False):
         if heredoc:
             i += 1
             continue
+        if not quote and text.startswith("$'", i):
+            j = i + 2
+            while j < len(text) and text[j] != "'":
+                word += text[j + 1 : j + 2] if text[j] == "\\" else text[j]
+                j += 2 if text[j] == "\\" else 1
+            if j >= len(text):
+                raise ValueError("unfinished quote")
+            active, i = True, j + 1
+            continue
         if quote:
             if char == quote:
                 quote = None
@@ -199,8 +208,8 @@ def shell_words(text, heredoc=False):
 def shell_source(text):
     pending, kept, live = [], [], []
     marker = re.compile(r"<<(?P<tabs>-)?[ \t]*(?P<spelling>'[^'\n]+'|\"[^\"\n]+\"|[\w-]+)")
-    quote = None
-    for line in text.splitlines(keepends=True):
+    stack, starts, continued = [], [], False
+    for number, line in enumerate(text.splitlines(keepends=True)):
         if pending:
             delimiter, tabs, quoted, executable, body = pending[0]
             if (line.lstrip("\t") if tabs else line).rstrip("\r\n") == delimiter:
@@ -215,17 +224,46 @@ def shell_source(text):
                 body.append(line.lstrip("\t") if tabs else line)
             continue
         index, start = 0, 0
+        command_start = None if continued or stack and stack[-1] not in ("$(", "`") else 0
+        continued = False
         while index < len(line):
             char = line[index]
-            if char == "\\" and quote != "'":
+            top = stack[-1] if stack else None
+            if top == "'":
+                if char == "'":
+                    stack.pop()
+                index += 1
+                continue
+            if char == "\\":
+                continued = line[index + 1 : index + 2] in ("\n", "\r")
                 index += 2
                 continue
-            if quote:
-                if char == quote:
-                    quote = None
+            if top == "$'":
+                if char == "'":
+                    stack.pop()
+                index += 1
+                continue
+            if char == "`" and top == "`" or char == ")" and top == "$(":
+                stack.pop()
+                origin, command_start = starts.pop()
+                if origin != number:
+                    command_start = None
+            elif char == "`" or line.startswith("$(", index):
+                stack.append("`" if char == "`" else "$(")
+                starts.append((number, command_start))
+                index += 1 if char == "`" else 2
+                command_start = index
+                continue
+            elif top == '"':
+                if char == '"':
+                    stack.pop()
+            elif line.startswith("$'", index):
+                stack.append("$'")
+                index += 2
+                continue
             elif char in "\"'":
-                quote = char
-            elif char == "#" and (index == 0 or line[index - 1].isspace()):
+                stack.append(char)
+            elif char == "#" and (index == 0 or line[index - 1].isspace() or line[index - 1] in ";&|()"):
                 break
             elif line.startswith("<<<", index):
                 index += 3
@@ -235,14 +273,16 @@ def shell_source(text):
                 if not match:
                     raise ValueError("unknown heredoc delimiter")
                 spelling = match.group("spelling")
-                prefix = list(shell_words(line[:index]))
+                prefix = [] if command_start is None else shell_words(line[command_start:index])
                 command_words = []
                 for kind, value in prefix:
                     if kind == "operator" and value[0] in ";&|()\n":
                         command_words = []
                     elif kind == "word":
                         command_words.append(value)
-                executable = bool(command_words) and os.path.basename(command_words[0]) in {"sh", "bash", "zsh"}
+                executable = command_start is None or (
+                    bool(command_words) and os.path.basename(command_words[0]) in {"sh", "bash", "zsh"}
+                )
                 pending.append(
                     (shlex.split(spelling)[0], bool(match.group("tabs")), spelling[0] in "\"'", executable, [])
                 )

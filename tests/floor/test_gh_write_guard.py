@@ -72,3 +72,38 @@ def test_unparsable_command_fails_closed_without_credential_claim(command):
     assert result.returncode == 2, result.stderr
     assert "could not parse" in result.stderr
     assert "Alex's credentials" not in result.stderr
+
+
+LAUNCH = (
+    "python3 forward-contract.py --key k -- seat-run --name k -- seat-exec --prompt-file @contract <<'CONTRACT_EOF'\n"
+    "Don't run it; it's the reviewer's job.\n"
+    "CONTRACT_EOF\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("prefix", "expected"),
+    [
+        ('x="$(echo "it\'s")"\n', 0),
+        ("cd /w;# don't forget\n", 0),
+        ('x="`echo "it\'s"`"\n', 0),
+        ("(cd /w)# it's\n", 0),
+        ("x=$(cat <<'EOF'\ngh pr merge 1\nEOF\n)\n", 0),
+        ('x="$(echo "it\'s")"\ngh pr merge 1\n', 2),
+        ("cd /w;# don't\ngh issue create\n", 2),
+        ("x=$(cat <<EOF\n$(gh pr merge 1)\nEOF\n)\n", 2),
+    ],
+)
+def test_contract_heredoc_after_nested_quotes_and_comments(prefix, expected):
+    env = {key: value for key, value in os.environ.items() if key not in {"GH_TOKEN", "GITHUB_TOKEN", "GH_APP"}}
+    result = subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=json.dumps({"tool_name": "Bash", "tool_input": {"command": prefix + LAUNCH}}),
+        text=True,
+        capture_output=True,
+        env=env,
+        timeout=15,
+    )
+    assert result.returncode == expected, result.stderr
+    if expected == 2:
+        assert "Alex's credentials" in result.stderr

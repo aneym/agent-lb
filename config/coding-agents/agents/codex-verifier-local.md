@@ -77,9 +77,9 @@ eval command, which files the contract owned) followed verbatim by this procedur
    gives you. You do not run the suite: this seat's sandbox is `read-only` and
    has NO writable temp directory, so pytest and most build tooling die before
    collecting a single test. Execution belongs to the `codex-test-runner` seat,
-   which runs it in a disposable worktree at the PR head and leaves the captured
-   output at `<repo>-wt/.verify-runs/pr<pr>-<sha8>.txt`.
-   `cat` that file and quote its tail.
+   which runs it in a disposable worktree at the PR head and prints the path of
+   the captured output. Use only a path the brief names; never write in a default
+   or guessed path. `cat` that file and quote its tail.
    **Never claim a suite ran unless the runner's output file is present.** If
    the brief names no such file, or the file is absent or empty, say
    `EVAL-NOT-RUN` and name which it was. Do not infer a result from the brief's
