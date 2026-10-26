@@ -34,9 +34,13 @@ An exported LANE_DIR that is not a lane is refused. A brief that runs
 agent-test-account needs a lane or agent owner. On any failure, stop and
 return the error. Never select a fresh-start file or recover a previous brief.
 
-Launch from the assigned worktree in the same Bash call, with timeout 270000.
-For longer work use the Bash tool's run_in_background, keeping the foreground
-wrapper alive until its result arrives. Do not return a queued handle.
+Launch from the assigned worktree in the same Bash call, with timeout 270000
+and never run_in_background. The review runs detached from your Bash call, so
+no tool timeout kills it; the launch waits up to 240 seconds for it. When the
+launch exits 3 with `codex-local: review still running`, run the exact
+`bash .../codex-local.sh wait <contract.md>` command it printed, again in the
+foreground with timeout 270000, and repeat until it exits with any other
+status. Never relaunch the same key and never return a still-running line.
 
 ```sh
 cd <worktree> || exit $?

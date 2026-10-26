@@ -3,8 +3,11 @@
 
 set -euo pipefail
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
-  echo 'usage: codex-local.sh [--dry-run] task [--review] [companion options]'
+  echo 'usage: codex-local.sh [--dry-run] task [--review] [companion options] | codex-local.sh wait <contract.md>'
   exit 0
+fi
+if [[ ${1:-} == wait ]]; then
+  exec python3 "$(dirname "$0")/codex-local-review.py" wait "${2:?usage: codex-local.sh wait <contract.md>}"
 fi
 if [[ ${1:-} == --dry-run ]]; then
   shift
@@ -148,4 +151,7 @@ cp "$(dirname "$0")/local-seat-bin/desktop-guard-focus" "$focus_dir/desktop-guar
 chmod +x "$focus_dir/desktop-guard-focus"
 export PATH="$focus_dir:$PATH"
 companion="$HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs"
+if [[ $review == 1 ]]; then
+  exec python3 "$(dirname "$0")/codex-local-review.py" start "$prompt_file" -- python3 "$(dirname "$0")/codex-local-launch.py" node "$companion" "$@"
+fi
 exec python3 "$(dirname "$0")/codex-local-launch.py" node "$companion" "$@"

@@ -37,11 +37,12 @@ if review and not rc:
         thread = payload["threadId"]
         if payload["status"] != 0 or not isinstance(thread, str) or not thread:
             raise ValueError("missing successful Codex thread")
-        lines = text.splitlines()
-        if len(lines) < 2 or not lines[-2].startswith("REVIEW-JSON "):
-            raise ValueError("missing REVIEW-JSON")
-        verdict = json.loads(lines[-2].removeprefix("REVIEW-JSON "))
-        match = re.fullmatch(r"VERDICT: (PASS|FAIL)(?: lens=\S+)? diff=(\S+)", lines[-1])
+        lines = [line.strip() for line in text.splitlines()]
+        last = max((i for i, line in enumerate(lines) if line.startswith("VERDICT: ")), default=0)
+        if not last or not lines[last - 1].startswith("REVIEW-JSON "):
+            raise ValueError("missing REVIEW-JSON line right before the VERDICT line")
+        verdict = json.loads(lines[last - 1].removeprefix("REVIEW-JSON "))
+        match = re.fullmatch(r"VERDICT: (PASS|FAIL)(?: lens=\S+)? diff=(\S+)", lines[last])
         if not match or verdict.get("verdict", "").upper() != match[1] or verdict.get("diff") != match[2]:
             raise ValueError("inconsistent review verdict")
         records = list((Path(review) / "companion" / "state").glob("*/jobs/task-*.json"))
