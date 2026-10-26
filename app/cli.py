@@ -33,6 +33,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     pace.add_argument("--base-url", default=None)
     pace.add_argument("--timeout", type=float, default=15.0)
 
+    threads = subparsers.add_parser("threads", help="Burn by T3 thread, as a share of each pool's weekly quota.")
+    threads.add_argument("--range", choices=("24h", "7d"), default="24h")
+    threads.add_argument("--host")
+    threads.add_argument("--pool", choices=("anthropic", "openai"))
+    threads.add_argument("--limit", type=int, default=20)
+    threads.add_argument("--json", action="store_true")
+    threads.add_argument("--base-url", default=None)
+    threads.add_argument("--timeout", type=float, default=60.0)
+
     audit = subparsers.add_parser("audit", help="Read-only receipt audits.")
     commands = audit.add_subparsers(dest="audit_command", required=True)
     from app.audit_routing import add_parser
@@ -201,6 +210,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     os.environ.setdefault("AGENT_LB_PROCESS_STARTED_NS", str(_PROCESS_STARTED_NS))
     args = _parse_args(argv)
 
+    if args.command == "threads":
+        from app.t3_threads_cli import run as run_threads
+
+        run_threads(args)
+        return
     if args.command == "pace":
         from app.pace_cli import run
 

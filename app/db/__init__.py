@@ -7,3 +7,4 @@ import app.db.quota_models  # noqa: F401
 import app.db.request_models  # noqa: F401
 import app.db.session_models  # noqa: F401
 import app.db.settings_models  # noqa: F401
+import app.db.t3_models  # noqa: F401

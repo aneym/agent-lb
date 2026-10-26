@@ -282,3 +282,11 @@ for _quota_column, _quota_suffix in (
         AdditionalUsageHistory.used_percent.desc(),
         AdditionalUsageHistory.id.desc(),
     ).ddl_if(dialect="sqlite")
+
+
+Index(
+    "idx_logs_client_session_time",
+    RequestLog.client_session_id,
+    RequestLog.requested_at.desc(),
+    postgresql_where=RequestLog.client_session_id.is_not(None),
+).ddl_if(dialect="postgresql")

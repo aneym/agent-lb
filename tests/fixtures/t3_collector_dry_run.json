@@ -1,0 +1,118 @@
+{
+  "host": "studio",
+  "full": true,
+  "threads": 5,
+  "nativeSessions": 3,
+  "sampleThreads": [
+    {
+      "threadId": "mcp:aaaa",
+      "projectId": "p1",
+      "projectTitle": "Rails",
+      "workspaceRoot": "/work/rails",
+      "title": "Recruiter app",
+      "providerInstance": "claudeAgent",
+      "model": "claude-opus-5-5",
+      "parentThreadId": null,
+      "rootThreadId": "mcp:aaaa",
+      "relationship": null,
+      "createdBy": "agent",
+      "creationSource": "mcp",
+      "createdAt": "2026-10-26T15:01:00.000Z",
+      "updatedAt": "2026-10-26T15:10:00.000Z",
+      "archivedAt": null,
+      "deletedAt": null
+    },
+    {
+      "threadId": "thread:delegated-task:bbbb",
+      "projectId": "p1",
+      "projectTitle": "Rails",
+      "workspaceRoot": "/work/rails",
+      "title": "Delegated check",
+      "providerInstance": "codex",
+      "model": "gpt-6.1",
+      "parentThreadId": "mcp:aaaa",
+      "rootThreadId": "mcp:aaaa",
+      "relationship": "delegated",
+      "createdBy": "agent",
+      "creationSource": "mcp",
+      "createdAt": "2026-10-26T15:02:00.000Z",
+      "updatedAt": "2026-10-26T15:11:00.000Z",
+      "archivedAt": null,
+      "deletedAt": null
+    },
+    {
+      "threadId": "thread:provider:cccc",
+      "projectId": "p1",
+      "projectTitle": "Rails",
+      "workspaceRoot": "/work/rails",
+      "title": "Inventory",
+      "providerInstance": "claudeAgent",
+      "model": "claude-sonnet-5-5",
+      "parentThreadId": "mcp:aaaa",
+      "rootThreadId": "mcp:aaaa",
+      "relationship": "subagent",
+      "createdBy": "agent",
+      "creationSource": "mcp",
+      "createdAt": "2026-10-26T15:03:00.000Z",
+      "updatedAt": "2026-10-26T15:12:00.000Z",
+      "archivedAt": null,
+      "deletedAt": null
+    },
+    {
+      "threadId": "mcp:dddd",
+      "projectId": "p2",
+      "projectTitle": "Raise",
+      "workspaceRoot": "/work/raise",
+      "title": "Raise",
+      "providerInstance": "agent-raise",
+      "model": "claude-opus-5-5",
+      "parentThreadId": null,
+      "rootThreadId": "mcp:dddd",
+      "relationship": null,
+      "createdBy": "agent",
+      "creationSource": "mcp",
+      "createdAt": "2026-10-26T15:04:00.000Z",
+      "updatedAt": "2026-10-26T15:13:00.000Z",
+      "archivedAt": "2026-10-26T15:20:00.000Z",
+      "deletedAt": null
+    },
+    {
+      "threadId": "mcp:eeee",
+      "projectId": "p2",
+      "projectTitle": "Raise",
+      "workspaceRoot": "/work/raise",
+      "title": "Not started",
+      "providerInstance": "claudeAgent",
+      "model": "claude-opus-5-5",
+      "parentThreadId": null,
+      "rootThreadId": "mcp:eeee",
+      "relationship": null,
+      "createdBy": "agent",
+      "creationSource": "mcp",
+      "createdAt": "2026-10-26T15:05:00.000Z",
+      "updatedAt": "2026-10-26T15:14:00.000Z",
+      "archivedAt": null,
+      "deletedAt": null
+    }
+  ],
+  "sampleNativeSessions": [
+    {
+      "nativeId": "00000000-0000-4000-8000-00000000000a",
+      "threadId": "mcp:aaaa",
+      "driver": "claudeAgent",
+      "providerInstance": "claudeAgent"
+    },
+    {
+      "nativeId": "01a00000-0000-7000-8000-00000000000b",
+      "threadId": "thread:delegated-task:bbbb",
+      "driver": "codex",
+      "providerInstance": "codex"
+    },
+    {
+      "nativeId": "00000000-0000-4000-8000-00000000000d",
+      "threadId": "mcp:dddd",
+      "driver": "claudeAgent",
+      "providerInstance": "agent-raise"
+    }
+  ]
+}

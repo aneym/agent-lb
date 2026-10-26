@@ -10,6 +10,7 @@ const nav = [
   { label: "Providers", path: "/" },
   { label: "Routing", path: "/routing" },
   { label: "Usage", path: "/usage" },
+  { label: "Threads", path: "/threads" },
   { label: "Keys", path: "/keys" },
   { label: "Settings", path: "/settings" },
 ];

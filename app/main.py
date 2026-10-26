@@ -41,7 +41,6 @@ from app.core.resilience.memory_monitor import configure as configure_memory_mon
 from app.core.usage.refresh_scheduler import build_usage_refresh_scheduler
 from app.db.session import SessionLocal, close_db, init_background_db, init_db
 from app.metrics_startup import start_metrics_server
-from app.muse_routes import register_muse_routes
 from app.modules.account_schedule import api as account_schedule_api
 from app.modules.account_schedule.scheduler import build_account_resume_scheduler
 from app.modules.accounts import api as accounts_api
@@ -85,9 +84,11 @@ from app.modules.sessions import api as sessions_api
 from app.modules.settings import api as settings_api
 from app.modules.sticky_sessions import api as sticky_sessions_api
 from app.modules.sticky_sessions.cleanup_scheduler import build_sticky_session_cleanup_scheduler
+from app.modules.t3_threads import api as t3_threads_api
 from app.modules.team import api as team_api
 from app.modules.usage import api as usage_api
 from app.modules.usage.additional_quota_keys import reload_additional_quota_registry
+from app.muse_routes import register_muse_routes
 from app.runtime_diagnostics import log_runtime_diagnostic_fingerprint
 from app.static_routes import configure_static_routes
 
@@ -402,34 +403,38 @@ def configure_app(app: FastAPI, settings) -> None:
         app.include_router(router)
     app.include_router(models)
     register_muse_routes(app)
-    app.include_router(audit_api.router)
-    app.include_router(accounts_api.router)
-    app.include_router(availability_router)
-    app.include_router(account_schedule_api.router)
-    app.include_router(dashboard_api.router)
-    app.include_router(usage_api.router)
-    app.include_router(public_usage_api.router)
-    app.include_router(request_logs_api.router)
-    app.include_router(receipts_api.router)
-    app.include_router(routing_view_api.router)
-    app.include_router(routing_policy_api.router)
-    app.include_router(sessions_api.router)
-    app.include_router(sessions_api.short_link_router)
-    app.include_router(pools_api.router)
-    app.include_router(quota_planner_api.router)
-    app.include_router(reports_api.router)
-    app.include_router(conversation_archive_api.router)
-    app.include_router(runtime_api.router)
-    app.include_router(oauth_api.router)
-    app.include_router(dashboard_auth_api.router)
-    app.include_router(settings_api.router)
-    app.include_router(firewall_api.router)
-    app.include_router(sticky_sessions_api.router)
-    app.include_router(api_keys_api.router)
-    app.include_router(team_api.router)
-    app.include_router(health_api.router)
-    app.include_router(federation_api.router)
-    app.include_router(federation_api.dashboard_router)
+    for dashboard_router in (
+        audit_api.router,
+        accounts_api.router,
+        availability_router,
+        account_schedule_api.router,
+        dashboard_api.router,
+        usage_api.router,
+        public_usage_api.router,
+        request_logs_api.router,
+        receipts_api.router,
+        routing_view_api.router,
+        routing_policy_api.router,
+        sessions_api.router,
+        sessions_api.short_link_router,
+        pools_api.router,
+        quota_planner_api.router,
+        reports_api.router,
+        conversation_archive_api.router,
+        runtime_api.router,
+        oauth_api.router,
+        dashboard_auth_api.router,
+        settings_api.router,
+        firewall_api.router,
+        sticky_sessions_api.router,
+        api_keys_api.router,
+        team_api.router,
+        health_api.router,
+        federation_api.router,
+        federation_api.dashboard_router,
+        t3_threads_api.router,
+    ):
+        app.include_router(dashboard_router)
 
     configure_static_routes(app)
 

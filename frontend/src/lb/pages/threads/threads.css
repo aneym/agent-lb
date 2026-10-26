@@ -1,0 +1,126 @@
+.lb .threads-page .thr-filters {
+  margin-top: 18px;
+}
+.lb .threads-page .thr-summary {
+  margin: 14px 0 18px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.lb .threads-page .thr-pool {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 6px;
+}
+.lb .threads-page .thr-sentence {
+  margin: 0;
+  flex: 1;
+}
+.lb .thr-bar {
+  display: flex;
+  flex: none;
+  width: 160px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--fill);
+}
+.lb .thr-seg.s1 {
+  background: var(--chart-1);
+}
+.lb .thr-seg.s2 {
+  background: var(--chart-2);
+}
+.lb .thr-seg.s3 {
+  background: var(--chart-3);
+}
+.lb .thr-seg.s4 {
+  background: var(--chart-4);
+}
+.lb .thr-sort {
+  display: inline-flex;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.lb .thr-sort.on {
+  color: var(--ink);
+}
+.lb .rows.thr {
+  --cols: minmax(240px, 2fr) minmax(110px, 1fr) minmax(110px, 1fr) 100px 80px 90px;
+}
+.lb .thr-who {
+  gap: 6px;
+}
+.lb .thr-who .t {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.lb .thr-who .n {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lb .thr-who .s,
+.lb .thr .c-pool .s {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.lb .thr .c-pool {
+  display: flex;
+  flex-direction: column;
+}
+.lb .thr-toggle {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  padding: 0;
+  cursor: pointer;
+}
+.lb .thr-toggle svg {
+  transition: transform 0.12s ease-out;
+}
+.lb .thr-toggle svg.open {
+  transform: rotate(90deg);
+}
+.lb .thr-detail {
+  border-top: 1px solid var(--line-2);
+  background: color-mix(in oklch, var(--fill) 45%, var(--card));
+}
+.lb .thr-facts {
+  padding: 10px 16px 10px 40px;
+  font-size: 12.5px;
+}
+.lb .thr-facts p {
+  margin: 0 0 4px;
+}
+.lb .thr-session {
+  margin-right: 14px;
+}
+.lb .thr-detail .thr-child {
+  background: transparent;
+  padding-left: 40px;
+}
+.lb .thr-empty {
+  padding: 18px 16px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+@media (max-width: 960px) {
+  .lb .rows.thr {
+    --cols: minmax(0, 1fr) auto;
+  }
+  .lb .thr-row > :nth-child(n + 2) {
+    font-size: 12px;
+  }
+}

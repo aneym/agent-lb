@@ -167,6 +167,12 @@ def _reset_global_state() -> None:
     except Exception:
         pass
     try:
+        from app.modules.t3_threads.service import clear_cache as clear_t3_burn_cache
+
+        clear_t3_burn_cache()
+    except Exception:
+        pass
+    try:
         from app.core.middleware.firewall_cache import get_firewall_ip_cache as get_firewall_cache
 
         get_firewall_cache().invalidate_all()
