@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import re
+import sys
+import tempfile
+import tomllib
+from datetime import datetime, timezone
+from pathlib import Path
+
+POOL_ACCOUNT_ID = "agent-lb-pool"
+CODEX_SUFFIX = "/backend-api/codex"
+EXPIRES_AT = 4102444800
+
+
+def _b64(data: dict[str, object]) -> str:
+    return base64.urlsafe_b64encode(json.dumps(data, separators=(",", ":")).encode()).decode().rstrip("=")
+
+
+def _placeholder_jwt() -> str:
+    claims = {
+        "exp": EXPIRES_AT,
+        "email": "pool@agent-lb.local",
+        "https://api.openai.com/auth": {"chatgpt_plan_type": "pro", "chatgpt_account_id": POOL_ACCOUNT_ID},
+    }
+    return f"{_b64({'alg': 'none', 'typ': 'JWT'})}.{_b64(claims)}.agent-lb"
+
+
+def lb_root(config: dict[str, object]) -> str:
+    provider = config.get("model_provider")
+    providers = config.get("model_providers")
+    entry = providers.get(provider) if isinstance(providers, dict) else None
+    base_url = entry.get("base_url") if isinstance(entry, dict) else None
+    if not isinstance(base_url, str) or not base_url.rstrip("/").endswith(CODEX_SUFFIX):
+        raise SystemExit(f"codex-pool-identity: model provider {provider!r} is not an agent-lb {CODEX_SUFFIX} base_url")
+    return base_url.rstrip("/").removesuffix(CODEX_SUFFIX)
+
+
+def with_chatgpt_base_url(text: str, root: str) -> str:
+    line = f'chatgpt_base_url = "{root}"'
+    lines = text.splitlines()
+    first_table = next((i for i, raw in enumerate(lines) if raw.lstrip().startswith("[")), len(lines))
+    for i in range(first_table):
+        if re.match(r"\s*chatgpt_base_url\s*=", lines[i]):
+            lines[i] = line
+            return "\n".join(lines) + "\n"
+    lines.insert(first_table, line)
+    return "\n".join(lines) + "\n"
+
+
+def auth_owner(auth_path: Path) -> str:
+    if not auth_path.exists():
+        return "none"
+    try:
+        tokens = json.loads(auth_path.read_text()).get("tokens") or {}
+    except (ValueError, AttributeError):
+        return "other"
+    return "pool" if tokens.get("account_id") == POOL_ACCOUNT_ID else "other"
+
+
+def _write(path: Path, text: str, mode: int) -> None:
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    with os.fdopen(fd, "w") as handle:
+        handle.write(text)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Give a login-less Codex home the agent-lb pool identity for usage reads (CLIENT-SETUP.md)."
+    )
+    parser.add_argument("--codex-home", type=Path, default=Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex"))
+    parser.add_argument("--check", action="store_true", help="exit 1 unless the pool identity is in place")
+    args = parser.parse_args()
+    config_path = args.codex_home / "config.toml"
+    auth_path = args.codex_home / "auth.json"
+    text = config_path.read_text()
+    root = lb_root(tomllib.loads(text))
+    owner = auth_owner(auth_path)
+    if owner == "other":
+        print(f"codex-pool-identity: {auth_path} holds a real login; left alone")
+        return 0
+    configured = tomllib.loads(text).get("chatgpt_base_url") == root
+    if args.check:
+        ok = owner == "pool" and configured
+        print(f"codex-pool-identity: {'ok' if ok else 'missing'} ({args.codex_home}, {root})")
+        return 0 if ok else 1
+    if not configured:
+        _write(config_path, with_chatgpt_base_url(text, root), config_path.stat().st_mode & 0o777)
+    if owner == "none":
+        jwt = _placeholder_jwt()
+        auth = {
+            "OPENAI_API_KEY": None,
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": jwt,
+                "access_token": jwt,
+                "refresh_token": "agent-lb",
+                "account_id": POOL_ACCOUNT_ID,
+            },
+            "last_refresh": datetime.now(timezone.utc).isoformat(),
+        }
+        _write(auth_path, json.dumps(auth, indent=2) + "\n", 0o600)
+    print(f"codex-pool-identity: {args.codex_home} reads usage from {root}/api/codex/usage")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

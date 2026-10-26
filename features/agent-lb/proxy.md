@@ -25,3 +25,4 @@ Use an HTTP client with the required credentials for the route.
 
 ## Gotchas
 The inventory derives literal routes from source decorators. Router prefixes are represented by endpoint templates in this file.
+`/api/codex/usage` answers `chatgpt-account-id: agent-lb-pool` with pooled usage for keyless trusted clients; `scripts/codex-pool-identity` sets that up for a Codex home with no login (T3 Code's usage page).

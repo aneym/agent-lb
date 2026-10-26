@@ -98,6 +98,14 @@ Healthy websocket signals:
 
 If you run `agent-lb` behind a reverse proxy, make sure it forwards WebSocket upgrades.
 
+**Usage in T3 Code and `/status` without a ChatGPT login.** Codex reads rate limits
+(`account/rateLimits/read`) only under ChatGPT auth. On a host with no login of its own, run
+`scripts/codex-pool-identity` once per Codex home: it writes a placeholder login for the
+`agent-lb-pool` account and sets `chatgpt_base_url` to the agent-lb root, so Codex reads pooled
+usage from `/api/codex/usage`. agent-lb serves the pool view only to clients it already serves
+without a key; with API key auth on, a key in `access_token` sees that key's limits. A real login
+is left alone. `--check` exits 1 when the identity is missing.
+
 **Migrating from direct OpenAI** — `codex resume` filters by `model_provider`;
 old sessions won't appear until you re-tag them. Use the built-in retag command
 instead of editing Codex files by hand; see

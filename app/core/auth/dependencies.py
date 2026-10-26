@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 _bearer = HTTPBearer(description="API key (e.g. sk-clb-…)", auto_error=False)
 
 API_KEY_TOKEN_PREFIX = "sk-clb-"
+CODEX_POOL_ACCOUNT_ID = "agent-lb-pool"
 
 
 def set_openai_error_format(request: Request) -> None:
@@ -220,6 +221,9 @@ async def validate_codex_usage_identity(request: Request) -> ApiKeyData | None:
 
     raw_account_id = request.headers.get("chatgpt-account-id")
     account_id = raw_account_id.strip() if raw_account_id else ""
+    if account_id == CODEX_POOL_ACCOUNT_ID:
+        pool_authorization = f"Bearer {token}" if token.startswith(API_KEY_TOKEN_PREFIX) else None
+        return await validate_proxy_api_key_authorization(pool_authorization, request=request)
     if not account_id:
         if token.startswith("sk-clb-"):
             return await _validate_api_key_token(token)
