@@ -48,6 +48,7 @@ DEFAULT_MODELS = frozenset(
         "gpt-6-luna",
         "gpt-6.1-luna",
         "gpt-6-astra",
+        "k3.1-pro",
     }
 )
 
