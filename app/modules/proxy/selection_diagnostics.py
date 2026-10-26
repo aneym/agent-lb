@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from app.core.balancer.failures import SELECTOR_RETRY_HINT_MAX_SECONDS
 from app.core.errors import OpenAIErrorEnvelope
 
 if TYPE_CHECKING:
@@ -72,4 +73,4 @@ def retry_after_seconds_from_error_detail(detail: Any) -> int | None:
         return None
     if seconds < 0:
         return None
-    return math.ceil(seconds)
+    return min(math.ceil(seconds), SELECTOR_RETRY_HINT_MAX_SECONDS)

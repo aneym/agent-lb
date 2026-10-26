@@ -58,7 +58,7 @@ Persisted additional-usage rows MUST record one internal canonical `quota_key` e
 
 ### Requirement: Selector retry hint is bounded by the auto-recovery window
 
-When `select_account` cannot return a candidate, the surfaced `"Try again in {N}s"` value MUST be clamped to at most `SELECTOR_RETRY_HINT_MAX_SECONDS` (default 300). Clients reattempt within agent-lb's auto-recovery window (background `/wham/usage` refresh + per-status cooldown threshold) instead of waiting the worst-case persisted `reset_at`. The clamp affects only the user-visible string; `AccountState.reset_at` and `AccountState.cooldown_until` remain unchanged and continue to drive selection, telemetry, and dashboard reads.
+When `select_account` cannot return a candidate, the surfaced `"Try again in {N}s"` value MUST be clamped to at most `SELECTOR_RETRY_HINT_MAX_SECONDS` (default 300). Clients reattempt within agent-lb's auto-recovery window (background `/wham/usage` refresh + per-status cooldown threshold) instead of waiting the worst-case persisted `reset_at`. The `Retry-After` header on those 429 and 503 responses carries the same clamp, because Codex and other clients sleep for the header's value: a 3566 s header kept a codex-verifier seat idle for an hour while accounts recovered (2026-10-26). The clamp affects only the user-visible string and header; `AccountState.reset_at`, `AccountState.cooldown_until` and the body's `resets_in_seconds` remain unchanged and continue to drive selection, telemetry, and dashboard reads.
 
 #### Scenario: Quota-exceeded reset far in the future is clamped
 - **GIVEN** every selectable account has `status = QUOTA_EXCEEDED`
