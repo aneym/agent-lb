@@ -56,6 +56,16 @@ def check_working_directory() -> None:
         raise SystemExit(1) from error
 
 
+def has_first_party_login() -> bool:
+    if sys.platform == "darwin":
+        return True
+    path = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / ".credentials.json"
+    try:
+        return "claudeAiOauth" in path.read_text()
+    except OSError:
+        return False
+
+
 def main() -> None:
     for name in ("GH_TOKEN", "GITHUB_TOKEN"):
         os.environ.pop(name, None)
@@ -138,6 +148,8 @@ def main() -> None:
 
                 os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
                 os.environ.pop("ANTHROPIC_API_KEY", None)
+                if not has_first_party_login():
+                    os.environ["ANTHROPIC_AUTH_TOKEN"] = "agent-lb-routed"
                 routed = True
             except RuntimeError as error:
                 label = "ccgpt" if CCGPT_MODE else "cc"
