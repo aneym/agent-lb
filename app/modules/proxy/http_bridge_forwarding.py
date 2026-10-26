@@ -6,7 +6,7 @@ import hmac
 import json
 import time
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 import aiohttp
@@ -17,6 +17,7 @@ from app.core.crypto import get_or_create_key
 from app.core.errors import OpenAIErrorEnvelope, openai_error, response_failed_event
 from app.core.identity import RequestIdentity
 from app.core.openai.requests import ResponsesRequest
+from app.core.utils.client_session import FactoryAttribution, validated_factory_attribution
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import format_sse_event
@@ -35,6 +36,10 @@ HTTP_BRIDGE_AFFINITY_KEY_HEADER = "x-codex-bridge-affinity-key"
 HTTP_BRIDGE_SIGNATURE_HEADER = "x-codex-bridge-signature"
 HTTP_BRIDGE_IDENTITY_HEADER = "x-codex-bridge-identity"
 HTTP_BRIDGE_IDENTITY_SIGNATURE_HEADER = "x-codex-bridge-identity-signature"
+HTTP_BRIDGE_FACTORY_PROJECT_HEADER = "x-codex-bridge-factory-project"
+HTTP_BRIDGE_FACTORY_OWNER_HEADER = "x-codex-bridge-factory-owner"
+HTTP_BRIDGE_FACTORY_HOST_HEADER = "x-codex-bridge-factory-host"
+HTTP_BRIDGE_FACTORY_JOB_HEADER = "x-codex-bridge-factory-job"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +52,7 @@ class HTTPBridgeForwardContext:
     original_affinity_key: str | None = None
     reservation: ApiKeyUsageReservationData | None = None
     identity: RequestIdentity | None = None
+    factory_attribution: FactoryAttribution = field(default_factory=FactoryAttribution)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +139,7 @@ class HTTPBridgeOwnerClient:
                     )
 
 
-_OWNER_FORWARD_DROP_PREFIXES = ("x-codex-bridge-", "tailscale-", "x-forwarded-", "cf-")
+_OWNER_FORWARD_DROP_PREFIXES = ("x-codex-bridge-", "x-factory-", "tailscale-", "x-forwarded-", "cf-")
 _OWNER_FORWARD_DROP_HEADERS = frozenset({"x-agent-lb-machine", "forwarded", "x-real-ip", "true-client-ip"})
 
 
@@ -164,6 +170,9 @@ def build_owner_forward_headers(
         forwarded[HTTP_BRIDGE_RESERVATION_ID_HEADER] = context.reservation.reservation_id
         forwarded[HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER] = context.reservation.key_id
         forwarded[HTTP_BRIDGE_RESERVATION_MODEL_HEADER] = context.reservation.model
+    if context.factory_attribution.project and context.factory_attribution.job:
+        forwarded[HTTP_BRIDGE_FACTORY_PROJECT_HEADER] = context.factory_attribution.project
+        forwarded[HTTP_BRIDGE_FACTORY_JOB_HEADER] = context.factory_attribution.job
     signature = _bridge_forward_signature(payload=payload, context=context)
     forwarded[HTTP_BRIDGE_SIGNATURE_HEADER] = signature
     if context.identity is not None:
@@ -211,6 +220,9 @@ def parse_forwarded_request(
         original_affinity_key=_optional_header(headers.get(HTTP_BRIDGE_AFFINITY_KEY_HEADER)),
         reservation=_reservation_from_headers(headers),
         identity=identity,
+        factory_attribution=validated_factory_attribution(
+            headers.get(HTTP_BRIDGE_FACTORY_PROJECT_HEADER, ""), headers.get(HTTP_BRIDGE_FACTORY_JOB_HEADER, "")
+        ),
     )
     signature = _optional_header(headers.get(HTTP_BRIDGE_SIGNATURE_HEADER))
     expected_signature = _bridge_forward_signature(payload=payload, context=context)
@@ -331,6 +343,10 @@ def _bridge_forward_signature(*, payload: ResponsesRequest, context: HTTPBridgeF
             body_digest,
         )
     )
+    if context.factory_attribution.project and context.factory_attribution.job:
+        signing_payload += "|" + json.dumps(
+            [context.factory_attribution.project, context.factory_attribution.job], separators=(",", ":")
+        )
     secret = get_or_create_key(get_settings().encryption_key_file)
     return hmac.new(secret, signing_payload.encode("utf-8"), hashlib.sha256).hexdigest()
 

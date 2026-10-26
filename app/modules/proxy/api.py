@@ -92,7 +92,7 @@ from app.core.resilience.overload import is_local_overload_error_code, merge_ret
 from app.core.runtime_logging import log_error_response
 from app.core.types import JsonValue
 from app.core.upload_admission import is_headless_claude_user_agent
-from app.core.utils.client_session import get_caller_seat, get_client_session_id
+from app.core.utils.client_session import FACTORY_ATTRIBUTION, get_caller_seat, get_client_session_id
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import (
@@ -1159,28 +1159,30 @@ async def internal_bridge_responses(
     if internal_error is not None or forwarded_request_context is None:
         assert internal_error is not None
         return _logged_error_json_response(request, internal_error.status_code, internal_error.payload)
+    forward = forwarded_request_context.context
+    FACTORY_ATTRIBUTION.set(forward.factory_attribution)
     api_key, auth_error = await _validate_internal_bridge_api_key(request)
     if auth_error is not None:
         return auth_error
-    skip_limit_enforcement = api_key is None or forwarded_request_context.context.reservation is not None
+    skip_limit_enforcement = api_key is None or forward.reservation is not None
     forwarded_headers = _strip_internal_bridge_headers(request.headers)
     return await _stream_responses(
         request,
         payload,
         context,
         api_key,
-        codex_session_affinity=forwarded_request_context.context.codex_session_affinity,
+        codex_session_affinity=forward.codex_session_affinity,
         openai_cache_affinity=True,
         prefer_http_bridge=True,
         skip_limit_enforcement=skip_limit_enforcement,
-        api_key_reservation_override=forwarded_request_context.context.reservation,
+        api_key_reservation_override=forward.reservation,
         include_rate_limit_headers=False,
         forwarded_request=True,
-        forwarded_identity=forwarded_request_context.context.identity,
+        forwarded_identity=forward.identity,
         forwarded_headers=forwarded_headers,
-        forwarded_downstream_turn_state=forwarded_request_context.context.downstream_turn_state,
-        forwarded_affinity_kind=forwarded_request_context.context.original_affinity_kind,
-        forwarded_affinity_key=forwarded_request_context.context.original_affinity_key,
+        forwarded_downstream_turn_state=forward.downstream_turn_state,
+        forwarded_affinity_kind=forward.original_affinity_kind,
+        forwarded_affinity_key=forward.original_affinity_key,
         enforce_openai_sdk_contract=False,
     )
 

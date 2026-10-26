@@ -41,6 +41,7 @@ from app.core.metrics.prometheus import (
 from app.core.openai.requests import (
     ResponsesRequest,
 )
+from app.core.utils.client_session import FACTORY_ATTRIBUTION
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.db.models import (
@@ -281,6 +282,7 @@ class _HTTPBridgeOwnerForwardingMixin:
         identity = get_request_identity()
         forward_context = HTTPBridgeForwardContext(
             origin_instance=current_instance,
+            factory_attribution=FACTORY_ATTRIBUTION.get(),
             identity=identity if identity is not None and identity.caller_user_source is not None else None,
             target_instance=owner_forward.owner_instance,
             reservation=api_key_reservation,

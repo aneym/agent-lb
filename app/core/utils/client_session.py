@@ -30,6 +30,10 @@ def factory_attribution_from_scope(scope: Scope) -> FactoryAttribution:
     headers = dict(scope.get("headers") or ())
     project = headers.get(b"x-factory-project", b"").decode("latin-1").strip()
     job = headers.get(b"x-factory-job", b"").decode("latin-1").strip()
+    return validated_factory_attribution(project, job)
+
+
+def validated_factory_attribution(project: str, job: str) -> FactoryAttribution:
     if not (_FACTORY_VALUE.fullmatch(project) and _FACTORY_VALUE.fullmatch(job)):
         return FactoryAttribution()
     from app.core.config.settings import get_settings
