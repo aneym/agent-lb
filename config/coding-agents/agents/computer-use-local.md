@@ -19,6 +19,7 @@ Have the launcher create a fresh job-key-bound contract file in the same Bash ca
 
 ```sh
 cd <assigned lane directory> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=computer-use-local-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file @contract <<'CONTRACT_EOF'
 PLACEMENT: studio-only

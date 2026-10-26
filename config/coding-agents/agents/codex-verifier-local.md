@@ -40,6 +40,7 @@ wrapper alive until its result arrives. Do not return a queued handle.
 
 ```sh
 cd <worktree> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=codex-verifier-local-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 job_args=()
 if [ -n "${AGENT_LB_DISPATCH:-}" ]; then

@@ -25,6 +25,7 @@ Launch (Bash `timeout: 600000`); the launcher creates the contract in this call:
 
 ```sh
 cd <worktree> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=codex-verifier-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 job_args=()
 if [ -n "${AGENT_LB_DISPATCH:-}" ]; then

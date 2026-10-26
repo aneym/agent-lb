@@ -323,3 +323,7 @@ Forwarding wrapper seats (host-relay, codex-*, gpt-*, verifier and the rest of R
 ## 2026-10-26: The routing table source is a directory
 
 The routing table source is `config/coding-agents/routing-table/`, one JSON file per responsibility (classes, explore, ladders, models, policy, pools, seats, standards). Each file holds a disjoint set of top-level keys. A reader that needs a few keys reads the file that defines them. Only `route` and `install-policy.py` compose the whole table. They read the files in name order and refuse a repeated key. The installed `~/.agent-lb/managed/coding-agents/routing-table.json` stays one generated file because agent-rails hooks, box sync and `table_sha256` depend on it, and its digest equals the source directory digest. `route` reads either form at a pinned rules commit. The policy mirror drops its old single-file copy.
+
+## 2026-10-26: Relay launchers set TMPPREFIX
+
+Box seats mount /tmp read-only and give a writable TMPDIR, but the seat Bash shell is zsh, which writes heredoc temp files under TMPPREFIX (default /tmp/zsh). Every relay launcher passes its contract by heredoc, so a forward from inside a box seat failed with "can't create temp file for here document" before the launcher ran. Each launcher block now sets `TMPPREFIX="${TMPDIR:-/tmp}/zsh"` after its `cd`. The `[claude-code:unrecognized_model]` line for `gpt-6.1-sol` is Claude Code's non-fatal stderr notice for a model outside its own catalog; the request still reaches the bridge and succeeds.

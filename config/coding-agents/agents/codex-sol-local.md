@@ -27,6 +27,7 @@ Have the launcher create a fresh job-key-bound contract file in the same Bash ca
 
 ```sh
 cd <working directory> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=codex-sol-local-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 task_class=research
 job_args=()

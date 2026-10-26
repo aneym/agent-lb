@@ -12,6 +12,7 @@ Set `SEAT_CLASS` to `mechanical` when the brief or its dispatch says mechanical 
 
 ```sh
 cd <directory> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=grok-implementer-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 SEAT_CLASS=<implement|mechanical> python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" --role "$HOME/.claude/agents/cursor-seat.md" -- seat-run --bg --name "$k" --timeout 3600 -- seat-exec --seat grok-implementer --prompt-file @contract <<'CONTRACT_EOF'
 <the brief, verbatim>

@@ -12,6 +12,7 @@ Run exactly this, as one Bash call with `timeout: 300000` (it returns at once):
 
 ```sh
 cd <directory> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=verifier-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 r=$(route resolve sonnet-latest --json) || exit $?
 chosen=verifier

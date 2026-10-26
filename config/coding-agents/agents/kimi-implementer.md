@@ -12,6 +12,7 @@ Run this as one Bash call, replacing the directory with the brief's worktree and
 
 ```sh
 cd <worktree> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=kimi-implementer-<kebab-topic>-$(date +%s)-$(openssl rand -hex 4)
 python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" --role "$HOME/.claude/agents/kimi-implementer-local.md" -- python3 "$HOME/.agents/policy/coding-agents/bin/kimi-seat" start --worktree "$PWD" --prompt-file @contract <<'CONTRACT_EOF'
 <the brief, verbatim>

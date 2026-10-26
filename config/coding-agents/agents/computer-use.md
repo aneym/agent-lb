@@ -12,6 +12,7 @@ Have the launcher create a fresh job-key-bound contract file in the same Bash ca
 
 ```sh
 cd <assigned lane directory> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=computer-use-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- seat-run --bg --name "$k" --timeout 4320 -- seat-exec --seat computer-use --effort medium --prompt-file @contract <<'CONTRACT_EOF'
 <contract text built below>

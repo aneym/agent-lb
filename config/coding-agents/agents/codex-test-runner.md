@@ -50,6 +50,7 @@ main checkout.
 
 ```sh
 cd "$RUN" || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=codex-test-runner-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- seat-run --bg --name "$k" --timeout 4320 -- seat-exec --seat codex-test-runner --effort medium --write --prompt-file @contract <<'CONTRACT_EOF'
 <contract text built below>

@@ -15,6 +15,7 @@ For a Mac-only brief, set `mac_only=yes`. Otherwise leave it at `no`. Run this a
 
 ```sh
 cd <directory> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=opus-seat-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 mac_only=no
 family=opus-latest

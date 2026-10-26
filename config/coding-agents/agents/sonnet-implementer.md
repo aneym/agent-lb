@@ -12,6 +12,7 @@ Run exactly this, as one Bash call with `timeout: 300000` (it returns at once):
 
 ```sh
 cd <directory> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=sonnet-implementer-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" --role "$HOME/.claude/agents/sonnet-implementer-local.md" -- seat-run --bg --name "$k" --timeout 3600 -- seat-exec --seat sonnet-implementer --prompt-file @contract <<'CONTRACT_EOF'
 <the brief, verbatim>

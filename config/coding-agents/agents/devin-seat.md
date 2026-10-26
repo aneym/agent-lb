@@ -15,6 +15,7 @@ Run exactly one command, from the directory the brief assigns:
 
 ```sh
 cd <dir> || exit $?
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"
 k=devin-seat-<kebab topic>-$(date +%s)-$(openssl rand -hex 4)
 python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k" -- python3 "$HOME/.agent-lb/bin/seat" run --vendor devin --model <alias> --class <class> --cwd "$PWD" --prompt-file @contract <<'CONTRACT_EOF'
 <contract text built below>
