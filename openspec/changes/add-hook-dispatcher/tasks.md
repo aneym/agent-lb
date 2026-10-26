@@ -62,3 +62,10 @@
 - [x] M2: wide-scan-guard.sh refuses when `cat` fails or reads nothing; cat is in its needed tools.
 - [x] M3: the dangerous-command guard refuses when jq or grep fails, on the script and on the legacy inline bytes.
 - [x] M4: folded entries naming different revs are refused with nothing written.
+
+## 10. Fix round (2026-10-26, Studio load pass)
+
+- [x] A refold writes the fresh registry: registry retirement starts from the pending registry instead of dropping it, so in-process pins follow the installed guards.
+- [x] kill-scope-guard.py runs only when its own early-return test (`kill|pkill|killall|pgrep`, or input it cannot read) says it can act; its prefilter is pinned to the installed bytes.
+- [x] sleep-loop-guard.py runs in process.
+- [x] Real Claude Code path on Studio: hook processes per Bash call about 60 per-hook, about 6 folded; each floor guard still blocks; a missing registry or dispatcher blocks.

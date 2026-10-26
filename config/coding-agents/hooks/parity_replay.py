@@ -82,7 +82,7 @@ SH_STUBS = {
 
 
 REPLAY_INPUT = {
-    "Bash": {"command": "echo launchctl railway link-cli; rm -rf /tmp/hook-dispatch-floor-replay"},
+    "Bash": {"command": "echo launchctl railway link-cli kill; rm -rf /tmp/hook-dispatch-floor-replay"},
     "Agent": {"subagent_type": "Explore", "prompt": "x", "description": "x"},
     "Workflow": {"script": "agent('x', {agentType: 'Explore'})"},
 }

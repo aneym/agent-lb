@@ -51,6 +51,19 @@ def pf_link_cli(payload):
     return command is None or "link-cli" in command
 
 
+KILL_WORDS = re.compile(r"\b(kill|pkill|killall|pgrep)\b")
+
+
+def pf_kill_scope(payload):
+    if not isinstance(payload, dict):
+        return True
+    tool_input = payload.get("tool_input")
+    if tool_input and not isinstance(tool_input, dict):
+        return True
+    command = (tool_input or {}).get("command") or ""
+    return not isinstance(command, str) or KILL_WORDS.search(command) is not None
+
+
 def pf_railway_custody(payload):
     if not isinstance(payload, dict):
         return True
@@ -305,8 +318,11 @@ SCRIPT_PREFILTERS = {
     "dangerous-command-guard.sh": ((), pf_dangerous),
     "no-chrome-guard.sh": ((), pf_no_chrome),
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
+    "kill-scope-guard.py": ((), pf_kill_scope),
     "route.sh": ("36bbdd44a69543ff7fe2865985443a2a09ab2f540d6bf09df25ec6c978e1d629", pf_jev_alert),
 }
+
+PYTHON_PREFILTERED = ("kill-scope-guard.py",)
 
 SCRIPT_NEEDS = {
     "wide-scan-guard.sh": (("cat",), ("jq",), ("python3",)),

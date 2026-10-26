@@ -56,6 +56,7 @@ try:
     from hook_prefilters import (  # type: ignore[missing-import]
         COMMAND_PREFILTERS,
         SCRIPT_NEEDS,
+        PYTHON_PREFILTERED,
         SCRIPT_PREFILTERS,
         escapes_in_input,
         never,
@@ -211,7 +212,7 @@ def plan_hook(hook, inproc_names, script_pins=None):
     plan.fallback_text = match.group("fb")
     script = expand_word(match.group("script"))
     name = os.path.basename(os.path.realpath(script))
-    if match.group("interp") is None:
+    if match.group("interp") is None or (name in PYTHON_PREFILTERED and python_like(match.group("interp"))):
         pinned = SCRIPT_PREFILTERS.get(name)
         if pinned is not None:
             sensitive = env_sensitive()

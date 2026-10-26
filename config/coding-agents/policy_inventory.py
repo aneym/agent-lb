@@ -118,4 +118,5 @@ DISPATCH_INPROC = (
     "idle-agents.py",
     "merge-gate-guard.py",
     "main-checkout-write-warn.py",
+    "sleep-loop-guard.py",
 )
