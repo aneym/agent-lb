@@ -496,11 +496,8 @@ def _websocket_event_error_code(event_type: str | None, payload: dict[str, JsonV
     error = _websocket_event_error_payload(event_type, payload)
     if not isinstance(error, dict):
         return None
-    code_value = error.get("code")
-    if not isinstance(code_value, str):
-        return None
-    stripped = code_value.strip()
-    return stripped or None
+    parsed = OpenAIEvent.model_validate({"type": "error", "error": error}).error
+    return parsed.code.strip() or None if parsed and parsed.code else None
 
 
 def _websocket_event_error_type(event_type: str | None, payload: dict[str, JsonValue] | None) -> str | None:

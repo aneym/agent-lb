@@ -261,7 +261,7 @@ def _normalize_error_code(code: str | None, error_type: str | None) -> str:
     if not value:
         return "upstream_error"
     normalized = value.lower()
-    if normalized == "turn_rate_limit_exceeded":
+    if normalized in {"turn_rate_limit_exceeded", "model_capacity_exceeded", "model_overloaded", "capacity_exceeded"}:
         return "rate_limit_exceeded"
     return normalized
 

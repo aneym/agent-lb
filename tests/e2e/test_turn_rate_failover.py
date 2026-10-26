@@ -17,7 +17,8 @@ from aiohttp import web
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_turn_rate_limit_fails_over_http_bridge(tmp_path):
+@pytest.mark.parametrize("capacity", [False, True, "message_only"])
+async def test_turn_rate_limit_fails_over_http_bridge(tmp_path, capacity):
     attempts: list[str] = []
 
     async def responses(request):
@@ -34,9 +35,19 @@ async def test_turn_rate_limit_fails_over_http_bridge(tmp_path):
                         "type": "error",
                         "status": 429,
                         "error": {
-                            "type": "rate_limit_error",
-                            "code": "turn_rate_limit_exceeded",
-                            "message": "Codex is at capacity",
+                            "type": "invalid_request_error" if capacity else "rate_limit_error",
+                            "code": (
+                                None
+                                if capacity == "message_only"
+                                else "model_capacity_exceeded"
+                                if capacity
+                                else "turn_rate_limit_exceeded"
+                            ),
+                            "message": (
+                                "Selected model is at capacity. Please try a different model."
+                                if capacity
+                                else "Codex is at capacity"
+                            ),
                         },
                     }
                 )
@@ -130,7 +141,7 @@ async def test_turn_rate_limit_fails_over_http_bridge(tmp_path):
         )
         try:
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=30) as client:
-                for _ in range(200):
+                for _ in range(1200):
                     if process.poll() is not None:
                         log.seek(0)
                         pytest.fail(f"isolated proxy exited: {log.read()}")

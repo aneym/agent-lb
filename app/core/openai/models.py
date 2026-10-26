@@ -10,6 +10,7 @@ from pydantic import (
     StrictStr,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from app.core.types import JsonValue
@@ -36,6 +37,18 @@ class OpenAIError(BaseModel):
     plan_type: StrictStr | None = None
     resets_at: StrictInt | StrictFloat | None = None
     resets_in_seconds: StrictInt | StrictFloat | None = None
+
+    @model_validator(mode="after")
+    def normalize_capacity(self) -> OpenAIError:
+        message = " ".join((self.message or "").lower().split())
+        if "selected model is at capacity" in message or self.code in {
+            "model_capacity_exceeded",
+            "model_overloaded",
+            "capacity_exceeded",
+        }:
+            self.code = "rate_limit_exceeded"
+            self.type = "rate_limit_error"
+        return self
 
 
 class OpenAIErrorEnvelope(BaseModel):
