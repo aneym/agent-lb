@@ -36,6 +36,6 @@ CONTRACT_EOF
 - The contract is the selected seat's local role (read as data) followed by the brief verbatim, in a fresh file; never a fixed or reused path, never inline.
 - Then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits (no call blocks past 270 s). It prints the seat's output tail and exit code; read `~/.agent-rails/jobs/seat-run/$k.log` when you need more.
 - After NAME-COLLISION or NO-SERVER, retry once through forward-contract.py with `--key <printed key> --contract <printed contract> --retry` and the same command and options (including `--name <printed key>`). Use only that launch’s printed path; never list or glob shared temporary files. Wait on the retry’s printed `name=`. After another refusal or SUBMIT-REFUSED, report blocked; never fall back to a local seat.
-- For placement without submitting, add `--dry-run` to seat-run inside the launcher command. For contract creation without invoking seat-run, add `--dry-run` to forward-contract.py.
+- For placement without submitting, replace `--bg` with `--dry-run` in the seat-run part of the launcher command (seat-run refuses both), then launch with `--key <printed key> --contract <printed contract>` and `--prompt-file @contract` unchanged. For contract creation without invoking seat-run, add `--dry-run` to forward-contract.py.
 
 Return the seat's final output as given, including its HANDOFF block, plus the key and the `seat-run:` placement lines. The driver owns acceptance.
