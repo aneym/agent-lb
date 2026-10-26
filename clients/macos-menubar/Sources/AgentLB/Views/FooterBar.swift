@@ -277,13 +277,11 @@ enum StatusIconRenderer {
     let state: IconState
     let outerBucket: Int?
     let innerBucket: Int?
-    let paceText: String?
   }
 
   @MainActor private static var cache: [Key: NSImage] = [:]
 
   private static let cellSize: CGFloat = 18
-  private static let paceGap: CGFloat = 3
 
 
 
@@ -294,20 +292,13 @@ enum StatusIconRenderer {
   static func icon(
     for state: IconState,
     primaryPercent: Double? = nil,
-    longWindowPercent: Double? = nil,
-    paceText: String? = nil
+    longWindowPercent: Double? = nil
   ) -> NSImage {
     let outerBucket = primaryPercent.map { Int(min(max($0, 0), 100) / 4) }
     let innerBucket = longWindowPercent.map { Int(min(max($0, 0), 100) / 4) }
-    let key = Key(
-      state: state, outerBucket: outerBucket, innerBucket: innerBucket,
-      paceText: paceText
-    )
+    let key = Key(state: state, outerBucket: outerBucket, innerBucket: innerBucket)
     if let cached = cache[key] { return cached }
-    let image = render(
-      state: state, outerBucket: outerBucket, innerBucket: innerBucket,
-      paceText: paceText
-    )
+    let image = render(state: state, outerBucket: outerBucket, innerBucket: innerBucket)
     cache[key] = image
     return image
   }
@@ -315,12 +306,9 @@ enum StatusIconRenderer {
   private static func render(
     state: IconState,
     outerBucket: Int?,
-    innerBucket: Int?,
-    paceText: String?
+    innerBucket: Int?
   ) -> NSImage {
-    let pace = paceText.map(paceGlyph)
-    let width = cellSize + (pace.map { paceGap + ceil($0.size().width) } ?? 0)
-    let image = NSImage(size: NSSize(width: width, height: cellSize), flipped: false) { _ in
+    let image = NSImage(size: NSSize(width: cellSize, height: cellSize), flipped: false) { _ in
 
 
       let rect = NSRect(x: 0, y: 0, width: cellSize, height: cellSize)
@@ -362,11 +350,6 @@ enum StatusIconRenderer {
         NSBezierPath(ovalIn: dot).fill()
       }
 
-
-      if let pace {
-        let size = pace.size()
-        pace.draw(at: NSPoint(x: cellSize + paceGap, y: (cellSize - size.height) / 2))
-      }
       return true
     }
 
@@ -408,16 +391,6 @@ enum StatusIconRenderer {
 
 
 
-
-  private static func paceGlyph(_ text: String) -> NSAttributedString {
-    NSAttributedString(
-      string: text,
-      attributes: [
-        .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
-        .foregroundColor: NSColor.black,
-      ]
-    )
-  }
 
   private static func drawSymbol(
     _ name: String,

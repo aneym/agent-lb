@@ -81,13 +81,6 @@ enum WeeklyPace {
     }
   }
 
-  static func statusText(pools entries: [PoolEntry], now: Date) -> String? {
-    rows(pools: entries, scope: .all, now: now)
-      .filter(\.isOver)
-      .max { ($0.multiple ?? 0) < ($1.multiple ?? 0) }?
-      .multipleText
-  }
-
   static func rows(pools entries: [PoolEntry], scope: ProviderScope, now: Date) -> [WeeklyPaceRow] {
     let byID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     return poolIDs(for: scope).compactMap { id in

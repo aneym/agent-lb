@@ -482,8 +482,7 @@ final class AppState {
     statusIcon = StatusIconRenderer.icon(
       for: state,
       primaryPercent: percents.primary,
-      longWindowPercent: percents.longWindow,
-      paceText: state == .down ? nil : WeeklyPace.statusText(pools: pools, now: .now)
+      longWindowPercent: percents.longWindow
     )
   }
 
