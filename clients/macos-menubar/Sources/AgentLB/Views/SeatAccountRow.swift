@@ -86,12 +86,8 @@ struct SeatAccountRow: View {
 
   static func todayText(_ seat: SeatAccount) -> String? {
     let runs = seat.todayRuns
-    guard runs > 0 || seat.today?.valueUsd != nil else { return nil }
-    var text = "\(runs) \(runs == 1 ? "run" : "runs")"
-    if let value = seat.today?.valueUsd {
-      text += " · " + (seat.today?.valueSource == "estimate" ? "~" : "") + Format.dollars(value)
-    }
-    return text
+    guard runs > 0 else { return nil }
+    return "\(runs) \(runs == 1 ? "run" : "runs")"
   }
 
   static func cells(for seat: SeatAccount) -> [RowWindow] {

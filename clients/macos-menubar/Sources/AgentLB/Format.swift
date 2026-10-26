@@ -60,33 +60,8 @@ enum Format {
 
 
 
-  static func usd(_ value: Double) -> String {
-    let formatter = NumberFormatter()
-    formatter.locale = Locale(identifier: "en_US")
-    formatter.numberStyle = .currency
-    formatter.currencyCode = "USD"
-    formatter.currencySymbol = "$"
-    if value < 0.01 {
-      formatter.minimumFractionDigits = 4
-      formatter.maximumFractionDigits = 4
-    } else {
-      formatter.minimumFractionDigits = 2
-      formatter.maximumFractionDigits = 2
-    }
-    return formatter.string(from: NSNumber(value: value)) ?? "$0.00"
-  }
 
 
-  static func dollars(_ value: Double) -> String {
-    let formatter = NumberFormatter()
-    formatter.locale = Locale(identifier: "en_US")
-    formatter.numberStyle = .currency
-    formatter.currencyCode = "USD"
-    formatter.currencySymbol = "$"
-    formatter.minimumFractionDigits = 2
-    formatter.maximumFractionDigits = 2
-    return formatter.string(from: NSNumber(value: value)) ?? "$0.00"
-  }
 
   static let eastern = TimeZone(identifier: "America/New_York")!
 
@@ -190,10 +165,4 @@ enum Format {
 
 
 
-  static func usdCompact(_ value: Double) -> String {
-    func one(_ scaled: Double) -> String { String(format: "%.1f", floor(scaled * 10) / 10) }
-    if value >= 1_000_000 { return "$" + one(value / 1_000_000) + "M" }
-    if value >= 1_000 { return "$" + one(value / 1_000) + "k" }
-    return "$" + String(format: "%.0f", value)
-  }
 }

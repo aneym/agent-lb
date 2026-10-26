@@ -124,20 +124,12 @@ struct SeatVendorSummary: Equatable, Sendable {
       } else {
         parts.append("tokens not reported")
       }
-      if let value = activity.valueUsd {
-        parts.append(Format.dollars(value) + (activity.valueSource == "estimate" ? " est" : ""))
-      } else {
-        parts.append("Not reported")
-      }
       lines.append(parts.joined(separator: " · "))
     } else {
       lines.append("7d · seat activity not reported")
     }
     if let requests = summary?.metrics?.requests7d, requests > 0 {
       var parts = ["proxy 7d", "\(Format.compact(requests)) req"]
-      if let cost = summary?.cost?.totalUsd7d, cost > 0 {
-        parts.append(Format.dollars(cost))
-      }
       if let rate = summary?.metrics?.errorRate7d {
         parts.append("err \(String(format: "%.2f", rate * 100))%")
       }

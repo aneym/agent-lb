@@ -223,16 +223,13 @@ struct PoolSection: View {
   private var metricsStrip: some View {
     VStack(alignment: .leading, spacing: PanelMetrics.metricsSpacing) {
       HStack(alignment: .firstTextBaseline, spacing: 14) {
-        if let cost = summary?.cost?.totalUsd7d {
-          Text("\(Format.dollars(cost)) · 7d")
-        }
         if let requests = summary?.metrics?.requests7d {
-          Text("\(Format.compact(requests)) req")
+          Text("\(Format.compact(requests)) req · 7d")
         }
         if let rate = summary?.metrics?.errorRate7d {
           Text("err \(String(format: "%.2f", rate * 100))%")
         }
-        if scope == .all && (summary?.cost?.totalUsd7d != nil || summary?.metrics?.requests7d != nil || summary?.metrics?.errorRate7d != nil) {
+        if scope == .all && (summary?.metrics?.requests7d != nil || summary?.metrics?.errorRate7d != nil) {
           Text("· all providers")
             .font(.system(size: 9))
             .foregroundStyle(.tertiary)
@@ -277,19 +274,15 @@ struct PoolSection: View {
       Text(stats.multipleLabel)
         .fontWeight(.semibold)
         .foregroundStyle(.primary)
-      Text("value · \(Format.usdCompact(stats.valueUSD)) vs \(Format.usdCompact(stats.weeklyPlanUSD))/wk")
+      Text("value · API price ÷ plan price, 7d")
     }
     .frame(height: PanelMetrics.metricsLine)
     .help(arbitrageTooltip(stats))
   }
 
   private func arbitrageTooltip(_ stats: ArbitrageStats) -> String {
-    let base = """
-    \(Format.usd(stats.valueUSD)) of API-equivalent token value in the weekly window \
-    vs \(Format.usd(stats.weeklyPlanUSD)) of subscriptions for the same 7 days \
-    (\(stats.planCount) plans, ~\(Format.usd(stats.monthlyPlanUSD))/mo). \
-    Ratio \(Format.multiple(stats.multiple)).
-    """
+    let base = "Tokens used in the weekly window, priced at API rates, "
+      + "divided by what the \(stats.planCount) subscriptions cost for the same 7 days."
     return stats.estimated
       ? base + " Plan prices estimated from plan type."
       : base
