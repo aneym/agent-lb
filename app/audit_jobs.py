@@ -5,6 +5,7 @@ import json
 import re
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from app.audit_tokens import connect, window
@@ -32,6 +33,7 @@ def add_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("jobs", help="Audit recorded tokens and list-price cost by job.")
     parser.set_defaults(window="7d")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--out", type=Path)
     parser.add_argument("--since")
     parser.add_argument("--until")
     parser.add_argument("--job", action="append", required=True)
@@ -118,7 +120,13 @@ def run(args):
             with connection.cursor() as cursor:
                 cursor.execute(QUERY, (since.replace(tzinfo=None), until.replace(tzinfo=None), args.job))
                 result = report(cursor, since, until, args.calls)
-        print(json.dumps(result))
+        output = json.dumps(result) + "\n"
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output)
+            print(f"Wrote jobs audit: {args.out}")
+        else:
+            print(output, end="")
     except Exception as exc:
         print(f"audit jobs: {type(exc).__name__}", file=sys.stderr)
         raise SystemExit(1) from None
