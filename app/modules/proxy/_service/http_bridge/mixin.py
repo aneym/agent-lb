@@ -17,7 +17,7 @@ from app.core.auth.refresh import (
 from app.core.clients.files import create_file as core_create_file  # noqa: F401
 from app.core.clients.files import finalize_file as core_finalize_file  # noqa: F401
 from app.core.clients.proxy import CodexControlResponse as CodexControlResponse
-from app.core.clients.proxy import (  # noqa: F401  # noqa: F401
+from app.core.clients.proxy import (  # noqa: F401
     ImageFetchSession,
     ProxyResponseError,
     UpstreamProxyRouteTrace,
@@ -1523,7 +1523,7 @@ class _HTTPBridgeMixin(
 
     async def close_all_http_bridge_sessions(self) -> None:
         async with self._http_bridge_lock:
-            sessions_to_close = list(self._http_bridge_sessions.values())
+            sessions = list(self._http_bridge_sessions.values())
             inflight_futures = list(self._http_bridge_inflight_sessions.values())
             self._http_bridge_sessions.clear()
             self._http_bridge_inflight_sessions.clear()
@@ -1543,8 +1543,7 @@ class _HTTPBridgeMixin(
             inflight_future.set_exception(shutdown_error)
             inflight_future.exception()
 
-        for session in sessions_to_close:
-            await self._close_http_bridge_session(session)
+        await asyncio.gather(*(self._close_http_bridge_session_bounded(s, reason="shutdown") for s in sessions))
         await self._drain_http_bridge_background_cleanup_tasks(reason="shutdown")
 
     async def mark_http_bridge_draining(self) -> None:
