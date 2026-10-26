@@ -15,6 +15,7 @@ from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
 from app.modules.usage.account_sync import UsageAccountSync
 from app.modules.usage.identity_mismatch import clear_identity_mismatch, record_identity_mismatch
+from app.modules.usage.rate_limit_backoff import mark_usage_refresh_auth_cooldown
 from app.modules.usage.refresh_ports import AccountRefreshResult, AccountsRepositoryWithStatusComparePort
 from app.modules.usage.refresh_rules import (
     ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
@@ -28,7 +29,6 @@ from app.modules.usage.refresh_rules import (
     fetch_usage_payload,
     list_additional_usage_quota_keys,
     logger,
-    mark_usage_refresh_auth_cooldown,
     merge_additional_rate_limits,
     minutes_of,
     payload_mismatches_account_slot,
@@ -67,7 +67,7 @@ class UsageAccountRefresh(UsageAccountSync):
                 await self._deactivate_for_client_error(account, exc)
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
             if exc.status_code != 401 or not self._auth_manager:
-                mark_usage_refresh_auth_cooldown(account.id, exc.status_code)
+                mark_usage_refresh_auth_cooldown(account.id, exc.status_code, exc.retry_after_seconds)
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
             try:
                 account = await self._auth_manager.ensure_fresh(account, force=True)
@@ -93,7 +93,7 @@ class UsageAccountRefresh(UsageAccountSync):
                 if account.provider != "kimi" and should_deactivate_for_usage_error(retry_exc):
                     await self._deactivate_for_client_error(account, retry_exc)
                 else:
-                    mark_usage_refresh_auth_cooldown(account.id, retry_exc.status_code)
+                    mark_usage_refresh_auth_cooldown(account.id, retry_exc.status_code, retry_exc.retry_after_seconds)
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
 
         if payload is None:

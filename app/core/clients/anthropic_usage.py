@@ -3,16 +3,25 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urljoin
 
 import aiohttp
+from aiohttp_retry import ExponentialRetry
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.core.clients.anthropic_resets import ResetStatus, _utc
 from app.core.clients.http import lease_retry_client
 from app.core.clients.rate_limit_resets import ResetCreditsError
-from app.core.clients.usage import UsageFetchError, _extract_error_code, _extract_error_message, _retry_options
+from app.core.clients.usage import (
+    RETRY_MAX_TIMEOUT,
+    RETRY_START_TIMEOUT,
+    RETRYABLE_STATUS,
+    UsageFetchError,
+    _extract_error_code,
+    _extract_error_message,
+)
 from app.core.config.settings import get_settings
 from app.core.usage.models import CreditsPayload, RateLimitPayload, UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
@@ -93,7 +102,15 @@ async def fetch_anthropic_usage(
     timeout = aiohttp.ClientTimeout(total=timeout_seconds or settings.usage_fetch_timeout_seconds)
     retries = max_retries if max_retries is not None else settings.usage_fetch_max_retries
     headers = _anthropic_usage_headers(access_token)
-    retry_options = _retry_options(retries + 1)
+    retry_options = ExponentialRetry(
+        attempts=retries + 1,
+        start_timeout=RETRY_START_TIMEOUT,
+        max_timeout=RETRY_MAX_TIMEOUT,
+        factor=2.0,
+        statuses=RETRYABLE_STATUS - {429},
+        exceptions={aiohttp.ClientError, asyncio.TimeoutError},
+        retry_all_server_errors=False,
+    )
 
     try:
         if client is not None:
@@ -231,6 +248,23 @@ async def _safe_json(resp: aiohttp.ClientResponse) -> dict[str, Any]:
     return data if isinstance(data, dict) else {"error": {"message": str(data)}}
 
 
+def _retry_after_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    text = value.strip()
+    try:
+        return max(0.0, float(text))
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
 async def _usage_payload_or_raise(resp: aiohttp.ClientResponse, *, account_id: str | None = None) -> UsagePayload:
     data = await _safe_json(resp)
     if resp.status >= 400:
@@ -244,7 +278,12 @@ async def _usage_payload_or_raise(resp: aiohttp.ClientResponse, *, account_id: s
             code,
             message,
         )
-        raise UsageFetchError(resp.status, message, code=code)
+        raise UsageFetchError(
+            resp.status,
+            message,
+            code=code,
+            retry_after_seconds=_retry_after_seconds(resp.headers.get("Retry-After")),
+        )
     try:
         payload = AnthropicOAuthUsagePayload.model_validate(data)
     except ValidationError as exc:

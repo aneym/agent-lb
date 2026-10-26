@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import logging
 import math
-import random
 import time
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
@@ -14,7 +13,6 @@ from app.core.balancer import PERMANENT_FAILURE_CODES, QUOTA_EXCEEDED_COOLDOWN_S
 from app.core.clients.anthropic_usage import fetch_anthropic_usage
 from app.core.clients.kimi_usage import fetch_kimi_usage
 from app.core.clients.usage import UsageFetchError, fetch_usage
-from app.core.config.settings import get_settings
 from app.core.plan_types import account_plan_matches_allowed, coerce_account_plan_type
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.upstream_proxy import ResolvedUpstreamRoute, resolve_upstream_route
@@ -40,18 +38,6 @@ class _MergedAdditionalWindow:
 
 
 last_successful_refresh: dict[str, datetime] = {}
-
-
-usage_refresh_auth_cooldowns: dict[str, float] = {}
-
-
-usage_refresh_rate_limit_strikes: dict[str, int] = {}
-
-
-_USAGE_REFRESH_RATE_LIMIT_BASE_SECONDS = 60.0
-
-
-_USAGE_REFRESH_RATE_LIMIT_MAX_SECONDS = 900.0
 
 
 USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, "kimi"})
@@ -509,50 +495,3 @@ async def _resolve_upstream_route_for_account(account: Account, *, operation: st
             operation=operation,
             scope="account",
         )
-
-
-def mark_usage_refresh_auth_cooldown(account_id: str, status_code: int) -> None:
-    if status_code == 429:
-        strikes = usage_refresh_rate_limit_strikes.get(account_id, 0) + 1
-        usage_refresh_rate_limit_strikes[account_id] = strikes
-        delay = min(
-            _USAGE_REFRESH_RATE_LIMIT_MAX_SECONDS,
-            _USAGE_REFRESH_RATE_LIMIT_BASE_SECONDS * (2 ** min(strikes - 1, 10)) * random.uniform(0.8, 1.2),
-        )
-        usage_refresh_auth_cooldowns[account_id] = time.monotonic() + delay
-        return
-    if status_code not in {401, 403}:
-        return
-    cooldown_seconds = max(0.0, float(get_settings().usage_refresh_auth_failure_cooldown_seconds))
-    if cooldown_seconds <= 0:
-        return
-    usage_refresh_auth_cooldowns[account_id] = time.monotonic() + cooldown_seconds
-
-
-def is_usage_refresh_in_cooldown(account_id: str) -> bool:
-    expires_at = usage_refresh_auth_cooldowns.get(account_id)
-    if expires_at is None:
-        return False
-    if expires_at > time.monotonic():
-        return True
-    usage_refresh_auth_cooldowns.pop(account_id, None)
-    return False
-
-
-def clear_usage_refresh_auth_cooldown(account_id: str) -> None:
-    usage_refresh_auth_cooldowns.pop(account_id, None)
-    usage_refresh_rate_limit_strikes.pop(account_id, None)
-
-
-def prune_usage_refresh_auth_cooldowns() -> None:
-    now = time.monotonic()
-    stale = [account_id for account_id, expires_at in usage_refresh_auth_cooldowns.items() if expires_at <= now]
-    for account_id in stale:
-        usage_refresh_auth_cooldowns.pop(account_id, None)
-
-
-def _clear_usage_refresh_state() -> None:
-    usage_refresh_auth_cooldowns.clear()
-    usage_refresh_rate_limit_strikes.clear()
-    last_successful_refresh.clear()
-    USAGE_REFRESH_SINGLEFLIGHT.clear()

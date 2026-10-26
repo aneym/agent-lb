@@ -10,18 +10,20 @@ from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.usage.account_usage_refresh import UsageAccountRefresh
 from app.modules.usage.refresh_ports import AccountRefreshResult
+from app.modules.usage.rate_limit_backoff import (
+    is_usage_refresh_in_cooldown,
+    prune_usage_refresh_auth_cooldowns,
+    record_usage_refresh_success,
+    usage_refresh_auth_cooldowns,
+    usage_refresh_rate_limit_strikes,
+)
 from app.modules.usage.refresh_rules import (
     USAGE_REFRESH_PROVIDERS,
     USAGE_REFRESH_SINGLEFLIGHT,
-    clear_usage_refresh_auth_cooldown,
-    is_usage_refresh_in_cooldown,
     last_successful_refresh,
     latest_usage_is_fresh,
     logger,
-    prune_usage_refresh_auth_cooldowns,
     quota_recovery_should_bypass_freshness,
-    usage_refresh_auth_cooldowns,
-    usage_refresh_rate_limit_strikes,
 )
 
 
@@ -82,7 +84,7 @@ class UsageUpdater(UsageAccountRefresh):
 
                 if result.fetch_succeeded:
                     last_successful_refresh[account.id] = now
-                    clear_usage_refresh_auth_cooldown(account.id)
+                    record_usage_refresh_success(account.id)
             except Exception as exc:
                 logger.warning(
                     "Usage refresh failed account_id=%s request_id=%s error=%s",
@@ -122,7 +124,7 @@ class UsageUpdater(UsageAccountRefresh):
             await self._sync_account_from_repo(account)
             if result.fetch_succeeded:
                 last_successful_refresh[account.id] = utcnow()
-                clear_usage_refresh_auth_cooldown(account.id)
+                record_usage_refresh_success(account.id)
             return result.usage_written
         except Exception as exc:
             logger.warning(
