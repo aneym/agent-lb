@@ -57,7 +57,7 @@ class External(object):
             argv, env = list(plan.exec_argv), dict(os.environ, **{RECEIPT_ENV: "1"})
         elif plan.kind == "rewriter":
             words = plan.command.split()
-            target = which(words[0])
+            target = plan.target or which(words[0])
             if target:
                 argv, executable = words, target
             env = rewriter_env()
@@ -172,7 +172,7 @@ def trace_hooks(plans, results):
 
 def exec_into(plan, payload, record):
     words = plan.command.split()
-    target = which(words[0])
+    target = plan.target or which(words[0])
     if not target:
         return
     fd = payload.open_fd()
@@ -219,7 +219,8 @@ def log_failures(event, key, plans, results):
                     "stderr": result.err.decode("utf-8", "replace").strip().splitlines()[-1:][0][:160]
                     if result.err.strip()
                     else "",
-                    "path": os.environ.get("PATH", "").split(os.pathsep)[:4],
+                    "path": os.environ.get("PATH", ""),
+                    "target": plan.target,
                 }
             )
     if not rows:

@@ -120,6 +120,7 @@ class Plan(object):
         "floor",
         "exec_argv",
         "opaque",
+        "target",
     )
 
     def __init__(self, hook):
@@ -138,6 +139,7 @@ class Plan(object):
         )
         self.exec_argv = None
         self.opaque = None
+        self.target = None
 
 
 def legacy_floor(command):
@@ -180,7 +182,8 @@ def plan_hook(hook, inproc_names, script_pins=None):
             return plan
         command = legacy_floor(command) or command
     if command.strip() in REWRITERS:
-        if not real_tool(command.split()[0]):
+        plan.target = real_tool(command.split()[0])
+        if not plan.target:
             plan.kind, plan.prefilter, plan.reason = "filtered", never, "rewriter is not on PATH, so it cannot rewrite"
             return plan
         plan.kind, plan.reason = "rewriter", "side-effect free rewriter"
