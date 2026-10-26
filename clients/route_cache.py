@@ -11,6 +11,9 @@ from typing import Any
 from route_storage import atomic_write  # pyrefly: ignore [missing-import]
 
 
+ERROR_BODY_CAP = 65536
+
+
 class HttpResult:
     def __init__(self, *, ok: bool, status: int | None, body: Any, error: str | None) -> None:
         self.ok = ok
@@ -80,7 +83,7 @@ def _live_attempt(method: str, path: str, *, payload: dict[str, Any] | None, tim
             status = response.status
     except urllib.error.HTTPError as error:
         try:
-            raw = error.read().decode("utf-8", errors="replace")
+            raw = error.read(ERROR_BODY_CAP).decode("utf-8", errors="replace")
         except (http.client.IncompleteRead, OSError) as read_error:
             return HttpResult(ok=False, status=error.code, body=None, error=f"truncated: {type(read_error).__name__}")
         body = _decode(raw)

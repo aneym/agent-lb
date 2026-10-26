@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from route_anthropic_models import family_alias, http_get, percent  # pyrefly: ignore [missing-import]
 from route_reserve_state import pool_for_model, utc_stamp  # pyrefly: ignore [missing-import]
@@ -37,26 +38,32 @@ ERROR_STATUSES = "&status=rate_limit&status=quota&status=error"
 def api_request_logs(since: datetime, *, cache: bool = False, errors_only: bool = False) -> list[dict[str, Any]]:
     if cache:
         since = since.replace(second=since.second // 5 * 5, microsecond=0)
-    from urllib.parse import urlencode
-
     until = datetime.now(timezone.utc)
     if cache:
         until = until.replace(second=until.second // 5 * 5, microsecond=0)
     query = urlencode({"includeTotal": "false", "since": utc_stamp(since), "until": until.isoformat()})
     query += ERROR_STATUSES if errors_only else ""
     rows: list[dict[str, Any]] = []
-    cursor = ""
+    position = ""
+    keyset: bool | None = None
     seen_cursors: set[str] = set()
     while len(rows) < REQUEST_LOG_CAP:
-        result = http_get(f"/api/request-logs?limit={REQUEST_LOG_PAGE}&{query}{cursor}")
+        result = http_get(f"/api/request-logs?limit={REQUEST_LOG_PAGE}&{query}{position}")
         body = result.body if result.ok and isinstance(result.body, dict) else {}
         page = [row for row in body.get("requests") or [] if isinstance(row, dict)]
         rows.extend(page)
+        if len(page) < REQUEST_LOG_PAGE:
+            break
         next_cursor = body.get("nextCursor")
-        if len(page) < REQUEST_LOG_PAGE or not isinstance(next_cursor, str) or next_cursor in seen_cursors:
+        if keyset is None:
+            keyset = isinstance(next_cursor, str)
+        if not keyset:
+            position = f"&offset={len(rows)}"
+            continue
+        if not isinstance(next_cursor, str) or next_cursor in seen_cursors:
             break
         seen_cursors.add(next_cursor)
-        cursor = "&" + urlencode({"cursor": next_cursor})
+        position = "&" + urlencode({"cursor": next_cursor})
     return rows[:REQUEST_LOG_CAP]
 
 
