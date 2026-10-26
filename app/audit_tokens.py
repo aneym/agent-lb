@@ -37,29 +37,36 @@ class AuditUsageError(ValueError):
     pass
 
 
-def window(args):
-    def parse(value):
+def timestamp(value, flag):
+    try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    except ValueError:
+        raise AuditUsageError(f"{flag} takes an ISO 8601 time, for example 2026-10-26T12:00:00Z") from None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
-    until = parse(args.until) if args.until else datetime.now(UTC)
-    match = re.fullmatch(r"([1-9]\d*)([hd])", args.window)
+
+def span(value):
+    match = re.fullmatch(r"([1-9]\d*)([hd])", value)
     if not match:
-        raise ValueError("--window must be a positive number followed by h or d")
+        return None
+    try:
+        return timedelta(hours=int(match[1]) * (24 if match[2] == "d" else 1))
+    except OverflowError:
+        raise AuditUsageError(f"offset {value} is too large") from None
+
+
+def window(args):
+    until = timestamp(args.until, "--until") if args.until else datetime.now(UTC)
+    width = span(args.window)
+    if width is None:
+        raise AuditUsageError("--window takes a positive <n>h or <n>d")
     if args.since:
-        relative = re.fullmatch(r"([1-9]\d*)([hd])", args.since)
-        try:
-            since = (
-                until - timedelta(hours=int(relative[1]) * (24 if relative[2] == "d" else 1))
-                if relative
-                else parse(args.since)
-            )
-        except (ValueError, OverflowError):
-            raise AuditUsageError("--since takes an ISO time or <n>h/<n>d") from None
+        offset = span(args.since)
+        since = until - offset if offset else timestamp(args.since, "--since")
     else:
-        since = until - timedelta(hours=int(match[1]) * (24 if match[2] == "d" else 1))
+        since = until - width
     if since >= until:
-        raise ValueError("--since must precede --until")
+        raise AuditUsageError("--since must precede --until")
     return since, until
 
 
@@ -222,7 +229,7 @@ def run(args):
         else:
             print(output, end="")
     except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+        print(f"usage: agent-lb audit tokens: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except Exception as exc:
         message = f"Token audit failed ({type(exc).__name__}); check local inputs and database availability."
