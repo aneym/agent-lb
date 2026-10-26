@@ -3,6 +3,28 @@ from __future__ import annotations
 import html
 
 
+def job_join(rows):
+    total = linked = 0.0
+    for row in rows:
+        try:
+            points = float(row.get("quota_points") or 0)
+        except (TypeError, ValueError):
+            continue
+        if points <= 0:
+            continue
+        total += points
+        job = row.get("job_id")
+        if isinstance(job, str) and job.strip():
+            linked += points
+    if total <= 0:
+        return {"points": 0.0, "joined": None, "unlinked_pct": None}
+    return {
+        "points": total,
+        "joined": linked / total,
+        "unlinked_pct": 100.0 * (total - linked) / total,
+    }
+
+
 def text_report(report):
     lines = [
         f"Window: {report['window']['since']} to {report['window']['until']}",
@@ -16,6 +38,15 @@ def text_report(report):
             "n/a (no priced spend)"
             if report["attribution"]["coverage"] is None
             else f"{report['attribution']['coverage']:.1%}; no lane ${report['attribution']['unattributed_usd']:,.2f}"
+        ),
+        "Job join: "
+        + (
+            "n/a (no quota points)"
+            if (report.get("attribution") or {}).get("jobs", {}).get("joined") is None
+            else (
+                f"{report['attribution']['jobs']['joined']:.1%} of points; "
+                f"unlinked {report['attribution']['jobs']['unlinked_pct']:.1f}%"
+            )
         ),
     ]
     for dim, values in report["by"].items():

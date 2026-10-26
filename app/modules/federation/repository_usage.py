@@ -177,6 +177,7 @@ class FederationUsageRepository:
                     caller_machine_source=row.caller_machine_source,
                     caller_seat=row.caller_seat,
                     room=row.room,
+                    job_id=row.job_id,
                     unified_5h_utilization=row.unified_5h_utilization,
                     unified_7d_utilization=row.unified_7d_utilization,
                     request_id=row.request_id,

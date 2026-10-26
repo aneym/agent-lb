@@ -109,7 +109,9 @@ def reset_room(token: Token[str | None]) -> None:
 _LANE_HEADER = b"x-agent-lb-lane"
 _LANE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:/-]{0,127}\Z")
 _JOB_HEADER = b"x-agent-lb-job"
-_JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:/-]{0,63}\Z")
+_JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:/-]{0,159}\Z")
+_JOB_PATH = re.compile(rb"/jobs/(seat-[A-Za-z0-9][A-Za-z0-9._-]{0,158})")
+_BODY_SCAN_LIMIT = 2_000_000
 _LANE: ContextVar[str | None] = ContextVar("lane", default=None)
 _JOB: ContextVar[str | None] = ContextVar("job", default=None)
 _SESSION_ATTRIBUTION: OrderedDict[str, tuple[str | None, str | None]] = OrderedDict()
@@ -122,6 +124,46 @@ def get_lane() -> str | None:
 
 def get_job_id() -> str | None:
     return _JOB.get()
+
+
+class JobBodyScan:
+    def __init__(self) -> None:
+        self.tail = b""
+        self.counts: dict[str, int] = {}
+        self.seen = 0
+
+    def feed(self, data: bytes) -> str | None:
+        if not data or self.seen >= _BODY_SCAN_LIMIT:
+            return self.best()
+        data = data[: _BODY_SCAN_LIMIT - self.seen]
+        self.seen += len(data)
+        blob = self.tail + data
+        for match in _JOB_PATH.finditer(blob):
+            job = match.group(1).decode("ascii", "ignore")
+            if _JOB_RE.fullmatch(job):
+                self.counts[job] = self.counts.get(job, 0) + 1
+        self.tail = blob[-180:]
+        return self.best()
+
+    def best(self) -> str | None:
+        if not self.counts:
+            return None
+        return max(self.counts, key=lambda name: (self.counts[name], len(name)))
+
+
+def remember_job(job: str | None) -> None:
+    if not job or not _JOB_RE.fullmatch(job):
+        return
+    current = _JOB.get()
+    if current is None or (job.startswith("seat-") and not str(current).startswith("seat-")):
+        _JOB.set(job)
+    session = get_client_session_id()
+    if not session:
+        return
+    lane, previous = _SESSION_ATTRIBUTION.pop(session, (None, None))
+    _SESSION_ATTRIBUTION[session] = (lane, _JOB.get() or previous or job)
+    while len(_SESSION_ATTRIBUTION) > _SESSION_ATTRIBUTION_LIMIT:
+        _SESSION_ATTRIBUTION.popitem(last=False)
 
 
 def set_attribution_from_scope(scope: Scope) -> tuple[Token[str | None], Token[str | None]]:

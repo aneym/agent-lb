@@ -42,7 +42,7 @@ class RequestLog(Base):
     caller_seat: Mapped[str | None] = mapped_column(String(64), nullable=True)
     room: Mapped[str | None] = mapped_column(String(128), nullable=True)
     lane: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    job_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     dispatch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     unified_5h_utilization: Mapped[float | None] = mapped_column(Float, nullable=True)
     unified_7d_utilization: Mapped[float | None] = mapped_column(Float, nullable=True)

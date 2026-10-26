@@ -8,6 +8,7 @@ from statistics import median
 
 from app.audit_allocation import allocate, empty, merge
 from app.audit_pricing import CLASSES, input_cost, price_row, token_classes
+from app.audit_token_output import job_join
 from app.audit_transcripts import classify, event_time, lane_source, safe_label
 
 DIMS = ("account", "purpose", "lane", "seat", "kind", "model", "effort", "provider", "useragent", "pane", "session")
@@ -374,7 +375,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
         "tree": finish_tree(tree),
         "sessions": sorted(sessions.values(), key=lambda v: v["usd"], reverse=True)[:top],
         "waste": wastes,
-        "attribution": attribution(lane_usd),
+        "attribution": attribution(lane_usd) | {"jobs": job_join(rows)},
         "waste_total_usd": sum(wastes[k]["usd"] for k in detectors if k != "first_write"),
         "cache_premium_by_day": dict(sorted(daily.items())),
         "priced_by": dict(priced),

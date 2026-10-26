@@ -9,6 +9,8 @@ from app.core.context_parts.capture import context_parts_state, wrap_receive
 from app.core.eval_guard import EvalGuardState, eval_guard_state, is_eval_proxy_path
 from app.core.exceptions import DashboardForbiddenError, ProxyAuthError
 from app.core.utils.client_session import (
+    JobBodyScan,
+    remember_job,
     reset_attribution,
     reset_caller_seat,
     reset_client_session_id,
@@ -20,6 +22,25 @@ from app.core.utils.client_session import (
     set_dispatch_id_from_scope,
     set_room_from_scope,
 )
+
+
+def _scan_job(receive: Receive) -> Receive:
+    scan = JobBodyScan()
+
+    async def inner() -> dict:
+        message = await receive()
+        payload = message.get("body") or b""
+        if isinstance(message.get("text"), str):
+            payload += message["text"].encode("utf-8", "ignore")
+        raw = message.get("bytes")
+        if isinstance(raw, (bytes, bytearray)):
+            payload += bytes(raw)
+        found = scan.feed(payload)
+        if found:
+            remember_job(found)
+        return message
+
+    return inner
 
 
 class ClientSessionMiddleware:
@@ -36,6 +57,7 @@ class ClientSessionMiddleware:
         seat = set_caller_seat_from_scope(scope)
         room = set_room_from_scope(scope)
         attribution = set_attribution_from_scope(scope)
+        receive = _scan_job(receive)
         receive, parts_token = wrap_receive(scope, receive)
         try:
             if not is_eval_proxy_path(scope["path"]):
