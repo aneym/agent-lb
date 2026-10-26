@@ -30,7 +30,7 @@ ORDER BY job_id, requested_at, id
 
 def add_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("jobs", help="Audit recorded tokens and list-price cost by job.")
-    parser.set_defaults(window="7d")
+    parser.add_argument("--window", default="7d")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--since")
     parser.add_argument("--until")
