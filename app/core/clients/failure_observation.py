@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
@@ -56,6 +55,4 @@ def failure_fields(
         status = observed.status
     if upstream_code is None and observed is not None:
         upstream_code = observed.error_class
-    if status is None and error_code and (match := re.fullmatch(r"upstream_([45]\d\d)", error_code)):
-        status = int(match[1])
     return status, upstream_code or error_code
