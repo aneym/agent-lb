@@ -4,7 +4,7 @@ Alex, 2026-10-16: "we should explore using haiku and sonnet more as well, and se
 
 Claude smarts drive at Opus medium. Sonnet and Haiku take only bounded decisions under an Opus contract. A class is set by its authority, not by its script name: verdict, architecture and spec authority stay on Opus. Sol, Muse and Grok do volume. Fable is off by default and runs only when a dispatch names it, logged; fable-orchestrator is no longer readmitted.
 
-`routing-table.json` is one versioned policy (`policy_rev`, `table_sha256`). `route dispatch <class> --job <id> --json` makes every decision and logs one row to `~/.claude/logs/route-decisions.jsonl` (schema `schemas/route-decision.v1.json`). `route policy snapshot --json` is the one source seat files, `effortLevel`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` and quota tab defaults are generated from.
+`routing-table/` is one versioned policy, one JSON file per responsibility (`policy_rev`, `table_sha256`). `route dispatch <class> --job <id> --json` makes every decision and logs one row to `~/.claude/logs/route-decisions.jsonl` (schema `schemas/route-decision.v1.json`). `route policy snapshot --json` is the one source seat files, `effortLevel`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` and quota tab defaults are generated from.
 
 Precedence, in order:
 1. **Explicit** seat, model or effort flags win and are logged as arm `explicit`.

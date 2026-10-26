@@ -123,7 +123,7 @@ Publish numbers only from runs you observed. The design:
 
 ## First milestones
 
-1. Orient: read this file, `clients/route`, `routing-table.json`, cli.py, the
+1. Orient: read this file, `clients/route`, `config/coding-agents/routing-table/`, cli.py, the
    keel decision docs. Write the plan and decisions below this section.
 2. One router: OF calls `route pick` / `route resolve`; delete `catalog.json` and
    `recommend_driver()`; one ledger (dispatch.jsonl).

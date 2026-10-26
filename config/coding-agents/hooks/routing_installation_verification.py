@@ -20,7 +20,10 @@ def verify_installation(
 ):
     settings = {}
     if not SOURCE_ONLY:
-        for name in ("claude-adapter.md", "routing-table.json"):
+        for name in (
+            "claude-adapter.md",
+            *(f"routing-table/{part.name}" for part in sorted((SOURCE / "routing-table").glob("*.json"))),
+        ):
             check(read(CANONICAL / name) == read(SOURCE / name) != "", f"{CANONICAL / name} matches {SOURCE / name}")
 
         for section in sorted((SOURCE / "routing").glob("*.md")):

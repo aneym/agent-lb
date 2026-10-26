@@ -1,0 +1,174 @@
+{
+  "spread": {
+    "note": "Q0 2026-10-26: conserve critical OpenAI and Anthropic pools; Grok first for bounded hands.",
+    "min_headroom_percent": 15,
+    "classes": {
+      "implement": [
+        {
+          "seat": "grok-implementer",
+          "model": "grok-latest",
+          "effort": "medium",
+          "pool": "grok",
+          "strength": 1.0
+        },
+        {
+          "seat": "gpt-implementer",
+          "model": "sol-latest",
+          "effort": "medium",
+          "pool": "openai-codex",
+          "strength": 0.15
+        }
+      ],
+      "mechanical": [
+        {
+          "seat": "grok-implementer",
+          "model": "grok-latest-low",
+          "effort": "low",
+          "pool": "grok",
+          "strength": 1.0
+        },
+        {
+          "seat": "gpt-implementer",
+          "model": "sol-latest",
+          "effort": "low",
+          "pool": "openai-codex",
+          "strength": 0.9
+        }
+      ],
+      "explore": [
+        {
+          "seat": "gpt-explorer",
+          "model": "sol-latest",
+          "effort": "low",
+          "pool": "openai-codex",
+          "strength": 0.9
+        }
+      ],
+      "research": [
+        {
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "effort": "high",
+          "pool": "openai-codex",
+          "strength": 1.0
+        }
+      ],
+      "computer": [
+        {
+          "seat": "computer-use",
+          "model": "sol-latest",
+          "effort": "medium",
+          "pool": "openai-codex",
+          "strength": 1.0
+        }
+      ]
+    }
+  },
+  "pools": {
+    "deepseek-flash": "deepseek-flash",
+    "opus-latest": "anthropic-general",
+    "sonnet-latest": "anthropic-general",
+    "haiku-latest": "anthropic-general",
+    "sol-latest": "openai-codex",
+    "luna-latest": "openai-codex",
+    "grok-latest": "grok",
+    "grok-latest-low": "grok",
+    "cursor-*": "cursor",
+    "kimi-*": "kimi",
+    "glm-*": "glm",
+    "composer-latest": "cursor",
+    "swe-latest-medium": "devin",
+    "swe-latest": "devin",
+    "swe-*": "devin"
+  },
+  "cli_pools": {
+    "cursor": {
+      "cycle_day_default": 1,
+      "accounts": {
+        "cursor-main": {
+          "plan": "cursor-ultra"
+        },
+        "cursor-gmail": {
+          "plan": "cursor-ultra"
+        }
+      },
+      "fast_multiplier": 3,
+      "pools": [
+        {
+          "id": "cursor-models",
+          "label": "Cursor models",
+          "models": [
+            "composer-*",
+            "grok-*",
+            "cursor-grok-*"
+          ],
+          "budget_usd_by_tier": {
+            "Ultra": 3123
+          }
+        },
+        {
+          "id": "cursor-other",
+          "label": "Other models",
+          "models": [
+            "*"
+          ],
+          "budget_usd_by_tier": {
+            "Ultra": 223,
+            "Pro+": 70,
+            "Pro": 20
+          }
+        }
+      ],
+      "prices_usd_per_mtok": [
+        [
+          "composer-2.5-fast",
+          [
+            3,
+            3,
+            15
+          ]
+        ],
+        [
+          "composer-*",
+          [
+            0.5,
+            0.2,
+            2.5
+          ]
+        ],
+        [
+          "grok-4.7-*",
+          [
+            2,
+            2,
+            6
+          ]
+        ],
+        [
+          "cursor-grok-*",
+          [
+            2,
+            2,
+            6
+          ]
+        ],
+        [
+          "claude-sonnet-5-5-*",
+          [
+            2,
+            0.2,
+            10
+          ]
+        ],
+        [
+          "*",
+          [
+            5,
+            5,
+            25
+          ]
+        ]
+      ]
+    }
+  }
+}

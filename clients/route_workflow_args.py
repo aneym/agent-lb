@@ -34,7 +34,16 @@ from route_reserve_state import (  # pyrefly: ignore [missing-import]
 )
 from route_resolve_one import workflow_opus_stage, workflow_seat, workflow_table  # pyrefly: ignore [missing-import]
 from route_seat_states import api_request_logs  # pyrefly: ignore [missing-import]
-from route_versioned_rules import EXIT_DEGRADED, EXIT_OK, EXIT_UNROUTABLE, ledger_path, load_table, now_iso, table_path  # pyrefly: ignore [missing-import]
+from route_versioned_rules import (  # pyrefly: ignore [missing-import]
+    EXIT_DEGRADED,
+    EXIT_OK,
+    EXIT_UNROUTABLE,
+    ledger_path,
+    load_table,
+    now_iso,
+    table_bytes,
+    table_path,
+)
 
 
 def pick_json(table: dict[str, Any], class_name: str, author_vendor: str | None) -> dict[str, Any]:
@@ -84,7 +93,7 @@ def command_workflow_args(args: argparse.Namespace) -> int:
     document: dict[str, Any] = {
         "generated_at": now_iso(),
         "ladder": table.get("ladder"),
-        "table_sha256": hashlib.sha256(table_path().read_bytes()).hexdigest() if table_path().is_file() else None,
+        "table_sha256": hashlib.sha256(table_bytes(table_path())).hexdigest() if table_path().exists() else None,
         "quota": quota,
         "policy_rev": table.get("policy_rev"),
         "stages": {},

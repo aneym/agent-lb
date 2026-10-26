@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,8 +25,11 @@ ALIASES = {
 def main() -> None:
     with tempfile.TemporaryDirectory(dir=ROOT) as directory:
         work = Path(directory)
-        table = json.loads((ROOT / "config/coding-agents/routing-table.json").read_text())
-        table_path = work / "table.json"
+        source = ROOT / "config/coding-agents/routing-table"
+        table_path = work / "table"
+        shutil.copytree(source, table_path)
+        table = json.loads((source / "explore.json").read_text())
+        aliases = json.loads((source / "models.json").read_text())["aliases"]
         (work / "api_models.json").write_text(json.dumps({"data": [{"id": "gpt-6.1-sol"}]}))
         env = dict(
             os.environ,
@@ -42,7 +46,7 @@ def main() -> None:
         ) -> tuple[int, dict]:
             nonlocal calls
             calls += 1
-            table_path.write_text(json.dumps(table))
+            (table_path / "explore.json").write_text(json.dumps(table))
             pools = {
                 "pools": [
                     {
@@ -104,7 +108,7 @@ def main() -> None:
             assert rc == 3, (tag, rc, row)
         for name in ("explore", "research"):
             for arm in table["explore"]["arms"][name]:
-                assert table["aliases"][arm["model"]]["vendor"] != "anthropic", arm
+                assert aliases[arm["model"]]["vendor"] != "anthropic", arm
         table["explore"]["enabled"] = True
         table["explore"]["max_share_per_class"] = 1
         table["explore"]["arms"]["implement"] = [

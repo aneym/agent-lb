@@ -344,10 +344,10 @@ def usage_since(record: dict[str, Any], since: datetime) -> dict[str, Any]:
 
 def cursor_pool(model: str) -> str:
     managed = Path.home() / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
-    repo = Path(__file__).resolve().parent.parent / "config" / "coding-agents" / "routing-table.json"
+    repo = Path(__file__).resolve().parent.parent / "config" / "coding-agents" / "routing-table"
     path = Path(os.environ.get("ROUTE_TABLE") or (managed if managed.is_file() else repo)).expanduser()
     try:
-        table = json.loads(path.read_text(encoding="utf-8"))
+        table = json.loads((path / "pools.json" if path.is_dir() else path).read_text(encoding="utf-8"))
         definitions = table["cli_pools"]["cursor"]["pools"]
         return next(
             pool["id"]

@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -13,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def main():
-    shipped = json.loads((ROOT / "config/coding-agents/routing-table.json").read_text())
+    source = ROOT / "config/coding-agents/routing-table"
+    shipped = json.loads((source / "explore.json").read_text())
     failures = 0
     with tempfile.TemporaryDirectory(prefix="explore-arm-check-") as directory:
         temp = Path(directory)
@@ -25,6 +27,7 @@ def main():
         ):
             env[name] = str(temp / name.lower())
         env["ROUTE_FIXTURE_DIR"] = directory
+        shutil.copytree(source, env["ROUTE_TABLE"])
         (temp / "v1_models.json").write_text(json.dumps({"data": [{"id": "gpt-6-sol"}]}))
         pools = temp / "pools.json"
         pools.write_text(json.dumps({"quotaMode": "anthropic", "reservations": {"live": []}, "pools": [
@@ -41,7 +44,7 @@ def main():
             if gate is not None:
                 next(arm for arm in table["explore"]["arms"]["mechanical"]
                      if arm["id"] == "luna-low")["gate"] = gate
-            Path(env["ROUTE_TABLE"]).write_text(json.dumps(table))
+            (Path(env["ROUTE_TABLE"]) / "explore.json").write_text(json.dumps(table))
             for name, rows in (("ROUTE_DECISIONS_LOG", decisions), ("ROUTE_OUTCOMES", outcomes)):
                 Path(env[name]).write_text("".join(json.dumps(row) + "\n" for row in rows))
             result = subprocess.run(

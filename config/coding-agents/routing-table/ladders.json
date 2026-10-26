@@ -1,0 +1,132 @@
+{
+  "ladder": "interim",
+  "ladders": {
+    "baseline": {},
+    "interim": {
+      "implement": [
+        {
+          "id": "grok-medium",
+          "seat": "grok-implementer",
+          "model": "grok-latest",
+          "effort": "medium",
+          "maker": "xai",
+          "pool": "grok"
+        },
+        {
+          "id": "swe2-high",
+          "seat": "devin-seat",
+          "model": "swe-latest",
+          "effort": "high",
+          "maker": "cognition",
+          "pool": "devin"
+        },
+        {
+          "id": "sol-medium",
+          "seat": "gpt-implementer",
+          "model": "sol-latest",
+          "effort": "medium",
+          "maker": "openai"
+        }
+      ],
+      "mechanical": [
+        {
+          "id": "grok-low",
+          "seat": "grok-implementer",
+          "model": "grok-latest-low",
+          "effort": "low",
+          "maker": "xai",
+          "pool": "grok"
+        },
+        {
+          "id": "kimi-low",
+          "seat": "kimi-implementer-local",
+          "model": "k3.1-pro",
+          "effort": "low",
+          "maker": "kimi",
+          "pool": "kimi"
+        },
+        {
+          "id": "swe2-medium",
+          "seat": "devin-seat",
+          "model": "swe-latest-medium",
+          "effort": "medium",
+          "maker": "cognition",
+          "pool": "devin"
+        },
+        {
+          "id": "sol-low",
+          "seat": "gpt-implementer",
+          "model": "sol-latest",
+          "effort": "low",
+          "maker": "openai"
+        }
+      ],
+      "explore": [
+        {
+          "id": "sol-low",
+          "seat": "gpt-explorer",
+          "model": "sol-latest",
+          "effort": "low",
+          "maker": "openai"
+        },
+        {
+          "id": "swe2-medium",
+          "seat": "devin-seat",
+          "model": "swe-latest-medium",
+          "effort": "medium",
+          "maker": "cognition",
+          "pool": "devin",
+          "read_only": true
+        }
+      ],
+      "verify": {
+        "by_author_maker": {
+          "openai": [
+            "@sol-high"
+          ],
+          "xai": [
+            "@sol-high"
+          ],
+          "cursor": [
+            "@sol-high"
+          ],
+          "cognition": [
+            "@sol-high"
+          ],
+          "anthropic": [
+            "@sol-high"
+          ],
+          "glm": [
+            "@sol-high"
+          ],
+          "kimi": [
+            "@sol-high"
+          ]
+        },
+        "rungs": {
+          "sol-high": {
+            "seat": "codex-verifier",
+            "model": "sol-latest",
+            "effort": "high",
+            "maker": "openai"
+          },
+          "sol-xhigh": {
+            "seat": "codex-verifier",
+            "model": "sol-latest",
+            "effort": "xhigh",
+            "maker": "openai"
+          }
+        }
+      },
+      "research": [
+        {
+          "id": "sol-research",
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "effort": "high",
+          "maker": "openai"
+        }
+      ]
+    }
+  }
+}

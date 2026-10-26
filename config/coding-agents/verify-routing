@@ -28,6 +28,7 @@ MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A
 GPT_ID = re.compile(r"^gpt-(\d+(?:\.\d+)*)-([a-z]+)$")
 from hooks.routing_factory_verification import verify_factory
 from hooks.routing_installation_verification import verify_installation
+from policy_files import source_routing_table  # type: ignore[missing-import]
 from policy_verification import MANAGED  # type: ignore[missing-import]
 
 failures: list[str] = []
@@ -57,7 +58,7 @@ def readmitted(seat: str) -> tuple:
     if seat == "fable-orchestrator":
         return ("claude-fable-*", "fable-latest*")
     try:
-        entry = (json.loads(read(SOURCE / "routing-table.json") or "{}").get("readmitted") or {}).get(seat)
+        entry = (json.loads(read(SOURCE / "routing-table" / "models.json") or "{}").get("readmitted") or {}).get(seat)
     except (json.JSONDecodeError, AttributeError):
         return ()
     if not isinstance(entry, dict):
@@ -86,7 +87,7 @@ check(
 
 
 try:
-    source_table = json.loads(read(SOURCE / "routing-table.json") or "{}")
+    source_table = source_routing_table(SOURCE / "routing-table")
 except json.JSONDecodeError:
     source_table = {}
     check(False, "routing tables are valid JSON")
@@ -195,7 +196,7 @@ if not SOURCE_ONLY:
             text=True,
             capture_output=True,
             timeout=30,
-            env=os.environ | {"ROUTE_TABLE": str(SOURCE / "routing-table.json")},
+            env=os.environ | {"ROUTE_TABLE": str(SOURCE / "routing-table")},
         )
         resolution = {row["alias"]: row["model"] for row in json.loads(served_out.stdout)["aliases"]}
     except Exception:
@@ -258,7 +259,7 @@ if not SOURCE_ONLY:
             for alias in sorted({"sol-latest"} | openai_aliases(source_table)):
                 result = subprocess.run(
                     [sys.executable, str(route), "resolve", alias], text=True, capture_output=True,
-                    timeout=60, env=os.environ | {"ROUTE_TABLE": str(SOURCE / "routing-table.json")},
+                    timeout=60, env=os.environ | {"ROUTE_TABLE": str(SOURCE / "routing-table")},
                 )
                 model = result.stdout.strip()
                 check(result.returncode == 0 and has_price(model),
@@ -315,7 +316,7 @@ table_models += list(source_table.get("pools", {}))
 for model in table_models:
     reason = stale_reason(model)
     if reason:
-        stale.append(f"routing-table.json: {model} ({reason})")
+        stale.append(f"routing-table: {model} ({reason})")
 env_slots = settings.get("env", {}) if isinstance(settings.get("env"), dict) else {}
 for key, value in env_slots.items():
     if key.startswith("ANTHROPIC_DEFAULT_") and isinstance(value, str) and stale_reason(value):

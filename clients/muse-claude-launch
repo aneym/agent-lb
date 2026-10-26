@@ -12,12 +12,12 @@ from urllib.parse import urlsplit
 
 def resolve_model() -> str:
     managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
-    bundled = Path(__file__).resolve().parents[1] / "config/coding-agents/routing-table.json"
+    bundled = Path(__file__).resolve().parents[1] / "config/coding-agents/routing-table"
     table = Path(os.environ["ROUTE_TABLE"]).expanduser() if os.environ.get("ROUTE_TABLE") else (
         managed if managed.is_file() else bundled
     )
     try:
-        model = json.loads(table.read_text())["aliases"]["muse-latest"]["pinned"]
+        model = json.loads((table / "models.json" if table.is_dir() else table).read_text())["aliases"]["muse-latest"]["pinned"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise SystemExit("Muse cannot resolve muse-latest from routing table") from exc
     if not isinstance(model, str) or not model.startswith("muse-") or model.endswith("-contributor"):

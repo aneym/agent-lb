@@ -107,7 +107,7 @@ def env_path(name: str, default: Path) -> Path:
 
 def table_path() -> Path:
     managed = Path.home() / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
-    repo = Path(__file__).resolve().parent.parent / "config" / "coding-agents" / "routing-table.json"
+    repo = Path(__file__).resolve().parent.parent / "config" / "coding-agents" / "routing-table"
     configured = (os.environ.get("ROUTE_TABLE") or "").strip()
     if configured:
         return Path(configured).expanduser()
@@ -151,13 +151,29 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def compose_table(parts: list[tuple[str, bytes]]) -> bytes:
+    table: dict[str, Any] = {}
+    for name, data in sorted(parts):
+        part = json.loads(data)
+        if not isinstance(part, dict) or table.keys() & part.keys():
+            raise ValueError(f"routing table part {name} is not an object or repeats a key")
+        table.update(part)
+    return (json.dumps(table, indent=2) + "\n").encode()
+
+
+def table_bytes(path: Path) -> bytes:
+    if not path.is_dir():
+        return path.read_bytes()
+    return compose_table([(part.name, part.read_bytes()) for part in path.glob("*.json")])
+
+
 def load_table(*, apply_default: bool = True) -> dict[str, Any]:
     path = table_path()
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(table_bytes(path))
     except FileNotFoundError:
         fail(f"routing table not found at {path}")
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, ValueError) as error:
         fail(f"routing table at {path} is unreadable: {error}")
     if not isinstance(value, dict):  # pyrefly: ignore [unbound-name]
         fail(f"routing table at {path} is not an object")
@@ -229,6 +245,24 @@ def applied_record(path: Path) -> dict[str, Any] | None:
     )
 
 
+def commit_table_bytes(clone: Path, commit: str) -> bytes | None:
+    single = policy_git(clone, "show", f"{commit}:config/coding-agents/routing-table.json", binary=True)
+    if single is not None:
+        return single.stdout
+    listing = policy_git(clone, "ls-tree", "--name-only", f"{commit}:config/coding-agents/routing-table")
+    names = [name for name in listing.stdout.split() if name.endswith(".json")] if listing else []
+    parts = [
+        (name, policy_git(clone, "show", f"{commit}:config/coding-agents/routing-table/{name}", binary=True))
+        for name in names
+    ]
+    if not parts or any(result is None for _, result in parts):
+        return None
+    try:
+        return compose_table([(name, result.stdout) for name, result in parts])  # pyrefly: ignore [missing-attribute]
+    except ValueError:
+        return None
+
+
 def versioned_rules(pin: str | None, as_json: bool) -> tuple[dict[str, Any], dict[str, Any], Path]:
     clone, applied_path, installed_path = policy_paths()
     git_ready = clone.is_dir() and policy_git(clone, "rev-parse", "--git-dir") is not None
@@ -254,10 +288,9 @@ def versioned_rules(pin: str | None, as_json: bool) -> tuple[dict[str, Any], dic
                 source = "applied"
                 commit = revision.stdout.strip()
     if commit:
-        result = policy_git(clone, "show", f"{commit}:config/coding-agents/routing-table.json", binary=True)
-        if result is None:
-            setup_error("unknown_rules", f"routing table missing at commit {commit}", as_json)
-        data = result.stdout  # pyrefly: ignore [missing-attribute]
+        data = commit_table_bytes(clone, commit) or setup_error(
+            "unknown_rules", f"routing table missing at commit {commit}", as_json
+        )
     else:
         try:
             data = installed_path.read_bytes()

@@ -27,9 +27,9 @@ def invoke(route: Path, arguments: list[str]) -> tuple[subprocess.CompletedProce
 def standards(route: Path) -> list[str]:
     configured = os.environ.get("ROUTE_TABLE", "").strip()
     managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
-    repo = route.parent.parent / "config/coding-agents/routing-table.json"
+    repo = route.parent.parent / "config/coding-agents/routing-table"
     table_path = Path(configured).expanduser() if configured else managed if managed.is_file() else repo
-    table = json.loads(table_path.read_text())
+    table = json.loads((table_path / "standards.json" if table_path.is_dir() else table_path).read_text())
     quota_path = table_path.with_name("quota-swap.json")
     if not quota_path.is_file():
         quota_path = repo.with_name("quota-swap.json")

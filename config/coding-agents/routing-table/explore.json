@@ -1,0 +1,132 @@
+{
+  "explore": {
+    "enabled": false,
+    "max_share_per_class": 0.4,
+    "daily_cap_per_arm": 40,
+    "claude_daily_cap_jobs": 60,
+    "stop_after_nonaccepts": 3,
+    "min_n_per_arm": 40,
+    "never_classes": [
+      "plan",
+      "review",
+      "spec",
+      "contract",
+      "verdict",
+      "judge",
+      "design",
+      "audit",
+      "ui_critical",
+      "trust",
+      "money_path",
+      "fix",
+      "story"
+    ],
+    "arms": {
+      "implement": [
+        {
+          "id": "muse",
+          "seat": "muse-seat",
+          "model": "muse-latest",
+          "effort": "medium",
+          "share": 0.1,
+          "pool": "muse"
+        },
+        {
+          "id": "grok",
+          "seat": "grok-implementer",
+          "model": "grok-latest",
+          "effort": "medium",
+          "share": 0.1,
+          "pool": "grok",
+          "gate": {
+            "open": true
+          }
+        },
+        {
+          "id": "pi-durable",
+          "seat": "pi-durable-seat",
+          "model": "sol-latest",
+          "effort": "medium",
+          "share": 0.05,
+          "pool": "openai-codex",
+          "gate": {
+            "open": false,
+            "until": "pi-durable e2e G3 + personal-evals arm pass"
+          }
+        }
+      ],
+      "mechanical": [
+        {
+          "id": "muse",
+          "seat": "muse-seat",
+          "model": "muse-latest",
+          "effort": "low",
+          "share": 0.1,
+          "pool": "muse"
+        },
+        {
+          "id": "grok-low",
+          "seat": "grok-implementer",
+          "model": "grok-latest-low",
+          "effort": "low",
+          "share": 0.2,
+          "pool": "grok"
+        },
+        {
+          "id": "luna-low",
+          "seat": "gpt-implementer",
+          "model": "luna-latest",
+          "effort": "low",
+          "share": 0.1,
+          "pool": "openai-codex",
+          "gate": {
+            "open": true
+          }
+        }
+      ],
+      "explore": [],
+      "decide": [
+        {
+          "id": "haiku-decide",
+          "seat": "decider",
+          "model": "haiku-latest",
+          "effort": "high",
+          "share": 0.1,
+          "pool": "anthropic-general"
+        }
+      ],
+      "digest": [
+        {
+          "id": "haiku-digest",
+          "seat": "digest",
+          "model": "haiku-latest",
+          "effort": "medium",
+          "share": 0.2,
+          "pool": "anthropic-general"
+        }
+      ],
+      "relay": [
+        {
+          "id": "haiku-relay",
+          "seat": "host-relay",
+          "model": "haiku-latest",
+          "effort": "low",
+          "share": 0.3,
+          "pool": "anthropic-general"
+        }
+      ],
+      "verify": [
+        {
+          "id": "sol-xhigh",
+          "seat": "codex-verifier",
+          "model": "sol-latest",
+          "effort": "xhigh",
+          "share": 0.1,
+          "pool": "openai-codex",
+          "author_vendor": "anthropic"
+        }
+      ],
+      "research": []
+    }
+  }
+}

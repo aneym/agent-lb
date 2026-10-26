@@ -14,7 +14,15 @@ from route_reserve_state import apply_overrides, pool_for_model, pools_by_id, re
 from route_resolve_one import ServedModels, decisions_path, resolve_alias, workflow_seat  # pyrefly: ignore [missing-import]
 from route_seat import fetch_pools, fetch_stand_ins, print_stand_in  # pyrefly: ignore [missing-import]
 from route_seat_states import pinned_model  # pyrefly: ignore [missing-import]
-from route_versioned_rules import EXIT_OK, READ_TIMEOUT_SECONDS, env_path, parse_ts, pool_exhausted, table_path  # pyrefly: ignore [missing-import]
+from route_versioned_rules import (  # pyrefly: ignore [missing-import]
+    EXIT_OK,
+    READ_TIMEOUT_SECONDS,
+    env_path,
+    parse_ts,
+    pool_exhausted,
+    table_bytes,
+    table_path,
+)
 
 
 def class_candidates(
@@ -294,7 +302,7 @@ def read_decisions() -> list[dict[str, Any]]:
 
 def table_digest() -> str:
     path = table_path()
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else hashlib.sha256(b"").hexdigest()
+    return hashlib.sha256(table_bytes(path) if path.exists() else b"").hexdigest()
 
 
 def alias_vendor(table: dict[str, Any], alias: str | None) -> str | None:

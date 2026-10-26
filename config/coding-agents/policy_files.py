@@ -17,8 +17,18 @@ from policy_hosts import policy_box_hosts  # type: ignore[missing-import]
 from policy_layout import POLICY_DIR, ROUTE_FILES, ROUTING_TABLE  # type: ignore[missing-import]
 
 
+def source_routing_table(directory: Path) -> dict:
+    table: dict = {}
+    for part in sorted(directory.glob("*.json")):
+        value = json.loads(part.read_text())
+        if not isinstance(value, dict) or table.keys() & value.keys():
+            raise SystemExit(f"error: {part} is not an object or repeats a key")
+        table.update(value)
+    return table
+
+
 def desired_routing_table(source_path: Path, live_path: Path) -> str:
-    table = json.loads(source_path.read_text())
+    table = source_routing_table(source_path)
     live_text = read_text(live_path)
     if live_text:
         try:

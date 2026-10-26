@@ -16,7 +16,7 @@ def main() -> None:
     if not model:
         source = Path(__file__).resolve()
         route_env = dict(os.environ)
-        route_env.setdefault("ROUTE_TABLE", str(source.parents[1] / "config/coding-agents/routing-table.json"))
+        route_env.setdefault("ROUTE_TABLE", str(source.parents[1] / "config/coding-agents/routing-table"))
         resolved = subprocess.run(
             [str(source.with_name("route")), "resolve", "kimi-latest", "--json"],
             env=route_env,

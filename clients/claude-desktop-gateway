@@ -131,7 +131,7 @@ def main() -> None:
     if args.host not in ("127.0.0.1", "::1", "localhost"):
         parser.error("gateway must listen on loopback; use an authenticated transport for remote access")
     env = os.environ.copy()
-    env.setdefault("ROUTE_TABLE", str(Path(__file__).resolve().parents[1] / "config/coding-agents/routing-table.json"))
+    env.setdefault("ROUTE_TABLE", str(Path(__file__).resolve().parents[1] / "config/coding-agents/routing-table"))
     result = subprocess.run([args.route, "workflow-args"], env=env, capture_output=True, text=True, timeout=60)
     workflow = json.loads(result.stdout)
     parent = workflow["stages"]["orchestrator"]

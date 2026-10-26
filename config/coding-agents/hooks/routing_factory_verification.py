@@ -332,9 +332,8 @@ def verify_factory(SOURCE, source_table, classes, check, read, frontmatter_model
             + [rf"(?<![A-Za-z0-9_]){re.escape(literal)}(?![A-Za-z0-9_])" for literal in private_literals]
         )
     )
-    public_files = [
-        SOURCE / name for name in ("ROUTING.md", "claude-adapter.md", "routing-table.json", "install-policy.py")
-    ]
+    public_files = [SOURCE / name for name in ("ROUTING.md", "claude-adapter.md", "install-policy.py")]
+    public_files += sorted((SOURCE / "routing-table").glob("*.json"))
     public_files += sorted((SOURCE / "agents").glob("*.md")) + sorted((SOURCE / "hooks").glob("*.py"))
     private_lines = [
         f"{path.name}:{index}"
