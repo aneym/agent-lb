@@ -25,7 +25,7 @@ def hook_targets(value: Any, home: Path) -> Iterator[Path]:
             yield from hook_targets(child, home)
 
 
-def validate_hook_changes(home: Path, changes: dict[Path, str | None], settings: Any) -> None:
+def validate_hook_changes(home: Path, changes: dict[Path, str | None], settings: Any, kept: Any = ()) -> None:
     registries = home / ".claude/hooks/dispatch"
     documents = {home / ".claude/settings.json": settings}
     paths = set(registries.glob("registry*.json"))
@@ -44,7 +44,7 @@ def validate_hook_changes(home: Path, changes: dict[Path, str | None], settings:
         for target in hook_targets(value, home):
             if target in changes and changes[target] is None:
                 problems.add(f"{document.name} references hook scheduled for removal: {target}")
-            elif document == settings_path and target not in changes and not target.is_file():
+            elif document == settings_path and target not in changes and target not in kept and not target.is_file():
                 problems.add(f"{document.name} references missing hook: {target}")
     if problems:
         raise SystemExit("error: unsafe hook installation; nothing written:\n" + "\n".join(sorted(problems)))

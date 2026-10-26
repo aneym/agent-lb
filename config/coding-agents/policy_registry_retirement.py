@@ -88,7 +88,7 @@ def retirable(path: Path, name: str) -> bool:
     try:
         content = path.read_bytes()
     except OSError:
-        return path.is_symlink()
+        return False
     marker = f"agent-lb:{Path(name).stem}:v1".encode()
     return marker in content or hashlib.sha256(content).hexdigest() in SHIPPED_SHA256.get(name, ())
 
@@ -100,6 +100,14 @@ def kept_retired_hooks(home: Path) -> dict[Path, str]:
             if (path.is_file() or path.is_symlink()) and not retirable(path, name):
                 kept[path] = name
     return kept
+
+
+def kept_warning(path: Path) -> str:
+    try:
+        path.read_bytes()
+    except OSError as exc:
+        return f"WARNING kept {path}: retired hook name, but ownership cannot be checked ({type(exc).__name__}); not ours to delete"
+    return f"WARNING kept {path}: retired hook name, but no agent-lb marker and no shipped hash; not ours to delete"
 
 
 def without_retired_hooks(value, home, retired):
