@@ -31,16 +31,16 @@ WARNED = []
 def refused_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
-    return path in ('/', home, '/Users/aneyman') or re.fullmatch(r'/Volumes/[^/]+', path) is not None
+    return path in ('/', home, '/Users', '/Volumes', '/Users/aneyman') or re.fullmatch(r'/Volumes/[^/]+', path) is not None
 def wide_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
-    return (path in ('/', home, '/Users/aneyman', '/System', '/Library', '/home', '/root',
-                     '/Volumes/StudioExt/repos', home + '/repos')
+    return (path in ('/', home, '/Users', '/Users/aneyman', '/System', '/Library', '/home', '/root',
+                     '/Volumes', '/Volumes/StudioExt/repos', home + '/repos')
             or re.fullmatch(r'/Volumes/[^/]+|/home/[^/]+(?:/repos)?', path) is not None
             or path.endswith('/.agent-rails') or path.endswith('/.agent-rails/lanes'))
 def search_paths(name, args):
-    paths, pattern, recursive = [], name == 'find' or (name == 'rg' and '--files' in args), name in ('rg', 'find', 'fd')
+    paths, pattern, recursive = [], name == 'find' or (name == 'rg' and '--files' in args), name in ('rg', 'find', 'fd', 'ack', 'ag', 'ugrep')
     word = None
     i, options = 0, True
     short_values = 'efmABCdD' if name in ('grep', 'egrep', 'fgrep', 'ggrep') else 'efgtdmABCj'
@@ -95,6 +95,12 @@ def resolve_path(path, cwd):
     if path.startswith('~'):
         home, _, rest = path.partition('/')
         path = (os.path.expanduser('~') if home == '~' else '/home/' + home[1:]) + '/' + rest
+    if path in ('/*', '~/*'):
+        path = '/' if path == '/*' else os.path.expanduser('~')
+    elif path.startswith('//'):
+        path = '/' + path.lstrip('/')
+    if path == os.path.expanduser('~') + '/*':
+        path = os.path.expanduser('~')
     return posixpath.normpath(path if path.startswith('/') else posixpath.join(cwd, path))
 wrapper_values = {
     'env': ('uC', ('--unset', '--chdir', '--split-string')),
@@ -216,10 +222,12 @@ def unsafe(args, depth, cwd):
     if name == 'git' and 'grep' in args and '--no-index' in args:
         name, args = 'rg', ['rg'] + args[args.index('grep') + 1:]
         args = [arg for arg in args if arg != '--no-index']
-    if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep'):
+    if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep', 'ugrep', 'ack', 'ag'):
         roots, recursive, word = search_paths(name, args[1:])
         recursive |= tool.startswith('rtk ')
-        content = name in ('rg', 'grep', 'egrep', 'fgrep', 'ggrep') and '--files' not in args
+        content = name in ('rg', 'grep', 'egrep', 'fgrep', 'ggrep', 'ugrep', 'ack', 'ag') and '--files' not in args
+        if name == 'fd':
+            content = any(arg in ('-x', '-X', '--exec', '--exec-batch') for arg in args)
         if name == 'find':
             content = any(arg in ('-exec', '-execdir', '-ok', '-okdir') for arg in args) or bool(re.search(r'\bxargs\b[^;]*\bcat\b', os.environ['SCAN_COMMAND']))
         if recursive:
