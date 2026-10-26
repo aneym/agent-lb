@@ -97,11 +97,25 @@ def observe(
         result["anthropic_cache"] = _anthropic_cache_observation(cache_summary)
     except StatusObservationError:
         result["anthropic_cache"] = _unknown_anthropic_cache()
+    result["http_status"] = _optional_get(
+        base_url + f"/api/request-logs/http-status-summary?window_minutes={HTTP_STATUS_WINDOW_MINUTES}", timeout
+    )
+    result["db_pool"] = _optional_get(base_url + "/health/db-pool", timeout)
     if provider:
         result["provider_filter"] = provider
     if model:
         result["model"] = {"name": model, "thinking": thinking, **_model_observation(accounts, model, thinking)}
     return result
+
+
+HTTP_STATUS_WINDOW_MINUTES = 60
+
+
+def _optional_get(url: str, timeout: float) -> Any:
+    try:
+        return _get_json(url, timeout)
+    except StatusObservationError:
+        return None
 
 
 CACHE_ALERT_READ_PERCENT = 90
@@ -132,7 +146,8 @@ def _anthropic_cache_observation(summary: Any) -> dict[str, Any]:
     count, incomplete, uncached, creation, read = values
     observation = {"state": "unknown", "ratio_percent": None, "window_minutes": 60, "request_count": count}
     denominator = uncached + creation + read
-    if not count or incomplete or incomplete > count or not denominator:
+    observation["incomplete_request_count"] = incomplete
+    if not count or incomplete > count or not denominator:
         return observation
     observation["ratio_percent"] = 100 * read / denominator
     if count < CACHE_ALERT_MIN_REQUESTS:
@@ -314,6 +329,17 @@ def _emit(payload: dict[str, Any], *, json_output: bool) -> None:
             print(f"Anthropic cache-read ratio (last hour): {cache['ratio_percent']:.1f}%")
         else:
             print("Anthropic cache-read ratio (last hour): unknown")
+    if http_status := payload.get("http_status"):
+        for name, counts in sorted(http_status["providers"].items()):
+            print(
+                f"{name} HTTP last {http_status['window_minutes']}m: {counts['requests']} requests, "
+                f"{counts['http_4xx']} 4xx, {counts['http_5xx']} 5xx, {counts['failed_without_status']} failed without status"
+            )
+    for name, pool in (payload.get("db_pool") or {}).items():
+        if pool.get("kind") == "queue":
+            print(
+                f"db pool {name}: {pool['checked_out']}/{pool['size']} checked out, overflow {pool['overflow']}/{pool['max_overflow']}"
+            )
     print(payload["availability_note"])
 
 

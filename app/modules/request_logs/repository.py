@@ -31,6 +31,7 @@ from app.db.request_models import RequestKind, RequestLog
 from app.db.session import sqlite_writer_section
 from app.modules.request_logs.aggregates import RequestLogAggregates
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
+from app.modules.request_logs.http_status import http_status_counts_since
 from app.modules.request_logs.queries import RequestLogQueries
 from app.modules.session_trace.recorder import store_context_parts
 
@@ -38,6 +39,9 @@ from app.modules.session_trace.recorder import store_context_parts
 class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def http_status_counts_since(self, since: datetime, until: datetime) -> dict[str, dict[str, int]]:
+        return await http_status_counts_since(self._session, since, until)
 
     async def list_since(self, since: datetime) -> list[RequestLog]:
         result = await self._session.execute(

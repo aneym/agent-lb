@@ -14,6 +14,7 @@ from app.core.config.settings_cache import get_settings_cache
 from app.core.request_locality import is_trusted_client
 from app.core.utils.time import utcnow
 from app.db.federation_models import BridgeRingMember
+from app.db.pool_depth import pool_depth
 from app.db.session import get_session
 from app.modules.health.schemas import BridgeRingInfo, HealthCheckResponse, HealthResponse
 from app.modules.proxy.ring_membership import RING_STALE_THRESHOLD_SECONDS
@@ -43,6 +44,11 @@ async def health_check() -> HealthResponse:
 @router.get("/health/live", response_model=HealthCheckResponse)
 async def health_live() -> HealthCheckResponse:
     return HealthCheckResponse(status="ok")
+
+
+@router.get("/health/db-pool")
+async def health_db_pool() -> dict:
+    return pool_depth()
 
 
 @router.get("/health/ready", response_model=HealthCheckResponse)

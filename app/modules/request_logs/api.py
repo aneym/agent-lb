@@ -44,6 +44,16 @@ async def anthropic_cache_summary(context: RequestLogsContext = Depends(get_requ
     }
 
 
+@router.get("/http-status-summary")
+async def http_status_summary(
+    window_minutes: int = Query(60, ge=1, le=1440),
+    context: RequestLogsContext = Depends(get_request_logs_context),
+) -> dict:
+    now = utcnow()
+    providers = await context.repository.http_status_counts_since(now - timedelta(minutes=window_minutes), now)
+    return {"window_minutes": window_minutes, "providers": providers}
+
+
 def _parse_model_option(value: str) -> ServiceRequestLogModelOption | None:
     raw = (value or "").strip()
     if not raw:

@@ -187,6 +187,10 @@ def _load_sqlite_backup_creator() -> _SqliteBackupCreator:
     return create_sqlite_pre_migration_backup
 
 
+def background_engine() -> AsyncEngine | None:
+    return _background_engine
+
+
 def init_background_db(url: str | None = None) -> None:
 
     global _background_engine, _background_session_factory

@@ -7,7 +7,13 @@ from sqlalchemy import Integer, and_, case, cast, false, func, literal_column, o
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate, UsageCostByModel, UsageCostSummary, UsageMetricsSummary  # noqa: I001  # fmt: skip
+from app.core.usage.types import (  # noqa: I001  # fmt: skip
+    BucketModelAggregate,
+    RequestActivityAggregate,
+    UsageCostByModel,
+    UsageCostSummary,
+    UsageMetricsSummary,
+)
 from app.db.models import Account
 from app.db.request_models import RequestKind, RequestLog
 from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS
@@ -31,9 +37,9 @@ class RequestLogAggregates:
             select(
                 func.count(),
                 func.coalesce(func.sum(case((complete, 0), else_=1)), 0),
-                func.coalesce(func.sum(RequestLog.input_tokens), 0),
-                func.coalesce(func.sum(RequestLog.cache_creation_tokens), 0),
-                func.coalesce(func.sum(RequestLog.cache_read_tokens), 0),
+                func.coalesce(func.sum(case((complete, RequestLog.input_tokens), else_=0)), 0),
+                func.coalesce(func.sum(case((complete, RequestLog.cache_creation_tokens), else_=0)), 0),
+                func.coalesce(func.sum(case((complete, RequestLog.cache_read_tokens), else_=0)), 0),
             ).where(
                 RequestLog.provider == "anthropic",
                 RequestLog.status == "success",
