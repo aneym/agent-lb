@@ -22,6 +22,25 @@ def roots():
     return [("lane", lanes), ("agent", base / "agents")]
 
 
+def repository(cwd, env):
+    git_env = {k: v for k, v in env.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")}
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(cwd), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            env=git_env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode or not result.stdout.strip():
+        return None
+    common = Path(result.stdout.strip())
+    name = common.parent.name if common.name == ".git" else common.name.removesuffix(".git")
+    return name if NAME.fullmatch(name) else None
+
+
 def launching_owner(env, cwd):
     owner_roots = roots()
     attempted = []
@@ -42,27 +61,17 @@ def launching_owner(env, cwd):
             continue
         if candidate.is_dir() and launch.is_dir():
             return (kind, parts[0]), None
+    here = Path(cwd).resolve()
+    attempted.append("git checkout at " + str(here))
+    repo = repository(here, env)
+    if not repo:
+        return None, "launching owner directory cannot be resolved; tried: " + ", ".join(attempted)
     if not env.get("LANE_DIR"):
-        source = Path(__file__).resolve()
-        fallback = Path.home() / "repos"
-        if source.parent.parts[-3:] == ("config", "coding-agents", "hooks"):
-            fallback = source.parents[4]
-        repo_root = Path(env.get("REPOS_ROOT") or env.get("GIT_GUARD_REPOS_ROOT") or fallback).expanduser().resolve()
-        attempted.append(str(repo_root))
-        try:
-            parts = launch.relative_to(repo_root).parts
-        except ValueError:
-            parts = ()
-        if parts:
-            agents = dict(owner_roots)["agent"].resolve()
-            for name in (env.get("FACTORY_OWNER_PANE", ""), parts[0]):
-                if not NAME.fullmatch(name):
-                    continue
-                candidate = agents / name
-                attempted.append(str(candidate))
-                if candidate.is_dir():
-                    return ("agent", name), None
-    return None, "launching owner directory cannot be resolved; tried: " + ", ".join(attempted)
+        agents = dict(owner_roots)["agent"].resolve()
+        for name in (env.get("FACTORY_OWNER_PANE", ""), repo):
+            if NAME.fullmatch(name) and (agents / name).is_dir():
+                return ("agent", name), None
+    return ("repo", repo), None
 
 
 def owner(brief, env, cwd):
@@ -77,6 +86,11 @@ def owner(brief, env, cwd):
     selected, reason = launching_owner(env, cwd)
     if not selected:
         return None, reason
+    if selected[0] == "repo" and (found or "agent-test-account" in brief):
+        return None, (
+            f"repository {selected[1]} cannot own a test account; "
+            "export the launching lane's LANE_DIR or launch from its lane or agent directory"
+        )
     if found and found != {selected}:
         return None, "brief account owner differs from launching owner"
     return selected, None

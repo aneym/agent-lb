@@ -21,8 +21,10 @@ inserted right before `task`. It must print `host=studio background=false`.
 Then launch with `--key <printed key> --contract <printed contract>` in place of
 `--key "$k"` and no heredoc. The wrapper's `--prompt-file` stays `@contract`
 in every call; forward-contract.py substitutes the contract it printed.
-Both preflight and launch require a resolved launching owner (export the launching lane's LANE_DIR or launch from its lane
-or agent directory) and a readable, non-empty brief. On any failure, stop and
+Both preflight and launch require a readable, non-empty brief and a launching
+owner: the exported LANE_DIR's lane, a lane or agent directory, or the repository
+of the checkout or worktree you launch from. A brief that runs
+agent-test-account needs a lane or agent owner. On any failure, stop and
 return the error. Never select a fresh-start file or recover a previous brief.
 
 Launch from the assigned worktree in the same Bash call, with timeout 270000.
