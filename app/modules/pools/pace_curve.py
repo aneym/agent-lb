@@ -13,7 +13,10 @@ PERIOD_HOURS = 168.0
 PLAN_FACTORS = {
     "anthropic": {"claude": 1.0},
     "openai": {"pro": 1.0, "plus": 1 / 18},
+    "kimi": {"kimi-coding": 1.0},
 }
+MONTHLY_PROVIDERS = frozenset({"kimi"})
+SINGLE_WINDOW_PROVIDERS = MONTHLY_PROVIDERS
 OUTPUT_POINTS_PER_MILLION = {"anthropic": 3.6, "openai": 8.26}
 UNUSABLE_STATUSES = frozenset({"paused", "deactivated", "reauth_required"})
 HELD_SUBSCRIPTIONS = frozenset({"canceled", "unpaid", "past_due"})
@@ -189,6 +192,7 @@ def pool_pace(
     previous: dict | None = None,
     tick: str | None = None,
     incomplete: bool = False,
+    last_eligible: int = 1,
 ) -> dict:
     previous = previous or {}
     fresh = [a for a in accounts if 0 <= (now - a.observed).total_seconds() < FRESH_SECONDS]
@@ -209,12 +213,12 @@ def pool_pace(
     known = fast is not None and slow is not None
     ratios = [r for r in (rho_fast, rho_slow) if r is not None]
     rho = min(ratios) if ratios else None
-    candidate = next((i for i in reversed(range(len(TIERS))) if rho is not None and rho >= BARS[i]), 0)
+    candidate = next((i for i in reversed(range(len(TIERS))) if rho is not None and rho >= BARS[i]), 0 if known else 1)
     if known and fast == slow == 0 and eligible:
         candidate = len(TIERS) - 1
     next_refill = min((hours(now, a.reset) for a in usable), default=None)
     critical = not stale and (
-        len(eligible) <= 1 or (bool(fast) and next_refill is not None and balance / fast < next_refill)
+        len(eligible) <= last_eligible or (bool(fast) and next_refill is not None and balance / fast < next_refill)
     )
     if critical:
         candidate = 0
@@ -287,8 +291,10 @@ def excluded(summary: Any) -> bool:
 
 
 def account_input(summary: Any) -> Account | None:
-    remaining = summary.usage.secondary_remaining_percent if summary.usage else None
-    reset = timestamp(summary.reset_at_secondary)
+    monthly = summary.provider in MONTHLY_PROVIDERS
+    usage = summary.usage
+    remaining = (usage.monthly_remaining_percent if monthly else usage.secondary_remaining_percent) if usage else None
+    reset = timestamp(summary.reset_at_monthly if monthly else summary.reset_at_secondary)
     factor = plan_factor(summary.provider, summary.plan_type)
     if remaining is None or reset is None or factor is None:
         return None

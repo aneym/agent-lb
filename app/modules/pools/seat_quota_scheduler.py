@@ -6,9 +6,11 @@ import logging
 import os
 import random
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.modules.pools.grok_weekly import collect_grok_usage
+from app.modules.pools.seat_pace import record_seat_history
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,10 @@ class SeatQuotaScheduler:
                 await asyncio.to_thread(collect_grok_usage)
             except OSError:
                 logger.warning("Grok weekly usage collector failed")
+            try:
+                await asyncio.to_thread(record_seat_history, datetime.now(UTC))
+            except OSError:
+                logger.warning("Seat pace history write failed")
 
 
 def build_seat_quota_scheduler() -> SeatQuotaScheduler:

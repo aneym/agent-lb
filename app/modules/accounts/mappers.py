@@ -16,8 +16,32 @@ from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.auth_manager import is_locally_owned
 from app.modules.accounts.credits import OPENROUTER_PROVIDER_NAME, credits_exhausted, window_from_usage
 from app.modules.accounts.health import account_problems
-from app.modules.accounts.schemas import AccountAdditionalQuota, AccountCreditsWindow, AccountRequestUsage, AccountSummary, AccountUsage, AccountUsageTrend, UsageTrendPoint  # noqa: I001  # fmt: skip
-from app.modules.accounts.summary_state import _account_subscription_ledger, _build_auth_status, _duplicate_detection_key, _duplicate_detection_keys_appearing_more_than_once, _effective_status_from_usage, _effective_usage_windows, _extract_credit_status, _fable_eligible, _fable_scoped_weekly_summary, _identity_mismatch_status, _limit_warmup_to_status, _normalize_account_routing_policy, _normalize_used_percent, _openrouter_additional_quotas, _usage_entry_is_recent_enough  # noqa: I001  # fmt: skip
+from app.modules.accounts.schemas import (  # noqa: I001  # fmt: skip
+    AccountAdditionalQuota,
+    AccountCreditsWindow,
+    AccountRequestUsage,
+    AccountSummary,
+    AccountUsage,
+    AccountUsageTrend,
+    UsageTrendPoint,
+)
+from app.modules.accounts.summary_state import (  # noqa: I001  # fmt: skip
+    _account_subscription_ledger,
+    _build_auth_status,
+    _duplicate_detection_key,
+    _duplicate_detection_keys_appearing_more_than_once,
+    _effective_status_from_usage,
+    _effective_usage_windows,
+    _extract_credit_status,
+    _fable_eligible,
+    _fable_scoped_weekly_summary,
+    _identity_mismatch_status,
+    _limit_warmup_to_status,
+    _normalize_account_routing_policy,
+    _normalize_used_percent,
+    _openrouter_additional_quotas,
+    _usage_entry_is_recent_enough,
+)
 
 
 def build_account_summaries(
@@ -262,7 +286,7 @@ def _account_to_summary(
         window_minutes_primary=window_minutes_primary,
         window_minutes_secondary=window_minutes_secondary,
         window_minutes_monthly=window_minutes_monthly,
-        quota_observed_at=effective_secondary_usage.recorded_at if effective_secondary_usage else None,
+        quota_observed_at=long_quota_usage.recorded_at if long_quota_usage else None,
         last_refresh_at=account.last_refresh,
         capacity_credits_primary=capacity_primary,
         remaining_credits_primary=remaining_credits_primary,

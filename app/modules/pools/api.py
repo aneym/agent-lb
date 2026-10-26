@@ -34,6 +34,8 @@ async def list_pools(
             "pools": [
                 pool.model_copy(update={"pace": shadow["pools"][pool.provider]})
                 if pool.id in {"anthropic-general", "openai-codex"}
+                else pool.model_copy(update={"pace": shadow["pools"][pool.id]})
+                if pool.id in shadow["pools"]
                 else pool
                 for pool in response.pools
             ]

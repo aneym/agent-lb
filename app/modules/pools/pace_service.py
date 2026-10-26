@@ -12,6 +12,7 @@ from app.modules.accounts.schemas import AccountSummary
 from app.modules.pools.pace_curve import (
     OUTPUT_POINTS_PER_MILLION,
     PLAN_FACTORS,
+    SINGLE_WINDOW_PROVIDERS,
     account_input,
     excluded,
     pool_pace,
@@ -21,8 +22,9 @@ from app.modules.pools.pace_curve import (
     sustainable_share,
     timestamp,
 )
+from app.modules.pools.seat_pace import MIN_CONVERSION_OUTPUT, seat_pools_pace
 
-PROVIDERS = ("anthropic", "openai")
+PROVIDERS = ("anthropic", "openai", "kimi")
 FAST_HOURS = 2
 SAMPLE_SECONDS = 300
 CACHE_SECONDS = 60
@@ -33,6 +35,8 @@ _LATEST: dict[str, object] = {}
 def weekly_row(provider: str, row) -> bool:
     if provider == "anthropic":
         return row.window == "secondary"
+    if provider == "kimi":
+        return row.window == "monthly"
     return row.window_minutes == 10080
 
 
@@ -47,7 +51,7 @@ async def sampled_usage(session: AsyncSession, accounts: list[str], since: datet
     else:
         bucket = cast(cast(func.strftime("%s", UsageHistory.recorded_at), Integer) / SAMPLE_SECONDS, Integer)
     windows = or_(
-        UsageHistory.window == "secondary",
+        UsageHistory.window.in_(("secondary", "monthly")),
         UsageHistory.window_minutes.in_((300, 10080)),
     )
     ranked = (
@@ -97,6 +101,15 @@ async def recent_receipts(session: AsyncSession, since: datetime) -> list[dict]:
     for receipt in receipts:
         receipt["requested_at"] = timestamp(receipt["requested_at"])
     return receipts
+
+
+async def output_since(session: AsyncSession, provider: str, since: datetime) -> int:
+    statement = select(func.coalesce(func.sum(RequestLog.output_tokens), 0)).where(
+        RequestLog.provider == provider,
+        RequestLog.requested_at >= since.replace(tzinfo=None),
+        RequestLog.deleted_at.is_(None),
+    )
+    return int((await session.execute(statement)).scalar_one() or 0)
 
 
 async def provider_pace(
@@ -156,15 +169,21 @@ async def provider_pace(
         ungoverned = unlinked / FAST_HOURS
     output = sum(r["output_tokens"] or 0 for r in provider_receipts if r.get("status", "success") == "success")
     conversion = measured["quota_points"] / (output / 1e6) if measured and output >= 1e6 else None
+    slow = recent_burn(weekly, now, factors, 24)
+    if conversion is None and provider not in OUTPUT_POINTS_PER_MILLION and slow:
+        daily_output = await output_since(session, provider, now - timedelta(hours=24))
+        if daily_output >= MIN_CONVERSION_OUTPUT:
+            conversion = slow * 24 / (daily_output / 1e6)
     unknown_plans = sorted({s.plan_type for s in members if s.plan_type not in PLAN_FACTORS.get(provider, {})})
     pace = pool_pace(
         accounts,
         now,
         fast=recent_burn(weekly, now, factors, FAST_HOURS),
-        slow=recent_burn(weekly, now, factors, 24),
+        slow=slow,
         ungoverned=ungoverned,
         capacity=short_window_capacity(accounts, ratio),
         incomplete=len(accounts) != len(members),
+        last_eligible=0 if provider in SINGLE_WINDOW_PROVIDERS else 1,
         previous=_PREVIOUS.get(provider),
         tick=now.replace(minute=now.minute // 5 * 5, second=0, microsecond=0).isoformat(),
     )
@@ -175,6 +194,8 @@ async def provider_pace(
         missing.append("account_quota")
     if provider == "anthropic" and ratio is None:
         missing.append("short_window_ratio")
+    if conversion is None and provider not in OUTPUT_POINTS_PER_MILLION:
+        missing.append("output_conversion")
     pace.update(
         plan_factors={a.id: a.factor for a in accounts},
         short_window_ratio=ratio,
@@ -197,18 +218,40 @@ async def build_pace(summaries: list[AccountSummary], session: AsyncSession, now
 
 async def compute_pace(summaries: list[AccountSummary], session: AsyncSession, now: datetime) -> dict:
     receipts = await recent_receipts(session, now - timedelta(hours=FAST_HOURS))
-    pools, conversions, basis = {}, {}, {}
+    pools, conversions, basis, excluded = {}, {}, {}, {}
     for provider in PROVIDERS:
+        if not any(s.provider == provider for s in summaries):
+            excluded[provider] = "no_accounts"
+            continue
         pools[provider], measured = await provider_pace(provider, summaries, receipts, session, now)
-        conversions[provider] = measured or OUTPUT_POINTS_PER_MILLION[provider]
-        basis[provider] = "measured_2h" if measured else "council_2026_10_26"
+        fallback = OUTPUT_POINTS_PER_MILLION.get(provider)
+        if measured or fallback:
+            conversions[provider] = measured or fallback
+            basis[provider] = "measured" if measured else "council_2026_10_26"
+    tick = now.replace(minute=now.minute // 5 * 5, second=0, microsecond=0).isoformat()
+    seat_pools, seat_excluded = seat_pools_pace(now, _PREVIOUS, tick, FAST_HOURS)
+    for name, pace in seat_pools.items():
+        _PREVIOUS[name] = pace
+        pools[name] = pace
+        if pace["output_points_per_million"]:
+            conversions[name] = pace["output_points_per_million"]
+            basis[name] = "measured_24h"
+    excluded.update(seat_excluded)
+    unshared = {name: ",".join(pace["missing"]) or "unknown" for name, pace in pools.items() if name not in conversions}
+    reasons = {**unshared, **excluded}
     return {
         "schema_version": 2,
         "shadow": True,
         "enforced": False,
         "generated_at": now.isoformat(),
         "pools": pools,
-        "s_star": sustainable_share(pools, conversions),
-        "s_star_inputs": {"pools": list(PROVIDERS), "points_per_million_output": conversions, "basis": basis},
-        "missing": ["s_star_single_window_pools:grok,kimi,cursor,devin"],
+        "excluded_pools": excluded,
+        "s_star": sustainable_share({name: pools[name] for name in conversions}, conversions),
+        "s_star_inputs": {
+            "pools": list(conversions),
+            "points_per_million_output": conversions,
+            "basis": basis,
+            "excluded": reasons,
+        },
+        "missing": [f"s_star_excluded:{name}={reason}" for name, reason in reasons.items()],
     }
