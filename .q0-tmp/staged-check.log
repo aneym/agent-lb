@@ -1,0 +1,33 @@
+{"findings": [], "count": 0}
+{
+  "cycles": [
+    "app",
+    "bin",
+    "clients",
+    "config",
+    "deploy",
+    "docs",
+    "features",
+    "frontend",
+    "openspec",
+    "patches",
+    "scripts",
+    "tests"
+  ],
+  "errors": [],
+  "ok": true,
+  "unowned": 132
+}
+test-guard: 0 violation(s)
+filecap: 0.260 s
+modcheck: 7.452 s
+comments: 0.174 s
+freeze: 0.357 s
+gate-precheck: clean in 8.254 s
+factory-lint check --changed
+pass: 0 new, 0 existing, 0 files fixed (238 ms)
+make lint: 0 s
+ok: True
+notes: {"features": ["accounts", "module-support-accounts"], "file": "app/modules/accounts/api.py", "problem": "overlapping paths", "product": "agent-lb"}
+notes: {"features": ["accounts", "module-support-accounts"], "file": "app/modules/accounts/availability_api.py", "problem": "overlapping paths", "product": "agent-lb"}
+feature-map check: 2 s

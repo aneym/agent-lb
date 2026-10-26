@@ -1,0 +1,39 @@
+
+1 routing check(s) failed
+PASS planner runs on the newest Opus via `model: opus` (got opus)
+PASS plan-reviewer runs on the newest Opus via `model: opus` (got opus)
+PASS frontend-designer runs on the newest Opus via `model: opus` (got opus)
+PASS codex-verifier forwards to its seat at dispatch-selected effort
+PASS no routing-table class runs on Fable
+PASS no routing-table pool maps a Fable model
+PASS plan uses only opus-latest, without a Sol fallback (['opus-latest'])
+PASS implement puts Opus only behind a pace gate (min_pace), else on cheaper seats
+PASS implement names its on-request cross-vendor auditors (Sonnet / newest Sol); review is optional pre-launch
+PASS mechanical puts Opus only behind a pace gate (min_pace), else on cheaper seats
+PASS mechanical names its on-request cross-vendor auditors (Sonnet / newest Sol); review is optional pre-launch
+PASS factory:implement-head implement and mechanical hold both default implementers with one at the head; implement_default=gpt-implementer
+PASS factory:off-default dated off-default seats are absent from chains
+PASS factory:audit-cross-vendor implement names fresh cross-vendor auditors, on request only
+PASS factory:audit-cross-vendor mechanical names fresh cross-vendor auditors, on request only
+PASS factory:review-policy cross-vendor review on request only, money path included, and one fix round
+PASS factory:stage-effort chain, audit and second-opinion efforts match their stage and definition
+PASS factory:second-opinion complex plans get astra-consult/astra-latest/openai/high
+PASS factory:routing-doc routing section headings are dated and sections are below 20000 bytes
+PASS factory:stage-definitions judge uses opus at medium effort before installer model resolution
+PASS factory:stage-definitions decider uses sonnet at high effort before installer model resolution
+PASS factory:stage-definitions digest uses sonnet at medium effort before installer model resolution
+PASS factory:stage-definitions jev uses haiku at low effort before installer model resolution
+PASS factory:seat-definitions source defines every chain, auditor and second-opinion seat; missing []
+PASS factory:seats-map legacy seat entries agree with chains and definitions; standard-only stage definitions are present
+PASS factory:escalation implement escalates to an audited chain seat at a fix round of 1 or more
+PASS factory:private-literals operator literal list loaded or not configured
+FAIL factory:public-text public policy has no private literals; found ['no_chrome_classify.py:120']
+PASS older_allowed names only live ids with eval references
+PASS the table declares family aliases and retired models
+PASS no retired model, and no older model without an eval reference, is pinned
+PASS seat guard admits model=fable when the dispatch names it (logged)
+PASS seat guard warns, never denies, a blocked model named on the dispatch
+PASS seat guard warns, never denies, a Fable-defined subagent type with nothing asking for Fable
+PASS seat guard admits a cheap seat
+PASS seat guard admits Fable on the readmitted fable-orchestrator seat
+PASS seat guard admits Astra on the readmitted astra-consult seat

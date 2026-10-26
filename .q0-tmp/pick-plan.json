@@ -1,0 +1,23 @@
+{
+  "alias": "opus-latest",
+  "audit": null,
+  "audit_gap": null,
+  "auditor": null,
+  "class": "plan",
+  "fallbacks": [],
+  "lease_availability": "known",
+  "model": "claude-opus-5-5",
+  "pool": "anthropic-general",
+  "reason": "first chain entry with the seat up and its pool not exhausted",
+  "reserve": {
+    "active": false,
+    "admitted": true,
+    "eligible": 5,
+    "headroom": 94.0,
+    "pool": "anthropic-general",
+    "why": null
+  },
+  "seat": "planner",
+  "standing_in": [],
+  "state_age_s": null
+}
