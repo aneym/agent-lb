@@ -9,6 +9,7 @@ from app.core.balancer.types import ClassifiedFailure, FailureClass, FailurePhas
 from app.core.errors import OpenAIErrorDetail, OpenAIErrorEnvelope
 from app.core.openai.models import OpenAIError
 from app.core.plan_types import normalize_rate_limit_plan_type
+from app.core.providers import OPENAI_PROVIDER_NAME
 from app.core.types import JsonValue
 from app.core.usage.types import UsageWindowRow, UsageWindowSummary
 from app.db.models import Account, AccountStatus, UsageHistory
@@ -78,7 +79,8 @@ def _select_accounts_for_limits(accounts: Iterable[Account]) -> list[Account]:
     return [
         account
         for account in accounts
-        if account.status not in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED)
+        if account.provider == OPENAI_PROVIDER_NAME
+        and account.status not in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED)
     ]
 
 

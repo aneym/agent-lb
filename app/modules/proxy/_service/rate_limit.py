@@ -255,10 +255,6 @@ class _RateLimitMixin:
                             reset_after_seconds=reset_after_seconds,
                             reset_at=reset_at,
                         )
-                    else:
-                        window_snapshot = RateLimitWindowSnapshotData(
-                            used_percent=int(max(0.0, min(100.0, avg_used_percent))),
-                        )
 
             secondary_window_snapshot = None
             if filtered_secondary:
@@ -278,10 +274,6 @@ class _RateLimitMixin:
                             limit_window_seconds=sec_limit_window_seconds,
                             reset_after_seconds=sec_reset_after_seconds,
                             reset_at=sec_reset_at,
-                        )
-                    else:
-                        secondary_window_snapshot = RateLimitWindowSnapshotData(
-                            used_percent=int(max(0.0, min(100.0, sec_avg))),
                         )
 
             rate_limit_details = None
