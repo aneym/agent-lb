@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -20,6 +21,12 @@ def main() -> None:
     if model != "muse-wonder-full-1.0":
         raise SystemExit("Muse Claude Code requires muse-wonder-full-1.0")
     base_url = os.environ.get("AGENT_LB_MUSE_BASE_URL", "http://127.0.0.1:2455/muse/claude")
+    if urlsplit(base_url).path.rstrip("/") != "/muse/claude":
+        raise SystemExit("Muse requires agent-lb /muse/claude; refusing another route")
+    if not any(arg in {"--print", "-p"} for arg in argv):
+        raise SystemExit("Muse requires --print for served-model verification")
+    if any(arg == "--output-format" or arg.startswith("--output-format=") for arg in argv):
+        raise SystemExit("Muse launcher owns --output-format for served-model verification")
     env = os.environ.copy()
     env.update(
         ANTHROPIC_BASE_URL=base_url,
@@ -39,7 +46,7 @@ def main() -> None:
         )
     env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "1000000"
     env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]
-    env["CLAUDE_CODE_EFFORT_LEVEL"] = "high"
+    env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     env.setdefault("ENABLE_TOOL_SEARCH", "true")
     env.setdefault("CLAUDE_CODE_WORKFLOWS", "1")
     env.setdefault("API_TIMEOUT_MS", "3000000")
@@ -73,7 +80,30 @@ def main() -> None:
         for arg in argv
     ):
         command.extend(["--permission-mode", "bypassPermissions"])
-    os.execve(claude, [*command, *argv], env)
+    command.extend(["--output-format", "stream-json", "--verbose"])
+    served: set[str] = set()
+    answer = ""
+    failed = False
+    with subprocess.Popen([*command, *argv], env=env, stdout=subprocess.PIPE, text=True) as child:
+        for line in child.stdout:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if event.get("type") == "assistant":
+                value = event.get("message", {}).get("model")
+                if not isinstance(value, str) or not value.startswith("muse-"):
+                    child.terminate()
+                    raise SystemExit("Muse route failed: response served a missing or non-Muse model")
+                served.add(value)
+            if event.get("type") == "result":
+                answer = event.get("result", "")
+                failed = event.get("is_error", False)
+        code = child.wait()
+    if code or failed or not served:
+        raise SystemExit(f"Muse route failed: exit={code}, error={failed}, verified_models={len(served)}")
+    print("[muse-route] served_model=" + ",".join(sorted(served)), file=sys.stderr)
+    print(answer)
 
 
 if __name__ == "__main__":

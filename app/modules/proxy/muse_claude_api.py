@@ -84,12 +84,24 @@ async def messages(request: Request, payload: AnthropicMessageRequest) -> JSONRe
         async for chunk in upstream.body_iterator:
             yield bytes(chunk) if isinstance(chunk, memoryview) else chunk
 
+    identity: dict[str, str] = {}
     events = responses_to_claude_events(
-        ordered_muse_events(source()),
+        ordered_muse_events(source(), identity),
         model=MODEL,
         input_tokens_estimate=estimate_claude_input_tokens(payload.model_dump(mode="json", exclude_none=True)),
     )
-    stream = format_claude_events(events)
+
+    async def verified_events():
+        async for event in events:
+            if event.get("type") == "message_start":
+                if "model" not in identity:
+                    raise ValueError("Muse upstream did not identify its served model")
+                message = event.get("message")
+                if isinstance(message, dict):
+                    event = {**event, "message": {**message, "model": identity["model"]}}
+            yield event
+
+    stream = format_claude_events(verified_events())
     if not payload.stream:
         return JSONResponse(await collect_claude_message(stream))
     return StreamingResponse(stream, media_type="text/event-stream")
@@ -112,7 +124,7 @@ def muse_schema(value):
     }
 
 
-async def ordered_muse_events(source: AsyncIterator[bytes | str]) -> AsyncIterator[str]:
+async def ordered_muse_events(source: AsyncIterator[bytes | str], identity: dict[str, str]) -> AsyncIterator[str]:
     buffer = ""
     finished_calls: set[str] = set()
     async for chunk in source:
@@ -122,6 +134,14 @@ async def ordered_muse_events(source: AsyncIterator[bytes | str]) -> AsyncIterat
             event = parse_sse_data_json(block)
             if event is None:
                 continue
+            response = event.get("response")
+            if isinstance(response, dict) and event.get("type") in {"response.created", "response.completed"}:
+                served = response.get("model")
+                if not isinstance(served, str) or not served.startswith("muse-"):
+                    raise ValueError("Muse upstream returned a missing or non-Muse served model")
+                if identity.get("model", served) != served:
+                    raise ValueError("Muse upstream changed its served model")
+                identity["model"] = served
             kind = event.get("type")
             item = event.get("item")
             if kind == "response.function_call_arguments.delta" or kind == "response.function_call_arguments.done":

@@ -60,10 +60,8 @@ def main():
     shutil.copyfile(Path(__file__).with_name("routing_daily_audit.py"), target)
     target.chmod(0o755)
 
-    homebrew = "/opt/homebrew/bin/python3"
-    interpreter = (
-        homebrew if os.path.isfile(homebrew) and os.access(homebrew, os.X_OK) else str(Path(sys.executable).resolve())
-    )
+    runtime_python = home / ".agent-lb/runtime/agent-lb/.venv/bin/python"
+    interpreter = str(runtime_python) if runtime_python.is_file() else str(Path(sys.executable).resolve())
     payload = {
         "Label": LABEL,
         "ProgramArguments": [interpreter, str(target), "--scheduled", "--post"],

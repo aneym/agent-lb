@@ -43,21 +43,21 @@ def window(args):
         return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
     until = parse(args.until) if args.until else datetime.now(UTC)
-    match = re.fullmatch(r"([1-9]\d*)([hd])", args.window)
+    match = re.fullmatch(r"([1-9]\d*)([mhd])", args.window)
     if not match:
-        raise ValueError("--window must be a positive number followed by h or d")
+        raise ValueError("--window must be a positive number followed by m, h or d")
     if args.since:
-        relative = re.fullmatch(r"([1-9]\d*)([hd])", args.since)
+        relative = re.fullmatch(r"([1-9]\d*)([mhd])", args.since)
         try:
             since = (
-                until - timedelta(hours=int(relative[1]) * (24 if relative[2] == "d" else 1))
+                until - timedelta(minutes=int(relative[1]) * {"m": 1, "h": 60, "d": 1440}[relative[2]])
                 if relative
                 else parse(args.since)
             )
         except (ValueError, OverflowError):
-            raise AuditUsageError("--since takes an ISO time or <n>h/<n>d") from None
+            raise AuditUsageError("--since takes an ISO time or <n>m/<n>h/<n>d") from None
     else:
-        since = until - timedelta(hours=int(match[1]) * (24 if match[2] == "d" else 1))
+        since = until - timedelta(minutes=int(match[1]) * {"m": 1, "h": 60, "d": 1440}[match[2]])
     if since >= until:
         raise ValueError("--since must precede --until")
     return since, until
