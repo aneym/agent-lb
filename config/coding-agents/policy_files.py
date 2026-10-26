@@ -91,9 +91,12 @@ def sync_policy_boxes(home: Path) -> None:
         'python3 "$HOME/.agent-lb/bin/route" policy snapshot --json'
     )
     for host in hosts:
+        step = "host validation"
+        sync_timeout = 15
         try:
             if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", host):
                 raise ValueError("invalid box name")
+            step = "load probe"
             load_output = subprocess.run(
                 [*ssh, host, "cat /proc/loadavg; nproc"],
                 capture_output=True,
@@ -110,6 +113,7 @@ def sync_policy_boxes(home: Path) -> None:
             cpu_count = int(load_output[1])
             sync_timeout = _sync_timeout(payload_bytes, load_1m, cpu_count)
             print(f"box sync budget {host}: timeout={sync_timeout}s load={load_1m:.2f}/{cpu_count}")
+            step = "remote directory setup"
             subprocess.run(
                 [
                     *ssh,
@@ -121,6 +125,7 @@ def sync_policy_boxes(home: Path) -> None:
                 check=True,
                 timeout=sync_timeout,
             )
+            step = "policy transfer"
             for sources, destination in (
                 (bins, ".agent-lb/bin/"),
                 (tables, ".agent-lb/managed/coding-agents/"),
@@ -133,6 +138,7 @@ def sync_policy_boxes(home: Path) -> None:
                     check=True,
                     timeout=sync_timeout,
                 )
+            step = "remote MCP apply"
             mcp = subprocess.run(
                 [*ssh, host, f"timeout {sync_timeout - 5} python3 -"],
                 input=Path(__file__).with_name("harness_mcp.py").read_text(),
@@ -142,6 +148,7 @@ def sync_policy_boxes(home: Path) -> None:
                 timeout=sync_timeout,
             )
             print(f"box MCP {host}: {mcp.stdout.strip()}")
+            step = "remote verification"
             result = subprocess.run(
                 [*ssh, host, verify], capture_output=True, text=True, check=True, timeout=sync_timeout
             )
@@ -152,8 +159,16 @@ def sync_policy_boxes(home: Path) -> None:
                 f"box policy synced {host}: policy_rev={expected['policy_rev']} table_sha256={expected['table_sha256']}"
             )
         except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
+            if isinstance(exc, subprocess.TimeoutExpired):
+                detail = f"timed out after {exc.timeout}s"
+            elif isinstance(exc, subprocess.CalledProcessError):
+                detail = f"command exited {exc.returncode}"
+                if step == "remote MCP apply" and exc.returncode == 124:
+                    detail = f"timed out after {sync_timeout - 5}s"
+            else:
+                detail = type(exc).__name__
             print(
-                f"WARNING: box policy sync failed for {host} ({type(exc).__name__}); local install succeeded",
+                f"WARNING: box policy sync failed for {host} during {step} ({detail}); local install succeeded",
                 file=sys.stderr,
             )
 
