@@ -184,7 +184,7 @@ def plan_hook(hook, inproc_names, script_pins=None):
     if command.strip() in REWRITERS:
         plan.target = real_tool(command.split()[0])
         if not plan.target:
-            plan.kind, plan.prefilter, plan.reason = "filtered", never, "rewriter is not on PATH, so it cannot rewrite"
+            plan.kind, plan.reason = "absent", "rewriter is not on PATH, so it cannot rewrite"
             return plan
         plan.kind, plan.reason = "rewriter", "side-effect free rewriter"
         return plan
@@ -299,6 +299,9 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
                     "opaque",
                 )
                 results[index].floor_failure = plan.opaque
+                continue
+            if plan.kind == "absent":
+                results[index] = Result(0, b"", b"", False, "skipped")
                 continue
             if plan.kind == "inproc" and plan.prefilter is not None and not plan.prefilter(payload_obj):
                 plan.kind = "skipped"
