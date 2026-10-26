@@ -209,6 +209,11 @@ class AccountPulseScheduler:
     def _is_pulse_candidate(self, account: Account, *, recovery_only: bool) -> bool:
         if account.status == AccountStatus.PAUSED:
             return False
+        if account.status in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED):
+            reset_at = account.reset_at
+            if reset_at is None or reset_at <= int(self.now().timestamp()):
+                return not self._in_backoff(account.id, max_delay_seconds=float(self.recovery_interval_seconds))
+            return False
         if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
             if account.deactivation_reason in DEAD_REFRESH_GRANT_REASONS:
                 return account.id not in self._failures
