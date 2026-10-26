@@ -60,7 +60,7 @@ Probes, in order, inside a 55-second budget:
 
 | probe | what it does | timeout |
 |---|---|---|
-| `lb-health` | `GET /api/health`, falling back to `/health` on a 404 (the shipped LB serves `/health`) | 4s |
+| `lb-health` | `GET /health` | 4s |
 | `lb-pools` | `GET /api/pools`, or the `/api/accounts` approximation | 5s |
 | `cursor-agent` | `cursor-agent status` | 10s |
 | `codex-companion` | `node ~/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs status` | 15s |

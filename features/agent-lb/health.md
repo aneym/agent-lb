@@ -3,7 +3,7 @@ id: health
 product: agent-lb
 owner: weekend-finish
 status: live
-covers: ["route:/health", "route:/health/live", "route:/health/ready", "route:/health/startup", "route:/internal/drain/start", "route:/internal/drain/status", "route:/internal/drain/stop", "route:/internal/oauth/pending"]
+covers: ["route:/health", "route:/api/health", "route:/api/hello", "route:/health/live", "route:/health/ready", "route:/health/startup", "route:/internal/drain/start", "route:/internal/drain/status", "route:/internal/drain/stop", "route:/internal/oauth/pending"]
 paths: ["features/agent-lb/health.md"]
 proofs: []
 ---

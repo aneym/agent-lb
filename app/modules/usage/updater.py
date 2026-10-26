@@ -148,7 +148,7 @@ class UsageUpdater(UsageAccountRefresh):
             now=utcnow(),
             interval_seconds=interval_seconds,
         ):
-            return AccountRefreshResult(usage_written=False)
+            return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
         return await self._refresh_account(
             account,
             usage_account_id=usage_account_id,

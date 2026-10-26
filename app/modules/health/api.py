@@ -33,7 +33,9 @@ def _is_internal_client_host(client_host: str | None) -> bool:
     return address.is_loopback
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.api_route("/health", methods=["GET", "HEAD"], response_model=HealthResponse)
+@router.api_route("/api/health", methods=["GET", "HEAD"], response_model=HealthResponse)
+@router.api_route("/api/hello", methods=["GET", "HEAD"], response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     return HealthResponse(status="ok")
 

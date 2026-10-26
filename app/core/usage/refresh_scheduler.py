@@ -6,7 +6,7 @@ import importlib
 import logging
 from dataclasses import dataclass, field
 from datetime import timezone
-from typing import AsyncIterator, Protocol, cast
+from typing import AsyncIterator, IO, Protocol, cast
 
 from app.core.audit.service import AuditDetails, AuditService
 from app.core.auth.refresh import RefreshError
@@ -15,6 +15,7 @@ from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.usage import capacity_for_plan
+from app.core.usage.refresh_lock import try_usage_refresh_process_lock
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
@@ -79,6 +80,7 @@ class UsageRefreshScheduler:
     _task: asyncio.Task[None] | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _process_lock: IO[str] | None = field(default=None, repr=False)
 
     async def start(self) -> None:
         if not self.enabled:
@@ -95,11 +97,23 @@ class UsageRefreshScheduler:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
+        if self._process_lock is not None:
+            self._process_lock.close()
+            self._process_lock = None
         await USAGE_REFRESH_SINGLEFLIGHT.cancel_all()
 
     async def _run_loop(self) -> None:
+        announced_wait = False
         while not self._stop.is_set():
-            await self._refresh_once()
+            if self._process_lock is None:
+                self._process_lock = try_usage_refresh_process_lock()
+            if self._process_lock is None:
+                if not announced_wait:
+                    logger.info("Usage refresh waiting; another process holds the poller lock")
+                    announced_wait = True
+            else:
+                announced_wait = False
+                await self._refresh_once()
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self.interval_seconds)
             except asyncio.TimeoutError:

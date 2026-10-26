@@ -55,6 +55,17 @@ async def test_health_endpoint_ok(async_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/health", "/api/health", "/api/hello"])
+async def test_health_probes_allow_get_and_head(async_client, path):
+    get_response = await async_client.get(path)
+    assert get_response.status_code == 200
+    assert get_response.json() == {"status": "ok"}
+    head_response = await async_client.head(path)
+    assert head_response.status_code == 200
+    assert head_response.content == b""
+
+
+@pytest.mark.asyncio
 async def test_api_validation_error_returns_dashboard_payload(async_client):
     response = await async_client.get("/api/usage/history?hours=0")
     assert response.status_code == 422

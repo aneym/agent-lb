@@ -305,11 +305,8 @@ def probe_lb_health() -> dict[str, Any]:
 
     started = time.monotonic()
     for attempt in range(LB_HEALTH_ATTEMPTS):
-        result = http_get("/api/health", timeout=4.0)
-        path = "/api/health"
-        if result.status == 404:
-            result = http_get("/health", timeout=4.0)
-            path = "/health"
+        result = http_get("/health", timeout=4.0)
+        path = "/health"
         ok = result.ok and result.status == 200
         if ok or attempt == LB_HEALTH_ATTEMPTS - 1:
             break
