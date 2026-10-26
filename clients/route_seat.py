@@ -42,31 +42,31 @@ def command_seat(args: argparse.Namespace) -> int:
         setup_error("unknown_seat", f"unknown seat {name!r}", args.json)
     named = [(task_class, entry) for task_class, entry in class_seat_entries(table["classes"]) if entry["seat"] == name]
     rung = None
+    if args.task_class is not None and args.task_class not in table["classes"]:
+        setup_error("unknown_class", f"unknown class {args.task_class!r} for seat {name}", args.json)
     ladder = ladder_entries(table, args.task_class) if args.task_class is not None else None
-    if ladder is not None:
-        entry = next((entry for entry in ladder if entry["seat"] == name), None)
-        if entry is None:
-            spec = table["classes"].get(args.task_class, {})
-            fallback = spec.get("codex_empty_fallback", {}).get("order", [])
-            escalation = spec.get("escalation", {}).get("seat")
-            entry = next((item for task, item in named if task == args.task_class), None)
-            if entry is None or (name not in fallback and name != escalation):
-                setup_error("unknown_class", f"class {args.task_class!r} does not name seat {name}", args.json)
-        rung = entry.get("id")  # pyrefly: ignore [missing-attribute]
+    entry = next((item for item in ladder or [] if item["seat"] == name), None)
+    if entry is not None:
+        rung = entry.get("id")
         named = [(args.task_class, entry)]
+    first: dict[Any, Any] = {}
+    for task_class, item in named:
+        first.setdefault(task_class, item)
     if args.task_class is not None:
-        if args.task_class not in table["classes"]:
-            setup_error("unknown_class", f"unknown class {args.task_class!r} for seat {name}", args.json)
-        chosen = [(task_class, entry) for task_class, entry in named if task_class == args.task_class]
-        if not chosen and named:
-            setup_error("unknown_class", f"class {args.task_class!r} does not name seat {name}", args.json)
+        if args.task_class not in first and first:
+            valid = ", ".join(first)
+            setup_error(
+                "unknown_class", f"class {args.task_class!r} does not name seat {name}; valid: {valid}", args.json
+            )
+        chosen = [(args.task_class, first[args.task_class])] if args.task_class in first else []
     else:
-        chosen = named
+        chosen = list(first.items())
     if chosen:
         if len({(entry.get("model"), entry.get("effort")) for _, entry in chosen}) != 1:  # pyrefly: ignore [missing-attribute]
+            options = "; ".join(f"{c} ({e.get('model')} {e.get('effort')})" for c, e in chosen)  # pyrefly: ignore [missing-attribute]
             setup_error(
                 "ambiguous_class",
-                f"seat {name} disagrees across classes {', '.join(dict.fromkeys(c for c, _ in chosen))}",  # pyrefly: ignore [no-matching-overload]
+                f"seat {name} disagrees across classes; pass --class with one of: {options}",
                 args.json,
             )
         task_class = "implement" if any(c == "implement" for c, _ in chosen) else chosen[0][0]
