@@ -48,6 +48,12 @@ def write_atomic(path: Path, content: str) -> None:
             os.unlink(temp_name)
 
 
+def _sync_timeout(payload_bytes: int, load_1m: float, cpu_count: int) -> int:
+    payload_mib = max(1.0, payload_bytes / (1024 * 1024))
+    load_factor = max(1.0, 1.0 + max(0.0, load_1m / max(1, cpu_count) - 0.5))
+    return min(300, max(60, round((30 + payload_mib * 12) * load_factor)))
+
+
 def sync_policy_boxes(home: Path) -> None:
     try:
         hosts = policy_box_hosts(home)
@@ -58,8 +64,11 @@ def sync_policy_boxes(home: Path) -> None:
         }
         bins = [home / ".agent-lb/bin" / name for name in ROUTE_FILES]
         tables = [table, table.with_name("quota-swap.json")]
+        model_docs = list((home / ".claude/docs/models").glob("*.md"))
+        sources = [*bins, *tables, *model_docs]
         if not all(path.is_file() for path in bins + tables):
             raise ValueError("routing files missing")
+        payload_bytes = sum(path.stat().st_size for path in sources)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         print(f"WARNING: box policy sync unavailable ({type(exc).__name__})", file=sys.stderr)
         return
@@ -75,6 +84,22 @@ def sync_policy_boxes(home: Path) -> None:
         try:
             if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", host):
                 raise ValueError("invalid box name")
+            load_output = subprocess.run(
+                [*ssh, host, "cat /proc/loadavg; nproc"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=15,
+            ).stdout.splitlines()
+            if len(load_output) < 2:
+                raise ValueError("invalid host load output")
+            load = load_output[0].split()
+            if not load:
+                raise ValueError("invalid host load output")
+            load_1m = float(load[0])
+            cpu_count = int(load_output[1])
+            sync_timeout = _sync_timeout(payload_bytes, load_1m, cpu_count)
+            print(f"box sync budget {host}: timeout={sync_timeout}s load={load_1m:.2f}/{cpu_count}")
             subprocess.run(
                 [
                     *ssh,
@@ -84,30 +109,32 @@ def sync_policy_boxes(home: Path) -> None:
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=30,
+                timeout=sync_timeout,
             )
             for sources, destination in (
                 (bins, ".agent-lb/bin/"),
                 (tables, ".agent-lb/managed/coding-agents/"),
-                (list((home / ".claude/docs/models").glob("*.md")), ".claude/docs/models/"),
+                (model_docs, ".claude/docs/models/"),
             ):
                 subprocess.run(
                     ["rsync", "-az", "-e", shlex.join(ssh), *(str(path) for path in sources), f"{host}:{destination}"],
                     capture_output=True,
                     text=True,
                     check=True,
-                    timeout=60,
+                    timeout=sync_timeout,
                 )
             mcp = subprocess.run(
-                [*ssh, host, "timeout 55 python3 -"],
+                [*ssh, host, f"timeout {sync_timeout - 5} python3 -"],
                 input=Path(__file__).with_name("harness_mcp.py").read_text(),
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=60,
+                timeout=sync_timeout,
             )
             print(f"box MCP {host}: {mcp.stdout.strip()}")
-            result = subprocess.run([*ssh, host, verify], capture_output=True, text=True, check=True, timeout=60)
+            result = subprocess.run(
+                [*ssh, host, verify], capture_output=True, text=True, check=True, timeout=sync_timeout
+            )
             actual = json.loads(result.stdout)
             if any(actual.get(key) != value for key, value in expected.items()):
                 raise ValueError("policy_rev or table_sha256 mismatch")
