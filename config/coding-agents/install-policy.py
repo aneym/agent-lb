@@ -30,6 +30,7 @@ from policy_layout import CORE_SOURCE, DISPATCH_EVENTS, DISPATCH_REGISTRY, DISPA
 from policy_lock import locked_main, parse_args  # type: ignore[missing-import]
 from policy_registry_retirement import kept_retired_hooks, retire_hook_registries  # type: ignore[missing-import]
 from policy_plan import plan_managed_files  # type: ignore[missing-import]
+from policy_stage import install_staged  # type: ignore[missing-import]
 from policy_settings import check_policy, internal_hook_commands, policy_snapshot, reconcile_settings, resolve_sol, snapshot_model  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
 
@@ -378,7 +379,7 @@ def main() -> int:
             return 0
         return 2 if path in latest_files else 1
 
-    for path, content in sorted(changes.items(), key=write_order):
+    for path, content in sorted(install_staged(args.home, changes).items(), key=write_order):
         if content is None:
             path.unlink()
         else:

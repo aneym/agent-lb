@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -87,10 +85,20 @@ def verify_install_revision(
     main_sha = git("rev-parse", "origin/main").stdout.strip()
     if git("merge-base", "--is-ancestor", "origin/main", "HEAD").returncode == 0:
         return
+    fetched_sha = os.environ.get("AGENT_LB_POLICY_FETCHED", "").strip()
+    if fetched_sha and fetched_sha == head and git("merge-base", "--is-ancestor", head, "origin/main").returncode == 0:
+        return
     message = f"HEAD={head} origin/main={main_sha}; rebase onto origin/main"
     if not force or not reason or not reason.strip():
         raise SystemExit("error: stale installer: " + message)
     print("WARNING: forced stale installation: " + message + "; reason=" + reason, flush=True)
+
+
+def sync_parent() -> bool:
+    command = subprocess.run(
+        ["ps", "-p", str(os.getppid()), "-o", "command="], capture_output=True, text=True, timeout=10
+    ).stdout
+    return "coding-agents-sync" in command
 
 
 def locked_main(main) -> int:
@@ -102,16 +110,18 @@ def locked_main(main) -> int:
     if not (args.check_hook_paths or args.preview or args.uninstall or args.check):
         verify_install_revision(Path(__file__).resolve().parent, args.force, args.reason, args.home)
     home = args.home.expanduser().resolve()
-    digest = hashlib.sha256(str(home).encode()).hexdigest()[:16]
-    lock_dir = Path(tempfile.gettempdir())
-    lock_path = lock_dir / f"agent-lb-install-policy-{os.getuid()}-{digest}.lock"
+    lock_path = home / ".agent-lb/coding-agents-sync.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_path, "a+") as handle:
         deadline = time.monotonic() + 600
+        held_by_parent = sync_parent()
         while True:
             try:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
+                if held_by_parent:
+                    break
                 handle.seek(0)
                 try:
                     holder = json.loads(handle.read())
@@ -142,7 +152,7 @@ def locked_main(main) -> int:
                             os.kill(pid, signal.SIGKILL)
                         continue
                 if time.monotonic() > deadline:
-                    raise SystemExit(f"error: another install-policy run holds {lock_path}")
+                    raise SystemExit(f"error: coding-agents-sync or another install-policy run holds {lock_path}")
                 time.sleep(1)
         started_at = time.time()
 
