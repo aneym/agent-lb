@@ -57,6 +57,20 @@ def token_login(token, env):
     return None
 
 
+def guarded_shim(path):
+    try:
+        with open(path, encoding="utf-8") as source:
+            lines = [line.strip() for line in source]
+    except (OSError, UnicodeError):
+        return False
+    if "import gh_guard" in lines:
+        return True
+    if not lines or not lines[0].startswith("#!/bin/sh") or 'slow() { exec "$bindir/gh-shim.py" "$@"; }' not in lines:
+        return False
+    beside = os.path.join(os.path.dirname(path), "gh-shim.py")
+    return os.path.basename(beside) != os.path.basename(path) and guarded_shim(beside)
+
+
 def write(args):
     if not args:
         return False
@@ -298,7 +312,7 @@ def shell_source(text):
 
 def check(command, environ=None, depth=0):
     spelling = command.replace("\\\n", "").translate(str.maketrans("", "", "\\\"'"))
-    if not re.search(r"(?<![\w-])(?:gh|git)(?![\w-])", spelling):
+    if not re.search(r"(?<![\w-])(?:gh|git|gh-shim\.py)(?![\w-])", spelling):
         return
     base = dict(os.environ if environ is None else environ)
     if depth > 8:
@@ -358,7 +372,7 @@ def check(command, environ=None, depth=0):
                 if arg.startswith("-") and "c" in arg and j + 1 < len(args):
                     check(args[j + 1], env, depth + 1)
                     break
-        if os.path.basename(word) != "gh":
+        if os.path.basename(word) not in {"gh", "gh-shim.py"}:
             continue
         while args and (
             args[0] in {"-R", "--repo", "--hostname"} or args[0].startswith(("--repo=", "-R", "--hostname="))
@@ -366,12 +380,7 @@ def check(command, environ=None, depth=0):
             args = args[2:] if args[0] in {"-R", "--repo", "--hostname"} else args[1:]
         token = env.get("GH_TOKEN") or env.get("GITHUB_TOKEN") or ""
         path = shutil.which(word, path=env.get("PATH")) or word
-        app_shim = False
-        try:
-            with open(os.path.realpath(path), encoding="utf-8") as source:
-                app_shim = any(line.strip() == "import gh_guard" for line in source)
-        except (OSError, UnicodeError):
-            pass
+        app_shim = guarded_shim(os.path.realpath(path))
         app = token.startswith("ghs_") or (
             not token and env.get("GH_APP") == "on" and env.get("GH_APP_FALLBACK") == "off" and app_shim
         )
