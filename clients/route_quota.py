@@ -51,7 +51,7 @@ def quota_swap_state(table: dict[str, Any], fetch_pools: Callable,
     eligible = eligible if isinstance(eligible, (int, float)) and not isinstance(eligible, bool) and math.isfinite(eligible) else None
     headroom = headroom / 100 if isinstance(headroom, (int, float)) and not isinstance(headroom, bool) and math.isfinite(headroom) else None
     now = datetime.now(timezone.utc)
-    errors = api_request_logs(now - timedelta(minutes=15), cache=True)
+    errors = api_request_logs(now - timedelta(minutes=15), cache=True, errors_only=True)
     stamps = []
     for row in errors:
         if not (row.get("provider") == "anthropic" or str(row.get("model", "")).startswith("claude-")):

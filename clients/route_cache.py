@@ -53,6 +53,17 @@ def _live_request(
 ) -> HttpResult:
     if fixture and _fixture_file(path) is not None:
         return _fixture_result(path)
+    result = _live_attempt(method, path, payload=payload, timeout=timeout, url=url)
+    for delay in (0.2, 0.5) if method == "GET" else ():
+        if not (result.error or "").startswith("truncated"):
+            break
+        time.sleep(delay)
+        result = _live_attempt(method, path, payload=payload, timeout=timeout, url=url)
+    return result
+
+
+def _live_attempt(method: str, path: str, *, payload: dict[str, Any] | None, timeout: float, url: str) -> HttpResult:
+    import http.client
     import urllib.error
     import urllib.request
 
@@ -71,6 +82,10 @@ def _live_request(
         raw = error.read().decode("utf-8", errors="replace")
         body = _decode(raw)
         return HttpResult(ok=False, status=error.code, body=body, error=f"HTTP {error.code}")
+    except http.client.IncompleteRead as error:
+        return HttpResult(ok=False, status=None, body=None, error=f"truncated: {error!r}")
+    except http.client.HTTPException as error:
+        return HttpResult(ok=False, status=None, body=None, error=f"truncated: {type(error).__name__}: {error}")
     except TimeoutError:
         return HttpResult(ok=False, status=None, body=None, error="timeout")
     except (OSError, urllib.error.URLError) as error:

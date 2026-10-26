@@ -29,13 +29,28 @@ def pinned_model(table: dict[str, Any], alias: str | None) -> str | None:
     return pinned if isinstance(pinned, str) else None
 
 
-def api_request_logs(since: datetime, *, cache: bool = False) -> list[dict[str, Any]]:
+REQUEST_LOG_PAGE = 200
+REQUEST_LOG_CAP = 1000
+ERROR_STATUSES = "&status=rate_limit&status=quota&status=error"
+
+
+def api_request_logs(since: datetime, *, cache: bool = False, errors_only: bool = False) -> list[dict[str, Any]]:
     if cache:
         since = since.replace(second=since.second // 5 * 5, microsecond=0)
-    result = http_get(f"/api/request-logs?limit=1000&includeTotal=false&since={utc_stamp(since)}")
-    body = result.body if result.ok and isinstance(result.body, dict) else {}
-    rows = body.get("requests") if isinstance(body.get("requests"), list) else []
-    return [row for row in rows if isinstance(row, dict)]
+    until = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=1)
+    if cache:
+        until = until.replace(second=until.second // 5 * 5) + timedelta(seconds=5)
+    query = f"includeTotal=false&since={utc_stamp(since)}&until={utc_stamp(until)}"
+    query += ERROR_STATUSES if errors_only else ""
+    rows: list[dict[str, Any]] = []
+    while len(rows) < REQUEST_LOG_CAP:
+        result = http_get(f"/api/request-logs?limit={REQUEST_LOG_PAGE}&offset={len(rows)}&{query}")
+        body = result.body if result.ok and isinstance(result.body, dict) else {}
+        page = [row for row in body.get("requests") or [] if isinstance(row, dict)]
+        rows.extend(page)
+        if len(page) < REQUEST_LOG_PAGE:
+            break
+    return rows[:REQUEST_LOG_CAP]
 
 
 def message_head(body: Any) -> str | None:
