@@ -28,8 +28,13 @@ def verify_factory(SOURCE, source_table, classes, check, read, frontmatter_model
     factory(
         "implement-head",
         implement_default in DEFAULT_HEADS
-        and all(bool(rows) and rows[0] == DEFAULT_HEADS[implement_default] for rows in head_rows),
-        f"implement and mechanical lead with the default implementer; implement_default={implement_default}",
+        and all(
+            DEFAULT_HEADS[implement_default] in rows
+            and all(row in rows for row in DEFAULT_HEADS.values())
+            and rows[0] in DEFAULT_HEADS.values()
+            for rows in head_rows
+        ),
+        f"implement and mechanical hold both default implementers with one at the head; implement_default={implement_default}",
     )
     off_default = source_table.get("off_default", [])
     off_seats = {item.get("seat") for item in off_default}
@@ -217,7 +222,7 @@ def verify_factory(SOURCE, source_table, classes, check, read, frontmatter_model
             f"extra {sorted((set(seat_map) | standard_definitions) - definitions)}"
         )
     named = class_seats | off_seats | {classes.get("implement", {}).get("escalation", {}).get("seat")}
-    for name in sorted(named - set(seat_map) - {None}):
+    for name in named - set(seat_map):
         problems.append(f"missing referenced seat {name}")
     if any(isinstance(value, dict) and value.get("needs_test_run") is True for value in seat_map.values()):
         if "codex-test-runner" not in seat_map:
@@ -293,6 +298,7 @@ def verify_factory(SOURCE, source_table, classes, check, read, frontmatter_model
             isinstance(target, str)
             and target in seat_map
             and bool(chain)
+            and any(entry.get("seat") == target for entry in chain)
             and target != chain[0].get("seat")
             and isinstance(seat_map.get(target), dict)
             and seat_map[target].get("vendor") in implement.get("audit", {}).get("by_author_vendor", {})
@@ -303,7 +309,7 @@ def verify_factory(SOURCE, source_table, classes, check, read, frontmatter_model
             and isinstance(escalation["evidence"], str)
             and bool(escalation["evidence"].strip())
         )
-    factory("escalation", valid_escalation, "implement escalates to an audited non-head seat at fix round 1 or more")
+    factory("escalation", valid_escalation, "implement escalates to an audited chain seat at a fix round of 1 or more")
 
     private_literals: list[str] = []
     literals_error = ""
