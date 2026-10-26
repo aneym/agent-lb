@@ -37,19 +37,26 @@ ERROR_STATUSES = "&status=rate_limit&status=quota&status=error"
 def api_request_logs(since: datetime, *, cache: bool = False, errors_only: bool = False) -> list[dict[str, Any]]:
     if cache:
         since = since.replace(second=since.second // 5 * 5, microsecond=0)
-    until = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=1)
+    from urllib.parse import urlencode
+
+    until = datetime.now(timezone.utc)
     if cache:
-        until = until.replace(second=until.second // 5 * 5) + timedelta(seconds=5)
-    query = f"includeTotal=false&since={utc_stamp(since)}&until={utc_stamp(until)}"
+        until = until.replace(second=until.second // 5 * 5, microsecond=0)
+    query = urlencode({"includeTotal": "false", "since": utc_stamp(since), "until": until.isoformat()})
     query += ERROR_STATUSES if errors_only else ""
     rows: list[dict[str, Any]] = []
+    cursor = ""
+    seen_cursors: set[str] = set()
     while len(rows) < REQUEST_LOG_CAP:
-        result = http_get(f"/api/request-logs?limit={REQUEST_LOG_PAGE}&offset={len(rows)}&{query}")
+        result = http_get(f"/api/request-logs?limit={REQUEST_LOG_PAGE}&{query}{cursor}")
         body = result.body if result.ok and isinstance(result.body, dict) else {}
         page = [row for row in body.get("requests") or [] if isinstance(row, dict)]
         rows.extend(page)
-        if len(page) < REQUEST_LOG_PAGE:
+        next_cursor = body.get("nextCursor")
+        if len(page) < REQUEST_LOG_PAGE or not isinstance(next_cursor, str) or next_cursor in seen_cursors:
             break
+        seen_cursors.add(next_cursor)
+        cursor = "&" + urlencode({"cursor": next_cursor})
     return rows[:REQUEST_LOG_CAP]
 
 

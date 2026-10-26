@@ -47,6 +47,7 @@ class RequestLogsPage:
     requests: list[RequestLogEntry]
     total: int
     has_more: bool
+    next_cursor: str | None = None
 
 
 class RequestLogsService:
@@ -67,6 +68,7 @@ class RequestLogsService:
         reasoning_efforts: list[str] | None = None,
         status: list[str] | None = None,
         include_total: bool = True,
+        before: tuple[datetime, int] | None = None,
     ) -> RequestLogsPage:
         status_filter = _map_status_filter(status)
         normalized_model_options = (
@@ -88,6 +90,7 @@ class RequestLogsService:
             error_codes_in=status_filter.error_codes_in,
             error_codes_excluding=status_filter.error_codes_excluding,
             include_total=include_total,
+            before=before,
         )
         api_key_ids = [log.api_key_id for log in logs if log.api_key_id]
         api_key_name_by_id = await self._repo.get_api_key_names_by_ids(api_key_ids)
@@ -102,6 +105,7 @@ class RequestLogsService:
             requests=requests,
             total=total,
             has_more=offset + limit < total,
+            next_cursor=f"{logs[-1].requested_at.isoformat()}|{logs[-1].id}" if logs else None,
         )
 
     async def list_filter_options(

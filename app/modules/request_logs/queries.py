@@ -37,6 +37,7 @@ class RequestLogQueries:
         error_codes_in: list[str] | None = None,
         error_codes_excluding: list[str] | None = None,
         include_total: bool = True,
+        before: tuple[datetime, int] | None = None,
     ) -> tuple[list[RequestLog], int]:
         filters = self._build_filters(
             search=search,
@@ -59,6 +60,12 @@ class RequestLogQueries:
         stmt = self._apply_related_search_joins(stmt, filters.needs_related_search_joins)
         if filters.conditions:
             stmt = stmt.where(and_(*filters.conditions))
+        if before is not None:
+            stamp, row_id = before
+            stamp = to_utc_naive(stamp)
+            stmt = stmt.where(
+                or_(RequestLog.requested_at < stamp, and_(RequestLog.requested_at == stamp, RequestLog.id < row_id))
+            )
         if offset:
             stmt = stmt.offset(offset)
         if limit:
