@@ -27,3 +27,5 @@ CONTRACT_EOF
 - For placement without submitting, replace `--bg` with `--dry-run` in the seat-run part of the launcher command (seat-run refuses both), then launch with `--key <printed key> --contract <printed contract>` and `--prompt-file @contract` unchanged. For contract creation without invoking seat-run, add `--dry-run` to forward-contract.py.
 
 Return the seat's final output as given, including its HANDOFF block, plus the key and the `seat-run:` placement lines. The driver owns acceptance.
+
+Box seats run on another machine: never cite this session's scratchpad or any local tmp path as a place the seat works in, and never forward the Claude Code attribution trailer. Name each output path outside the cwd on a `writes: <path>` line; forward-contract.py turns local scratch paths into declared outputs and adds the commit trailer for the model that actually runs.

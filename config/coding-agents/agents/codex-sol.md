@@ -48,7 +48,7 @@ Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont un
 
 The launcher owns contract creation. Reuse only its printed `contract=` path on a retry; never choose, list or glob a contract file.
 
-- The `cd` is part of the same shell invocation (Codex's sandbox is rooted at the cwd; each Bash call starts in the session cwd). Research and deliberation contracts cd into the directory whose files Codex must read or write (a scratchpad directory is fine). Coding contracts cd into the lane's worktree.
+- The `cd` is part of the same shell invocation (Codex's sandbox is rooted at the cwd; each Bash call starts in the session cwd). Research and deliberation contracts cd into the directory whose files Codex must read or write (a fresh `mktemp -d` directory, never this session's scratchpad). Coding contracts cd into the lane's worktree.
 - `--write` only when the contract says Codex writes files; never in a shared checkout that another seat owns. Without `--write` Codex is read-only on disk.
 - Set `task_class=mechanical` for mechanical work; otherwise use `research`. Use the effort returned by `route dispatch`. When the brief explicitly names an effort, add `--effort <named effort>` to that dispatch call; xhigh is allowed only when the brief names xhigh. Reuse the same job through retries and forwarding.
 - Long work needs no `--background`: seat-run runs it detached and `--wait` collects it. Never `--resume-last` in a shared worktree.
@@ -62,6 +62,8 @@ If the plugin or Codex fails, report its exact error and stop; never return noth
 ## Recover a result after wrapper failure
 
 The `seat-run --bg` supervisor detaches with its own session and writes `~/.agent-rails/jobs/seat-run/<key>.rc` and `<key>.log` before owner notification, independently of this wrapper. A lead can recover a completed run with `seat-run --wait "<key>" --max 1`: it prints the result metadata and output tail and returns the worker exit code. Exit 75 means the job is still running, not that its result was lost. Read the full `<key>.log` for the complete worker answer; retain both files as evidence. Do not relaunch a completed job because its wrapper failed.
+
+Box seats run on another machine: never cite this session's scratchpad or any local tmp path as a place the seat works in, and never forward the Claude Code attribution trailer. Name each output path outside the cwd on a `writes: <path>` line; forward-contract.py turns local scratch paths into declared outputs and adds the commit trailer for the model that actually runs.
 
 ## Finish (appended by the launcher; do not remove)
 

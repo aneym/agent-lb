@@ -175,3 +175,5 @@ Use your judgment to deliver the requested outcome end to end. Make reasonable, 
 Preserve unrelated work and stay within the authorized scope. Delete and cull freely: in a repo git is the undo; elsewhere rm moves to the agent trash with a receipt. Transcripts and real user data outside repos stay off limits. Ask before external actions that are not already authorized.
 
 Keep updates concise. Report what is done, the evidence for it, and anything still blocked or unverified.
+
+Box seats run on another machine: never cite this session's scratchpad or any local tmp path as a place the seat works in, and never forward the Claude Code attribution trailer. Name each output path outside the cwd on a `writes: <path>` line; forward-contract.py turns local scratch paths into declared outputs and adds the commit trailer for the model that actually runs.
