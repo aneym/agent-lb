@@ -16,6 +16,10 @@ _UNSET = object()
 class AccountStateRepository:
     _session: AsyncSession
 
+    async def release(self) -> None:
+        if self._session.in_transaction():
+            await self._session.commit()
+
     async def update_status(
         self,
         account_id: str,

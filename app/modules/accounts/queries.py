@@ -319,11 +319,13 @@ class AccountsQueries:
             and (account.status == AccountStatus.ACTIVE or account.status in _LIMITED_LISTABLE_STATUSES)
         ]
         accounts.sort(key=lambda account: account.status != AccountStatus.ACTIVE)
+        await self._repo.release()
         for account in accounts[:ANTHROPIC_MODELS_MAX_ACCOUNTS]:
             try:
                 fresh = account
                 if account.status == AccountStatus.ACTIVE and self._auth_manager:
                     fresh = await self._auth_manager.ensure_fresh(account, force=False)
+                    await self._repo.release()
                     if fresh.status != AccountStatus.ACTIVE:
                         continue
                 access_token = self._encryptor.decrypt(fresh.access_token_encrypted)

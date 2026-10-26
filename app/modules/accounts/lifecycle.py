@@ -153,9 +153,11 @@ class AccountsLifecycle(AccountsTransfer):
         if normalize_subscription_status(account.subscription_status) != CANCELED_SUBSCRIPTION_STATUS:
             raise AccountStateTransitionError("Subscription checks are only available for canceled accounts")
 
+        await self._repo.release()
         check_account = account
         if self._auth_manager is not None:
             check_account = await self._auth_manager.ensure_fresh(account, force=False)
+            await self._repo.release()
 
         access_token = self._encryptor.decrypt(check_account.access_token_encrypted)
         provider = normalize_provider_name(check_account.provider)
@@ -235,10 +237,12 @@ class AccountsLifecycle(AccountsTransfer):
 
         primary_before, secondary_before = await self._latest_usage_percents(account_id)
         status_before = account.status.value
+        await self._repo.release()
 
         probe_account = account
         if self._auth_manager is not None:
             probe_account = await self._auth_manager.ensure_fresh(account, force=False)
+            await self._repo.release()
 
         access_token = self._encryptor.decrypt(probe_account.access_token_encrypted)
         probe_model = model or probes.DEFAULT_PROBE_MODEL
@@ -247,6 +251,7 @@ class AccountsLifecycle(AccountsTransfer):
         compat_profile = compat_profiles.get(provider)
         if provider == ANTHROPIC_PROVIDER_NAME and self._usage_updater:
             await self._usage_updater.force_refresh(probe_account)
+            await self._repo.release()
         if compat_profile is not None:
             base_url = compat_profile.upstream_base_url
             if base_url is None:
@@ -266,7 +271,9 @@ class AccountsLifecycle(AccountsTransfer):
             )
 
         if self._usage_repo and self._usage_updater and provider in {OPENAI_PROVIDER_NAME, "kimi"}:
+            await self._repo.release()
             await self._usage_updater.force_refresh(probe_account)
+            await self._repo.release()
             if provider == "kimi":
                 from app.modules.accounts.service_caches import invalidate_additional_quotas_cache
 
