@@ -79,7 +79,10 @@ def _live_attempt(method: str, path: str, *, payload: dict[str, Any] | None, tim
             raw = response.read().decode("utf-8", errors="replace")
             status = response.status
     except urllib.error.HTTPError as error:
-        raw = error.read().decode("utf-8", errors="replace")
+        try:
+            raw = error.read().decode("utf-8", errors="replace")
+        except (http.client.IncompleteRead, OSError) as read_error:
+            return HttpResult(ok=False, status=error.code, body=None, error=f"truncated: {type(read_error).__name__}")
         body = _decode(raw)
         return HttpResult(ok=False, status=error.code, body=body, error=f"HTTP {error.code}")
     except http.client.IncompleteRead as error:

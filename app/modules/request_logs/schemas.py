@@ -64,6 +64,7 @@ class RequestLogEntry(DashboardModel):
 
 
 class RequestLogsResponse(DashboardModel):
+    next_cursor: str | None = None
     requests: list[RequestLogEntry] = Field(default_factory=list)
     total: int
     has_more: bool

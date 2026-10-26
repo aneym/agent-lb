@@ -102,12 +102,24 @@ async def list_request_logs(
     model_option: list[str] | None = Query(default=None, alias="modelOption"),
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
+    cursor: str | None = Query(default=None),
     context: RequestLogsContext = Depends(get_request_logs_context),
 ) -> RequestLogsResponse:
     parsed_options: list[ServiceRequestLogModelOption] | None = None
     if model_option:
         parsed = [_parse_model_option(value) for value in model_option]
         parsed_options = [value for value in parsed if value is not None] or None
+    before = None
+    if cursor is not None:
+        try:
+            stamp, row_id = cursor.rsplit("|", 1)
+            parsed_stamp = _parse_timestamp(stamp, "cursor")
+            parsed_id = int(row_id)
+            if parsed_stamp is None or parsed_id < 1 or offset:
+                raise ValueError
+            before = (parsed_stamp, parsed_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor or cursor combined with offset") from exc
     page = await context.service.list_recent(
         limit=limit,
         offset=offset,
@@ -121,11 +133,13 @@ async def list_request_logs(
         reasoning_efforts=reasoning_effort,
         status=status,
         include_total=include_total,
+        before=before,
     )
     return RequestLogsResponse(
         requests=page.requests,
         total=page.total,
         has_more=page.has_more,
+        next_cursor=page.next_cursor,
     )
 
 
