@@ -200,7 +200,7 @@ def keep_config_order(groups: list[Any], eligible: list[bool], event: str) -> li
     return eligible
 
 
-def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+def drop_hooks(hooks: dict[str, Any], retired_kept: frozenset[str] = frozenset()) -> tuple[dict[str, Any], list[str]]:
 
     kept, dropped = {}, []
     for event, groups in hooks.items():
@@ -219,7 +219,12 @@ def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 if isinstance(command, str):
                     name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
                     name = name or next(
-                        (n for n in (*RETIRED_HOOKS, *UNREGISTERED_HOOKS, "/_root/hooks/") if n in command), None
+                        (
+                            n
+                            for n in (*RETIRED_HOOKS, *UNREGISTERED_HOOKS, "/_root/hooks/")
+                            if n in command and n not in retired_kept
+                        ),
+                        None,
                     )
                     if (
                         (event == "PostToolUse" and "factory-lint-hook" in command)

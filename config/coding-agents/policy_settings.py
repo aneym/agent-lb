@@ -181,11 +181,12 @@ def reconcile_settings(
     rewrite_commands,
     sonnet_model: str = SONNET_MODEL,
     source: Path | None = None,
+    retired_kept: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
     hooks = updated.get("hooks", {})
     if isinstance(hooks, dict):
-        hooks, dropped = drop_hooks(hooks)
+        hooks, dropped = drop_hooks(hooks, retired_kept)
         for line in dropped:
             print(f"dropped {line}")
         updated["hooks"] = hooks

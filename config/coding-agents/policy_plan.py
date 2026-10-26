@@ -7,11 +7,12 @@ from pathlib import Path
 from policy_documents import read_text  # type: ignore[missing-import]
 from policy_files import desired_routing_table  # type: ignore[missing-import]
 from policy_hook_groups import installed_manifest  # type: ignore[missing-import]
-from policy_layout import ADOPTED_KEEP, DISPATCH_SCRIPT, HOOK_MANIFEST, MANAGED_AGENTS, MANAGED_DIR, POLICY_DIR, POLICY_FILES, POLICY_HOOKS_RECORD, POLICY_SNAPSHOT, RETIRED_AGENTS, RETIRED_HOOKS, ROUTE_FILES, ROUTING_TABLE, ROUTING_TABLE_OWNER  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
+from policy_layout import ADOPTED_KEEP, DISPATCH_SCRIPT, HOOK_MANIFEST, MANAGED_AGENTS, MANAGED_DIR, POLICY_DIR, POLICY_FILES, POLICY_SNAPSHOT, RETIRED_AGENTS, RETIRED_HOOKS, ROUTE_FILES, ROUTING_TABLE, ROUTING_TABLE_OWNER  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 from policy_inventory import MANAGED_SEATS  # type: ignore[missing-import]
 from policy_settings import seat_template  # type: ignore[missing-import]
 
 SHADOWED_AGENTS = Path(".agent-lb/shadowed-agents")
+POLICY_HOOKS_RECORD = MANAGED_DIR / "policy-hooks"
 
 
 def definition_name(text):
@@ -33,7 +34,7 @@ def evict_shadows(home, changes):
             changes[path] = None
 
 
-def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link):
+def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link, kept):
     shipped = {path.name for path in (source / "hooks").iterdir() if path.is_file()}
     settings = "".join(read_text(home / ".claude" / name) or "" for name in ("settings.json", "settings.local.json"))
     record = home / POLICY_HOOKS_RECORD
@@ -50,6 +51,7 @@ def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link
             and path.name not in shipped
             and path.name in owned
             and path.name not in settings
+            and path not in kept
         ):
             changes[path] = None
     if copied:
@@ -70,14 +72,14 @@ def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link
         if any(name in shipped or name in settings for name in names):
             continue
         stale = [home / ".claude/hooks" / name for name in names]
-        stale = [hook for hook in stale if hook.is_file() and not hook.is_symlink()]
+        stale = [hook for hook in stale if hook.is_file() and not hook.is_symlink() and hook not in kept]
         for hook in stale:
             changes[hook] = None
         if stale:
             changes[marker] = None
 
 
-def plan_managed_files(args, source, snapshot, keep_fold, changes):
+def plan_managed_files(args, source, snapshot, keep_fold, changes, kept):
     preserved_agents: list[tuple[str, Path]] = []
     replace_policy_link = False
     policy_link_target = ""
@@ -148,11 +150,11 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes):
                     changes[path] = None
         for name in RETIRED_HOOKS:
             stub = args.home / ".claude/hooks" / name
-            if stub.is_file() or stub.is_symlink():
+            if (stub.is_file() or stub.is_symlink()) and stub not in kept:
                 changes[stub] = None
             for relative in (POLICY_DIR / "hooks" / name, MANAGED_DIR / Path(name).stem):
                 target = args.home / relative
-                if target.is_file() and not target.is_symlink():
+                if target.is_file() and not target.is_symlink() and target not in kept:
                     changes[target] = None
         for name in RETIRED_AGENTS:
             for relative in (
@@ -191,7 +193,7 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes):
                 changes[decider_path] = decider_source.read_text()
 
         replace_policy_link = policy_dir.is_symlink()
-        prune_unshipped_hooks(args.home, source, policy_dir, changes, replace_policy_link)
+        prune_unshipped_hooks(args.home, source, policy_dir, changes, replace_policy_link, kept)
         if replace_policy_link:
             policy_link_target = os.readlink(policy_dir)
         if replace_policy_link or policy_dir.resolve() != source:

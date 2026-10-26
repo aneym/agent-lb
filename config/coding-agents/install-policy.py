@@ -28,7 +28,7 @@ from policy_hook_install import dispatch_worth, managed_hooks, pin_inproc  # typ
 from policy_hook_registry import fold_hooks, folded_rev, is_folded, read_registry, registry_rev, unfold_hooks  # type: ignore[missing-import]  # fmt: skip
 from policy_layout import CORE_SOURCE, DISPATCH_EVENTS, DISPATCH_REGISTRY, DISPATCH_SCRIPT, HAIKU_ENV, MODELS_FULL, MODELS_MARKER, POLICY_DIR, RETIRED_HOOKS, REV_FILE, REV_KEEP_SECONDS, SONNET_MODEL  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 from policy_lock import locked_main, parse_args  # type: ignore[missing-import]
-from policy_registry_retirement import retire_hook_registries  # type: ignore[missing-import]
+from policy_registry_retirement import kept_retired_hooks, retire_hook_registries  # type: ignore[missing-import]
 from policy_plan import plan_managed_files  # type: ignore[missing-import]
 from policy_settings import check_policy, internal_hook_commands, policy_snapshot, reconcile_settings, resolve_sol, snapshot_model  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
@@ -59,6 +59,9 @@ def main() -> int:
     snapshot = None if args.uninstall else policy_snapshot(source, args.home)
     if args.check:
         return check_policy(source, args.home, snapshot)
+    kept = kept_retired_hooks(args.home)
+    for path in kept:
+        print(f"WARNING kept {path}: retired hook name, but no agent-lb marker and no shipped hash; not ours to delete")
     claude_path = args.home / ".claude" / "CLAUDE.md"
     codex_path = args.home / ".codex" / "AGENTS.md"
     template = (source / "claude-adapter.md").read_text()
@@ -121,7 +124,9 @@ def main() -> int:
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
     sonnet_model = SONNET_MODEL if args.uninstall else snapshot_model(snapshot, "sonnet-latest")
-    nxt = reconcile_settings(settings, args.uninstall, rewrite_floor_commands, sonnet_model, source)
+    nxt = reconcile_settings(
+        settings, args.uninstall, rewrite_floor_commands, sonnet_model, source, frozenset(kept.values())
+    )
     handlers = {} if args.uninstall else apply_handlers(nxt, load_handlers(args.home, source), args.home)
     if not args.uninstall:
         nxt["autoCompactWindow"] = snapshot["autocompact_window"]["tab"]
@@ -322,10 +327,10 @@ def main() -> int:
                 changes[path] = None
     changes.update(codex_changes(args.home, None if args.uninstall else resolve_sol(source, args.home)))
     preserved_agents, replace_policy_link, policy_link_target = plan_managed_files(
-        args, source, snapshot, keep_fold, changes
+        args, source, snapshot, keep_fold, changes, kept
     )
 
-    retire_hook_registries(args.home, changes)
+    retire_hook_registries(args.home, changes, kept)
     validate_hook_changes(args.home, changes, nxt)
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
