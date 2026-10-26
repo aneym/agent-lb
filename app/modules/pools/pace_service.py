@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import Integer, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit_quota import quota_allocation
@@ -24,17 +24,54 @@ from app.modules.pools.pace_curve import (
 
 PROVIDERS = ("anthropic", "openai")
 FAST_HOURS = 2
+SAMPLE_SECONDS = 300
+CACHE_SECONDS = 60
 _PREVIOUS: dict[str, dict] = {}
+_LATEST: dict[str, object] = {}
 
 
-def weekly_row(provider: str, row: UsageHistory) -> bool:
+def weekly_row(provider: str, row) -> bool:
     if provider == "anthropic":
         return row.window == "secondary"
     return row.window_minutes == 10080
 
 
-def short_row(provider: str, row: UsageHistory) -> bool:
+def short_row(provider: str, row) -> bool:
     return provider == "anthropic" and row.window == "primary" and row.window_minutes == 300
+
+
+async def sampled_usage(session: AsyncSession, accounts: list[str], since: datetime) -> list:
+    bind = session.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        bucket = func.floor(func.extract("epoch", UsageHistory.recorded_at) / SAMPLE_SECONDS)
+    else:
+        bucket = cast(cast(func.strftime("%s", UsageHistory.recorded_at), Integer) / SAMPLE_SECONDS, Integer)
+    windows = or_(
+        UsageHistory.window == "secondary",
+        UsageHistory.window_minutes.in_((300, 10080)),
+    )
+    ranked = (
+        select(
+            UsageHistory.account_id,
+            UsageHistory.window,
+            UsageHistory.window_minutes,
+            UsageHistory.used_percent,
+            UsageHistory.recorded_at,
+            UsageHistory.reset_at,
+            func.row_number()
+            .over(
+                partition_by=(UsageHistory.account_id, UsageHistory.window, UsageHistory.window_minutes, bucket),
+                order_by=UsageHistory.recorded_at.desc(),
+            )
+            .label("rank"),
+        )
+        .where(
+            and_(UsageHistory.account_id.in_(accounts), UsageHistory.recorded_at >= since.replace(tzinfo=None), windows)
+        )
+        .subquery()
+    )
+    statement = select(ranked).where(ranked.c.rank == 1).order_by(ranked.c.recorded_at)
+    return list((await session.execute(statement)).all())
 
 
 async def recent_receipts(session: AsyncSession, since: datetime) -> list[dict]:
@@ -73,15 +110,7 @@ async def provider_pace(
     inputs = {s.account_id: account_input(s) for s in members}
     accounts = [a for a in inputs.values() if a is not None]
     factors = {a.id: a.factor for a in accounts}
-    statement = (
-        select(UsageHistory)
-        .where(
-            UsageHistory.account_id.in_([s.account_id for s in members]),
-            UsageHistory.recorded_at >= (now - timedelta(hours=25)).replace(tzinfo=None),
-        )
-        .order_by(UsageHistory.recorded_at)
-    )
-    rows = (await session.execute(statement)).scalars().all()
+    rows = await sampled_usage(session, [s.account_id for s in members], now - timedelta(hours=25))
     weekly = [
         {
             "account": r.account_id,
@@ -158,6 +187,15 @@ async def provider_pace(
 
 async def build_pace(summaries: list[AccountSummary], session: AsyncSession, now: datetime) -> dict:
     now = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
+    cached = _LATEST.get("pace")
+    if isinstance(cached, dict) and 0 <= (now - cached["at"]).total_seconds() < CACHE_SECONDS:
+        return cached["body"]
+    body = await compute_pace(summaries, session, now)
+    _LATEST["pace"] = {"at": now, "body": body}
+    return body
+
+
+async def compute_pace(summaries: list[AccountSummary], session: AsyncSession, now: datetime) -> dict:
     receipts = await recent_receipts(session, now - timedelta(hours=FAST_HOURS))
     pools, conversions, basis = {}, {}, {}
     for provider in PROVIDERS:
