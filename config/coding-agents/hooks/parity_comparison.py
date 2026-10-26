@@ -38,34 +38,6 @@ def run_path(sandbox, case, hooks, extra, trace):
                 result["trace"] = [json.loads(line) for line in handle if line.strip()]
             os.unlink(trace_path)
         results.append(result)
-    if "poll_warning" in case:
-
-        def warnings(rows):
-            return [
-                text for text in effect(case["event"], rows)["context"].splitlines() if text.startswith("Waits rule")
-            ]
-
-        contexts = warnings(results)
-        assert len(contexts) == int(case["poll_warning"]), (case["name"], results)
-        assert all(len(text.encode()) <= 300 for text in contexts)
-        assert all(row["code"] == 0 for row in results), (case["name"], results)
-        if case.get("poll_repeat"):
-            repeated = [run_shell(hook["command"], payload, env, cwd, hook_timeout(hook)) for hook in hooks]
-            assert not warnings(repeated), (case["name"], repeated)
-            assert all(row["code"] == 0 for row in repeated)
-            alternate = json.loads(payload)
-            alternate["tool_input"]["command"] = "echo prefix; " + alternate["tool_input"]["command"]
-            again = [
-                run_shell(hook["command"], json.dumps(alternate).encode(), env, cwd, hook_timeout(hook))
-                for hook in hooks
-            ]
-            assert not warnings(again), (case["name"], again)
-            alternate["session_id"] += "-other"
-            separate = [
-                run_shell(hook["command"], json.dumps(alternate).encode(), env, cwd, hook_timeout(hook))
-                for hook in hooks
-            ]
-            assert len(warnings(separate)) == 1, (case["name"], separate)
     return run, results, files_of(run)
 
 

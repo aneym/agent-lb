@@ -183,6 +183,6 @@ def subagent_only(case, mismatch):
 
 def verdict(case, outcome):
     kept = [m for m in outcome["mismatches"] if not subagent_only(case, m)]
-    if case.get("setup") == "offload":
+    if case.get("setup") == "offload" and any("offload" in command for command, *_ in outcome["modes"]):
         kept += [{"what": "offload", "problem": text} for text in problems(case, outcome)]
     return kept

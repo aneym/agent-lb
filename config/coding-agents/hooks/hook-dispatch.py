@@ -133,7 +133,7 @@ class Plan(object):
         self.timeout = (
             min(float(timeout), FLOOR_TIMEOUT)
             if self.floor and isinstance(timeout, (int, float)) and timeout > 0
-            else (FLOOR_TIMEOUT if self.floor else min(self.timeout, DEFAULT_TIMEOUT))
+            else (FLOOR_TIMEOUT if self.floor else self.timeout)
         )
         self.exec_argv = None
         self.opaque = None
@@ -179,6 +179,9 @@ def plan_hook(hook, inproc_names, script_pins=None):
             return plan
         command = legacy_floor(command) or command
     if command.strip() in REWRITERS:
+        if not which(command.split()[0]):
+            plan.kind, plan.prefilter, plan.reason = "filtered", never, "rewriter is not on PATH, so it cannot rewrite"
+            return plan
         plan.kind, plan.reason = "rewriter", "side-effect free rewriter"
         return plan
     prefilter = COMMAND_PREFILTERS.get(hashlib.sha256(command.encode("utf-8")).hexdigest())

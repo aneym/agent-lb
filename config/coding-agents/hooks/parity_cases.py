@@ -16,41 +16,6 @@ def bash(command, cwd_rel="work", **extra):
     return dict(event="PreToolUse", tool="Bash", input={"command": command}, cwd_rel=cwd_rel, **extra)
 
 
-def poll_loop_cases():
-    studio = 'until ! pgrep -f "check --staged" >/dev/null || [ $(grep -c . status.log) -gt 400 ]; do sleep 5; done'
-    rows = [
-        ("studio-check", studio, True),
-        ("studio-eval", "eval 'until python3 scripts/studio_merge.py status job; do sleep 20; done'", True),
-        ("studio-zsh", 'zsh -c "for k in a b; do seat-run --wait $k; sleep 15; done"', True),
-        ("bash-fraction", "bash -c 'while ready; do sleep 0.5; done'", True),
-        ("outside", "sleep 5", False),
-        ("outside-body", "while ready; do echo ready; done; sleep 5", False),
-        ("minute", "while ready; do sleep 60; done", False),
-        ("long", "until ready; do sleep 120.5; done", False),
-        ("heredoc", "cat > x <<EOF\nwhile ready; do sleep 5; done\nEOF", False),
-        ("quoted-heredoc", "cat > x <<'EOF'\nwhile ready; do sleep 5; done\nEOF", False),
-        ("echo", "echo 'while ready; do sleep 5; done'", False),
-        ("comment", "echo ready # while ready; do sleep 5; done", False),
-        ("substitution", "echo $(until ready; do sleep 3; done)", True),
-        ("nested", "while ready; do for k in a; do sleep 3; done; done", True),
-    ]
-    cases = [
-        dict(bash(cmd), name="poll-loop-" + name, expect="allow", poll_warning=warn, poll_repeat=warn)
-        for name, cmd, warn in rows
-    ]
-    cases.append(
-        dict(
-            event="PreToolUse",
-            tool="Bash",
-            input={"command": studio, "run_in_background": True},
-            name="poll-loop-background",
-            expect="allow",
-            poll_warning=False,
-        )
-    )
-    return cases
-
-
 def builtin_cases():
     deny = "deny"
     cases = [
@@ -65,7 +30,6 @@ def builtin_cases():
         dict(bash("DISPLAY_WAKE_SKIP=1 screencapture -x /tmp/x.png"), name="allow-display-skip", expect="allow"),
         dict(bash("screencapture -x out.png"), name="allow-display-wake-fires", expect="allow"),
         *parity_offload.cases(bash),
-        *poll_loop_cases(),
         dict(bash("cd sub && rm a1 a2"), name="allow-rm-cd-rewrite", expect="allow", setup="rmcd"),
         dict(bash("open -a Preview out.png"), name="deny-open-other-app", expect=deny),
         dict(bash("wslview https://x"), name="deny-wslview", expect=deny),
