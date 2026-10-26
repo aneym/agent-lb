@@ -9,11 +9,11 @@ description: Verify the agent-lb operator's three primary journeys with isolated
 
 Work from the checked-out candidate repo. Read `AGENTS.md`, `PRODUCT.md`,
 `products.json` and `features/README.md`. Resolve `git rev-parse HEAD` before
-collecting evidence. Use the landed agent-plugin-kit checkout:
+collecting evidence. Use the installed factory tools:
 
 ```sh
-KIT=/Volumes/StudioExt/repos/agent-plugin-kit
-"$KIT/bin/feature-map" check --repo .
+BIN=~/.agent-rails/factory-runtime/bin
+"$BIN/feature-map" check --repo .
 ```
 
 Do not launch or restart the operator's service, open its dashboard session,
@@ -31,8 +31,8 @@ Confirm the checkout and dependencies without reading credentials:
 git rev-parse --show-toplevel
 git rev-parse HEAD
 python3 --version
-KIT=/Volumes/StudioExt/repos/agent-plugin-kit
-"$KIT/bin/feature-map" check --repo .
+BIN=~/.agent-rails/factory-runtime/bin
+"$BIN/feature-map" check --repo .
 ```
 
 Check each identity backend with `test-identity SERVICE --repo . --json`, where
@@ -67,10 +67,10 @@ that blocker with an audited driver that performs these acceptance paths:
 Record current attempts, one command at a time:
 
 ```sh
-KIT=/Volumes/StudioExt/repos/agent-plugin-kit
-"$KIT/bin/feature-map" run --repo . --feature agent-lb/proxy --proof provider-response --env sandbox
-"$KIT/bin/feature-map" run --repo . --feature agent-lb/accounts --proof pause-resume-account --env sandbox
-"$KIT/bin/feature-map" run --repo . --feature agent-lb/request-logs --proof inspect-failed-request --env sandbox
+BIN=~/.agent-rails/factory-runtime/bin
+"$BIN/feature-map" run --repo . --feature agent-lb/proxy --proof provider-response --env sandbox
+"$BIN/feature-map" run --repo . --feature agent-lb/accounts --proof pause-resume-account --env sandbox
+"$BIN/feature-map" run --repo . --feature agent-lb/request-logs --proof inspect-failed-request --env sandbox
 ```
 
 Expected proof-host result: exit 3, blocked. Capture each command's return
@@ -81,11 +81,10 @@ delegates journeys rather than driving them locally. Do not bypass that routing.
 
 Studio delegation at `f9972aa29a7d5965d23093a355fa171fe1712007` recorded
 `fail`, not `blocked`: `feature-map` was absent from the proof host's PATH.
-A delegation failure is not evidence that a journey ran. Ship the landed
-agent-plugin-kit checkout alongside this repo with `seat-run --box forge
---ship /Volumes/StudioExt/repos/agent-plugin-kit --ship "$PWD"` and invoke
-`python3 /Volumes/StudioExt/repos/agent-plugin-kit/bin/feature-map run` on
-that configured proof host, with the same feature, proof, SHA and environment
+A delegation failure is not evidence that a journey ran. Ship this repo with
+`seat-run --box forge --ship "$PWD"` and invoke
+`~/.agent-rails/factory-runtime/bin/feature-map run` on that configured proof
+host, with the same feature, proof, SHA and environment
 arguments above. This preserves the journey kind and declared side effects.
 A blocked attempt can still report `record retained in spool; Studio
 acknowledgement unavailable`; verify its immutable record and synchronize it
@@ -94,9 +93,9 @@ before claiming durable evidence. Never relabel the earlier failing records.
 ## Evidence
 
 ```sh
-KIT=/Volumes/StudioExt/repos/agent-plugin-kit
-"$KIT/bin/feature-map" runs --repo . --latest --json | python3 -c 'import json,sys; records=json.load(sys.stdin)["records"]; assert len(records)>=3; print(str(len(records))+" journey records")'
-"$KIT/bin/feature-map" runs --repo . --sha "$(git rev-parse HEAD)" --history --json
+BIN=~/.agent-rails/factory-runtime/bin
+"$BIN/feature-map" runs --repo . --latest --json | python3 -c 'import json,sys; records=json.load(sys.stdin)["records"]; assert len(records)>=3; print(str(len(records))+" journey records")'
+"$BIN/feature-map" runs --repo . --sha "$(git rev-parse HEAD)" --history --json
 ```
 
 The JSON document has a `records` array; count that array, not top-level keys.

@@ -78,10 +78,9 @@ def claude_launch_executable() -> str:
     launcher = shutil.which("claude-launch")
     if launcher is not None:
         return launcher
-    kit = Path(os.environ.get("AGENT_PLUGIN_KIT") or Path.home() / ".agent-rails/installed-runtime/agent-plugin-kit")
-    candidate = kit / "bin/claude-launch"
+    candidate = Path.home() / ".agent-rails/rails-host-runtime/current/packages/agent-runtime/bin/claude-launch"
     if not os.access(candidate, os.X_OK):
-        raise SystemExit("cc: claude-launch is missing; install the reviewed agent-plugin-kit release")
+        raise SystemExit("cc: claude-launch is missing; install the Rails host runtime")
     return str(candidate)
 
 

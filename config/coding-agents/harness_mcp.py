@@ -58,18 +58,17 @@ def ensure_harness_mcp(host_home, run):
         return entries if isinstance(entries, dict) else {}
 
     servers = read_servers(source)
-    plugin_roots = [home / ".agent-rails/installed-runtime/agent-plugin-kit"]
+    plugin_roots = []
     plugins = home / ".claude/plugins"
     registry = plugins / "installed_plugins.json"
     if registry.is_file():
         records = json.loads(registry.read_text()).get("plugins", {})
         for name, installs in records.items():
-            if name.split("@")[0] in ("agent", "agent-plugin-kit"):
+            if name.split("@")[0] in ("agent",):
                 for install in installs:
                     if install.get("installPath"):
                         plugin_roots.append(Path(install["installPath"]).expanduser())
-    for pattern in ("cache/*/agent-plugin-kit/*", "marketplaces/agent-plugin-kit",
-                    "marketplaces/*/plugins/agent-plugin-kit", "marketplaces/*/plugins/agent"):
+    for pattern in ("marketplaces/*/plugins/agent",):
         plugin_roots.extend(sorted(plugins.glob(pattern)))
     plugin_sources = []
     provided = set()

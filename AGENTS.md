@@ -3,8 +3,6 @@
 Local load balancer for Claude Code, Codex and other agent clients; used by its operator and teammates.
 Pools subscription accounts behind one endpoint and provides an operational dashboard.
 
-rules: agent-plugin-kit@dec697c
-
 ## Read first
 1. This file.
 2. `features/README.md`: what the repo does, by feature.
