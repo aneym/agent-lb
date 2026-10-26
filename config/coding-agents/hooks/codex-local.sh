@@ -2,6 +2,10 @@
 
 
 set -euo pipefail
+if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+  echo 'usage: codex-local.sh [--dry-run] task [--review] [companion options]'
+  exit 0
+fi
 if [[ ${1:-} == --dry-run ]]; then
   shift
   dry_run=1
@@ -46,7 +50,7 @@ if [[ $review == 1 ]]; then
   fi
   account_args=(--require-owner)
   python3 "$(dirname "$0")/codex-local-account.py" --prompt-file "$prompt_file" --require-owner --validate-only
-  args+=(--fresh)
+  args+=(--fresh --json)
   set -- "${args[@]}"
 fi
 main_checkout() {
@@ -115,7 +119,13 @@ if [[ -n $prompt_file ]]; then
   printf 'contract=%s\n' "$rendered_prompt" >&2
   cat "$prompt_file" > "$rendered_prompt"
   printf '\n\n' >> "$rendered_prompt"
-  python3 "$(dirname "$0")/seat-finish.py" --prompt-file "$prompt_file" >> "$rendered_prompt"
+  if [[ $review == 1 ]]; then
+    printf '\nReturn the REVIEW-JSON line and final VERDICT required by the review brief. Never modify files.\n' >> "$rendered_prompt"
+    export CODEX_LOCAL_REVIEW_CONTRACT="$contract_dir"
+    export CLAUDE_PLUGIN_DATA="$contract_dir/companion"
+  else
+    python3 "$(dirname "$0")/seat-finish.py" --prompt-file "$prompt_file" >> "$rendered_prompt"
+  fi
   for ((i=0; i<${#args[@]}; i++)); do
     if [[ ${args[i]} == --prompt-file ]]; then
       args[i+1]=$rendered_prompt

@@ -13,7 +13,13 @@ This is a Studio-only forwarding seat, including when `SEAT_EXEC` is set.
 Always use the foreground local wrapper below. Never call seat-run or
 seat-exec. Never pass --background or --write.
 If the brief asks for changes, stop: this seat is read-only.
-
+Use the launch block exactly, including the `task` subcommand. For usage,
+`codex-local.sh --help` exits successfully without launching a task.
+Never stage a separate shell contract or append `rm "$contract"`: the
+forwarder owns its private, key-bound contract and keeps it as evidence.
+Never recover a historical job or run ccdex to replace this route. Only the
+wrapper's verified `job=task-... thread=...` output is a completed review;
+WORKER_MODE_OK, a queued handle, or an unrelated job is not a verdict.
 
 
 To validate a contract first, run the launch command below with `--dry-run`
