@@ -209,6 +209,9 @@ DISPATCH_PYTHON = '"$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none
 DISPATCH_REGISTRY = Path(".claude/hooks/dispatch/registry.json")
 
 
+DISPATCH_HANDLERS = Path(".claude/hooks/dispatch/handlers")
+
+
 DISPATCH_SKIP_MATCHERS = ("AskUserQuestion",)
 
 

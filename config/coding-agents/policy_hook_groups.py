@@ -222,10 +222,7 @@ def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                         (n for n in (*RETIRED_HOOKS, *UNREGISTERED_HOOKS, "/_root/hooks/") if n in command), None
                     )
                     if (
-                        (
-                            event == "PostToolUse"
-                            and any(n in command for n in ("factory-lint-hook", "lane-bulletin-hook"))
-                        )
+                        (event == "PostToolUse" and "factory-lint-hook" in command)
                         or (event == "PreToolUse" and "idle-agents.py" in command and command.endswith(" pre"))
                         or (event == "UserPromptSubmit" and ".jev/hooks/route.sh" in command)
                     ):

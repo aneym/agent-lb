@@ -23,6 +23,7 @@ from hook_inventory import hook_path_problems, validate_hook_changes  # type: ig
 from policy_documents import install_adapter, install_codex_doc, read_text, uninstall_adapter  # type: ignore[missing-import]  # fmt: skip
 from policy_files import autocompact_text, checkpoint_changes, write_atomic  # type: ignore[missing-import]
 from policy_hook_groups import dispatcher_module, opaque_floor_commands  # type: ignore[missing-import]
+from policy_hook_handlers import apply_handlers, handler_folds_known, load_handlers  # type: ignore[missing-import]  # fmt: skip
 from policy_hook_install import dispatch_worth, managed_hooks, pin_inproc  # type: ignore[missing-import]
 from policy_hook_registry import fold_hooks, folded_rev, is_folded, read_registry, registry_rev, unfold_hooks  # type: ignore[missing-import]  # fmt: skip
 from policy_layout import CORE_SOURCE, DISPATCH_EVENTS, DISPATCH_REGISTRY, DISPATCH_SCRIPT, HAIKU_ENV, MODELS_FULL, MODELS_MARKER, POLICY_DIR, RETIRED_HOOKS, REV_FILE, REV_KEEP_SECONDS, SONNET_MODEL  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
@@ -121,6 +122,7 @@ def main() -> int:
         raise SystemExit(f"error: {exc}") from exc
     sonnet_model = SONNET_MODEL if args.uninstall else snapshot_model(snapshot, "sonnet-latest")
     nxt = reconcile_settings(settings, args.uninstall, rewrite_floor_commands, sonnet_model, source)
+    handlers = {} if args.uninstall else apply_handlers(nxt, load_handlers(args.home, source), args.home)
     if not args.uninstall:
         nxt["autoCompactWindow"] = snapshot["autocompact_window"]["tab"]
     if args.uninstall:
@@ -153,6 +155,8 @@ def main() -> int:
                 )
                 rewrite_floor_commands({"PreToolUse": folded_groups} if event == "PreToolUse" else {}, source)
                 only[event] = folded_groups
+            for event, groups in handlers.items():
+                only.setdefault(event, []).extend(groups)
         folded_hooks, candidate = fold_hooks(nxt["hooks"], only, dispatch_worth(source, args.home))
         if candidate is not None:
             candidate = pin_inproc(candidate, args.home, source)
@@ -165,6 +169,7 @@ def main() -> int:
                     candidate.get(field) == old_registry.get(field)
                     for field in ("inproc_sha", "dispatcher_sha256", "script_sha")
                 )
+                and handler_folds_known(candidate, old_registry, handlers)
             )
             if args.preview:
                 print(f"would fold hooks into the dispatcher ({'refold' if unchanged else 'after the parity fixture'})")

@@ -81,6 +81,14 @@ The dispatcher MUST refuse a PreToolUse call (exit 2 and a JSON deny naming the 
 - **WHEN** a guard answers differently on the two paths
 - **THEN** `on` exits non-zero and settings and the registry are unchanged
 
+### Requirement: install-policy is the one writer of Claude settings hook entries
+
+Other installers MUST NOT write `~/.claude/settings.json` hooks. They register hooks as handlers: one JSON file per owner in `~/.claude/hooks/dispatch/handlers/`, shaped `{"owner": ..., "hooks": [{"event", "matcher", "hook"}]}`. install-policy MUST install every valid handler hook, keep exactly one hook per handler program, event and matcher, fold handler hooks on dispatcher events like any other hook, and rerun the parity fixture before a handler hook first runs inside the dispatcher. A handler file that is not valid JSON, names a floor guard, or does not start its command with the program path MUST be ignored with a warning and change nothing. Evidence: open-factory's bulletin installer and install-policy rewrote the PostToolUse `lane-bulletin-hook` entry back and forth every few minutes (2026-10-26).
+
+#### Scenario: open-factory registers the bulletin hook
+- **WHEN** `open-factory-lane-bulletin.json` registers `lane-bulletin-hook` for SessionStart, UserPromptSubmit and PostToolUse and the settings already list older forms of it
+- **THEN** install-policy leaves one bulletin hook per event, folds the UserPromptSubmit and PostToolUse ones into their `'*'` dispatcher entries, and a second run changes nothing
+
 ### Requirement: Folds switch atomically
 
 Each fold MUST be written as `registry.<rev>.json` before settings name that rev, and settings MUST switch every dispatcher entry in one write. Entries without a rev (written before revs) MUST keep the fold they were written with as `registry.legacy.json`.
