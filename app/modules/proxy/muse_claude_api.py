@@ -17,10 +17,27 @@ from app.modules.proxy.claude_codex_bridge import (
     format_claude_events,
     responses_to_claude_events,
 )
-from app.modules.proxy.meta_service import provider_responses
+from app.modules.proxy.meta_service import provider_responses, resolve_model
 
 router = APIRouter(prefix="/muse/claude/v1", tags=["muse"], dependencies=[Depends(validate_proxy_api_key)])
 MODEL = "muse-wonder-full-1.0"
+
+
+@router.get("/models")
+async def models() -> dict:
+    return {
+        "data": [
+            {
+                "id": MODEL,
+                "type": "model",
+                "display_name": resolve_model("muse-latest"),
+                "created_at": "2026-10-26T00:00:00Z",
+            }
+        ],
+        "has_more": False,
+        "first_id": MODEL,
+        "last_id": MODEL,
+    }
 
 
 @router.post("/messages", response_model=None)
@@ -30,7 +47,7 @@ async def messages(request: Request, payload: AnthropicMessageRequest) -> JSONRe
             {"type": "error", "error": {"type": "invalid_request_error", "message": f"This route requires {MODEL}"}},
             status_code=400,
         )
-    converted = claude_to_responses(payload, MODEL).model_dump(mode="json", exclude_none=True)
+    converted = claude_to_responses(payload, resolve_model("muse-latest")).model_dump(mode="json", exclude_none=True)
     for tool in converted.get("tools", []):
         tool["parameters"] = muse_schema(tool["parameters"])
     converted.pop("service_tier", None)
