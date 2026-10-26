@@ -21,19 +21,32 @@ def run(worktree, prompt):
         ANTHROPIC_DEFAULT_HAIKU_MODEL=model,
         CLAUDE_CODE_SUBAGENT_MODEL=model,
         ANTHROPIC_CUSTOM_HEADERS="x-agent-lb-seat: kimi-implementer",
+        API_TIMEOUT_MS="3000000",
     )
     env.pop("ANTHROPIC_API_KEY", None)
     started = time.time()
     print(f"KIMI_MODEL={model} seat=kimi-implementer worktree={worktree}", flush=True)
     try:
         with Path(str(prompt) + ".json").open("w") as output, Path(str(prompt) + ".log").open("w") as log:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 [str(Path.home() / ".local/bin/claude"), "-p", "--model", model,
                  "--output-format", "json", "--no-session-persistence"],
-                input=prompt.read_text(), text=True, cwd=worktree, env=env,
-                stdout=output, stderr=log, timeout=3600,
+                stdin=subprocess.PIPE, text=True, cwd=worktree, env=env,
+                stdout=output, stderr=log, start_new_session=True,
             )
-        rc = result.returncode
+            proc.stdin.write(prompt.read_text())
+            proc.stdin.close()
+            deadline = started + 3600
+            while proc.poll() is None:
+                if time.time() >= deadline:
+                    proc.kill()
+                    raise subprocess.TimeoutExpired(proc.args, 3600)
+                print(f"kimi-seat: heartbeat {int(time.time() - started)}s", flush=True)
+                try:
+                    proc.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    pass
+        rc = proc.returncode
         data = json.loads(Path(str(prompt) + ".json").read_text())
         final = data.get("result", "")
         Path(str(prompt) + ".last").write_text(final)
