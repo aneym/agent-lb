@@ -10,12 +10,20 @@ from sqlalchemy import exc as sa_exc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.clients.failure_observation import failure_fields
 from app.core.context_parts.capture import measured_parts
 from app.core.eval_guard import eval_guard_state
 from app.core.identity import RequestIdentity, identity_for_log
 from app.core.model_aliases import requested_model_alias
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
-from app.core.utils.client_session import get_caller_seat, get_client_session_id, get_dispatch_id, get_job_id, get_lane, get_room  # noqa: I001  # fmt: skip
+from app.core.utils.client_session import (  # noqa: I001  # fmt: skip
+    get_caller_seat,
+    get_client_session_id,
+    get_dispatch_id,
+    get_job_id,
+    get_lane,
+    get_room,
+)
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account
@@ -132,6 +140,11 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
         upstream_cost_usd: float | None = None,
     ) -> RequestLog:
         parts = await measured_parts()
+        if status == "error":
+            upstream_status_code, upstream_error_code = failure_fields(
+                upstream_status_code, upstream_error_code, error_code
+            )
+            error_code = error_code or upstream_error_code
         caller = identity_for_log(identity)
         async with sqlite_writer_section(self._session):
             resolved_request_id = ensure_request_id(request_id)

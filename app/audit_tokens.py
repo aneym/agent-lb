@@ -67,7 +67,7 @@ QUERY = f"""
 WITH base AS (
  SELECT id, account_id, provider, model, reasoning_effort, useragent_group, source, request_kind,
  service_tier, input_tokens, output_tokens, cached_input_tokens, cache_creation_tokens, cache_read_tokens,
- reasoning_tokens, cost_usd, status, error_code, upstream_status_code, requested_at, request_id,
+ reasoning_tokens, cost_usd, status, error_code, upstream_status_code, upstream_error_code, requested_at, request_id,
  caller_seat, ATTRIBUTION_COLUMNS,
  coalesce({SESSION_KEY_SQL},'receipt:' || id::text) AS sid
  FROM request_logs WHERE deleted_at IS NULL AND requested_at >= %s AND requested_at < %s

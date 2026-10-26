@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Mapping
 
+from app.core.clients.failure_observation import observe_error
 from app.core.errors import ResponseFailedEvent
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_dict
@@ -79,6 +80,7 @@ def parse_sse_data_json(event_block: str) -> dict[str, JsonValue] | None:
     except json.JSONDecodeError:
         return None
     if is_json_dict(payload):
+        observe_error(payload)
         return payload
     return None
 
