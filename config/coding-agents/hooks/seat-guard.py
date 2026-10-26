@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -13,11 +14,14 @@ def main():
         return 2
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    payload = sys.stdin.buffer.read()
     try:
-        current = current_entry("PreToolUse", "Agent")
+        tool = json.loads(payload).get("tool_name") or "Agent"
+        current = current_entry("PreToolUse", tool)
         if current is None:
-            raise ValueError("current settings still use the dispatcher")
-        result = module.run_entry("PreToolUse", current[1], sys.stdin.buffer.read(), {}, "Agent")
+            registry, hooks, _ = module.load_entry("PreToolUse", tool)
+            current = registry, hooks, None
+        result = module.run_entry("PreToolUse", current[1], payload, {}, tool)
     except (OSError, ValueError) as exc:
         result = module.refusal("PreToolUse", str(exc))
     return module.answer(result)

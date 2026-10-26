@@ -11,8 +11,6 @@ def current_entry(event, key):
     groups = settings.get("hooks", {})
     if not isinstance(groups, dict):
         raise ValueError("current settings hooks are not an object")
-    if "hook-dispatch.py" in json.dumps(groups):
-        return None
     hooks = []
     for group in groups.get(event, []):
         matcher = group.get("matcher", "")
@@ -24,7 +22,9 @@ def current_entry(event, key):
             command = hook.get("command")
             if not isinstance(command, str) or not command.strip():
                 raise ValueError("current settings contain an invalid hook command")
+            if "hook-dispatch.py" in command:
+                return None
             if "seat-guard.py" in command:
-                raise ValueError("current settings still register the cached seat guard")
+                continue
             hooks.append(hook)
     return {"entries": {event: {key: hooks}}}, hooks, path

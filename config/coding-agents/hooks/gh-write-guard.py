@@ -344,6 +344,8 @@ def main():
         return 0
     try:
         data = json.load(sys.stdin)
+        if data.get("tool_name", "Bash") != "Bash":
+            return 0
         command = data.get("tool_input", {}).get("command", "")
         if not isinstance(command, str):
             raise ValueError("command is not text")
