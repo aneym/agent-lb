@@ -277,15 +277,12 @@ enum StatusIconRenderer {
     let state: IconState
     let outerBucket: Int?
     let innerBucket: Int?
-    let showFable: Bool
-    let fableBucket: Int?
     let paceText: String?
   }
 
   @MainActor private static var cache: [Key: NSImage] = [:]
 
   private static let cellSize: CGFloat = 18
-  private static let fableGap: CGFloat = 2
   private static let paceGap: CGFloat = 3
 
 
@@ -298,21 +295,18 @@ enum StatusIconRenderer {
     for state: IconState,
     primaryPercent: Double? = nil,
     longWindowPercent: Double? = nil,
-    showFable: Bool = false,
-    fablePercent: Double? = nil,
     paceText: String? = nil
   ) -> NSImage {
     let outerBucket = primaryPercent.map { Int(min(max($0, 0), 100) / 4) }
     let innerBucket = longWindowPercent.map { Int(min(max($0, 0), 100) / 4) }
-    let fableBucket = showFable ? fablePercent.map { Int(min(max($0, 0), 100) / 4) } : nil
     let key = Key(
       state: state, outerBucket: outerBucket, innerBucket: innerBucket,
-      showFable: showFable, fableBucket: fableBucket, paceText: paceText
+      paceText: paceText
     )
     if let cached = cache[key] { return cached }
     let image = render(
       state: state, outerBucket: outerBucket, innerBucket: innerBucket,
-      showFable: showFable, fableBucket: fableBucket, paceText: paceText
+      paceText: paceText
     )
     cache[key] = image
     return image
@@ -322,13 +316,10 @@ enum StatusIconRenderer {
     state: IconState,
     outerBucket: Int?,
     innerBucket: Int?,
-    showFable: Bool,
-    fableBucket: Int?,
     paceText: String?
   ) -> NSImage {
     let pace = paceText.map(paceGlyph)
-    let cellsWidth = showFable ? cellSize * 2 + fableGap : cellSize
-    let width = cellsWidth + (pace.map { paceGap + ceil($0.size().width) } ?? 0)
+    let width = cellSize + (pace.map { paceGap + ceil($0.size().width) } ?? 0)
     let image = NSImage(size: NSSize(width: width, height: cellSize), flipped: false) { _ in
 
 
@@ -371,18 +362,10 @@ enum StatusIconRenderer {
         NSBezierPath(ovalIn: dot).fill()
       }
 
-      if showFable {
-        drawFableCell(
-          in: NSRect(x: cellSize + fableGap, y: 0, width: cellSize, height: cellSize),
-          stroke: stroke,
-          bucket: fableBucket,
-          ringAlpha: ringAlpha
-        )
-      }
 
       if let pace {
         let size = pace.size()
-        pace.draw(at: NSPoint(x: cellsWidth + paceGap, y: (cellSize - size.height) / 2))
+        pace.draw(at: NSPoint(x: cellSize + paceGap, y: (cellSize - size.height) / 2))
       }
       return true
     }
@@ -425,26 +408,6 @@ enum StatusIconRenderer {
 
 
 
-
-  private static func drawFableCell(
-    in rect: NSRect,
-    stroke: CGFloat,
-    bucket: Int?,
-    ringAlpha: CGFloat
-  ) {
-    let center = NSPoint(x: rect.midX, y: rect.midY)
-    let radius = rect.width / 2 - 1.0 - 0.5
-    drawRing(center: center, radius: radius, stroke: stroke, bucket: bucket, ringAlpha: ringAlpha)
-    let glyph = NSAttributedString(
-      string: "F",
-      attributes: [
-        .font: NSFont.systemFont(ofSize: 8, weight: .bold),
-        .foregroundColor: NSColor.black.withAlphaComponent(ringAlpha),
-      ]
-    )
-    let size = glyph.size()
-    glyph.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
-  }
 
   private static func paceGlyph(_ text: String) -> NSAttributedString {
     NSAttributedString(

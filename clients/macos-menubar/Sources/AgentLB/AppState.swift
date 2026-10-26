@@ -29,7 +29,6 @@ final class AppState {
   var statusIcon = StatusIconRenderer.icon(for: .healthy, primaryPercent: nil, longWindowPercent: nil)
 
 
-  var isClaudeFrontmost = false
   var isRefreshing = false
   var isRestarting = false
   var startupError: String?
@@ -46,7 +45,6 @@ final class AppState {
   private var openTask: Task<Void, Never>?
   private var resetCreditAccountsInFlight: Set<String> = []
   private var popoverIsOpen = false
-  private var frontmostObserver: (any NSObjectProtocol)?
   private var lastHealthSuccess: ContinuousClock.Instant?
 
   nonisolated static let healthFailureGrace: Duration = .seconds(45)
@@ -59,7 +57,6 @@ final class AppState {
 
 
   func startBackgroundPolling() {
-    startFrontmostObservation()
     closedTask?.cancel()
     closedTask = Task {
       var tick = 0
@@ -97,31 +94,6 @@ final class AppState {
 
 
 
-  private func startFrontmostObservation() {
-    guard frontmostObserver == nil else { return }
-    setClaudeFrontmost(
-      Self.isClaudeApp(bundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
-    )
-    frontmostObserver = NSWorkspace.shared.notificationCenter.addObserver(
-      forName: NSWorkspace.didActivateApplicationNotification,
-      object: nil,
-      queue: .main
-    ) { [weak self] note in
-      let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-      let isClaude = AppState.isClaudeApp(bundleIdentifier: app?.bundleIdentifier)
-      Task { @MainActor in self?.setClaudeFrontmost(isClaude) }
-    }
-  }
-
-  private func setClaudeFrontmost(_ value: Bool) {
-    guard value != isClaudeFrontmost else { return }
-    isClaudeFrontmost = value
-    recomputeStatusIcon()
-  }
-
-  nonisolated static func isClaudeApp(bundleIdentifier: String?) -> Bool {
-    bundleIdentifier?.lowercased().hasPrefix("com.anthropic.") == true
-  }
 
   func popoverOpened() {
     popoverIsOpen = true
@@ -511,8 +483,6 @@ final class AppState {
       for: state,
       primaryPercent: percents.primary,
       longWindowPercent: percents.longWindow,
-      showFable: isClaudeFrontmost,
-      fablePercent: isClaudeFrontmost ? Self.fablePoolPercent(accounts: accounts) : nil,
       paceText: state == .down ? nil : WeeklyPace.statusText(pools: pools, now: .now)
     )
   }
@@ -520,14 +490,6 @@ final class AppState {
 
 
 
-
-  nonisolated static func fablePoolPercent(accounts: [Account]) -> Double? {
-    let remaining = accounts
-      .filter(\.isRoutable)
-      .compactMap(\.fableRemainingPercent)
-    guard !remaining.isEmpty else { return nil }
-    return remaining.reduce(0, +) / Double(remaining.count)
-  }
 
   nonisolated static func statusIconPercents(
     from summary: UsageSummary?

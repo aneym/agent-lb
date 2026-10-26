@@ -2,8 +2,6 @@ import Foundation
 
 
 
-private let fableScopedWeeklyQuotaKey = "anthropic_fable_scoped_weekly"
-
 struct AccountsResponse: Decodable {
   let accounts: [Account]
 }
@@ -18,7 +16,6 @@ struct Account: Decodable, Identifiable, Sendable, Equatable {
   let planType: String?
   let routingPolicy: String?
   let status: String
-  let fableEligible: Bool?
   let resetCreditsAvailable: Int?
   let additionalQuotas: [AccountAdditionalQuota]?
   let usage: AccountUsage
@@ -60,45 +57,6 @@ extension Account {
     return exhaustedResets.max()
   }
 
-  var fableAvailability: FableAvailability? {
-    guard provider.lowercased() == "anthropic", let fableEligible else { return nil }
-    return fableEligible ? .available : .out
-  }
-
-  var fableRemainingPercent: Double? {
-    guard provider.lowercased() == "anthropic" else { return nil }
-    guard let usedPercent = additionalQuotas?
-      .first(where: { $0.quotaKey == fableScopedWeeklyQuotaKey })?
-      .primaryWindow?
-      .usedPercent
-    else {
-      return nil
-    }
-    return min(100, max(0, 100 - usedPercent))
-  }
-
-  var fableAvailabilityLabel: String? {
-    guard let availability = fableAvailability else { return nil }
-    guard let remaining = fableRemainingPercent else { return availability.label }
-    switch availability {
-    case .available:
-      return "FABLE WK \(Format.percent(remaining))"
-    case .out:
-      return "FABLE WK OUT \(Format.percent(remaining))"
-    }
-  }
-
-  var fableAvailabilityHelp: String? {
-    guard let availability = fableAvailability else { return nil }
-    guard let remaining = fableRemainingPercent else { return availability.help }
-    switch availability {
-    case .available:
-      return "Fable weekly usage available (\(Format.percent(remaining)) remaining)"
-    case .out:
-      return "Fable weekly usage exhausted (\(Format.percent(remaining)) remaining); Opus availability is separate"
-    }
-  }
-
   var isSubscriptionCanceled: Bool {
     subscription?.status == "canceled"
   }
@@ -125,25 +83,6 @@ extension Account {
     guard (resetCreditsAvailable ?? 0) > 0 else { return false }
     guard isRoutable else { return false }
     return status == "rate_limited" || status == "quota_exceeded"
-  }
-}
-
-enum FableAvailability: Sendable, Equatable {
-  case available
-  case out
-
-  var label: String {
-    switch self {
-    case .available: return "FABLE WK"
-    case .out: return "FABLE WK OUT"
-    }
-  }
-
-  var help: String {
-    switch self {
-    case .available: return "Fable weekly usage available"
-    case .out: return "Fable weekly usage exhausted; Opus availability is separate"
-    }
   }
 }
 
