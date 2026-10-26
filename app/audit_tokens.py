@@ -42,7 +42,10 @@ def window(args):
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
-    until = parse(args.until) if args.until else datetime.now(UTC)
+    try:
+        until = parse(args.until) if args.until else datetime.now(UTC)
+    except (ValueError, OverflowError):
+        raise AuditUsageError("--until takes an ISO time") from None
     match = re.fullmatch(r"([1-9]\d*)([hd])", args.window)
     if not match:
         raise ValueError("--window must be a positive number followed by h or d")
