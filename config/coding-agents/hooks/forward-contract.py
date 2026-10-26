@@ -12,6 +12,8 @@ import sys
 import time
 from pathlib import Path
 
+import box_contract
+
 RETRYABLE = (2,)
 
 parser = argparse.ArgumentParser()
@@ -129,6 +131,8 @@ else:
                 + " in HANDOFF deviations."
                 + " The executing vendor is OpenAI, not Anthropic.\n"
             )
+    if seat_run:
+        brief = box_contract.prepare(brief, command)
     directory = contracts_root() / k
     try:
         os.mkdir(directory, 0o700)
