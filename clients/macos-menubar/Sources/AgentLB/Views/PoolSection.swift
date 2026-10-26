@@ -21,6 +21,7 @@ struct PoolSection: View {
   var menuTimeZone: TimeZone = .current
   var vendorPools: [PoolEntry] = []
   var seats: [SeatAccount] = []
+  var pacePools: [PoolEntry] = []
 
   private var isScoped: Bool { scope != .all }
   var showsPoolTiles: Bool { scope == .all && !menuPools.isEmpty }
@@ -40,12 +41,14 @@ struct PoolSection: View {
         RetryRow(retry: retry)
       } else if showsPoolTiles {
         poolTiles
+        paceCard
         metricsStrip
         if hasError {
           RetryRow(retry: retry)
         }
       } else {
         cards
+        paceCard
         metricsStrip
         if hasError {
           RetryRow(retry: retry)
@@ -76,6 +79,7 @@ struct PoolSection: View {
         }
       }
     }
+    paceCard
     VStack(alignment: .leading, spacing: PanelMetrics.metricsSpacing) {
       ForEach(Array(vendor.stripLines.enumerated()), id: \.offset) { _, line in
         Text(line)
@@ -89,6 +93,18 @@ struct PoolSection: View {
     .minimumScaleFactor(0.85)
     if hasError {
       RetryRow(retry: retry)
+    }
+  }
+
+  var paceRows: [WeeklyPaceRow] {
+    WeeklyPace.rows(pools: pacePools, scope: scope, now: menuNow)
+  }
+
+  @ViewBuilder
+  private var paceCard: some View {
+    let rows = paceRows
+    if !rows.isEmpty {
+      WeeklyPaceCard(rows: rows, showsNames: scope == .all || rows.count > 1, now: menuNow)
     }
   }
 
@@ -139,7 +155,7 @@ struct PoolSection: View {
         knownFull: knownFull(.secondary),
         recoveredCredits: recovered(.secondary, now: now),
         schedule: scheduleTooltip(.secondary, now: now),
-        status: isScoped ? nil : paceStatus
+        status: nil
       )
     }
   }
@@ -200,14 +216,6 @@ struct PoolSection: View {
     let level = projections?.depletionPrimary?.riskLevel ?? "safe"
     let elevated = ["warning", "danger", "critical"].contains(level)
     return .init(text: "risk: \(level)", emphasized: elevated, warning: elevated)
-  }
-
-
-  private var paceStatus: WindowCard.Status? {
-    guard summary?.secondaryWindow != nil,
-          let status = projections?.weeklyCreditPace?.status else { return nil }
-    let emphasized = ["behind", "ahead", "danger"].contains(status)
-    return .init(text: "pace: \(status)", emphasized: emphasized, warning: false)
   }
 
 

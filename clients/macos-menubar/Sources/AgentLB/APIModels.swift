@@ -277,7 +277,6 @@ struct SummaryMetrics: Decodable, Sendable, Equatable {
 struct ProjectionsResponse: Decodable, Sendable, Equatable {
   let depletionPrimary: Depletion?
   let depletionSecondary: Depletion?
-  let weeklyCreditPace: WeeklyCreditPace?
 }
 
 struct Depletion: Decodable, Sendable, Equatable {
@@ -285,14 +284,6 @@ struct Depletion: Decodable, Sendable, Equatable {
   let riskLevel: String?
   let projectedExhaustionAt: Date?
   let secondsUntilExhaustion: Double?
-}
-
-struct WeeklyCreditPace: Decodable, Sendable, Equatable {
-  let actualUsedPercent: Double?
-  let scheduledUsedPercent: Double?
-  let deltaPercent: Double?
-  let status: String?
-  let confidence: String?
 }
 
 
@@ -556,6 +547,7 @@ struct PoolEntry: Decodable, Equatable, Sendable {
   var observedTokens: Int? = nil
   var windows: [PoolWindow]? = nil
   var quotaSource: String? = nil
+  var pace: PoolPace? = nil
 }
 
 struct PoolWindow: Decodable, Equatable, Sendable {

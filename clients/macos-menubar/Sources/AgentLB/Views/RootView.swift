@@ -130,6 +130,7 @@ struct RootView: View {
     inputs.metricsLines = PoolSection.metricsLineCount(
       scope: scope, summary: appState.summary, hasArbitrage: arbitrage != nil
     )
+    inputs.paceRows = WeeklyPace.rows(pools: appState.pools, scope: scope, now: .now).count
     inputs.poolHasError = appState.sectionErrors.contains(.pool)
     inputs.poolHasData = appState.summary != nil || scope != .all
     inputs.scopedAccountCount = scopedAccounts.count + scopedSeats.count
@@ -269,7 +270,8 @@ struct ScopeTabContent: View {
         menuNow: fixedNow ?? .now,
         menuTimeZone: Format.eastern,
         vendorPools: scope.isSeatVendor ? pools : [],
-        seats: seats
+        seats: seats,
+        pacePools: pools
       )
       .padding(.horizontal, 14)
       .padding(.vertical, 6)

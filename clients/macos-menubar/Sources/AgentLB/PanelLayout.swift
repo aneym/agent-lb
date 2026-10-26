@@ -33,6 +33,16 @@ enum PanelMetrics {
   static let poolCard: Double = 128
   static let metricsLine: Double = 14
   static let metricsSpacing: Double = 3
+  static let pacePadding: Double = 10
+  static let paceHeader: Double = 12
+  static let paceHeaderGap: Double = 6
+  static let paceRow: Double = 14
+  static let paceRowSpacing: Double = 4
+
+  static func paceCard(rows: Int) -> Double {
+    2 * pacePadding + paceHeader + paceHeaderGap
+      + Double(rows) * paceRow + Double(max(0, rows - 1)) * paceRowSpacing
+  }
 
   static let retryRow: Double = 16
 
@@ -79,6 +89,7 @@ struct PanelLayout: Equatable {
     var showsScopeBar = true
 
     var metricsLines = 1
+    var paceRows = 0
     var poolHasError = false
 
 
@@ -162,6 +173,9 @@ struct PanelLayout: Equatable {
     }
     var height = PanelMetrics.sectionPad + PanelMetrics.poolLabel
       + PanelMetrics.poolSpacing + PanelMetrics.poolCard + PanelMetrics.poolSpacing
+    if input.paceRows > 0 {
+      height += PanelMetrics.paceCard(rows: input.paceRows) + PanelMetrics.poolSpacing
+    }
     height += Double(input.metricsLines) * PanelMetrics.metricsLine
       + Double(input.metricsLines - 1) * PanelMetrics.metricsSpacing
     if input.poolHasError {
