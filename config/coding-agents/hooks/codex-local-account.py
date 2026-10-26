@@ -61,16 +61,21 @@ def launching_owner(env, cwd):
             continue
         if candidate.is_dir() and launch.is_dir():
             return (kind, parts[0]), None
+    unresolved = "launching owner directory cannot be resolved; tried: "
+    if env.get("LANE_DIR"):
+        return None, (
+            unresolved + ", ".join(attempted) + "; an exported LANE_DIR must be a lane or agent directory, "
+            "or unset it to launch under the checkout's repository"
+        )
     here = Path(cwd).resolve()
     attempted.append("git checkout at " + str(here))
     repo = repository(here, env)
     if not repo:
-        return None, "launching owner directory cannot be resolved; tried: " + ", ".join(attempted)
-    if not env.get("LANE_DIR"):
-        agents = dict(owner_roots)["agent"].resolve()
-        for name in (env.get("FACTORY_OWNER_PANE", ""), repo):
-            if NAME.fullmatch(name) and (agents / name).is_dir():
-                return ("agent", name), None
+        return None, unresolved + ", ".join(attempted)
+    agents = dict(owner_roots)["agent"].resolve()
+    for name in (env.get("FACTORY_OWNER_PANE", ""), repo):
+        if NAME.fullmatch(name) and (agents / name).is_dir():
+            return ("agent", name), None
     return ("repo", repo), None
 
 

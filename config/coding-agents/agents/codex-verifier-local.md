@@ -22,8 +22,9 @@ Then launch with `--key <printed key> --contract <printed contract>` in place of
 `--key "$k"` and no heredoc. The wrapper's `--prompt-file` stays `@contract`
 in every call; forward-contract.py substitutes the contract it printed.
 Both preflight and launch require a readable, non-empty brief and a launching
-owner: the exported LANE_DIR's lane, a lane or agent directory, or the repository
-of the checkout or worktree you launch from. A brief that runs
+owner: the exported LANE_DIR's lane, a lane or agent directory, or, with no
+LANE_DIR exported, the repository of the checkout or worktree you launch from.
+An exported LANE_DIR that is not a lane is refused. A brief that runs
 agent-test-account needs a lane or agent owner. On any failure, stop and
 return the error. Never select a fresh-start file or recover a previous brief.
 
