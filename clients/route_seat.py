@@ -53,8 +53,8 @@ def command_seat(args: argparse.Namespace) -> int:
     for task_class, item in named:
         first.setdefault(task_class, item)
     if args.task_class is not None:
-        if args.task_class not in first and first:
-            valid = ", ".join(first)
+        if args.task_class not in first:
+            valid = ", ".join(first) or "none, resolve it without --class"
             setup_error(
                 "unknown_class", f"class {args.task_class!r} does not name seat {name}; valid: {valid}", args.json
             )

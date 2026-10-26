@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from policy_layout import ROUTE_FILES  # type: ignore[missing-import]
@@ -30,16 +31,24 @@ def exchange(first: Path, second: Path) -> None:
         raise OSError(errno, os.strerror(errno), str(second))
 
 
-def entries(directory: Path) -> dict[str, tuple[int, int, int]]:
+def signature(path: Path) -> tuple:
+    info = path.lstat()
+    mark = (info.st_mtime_ns, info.st_size, info.st_ino)
+    if not path.is_dir() or path.is_symlink():
+        return mark
+    inner = []
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [name for name in dirs if name != "__pycache__"]
+        for name in files:
+            child = os.lstat(os.path.join(root, name))
+            inner.append((os.path.relpath(os.path.join(root, name), path), child.st_mtime_ns, child.st_size))
+    return mark, tuple(sorted(inner))
+
+
+def entries(directory: Path) -> dict[str, tuple]:
     if not directory.is_dir():
         return {}
-    found = {}
-    for entry in os.scandir(directory):
-        if entry.name == "__pycache__":
-            continue
-        info = entry.stat(follow_symlinks=False)
-        found[entry.name] = (info.st_mtime_ns, info.st_size, info.st_ino)
-    return found
+    return {entry.name: signature(Path(entry.path)) for entry in os.scandir(directory) if entry.name != "__pycache__"}
 
 
 def copy_entry(source: Path, destination: Path) -> None:
@@ -80,32 +89,39 @@ def build_stage(live: Path, stage: Path, files: dict[Path, str | None]) -> None:
     os.chmod(stage, mode)
 
 
-def verify_stage(home: Path, bin_dir: Path, table: Path) -> None:
+def verify_stage(home: Path, bin_dir: Path, managed_dir: Path) -> None:
     modules = [name[:-3] for name in ROUTE_FILES if name.endswith(".py") and (bin_dir / name).is_file()]
-    env = dict(os.environ, ROUTE_TABLE=str(table), HOME=str(home))
-    env.pop("PYTHONPATH", None)
     probe = (
         "import importlib, sys\n"
         f"sys.path.insert(0, {str(bin_dir)!r})\n"
         f"for name in {modules!r}:\n"
         "    importlib.import_module(name)\n"
     )
-    checks = [
-        ("import check", [sys.executable, "-I", "-c", probe]),
-        (f"route seat {VERIFY_SEAT}", [sys.executable, str(bin_dir / "route"), "seat", VERIFY_SEAT]),
-    ]
-    for label, command in checks:
-        try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=120, env=env, cwd=str(home))
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise SystemExit(f"error: staged install failed {label}: {exc}; live files unchanged") from exc
-        if result.returncode:
-            tail = (result.stderr.strip() or result.stdout.strip()).splitlines()[-3:]
-            raise SystemExit(f"error: staged install failed {label}: {' | '.join(tail)}; live files unchanged")
-        print(f"staged {label}: ok")
+    checks = [("import check", [sys.executable, "-I", "-c", probe])]
+    if (home / ".claude/agents" / f"{VERIFY_SEAT}.md").is_file():
+        checks.append((f"route seat {VERIFY_SEAT}", [sys.executable, str(bin_dir / "route"), "seat", VERIFY_SEAT]))
+    with tempfile.TemporaryDirectory(prefix="policy-stage-verify-") as root:
+        (Path(root) / "managed").mkdir()
+        (Path(root) / "managed/coding-agents").symlink_to(managed_dir)
+        env = dict(
+            os.environ,
+            HOME=str(home),
+            ROUTE_TABLE=str(managed_dir / "routing-table.json"),
+            AGENT_LB_POLICY_SRC=str(Path(root) / "policy-src"),
+        )
+        env.pop("PYTHONPATH", None)
+        for label, command in checks:
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=120, env=env, cwd=str(home))
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise SystemExit(f"error: staged install failed {label}: {exc}; live files unchanged") from exc
+            if result.returncode:
+                tail = (result.stderr.strip() or result.stdout.strip()).splitlines()[-3:]
+                raise SystemExit(f"error: staged install failed {label}: {' | '.join(tail)}; live files unchanged")
+            print(f"staged {label}: ok")
 
 
-def swap_in(live: Path, stage: Path, snapshot: dict[str, tuple[int, int, int]], owned: set[str]) -> None:
+def swap_in(live: Path, stage: Path, snapshot: dict[str, tuple], owned: set[str]) -> None:
     if live.is_dir():
         current = entries(live)
         for name in set(snapshot) | set(current):
@@ -160,7 +176,7 @@ def install_staged(home: Path, changes: dict[Path, str | None]) -> dict[Path, st
             snapshots[live] = entries(live)
             build_stage(live, stage, grouped[live])
         bin_dir, managed_dir = (stages.get(live, live) for live in lives)
-        verify_stage(home, bin_dir, managed_dir / "routing-table.json")
+        verify_stage(home, bin_dir, managed_dir)
         for live, stage in stages.items():
             swap_in(live, stage, snapshots[live], {path.name for path in grouped[live]})
             for path, content in grouped[live].items():
