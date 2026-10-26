@@ -106,11 +106,11 @@ export BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only
 export CODEX_LOCAL_WRITE_SANDBOX=danger-full-access
 
 if [[ -n $prompt_file ]]; then
-  contract_name=$(basename "$prompt_file")
-  [[ $contract_name == *.contract.* ]] || { echo 'codex-local: prompt path must be a job-key-bound contract' >&2; exit 2; }
-  k=${contract_name%%.contract.*}
+  contract_dir=$(dirname "$prompt_file")
+  k=$(basename "$contract_dir")
   [[ $k =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo 'codex-local: invalid contract job key' >&2; exit 2; }
-  rendered_prompt=$(mktemp "${TMPDIR:-/tmp}/$k.contract.XXXXXX")
+  [[ $(basename "$prompt_file") == contract.md && $(head -n 1 "$prompt_file") == "seat-contract: $k" ]] || { echo 'codex-local: prompt path must be the job-key-bound contract forward-contract.py printed' >&2; exit 2; }
+  rendered_prompt=$(mktemp "$contract_dir/rendered.XXXXXX")
   printf 'contract=%s\n' "$rendered_prompt" >&2
   cat "$prompt_file" > "$rendered_prompt"
   printf '\n\n' >> "$rendered_prompt"

@@ -23,7 +23,7 @@ CONTRACT_EOF
 
 - `seat run` picks a healthy registered Cursor account (`seat accounts`), fails over
   to the next one on a usage limit or auth error, and writes the dispatch and
-  closeout rows to the ledger. The launcher creates the contract as `$k.contract.XXXXXX`
+  closeout rows to the ledger. The launcher writes the contract into a private directory for `$k`
   and prints `contract=<path>`; never choose a path yourself.
 - `<alias>` is the family alias the brief names (`grok-latest` when it names none,
   `grok-latest-low` for mechanical work); `seat` resolves it through `route resolve`,

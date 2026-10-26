@@ -8,7 +8,29 @@ from policy_documents import read_text  # type: ignore[missing-import]
 from policy_files import desired_routing_table  # type: ignore[missing-import]
 from policy_hook_groups import installed_manifest  # type: ignore[missing-import]
 from policy_layout import ADOPTED_KEEP, DISPATCH_SCRIPT, HOOK_MANIFEST, MANAGED_AGENTS, MANAGED_DIR, POLICY_DIR, POLICY_FILES, POLICY_SNAPSHOT, RETIRED_AGENTS, RETIRED_HOOKS, ROUTE_FILES, ROUTING_TABLE, ROUTING_TABLE_OWNER  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
+from policy_inventory import MANAGED_SEATS  # type: ignore[missing-import]
 from policy_settings import seat_template  # type: ignore[missing-import]
+
+SHADOWED_AGENTS = Path(".agent-lb/shadowed-agents")
+
+
+def definition_name(text):
+    if not text.startswith("---\n"):
+        return None
+    for line in text.split("\n---", 1)[0].splitlines():
+        if line.startswith("name:"):
+            return line.split(":", 1)[1].strip().strip("'\"")
+    return None
+
+
+def evict_shadows(home, changes):
+    agents = home / ".claude/agents"
+    for path in sorted(agents.rglob("*.md")) if agents.is_dir() else []:
+        text = read_text(path)
+        name = definition_name(text) if text else None
+        if name in MANAGED_SEATS and path != agents / f"{name}.md":
+            changes[home / SHADOWED_AGENTS / path.relative_to(agents)] = text
+            changes[path] = None
 
 
 def plan_managed_files(args, source, snapshot, keep_fold, changes):
@@ -95,6 +117,7 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes):
             ):
                 if (args.home / relative).is_file() and (args.home / relative).resolve().parent != source / "agents":
                     changes[args.home / relative] = None
+        evict_shadows(args.home, changes)
         table_path = args.home / ROUTING_TABLE
         desired_table = desired_routing_table(source / "routing-table.json", table_path)
         if desired_table != read_text(table_path):
