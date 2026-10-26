@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -82,9 +83,15 @@ def main() -> None:
     if sys.argv[1:] == ["--doctor-nightly"]:
         sys.exit(run_opus_doctor(nightly=True))
 
+    argv = sys.argv[1:]
+    requested = arg_value(argv, "--model", "-m") or os.environ.get("ANTHROPIC_MODEL") or ""
+    if re.fullmatch(r"muse-.+-full-\d+(?:\.\d+)*", requested):
+        print("served model: unavailable", file=sys.stderr)
+        print(f"{requested} is not available to Claude Code", file=sys.stderr)
+        sys.exit(1)
+
     schedule_opus_doctor()
 
-    argv = sys.argv[1:]
     if not headless_invocation(argv):
         os.environ.setdefault("CLAUDE_CODE_NO_FLICKER", "1")
     tag_reason = resolve_lane_tags(argv)

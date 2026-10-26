@@ -69,6 +69,10 @@ def resolve_alias(
     return model, f"{reason}; fallback {fallback}: {why}"
 
 
+def muse_full_id(name: str) -> bool:
+    return re.fullmatch(r"muse-.+-full-\d+(?:\.\d+)*", name) is not None
+
+
 def resolve_one(table: dict[str, Any], name: str, served: list[str], seat: str | None = None) -> tuple[str | None, str]:
 
     retired = retired_patterns(table)
@@ -93,6 +97,8 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str], seat: str |
             return None, f"{name} is retired"
         if "*" in name or "?" in name:
             return None, f"{name} is a wildcard, not a served model"
+        if muse_full_id(name):
+            return None, f"{name} is not available"
         return name, "not an alias"
     if spec.get("vendor") == "anthropic" or (spec.get("harness") and not spec.get("family")):
         return resolve_claude_family(spec, retired)
@@ -103,10 +109,12 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str], seat: str |
         return spec["pinned"], f"pinned {spec['vendor']} model"
     if spec.get("vendor") == "muse":
         pinned = spec.get("pinned")
-        if not isinstance(pinned, str) or not re.fullmatch(rf"{re.escape(family)}-\d+(?:\.\d+)*", pinned):
+        if not isinstance(pinned, str) or not re.fullmatch(rf"{re.escape(family)}-(?:full-)?\d+(?:\.\d+)*", pinned):
             return None, f"alias {name} has no valid {family} pin"
         if is_retired(pinned, retired):
             return None, f"{pinned} is retired or blocked"
+        if muse_full_id(pinned):
+            return None, f"{pinned} is not available"
         return pinned, f"pinned {family}; account eligibility is checked at dispatch"
     if spec.get("vendor") == "cursor":
         variant = spec.get("variant")

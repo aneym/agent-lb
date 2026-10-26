@@ -11,24 +11,46 @@ import sys
 import urllib.request
 
 DEFAULT_BASE_URL = "http://127.0.0.1:2455/muse-api"
-DEFAULT_MODEL = "muse-wonder-1.0"
 
 
-def resolve_model() -> str:
+def muse_full_id(name: str) -> bool:
+    return re.fullmatch(r"muse-.+-full-\d+(?:\.\d+)*", name) is not None
+
+
+def resolve_model(name: str) -> str:
     override = os.environ.get("MUSE_MODEL")
-    if override:
+    if override and name == "muse-latest":
+        if muse_full_id(override):
+            print("served model: unavailable", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"served model: {override}", file=sys.stderr)
         return override
+    if muse_full_id(name):
+        print("served model: unavailable", file=sys.stderr)
+        raise SystemExit(1)
     route = os.path.expanduser("~/.agent-lb/bin/route")
     try:
-        result = subprocess.run(
-            [route, "resolve", "muse-latest"], capture_output=True, text=True, timeout=10
-        )
-        model = result.stdout.strip()
-        if result.returncode == 0 and model:
-            return model
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return DEFAULT_MODEL
+        result = subprocess.run([route, "resolve", name], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
+        print("served model: unavailable", file=sys.stderr)
+        raise SystemExit(1) from error
+    model = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+    if result.returncode == 0 and model and " " not in model and not muse_full_id(model):
+        print(f"served model: {model}", file=sys.stderr)
+        return model
+    print("served model: unavailable", file=sys.stderr)
+    if result.stderr.strip():
+        print(result.stderr.strip(), file=sys.stderr)
+    raise SystemExit(1)
+
+
+def requested_model(argv: list[str]) -> tuple[str, int] | None:
+    for index, word in enumerate(argv):
+        if word == "--model" and index + 1 < len(argv):
+            return argv[index + 1], index + 1
+        if word.startswith("--model="):
+            return word.split("=", 1)[1], index
+    return None
 
 
 def lb_healthy(base_url: str) -> bool:
@@ -44,6 +66,10 @@ def main(argv: list[str]) -> None:
     muse = shutil.which("muse") or os.path.expanduser("~/.local/bin/muse")
     if os.environ.get("MUSE_LB_DISABLE") == "1" or argv[:1] in (["--version"], ["-V"], ["--help"], ["-h"]):
         os.execvp(muse, [muse, *argv])
+    named = requested_model(argv)
+    if named is not None and muse_full_id(named[0]):
+        print("served model: unavailable", file=sys.stderr)
+        raise SystemExit(1)
     base_url = os.environ.get("MUSE_LB_BASE_URL", DEFAULT_BASE_URL)
     if not lb_healthy(base_url):
         print(
@@ -55,8 +81,13 @@ def main(argv: list[str]) -> None:
     if re.fullmatch(r"[a-z0-9][a-z0-9@._:-]{0,63}", seat):
         base_url = f"{base_url.rstrip('/')}/seat/{seat}"
     flags = ["--provider", "meta", "--base-url", base_url]
-    if "--model" not in argv:
-        flags += ["--model", resolve_model()]
+    if named is None:
+        flags += ["--model", resolve_model("muse-latest")]
+    else:
+        resolved = resolve_model(named[0])
+        argv = list(argv)
+        slot = named[1]
+        argv[slot] = f"--model={resolved}" if argv[slot].startswith("--model=") else resolved
     subcommands = {
         "resume", "exec", "config", "export", "trace", "model-profile",
         "skills", "voice", "plugins", "sandbox", "schema", "serve",
