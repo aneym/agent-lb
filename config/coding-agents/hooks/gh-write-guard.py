@@ -20,7 +20,7 @@ WRITES = {
     "variable": {"set", "delete"},
 }
 REFUSAL = "BLOCKED: kept floor \"Alex's credentials\": gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN)."
-PARSE_REFUSAL = "BLOCKED: gh-write-guard could not parse this command ({}), so it fails closed. No gh write was found. Split it into simpler commands, or use the Edit and Write tools."
+PARSE_REFUSAL = "BLOCKED: gh-write-guard could not parse this command ({}), and a gh or git token may be present, so it fails closed. Split it into simpler commands, or use the Edit and Write tools."
 
 
 def token_login(token, env):
@@ -297,6 +297,9 @@ def shell_source(text):
 
 
 def check(command, environ=None, depth=0):
+    spelling = command.replace("\\\n", "").translate(str.maketrans("", "", "\\\"'"))
+    if not re.search(r"(?<![\w-])(?:gh|git)(?![\w-])", spelling):
+        return
     base = dict(os.environ if environ is None else environ)
     if depth > 8:
         raise ValueError("nested shell limit")
