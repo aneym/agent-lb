@@ -100,6 +100,7 @@ if [[ $(uname -s) != Darwin || $(hostname -s | tr '[:upper:]' '[:lower:]') != *s
   echo 'codex-local: requires Studio; refusing to run or forward on this host' >&2
   exit 75
 fi
+command -v node >/dev/null || export PATH="$PATH:/opt/homebrew/bin"
 companion="$HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs"
 node "$companion" "$@" --dry-run >&2
 export BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only
