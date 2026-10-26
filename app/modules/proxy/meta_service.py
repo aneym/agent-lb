@@ -13,6 +13,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.core.clients.failure_observation import observation, observe_status, observe_text
 from app.core.routing_table import read_routing_table
 from app.core.utils.client_session import reset_caller_seat, set_caller_seat
 
@@ -141,6 +142,19 @@ async def _log_call(
         from app.modules.request_logs.repository import RequestLogsRepository
 
         input_tokens, output_tokens = parse_usage_from_sse_tail(tail)
+        if upstream_status is not None:
+            observe_status(upstream_status)
+        text = tail.decode("utf-8", "replace").strip()
+        if text.startswith("{"):
+            observe_text(text)
+        else:
+            for line in text.splitlines():
+                if line.startswith("data:"):
+                    observe_text(line[5:])
+        observed = observation.get()
+        error_class = observed.error_class if observed else None
+        if error_class:
+            status = "error"
         async with SessionLocal() as session:
             await RequestLogsRepository(session).add_log(
                 account_id=None,
@@ -150,7 +164,8 @@ async def _log_call(
                 output_tokens=output_tokens,
                 latency_ms=latency_ms,
                 status=status,
-                error_code=None,
+                error_code=error_class
+                or (f"upstream_{upstream_status}" if status == "error" and upstream_status else None),
                 session_id=session_id,
                 transport=transport,
                 provider=PROVIDER,

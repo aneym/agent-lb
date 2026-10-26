@@ -5,6 +5,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.auth.dependencies import validate_eval_api_access
+from app.core.clients.failure_observation import UpstreamObservation, observation
 from app.core.context_parts.capture import context_parts_state, wrap_receive
 from app.core.eval_guard import EvalGuardState, eval_guard_state, is_eval_proxy_path
 from app.core.exceptions import DashboardForbiddenError, ProxyAuthError
@@ -51,6 +52,7 @@ class ClientSessionMiddleware:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
+        observed = observation.set(UpstreamObservation())
         guard = eval_guard_state.set(EvalGuardState())
         token = set_client_session_id_from_scope(scope)
         dispatch = set_dispatch_id_from_scope(scope)
@@ -75,6 +77,7 @@ class ClientSessionMiddleware:
         finally:
             if parts_token is not None:
                 context_parts_state.reset(parts_token)
+            observation.reset(observed)
             eval_guard_state.reset(guard)
             reset_attribution(attribution)
             reset_room(room)

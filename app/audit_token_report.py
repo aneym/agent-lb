@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from statistics import median
 
 from app.audit_allocation import allocate, empty, merge
+from app.audit_failures import failure_counts
 from app.audit_pricing import CLASSES, input_cost, price_row, token_classes
 from app.audit_token_output import job_join
 from app.audit_transcripts import classify, event_time, lane_source, safe_label
@@ -371,6 +372,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
             )
     return {
         "totals": totals,
+        "failures_by_pool": failure_counts(rows),
         "by": by,
         "tree": finish_tree(tree),
         "sessions": sorted(sessions.values(), key=lambda v: v["usd"], reverse=True)[:top],

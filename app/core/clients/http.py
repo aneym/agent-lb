@@ -12,6 +12,7 @@ import aiohttp
 import certifi
 from aiohttp_retry import RetryClient
 
+from app.core.clients.failure_observation import observe_error, observe_status
 from app.core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,19 @@ class HttpClientLease:
         await _release_http_client(self._managed_client)
 
 
+async def observe_response(
+    session: aiohttp.ClientSession, context: object, params: aiohttp.TraceRequestEndParams
+) -> None:
+    if not params.url.path.rstrip("/").endswith(("/messages", "/responses", "/chat/completions", "/count_tokens")):
+        return
+    observe_status(params.response.status)
+    if params.response.status >= 400:
+        try:
+            observe_error(await params.response.json(content_type=None))
+        except (ValueError, aiohttp.ClientError):
+            pass
+
+
 async def _build_http_client() -> HttpClient:
     settings = get_settings()
     connector = aiohttp.TCPConnector(
@@ -76,7 +90,10 @@ async def _build_http_client() -> HttpClient:
         limit_per_host=settings.http_connector_limit_per_host,
         ssl=_build_ssl_context(),
     )
+    trace = aiohttp.TraceConfig()
+    trace.on_request_end.append(observe_response)
     session = aiohttp.ClientSession(
+        trace_configs=[trace],
         connector=connector,
         timeout=aiohttp.ClientTimeout(total=None),
         trust_env=True,

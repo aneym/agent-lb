@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from app.core.clients.failure_observation import observe_status, observe_text
 from app.core.conversation_archive import archive_bytes, archive_text
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 
@@ -42,6 +43,7 @@ class ArchivingResponsesWebSocket:
             headers=self._headers,
             extra={"frame_type": "text"},
         )
+        observe_status(101)
         await self._wrapped.send_text(text)
 
     async def send_bytes(self, data: bytes) -> None:
@@ -61,6 +63,7 @@ class ArchivingResponsesWebSocket:
     async def receive(self) -> UpstreamWebSocketMessage:
         message = await self._wrapped.receive()
         if message.kind == "text" and message.text is not None:
+            observe_text(message.text)
             archive_text(
                 direction="server_to_codex",
                 kind="responses",

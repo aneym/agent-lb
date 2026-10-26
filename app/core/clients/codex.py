@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from app.core.auth.exchange_phase import ExchangePhase
 from app.core.clients.codex_tls import codex_tls_kwargs
+from app.core.clients.failure_observation import observe_error, observe_status
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 
 _RESERVED = frozenset({"proxy", "proxies", "impersonate", "ja3", "akamai", "extra_fp"})
@@ -66,6 +67,14 @@ class CodexClient:
                 response = await self._session.request(
                     method, url, proxy=endpoint.proxy_url, **codex_tls_kwargs(), **kwargs
                 )
+                status = getattr(response, "status_code", None)
+                if isinstance(status, int):
+                    observe_status(status)
+                    if status >= 400:
+                        try:
+                            observe_error(response.json())
+                        except ValueError:
+                            pass
                 return CodexRequestResult(response, candidate, index > 0)
             except Exception as exc:
                 if index == len(endpoints) - 1 or not allow_fallback:

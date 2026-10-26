@@ -49,6 +49,8 @@ def text_report(report):
             )
         ),
     ]
+    for pool, failures in report.get("failures_by_pool", {}).items():
+        lines.append(f"Failures {pool}: statuses={failures['status_counts']} classes={failures['error_classes']}")
     for dim, values in report["by"].items():
         lines += [f"\n{dim.upper():<40} {'POINTS':>10} {'ACCT-WEEKS':>16} {'USD':>12}"]
         lines += [
