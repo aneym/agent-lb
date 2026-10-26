@@ -7,7 +7,7 @@ import sys
 import tempfile
 import types
 
-DEFAULT_TIMEOUT = 600.0
+DEFAULT_TIMEOUT = 3.0
 
 FLOOR_TIMEOUT = 2.5
 
