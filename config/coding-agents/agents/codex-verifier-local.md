@@ -16,10 +16,12 @@ If the brief asks for changes, stop: this seat is read-only.
 
 
 
-After writing the explicit brief below, run the wrapper with
-`--dry-run task --review --prompt-file <printed contract>` when validating a contract. It must print
-`host=studio background=false`. Both preflight and launch require a resolved
-launching owner (export the launching lane's LANE_DIR or launch from its lane
+To validate a contract first, run the launch command below with `--dry-run`
+inserted right before `task`. It must print `host=studio background=false`.
+Then launch with `--key <printed key> --contract <printed contract>` in place of
+`--key "$k"` and no heredoc. The wrapper's `--prompt-file` stays `@contract`
+in every call; forward-contract.py substitutes the contract it printed.
+Both preflight and launch require a resolved launching owner (export the launching lane's LANE_DIR or launch from its lane
 or agent directory) and a readable, non-empty brief. On any failure, stop and
 return the error. Never select a fresh-start file or recover a previous brief.
 

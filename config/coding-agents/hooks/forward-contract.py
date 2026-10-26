@@ -30,8 +30,17 @@ header = f"seat-contract: {k}\n"
 command = args.command
 if command[:1] == ["--"]:
     command = command[1:]
+command = [part for arg in command for part in (arg.split("=", 1) if arg.startswith("--prompt-file=") else [arg])]
+if args.contract:
+    printed = os.path.realpath(args.contract)
+    command = [
+        "@contract" if arg.endswith("contract.md") and os.path.realpath(arg) == printed else arg for arg in command
+    ]
 if not command or command.count("@contract") != 1:
-    parser.error("command requires exactly one @contract prompt path")
+    parser.error(
+        f"command requires exactly one @contract prompt path, got {command.count('@contract')}: "
+        "write --prompt-file @contract and let forward-contract.py substitute the contract it printed for this key"
+    )
 seat_run = Path(command[0]).name == "seat-run"
 if seat_run:
     if "--name" not in command or command[command.index("--name") + 1] != k:
