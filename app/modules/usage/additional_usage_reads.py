@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import func, literal, or_, select, true, union_all
+from sqlalchemy import func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, AdditionalUsageHistory
@@ -66,7 +66,7 @@ class AdditionalUsageReads:
         if since is not None:
             conditions.append(AdditionalUsageHistory.recorded_at >= since)
         bind = self._session.get_bind()
-        if bind is not None and bind.dialect.name == "sqlite":
+        if bind is not None and bind.dialect.name in {"sqlite", "postgresql"}:
             if account_ids is not None and not account_ids:
                 return {}
             if account_ids is not None and len(account_ids) > 400:
@@ -83,7 +83,11 @@ class AdditionalUsageReads:
                         )
                     )
                 return result
-            accounts_stmt = select(AdditionalUsageHistory.account_id).distinct()
+            accounts_stmt = (
+                select(Account.id.label("account_id"))
+                if bind.dialect.name == "postgresql"
+                else select(AdditionalUsageHistory.account_id).distinct()
+            )
             if account_ids is not None:
                 accounts_stmt = union_all(
                     *(select(literal(account_id).label("account_id")) for account_id in sorted(set(account_ids)))
@@ -133,31 +137,6 @@ class AdditionalUsageReads:
             )
             ids = select(latest_id.label("usage_id")).select_from(accounts).subquery("latest_quota_ids")
             stmt = select(AdditionalUsageHistory).join(ids, AdditionalUsageHistory.id == ids.c.usage_id)
-        elif bind is not None and bind.dialect.name == "postgresql" and account_ids:
-            conditions[0] = AdditionalUsageHistory.quota_key.in_(
-                tuple(scope.quota_key_match_values or {scope.quota_key})
-            )
-            accounts = (
-                select(Account.id.label("account_id")).where(Account.id.in_(account_ids)).subquery("quota_accounts")
-            )
-            latest = (
-                select(AdditionalUsageHistory.id.label("usage_id"))
-                .where(*conditions, AdditionalUsageHistory.account_id == accounts.c.account_id)
-                .correlate(accounts)
-                .order_by(
-                    AdditionalUsageHistory.recorded_at.desc(),
-                    AdditionalUsageHistory.used_percent.desc(),
-                    AdditionalUsageHistory.id.desc(),
-                )
-                .limit(1)
-                .lateral("latest_additional_usage")
-            )
-            stmt = (
-                select(AdditionalUsageHistory)
-                .select_from(accounts)
-                .join(latest, true())
-                .join(AdditionalUsageHistory, AdditionalUsageHistory.id == latest.c.usage_id)
-            )
         else:
             subq = (
                 select(
