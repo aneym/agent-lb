@@ -120,6 +120,7 @@ def pool_pace(
     ungoverned: float | None = None,
     previous: dict | None = None,
     tick: str | None = None,
+    incomplete: bool = False,
 ) -> dict:
     previous = previous or {}
     stale = any(not 0 <= (now - a.observed).total_seconds() < 1800 for a in accounts)
@@ -128,7 +129,7 @@ def pool_pace(
         for a in accounts
         if a.eligible and a.factor > 0 and a.reset > now and 0 <= (now - a.observed).total_seconds() < 1800
     ]
-    missing = stale or not usable or fast is None or slow is None
+    missing = incomplete or stale or not usable or fast is None or slow is None
     b_star = sustainable(usable, now)
     balance = sum(max(0.0, a.remaining - reserve((a.reset - now).total_seconds() / 3600)) * a.factor for a in usable)
     floor = max(

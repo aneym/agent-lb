@@ -21,6 +21,7 @@ from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     ROUTABLE_STATUSES,
     SEAT_NAME,
     WEEKLY_CYCLE_HOURS,
+    account_weekly_pace,
     add_pool_refills,
     base_url,
     class_seat_entries,
@@ -199,6 +200,7 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
         )
         provider = members[0].get("provider") if members else None
         weekly_members = [account for account in routable if account.get("status") in ROUTABLE_STATUSES]
+        weekly_paces = [account_weekly_pace(account) for account in weekly_members]
         pools.append(
             {
                 "id": pool_id,
@@ -233,6 +235,7 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
                     else None
                 ),
                 "pace": {"shadow": True, "tier": "behind", "stale": True},
+                "admissionPacePercent": round(statistics.fmean(weekly_paces), 1) if weekly_paces else None,
             }
         )
     return {"generatedAt": now_iso(), "pools": pools, "source": "accounts_fallback"}
@@ -351,7 +354,7 @@ def command_stand_ins(args: argparse.Namespace) -> int:
 
 def pool_pace(pool: dict[str, Any], cycle_hours: float) -> float | None:
 
-    pace = pool.get("weeklyPacePercent")
+    pace = pool.get("admissionPacePercent")
     if isinstance(pace, (int, float)) and not isinstance(pace, bool):
         return float(pace)
     return None
