@@ -13,7 +13,6 @@ from route_grok import rung_block  # pyrefly: ignore [missing-import]
 from route_pace_state import (  # pyrefly: ignore [missing-import]
     lease_unavailable,
     load_pool_history,
-    pace_state,
     pick_leases,
     record_caller_choice,
     record_pool_history,
@@ -55,7 +54,11 @@ def ladder_walk(
     policy = table.get("policy") or {}
     guarded_pools = (policy.get("pace") or {}).get("guarded_pools")
     pace = {
-        pool: pace_state(pools.get(pool, {}), history, policy, now)
+        pool: {
+            "state": "unknown",
+            "remaining": pools.get(pool, {}).get("weeklyRemainingPercent"),
+            "shadow": pools.get(pool, {}).get("pace"),
+        }
         for entry in entries
         if (pool := rung_pool(table, entry, pools))
     }

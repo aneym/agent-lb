@@ -28,6 +28,14 @@ async def list_pools(
     return await PoolsService(context.service, RequestLogsRepository(context.session)).get_pools()
 
 
+@router.get("/pace")
+async def shadow_pace(context: AccountsContext = Depends(get_accounts_context)):
+    from app.core.utils.time import utcnow
+    from app.modules.pools.pace_service import build_pace
+
+    return await build_pace(await context.service.list_accounts(), context.session, utcnow())
+
+
 @router.get("/plan")
 async def account_plan(context: AccountsContext = Depends(get_accounts_context)):
     try:

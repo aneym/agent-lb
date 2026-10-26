@@ -39,6 +39,7 @@ from route_learn import command_standings
 from route_pace_state import command_heartbeat
 from route_pace_state import command_models
 from route_pace_state import command_pools
+from route_pace import command_pace
 from route_pace_state import command_quota_mode
 from route_pace_state import command_release
 from route_pace_state import command_resolve
@@ -163,6 +164,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     eval_seat = sub.add_parser("eval-seat", help="print the request-log seat for a decision")
     eval_seat.add_argument("decision_id")
     eval_seat.set_defaults(handler=command_eval_seat)
+
+    pace = sub.add_parser("pace", help="Read canonical shadow pace from agent-lb")
+    pace.add_argument("--json", action="store_true")
+    pace.set_defaults(handler=command_pace)
 
     pools = sub.add_parser("pools", help="pool headroom from the LB")
     pools.add_argument("--json", action="store_true")

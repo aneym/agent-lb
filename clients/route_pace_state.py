@@ -80,90 +80,12 @@ def record_pool_history(document: dict, now: datetime) -> None:
         pass
 
 
-def pace_state(pool: dict, history: list[dict], policy: dict, now: datetime) -> dict:
-    result = dict(
-        state="unknown",
-        remaining=None,
-        hours_left=None,
-        burn_per_hour=None,
-        empties_in_h=None,
-        leftover=None,
-        basis="none",
-        next_refill_h=None,
-    )
-    result["next_refill_h"] = pool.get("pace", {}).get("next_refill_h")
-    if pool.get("status") == "exhausted":
-        result["state"] = "exhausted"
-        return result
-    monthly = pool.get("windowLabel") == "month"
-    remaining = pool_remaining(pool)
-    reset = pace_timestamp(pool.get("cycleResetAt" if monthly else "weeklyResetAt")) or pace_timestamp(
-        pool.get("resetAt")
-    )
-    hours_left = (reset - now).total_seconds() / 3600 if reset is not None else None
-    if hours_left is not None and hours_left <= 0:
-        hours_left = None
-    burn = pace_number(pool.get("burn24hPercent"))
-    burn = max(0.0, burn / 24) if burn is not None else None
-    if burn is None and remaining is not None:
-        samples = []
-        for row in history:
-            if not isinstance(row, dict) or row.get("pool") != pool.get("id"):
-                continue
-            stamp = pace_timestamp(row.get("ts"))
-            value = pace_number(row.get("remaining"))
-            if stamp is not None and stamp <= now and value is not None:
-                samples.append((stamp, value))
-        samples.sort()
-        baseline = next(
-            (sample for sample in samples if now - timedelta(hours=28) <= sample[0] <= now - timedelta(hours=20)), None
-        )
-        if baseline is not None:
-            later = [sample for sample in samples if sample[0] > baseline[0]]
-            values = [baseline[1], *(sample[1] for sample in later), remaining]
-            if not any(current > previous + 5 for previous, current in zip(values, values[1:])):
-                elapsed = (now - baseline[0]).total_seconds() / 3600
-                burn = max(0.0, (baseline[1] - remaining) / elapsed)
-    result.update(remaining=remaining, hours_left=hours_left, burn_per_hour=burn)  # pyrefly: ignore [bad-argument-type]
-    pace_policy = policy.get("pace") if isinstance(policy, dict) else None
-    pace_policy = pace_policy if isinstance(pace_policy, dict) else {}
-    thresholds = {}
-    for key, default in (("rich_leftover", 15), ("behind_lt", -10), ("ahead_gt", 15)):
-        value = pace_number(pace_policy.get(key))
-        thresholds[key] = default if value is None else value
-    if burn is not None and remaining is not None and hours_left is not None:
-        empties = remaining / burn if burn != 0 else None
-        leftover = remaining - burn * hours_left
-        rich_leftover = thresholds["rich_leftover"]
-        state = (
-            "low"
-            if empties is not None and empties < hours_left
-            else ("rich" if leftover >= rich_leftover else "on_pace")
-        )
-        result.update(state=state, empties_in_h=empties, leftover=leftover, basis="burn_24h")
-    elif burn is None:
-        pace = pace_number(pool.get("monthlyPacePercent" if monthly else "weeklyPacePercent"))
-        if pace is not None:
-            state = (
-                "low" if pace < thresholds["behind_lt"] else ("rich" if pace > thresholds["ahead_gt"] else "on_pace")
-            )
-            result.update(state=state, basis="pace")
-    return result
-
-
 def command_pools(args: argparse.Namespace) -> int:
     document, error = fetch_pools(refills=True)
     if document is None:
         print(f"route: {error}", file=sys.stderr)
         return EXIT_DEGRADED
     now = datetime.now(timezone.utc)
-    history = load_pool_history(now)
-    try:
-        policy = load_table().get("policy") or {}
-    except SystemExit:
-        policy = {}
-    for pool in pools_by_id(document).values():
-        pool["pace"] = pace_state(pool, history, policy, now)
     record_pool_history(document, now)
     if args.json:
         print(json.dumps(document, indent=2, sort_keys=True))

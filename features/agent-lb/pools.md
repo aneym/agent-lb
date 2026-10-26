@@ -3,7 +3,7 @@ id: pools
 product: agent-lb
 owner: weekend-finish
 status: live
-covers: ["route:/api/pools/plan", "route:/api/pools/reservations", "route:/api/pools/seat-accounts", "route:/api/pools/stand-ins"]
+covers: ["route:/api/pools/pace", "route:/api/pools/plan", "route:/api/pools/reservations", "route:/api/pools/seat-accounts", "route:/api/pools/stand-ins"]
 paths: ["features/agent-lb/pools.md"]
 proofs: []
 unmapped:

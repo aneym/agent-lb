@@ -154,6 +154,7 @@ MENU_POOL_FIELDS = (
     "headroomPercent",
     "weeklyRemainingPercent",
     "weeklyPacePercent",
+    "pace",
     "weeklyResetAt",
     "resetAt",
     "refills",

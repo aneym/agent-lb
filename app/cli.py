@@ -28,6 +28,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     subparsers = parser.add_subparsers(dest="command")
 
+    pace = subparsers.add_parser("pace", help="Read shadow sustainable pace.")
+    pace.add_argument("--json", action="store_true")
+    pace.add_argument("--base-url", default=None)
+    pace.add_argument("--timeout", type=float, default=15.0)
+
     audit = subparsers.add_parser("audit", help="Read-only receipt audits.")
     commands = audit.add_subparsers(dest="audit_command", required=True)
     from app.audit_routing import add_parser
@@ -195,6 +200,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> None:
     os.environ.setdefault("AGENT_LB_PROCESS_STARTED_NS", str(_PROCESS_STARTED_NS))
     args = _parse_args(argv)
+
+    if args.command == "pace":
+        from app.pace_cli import run
+
+        run(args)
+        return
 
     if args.command == "audit":
         if args.audit_command == "routing":
