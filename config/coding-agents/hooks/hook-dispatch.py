@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+import time
+
+STARTED = time.monotonic()
+
 import hashlib
 import json
 import os
 import re
 import sys
-import time
 
 sys.path[:0] = [os.path.dirname(os.path.abspath(__file__)), os.path.dirname(os.path.realpath(__file__))]
 try:
@@ -23,6 +26,7 @@ try:
         FLOOR_EXEC,
         FLOOR_TEXT,
         FLOOR_TIMEOUT,
+        floor_budget,
         INLINE_FLOOR,
         REV_SHA,
         REWRITERS,
@@ -124,7 +128,7 @@ class Plan(object):
         "target",
     )
 
-    def __init__(self, hook):
+    def __init__(self, hook, floor_timeout=FLOOR_TIMEOUT):
         self.hook = hook
         self.command = hook.get("command", "") if isinstance(hook.get("command"), str) else ""
         timeout = hook.get("timeout")
@@ -134,9 +138,9 @@ class Plan(object):
         self.reason, self.prefilter = "", None
         self.floor = floor_name(self.command)
         self.timeout = (
-            min(float(timeout), FLOOR_TIMEOUT)
+            min(float(timeout), floor_timeout)
             if self.floor and isinstance(timeout, (int, float)) and timeout > 0
-            else (FLOOR_TIMEOUT if self.floor else self.timeout)
+            else (floor_timeout if self.floor else self.timeout)
         )
         self.exec_argv = None
         self.opaque = None
@@ -166,8 +170,8 @@ def floor_exec(command, name):
     return ([match.group("interp")] if match.group("interp") else []) + [script] + match.group("args").split()
 
 
-def plan_hook(hook, inproc_names, script_pins=None):
-    plan = Plan(hook)
+def plan_hook(hook, inproc_names, script_pins=None, floor_timeout=FLOOR_TIMEOUT):
+    plan = Plan(hook, floor_timeout)
     command = plan.command
     if hook.get("type", "command") != "command" or not command:
         plan.reason = "not a command hook"
@@ -271,14 +275,15 @@ def plan_hook(hook, inproc_names, script_pins=None):
 
 
 def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
-    deadline = time.monotonic() + DISPATCH_TIMEOUT
+    budget = floor_budget()
+    deadline = STARTED + max(DISPATCH_TIMEOUT, budget + 2.0)
     record = {"event": event, "pid": os.getpid(), "ppid": os.getppid()}
     plans = []
     for hook in hooks:
         try:
-            plans.append(plan_hook(hook, inproc_names, script_pins))
+            plans.append(plan_hook(hook, inproc_names, script_pins, budget))
         except Exception as exc:
-            plan = Plan(hook)
+            plan = Plan(hook, budget)
             plan.reason = "plan error %s" % exc.__class__.__name__
             plans.append(plan)
     try:

@@ -1,5 +1,6 @@
 import hashlib
 import marshal
+import math
 import os
 import re
 import shutil
@@ -69,6 +70,21 @@ FLOOR_EXEC = re.compile(
     r"^\s*(?:(?P<interp>/usr/bin/python3|python3|/bin/bash|bash)\s+)?(?P<script>%s)(?P<args>(?:\s+%s)*)\s*$"
     % (_PATH_WORD, _ARG_WORD)
 )
+
+
+def floor_budget():
+    try:
+        load = os.getloadavg()[0]
+        cpus = (
+            len(os.sched_getaffinity(0))
+            if hasattr(os, "sched_getaffinity")
+            else getattr(os, "process_cpu_count", os.cpu_count)()
+        )
+    except (OSError, AttributeError):
+        return FLOOR_TIMEOUT
+    if not cpus or not math.isfinite(load) or load < 0:
+        return FLOOR_TIMEOUT
+    return FLOOR_TIMEOUT * min(4.0, max(1.0, load / cpus))
 
 
 def env_sensitive():
