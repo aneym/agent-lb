@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,19 +18,36 @@ from pathlib import Path
 def bounded_process_snapshots():
     previous_path = os.environ.get("PATH")
     previous_cache = os.environ.get("CLAUDE_LB_PS_CACHE")
-    with tempfile.TemporaryDirectory(prefix="claude-lb-ps-") as directory:
-        root = Path(directory)
+    directory = tempfile.mkdtemp(prefix="claude-lb-ps-")
+    root = Path(directory)
+    try:
         (root / "ps").symlink_to(Path(__file__).resolve())
         os.environ["PATH"] = directory + os.pathsep + (previous_path or os.defpath)
         os.environ["CLAUDE_LB_PS_CACHE"] = directory
-        try:
-            yield
-        finally:
-            for key, value in (("PATH", previous_path), ("CLAUDE_LB_PS_CACHE", previous_cache)):
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+        yield
+    finally:
+        for key, value in (("PATH", previous_path), ("CLAUDE_LB_PS_CACHE", previous_cache)):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        deadline = time.monotonic() + 0.2
+        for attempt in range(4):
+            try:
+                shutil.rmtree(root)
+                break
+            except FileNotFoundError:
+                if not root.exists():
+                    break
+            except OSError:
+                pass
+            if attempt == 3 or time.monotonic() >= deadline:
+                try:
+                    print(f"cc: leaving process snapshot cache after cleanup race: {root}", file=sys.stderr)
+                except OSError:
+                    pass
+                break
+            time.sleep(0.02)
 
 
 def cached_snapshot(path: Path) -> str | None:
@@ -46,30 +64,34 @@ def cached_snapshot(path: Path) -> str | None:
 def snapshot(root: Path, session: bool) -> str:
     cache = root / ("session.json" if session else "parents.json")
     deadline = time.monotonic() + 0.8
-    with (root / "snapshot.lock").open("a") as lock:
-        while True:
+    output = ""
+    try:
+        with (root / "snapshot.lock").open("a") as lock:
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        return cached_snapshot(cache) or ""
+                    time.sleep(0.02)
+            output = cached_snapshot(cache)
+            if output is not None:
+                return output
+            args = ["/bin/ps", "-A", "-o", "pid=", "-o", "ppid="]
+            if session:
+                args.extend(["-o", "sess=" if sys.platform == "darwin" else "sid="])
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    return cached_snapshot(cache) or ""
-                time.sleep(0.02)
-        output = cached_snapshot(cache)
-        if output is not None:
+                result = subprocess.run(args, capture_output=True, text=True, timeout=0.5, check=False)
+                output = result.stdout if result.returncode == 0 else ""
+            except (OSError, subprocess.TimeoutExpired):
+                output = ""
+            temporary = cache.with_suffix(".pending")
+            temporary.write_text(json.dumps({"time": time.monotonic(), "output": output}))
+            temporary.replace(cache)
             return output
-        args = ["/bin/ps", "-A", "-o", "pid=", "-o", "ppid="]
-        if session:
-            args.extend(["-o", "sess=" if sys.platform == "darwin" else "sid="])
-        try:
-            result = subprocess.run(args, capture_output=True, text=True, timeout=0.5, check=False)
-            output = result.stdout if result.returncode == 0 else ""
-        except (OSError, subprocess.TimeoutExpired):
-            output = ""
-        temporary = cache.with_suffix(".pending")
-        temporary.write_text(json.dumps({"time": time.monotonic(), "output": output}))
-        temporary.replace(cache)
-        return output
+    except OSError:
+        return output or ""
 
 
 def main() -> None:
