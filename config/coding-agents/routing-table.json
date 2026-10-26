@@ -649,8 +649,8 @@
     "muse-latest": {
       "vendor": "muse",
       "family": "muse-wonder",
-      "pinned": "muse-wonder-1.0",
-      "note": "2026-10-13 Meta catalog pin. Muse seats run through agent-lb /muse-api into request logs and the muse pool; explore arms only."
+      "pinned": "muse-wonder-full-1.0",
+      "note": "2026-10-26 FULL pin, verified via council launcher. Muse seats use agent-lb /muse-api; explore arms only."
     },
     "opus-latest": {
       "vendor": "anthropic",

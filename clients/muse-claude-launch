@@ -10,16 +10,39 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
+def resolve_model() -> str:
+    managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
+    bundled = Path(__file__).resolve().parents[1] / "config/coding-agents/routing-table.json"
+    table = Path(os.environ["ROUTE_TABLE"]).expanduser() if os.environ.get("ROUTE_TABLE") else (
+        managed if managed.is_file() else bundled
+    )
+    try:
+        model = json.loads(table.read_text())["aliases"]["muse-latest"]["pinned"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise SystemExit("Muse cannot resolve muse-latest from routing table") from exc
+    if not isinstance(model, str) or not model.startswith("muse-") or model.endswith("-contributor"):
+        raise SystemExit("Muse requires a pinned, non-contributor Muse model")
+    return model
+
+
 def main() -> None:
     argv = sys.argv[1:]
-    model = "muse-wonder-full-1.0"
+    resolved = resolve_model()
+    model = resolved
     for index, arg in enumerate(argv):
         if arg in {"--model", "-m"} and index + 1 < len(argv):
             model = argv[index + 1]
         elif arg.startswith("--model="):
             model = arg.partition("=")[2]
-    if model != "muse-wonder-full-1.0":
-        raise SystemExit("Muse Claude Code requires muse-wonder-full-1.0")
+    if model == "muse-latest":
+        model = resolved
+    if model != resolved:
+        raise SystemExit(f"Muse Claude Code requires resolved muse-latest: {resolved}")
+    for index, arg in enumerate(argv):
+        if arg in {"--model", "-m"} and index + 1 < len(argv):
+            argv[index + 1] = model
+        elif arg.startswith("--model="):
+            argv[index] = f"--model={model}"
     base_url = os.environ.get("AGENT_LB_MUSE_BASE_URL", "http://127.0.0.1:2455/muse/claude")
     if urlsplit(base_url).path.rstrip("/") != "/muse/claude":
         raise SystemExit("Muse requires agent-lb /muse/claude; refusing another route")
