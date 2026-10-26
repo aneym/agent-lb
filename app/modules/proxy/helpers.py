@@ -260,7 +260,10 @@ def _normalize_error_code(code: str | None, error_type: str | None) -> str:
     value = code or error_type
     if not value:
         return "upstream_error"
-    return value.lower()
+    normalized = value.lower()
+    if normalized == "turn_rate_limit_exceeded":
+        return "rate_limit_exceeded"
+    return normalized
 
 
 def _parse_openai_error(payload: OpenAIErrorEnvelope) -> OpenAIError | None:
