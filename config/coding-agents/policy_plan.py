@@ -33,6 +33,34 @@ def evict_shadows(home, changes):
             changes[path] = None
 
 
+def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link):
+    shipped = {path.name for path in (source / "hooks").iterdir() if path.is_file()}
+    hooks = policy_dir / "hooks"
+    copied = replace_policy_link or policy_dir.resolve() != source
+    for path in sorted(hooks.iterdir()) if copied and hooks.is_dir() and not hooks.is_symlink() else []:
+        if path.suffix in (".py", ".sh") and path.is_file() and not path.is_symlink() and path.name not in shipped:
+            changes[path] = None
+    owners = {owner.name for _target, owner, _marker, _template in MANAGED_AGENTS}
+    settings = read_text(home / ".claude/settings.json") or ""
+    markers = home / MANAGED_DIR
+    for marker in sorted(markers.iterdir()) if markers.is_dir() else []:
+        if (
+            marker.name in owners
+            or not marker.is_file()
+            or marker.stat().st_size > 200
+            or read_text(marker) != f"agent-lb:{marker.name}:v1\n"
+        ):
+            continue
+        for suffix in (".py", ".sh"):
+            name = marker.name + suffix
+            hook = home / ".claude/hooks" / name
+            if name in shipped or f"/.claude/hooks/{name}" in settings:
+                break
+            if hook.is_file() and not hook.is_symlink():
+                changes[hook] = None
+                changes[marker] = None
+
+
 def plan_managed_files(args, source, snapshot, keep_fold, changes):
     preserved_agents: list[tuple[str, Path]] = []
     replace_policy_link = False
@@ -146,6 +174,7 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes):
                 changes[decider_path] = decider_source.read_text()
 
         replace_policy_link = policy_dir.is_symlink()
+        prune_unshipped_hooks(args.home, source, policy_dir, changes, replace_policy_link)
         if replace_policy_link:
             policy_link_target = os.readlink(policy_dir)
         if replace_policy_link or policy_dir.resolve() != source:
