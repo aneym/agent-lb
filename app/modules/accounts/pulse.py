@@ -211,7 +211,7 @@ class AccountPulseScheduler:
             return False
         if account.status in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED):
             reset_at = account.reset_at
-            if reset_at is None or reset_at <= int(self.now().timestamp()):
+            if reset_at is None or reset_at <= naive_utc_to_epoch(to_utc_naive(self.now())):
                 return not self._in_backoff(account.id, max_delay_seconds=float(self.recovery_interval_seconds))
             return False
         if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):

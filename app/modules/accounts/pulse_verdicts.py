@@ -52,7 +52,12 @@ async def apply_verdict[Failure](
                 details={"account_id": account.id, "probe_status_code": status},
             )
             logger.info("Account pulse restored subscription account_id=%s", account.id)
-        if account.status in (AccountStatus.DEACTIVATED, AccountStatus.REAUTH_REQUIRED):
+        if account.status in (
+            AccountStatus.DEACTIVATED,
+            AccountStatus.REAUTH_REQUIRED,
+            AccountStatus.RATE_LIMITED,
+            AccountStatus.QUOTA_EXCEEDED,
+        ):
             updated = await repo.update_status_if_current(
                 account.id,
                 AccountStatus.ACTIVE,
