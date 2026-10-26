@@ -327,3 +327,7 @@ The routing table source is `config/coding-agents/routing-table/`, one JSON file
 ## 2026-10-26: Relay launchers set TMPPREFIX
 
 Box seats mount /tmp read-only and give a writable TMPDIR, but the seat Bash shell is zsh, which writes heredoc temp files under TMPPREFIX (default /tmp/zsh). Every relay launcher passes its contract by heredoc, so a forward from inside a box seat failed with "can't create temp file for here document" before the launcher ran. Each launcher block now sets `TMPPREFIX="${TMPDIR:-/tmp}/zsh"` after its `cd`. The `[claude-code:unrecognized_model]` line for `gpt-6.1-sol` is Claude Code's non-fatal stderr notice for a model outside its own catalog; the request still reaches the bridge and succeeds.
+
+## 2026-10-26: Usage is shown in quota units, never dollars
+
+Alex: "never do raw dollar amount, we're using subsidized subscriptions and the dollar amount is just an at cost api token estimation and not really relevant." `request_logs.cost_usd` is an API-price estimate, so the menubar, dashboards, reports and docs state usage as share of weekly quota, % of one account's week, burn ÷ sustainable, requests or tokens. Agent work now runs only inside T3 Code; everything else on Studio and ax42 was stopped the same day. Findings and method: `docs/burn-audit.md`.

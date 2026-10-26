@@ -23,3 +23,6 @@ Use an HTTP client with the required credentials for the route.
 
 ## Gotchas
 The inventory derives literal routes from source decorators. Router prefixes are represented by endpoint templates in this file.
+
+## Pace
+`/api/pools/pace` reports burn ÷ sustainable per pool. How to read it, measure burn after a change, and attribute burn to sources: `docs/burn-audit.md`.
