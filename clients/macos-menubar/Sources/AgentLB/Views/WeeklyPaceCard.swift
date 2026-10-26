@@ -58,7 +58,6 @@ private struct PaceRowView: View {
     }
     .monospacedDigit()
     .lineLimit(1)
-    .opacity(row.partial ? 0.5 : 1)
     .help(row.help)
     .accessibilityElement(children: .combine)
   }

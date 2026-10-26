@@ -39,7 +39,8 @@ struct WeeklyPaceRow: Equatable, Sendable, Identifiable {
 
   var multipleText: String {
     guard let multiple, !isIdle else { return "—" }
-    return multiple >= 99.5 ? ">99×" : Format.multiple(multiple)
+    let text = multiple >= 99.5 ? ">99×" : Format.multiple(multiple)
+    return partial ? "~" + text : text
   }
 
   var verdict: String {
@@ -78,6 +79,13 @@ enum WeeklyPace {
     case .devin: ["devin"]
     case .muse, .other: []
     }
+  }
+
+  static func statusText(pools entries: [PoolEntry], now: Date) -> String? {
+    rows(pools: entries, scope: .all, now: now)
+      .filter(\.isOver)
+      .max { ($0.multiple ?? 0) < ($1.multiple ?? 0) }?
+      .multipleText
   }
 
   static func rows(pools entries: [PoolEntry], scope: ProviderScope, now: Date) -> [WeeklyPaceRow] {
@@ -126,7 +134,7 @@ enum WeeklyPace {
       lines.append("First refill in \(Int(refill.rounded()))h")
     }
     if pace.stale == true {
-      lines.append("Partial history: the 24h burn is still filling in")
+      lines.append("~ estimate: some quota readings are old or the 24h history is short")
     }
     lines.append("Units: percent of one account's week")
     return lines.joined(separator: "\n")

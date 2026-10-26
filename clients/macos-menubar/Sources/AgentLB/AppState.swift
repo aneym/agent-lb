@@ -512,7 +512,8 @@ final class AppState {
       primaryPercent: percents.primary,
       longWindowPercent: percents.longWindow,
       showFable: isClaudeFrontmost,
-      fablePercent: isClaudeFrontmost ? Self.fablePoolPercent(accounts: accounts) : nil
+      fablePercent: isClaudeFrontmost ? Self.fablePoolPercent(accounts: accounts) : nil,
+      paceText: state == .down ? nil : WeeklyPace.statusText(pools: pools, now: .now)
     )
   }
 
