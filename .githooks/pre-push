@@ -4,6 +4,6 @@ zero=0000000000000000000000000000000000000000
 while read -r local_ref local_sha remote_ref remote_sha; do
     [ -n "$local_ref" ] || continue
     [ "$local_sha" != "$zero" ] || continue
-    case "$remote_ref" in refs/seat-in/*) continue ;; esac
+    case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac
     "$HOME/.agent-rails/factory-runtime/bin/gate-precheck" --rev "$local_sha" --fast
 done
