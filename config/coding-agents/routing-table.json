@@ -647,7 +647,7 @@
       "vendor": "muse",
       "family": "muse-wonder",
       "pinned": "muse-wonder-1.0",
-      "note": "2026-10-13 Meta catalog pin. Muse seats run through agent-lb /muse-api into request logs and the muse pool; explore arms only."
+      "note": "Served Muse Wonder is muse-wonder-1.0. muse-wonder-full-1.0 is not in the served catalog and is not substituted (2026-10-26). Muse seats run through agent-lb /muse-api; explore arms only."
     },
     "opus-latest": {
       "vendor": "anthropic",

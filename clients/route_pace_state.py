@@ -246,6 +246,7 @@ def command_resolve(args: argparse.Namespace) -> int:
                     "effort": standard.get("effort"),
                     "reason": reason,
                 }
+                print(f"served model: {model}", file=sys.stderr)
                 print(json.dumps(result, sort_keys=True) if args.json else model)
                 return EXIT_OK
             reasons.append(reason)
@@ -260,11 +261,14 @@ def command_resolve(args: argparse.Namespace) -> int:
                 degrade_alias(
                     result, table, served, fetch_pools, pool_for_model, http_get, resolve_alias, append_ledger
                 )
+            print(f"served model: {result['model']}", file=sys.stderr)
             print(json.dumps(result, sort_keys=True) if args.json else result["model"])
             return EXIT_OK
         if reason == f"unknown alias {name}":
             unknown.append(name)
         reasons.append(f"{name}: {reason}")
+    if any("is not available" in reason for reason in reasons):
+        print("served model: unavailable", file=sys.stderr)
     if unknown:
         print(f"route: unknown alias {', '.join(unknown)}", file=sys.stderr)
         return EXIT_SETUP

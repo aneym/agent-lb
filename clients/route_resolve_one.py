@@ -69,6 +69,25 @@ def resolve_alias(
     return model, f"{reason}; fallback {fallback}: {why}"
 
 
+def muse_catalog_pin(pinned: str, family: str) -> tuple[str | None, str]:
+    if not re.fullmatch(rf"{re.escape(family)}-full-\d+(?:\.\d+)*", pinned):
+        return pinned, f"pinned {family}; account eligibility is checked at dispatch"
+    listed = cursor_models()
+    if not listed:
+        return pinned, f"pinned {family}; served catalog unavailable"
+    if any(model == pinned or model.startswith(pinned + "-") for model in listed):
+        return pinned, f"pinned {family}; served catalog lists {pinned}"
+    bases = sorted(
+        {
+            re.sub(r"-(?:minimal|low|medium|high|xhigh|max)$", "", model)
+            for model in listed
+            if model.startswith(family + "-") and "-full-" not in model
+        }
+    )
+    served_as = bases[-1] if bases else "none"
+    return None, f"{pinned} is not available; served {family} is {served_as}"
+
+
 def resolve_one(table: dict[str, Any], name: str, served: list[str], seat: str | None = None) -> tuple[str | None, str]:
 
     retired = retired_patterns(table)
@@ -93,6 +112,8 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str], seat: str |
             return None, f"{name} is retired"
         if "*" in name or "?" in name:
             return None, f"{name} is a wildcard, not a served model"
+        if re.fullmatch(r"muse-.+-full-\d+(?:\.\d+)*", name):
+            return muse_catalog_pin(name, name.rsplit("-full-", 1)[0])
         return name, "not an alias"
     if spec.get("vendor") == "anthropic" or (spec.get("harness") and not spec.get("family")):
         return resolve_claude_family(spec, retired)
@@ -103,11 +124,11 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str], seat: str |
         return spec["pinned"], "pinned OpenRouter model"
     if spec.get("vendor") == "muse":
         pinned = spec.get("pinned")
-        if not isinstance(pinned, str) or not re.fullmatch(rf"{re.escape(family)}-\d+(?:\.\d+)*", pinned):
+        if not isinstance(pinned, str) or not re.fullmatch(rf"{re.escape(family)}-(?:full-)?\d+(?:\.\d+)*", pinned):
             return None, f"alias {name} has no valid {family} pin"
         if is_retired(pinned, retired):
             return None, f"{pinned} is retired or blocked"
-        return pinned, f"pinned {family}; account eligibility is checked at dispatch"
+        return muse_catalog_pin(pinned, family)
     if spec.get("vendor") == "cursor":
         variant = spec.get("variant")
         suffix = "-" + re.escape(variant) if variant else ""

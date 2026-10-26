@@ -14,20 +14,30 @@ DEFAULT_BASE_URL = "http://127.0.0.1:2455/muse-api"
 DEFAULT_MODEL = "muse-wonder-1.0"
 
 
-def resolve_model() -> str:
+def resolve_model(name: str) -> str:
     override = os.environ.get("MUSE_MODEL")
-    if override:
+    if override and name == "muse-latest":
+        print(f"served model: {override}", file=sys.stderr)
         return override
     route = os.path.expanduser("~/.agent-lb/bin/route")
     try:
-        result = subprocess.run(
-            [route, "resolve", "muse-latest"], capture_output=True, text=True, timeout=10
-        )
-        model = result.stdout.strip()
-        if result.returncode == 0 and model:
-            return model
-    except (OSError, subprocess.SubprocessError):
-        pass
+        result = subprocess.run([route, "resolve", name], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
+        if name != "muse-latest":
+            print("served model: unavailable", file=sys.stderr)
+            raise SystemExit(1) from error
+        print(f"served model: {DEFAULT_MODEL}", file=sys.stderr)
+        return DEFAULT_MODEL
+    model = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+    if result.returncode == 0 and model and " " not in model:
+        print(f"served model: {model}", file=sys.stderr)
+        return model
+    if "is not available" in result.stderr or name != "muse-latest":
+        print("served model: unavailable", file=sys.stderr)
+        if result.stderr.strip():
+            print(result.stderr.strip(), file=sys.stderr)
+        raise SystemExit(1)
+    print(f"served model: {DEFAULT_MODEL}", file=sys.stderr)
     return DEFAULT_MODEL
 
 
@@ -56,7 +66,11 @@ def main(argv: list[str]) -> None:
         base_url = f"{base_url.rstrip('/')}/seat/{seat}"
     flags = ["--provider", "meta", "--base-url", base_url]
     if "--model" not in argv:
-        flags += ["--model", resolve_model()]
+        flags += ["--model", resolve_model("muse-latest")]
+    else:
+        requested = argv[argv.index("--model") + 1]
+        resolved = resolve_model(requested)
+        argv = [resolved if word == requested else word for word in argv]
     subcommands = {
         "resume", "exec", "config", "export", "trace", "model-profile",
         "skills", "voice", "plugins", "sandbox", "schema", "serve",
