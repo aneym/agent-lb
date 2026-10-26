@@ -216,6 +216,10 @@ def log_failures(event, key, plans, results):
                     "floor": plan.floor,
                     "failure": failure,
                     "outcome": "refused" if plan.floor and event == "PreToolUse" else "failed open",
+                    "stderr": result.err.decode("utf-8", "replace").strip().splitlines()[-1:][0][:160]
+                    if result.err.strip()
+                    else "",
+                    "path": os.environ.get("PATH", "").split(os.pathsep)[:4],
                 }
             )
     if not rows:
