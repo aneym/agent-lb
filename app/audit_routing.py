@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import sys
 from bisect import bisect_right
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -13,7 +14,7 @@ from app.audit_allocation import allocate, empty, merge
 from app.audit_pricing import anthropic_price, input_cost, price_row, token_classes
 from app.audit_quota import quota_allocation
 from app.audit_routing_units import fold_units, instant, merge_units, read_jsonl
-from app.audit_tokens import load_receipts, window
+from app.audit_tokens import AuditUsageError, load_receipts, window
 from app.audit_transcripts import event_time, metadata, safe_label, session_agents, session_index
 
 
@@ -343,6 +344,10 @@ def text_report(report):
 def run(args):
     try:
         since, until = window(args)
+    except AuditUsageError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from None
+    try:
         report = report_for(args, since, until)
         if args.compare_previous:
             report["previous"] = report_for(args, since - (until - since), since)
