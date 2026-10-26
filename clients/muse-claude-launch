@@ -92,9 +92,9 @@ def main() -> None:
                 continue
             if event.get("type") == "assistant":
                 value = event.get("message", {}).get("model")
-                if not isinstance(value, str) or not value.startswith("muse-"):
+                if value != model:
                     child.terminate()
-                    raise SystemExit("Muse route failed: response served a missing or non-Muse model")
+                    raise SystemExit(f"Muse route failed: requested {model}, served {value or 'no model'}")
                 served.add(value)
             if event.get("type") == "result":
                 answer = event.get("result", "")
