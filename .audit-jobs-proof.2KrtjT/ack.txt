@@ -1,0 +1,1 @@
+Wrote job audit: /Users/aneyman/.factory/box/cow/jobs/seat-nb26-gpt-mechanical-81b0f990adea54ba-fdb9167c/worktree/.audit-jobs-proof.2KrtjT/nested/report.json
