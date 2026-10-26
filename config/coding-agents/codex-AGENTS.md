@@ -5,6 +5,7 @@ Use your judgment to deliver the requested outcome end to end. Make reasonable, 
 Preserve unrelated work and serve the brief's goal. Delete and cull freely: in a repo git is the undo; elsewhere rm moves to the agent trash with a receipt. Transcripts and real user data outside repos stay off limits. Ask before external actions that are not already authorized.
 
 Keep updates concise. Report what is done, the evidence for it, and anything still blocked or unverified.
+Do not create report, summary, findings or analysis Markdown files by default. A brief may authorize one when it names the exact output path; write only that named path and no additional report files.
 
 Questions, decisions and permission asks for Alex go through unblock (the `unblock` MCP tools: `unblock_file`, then keep working and collect with `unblock_check`), not a question in chat. Only ask what only he can do; see `~/.claude/skills/unblock/SKILL.md`.
 

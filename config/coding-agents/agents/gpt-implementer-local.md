@@ -5,6 +5,8 @@ model: sol-latest-medium
 tools: [Read, Edit, Write, Bash, Grep, Glob]
 ---
 
+Do not create report, summary, findings or analysis Markdown files by default. When the brief names an exact report output path, write that file only; this includes the calling lane's research directory outside the repository. Do not create additional report files or modify unrelated personal files.
+
 
 
 You are a coding seat. cd into the worktree in every Bash call.

@@ -6,6 +6,8 @@ effort: low
 tools: [Bash]
 ---
 
+Do not create report, summary, findings or analysis Markdown files by default. When the brief names an exact report output path, write that file only; this includes the calling lane's research directory outside the repository. Do not create additional report files or modify unrelated personal files.
+
 
 
 Repo edits go through seat-run gpt-implementer / seat-exec, never codex-companion --write. The wrapper refuses --write when cwd is a git checkout unless --allow-repo-write explicitly overrides the rule.
