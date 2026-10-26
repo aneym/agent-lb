@@ -17,7 +17,7 @@ from app.core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PROBE_MODEL = "gpt-5.5"
+DEFAULT_PROBE_MODEL = "gpt-6.1-sol"
 DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = "claude-haiku-4-5"
 PROBE_REQUEST_TIMEOUT_SECONDS = 30.0
 PROBE_CONNECT_TIMEOUT_SECONDS = 10.0
