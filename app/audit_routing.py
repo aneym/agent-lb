@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import sys
 from bisect import bisect_right
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -13,7 +14,7 @@ from app.audit_allocation import allocate, empty, merge
 from app.audit_pricing import anthropic_price, input_cost, price_row, token_classes
 from app.audit_quota import quota_allocation
 from app.audit_routing_units import fold_units, instant, merge_units, read_jsonl
-from app.audit_tokens import load_receipts, window
+from app.audit_tokens import AuditUsageError, load_receipts, window
 from app.audit_transcripts import event_time, metadata, safe_label, session_agents, session_index
 
 
@@ -367,6 +368,9 @@ def run(args):
             print(output, end="")
     except BrokenPipeError:
         return
+    except AuditUsageError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from None
     except Exception as exc:
         raise SystemExit(
             f"Routing audit failed ({type(exc).__name__}); check local inputs and database availability."
