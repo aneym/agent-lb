@@ -9,7 +9,7 @@ import types
 
 DEFAULT_TIMEOUT = 600.0
 
-FLOOR_TIMEOUT = 40.0
+FLOOR_TIMEOUT = 2.5
 
 SHELL = "/bin/sh"
 

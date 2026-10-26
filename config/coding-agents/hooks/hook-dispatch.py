@@ -94,7 +94,7 @@ FLOOR_SCRIPTS = (
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
 
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
-DISPATCH_TIMEOUT = 50.0
+DISPATCH_TIMEOUT = 8.0
 REV = re.compile(r"[0-9a-f]{12}")
 
 LEGACY_FLOOR_COMMANDS = {

@@ -67,7 +67,7 @@ def registry_rev(entries: dict[str, Any]) -> str:
 
 
 def dispatch_group(event: str, key: str, matcher_field: Any, hooks: list[dict[str, Any]], rev: str) -> dict[str, Any]:
-    timeout = 60
+    timeout = 15
     entry: dict[str, Any] = {
         "type": "command",
         "command": f'P={DISPATCH_PYTHON}; [ -x "$P" ] || P=python3; '
