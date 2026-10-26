@@ -219,7 +219,7 @@ def unsafe(args, depth, cwd):
     if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep'):
         roots, recursive, word = search_paths(name, args[1:])
         recursive |= tool.startswith('rtk ')
-        content = name in ('rg', 'grep', 'egrep', 'fgrep', 'ggrep') and not any(arg in ('--files', '-l', '--files-with-matches', '--files-without-match') for arg in args)
+        content = name in ('rg', 'grep', 'egrep', 'fgrep', 'ggrep') and not any(arg in ('--files', '--files-with-matches', '--files-without-match') for arg in args)
         if name == 'find':
             content = any(arg in ('-exec', '-execdir', '-ok', '-okdir') for arg in args) or bool(re.search(r'\bxargs\b[^;]*\bcat\b', os.environ['SCAN_COMMAND']))
         if recursive:
