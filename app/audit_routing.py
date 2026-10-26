@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import sys
 from bisect import bisect_right
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -343,6 +344,10 @@ def text_report(report):
 def run(args):
     try:
         since, until = window(args)
+    except (ValueError, OverflowError) as exc:
+        print(f"usage: agent-lb audit routing: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    try:
         report = report_for(args, since, until)
         if args.compare_previous:
             report["previous"] = report_for(args, since - (until - since), since)
