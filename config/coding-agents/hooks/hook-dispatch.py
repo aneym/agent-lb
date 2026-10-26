@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import time
 
-STARTED = time.monotonic()
+DAEMON_MODE = False
 
 import hashlib
 import json
@@ -276,7 +276,7 @@ def plan_hook(hook, inproc_names, script_pins=None, floor_timeout=FLOOR_TIMEOUT)
 
 def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
     budget = floor_budget()
-    deadline = STARTED + max(DISPATCH_TIMEOUT, budget + 2.0)
+    deadline = time.monotonic() + max(DISPATCH_TIMEOUT, budget + 2.0)
     record = {"event": event, "pid": os.getpid(), "ppid": os.getppid()}
     plans = []
     for hook in hooks:
@@ -359,6 +359,7 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
                 others_quiet
                 and sum(1 for p in plans if p.kind == "rewriter") == 1
                 and not subagent_bash(payload_obj, event)
+                and not DAEMON_MODE
             ):
                 record["hooks"] = trace_hooks(plans, results)
                 record["spawned"] = SPAWNS[0]

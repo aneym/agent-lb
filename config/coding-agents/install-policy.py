@@ -27,6 +27,8 @@ from policy_hook_handlers import apply_handlers, handler_folds_known, load_handl
 from policy_hook_install import dispatch_worth, managed_hooks, pin_inproc  # type: ignore[missing-import]
 from policy_hook_registry import fold_hooks, folded_rev, is_folded, read_registry, registry_rev, unfold_hooks  # type: ignore[missing-import]  # fmt: skip
 from policy_layout import CORE_SOURCE, DISPATCH_EVENTS, DISPATCH_REGISTRY, DISPATCH_SCRIPT, HAIKU_ENV, MODELS_FULL, MODELS_MARKER, POLICY_DIR, RETIRED_HOOKS, REV_FILE, REV_KEEP_SECONDS, SONNET_MODEL  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
+
+import hookd_install  # type: ignore[missing-import]
 from policy_lock import locked_main, parse_args  # type: ignore[missing-import]
 from policy_registry_retirement import kept_retired_hooks, kept_warning, retire_hook_registries  # type: ignore[missing-import]
 from policy_plan import plan_managed_files  # type: ignore[missing-import]
@@ -140,6 +142,7 @@ def main() -> int:
         background = snapshot.get("background_model") or snapshot["standards"]["background_model"]
         nxt["env"][HAIKU_ENV] = snapshot_model(snapshot, background)
     mode = "off" if args.uninstall else (args.hook_dispatcher or ("sticky" if folded_now else "off"))
+    hookd_install.prepare(source, args.home, mode != "off" and not args.preview)
     if mode != "off" and isinstance(nxt.get("hooks"), dict):
         opaque = opaque_floor_commands(nxt["hooks"], source)
         if opaque:
@@ -380,6 +383,7 @@ def main() -> int:
             if path.suffix in (".py", ".sh") or path.name in ("verify-routing", "route", "seat"):
                 os.chmod(path, path.stat().st_mode | 0o111)
         print(f"{'removed' if content is None else 'updated'} {path}")
+    hookd_install.ensure_daemon(args.home, any(path.parent == args.home / ".claude/hooks" for path in changes))
     for reason, path in preserved_agents:
         print(f"preserved {reason} {path}")
     return 0

@@ -441,6 +441,9 @@ def main():
     except (OSError, AttributeError, ValueError):
         return 0
     start = os.getppid()
+    caller = os.environ.get("HOOK_CALLER_PID", "")
+    if caller.isdigit() and "hookd.py" in table.get(start, (0, ""))[1]:
+        start = int(caller)
     own = descendants(table, session_root(table, start))
     foreign = []
     live = set()

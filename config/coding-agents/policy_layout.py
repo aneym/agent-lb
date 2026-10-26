@@ -149,6 +149,7 @@ POLICY_FILES = (
     "FINISH.md",
     "claude-adapter.md",
     "install-policy.py",
+    "hookd_install.py",
     *(path.name for path in sorted(Path(__file__).resolve().parent.glob("policy_*.py"))),
     "dispatch_parity.py",
     "codex_home.py",

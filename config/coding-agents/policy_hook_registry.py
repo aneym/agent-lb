@@ -8,7 +8,9 @@ from typing import Any
 
 from policy_hook_groups import foldable_groups, is_dispatch_hook, keep_config_order, matcher_key, unfold_shared  # type: ignore[missing-import]  # fmt: skip
 from policy_inventory import DISPATCH_INPROC  # type: ignore[missing-import]
-from policy_layout import DISPATCH_EVENTS, DISPATCH_PYTHON, DISPATCH_REGISTRY, DISPATCH_REV, DISPATCH_SCRIPT  # type: ignore[missing-import]  # fmt: skip
+from policy_layout import DISPATCH_EVENTS, DISPATCH_REGISTRY, DISPATCH_REV, DISPATCH_SCRIPT  # type: ignore[missing-import]  # fmt: skip
+
+import hookd_install  # type: ignore[missing-import]
 
 
 def registry_problem(registry: Any) -> str | None:
@@ -70,8 +72,7 @@ def dispatch_group(event: str, key: str, matcher_field: Any, hooks: list[dict[st
     timeout = 15
     entry: dict[str, Any] = {
         "type": "command",
-        "command": f'P={DISPATCH_PYTHON}; [ -x "$P" ] || P=python3; '
-        f'exec "$P" -I -S "$HOME/.claude/{DISPATCH_SCRIPT}" {event} \'{key}\' {rev}',
+        "command": hookd_install.command_for(DISPATCH_SCRIPT, event, key, rev),
         "timeout": int(timeout) if float(timeout).is_integer() else timeout,
     }
     messages = list(dict.fromkeys(hook["statusMessage"] for hook in hooks if hook.get("statusMessage")))
