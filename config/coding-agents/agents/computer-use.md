@@ -54,6 +54,8 @@ Keep updates concise. Report what is done, the evidence for it, and anything sti
 
 Machine addresses, delivery commands, and browser preferences are in `~/.agents/shared/MACHINES.md` when needed.
 
+Box seats run on another machine: never cite this session's scratchpad or any local tmp path as a place the seat works in, and never forward the Claude Code attribution trailer. Name each output path outside the cwd on a `writes: <path>` line; forward-contract.py turns local scratch paths into declared outputs and adds the commit trailer for the model that actually runs.
+
 ## Finish (appended by the launcher; do not remove)
 
 - Do not move the default branch unless the brief says land.

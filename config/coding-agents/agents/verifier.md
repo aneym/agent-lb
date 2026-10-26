@@ -33,3 +33,5 @@ CONTRACT_EOF
 Return the seat's final output as given, including its HANDOFF block, plus the key and the `seat-run:` placement lines. The driver owns acceptance.
 
 When degraded to Sol, use the codex-verifier role for the vendor check, not verifier-local's Anthropic premise. If the author vendor is OpenAI, report CROSS-VENDOR-VIOLATION and verify nothing. Degradation never waives independence.
+
+Box seats run on another machine: never cite this session's scratchpad or any local tmp path as a place the seat works in, and never forward the Claude Code attribution trailer. Name each output path outside the cwd on a `writes: <path>` line; forward-contract.py turns local scratch paths into declared outputs and adds the commit trailer for the model that actually runs.
