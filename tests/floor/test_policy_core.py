@@ -17,7 +17,7 @@ SOURCE = ROOT / "config/coding-agents"
 BUDGET = 7168
 
 OBLIGATIONS = {
-    "credential floor": r"Never type or print Alex's own passwords, passkeys or codes",
+    "credential floor": r"Never type or print Alex's own passkeys or codes\. His Mac password goes only into a macOS prompt",
     "outbound exact message": r"No message to a real person without his yes; approval covers that exact message only",
     "spend cap": r"No spend past a stated cap",
     "destructive needs record": r"No destructive data without an approval record on file",
@@ -31,7 +31,7 @@ OBLIGATIONS = {
     "decide after scope": r"After a scope is approved, agents decide and log why",
     "mac clicks scope": r"Click macOS consent and TCC prompts, Privacy & Security toggles, system dialogs and app permission prompts yourself",
     "mac clicks log": r"log each with `ledger\.event` and a screenshot",
-    "mac clicks exclusions": r"Never his password, Touch ID or codes \(ask for that step only\), no messages, no spend past a cap",
+    "mac clicks exclusions": r"Never Touch ID or codes \(ask for that step only\); his password only through `mac-prompt-fill` as in the kept floor, no messages, no spend past a cap",
     "opus architects": r"Opus \(opus-latest medium\) owns architecture, contracts, specs, plans, verdicts and UI design",
     "top level medium": r"never xhigh, max or Fable by default",
     "sol only to spec": r"Sol implements only to an Opus spec and writes no scopes, specs, contracts, docs, research synthesis or rulings",
