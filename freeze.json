@@ -4,15 +4,6 @@
  "moved": [
   {
    "into": [
-    "scripts/routing_daily_audit.py"
-   ],
-   "note": "split not landed; no change",
-   "path": "scripts/routing_daily_audit.py",
-   "sha": "fbc1ac8f8cb2b0f9b2067f6494ca2ac2c15de325",
-   "until": "2026-10-29T14:51:59Z"
-  },
-  {
-   "into": [
     "app/db/access_models.py",
     "app/db/account_state_models.py",
     "app/db/base.py",
