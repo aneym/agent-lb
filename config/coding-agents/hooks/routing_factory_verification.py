@@ -103,6 +103,7 @@ def verify_factory(SOURCE, source_table, classes, check, read, frontmatter_model
         "sonnet-implementer",
         "verifier",
         "gpt-implementer",
+        "terra-implementer",
         "grok-implementer",
         "gpt-explorer",
         "codex-sol-local",
