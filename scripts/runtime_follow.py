@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -120,20 +121,27 @@ def deploy(paths: Paths, state: dict, want: str, manage_static: bool, bin_todo: 
         paths,
         f"sync ok {want[:10]} (runtime-follow{', bin ' + ','.join(report.refreshed) if report.refreshed else ''})",
     )
-    cmd = [
-        str(paths.bin_dir / "lb-restart"),
-        "--reason",
-        f"runtime-follow: origin/main {want[:12]} ({why})",
-        "--backup",
-        str(saved),
-    ]
-    try:
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-        rc, tail = done.returncode, (done.stderr or done.stdout or "").strip().splitlines()[-1:] or [""]
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        rc, tail = 1, [str(exc)]
+    units = os.environ.get("AGENT_LB_FOLLOW_SYSTEMD_UNITS", "").split()
+    if units:
+        rc, tail = systemd_restart(units)
+    else:
+        cmd = [
+            str(paths.bin_dir / "lb-restart"),
+            "--reason",
+            f"runtime-follow: origin/main {want[:12]} ({why})",
+            "--backup",
+            str(saved),
+        ]
+        try:
+            done = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            rc, tail = done.returncode, (done.stderr or done.stdout or "").strip().splitlines()[-1:] or [""]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            rc, tail = 1, [str(exc)]
     if rc != 0:
-        return failed(paths, state, want, saved, old_lock, before, f"lb-restart rc={rc}: {tail[0][:200]}")
+        result = failed(paths, state, want, saved, old_lock, before, f"restart rc={rc}: {tail[0][:200]}")
+        if units:
+            systemd_restart(units)
+        return result
     state["restarted_at"] = utc()
     for key in runtime_plan.PENDING_KEYS:
         state.pop(key, None)
@@ -147,6 +155,30 @@ def deploy(paths: Paths, state: dict, want: str, manage_static: bool, bin_todo: 
     state.pop("alerted", None)
     tree.prune_backups(paths, LABEL)
     return True
+
+
+def healthy(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            return resp.status == 200
+    except (OSError, ValueError):
+        return False
+
+
+def systemd_restart(units: list[str]) -> tuple[int, list[str]]:
+    url = os.environ.get("AGENT_LB_FOLLOW_HEALTH_URL") or "http://127.0.0.1:2477/health"
+    try:
+        done = subprocess.run(["systemctl", "--user", "restart", *units], capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, [str(exc)]
+    if done.returncode:
+        return done.returncode, (done.stderr or "").strip().splitlines()[-1:] or [""]
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        if healthy(url):
+            return 0, [""]
+        time.sleep(1)
+    return 1, [f"{url} not healthy 90s after systemctl restart"]
 
 
 def failed(paths: Paths, state: dict, want: str, saved: Path, old_lock: str, before: str, why: str) -> bool:
