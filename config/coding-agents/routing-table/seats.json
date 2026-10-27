@@ -223,7 +223,7 @@
         "adapter": "codex"
       },
       "model": "terra-latest",
-      "effort": "medium"
+      "effort": "low"
     }
   }
 }
