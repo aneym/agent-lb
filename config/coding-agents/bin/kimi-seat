@@ -37,6 +37,8 @@ def run(worktree, prompt):
         API_TIMEOUT_MS="3000000",
     )
     env.pop("ANTHROPIC_API_KEY", None)
+    for name in ("NO_PROXY", "no_proxy"):
+        env[name] = ",".join(value for value in ("127.0.0.1", "localhost", env.get(name)) if value)
     started = time.time()
     print(f"KIMI_MODEL={model} seat=kimi-implementer worktree={worktree}", flush=True)
     try:

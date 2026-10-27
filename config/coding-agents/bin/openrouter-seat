@@ -21,9 +21,12 @@ def run(worktree, prompt):
         ANTHROPIC_DEFAULT_HAIKU_MODEL=model,
         CLAUDE_CODE_SUBAGENT_MODEL=model,
         ANTHROPIC_CUSTOM_HEADERS="x-agent-lb-seat: openrouter-seat",
+        ANTHROPIC_AUTH_TOKEN="agent-lb-routed",
         API_TIMEOUT_MS="3000000",
     )
     env.pop("ANTHROPIC_API_KEY", None)
+    for name in ("NO_PROXY", "no_proxy"):
+        env[name] = ",".join(value for value in ("127.0.0.1", "localhost", env.get(name)) if value)
     started = time.time()
     print(f"OPENROUTER_MODEL={model} seat=openrouter-seat worktree={worktree}", flush=True)
     try:
