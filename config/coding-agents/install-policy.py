@@ -25,6 +25,7 @@ from policy_files import autocompact_text, checkpoint_changes, write_atomic  # t
 from policy_hook_groups import dispatcher_module, opaque_floor_commands  # type: ignore[missing-import]
 from policy_hook_install import dispatch_worth, managed_hooks, pin_inproc  # type: ignore[missing-import]
 from policy_hook_registry import fold_hooks, folded_rev, is_folded, read_registry, registry_rev, unfold_hooks  # type: ignore[missing-import]  # fmt: skip
+from policy_hook_registration import apply_registrations, load_registrations, registration_commands  # type: ignore[missing-import]  # fmt: skip
 from policy_layout import CORE_SOURCE, DISPATCH_EVENTS, DISPATCH_REGISTRY, DISPATCH_SCRIPT, HAIKU_ENV, MODELS_FULL, MODELS_MARKER, POLICY_DIR, RETIRED_HOOKS, REV_FILE, REV_KEEP_SECONDS, SONNET_MODEL  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 from policy_lock import locked_main, parse_args  # type: ignore[missing-import]
 from policy_registry_retirement import retire_hook_registries  # type: ignore[missing-import]
@@ -103,6 +104,7 @@ def main() -> int:
                 f"error: {exc}. Restore {registry_path} from ~/.agent-lb/config-checkpoints/coding-agents/"
             ) from exc
 
+    registration_path, registrations, registration_text = load_registrations(args.home, args.register_hook)
     try:
         desired_docs = {
             codex_path: (
@@ -121,6 +123,8 @@ def main() -> int:
         raise SystemExit(f"error: {exc}") from exc
     sonnet_model = SONNET_MODEL if args.uninstall else snapshot_model(snapshot, "sonnet-latest")
     nxt = reconcile_settings(settings, args.uninstall, rewrite_floor_commands, sonnet_model, source)
+    if not args.uninstall:
+        apply_registrations(nxt, registrations)
     if not args.uninstall:
         nxt["autoCompactWindow"] = snapshot["autocompact_window"]["tab"]
     if args.uninstall:
@@ -153,7 +157,9 @@ def main() -> int:
                 )
                 rewrite_floor_commands({"PreToolUse": folded_groups} if event == "PreToolUse" else {}, source)
                 only[event] = folded_groups
-        folded_hooks, candidate = fold_hooks(nxt["hooks"], only, dispatch_worth(source, args.home))
+        folded_hooks, candidate = fold_hooks(
+            nxt["hooks"], only, dispatch_worth(source, args.home, registration_commands(registrations))
+        )
         if candidate is not None:
             candidate = pin_inproc(candidate, args.home, source)
             if mode == "sticky" and old_registry is not None:
@@ -258,6 +264,8 @@ def main() -> int:
             else:
                 print(f"PRESERVE {old_policy}: modified or unrecognized legacy routing document")
 
+    if args.register_hook and read_text(registration_path) != registration_text:
+        changes[registration_path] = registration_text
     if nxt != disk_settings:
         changes[settings_path] = nxt_text
     if not args.uninstall and registry_path.parent.is_dir():

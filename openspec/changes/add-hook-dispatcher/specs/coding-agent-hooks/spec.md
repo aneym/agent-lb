@@ -85,6 +85,14 @@ The dispatcher MUST refuse a PreToolUse call (exit 2 and a JSON deny naming the 
 
 Each fold MUST be written as `registry.<rev>.json` before settings name that rev, and settings MUST switch every dispatcher entry in one write. Entries without a rev (written before revs) MUST keep the fold they were written with as `registry.legacy.json`.
 
+### Requirement: External handlers register through the dispatcher owner
+
+`install-policy.py --register-hook` MUST persist external command-hook registrations and reconcile their settings entries itself. Other installers MUST call this interface instead of writing `settings.json`. Registered handlers MUST survive subsequent installs, fold into the dispatcher registry when their event and matcher are eligible, and remain direct per-hook entries when the dispatcher is off.
+
+#### Scenario: The bulletin installer runs repeatedly beside the policy installer
+- **WHEN** open-factory registers its SessionStart, UserPromptSubmit and PostToolUse bulletin handler and both installers rerun
+- **THEN** each event has one bulletin handler, PostToolUse and UserPromptSubmit run it from the dispatcher registry while folded, and settings do not alternate between owners
+
 ### Requirement: Bash calls cost at most two processes
 
 With the dispatcher installed over the live Studio guard set, a Bash tool call that no guard acts on MUST start at most two processes for its PreToolUse and PostToolUse hooks together. The count MUST be observed from the kernel (a kqueue watch on each hook process from before it runs, every fork counted), not inferred from the dispatcher's own records, and an unobserved count fails. Measured 2026-10-07: 2 with the session's cwd in a git repo; outside a git repo `rtk hook claude` runs `git rev-parse` and forks once per PATH entry ahead of git's directory (about 24 on Studio), both per-hook and through the dispatcher.

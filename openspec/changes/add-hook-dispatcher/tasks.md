@@ -63,6 +63,12 @@
 - [x] M3: the dangerous-command guard refuses when jq or grep fails, on the script and on the legacy inline bytes.
 - [x] M4: folded entries naming different revs are refused with nothing written.
 
+## 11. External handler ownership (2026-10-26)
+
+- [x] Persistent `--register-hook` registrations survive reconcile and force eligible external handlers into the fold.
+- [x] open-factory bulletin installation delegates all settings writes to agent-lb.
+- [x] Dispatcher rollback keeps registered handlers as direct per-hook entries.
+
 ## 10. Fix round (2026-10-26, Studio load pass)
 
 - [x] A refold writes the fresh registry: registry retirement starts from the pending registry instead of dropping it, so in-process pins follow the installed guards.

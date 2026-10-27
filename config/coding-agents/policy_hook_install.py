@@ -10,7 +10,7 @@ from policy_inventory import DISPATCH_INPROC  # type: ignore[missing-import]
 from policy_layout import DERIVED_PINS, DISPATCH_SCRIPT, MANAGED_AGENTS, SCRIPT_WORD  # type: ignore[missing-import]
 
 
-def dispatch_worth(source: Path, home: Path) -> Any:
+def dispatch_worth(source: Path, home: Path, registered: set[str]) -> Any:
 
     import importlib.util
 
@@ -21,6 +21,8 @@ def dispatch_worth(source: Path, home: Path) -> Any:
     spec.loader.exec_module(module)
 
     def worth(hooks: list[dict[str, Any]]) -> bool:
+        if any(hook["command"] in registered for hook in hooks):
+            return True
         if len({hook["command"] for hook in hooks}) > 1:
             return True
         saved = dict(os.environ)

@@ -38,7 +38,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Check folded and direct hook paths",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--register-hook",
+        action="append",
+        default=[],
+        metavar="JSON",
+        help="Register a persistent external hook through the dispatcher owner",
+    )
+    args = parser.parse_args()
+    if args.uninstall and args.register_hook:
+        parser.error("--register-hook cannot be combined with --uninstall")
+    return args
 
 
 def same_policy_tree(bundle: Path, checkout: Path) -> bool:
