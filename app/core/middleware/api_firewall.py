@@ -85,7 +85,7 @@ def resolve_connection_client_ip(
     trust_proxy_headers: bool,
     trusted_proxy_networks: tuple[IPv4Network | IPv6Network, ...] = (),
 ) -> str | None:
-    if trust_proxy_headers and socket_ip and _is_trusted_proxy_source(socket_ip, trusted_proxy_networks):
+    if trust_proxy_headers and socket_ip and is_trusted_proxy_source(socket_ip, trusted_proxy_networks):
         forwarded_for = headers.get("x-forwarded-for")
         if forwarded_for:
             resolved_from_chain = _resolve_client_ip_from_xff_chain(
@@ -118,14 +118,14 @@ def _resolve_client_ip_from_xff_chain(
     for index in range(len(chain) - 1, 0, -1):
         current_proxy = chain[index]
         previous_hop = chain[index - 1]
-        if not _is_trusted_proxy_source(current_proxy, trusted_proxy_networks):
+        if not is_trusted_proxy_source(current_proxy, trusted_proxy_networks):
             resolved = current_proxy
             break
         resolved = previous_hop
     return resolved
 
 
-def _is_trusted_proxy_source(
+def is_trusted_proxy_source(
     host: str,
     trusted_proxy_networks: tuple[IPv4Network | IPv6Network, ...],
 ) -> bool:

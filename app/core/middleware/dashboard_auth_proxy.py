@@ -7,7 +7,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.auth.dashboard_mode import DashboardAuthMode
 from app.core.config.settings import get_settings
-from app.core.middleware.api_firewall import _is_trusted_proxy_source, parse_trusted_proxy_networks
+from app.core.middleware.api_firewall import is_trusted_proxy_source, parse_trusted_proxy_networks
 
 
 class DashboardAuthProxyHeaderSanitizerMiddleware:
@@ -29,7 +29,7 @@ class DashboardAuthProxyHeaderSanitizerMiddleware:
         if (
             self._trust_proxy_headers
             and client_host
-            and _is_trusted_proxy_source(client_host, self._trusted_proxy_networks)
+            and is_trusted_proxy_source(client_host, self._trusted_proxy_networks)
         ):
             await self.app(scope, receive, send)
             return
