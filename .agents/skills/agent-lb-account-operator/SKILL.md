@@ -189,6 +189,28 @@ Use this path for an authorized Claude account purchase and enrollment; skip the
 billing steps for an already-paid account. For OpenAI, use the same identity and
 readiness checks with `--provider openai`.
 
+## 0. Get a fresh email address
+
+New accounts use a first-name address on a Cloudflare-hosted domain (default
+`chordtalent.com`, e.g. `dan@chordtalent.com`) that forwards to the operator's
+personal inbox. Email Routing is free. The wrangler OAuth login on ax42 carries
+`email_routing (write)`; check it with `wrangler whoami`.
+
+- List zones: `GET /zones`. List a zone's routes:
+  `GET /zones/{zoneId}/email/routing/rules`. Verified forward targets:
+  `GET /accounts/{accountId}/email/routing/addresses`.
+- An address is free when it has no route and no row in `GET /api/accounts` or
+  `agent-lb profiles list --json`. Every existing route on a domain is usually
+  already enrolled, so pick a new name.
+- Create the route: `POST /zones/{zoneId}/email/routing/rules` with
+  `{"name":"NAME to personal","enabled":true,"matchers":[{"type":"literal","field":"to","value":"NAME@chordtalent.com"}],"actions":[{"type":"forward","value":["a.neyman17@gmail.com"]}]}`.
+  A new forward target must be verified from its inbox first.
+- Read the bearer from `~/.config/.wrangler/config/default.toml` inside the calling
+  process; never print it.
+
+On Book, whose agent-lb has no `profiles` command, open a dedicated Chrome profile
+directly: `open -na "Google Chrome" --args --user-data-dir=$HOME/.agent-lb/browser-profiles/EMAIL --remote-debugging-port=PORT --no-first-run https://claude.ai/login`.
+
 ## 1. Resolve the actual browser profile
 
 ```bash
