@@ -303,6 +303,10 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
     elif seat in WORKFLOW_EFFORT_BRIEF_SEATS:
         brief = f"Effort: {effort}\n" if effort else ""
     out = {key: entry.get(key) for key in ("rung", "seat", "model", "alias", "vendor", "pool") if entry.get(key)}
+    if model:
+        out["model"] = model
+    if alias:
+        out["alias"] = alias
     seat_spec = (table.get("seats") or {}).get(seat)
     if "vendor" not in out and isinstance(seat_spec, dict) and seat_spec.get("vendor"):
         out["vendor"] = seat_spec["vendor"]
