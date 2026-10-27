@@ -57,7 +57,10 @@ def main():
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     plist.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(Path(__file__).with_name("routing_daily_audit.py"), target)
+    source = Path(__file__).resolve().parent
+    shutil.copyfile(source / "routing_daily_audit.py", target)
+    for module in source.glob("routing_audit_*.py"):
+        shutil.copyfile(module, target.with_name(module.name))
     target.chmod(0o755)
 
     runtime_python = home / ".agent-lb/runtime/agent-lb/.venv/bin/python"
