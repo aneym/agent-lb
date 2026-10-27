@@ -17,7 +17,7 @@ from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 
 def add_api_firewall_middleware(app: FastAPI) -> None:
     settings = get_settings()
-    trusted_proxy_networks = _parse_trusted_proxy_networks(settings.firewall_trusted_proxy_cidrs)
+    trusted_proxy_networks = parse_trusted_proxy_networks(settings.firewall_trusted_proxy_cidrs)
     firewall_cache = get_firewall_ip_cache()
 
     @app.middleware("http")
@@ -98,7 +98,7 @@ def resolve_connection_client_ip(
     return socket_ip
 
 
-def _parse_trusted_proxy_networks(cidrs: list[str]) -> tuple[IPv4Network | IPv6Network, ...]:
+def parse_trusted_proxy_networks(cidrs: list[str]) -> tuple[IPv4Network | IPv6Network, ...]:
     return tuple(ip_network(cidr, strict=False) for cidr in cidrs)
 
 

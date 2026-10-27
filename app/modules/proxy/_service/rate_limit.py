@@ -12,7 +12,7 @@ from app.modules.proxy.helpers import (
     _credits_headers,
     _credits_snapshot,
     _plan_type_for_accounts,
-    _rate_limit_details,
+    rate_limit_details,
     _rate_limit_headers,
     _select_accounts_for_limits,
     _summarize_window,
@@ -147,7 +147,7 @@ class _RateLimitMixin:
 
             return RateLimitStatusPayloadData(
                 plan_type=_plan_type_for_accounts(selected_accounts),
-                rate_limit=_rate_limit_details(
+                rate_limit=rate_limit_details(
                     primary_window,
                     secondary_window,
                     monthly_window,

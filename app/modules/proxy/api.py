@@ -3,9 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Security
 
 from app.core.auth.dependencies import set_openai_error_format, validate_proxy_api_key
-from app.core.middleware.api_firewall import _parse_trusted_proxy_networks
+from app.core.middleware.api_firewall import parse_trusted_proxy_networks
 from app.modules.proxy.anthropic_routes import anthropic_routes_frame_db_router, anthropic_routes_v1_router
-from app.modules.proxy.anthropic_service import _anthropic_request_session_id, _is_fable_model
+from app.modules.proxy.anthropic_service import anthropic_request_session_id, is_fable_model
 from app.modules.proxy.api_dependencies import proxy_dependencies
 from app.modules.proxy.chat_routes import chat_routes_v1_router
 from app.modules.proxy.compact_requests import compact_requests_router, compact_requests_v1_router
@@ -14,7 +14,7 @@ from app.modules.proxy.control_routes import (
     control_routes_usage_router,
     control_routes_wham_router,
 )
-from app.modules.proxy.helpers import _rate_limit_details
+from app.modules.proxy.helpers import rate_limit_details
 from app.modules.proxy.media_routes import (
     media_routes_files_router,
     media_routes_transcribe_router,
@@ -106,7 +106,7 @@ v1_router.include_router(chat_routes_v1_router)
 router.include_router(compact_requests_router)
 v1_router.include_router(compact_requests_v1_router)
 usage_router.include_router(usage_routes_usage_router)
-proxy_dependencies.anthropic_request_session_id = _anthropic_request_session_id
-proxy_dependencies.is_fable_model = _is_fable_model
-proxy_dependencies.rate_limit_details = _rate_limit_details
-proxy_dependencies.parse_trusted_proxy_networks = _parse_trusted_proxy_networks
+proxy_dependencies.anthropic_request_session_id = anthropic_request_session_id
+proxy_dependencies.is_fable_model = is_fable_model
+proxy_dependencies.rate_limit_details = rate_limit_details
+proxy_dependencies.parse_trusted_proxy_networks = parse_trusted_proxy_networks

@@ -143,7 +143,7 @@ def _percent_to_int(value: float) -> int:
     return int(bounded)
 
 
-def _rate_limit_details(
+def rate_limit_details(
     primary: RateLimitWindowSnapshotData | None,
     secondary: RateLimitWindowSnapshotData | None,
     monthly: RateLimitWindowSnapshotData | None = None,

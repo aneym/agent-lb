@@ -441,7 +441,7 @@ class AnthropicProxyService(AnthropicTransport):
         auth_retried_account_ids: set[str] = set()
         media_type = "text/event-stream" if payload.stream else "application/json"
         affinity_quota_key = _messages_affinity_quota_key(payload, provider_name=provider_name)
-        session_id = _anthropic_request_session_id(payload, inbound_headers)
+        session_id = anthropic_request_session_id(payload, inbound_headers)
         useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
         sticky_key = _messages_sticky_key(
             payload,
@@ -1662,7 +1662,7 @@ class AnthropicProxyService(AnthropicTransport):
                     for account_id, entry in fable_scoped.items()
                 }
 
-        fable_request = fable_routing and _is_fable_model(model)
+        fable_request = fable_routing and is_fable_model(model)
         threshold = settings.anthropic_fable_weekly_max_used_percent if fable_routing else 0.0
         scoped_threshold = settings.anthropic_fable_scoped_max_used_percent if fable_routing else 0.0
 
@@ -2249,7 +2249,7 @@ def _resolve_planner_model(model: str) -> str:
     return model
 
 
-def _is_fable_model(model: str | None) -> bool:
+def is_fable_model(model: str | None) -> bool:
     return bool(model) and "fable" in model.lower()
 
 
@@ -2298,7 +2298,7 @@ def _messages_affinity_quota_key(payload: AnthropicMessageRequest, *, provider_n
     elif base == "anthropic_opus_thinking":
         base = "anthropic_top_thinking"
 
-    return f"{base}_fable" if _is_fable_model(payload.model) else base
+    return f"{base}_fable" if is_fable_model(payload.model) else base
 
 
 def _anthropic_fast_mode_requested(payload: AnthropicMessageRequest) -> bool:
@@ -2358,7 +2358,7 @@ def _other_provider_routing_message(provider_name: str) -> str:
     return get_anthropic_compat_profile(provider_name).other_provider_routing_message
 
 
-def _anthropic_request_session_id(
+def anthropic_request_session_id(
     payload: AnthropicMessageRequest,
     headers: Mapping[str, str],
 ) -> str | None:
