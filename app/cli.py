@@ -79,6 +79,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     from app.subscriptions_cli import add_parser as add_subscriptions_parser
 
     add_subscriptions_parser(subparsers)
+    from app.recard_cli import add_parser as add_recard_parser
+
+    add_recard_parser(subparsers)
 
     status = subparsers.add_parser(
         "status",
@@ -236,6 +239,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         run(args)
         return
 
+    if args.command == "recard":
+        from app.recard_cli import run as run_recard
+
+        run_recard(args)
+        return
     if args.command == "subscriptions":
         from app.subscriptions_cli import run as run_subscriptions
 

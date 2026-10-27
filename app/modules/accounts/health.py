@@ -79,7 +79,7 @@ def account_problems(
             problems.append(
                 AccountProblem(
                     code="renewal_payment",
-                    message=f"Subscription {subscription.plan} renews {subscription.renews_on} on a {subscription.payment} payment method; put a real card on the account before then, then run: agent-lb subscriptions set {account.email} --payment card --renews-on <next date>.",
+                    message=f"Subscription {subscription.plan} renews {subscription.renews_on} on a {subscription.payment} payment method. The recard watcher asks for a Link card 2 days before; to do it now run: agent-lb recard start {account.email}. For a permanent card, run: agent-lb subscriptions set {account.email} --payment card.",
                 )
             )
         elif subscription.payment == "card" and days < -2:

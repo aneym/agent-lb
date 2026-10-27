@@ -149,6 +149,21 @@ the tool that can operate the actual form. Do not change browser tools repeatedl
 when one already reaches the page. Keep the requested account profile open and
 preserve unrelated sessions unless the user requested their closure.
 
+## Recard a single-use subscription
+
+A subscription paid with a Link temporary card (`payment: single-use`) needs a new
+card each cycle. Account health flags it 7 days out (`renewal_payment`). The
+`com.aneyman.agent-lb-recard` launchd job (`scripts/install-recard-watch.sh`, Studio)
+runs `agent-lb recard run` every 15 minutes: 2 days before renewal it checks the
+account's browser profile is signed in to claude.ai, creates a Link card request
+for the ledger amount (Link prompts the operator's app; the approval URL is also
+posted with lane-post), and once approved puts the card on the billing page,
+records the last 4 digits in the ledger note and rolls `renewsOn` forward after the
+renewal date passes. By hand: `agent-lb recard start EMAIL`, then
+`agent-lb recard finish EMAIL` after approval; `agent-lb recard status` shows
+each cycle. A signed-out or unreachable profile (for example one that lives on
+Book) is posted once as stuck; sign in there and the next run continues.
+
 ## Subscription Ledger Mapping
 
 Use these statuses in the agent-lb dashboard/API ledger:

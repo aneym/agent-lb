@@ -62,7 +62,7 @@ def _profile(email: str) -> BrowserProfile:
     return profile
 
 
-def _launch(profile: BrowserProfile, url: str) -> None:
+def launch_profile(profile: BrowserProfile, url: str) -> None:
     subprocess.Popen(
         chrome_argv(profile, url), start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
@@ -94,7 +94,7 @@ def run_profiles(args) -> None:
                 print(f"warning: profile directory does not exist: {user_data_dir(profile)}", file=sys.stderr)
             print(f"registered {profile.email} (profile {profile.dir}, CDP {profile.cdp_port})")
         else:
-            _launch(_profile(args.email), "about:blank")
+            launch_profile(_profile(args.email), "about:blank")
     except (OSError, ValueError) as exc:
         print(f"profiles: {type(exc).__name__}", file=sys.stderr)
         raise SystemExit(1) from None
@@ -139,7 +139,7 @@ def _open_browser(profile: BrowserProfile, url: str, cdp: str) -> bool:
     if _cdp_ready(cdp):
         _request(cdp, "/json/new?" + quote(url, safe=""), method="PUT", cdp=True)
         return True
-    _launch(profile, url)
+    launch_profile(profile, url)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if _cdp_ready(cdp):
