@@ -6,6 +6,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from scripts.routing_audit_manifest import ROUTING_AUDIT_ENTRYPOINT, ROUTING_AUDIT_MODULES
 from scripts.runtime_tree import Paths, git
 
 SOURCES = ("scripts", "clients")
@@ -26,6 +27,7 @@ def copies(paths: Paths) -> list[tuple[Path, Path, str]]:
     found = []
     if not paths.bin_dir.is_dir():
         return found
+    installed_names = set()
     for entry in sorted(paths.bin_dir.iterdir()):
         if entry.name.startswith(".") or ".bak" in entry.name or entry.is_symlink() or not entry.is_file():
             continue
@@ -34,7 +36,18 @@ def copies(paths: Paths) -> list[tuple[Path, Path, str]]:
             staged = paths.stage / rel
             if staged.is_file():
                 found.append((entry, staged, rel))
+                installed_names.add(entry.name)
                 break
+    if ROUTING_AUDIT_ENTRYPOINT in installed_names:
+        for name in ROUTING_AUDIT_MODULES:
+            installed = paths.bin_dir / name
+            if installed.exists() or installed.is_symlink():
+                continue
+            rel = f"scripts/{name}"
+            staged = paths.stage / rel
+            if not staged.is_file():
+                raise RuntimeError(f"missing staged bin dependency: {rel}")
+            found.append((installed, staged, rel))
     return found
 
 
@@ -52,14 +65,14 @@ def plan(paths: Paths, verdicts: dict[str, str]) -> tuple[list[tuple[Path, Path,
     report = BinReport()
     todo = []
     for installed, staged, rel in copies(paths):
-        have = blob_id(installed.read_bytes())
-        if have == blob_id(staged.read_bytes()):
+        have = blob_id(installed.read_bytes()) if installed.is_file() else None
+        if have is not None and have == blob_id(staged.read_bytes()):
             report.current += 1
             continue
         key = f"{rel}@{have}"
         verdict = verdicts.get(key)
         if verdict is None:
-            verdict = "outdated" if have in history(paths, rel) else "drift"
+            verdict = "outdated" if have is None or have in history(paths, rel) else "drift"
             verdicts[key] = verdict
         if verdict == "outdated":
             todo.append((installed, staged, rel))
@@ -70,12 +83,18 @@ def plan(paths: Paths, verdicts: dict[str, str]) -> tuple[list[tuple[Path, Path,
 
 def save(todo: list[tuple[Path, Path, str]], dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
+    missing = []
     for installed, _, _ in todo:
-        shutil.copy2(installed, dest / installed.name)
+        if installed.is_file():
+            shutil.copy2(installed, dest / installed.name)
+        else:
+            missing.append(installed.name)
+    (dest / ".missing").write_text("".join(f"{name}\n" for name in missing))
 
 
 def install(todo: list[tuple[Path, Path, str]], report: BinReport) -> None:
-    for installed, staged, _ in todo:
+    ordered = sorted(todo, key=lambda item: item[0].name == ROUTING_AUDIT_ENTRYPOINT)
+    for installed, staged, _ in ordered:
         temp = installed.with_name(f".{installed.name}.follow")
         shutil.copyfile(staged, temp)
         os.chmod(temp, 0o755)
@@ -86,7 +105,13 @@ def install(todo: list[tuple[Path, Path, str]], report: BinReport) -> None:
 def put_back(saved: Path, bin_dir: Path) -> None:
     if not saved.is_dir():
         return
+    missing = saved / ".missing"
+    if missing.is_file():
+        for name in missing.read_text().splitlines():
+            (bin_dir / name).unlink(missing_ok=True)
     for item in saved.iterdir():
+        if item == missing:
+            continue
         temp = bin_dir / f".{item.name}.follow"
         shutil.copy2(item, temp)
         os.replace(temp, bin_dir / item.name)

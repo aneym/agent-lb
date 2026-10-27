@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from routing_audit_manifest import ROUTING_AUDIT_ENTRYPOINT, ROUTING_AUDIT_MODULES  # type: ignore[missing-import]
+
 LABEL = "com.agentlb.routing-audit"
 TAB_LABEL = "com.agentlb.tab-token-audit"
 
@@ -43,7 +45,7 @@ def main():
     parser.add_argument("--uninstall", action="store_true")
     args = parser.parse_args()
     home = Path.home()
-    target = home / ".agent-lb/bin/routing_daily_audit.py"
+    target = home / ".agent-lb/bin" / ROUTING_AUDIT_ENTRYPOINT
     plist = home / "Library/LaunchAgents" / (LABEL + ".plist")
     domain = f"gui/{os.getuid()}"
     loaded = subprocess.run(["launchctl", "print", domain + "/" + LABEL], capture_output=True).returncode == 0
@@ -58,9 +60,8 @@ def main():
     target.parent.mkdir(parents=True, exist_ok=True)
     plist.parent.mkdir(parents=True, exist_ok=True)
     source = Path(__file__).resolve().parent
-    shutil.copyfile(source / "routing_daily_audit.py", target)
-    for module in source.glob("routing_audit_*.py"):
-        shutil.copyfile(module, target.with_name(module.name))
+    for name in (*ROUTING_AUDIT_MODULES, ROUTING_AUDIT_ENTRYPOINT):
+        shutil.copyfile(source / name, target.with_name(name))
     target.chmod(0o755)
 
     runtime_python = home / ".agent-lb/runtime/agent-lb/.venv/bin/python"
