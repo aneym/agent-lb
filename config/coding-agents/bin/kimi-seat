@@ -33,6 +33,7 @@ def run(worktree, prompt):
         ANTHROPIC_DEFAULT_HAIKU_MODEL=model,
         CLAUDE_CODE_SUBAGENT_MODEL=model,
         ANTHROPIC_CUSTOM_HEADERS="x-agent-lb-seat: kimi-implementer",
+        ANTHROPIC_AUTH_TOKEN="agent-lb-routed",
         API_TIMEOUT_MS="3000000",
     )
     env.pop("ANTHROPIC_API_KEY", None)
