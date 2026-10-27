@@ -21,29 +21,11 @@ from app.core.balancer import (
     failover_decision,
 )
 from app.core.balancer.types import ClassifiedFailure, UpstreamError
-from app.core.clients.files import create_file as core_create_file  # noqa: F401
-from app.core.clients.files import finalize_file as core_finalize_file  # noqa: F401
 from app.core.clients.http import lease_http_session as lease_http_session  # noqa: F401
 from app.core.clients.proxy import CodexControlResponse as CodexControlResponse
 from app.core.clients.proxy import (  # noqa: F401
-    ImageFetchSession,
     ProxyResponseError,
-    UpstreamProxyRouteTrace,
-    _as_image_fetch_session,
-    _inline_content_images,
-    _inline_input_image_urls,
-    _ws_transport_payload_budget_bytes,
-    filter_inbound_headers,
-    pop_compact_timeout_overrides,
-    pop_stream_timeout_overrides,
-    pop_transcribe_timeout_overrides,
-    push_compact_timeout_overrides,
-    push_stream_timeout_overrides,
-    push_transcribe_timeout_overrides,
 )
-from app.core.clients.proxy import codex_control_request as core_codex_control_request  # noqa: F401
-from app.core.clients.proxy import compact_responses as core_compact_responses  # noqa: F401
-from app.core.clients.proxy import transcribe_audio as core_transcribe_audio  # noqa: F401
 from app.core.clients.proxy_websocket import (
     UpstreamResponsesWebSocket,
     filter_inbound_websocket_headers,
@@ -248,6 +230,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
 from app.modules.proxy._service.http_bridge.helpers import (
     _trim_http_bridge_previous_response_input_items as _trim_http_bridge_previous_response_input_items,
 )
+from app.modules.proxy._service.http_bridge.retryable_overload import retryable_overload_event
 from app.modules.proxy._service.observability import (
     _hash_identifier as _hash_identifier,
 )
@@ -2939,7 +2922,7 @@ class _WebSocketMixin:
             upstream_control=upstream_control,
             response_create_gate=response_create_gate,
         )
-        return downstream_text
+        return retryable_overload_event(downstream_text)
 
     async def _handle_precreated_websocket_auth_failure(
         self,

@@ -5,22 +5,6 @@ import logging
 from typing import Any, TypeVar
 
 from app.core.clients.proxy import CodexControlResponse as CodexControlResponse
-from app.core.clients.proxy import (  # noqa: F401
-    ImageFetchSession,
-    ProxyResponseError,
-    UpstreamProxyRouteTrace,
-    _as_image_fetch_session,
-    _inline_content_images,
-    _inline_input_image_urls,
-    _ws_transport_payload_budget_bytes,
-    filter_inbound_headers,
-    pop_compact_timeout_overrides,
-    pop_stream_timeout_overrides,
-    pop_transcribe_timeout_overrides,
-    push_compact_timeout_overrides,
-    push_stream_timeout_overrides,
-    push_transcribe_timeout_overrides,
-)
 from app.core.openai.parsing import parse_sse_event
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.proxy._service.api_key_usage import (
@@ -37,6 +21,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _log_http_bridge_event,
     _normalize_http_bridge_error_event,
 )
+from app.modules.proxy._service.http_bridge.retryable_overload import retryable_overload_event
 from app.modules.proxy._service.http_bridge.service_stubs import (
     _assign_websocket_response_id,
     _build_stream_incomplete_terminal_event_for_request,
@@ -670,7 +655,7 @@ class _HTTPBridgeUpstreamEventsMixin:
             )
             if status_request_state is not None:
                 setattr(status_request_state, "account_health_error_handled", True)
-            if status_request_state is not None and status_request_state.previous_response_id is None:
+            if status_request_state is not None:
                 status_request_state.excluded_account_ids.add(session.account.id)
                 status_request_state.preferred_account_id = None
                 async with session.pending_lock:
@@ -788,6 +773,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                     if retried:
                         return
 
+        event_block = retryable_overload_event(event_block)
         if (
             matched_request_state is not None
             and matched_request_state.event_queue is not None
