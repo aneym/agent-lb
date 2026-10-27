@@ -4,16 +4,28 @@ import argparse
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import time
+
+
+STUDIO_LB = "https://studio.tailf266ac.ts.net:2455"
+
+
+def balancer():
+    try:
+        socket.create_connection(("127.0.0.1", 2455), timeout=1).close()
+        return "http://127.0.0.1:2455"
+    except OSError:
+        return STUDIO_LB
 
 
 def run(worktree, prompt):
     model = "k3.1-pro"
     env = dict(os.environ)
     env.update(
-        ANTHROPIC_BASE_URL="http://127.0.0.1:2455",
+        ANTHROPIC_BASE_URL=balancer(),
         ANTHROPIC_MODEL=model,
         ANTHROPIC_SMALL_FAST_MODEL=model,
         ANTHROPIC_DEFAULT_OPUS_MODEL=model,
