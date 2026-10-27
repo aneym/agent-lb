@@ -221,7 +221,9 @@
       "vendor": "openai",
       "box": {
         "adapter": "codex"
-      }
+      },
+      "model": "terra-latest",
+      "effort": "medium"
     }
   }
 }
