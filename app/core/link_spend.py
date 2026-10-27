@@ -65,10 +65,10 @@ def create_card_request(email: str, plan: str, amount_usd: float, renews_on: str
 
 
 def request_state(request_id: str) -> dict:
-    payload = _link("spend-request", "retrieve", request_id, "--filter-output", "status,approval_url")
+    payload = _link("spend-request", "retrieve", request_id, "--filter-output", "status")
     if not isinstance(payload, dict) or not isinstance(payload.get("status"), str):
         raise LinkError("link-cli returned no status")
-    return {"status": payload["status"], "approvalUrl": payload.get("approval_url")}
+    return {"status": payload["status"], "approvalUrl": f"https://app.link.com/activity/approve/{request_id}"}
 
 
 def load_card(request_id: str, directory: Path) -> dict:
