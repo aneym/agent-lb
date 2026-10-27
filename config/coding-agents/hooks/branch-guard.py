@@ -124,7 +124,13 @@ def fallback_commands(text, cwd):
             paths = [part.strip("'\"") for part in paths if not part.startswith("-")]
             if not paths:
                 continue
-            where = None if where is None else str((Path(where) / paths[0]).resolve())
+            where = (
+                str(Path(paths[0]).resolve())
+                if paths[0].startswith("/")
+                else None
+                if where is None
+                else str((Path(where) / paths[0]).resolve())
+            )
             force = bool(re.search(r"(?:^|\s)(?:--force|-[a-zA-Z]*f[a-zA-Z]*)(?:\s|$)", args))
             if not (where and any(char in where for char in "$`")) and removable_worktree(where, force):
                 continue
@@ -279,8 +285,8 @@ def commands(text, cwd, depth=0):
                         target = targets[0]
                         resolved = (
                             None
-                            if where is None or any(x in target for x in "$`")
-                            else str((Path(where) / target).resolve())
+                            if any(x in target for x in "$`") or where is None and not target.startswith("/")
+                            else str((Path(where or "/") / target).resolve())
                         )
                         force = any(arg == "--force" or re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", arg) for arg in rest[1:])
                         if not removable_worktree(resolved, force):
