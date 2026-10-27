@@ -216,6 +216,12 @@
       "box": null,
       "model": "sonnet-latest",
       "effort": "high"
+    },
+    "terra-implementer": {
+      "vendor": "openai",
+      "box": {
+        "adapter": "codex"
+      }
     }
   }
 }
