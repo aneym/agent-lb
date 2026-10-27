@@ -49,6 +49,10 @@ def write_atomic(path: Path, content: str) -> None:
             os.unlink(temp_name)
 
 
+def box_sync_timeout(payload_bytes: int, host_load: float) -> int:
+    return min(240, math.ceil((60 + payload_bytes / 262144) * (1 + min(3, max(0, host_load)))))
+
+
 def sync_policy_boxes(home: Path) -> None:
     try:
         hosts = policy_box_hosts(home)
@@ -76,45 +80,66 @@ def sync_policy_boxes(home: Path) -> None:
         try:
             if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", host):
                 raise ValueError("invalid box name")
-            subprocess.run(
+            load_probe = shlex.quote("import os; print(os.getloadavg()[0] / (os.cpu_count() or 1))")
+            preparation = subprocess.run(
                 [
                     *ssh,
                     host,
-                    'mkdir -p "$HOME/.agent-lb/bin" "$HOME/.agent-lb/managed/coding-agents" "$HOME/.claude/docs/models"',
+                    'mkdir -p "$HOME/.agent-lb/bin" "$HOME/.agent-lb/managed/coding-agents" "$HOME/.claude/docs/models"'
+                    f" && python3 -c {load_probe}",
                 ],
                 capture_output=True,
                 text=True,
                 check=True,
                 timeout=30,
             )
+            host_load = float(preparation.stdout.strip())
+            if not math.isfinite(host_load) or host_load < 0:
+                raise ValueError("invalid box load")
+            timeout = box_sync_timeout(0, host_load)
             for sources, destination in (
                 (bins, ".agent-lb/bin/"),
                 (tables, ".agent-lb/managed/coding-agents/"),
                 (list((home / ".claude/docs/models").glob("*.md")), ".claude/docs/models/"),
             ):
+                if not sources:
+                    continue
+                payload_bytes = sum(path.stat().st_size for path in sources)
+                transfer_timeout = box_sync_timeout(payload_bytes, host_load)
+                print(f"box policy sync {host}: bytes={payload_bytes} load={host_load:.2f} timeout={transfer_timeout}s")
                 subprocess.run(
                     ["rsync", "-az", "-e", shlex.join(ssh), *(str(path) for path in sources), f"{host}:{destination}"],
                     capture_output=True,
                     text=True,
                     check=True,
-                    timeout=60,
+                    timeout=transfer_timeout,
                 )
+            mcp_source = Path(__file__).with_name("harness_mcp.py").read_text()
+            mcp_timeout = box_sync_timeout(len(mcp_source.encode()), host_load)
             mcp = subprocess.run(
-                [*ssh, host, "timeout 55 python3 -"],
-                input=Path(__file__).with_name("harness_mcp.py").read_text(),
+                [*ssh, host, f"timeout {mcp_timeout - 5} python3 -"],
+                input=mcp_source,
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=60,
+                timeout=mcp_timeout,
             )
             print(f"box MCP {host}: {mcp.stdout.strip()}")
-            result = subprocess.run([*ssh, host, verify], capture_output=True, text=True, check=True, timeout=60)
+            result = subprocess.run([*ssh, host, verify], capture_output=True, text=True, check=True, timeout=timeout)
             actual = json.loads(result.stdout)
             if any(actual.get(key) != value for key, value in expected.items()):
                 raise ValueError("policy_rev or table_sha256 mismatch")
             print(
                 f"box policy synced {host}: policy_rev={expected['policy_rev']} table_sha256={expected['table_sha256']}"
             )
+        except subprocess.TimeoutExpired as exc:
+            print(
+                f"WARNING: box policy sync timed out for {host} after {exc.timeout}s; local install succeeded",
+                file=sys.stderr,
+            )
+        except subprocess.CalledProcessError as exc:
+            reason = "remote timeout" if exc.returncode == 124 else f"exit {exc.returncode}"
+            print(f"WARNING: box policy sync failed for {host} ({reason}); local install succeeded", file=sys.stderr)
         except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
             print(
                 f"WARNING: box policy sync failed for {host} ({type(exc).__name__}); local install succeeded",
