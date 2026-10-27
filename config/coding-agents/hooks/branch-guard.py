@@ -8,48 +8,46 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
-ROOT = Path("/Volumes") / "StudioExt" / "repos"
+SHARED = (Path("/Volumes") / "StudioExt" / "repos", Path.home() / "repos")
 
 
 @lru_cache(maxsize=128)
 def first_checkout(cwd):
     try:
         result = subprocess.run(
-            ["git", "-C", cwd, "worktree", "list", "--porcelain"],
+            [
+                "git",
+                "-C",
+                cwd,
+                "rev-parse",
+                "--path-format=absolute",
+                "--show-toplevel",
+                "--git-dir",
+                "--git-common-dir",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
             check=False,
         )
-        if result.returncode:
+        lines = result.stdout.splitlines()
+        if result.returncode or len(lines) != 3:
             return None
-        first = next((line[9:] for line in result.stdout.splitlines() if line.startswith("worktree ")), "")
-        if not first:
-            return None
-        path = Path(first).resolve()
-        return (
-            path.is_relative_to(ROOT)
-            and Path(cwd).resolve().is_relative_to(path)
-            and not (Path(cwd).resolve() != path and ".git" in Path(cwd).parts)
-        )
+        top, git_dir, common = (Path(line).resolve() for line in lines)
+        roots = {path for root in SHARED for path in (root, root.resolve())}
+        return git_dir == common and any(top.is_relative_to(root) for root in roots)
     except (OSError, subprocess.SubprocessError):
         return None
 
 
 def removable_worktree(where, force=False):
-    if not where:
-        return False
-    path = Path(where).resolve()
-    if not path.is_relative_to(ROOT):
-        return False
-    parts = path.relative_to(ROOT).parts
-    if len(parts) < 2 or not parts[0].endswith("-wt") or first_checkout(str(path)) is True:
-        return False
     if not force:
         return True
+    if not where:
+        return False
     try:
         result = subprocess.run(
-            ["git", "-C", str(path), "status", "--porcelain", "--untracked-files=all"],
+            ["git", "-C", where, "status", "--porcelain", "--untracked-files=all"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -117,10 +115,8 @@ def fallback_commands(text, cwd):
             if re.search(r"--force|(?:^|\s)-[a-zA-Z]*f|(?:^|\s)\+", args):
                 found.append(("push denied: " + FORCE_PUSH, None))
             continue
-        if re.search(r"(?:^|[;\n|&])\s*(?:cd|pushd|popd)\b", text[: match.start()]):
-            found.append((action, None))
-            continue
-        where = str((Path(cwd) / target.strip("'\"")).resolve()) if target else cwd
+        moved = re.search(r"(?:^|[;\n|&])\s*(?:cd|pushd|popd)\b", text[: match.start()])
+        where = None if moved else str((Path(cwd) / target.strip("'\"")).resolve()) if target else cwd
         if action == "checkout" and (not args or args.startswith("-- ")):
             continue
         if action.startswith("worktree"):
@@ -128,10 +124,13 @@ def fallback_commands(text, cwd):
             paths = [part.strip("'\"") for part in paths if not part.startswith("-")]
             if not paths:
                 continue
-            where = str((Path(where) / paths[0]).resolve())
+            where = None if where is None else str((Path(where) / paths[0]).resolve())
             force = bool(re.search(r"(?:^|\s)(?:--force|-[a-zA-Z]*f[a-zA-Z]*)(?:\s|$)", args))
-            if not any(char in where for char in "$`") and removable_worktree(where, force):
+            if not (where and any(char in where for char in "$`")) and removable_worktree(where, force):
                 continue
+            found.append((action, None))
+            continue
+        if where is None:
             found.append((action, None))
             continue
         found.append((action, None if any(char in where for char in "$`") else where))
@@ -325,7 +324,10 @@ def main():
                     if action.startswith("push denied: ")
                     else "Git hook bypass is forbidden: do not use --no-verify, -n or core.hooksPath overrides; fix the hook failure."
                     if action == "hook bypass"
-                    else "Floor: destructive shared-checkout mutation. Branch changes or removal of the shared checkout can take "
+                    else "git worktree remove --force would discard uncommitted files in that worktree; commit or move "
+                    "them first, then remove it without --force."
+                    if action == "worktree remove"
+                    else "Floor: destructive shared-checkout mutation. Branch changes in the shared checkout can take "
                     "another agent's working state; use a dedicated <repo>-wt/<topic> worktree."
                 )
                 print(
