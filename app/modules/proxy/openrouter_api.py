@@ -41,15 +41,12 @@ async def _prime_stream(request: Request, body: AsyncIterator[bytes]) -> bytes |
 async def chat_response(
     request: Request, effective_model: str, stream_requested: bool | None, api_key: ApiKeyData | None
 ) -> Response:
-    from app.modules.proxy.api import (
-        _collect_anthropic_body,
-        _enforce_request_limits,
-        _estimate_anthropic_request_usage,
-        _logged_error_json_response,
-        _release_reservation,
-        openai_error,
-        validate_model_access,
-    )
+    from app.core.errors import openai_error
+    from app.modules.proxy.anthropic_errors import collect_anthropic_body, estimate_anthropic_request_usage
+    from app.modules.proxy.request_admission import enforce_request_limits
+    from app.modules.proxy.request_policy import validate_model_access
+    from app.modules.proxy.reservations import release_reservation
+    from app.modules.proxy.response_errors import logged_error_json_response
 
     validate_model_access(api_key, effective_model)
     raw_body = await request.json()
@@ -62,11 +59,11 @@ async def chat_response(
         messages=[{"role": "user", "content": ""}],
         stream=stream_requested,
     )
-    reservation = await _enforce_request_limits(
+    reservation = await enforce_request_limits(
         api_key,
         request_model=effective_model,
         request_service_tier=None,
-        request_usage_budget=_estimate_anthropic_request_usage(routing_payload, raw_body=await request.body()),
+        request_usage_budget=estimate_anthropic_request_usage(routing_payload, raw_body=await request.body()),
     )
 
     async def release_body(body: AsyncIterator[bytes], first: bytes) -> AsyncIterator[bytes]:
@@ -76,7 +73,7 @@ async def chat_response(
                 yield chunk
         finally:
             with CancelScope(shield=True):
-                await _release_reservation(reservation)
+                await release_reservation(reservation)
 
     try:
         stream = await get_anthropic_proxy_context(request).service.stream_messages(
@@ -90,19 +87,19 @@ async def chat_response(
             try:
                 first = await _prime_stream(request, stream.body)
                 if first is None:
-                    await _release_reservation(reservation)
+                    await release_reservation(reservation)
                     return Response(status_code=499)
             except StopAsyncIteration:
-                await _release_reservation(reservation)
+                await release_reservation(reservation)
                 return Response(content=b"", media_type=stream.media_type)
             return StreamingResponse(release_body(stream.body, first), media_type=stream.media_type)
         try:
-            return Response(content=await _collect_anthropic_body(stream.body), media_type=stream.media_type)
+            return Response(content=await collect_anthropic_body(stream.body), media_type=stream.media_type)
         finally:
-            await _release_reservation(reservation)
+            await release_reservation(reservation)
     except AnthropicProxyError as exc:
-        await _release_reservation(reservation)
-        return _logged_error_json_response(
+        await release_reservation(reservation)
+        return logged_error_json_response(
             request,
             exc.status_code,
             openai_error(
@@ -115,5 +112,5 @@ async def chat_response(
         )
     except BaseException:
         with CancelScope(shield=True):
-            await _release_reservation(reservation)
+            await release_reservation(reservation)
         raise
