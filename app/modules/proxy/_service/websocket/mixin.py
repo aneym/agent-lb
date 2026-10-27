@@ -25,7 +25,7 @@ from app.core.clients.files import create_file as core_create_file  # noqa: F401
 from app.core.clients.files import finalize_file as core_finalize_file  # noqa: F401
 from app.core.clients.http import lease_http_session as lease_http_session  # noqa: F401
 from app.core.clients.proxy import CodexControlResponse as CodexControlResponse
-from app.core.clients.proxy import (  # noqa: F401  # noqa: F401
+from app.core.clients.proxy import (  # noqa: F401
     ImageFetchSession,
     ProxyResponseError,
     UpstreamProxyRouteTrace,
@@ -70,7 +70,6 @@ from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.core.utils.time import utcnow as utcnow
 from app.db.models import (
     Account,
-    AccountStatus,  # noqa: F401
     StickySessionKind,
 )
 from app.modules.api_keys.service import ApiKeysService
@@ -199,9 +198,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_should_attempt_local_bootstrap_rebind as _http_bridge_should_attempt_local_bootstrap_rebind,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_should_attempt_local_previous_response_recovery,  # noqa: F401
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_should_attempt_soft_affinity_reroute as _http_bridge_should_attempt_soft_affinity_reroute,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -286,9 +282,7 @@ from app.modules.proxy._service.observability import (
     _truncate_identifier as _truncate_identifier,
 )
 from app.modules.proxy._service.support import (
-    _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
     _REQUEST_TRANSPORT_WEBSOCKET,
-    _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS,  # noqa: F401
     _clear_websocket_request_error_overrides,
     _DownstreamWebSocketActivity,
     _event_type_from_payload,
@@ -396,7 +390,6 @@ from app.modules.proxy.affinity import (
     _owner_lookup_session_id_from_headers,
     _prompt_cache_key_from_request_model,
     _sticky_key_for_responses_request,
-    _sticky_key_from_session_header,  # noqa: F401
     _sticky_key_from_turn_state_header,
 )
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
@@ -2780,6 +2773,7 @@ class _WebSocketMixin:
             event_type=event_type,
             payload=payload,
             has_other_pending_requests=has_other_pending_requests,
+            allow_protocol_only_started=True,
         )
         auth_error_code = _websocket_precreated_auth_error_code(
             request_state,
@@ -2810,6 +2804,7 @@ class _WebSocketMixin:
                 event_type=event_type,
                 payload=payload,
                 has_other_pending_requests=has_other_pending_requests,
+                allow_protocol_only_started=True,
             )
         if (
             retry_error_code in _facade()._WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES
@@ -2854,6 +2849,8 @@ class _WebSocketMixin:
                 _prepare_websocket_request_state_for_visible_output_replay(request_state)
                 upstream_control.suppress_downstream_event = True
                 upstream_control.replay_request_state = request_state
+                request_state.excluded_account_ids.add(account.id)
+                request_state.preferred_account_id = None
                 await proxy._handle_stream_error(
                     account,
                     {"message": _websocket_event_error_message(event_type, payload) or "Upstream error"},

@@ -4,10 +4,8 @@ import asyncio
 import logging
 from typing import Any, TypeVar
 
-from app.core.clients.files import create_file as core_create_file  # noqa: F401
-from app.core.clients.files import finalize_file as core_finalize_file  # noqa: F401
 from app.core.clients.proxy import CodexControlResponse as CodexControlResponse
-from app.core.clients.proxy import (  # noqa: F401  # noqa: F401
+from app.core.clients.proxy import (  # noqa: F401
     ImageFetchSession,
     ProxyResponseError,
     UpstreamProxyRouteTrace,
@@ -23,9 +21,6 @@ from app.core.clients.proxy import (  # noqa: F401  # noqa: F401
     push_stream_timeout_overrides,
     push_transcribe_timeout_overrides,
 )
-from app.core.clients.proxy import codex_control_request as core_codex_control_request  # noqa: F401
-from app.core.clients.proxy import compact_responses as core_compact_responses  # noqa: F401
-from app.core.clients.proxy import transcribe_audio as core_transcribe_audio  # noqa: F401
 from app.core.openai.parsing import parse_sse_event
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.proxy._service.api_key_usage import (
@@ -92,8 +87,6 @@ from app.modules.proxy._service.observability import (
     _truncate_identifier as _truncate_identifier,
 )
 from app.modules.proxy._service.support import (
-    _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
-    _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS,  # noqa: F401
     _event_type_from_payload,
     _HTTPBridgeSession,
     _record_response_event,
@@ -678,6 +671,8 @@ class _HTTPBridgeUpstreamEventsMixin:
             if status_request_state is not None:
                 setattr(status_request_state, "account_health_error_handled", True)
             if status_request_state is not None and status_request_state.previous_response_id is None:
+                status_request_state.excluded_account_ids.add(session.account.id)
+                status_request_state.preferred_account_id = None
                 async with session.pending_lock:
                     if status_request_state not in session.pending_requests:
                         session.pending_requests.appendleft(status_request_state)
