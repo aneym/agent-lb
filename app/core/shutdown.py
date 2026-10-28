@@ -6,26 +6,33 @@ import time
 from app.core.shutdown_budget import EXCHANGE_SETTLE_S as EXCHANGE_SETTLE_S
 
 _draining: bool = False
+_admit_until: float = 0.0
 _bridge_drain_active: bool = False
 _in_flight: int = 0
 _exchanges: int = 0
 
 
 def reset() -> None:
-    global _draining, _bridge_drain_active, _in_flight, _exchanges
+    global _draining, _admit_until, _bridge_drain_active, _in_flight, _exchanges
     _draining = False
+    _admit_until = 0.0
     _bridge_drain_active = False
     _in_flight = 0
     _exchanges = 0
 
 
-def set_draining(val: bool = True) -> None:
-    global _draining
+def set_draining(val: bool = True, admit_grace_seconds: float = 0.0) -> None:
+    global _draining, _admit_until
     _draining = val
+    _admit_until = time.monotonic() + admit_grace_seconds if val else 0.0
 
 
 def is_draining() -> bool:
     return _draining
+
+
+def admits_requests() -> bool:
+    return not _draining or time.monotonic() < _admit_until
 
 
 def set_bridge_drain_active(val: bool = True) -> None:

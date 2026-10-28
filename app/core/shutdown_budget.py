@@ -5,6 +5,7 @@ from collections.abc import Mapping
 
 EXCHANGE_SETTLE_S = 75
 EXIT_MARGIN_S = 15
+DRAIN_ADMIT_GRACE_S = 15
 
 
 def minimum_exit_timeout(env: Mapping[str, str]) -> int:

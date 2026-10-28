@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from hashlib import sha256
 from ipaddress import ip_address
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.request_locality import is_trusted_client
+from app.core.shutdown_budget import DRAIN_ADMIT_GRACE_S
 from app.core.utils.time import utcnow
 from app.db.federation_models import BridgeRingMember
 from app.db.pool_depth import pool_depth
@@ -111,14 +113,25 @@ async def start_internal_drain(request: Request) -> HealthCheckResponse:
 
     import app.core.shutdown as shutdown_state
 
-    shutdown_state.set_bridge_drain_active(True)
-    shutdown_state.set_draining(True)
-
-    proxy_service = getattr(request.app.state, "proxy_service", None)
-    if proxy_service is not None and hasattr(proxy_service, "mark_http_bridge_draining"):
-        await proxy_service.mark_http_bridge_draining()
+    shutdown_state.set_draining(True, admit_grace_seconds=DRAIN_ADMIT_GRACE_S)
+    request.app.state.bridge_drain_task = asyncio.create_task(
+        _close_bridge_admission(request.app.state, DRAIN_ADMIT_GRACE_S)
+    )
 
     return HealthCheckResponse(status="ok", checks={"draining": "ok"})
+
+
+async def _close_bridge_admission(state: object, delay_seconds: float) -> None:
+    await asyncio.sleep(delay_seconds)
+
+    import app.core.shutdown as shutdown_state
+
+    if not shutdown_state.is_draining():
+        return
+    shutdown_state.set_bridge_drain_active(True)
+    proxy_service = getattr(state, "proxy_service", None)
+    if proxy_service is not None and hasattr(proxy_service, "mark_http_bridge_draining"):
+        await proxy_service.mark_http_bridge_draining()
 
 
 @router.post("/internal/drain/stop", include_in_schema=False)
@@ -148,6 +161,7 @@ async def internal_drain_status(request: Request) -> HealthCheckResponse:
         status="ok",
         checks={
             "draining": str(shutdown_state.is_draining()).lower(),
+            "admitting": str(shutdown_state.admits_requests()).lower(),
             "bridge_drain_active": str(shutdown_state.is_bridge_drain_active()).lower(),
             "in_flight": str(shutdown_state.get_in_flight()),
             "token_exchanges": str(shutdown_state.get_exchanges()),

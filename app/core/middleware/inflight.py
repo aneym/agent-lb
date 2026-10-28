@@ -42,7 +42,7 @@ class InFlightMiddleware:
         shutdown_state = import_module("app.core.shutdown")
 
         path = scope.get("path", "")
-        if shutdown_state.is_draining() and path not in _DRAIN_ALLOWED_HTTP_PATHS:
+        if not shutdown_state.admits_requests() and path not in _DRAIN_ALLOWED_HTTP_PATHS:
             response = JSONResponse(
                 status_code=503,
                 content={

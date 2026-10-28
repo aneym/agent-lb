@@ -43,7 +43,9 @@ def _post(url: str) -> None:
 
 def _in_flight(base: str) -> int:
     with urllib.request.urlopen(f"{base}/internal/drain/status", timeout=5) as resp:
-        return int(json.load(resp)["checks"]["in_flight"])
+        checks = json.load(resp)["checks"]
+    admitting = 1 if checks.get("admitting") == "true" else 0
+    return int(checks["in_flight"]) + admitting
 
 
 def drain(health_url: str, log: Callable[[str], None], budget: float | None = None) -> None:
