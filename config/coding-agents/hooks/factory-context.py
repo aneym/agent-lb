@@ -304,13 +304,19 @@ def main() -> None:
     if not isinstance(payload, dict):
         payload = {}
     source = payload.get("source")
-    if source not in ("compact", "resume"):
+    if source not in ("startup", "compact", "resume"):
         return
     lanes = Path(os.environ.get("FACTORY_LANES_DIR") or "~/.agent-rails/lanes").expanduser()
     agents = Path(os.environ.get("FACTORY_AGENTS_DIR") or "~/.agent-rails/agents").expanduser()
     learned = Path(os.environ.get("FACTORY_LEARNED_FILE") or "~/.agent-rails/factory/learned.jsonl").expanduser()
     thread_id, host = t3_selection(payload)
     lane, agent, data = identity(payload, lanes, agents, thread_id, host)
+    orch_line = "You are an orch. Load ~/.claude/skills/orch/SKILL.md and run memory.brief before acting."
+    orch = data.get("role") == "orch"
+    if source == "startup":
+        if orch:
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": orch_line}}))
+        return
     binding = data.get("t3")
     binding = binding if isinstance(binding, dict) else {}
     thread_id = str(binding.get("thread_id") or "")
@@ -356,6 +362,8 @@ def main() -> None:
         home = agent_dir(agents, agent)
         card = thread_card(home, session) if home is not None else None
         base.append("Thread card: {}. Run memory.brief before acting.".format(card or "none found"))
+    if orch:
+        base.insert(0, orch_line)
     if source == "compact":
         base = base + cap_lines(
             checkpoint_lines(path, payload, datetime.now(timezone.utc)), 1023 - len("\n".join(base).encode())

@@ -155,7 +155,7 @@
     },
     {
       "event": "SessionStart",
-      "matcher": "compact|resume",
+      "matcher": "startup|compact|resume",
       "hook": {
         "type": "command",
         "command": "/usr/bin/python3 \"$HOME/.claude/hooks/factory-context.py\" 2>/dev/null || true",
