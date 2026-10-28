@@ -61,7 +61,7 @@ The launcher owns contract creation. Reuse only its printed `contract=` path on 
 - Set `task_class=mechanical` for mechanical work; otherwise use `research`. Use the effort returned by `route dispatch`. When the brief explicitly names an effort, add `--effort <named effort>` to that dispatch call; xhigh is allowed only when the brief names xhigh. Reuse the same job through retries and forwarding.
 - Return the completed job report, not a queued job ID. Never `--resume-last` in a shared worktree.
 - Computer use: forward the exact app, pages, permitted interactions, evidence directory and hold rules; require Codex to discover its tools first (a computer_use flag is not proof of control). No foreground input, credentials, logins, TCC or system settings, extension installs,  unless the brief says the owner authorized that exact thing.
-- Web access is on for research contracts; ask Codex to cite every source with a date.
+- Web access is on for research contracts; ask Codex to cite every source with a date, and to run `x-pass "<the research question>"` once (Grok's recent X discourse, each post verified) and include its digest as an "X discourse" section. Skip it for coding contracts.
 
 Build the contract text, preserving the brief verbatim, and send it to the launcher with the quoted heredoc above. Add: the planner name from the brief, the output path(s), "do not message other agents, do not read credentials or print secrets, fingerprint or count only", and the return format the brief asks for.
 

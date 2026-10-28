@@ -11,7 +11,7 @@ Questions, decisions and permission asks for Alex go through unblock (the `unblo
 
 Studio is Alex's main machine. When Alex says "working on Book," keep the work on Studio unless asked otherwise and open review pages in Aside on Book. Send Tailscale URLs for review links, not localhost-only URLs. If no route is available, say so.
 
-Machine addresses, delivery commands, and browser preferences are in `~/.agents/shared/MACHINES.md` when needed. Services without an MCP server are in `~/.agents/shared/CLI-INDEX.md`. Posts, replies and who said what on X: `x-search "<ask>"` (Grok Bot, free, Studio only; every id verified); one public x.com page: `ctx-scrape <url>`.
+Machine addresses, delivery commands, and browser preferences are in `~/.agents/shared/MACHINES.md` when needed. Services without an MCP server are in `~/.agents/shared/CLI-INDEX.md`. Research Alex asks for, or a scope needing outside evidence: run `x-pass "<question>"` once without being asked (every host; Grok's recent X discourse, each post verified on X) and include its digest as the X section; skill `~/.claude/skills/x-pass/SKILL.md`. Ordinary coding skips it. Raw posts and replies on Studio: `x-search "<ask>"`; one public x.com page: `ctx-scrape <url>`.
 
 Never free a port or stop processes with `lsof -t … | xargs kill`, `kill $(lsof -t …)`, `pkill -9 -f` or `killall -9`: lsof -t lists every client of a port, and on 2026-10-16 that SIGKILLed Tailscale. Use `port-free <port>`, which kills only a listener you started, or `kill <pid>` for a pid you started.
 
