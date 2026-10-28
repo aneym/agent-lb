@@ -81,7 +81,6 @@ def main():
                             "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                             "decision": "pass-unparsed",
                             "session": session,
-                            "pane": os.environ.get("HERDR_PANE_ID", ""),
                             "command": command,
                         }
                     )

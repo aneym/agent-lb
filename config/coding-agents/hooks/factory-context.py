@@ -3,12 +3,31 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 TAIL_BYTES = 2 * 1024 * 1024
 TRUNCATED = "... (truncated)"
+STUDIO_ENVIRONMENT = "78038392-71c3-4cd9-bfc8-19fc12031eee"
+
+
+def local_host() -> str:
+    configured = os.environ.get("FACTORY_HOST") or socket.gethostname()
+    return configured.split(".")[0].lower()
+
+
+def t3_selection(payload: dict) -> tuple:
+    selected = payload.get("t3")
+    selected = selected if isinstance(selected, dict) else {}
+    thread_id = str(os.environ.get("T3_THREAD_ID") or selected.get("thread_id") or "")
+    environment = os.environ.get("T3_ENVIRONMENT_ID")
+    if environment:
+        host = "studio" if environment == STUDIO_ENVIRONMENT else local_host()
+    else:
+        host = str(selected.get("host") or "")
+    return thread_id, host
 
 
 def read_object(path: Path) -> dict:
@@ -37,20 +56,26 @@ def lane_records(lanes: Path) -> list:
     return sorted(records, key=lambda item: (item[0], item[1]), reverse=True)
 
 
-def identity(payload: dict, lanes: Path, agents: Path, pane: str) -> tuple:
+def identity(payload: dict, lanes: Path, agents: Path, thread_id: str, host: str) -> tuple:
     lane = os.environ.get("FACTORY_LANE", "")
     if lane and (lanes / lane).is_dir():
         return lane, "", read_object(lanes / lane / "lane.json")
     records = lane_records(lanes)
-    if pane:
+    if thread_id:
         for _, name, data in records:
-            herdr = data.get("herdr")
-            if isinstance(herdr, dict) and herdr.get("pane_id") == pane:
+            t3 = data.get("t3")
+            if isinstance(t3, dict) and t3.get("thread_id") == thread_id and (not host or t3.get("host") == host):
                 return name, "", data
-        for path in sorted(agents.glob("*/agent.json")):
-            data = read_object(path)
-            if data.get("pane") == pane:
-                return "", data.get("name") or path.parent.name, {}
+    for path in sorted(agents.glob("*/agent.json")):
+        data = read_object(path)
+        t3 = data.get("t3")
+        if (
+            thread_id
+            and isinstance(t3, dict)
+            and t3.get("thread_id") == thread_id
+            and (not host or t3.get("host") == host)
+        ):
+            return "", data.get("name") or path.parent.name, data
     cwd = Path(payload.get("cwd") or os.getcwd()).resolve()
     root = lanes.resolve()
     if within(cwd, root):
@@ -65,6 +90,10 @@ def identity(payload: dict, lanes: Path, agents: Path, pane: str) -> tuple:
             path = entry.get("path") if isinstance(entry, dict) else entry
             if isinstance(path, str) and path and within(cwd, Path(path)):
                 return name, "", data
+    if within(cwd, agents.resolve()):
+        parts = cwd.relative_to(agents.resolve()).parts
+        if parts and (agents / parts[0]).is_dir():
+            return "", parts[0], read_object(agents / parts[0] / "agent.json")
     return "", "", {}
 
 
@@ -112,7 +141,7 @@ def expired(value: object, now: datetime) -> bool:
         return False
 
 
-def learning_lines(path: Path, pane: str, lane: str, project: str) -> list:
+def learning_lines(path: Path, thread_id: str, lane: str, project: str) -> list:
     try:
         with path.open("rb") as stream:
             size = stream.seek(0, 2)
@@ -134,7 +163,7 @@ def learning_lines(path: Path, pane: str, lane: str, project: str) -> list:
             continue
         problem, fix = str(row.get("problem", "")), str(row.get("fix", ""))
         content = (problem + " " + fix).lower()
-        rank = 0 if pane and row.get("by") == pane else (1 if any(name in content for name in names) else 2)
+        rank = 0 if thread_id and row.get("by") == thread_id else (1 if any(name in content for name in names) else 2)
         text = "- [{}] {} (full: cat {})".format(row.get("id") or row.get("at", "-"), problem[:80], path)
         ranked.append((rank, index, text.replace("\r", " ").replace("\n", " ")[:300]))
     selected = sorted(ranked, key=lambda item: (item[0], -item[1]))[:3]
@@ -160,6 +189,15 @@ def agent_dir(agents: Path, agent: str):
         if read_object(path).get("name") == agent:
             return path.parent
     return None
+
+
+def unmigrated_agents(agents: Path) -> list[str]:
+    names = []
+    for path in sorted(agents.glob("*/agent.json")):
+        data = read_object(path)
+        if not isinstance(data.get("t3"), dict):
+            names.append(data.get("name") or path.parent.name)
+    return [name for name in names if isinstance(name, str)]
 
 
 def checkpoint_path(lanes: Path, agents: Path, lane: str, agent: str, session: str) -> tuple:
@@ -271,13 +309,26 @@ def main() -> None:
     lanes = Path(os.environ.get("FACTORY_LANES_DIR") or "~/.agent-rails/lanes").expanduser()
     agents = Path(os.environ.get("FACTORY_AGENTS_DIR") or "~/.agent-rails/agents").expanduser()
     learned = Path(os.environ.get("FACTORY_LEARNED_FILE") or "~/.agent-rails/factory/learned.jsonl").expanduser()
-    pane = os.environ.get("HERDR_PANE_ID", "")
-    lane, agent, data = identity(payload, lanes, agents, pane)
+    thread_id, host = t3_selection(payload)
+    lane, agent, data = identity(payload, lanes, agents, thread_id, host)
+    binding = data.get("t3")
+    binding = binding if isinstance(binding, dict) else {}
+    thread_id = str(binding.get("thread_id") or "")
+    host = str(binding.get("host") or "")
     session = str(payload.get("session_id") or "")
     path, _ = checkpoint_path(lanes, agents, lane, agent, session)
     if not lane and not agent:
-        line = "Factory context: no lane or agent home resolved (cwd {}, pane {}); compact checkpoint {}: {}.".format(
-            payload.get("cwd") or os.getcwd(), pane or "-", "found" if path.is_file() else "none", path
+        legacy = unmigrated_agents(agents)
+        gap = "; unmigrated agent records without verified T3 binding: {}".format(len(legacy)) if legacy else ""
+        line = (
+            "Factory context: no lane or agent home resolved (cwd {}, T3 thread {}, host {}); compact checkpoint {}: {}.".format(
+                payload.get("cwd") or os.getcwd(),
+                thread_id or "-",
+                host or "-",
+                "found" if path.is_file() else "none",
+                path,
+            )
+            + gap
         )
         text = "\n".join(cap_lines([line[:1000]], 1024))
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
@@ -287,8 +338,8 @@ def main() -> None:
     if lane:
         home = lanes / lane
         base = [
-            "Factory role: lead of lane {} (project {}, herdr pane {}). Context re-injected after {}.".format(
-                lane, project or "-", pane or "-", source
+            "Factory role: lead of lane {} (project {}, T3 thread {}, host {}). Context re-injected after {}.".format(
+                lane, project or "-", thread_id or "-", host or "-", source
             ),
             "Lane state: {}/STATE.md. Re-read it in full and append decisions there before acting.".format(home),
         ]
@@ -298,7 +349,9 @@ def main() -> None:
             state = state_lines(home / "STATE.md")
     else:
         base = [
-            "Factory role: agent home {} (herdr pane {}). Context re-injected after {}.".format(agent, pane, source)
+            "Factory role: agent home {} (T3 thread {}, host {}). Context re-injected after {}.".format(
+                agent, thread_id or "-", host or "-", source
+            )
         ]
         home = agent_dir(agents, agent)
         card = thread_card(home, session) if home is not None else None
@@ -307,7 +360,7 @@ def main() -> None:
         base = base + cap_lines(
             checkpoint_lines(path, payload, datetime.now(timezone.utc)), 1023 - len("\n".join(base).encode())
         )
-    learnings = learning_lines(learned, pane, lane, project)
+    learnings = learning_lines(learned, thread_id, lane, project)
     while learnings and len("\n".join(base + state + learnings).encode()) > 1024:
         learnings.pop()
         if len(learnings) == 1:

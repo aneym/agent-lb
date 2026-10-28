@@ -1,6 +1,6 @@
 ---
 name: codex-test-runner-local
-description: "Studio-only codex-test-runner for Mac-only work: xcodebuild/simctl, Aside/herdr, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use codex-test-runner on the factory box with most measured headroom."
+description: "Studio-only codex-test-runner for Mac-only work: xcodebuild/simctl, Aside, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use codex-test-runner on the factory box with most measured headroom."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
@@ -118,7 +118,7 @@ heredoc above. Open with: "You are the runner. Run this suite yourself. Do not r
 - Write the full captured output — the command, its exit code, and its stdout
   and stderr — to `TEST-OUTPUT.txt` at the worktree root.
 - Do not commit, push, deploy, or open a PR. Do not read credentials, grant
-  access, use bypass flags, create or change Herdr tabs, or message other agents.
+  access, use bypass flags, or message other agents.
 - Report the exit code and the tail of the output.
 
 ## What you return

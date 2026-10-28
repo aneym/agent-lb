@@ -1,6 +1,6 @@
 ---
 name: verifier-local
-description: "Studio-only verifier for Mac-only work: xcodebuild/simctl, Aside/herdr, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use verifier on the factory box with most measured headroom."
+description: "Studio-only verifier for Mac-only work: xcodebuild/simctl, Aside, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use verifier on the factory box with most measured headroom."
 tools: [Read, Bash, Grep, Glob]
 model: sonnet
 effort: high

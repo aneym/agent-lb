@@ -83,7 +83,7 @@ BUNDLE = re.compile(
     r"(?i)com\.google\.chrome|com\.apple\.safari|org\.chromium|aside|org\.mozilla\.firefox|com\.brave\.browser|com\.microsoft\.edgemac|com\.vivaldi\.vivaldi|company\.thebrowser\.browser|com\.operasoftware\.opera|com\.kagi\.kagimacOS"
 )
 LAUNCHER = "agent-cdp-launch"
-SPACE = "herdr-shell-space"
+SPACE = "mac-space"
 LANE_TOOL = "lane-browser"
 LANE_SUBS = {
     "shot",
@@ -118,7 +118,6 @@ LANE_SUBS = {
     "close",
 }
 SESSION = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
-GUEST_RAILS = re.compile(r"/Users/[^/]+/Applications(/[A-Za-z0-9_. -]+)*/Rails\.app")
 PLAIN = re.compile(r"[A-Za-z0-9_./:=%+,@ -]+")
 LAUNCH_CODE = re.compile(
     r"\bwebbrowser\b|puppeteer\.launch|chromium\.launch|launchPersistentContext|launch_persistent_context|storage_state\s*=|--storage-state|--user-data-dir|\bconnectOverCDP\s*\(|\bconnect_over_cdp\s*\(|--cdp\b|--remote-debugging-port\b|wss?://[^\s\"']+:\d+/devtools"
@@ -310,20 +309,7 @@ def guest_space(argv, plain):
     trusted = argv[0] in launchers(SPACE)
     if argv[1:2] in (["driver"], ["stop"]) and trusted:
         return True
-    rest = argv[2:]
-    apps = [rest[i + 1] for i, a in enumerate(rest[:-1]) if a == "--app"]
-    if argv[1:2] == ["start"] and any(MAC_APP.search(os.path.normpath(a)) for a in apps):
-        return False
-    if (
-        argv[1:2] != ["start"]
-        or "--fresh-rails-profile" not in rest
-        and not any(re.search(r"(?i)rails\.app", a) for a in rest)
-    ):
-        return None
-    if not (plain and trusted and len(rest) == 3 and rest.count("--fresh-rails-profile") == 1 and "--app" in rest):
-        return False
-    app = rest[rest.index("--app") + 1] if rest.index("--app") < 2 else ""
-    return bool(GUEST_RAILS.fullmatch(app.rstrip("/"))) and os.path.normpath(app) == app.rstrip("/")
+    return None
 
 
 def lane_tool(argv, first):
@@ -479,15 +465,17 @@ def classify(text, depth=0):
             if any(host_of(t) in PC_HOSTS for t in targets):
                 found.add("browser" if any("chrome" in a.lower() for a in argv[1:]) else "pc")
     for consumer, body in code:
+        if consumer not in ("python", "python3") and kind(body) == "browser":
+            found.add("mac")
         if consumer in SHELLS:
             found.add(classify(body, depth + 1))
         elif launch_code(body, consumer, writes):
             found.add("mac")
     if "mac" in found and "pc" in found and "browser" not in found:
         return "macpc"
-    for kind in ("browser", "mac", "pc"):
-        if kind in found:
-            return kind
+    for result in ("browser", "mac", "pc"):
+        if result in found:
+            return result
     return "none"
 
 

@@ -57,7 +57,7 @@ python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k
 CONTRACT_EOF
 ```
 
-Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it as a Nomad job on a linux box unless the contract names a Mac-only tool. Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). After NAME-COLLISION or NO-SERVER, retry once through forward-contract.py with the printed key and contract path, `--retry`, and the same command; wait on its printed name; after another refusal report blocked; after `SUBMIT-REFUSED` report blocked with that line. A seat that is not Mac-only never runs on Studio, so never fall back to a `-local` seat. Studio-only work (a Mac app, Aside, herdr, simulators) uses `codex-test-runner-local` instead.
+Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it as a Nomad job on a linux box unless the contract names a Mac-only tool. Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). After NAME-COLLISION or NO-SERVER, retry once through forward-contract.py with the printed key and contract path, `--retry`, and the same command; wait on its printed name; after another refusal report blocked; after `SUBMIT-REFUSED` report blocked with that line. A seat that is not Mac-only never runs on Studio, so never fall back to a `-local` seat. Studio-only work (a Mac app, Aside, simulators) uses `codex-test-runner-local` instead.
 
    Run those lines exactly as shown, starting at column 0: bash ends the contract only at a line that is exactly `CONTRACT_EOF`, so an indented closer swallows the `node` line.
 
@@ -115,7 +115,7 @@ heredoc above. Copy each brief line that starts with `PLACEMENT:` or `NEEDS:` un
 - Write the full captured output — the command, its exit code, and its stdout
   and stderr — to `TEST-OUTPUT.txt` at the worktree root.
 - Do not commit, push, deploy, or open a PR. Do not read credentials, grant
-  access, use bypass flags, create or change Herdr tabs, or message other agents.
+  access, use bypass flags, or message other agents.
 - Report the exit code and the tail of the output.
 
 ## What you return

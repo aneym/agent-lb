@@ -19,9 +19,9 @@ python3 "$HOME/.agents/policy/coding-agents/hooks/forward-contract.py" --key "$k
 CONTRACT_EOF
 ```
 
-Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it as a Nomad job on a linux box unless the contract names a Mac-only tool. Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). After NAME-COLLISION or NO-SERVER, retry once through forward-contract.py with the printed key and contract path, `--retry`, and the same command; wait on its printed name; after another refusal report blocked; after `SUBMIT-REFUSED` report blocked with that line. A seat that is not Mac-only never runs on Studio, so never fall back to a `-local` seat. Studio-only work (a Mac app, Aside, herdr, simulators) uses `computer-use-local` instead.
+Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it as a Nomad job on a linux box unless the contract names a Mac-only tool. Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 3 (queued or running), at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). After NAME-COLLISION or NO-SERVER, retry once through forward-contract.py with the printed key and contract path, `--retry`, and the same command; wait on its printed name; after another refusal report blocked; after `SUBMIT-REFUSED` report blocked with that line. A seat that is not Mac-only never runs on Studio, so never fall back to a `-local` seat. Studio-only work (a Mac app, Aside, simulators) uses `computer-use-local` instead.
 
-Isolated Space (R597, Alex, 2026-10-06: "we should be using isolatedcua spaces for automation in all lanes, i think agent rails is running cua on my normal desktop and its interrupting me"): GUI work here never touches Alex's desktop. The contract's first line is `PLACEMENT: box`, which keeps it on a box even when its rules name screenshots or Herdr. On a box, desktop and browser tasks run in an isolated, token-authenticated Linux Cua Space through `cua-space`.
+Isolated Space (R597, Alex, 2026-10-06: "we should be using isolatedcua spaces for automation in all lanes, i think agent rails is running cua on my normal desktop and its interrupting me"): GUI work here never touches Alex's desktop. The contract's first line is `PLACEMENT: box`, which keeps it on a box even when its rules name screenshots or Mac-only tools. On a box, desktop and browser tasks run in an isolated, token-authenticated Linux Cua Space through `cua-space`.
 
 Include these instructions in the contract:
 
@@ -33,7 +33,7 @@ Include these instructions in the contract:
 
 A box GUI contract needs network sockets and a writable sandbox. Add `--write` to the seat-exec command inside the launcher above; keep the contract in its owned prompt file.
 
-The box job runs in a mirrored copy of the lane directory, so evidence written to the current directory comes back with it. Mac-only GUI steps go to `computer-use-local`, which runs them in the herdr-qa Space. The driver's acceptance check reads `desktop-guard-focus count` on Studio before and after; any rise is a failure to report.
+The box job runs in a mirrored copy of the lane directory, so evidence written to the current directory comes back with it. Mac-only GUI steps go to `computer-use-local`, which runs them in an isolated macOS VM. The driver's acceptance check reads `desktop-guard-focus count` on Studio before and after; any rise is a failure to report.
 
 The launcher owns contract creation. Reuse only its printed `contract=` path on a retry; never choose, list or glob a contract file.
 
@@ -41,7 +41,7 @@ For an explicitly placed box browser proof, add `--write`: it needs network sock
 
 Require Codex to discover its actual tools first. A configured node_repl server, computer_use feature flag, model name, HTTP fetch or wrapper is not proof of desktop control. Use installed browser/desktop capabilities only, with a read-only first probe. Report tool names, observed result and limitations. Never invent @oai/sky availability or signatures.
 
-No new visible specialist tab, Herdr mutation, foreground input, credentials, login, TCC/system settings, extension installation, or access grants. Do not change user tabs. Interactions are allowed only on the explicitly assigned scratch/test app. Stop on an approval request or missing capability; return the exact blocker, not a fallback presented as computer-use. Read-only sandbox does not itself constrain external MCP tool side effects.
+No new visible specialist tab, foreground input, credentials, login, TCC/system settings, extension installation, or access grants. Do not change user tabs. Interactions are allowed only on the explicitly assigned scratch/test app. Stop on an approval request or missing capability; return the exact blocker, not a fallback presented as computer-use. Read-only sandbox does not itself constrain external MCP tool side effects.
 
 Do not inspect the app yourself or switch providers. Return runtime stdout/errors. The driver owns status/result collection and independent acceptance checks.
 

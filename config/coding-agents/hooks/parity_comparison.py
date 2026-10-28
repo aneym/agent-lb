@@ -57,7 +57,7 @@ def run_case(sandbox, registry, case):
     event, tool = case["event"], case.get("tool")
     olds = old_hooks(registry["per_hook"], event, tool)
     news = new_hooks(registry["dispatch"], event, tool)
-    extra = {"HERDR_PANE_ID": TEST_PANE} if case.get("pane") else {}
+    extra = {"T3_THREAD_ID": TEST_PANE} if case.get("pane") else {}
     outcome = {"name": case["name"], "event": event, "tool": tool, "mismatches": []}
     run, old_results, old_files = run_path(sandbox, case, olds, extra, False)
     run2, new_results, new_files = run_path(sandbox, case, news, extra, True)

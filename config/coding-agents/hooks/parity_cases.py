@@ -65,7 +65,6 @@ def builtin_cases():
         ),
         dict(bash("ssh pc 'dir'"), name="allow-ssh-pc", expect="allow"),
         dict(bash("gh pr merge 5 --squash"), name="deny-no-direct-merge", expect=None),
-        dict(bash("open -a 'Herdr Shell'"), name="deny-herdr-shell-host", expect=None),
         dict(bash("cua do click 10 10"), name="deny-desktop-guard", expect=deny),
         dict(bash("rm -rf / && gh pr merge 1 --squash"), name="deny-two-guards", expect=deny),
         dict(

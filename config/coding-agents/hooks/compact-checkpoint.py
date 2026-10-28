@@ -231,8 +231,8 @@ def git_head(cwd: str):
 def build(payload: dict, context) -> tuple:
     lanes = Path(os.environ.get("FACTORY_LANES_DIR") or "~/.agent-rails/lanes").expanduser()
     agents = Path(os.environ.get("FACTORY_AGENTS_DIR") or "~/.agent-rails/agents").expanduser()
-    pane = os.environ.get("HERDR_PANE_ID", "")
-    lane, agent, _ = context.identity(payload, lanes, agents, pane)
+    thread_id, host = context.t3_selection(payload)
+    lane, agent, _ = context.identity(payload, lanes, agents, thread_id, host)
     session = str(payload.get("session_id") or "")
     path, owner = context.checkpoint_path(lanes, agents, lane, agent, session)
     cwd = str(payload.get("cwd") or os.getcwd())

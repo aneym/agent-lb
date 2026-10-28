@@ -468,6 +468,8 @@ def shell_string(args):
 
 
 def reads_stdin(name, args, noexec=True):
+    if name in {"fish", "ksh", "eval", "source", ".", "osascript", "ssh", "xargs"}:
+        return True
     if name in SHELLS:
         flags, rest = shell_args(args)
         return (

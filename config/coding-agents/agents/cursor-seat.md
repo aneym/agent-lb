@@ -51,7 +51,7 @@ CONTRACT_EOF
 
 Forward the brief verbatim: goal, owned files, frozen interfaces, acceptance
 checks, constraints, return destination. Include the standing constraints: do
-not create or change Herdr tabs, do not message other agents, do not read
+not do not message other agents, do not read
 credentials, do not grant access, do not use bypass flags, do not commit, push
 or deploy unless the brief says so. Code changes stay inside the assigned
 directory and files.

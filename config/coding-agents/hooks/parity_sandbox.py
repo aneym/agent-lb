@@ -122,7 +122,9 @@ class Sandbox(object):
         env = {
             key: value
             for key, value in os.environ.items()
-            if not key.startswith(("HERDR_", "FACTORY_", "HOOK_DISPATCH_", "HOOK_FLOOR_", "CLAUDE_ENV_FILE", "TMUX"))
+            if not key.startswith(
+                ("FACTORY_", "HOOK_DISPATCH_", "HOOK_FLOOR_", "CLAUDE_ENV_FILE", "TMUX", "T3_", "RW_")
+            )
         }
         env.update(
             {

@@ -32,7 +32,7 @@ FAIL_LINE = {
 }
 STATUS = re.compile(
     r"gh (?:pr (?:view|checks|status)|run (?:view|list|watch))|queue_pr\.py\s+(?:status|show|list)|result\.json"
-    r"|/folds?/|fold-status|lane-status|seat-run\s+--wait|RESUME\.md|BRIEF\.md|PROTOCOL\.md|herdr pane read"
+    r"|/folds?/|fold-status|lane-status|seat-run\s+--wait|RESUME\.md|BRIEF\.md|PROTOCOL\.md"
 )
 RESULT_PARSER = re.compile(r"json\.loads?\([^\n]*result\.json|result\.json[\s\S]*json\.loads?\(")
 READ_ARG = re.compile(

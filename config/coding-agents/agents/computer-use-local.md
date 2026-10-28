@@ -1,6 +1,6 @@
 ---
 name: computer-use-local
-description: "Studio-only computer-use for Mac-only work: xcodebuild/simctl, Aside/herdr, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use computer-use on the factory box with most measured headroom."
+description: "Studio-only computer-use for Mac-only work: xcodebuild/simctl, Aside, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use computer-use on the factory box with most measured headroom."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
@@ -27,7 +27,7 @@ PLACEMENT: studio-only
 CONTRACT_EOF
 ```
 
-Isolated Space (R597, Alex, 2026-10-06: "we should be using isolatedcua spaces for automation in all lanes, i think agent rails is running cua on my normal desktop and its interrupting me"): a Mac GUI step never runs on Alex's desktop. Sustained testing and every input action run in the herdr-qa Space, a Lume macOS VM with no host window: `herdr-shell-space up`, then `herdr-shell-space start|exec|driver|shot` (one holder at a time; it waits on the lock). The only host access is a one-off background read of an app that must be on the host, through the mac-apps server; never host input, never a foreground switch. A GUI step that is not Mac-only belongs to `computer-use` (a box display through `cua-display`). Wrap the run with `desktop-guard-focus watch --seconds <run length>` in the background and return its JSON; `steals` above 0, or a changed front app or cursor with no human input, is a failure to report, not a pass.
+Isolated Space (R597, Alex, 2026-10-06: "we should be using isolatedcua spaces for automation in all lanes, i think agent rails is running cua on my normal desktop and its interrupting me"): a Mac GUI step never runs on Alex's desktop. Sustained testing and every input action run in an isolated macOS VM with no host window through `mac-space up --create|exec|driver|shot|pull|push|stop|status`; retain desktop-guard-focus evidence. The only host access is a one-off background read of an app that must be on the host, through the mac-apps server; never host input, never a foreground switch. A GUI step that is not Mac-only belongs to `computer-use` (a box display through `cua-display`). Wrap the run with `desktop-guard-focus watch --seconds <run length>` in the background and return its JSON; `steals` above 0, or a changed front app or cursor with no human input, is a failure to report, not a pass.
 
 The launcher owns contract creation. Reuse only its printed `contract=` path on a retry; never choose, list or glob a contract file.
 
@@ -37,7 +37,7 @@ Require Codex to discover its actual tools first. A configured node_repl server,
 
 Use workspace-write mode for admission, evidence and daemon/network access, even when app source files remain read-only. Launch from the owning lane directory or export `LANE_DIR` for scratch cwd. This does not authorize repository edits.
 
-No new visible specialist tab, Herdr mutation, foreground input, credentials, login, TCC/system settings, extension installation, or access grants. Do not change user tabs. Interactions are allowed only on the explicitly assigned scratch/test app. Stop on an approval request or missing capability; return the exact blocker, not a fallback presented as computer-use. Read-only sandbox does not itself constrain external MCP tool side effects.
+No new visible specialist tab, foreground input, credentials, login, TCC/system settings, extension installation, or access grants. Do not change user tabs. Interactions are allowed only on the explicitly assigned scratch/test app. Stop on an approval request or missing capability; return the exact blocker, not a fallback presented as computer-use. Read-only sandbox does not itself constrain external MCP tool side effects.
 
 Do not inspect the app yourself or switch providers. Return runtime stdout/errors. Collect and return the completed job report yourself. The driver owns independent acceptance checks.
 

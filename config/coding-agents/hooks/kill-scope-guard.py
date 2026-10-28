@@ -451,7 +451,7 @@ def main():
         words = argv.split()
         exe = os.path.basename(words[0]) if words else ""
         if exe in {"claude", "codex"} or re.search(
-            r"@anthropic-ai/claude-code|(?:seat-exec|seat-run|herdr-server|agent-lb)(?:\s|/|$)", argv
+            r"@anthropic-ai/claude-code|(?:seat-exec|seat-run|agent-lb)(?:\s|/|$)|(?:^|[/\s])t3\s+serve(?:\s|$)", argv
         ):
             live.update(descendants(table, pid))
     for sel in selections:
@@ -476,13 +476,13 @@ def main():
             ppid, argv = table[pid]
             executable = os.path.basename(argv.split()[0]) if argv.split() else ""
             gui = (
-                executable not in {"Python", "python", "python3", "node"}
+                executable not in {"Python", "python", "python3", "node", "lume"}
                 and bool(re.search(r"\.app/Contents/(?:MacOS|Frameworks/[^ ]*\.app/Contents/MacOS)/", argv))
                 or os.path.basename(argv.split()[0]) in {"Finder", "Dock", "WindowServer", "loginwindow"}
             )
             shared = bool(
                 re.search(
-                    r"(?:^|[/\s])(?:agent[-_]lb(?:[./\s]|$)|herdr(?:-server)?(?:[./\s]|$)|unblock(?:[./\s]|$)|postgres(?:\s|$)|mysqld(?:\s|$)|redis-server(?:\s|$))",
+                    r"(?:^|[/\s])(?:t3\s+(?:serve|__service-launcher)(?:\s|$)|agent[-_]lb(?:[./\s]|$)|unblock(?:[./\s]|$)|postgres(?:\s|$)|mysqld(?:\s|$)|redis-server(?:\s|$))",
                     argv,
                     re.I,
                 )
