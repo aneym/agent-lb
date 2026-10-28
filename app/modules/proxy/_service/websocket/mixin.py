@@ -593,7 +593,7 @@ class _WebSocketMixin:
                     if downstream_close.draining():
                         async with client_send_lock:
                             if await downstream_close.close_if_due(
-                                websocket, pending_requests, pending_lock=pending_lock
+                                websocket, pending_requests, pending_lock=pending_lock, activity=downstream_activity
                             ):
                                 break
 
