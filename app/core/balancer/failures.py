@@ -16,6 +16,7 @@ from app.core.balancer.state import (
     AccountState,
 )
 from app.core.balancer.types import FailureClass, UpstreamError
+from app.core.upstream_capacity import CAPACITY_COOLDOWN_SECONDS, is_capacity_message
 from app.db.models import AccountStatus
 
 PERMANENT_FAILURE_CODES = {
@@ -60,6 +61,10 @@ _AUTH_REFRESH_ERROR_PREFIX = "auth_refresh_"
 
 def handle_rate_limit(state: AccountState, error: UpstreamError) -> None:
     now = time.time()
+    if is_capacity_message(error.get("message")):
+        state.last_error_at = now
+        state.cooldown_until = now + CAPACITY_COOLDOWN_SECONDS
+        return
     state.status = AccountStatus.RATE_LIMITED
     state.error_count += 1
     state.last_error_at = now

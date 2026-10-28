@@ -13,6 +13,7 @@ from app.core.openai.models import OpenAIErrorEnvelope as OpenAIErrorEnvelopeMod
 from app.core.openai.parsing import parse_response_payload
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.modules.api_keys.service_data import ApiKeyUsageReservationData
+from app.modules.proxy._service.http_bridge.retryable_overload import retryable_overload_status
 from app.modules.proxy.constants import (
     CHAT_COMPLETIONS_STARTUP_ERROR_PROBE_SECONDS,
     CHAT_COMPLETIONS_STARTUP_EVENT_TYPES,
@@ -140,13 +141,14 @@ def stream_startup_error_response(
     if isinstance(error, ProxyResponseError):
         envelope = parse_error_envelope(error.payload)
         status_code, envelope = mask_previous_response_not_found_error(envelope, default_status=error.status_code)
+        status_code, envelope = retryable_overload_status(status_code, envelope)
         return logged_error_json_response(
             request,
             status_code,
             envelope.model_dump(mode="json", exclude_none=True),
             headers=headers,
         )
-    status_code, envelope = mask_previous_response_not_found_error(error)
+    status_code, envelope = retryable_overload_status(*mask_previous_response_not_found_error(error))
     return logged_error_json_response(
         request,
         status_code,

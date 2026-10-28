@@ -16,6 +16,7 @@ from app.dependencies import ProxyContext
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy import affinity as proxy_affinity_module
 from app.modules.proxy import service as proxy_service_module
+from app.modules.proxy._service.http_bridge.retryable_overload import retryable_overload_stream
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.constants import HTTP_BRIDGE_STARTUP_ERROR_PROBE_SECONDS, STREAM_STARTUP_ERROR_PROBE_SECONDS
 from app.modules.proxy.public_streams import normalize_public_responses_stream
@@ -147,10 +148,12 @@ async def stream_responses(
             headers=rate_limit_headers,
         )
     stream = normalize_public_responses_stream(
-        stream_response_error_events(
-            stream,
-            owns_reservation=owns_reservation,
-            reservation=reservation,
+        retryable_overload_stream(
+            stream_response_error_events(
+                stream,
+                owns_reservation=owns_reservation,
+                reservation=reservation,
+            )
         ),
         enforce_openai_sdk_contract=enforce_openai_sdk_contract,
     )
