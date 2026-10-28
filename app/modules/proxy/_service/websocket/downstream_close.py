@@ -22,6 +22,8 @@ IDLE_CLOSE_REASON = "Idle downstream websocket timeout"
 class DownstreamActivity(Protocol):
     last_activity_at: float
 
+    def mark_disconnected(self) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class DownstreamClose:
@@ -38,8 +40,8 @@ async def due(
     pending_requests: deque[Any],
     *,
     pending_lock: anyio.Lock,
-    activity: DownstreamActivity | None = None,
-    idle_timeout_seconds: float = 0.0,
+    activity: DownstreamActivity,
+    idle_timeout_seconds: float | None = None,
 ) -> DownstreamClose | None:
     async with pending_lock:
         streaming = bool(pending_requests)
@@ -49,7 +51,7 @@ async def due(
         return None
     if not shutdown_state.admits_requests():
         return DownstreamClose(RESTART_CLOSE_CODE, RESTART_CLOSE_REASON)
-    if activity is not None and time.monotonic() - activity.last_activity_at >= idle_timeout_seconds:
+    if idle_timeout_seconds is not None and time.monotonic() - activity.last_activity_at >= idle_timeout_seconds:
         return DownstreamClose(IDLE_CLOSE_CODE, IDLE_CLOSE_REASON)
     return None
 
@@ -59,8 +61,8 @@ async def close_if_due(
     pending_requests: deque[Any],
     *,
     pending_lock: anyio.Lock,
-    activity: DownstreamActivity | None = None,
-    idle_timeout_seconds: float = 0.0,
+    activity: DownstreamActivity,
+    idle_timeout_seconds: float | None = None,
 ) -> bool:
     frame = await due(
         pending_requests,
@@ -77,6 +79,7 @@ async def close_if_due(
             str(frame.streaming).lower(),
             str(shutdown_state.websockets_closing()).lower(),
         )
+        activity.mark_disconnected()
     try:
         await websocket.close(code=frame.code, reason=frame.reason)
     except Exception:
