@@ -12,7 +12,7 @@ CAPACITY_MESSAGE_CODES = frozenset(
         "capacity_exceeded",
     }
 )
-_CAPACITY_MARKERS = ("at capacity", "currently overloaded")
+_CAPACITY_MARKERS = ("at capacity", "overloaded")
 
 
 def is_capacity_message(message: object) -> bool:

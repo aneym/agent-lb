@@ -11,6 +11,7 @@ from app.core.openai.models import OpenAIError
 from app.core.plan_types import normalize_rate_limit_plan_type
 from app.core.providers import OPENAI_PROVIDER_NAME
 from app.core.types import JsonValue
+from app.core.upstream_capacity import OVERLOAD_CODES, is_capacity_message
 from app.core.usage.types import UsageWindowRow, UsageWindowSummary
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.proxy.types import (
@@ -50,7 +51,7 @@ def classify_upstream_failure(
     phase: FailurePhase,
 ) -> ClassifiedFailure:
     failure_class: FailureClass
-    if error_code in _RATE_LIMIT_CODES:
+    if error_code in _RATE_LIMIT_CODES or (error_code in OVERLOAD_CODES and is_capacity_message(error.get("message"))):
         failure_class = "rate_limit"
     elif error_code in _QUOTA_CODES:
         failure_class = "quota"
