@@ -8,6 +8,7 @@ class UpstreamError(TypedDict, total=False):
     quota_reset_at: int
     resets_at: int | float
     resets_in_seconds: int | float
+    capacity: bool
 
 
 FailureClass = Literal["rate_limit", "quota", "retryable_transient", "non_retryable"]

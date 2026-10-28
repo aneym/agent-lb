@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 CAPACITY_COOLDOWN_SECONDS = 15.0
-OVERLOAD_CODES = frozenset({"server_is_overloaded", "slow_down"})
+OVERLOAD_CODES = frozenset(
+    {"server_is_overloaded", "slow_down", "model_capacity_exceeded", "model_overloaded", "capacity_exceeded"}
+)
 CAPACITY_MESSAGE_CODES = frozenset(
     {
         "server_error",
         "rate_limit_exceeded",
         "turn_rate_limit_exceeded",
-        "model_capacity_exceeded",
-        "model_overloaded",
-        "capacity_exceeded",
     }
 )
 _CAPACITY_MARKERS = ("at capacity", "overloaded")

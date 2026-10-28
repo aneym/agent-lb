@@ -41,6 +41,8 @@ class OpenAIError(BaseModel):
     @model_validator(mode="after")
     def normalize_capacity(self) -> OpenAIError:
         message = " ".join((self.message or "").lower().split())
+        if self.code == "server_error":
+            return self
         if "selected model is at capacity" in message or self.code in {
             "model_capacity_exceeded",
             "model_overloaded",

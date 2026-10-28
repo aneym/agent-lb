@@ -61,7 +61,7 @@ _AUTH_REFRESH_ERROR_PREFIX = "auth_refresh_"
 
 def handle_rate_limit(state: AccountState, error: UpstreamError) -> None:
     now = time.time()
-    if is_capacity_message(error.get("message")):
+    if error.get("capacity") or is_capacity_message(error.get("message")):
         state.last_error_at = now
         state.cooldown_until = now + CAPACITY_COOLDOWN_SECONDS
         return

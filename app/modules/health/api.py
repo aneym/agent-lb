@@ -115,6 +115,7 @@ async def start_internal_drain(request: Request) -> HealthCheckResponse:
 
     shutdown_state.set_draining(True, admit_grace_seconds=DRAIN_ADMIT_GRACE_S)
     _cancel_bridge_admission(request.app.state)
+    shutdown_state.set_bridge_drain_active(False)
     request.app.state.bridge_drain_task = asyncio.create_task(
         _close_bridge_admission(request.app.state, DRAIN_ADMIT_GRACE_S)
     )
