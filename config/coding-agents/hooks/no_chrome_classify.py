@@ -398,7 +398,7 @@ def classify(text, depth=0):
                     message = True
                 elif not arg.startswith(("--message=", "-m")):
                     paths.append(arg)
-        if any(
+        if (name not in DATA_READERS or any(BROWSER_WORD.search(value) for value in paths)) and any(
             owner_path(value.partition("=")[2] if value.startswith("--") and "=" in value else value, variables)
             for value in paths
         ):
