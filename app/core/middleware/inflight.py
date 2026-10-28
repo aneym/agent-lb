@@ -69,7 +69,8 @@ class InFlightMiddleware:
             if "websocket.http.response" in scope.get("extensions", {}):
                 await websocket.send_denial_response(_draining_response())
             else:
-                await websocket.close(code=1013, reason="Server is draining")
+                await websocket.accept()
+                await websocket.close(code=1012, reason="Server is draining")
             return
         shutdown_state.increment_websockets()
         try:

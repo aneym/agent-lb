@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 
+from app.core import errors
 from app.core.openai.models import OpenAIError, OpenAIErrorEnvelope
+from app.core.resilience.overload import is_local_overload_error_code
 from app.core.upstream_capacity import is_capacity_error
 
 RETRYABLE_CODE = "server_error"
@@ -47,3 +49,14 @@ def retryable_overload_status(status_code: int, envelope: OpenAIErrorEnvelope) -
         return status_code, envelope
     retryable = OpenAIError.model_construct(message=error.message, type=RETRYABLE_CODE, code=RETRYABLE_CODE)
     return 503, OpenAIErrorEnvelope.model_construct(error=retryable)
+
+
+def retryable_connect_failure(
+    status_code: int, envelope: errors.OpenAIErrorEnvelope
+) -> tuple[int, errors.OpenAIErrorEnvelope]:
+    error = envelope["error"]
+    code = error.get("code")
+    local_overload = status_code == 429 and is_local_overload_error_code(code)
+    if not local_overload and not is_capacity_error(code, error.get("message")):
+        return status_code, envelope
+    return 503, {"error": {**error, "code": RETRYABLE_CODE, "type": RETRYABLE_CODE}}

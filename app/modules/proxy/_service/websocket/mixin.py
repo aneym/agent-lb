@@ -230,7 +230,10 @@ from app.modules.proxy._service.http_bridge.helpers import (
 from app.modules.proxy._service.http_bridge.helpers import (
     _trim_http_bridge_previous_response_input_items as _trim_http_bridge_previous_response_input_items,
 )
-from app.modules.proxy._service.http_bridge.retryable_overload import retryable_overload_event
+from app.modules.proxy._service.http_bridge.retryable_overload import (
+    retryable_connect_failure,
+    retryable_overload_event,
+)
 from app.modules.proxy._service.observability import (
     _hash_identifier as _hash_identifier,
 )
@@ -498,6 +501,7 @@ class _WebSocketMixin:
                     if replay_state is None and upstream_control is not None:
                         replay_state = upstream_control.replay_request_state
                     upstream_reader = None
+                    downstream_activity.relaying = False
                     upstream_control = None
                     if upstream is not None:
                         try:
@@ -711,6 +715,7 @@ class _WebSocketMixin:
                     if replay_state is None and upstream_control is not None:
                         replay_state = upstream_control.replay_request_state
                     upstream_reader = None
+                    downstream_activity.relaying = False
                     upstream_control = None
                     if upstream is not None:
                         try:
@@ -731,6 +736,7 @@ class _WebSocketMixin:
                     if replay_state is None:
                         replay_state = upstream_control.replay_request_state
                     upstream_reader = None
+                    downstream_activity.relaying = False
                     upstream_control = None
                     if upstream is not None:
                         try:
@@ -1003,6 +1009,7 @@ class _WebSocketMixin:
                                 upstream_reader, label="proxy websocket upstream reader"
                             )
                             upstream_reader = None
+                            downstream_activity.relaying = False
                         upstream_control = None
                         if upstream is not None:
                             try:
@@ -1032,6 +1039,7 @@ class _WebSocketMixin:
                     if upstream_reader is not None:
                         await _facade()._await_cancelled_task(upstream_reader, label="proxy websocket upstream reader")
                         upstream_reader = None
+                        downstream_activity.relaying = False
                     upstream_control = None
                     if upstream is not None:
                         try:
@@ -2285,6 +2293,7 @@ class _WebSocketMixin:
                     continue
                 if message.kind == "text" and message.text is not None:
                     downstream_activity.mark()
+                    downstream_activity.relaying = True
                     downstream_text = await proxy._process_upstream_websocket_text(
                         message.text,
                         account=account,
@@ -2370,6 +2379,7 @@ class _WebSocketMixin:
                                     exc_info=True,
                                 )
                             break
+                    downstream_activity.relaying = upstream_control.replay_request_state is not None
                     if upstream_control.reconnect_requested:
                         should_reconnect = upstream_control.replay_request_state is not None
                         if not should_reconnect:
@@ -3239,6 +3249,7 @@ class _WebSocketMixin:
             error_code=error_code,
             error_message=error_message,
         )
+        status_code, payload = retryable_connect_failure(status_code, payload)
         await proxy._release_websocket_request_state_reservation(request_state)
         await proxy._write_websocket_connect_failure(
             account_id=account_id,

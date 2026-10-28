@@ -86,11 +86,13 @@ def drain(health_url: str, log: Callable[[str], None], budget: float | None = No
             log(f"drain status unreadable, restarting: {exc}")
             return
         peak = max(peak, websockets or 0)
-        if left <= 0:
-            seen = "websockets unreported" if websockets is None else f"websockets peak {peak}, cut 0"
-            log(f"drained in {time.monotonic() - started:.0f}s ({seen})")
+        if left <= 0 and websockets is not None:
+            log(f"drained in {time.monotonic() - started:.0f}s (websockets peak {peak}, cut 0)")
             return
         time.sleep(POLL_SECONDS)
+    if websockets is None:
+        log(f"drain budget spent; app does not report websockets, so waited it out ({left} in flight), restarting")
+        return
     log(f"drain budget spent with {left} in flight ({websockets} websocket(s)), restarting")
     if websockets:
         _close_websockets(base, log, websockets)

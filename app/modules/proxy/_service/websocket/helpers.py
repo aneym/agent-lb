@@ -31,8 +31,6 @@ from app.core.clients.proxy import (  # noqa: F401
     push_transcribe_timeout_overrides,
 )
 from app.core.clients.proxy import codex_control_request as core_codex_control_request  # noqa: F401
-from app.core.clients.proxy import compact_responses as core_compact_responses  # noqa: F401
-from app.core.clients.proxy import transcribe_audio as core_transcribe_audio  # noqa: F401
 from app.core.clients.proxy_websocket import (
     UpstreamWebSocketMessage,
 )
@@ -46,7 +44,7 @@ from app.core.errors import (
     response_failed_event,
 )
 from app.core.exceptions import AppError
-from app.core.openai.models import OpenAIEvent
+from app.core.openai.models import OpenAIError, OpenAIEvent
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.request_input import extract_input_file_ids, extract_input_image_file_references
 from app.core.openai.requests import ResponsesRequest
@@ -526,11 +524,12 @@ def _websocket_event_error_message(event_type: str | None, payload: dict[str, Js
     error = _websocket_event_error_payload(event_type, payload)
     if not isinstance(error, dict):
         return None
-    message_value = error.get("message")
-    if not isinstance(message_value, str):
+    message = error.get("message")
+    if not isinstance(message, str):
         return None
-    stripped = message_value.strip()
-    return stripped or None
+    code = error.get("code")
+    normalized = OpenAIError.model_validate({"code": code if isinstance(code, str) else None, "message": message})
+    return (normalized.message or "").strip() or None
 
 
 def _websocket_precreated_retry_error_code(

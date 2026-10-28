@@ -21,6 +21,7 @@ IDLE_CLOSE_REASON = "Idle downstream websocket timeout"
 
 class DownstreamActivity(Protocol):
     last_activity_at: float
+    relaying: bool
 
     def mark_disconnected(self) -> None: ...
 
@@ -44,7 +45,7 @@ async def due(
     idle_timeout_seconds: float | None = None,
 ) -> DownstreamClose | None:
     async with pending_lock:
-        streaming = bool(pending_requests)
+        streaming = bool(pending_requests) or activity.relaying
     if shutdown_state.websockets_closing():
         return DownstreamClose(RESTART_CLOSE_CODE, RESTART_CLOSE_REASON, streaming=streaming)
     if streaming:

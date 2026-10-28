@@ -353,6 +353,7 @@ class _WebSocketUpstreamControl:
 class _DownstreamWebSocketActivity:
     last_activity_at: float = field(default_factory=time.monotonic)
     disconnected: bool = False
+    relaying: bool = False
 
     def mark(self) -> None:
         self.last_activity_at = time.monotonic()
