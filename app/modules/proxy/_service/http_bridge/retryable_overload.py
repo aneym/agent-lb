@@ -11,7 +11,8 @@ _FAST_MARKERS = ("overloaded", "capacity", "slow_down")
 
 
 def retryable_overload_event(block: str) -> str:
-    if not any(marker in block for marker in _FAST_MARKERS):
+    lowered = block.lower()
+    if not any(marker in lowered for marker in _FAST_MARKERS):
         return block
     prefix, marker, data = block.partition("data: ")
     if not marker:
@@ -45,4 +46,4 @@ def retryable_overload_status(status_code: int, envelope: OpenAIErrorEnvelope) -
     if error is None or not is_capacity_error(error.code, error.message):
         return status_code, envelope
     retryable = OpenAIError.model_construct(message=error.message, type=RETRYABLE_CODE, code=RETRYABLE_CODE)
-    return 503, OpenAIErrorEnvelope(error=retryable)
+    return 503, OpenAIErrorEnvelope.model_construct(error=retryable)

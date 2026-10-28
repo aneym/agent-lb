@@ -48,6 +48,10 @@ class OpenAIError(BaseModel):
         }:
             self.code = "rate_limit_exceeded"
             self.type = "rate_limit_error"
+            if "at capacity" not in message:
+                self.message = (
+                    f"{self.message.rstrip('. ')}: model at capacity" if self.message else "Model at capacity"
+                )
         return self
 
 
