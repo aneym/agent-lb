@@ -82,6 +82,23 @@ BROWSER_WORD = re.compile(
 BUNDLE = re.compile(
     r"(?i)com\.google\.chrome|com\.apple\.safari|org\.chromium|aside|org\.mozilla\.firefox|com\.brave\.browser|com\.microsoft\.edgemac|com\.vivaldi\.vivaldi|company\.thebrowser\.browser|com\.operasoftware\.opera|com\.kagi\.kagimacOS"
 )
+AGENT_BROWSER = "agent-browser"
+AGENT_BROWSER_REACH = (
+    "--auto-connect",
+    "--cdp",
+    "--profile",
+    "--state",
+    "--restore",
+    "--session-name",
+    "--headed",
+    "--extension",
+    "--executable-path",
+    "--args",
+    "--config",
+    "--provider",
+    "--engine",
+)
+AGENT_BROWSER_SUBS = {"connect", "auth", "profiles", "state", "-p"}
 LAUNCHER = "agent-cdp-launch"
 SPACE = "mac-space"
 LANE_TOOL = "lane-browser"
@@ -218,6 +235,11 @@ def mac_launch(argv, writes=()):
             return False
     if argv[1:] == ["--help"]:
         return False
+    if name == AGENT_BROWSER:
+        words = [w for a in argv[1:] for w in a.split()]
+        if words[-1:] == ["batch"] or "--stdin" in words:
+            return True
+        return any(w in AGENT_BROWSER_SUBS or w.startswith(AGENT_BROWSER_REACH) for w in words)
     if name == "playwright-cli":
         args = argv[1:]
         if any(a in ("--extension", "connect") or a.startswith("--extension=") for a in args):
@@ -365,6 +387,8 @@ def classify(text, depth=0):
         argv = raw
         while argv and argv[0] in KEYWORDS:
             argv = argv[1:]
+        if any(a.startswith("AGENT_BROWSER_") and "=" in a for a in argv):
+            found.add("mac")
         segment_values(argv, variables)
         argv = normalize(argv)
         if not argv:
@@ -426,7 +450,7 @@ def classify(text, depth=0):
             found.add(classify(shlex.join(nested), depth + 1))
         if mac_launch(argv, writes):
             found.add("mac")
-        elif name == "playwright-cli":
+        elif name in ("playwright-cli", AGENT_BROWSER):
             continue
         elif name == "find":
             for segment in find_execs(argv[1:]):
