@@ -1,13 +1,22 @@
-diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/codex.mjs
---- a/plugins/codex/scripts/lib/codex.mjs
-+++ b/plugins/codex/scripts/lib/codex.mjs
-@@ -1179,7 +1179,8 @@ export async function runAppServerTurn(cwd, options = {}) {
-           input: buildTurnInput(prompt),
-           model: options.model ?? null,
-           effort: options.effort ?? null,
--          outputSchema: options.outputSchema ?? null
-+          outputSchema: options.outputSchema ?? null,
-+          ...(process.env.CODEX_COMPANION_SERVICE_TIER ? { serviceTier: process.env.CODEX_COMPANION_SERVICE_TIER } : {})
-         }),
-       { onProgress: options.onProgress }
-     );
+diff --git a/plugins/codex/scripts/lib/app-server.mjs b/plugins/codex/scripts/lib/app-server.mjs
+--- a/plugins/codex/scripts/lib/app-server.mjs
++++ b/plugins/codex/scripts/lib/app-server.mjs
+@@ -187,7 +187,8 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
+   }
+ 
+   async initialize() {
+-    this.proc = spawn("codex", ["app-server"], {
++    const serviceTier = process.env.CODEX_COMPANION_SERVICE_TIER;
++    this.proc = spawn("codex", ["app-server", ...(serviceTier ? ["-c", `service_tier="${serviceTier}"`] : [])], {
+       cwd: this.cwd,
+       env: this.options.env ?? process.env,
+       stdio: ["pipe", "pipe", "pipe"],
+@@ -488,7 +489,7 @@ function signalTree(tree, proc, signal) {
+ export class CodexAppServerClient {
+   static async connect(cwd, options = {}) {
+     let brokerEndpoint = null;
+-    if (!options.disableBroker) {
++    if (!options.disableBroker && !process.env.CODEX_COMPANION_SERVICE_TIER) {
+       brokerEndpoint = options.brokerEndpoint ?? options.env?.[BROKER_ENDPOINT_ENV] ?? process.env[BROKER_ENDPOINT_ENV] ?? null;
+       if (!brokerEndpoint && options.reuseExistingBroker) {
+         brokerEndpoint = loadBrokerSession(cwd)?.endpoint ?? null;
