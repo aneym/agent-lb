@@ -101,5 +101,5 @@ def drain(health_url: str, log: Callable[[str], None], budget: float | None = No
 def undrain(health_url: str) -> None:
     try:
         _post(f"{_base(health_url)}/internal/drain/stop")
-    except OSError:
+    except (OSError, ValueError):
         pass

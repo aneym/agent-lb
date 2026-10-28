@@ -6,6 +6,7 @@ import calendar
 import fcntl
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -169,21 +170,31 @@ def healthy(url: str) -> bool:
 
 def systemd_restart(units: list[str], paths: Paths) -> tuple[int, list[str]]:
     url = os.environ.get("AGENT_LB_FOLLOW_HEALTH_URL") or "http://127.0.0.1:2477/health"
-    systemd_drain.drain(url, lambda line: log_line(paths, line))
+
+    def terminate(signum: int, _frame: object) -> None:
+        raise SystemExit(128 + signum)
+
+    previous_handler = signal.signal(signal.SIGTERM, terminate)
     try:
-        done = subprocess.run(["systemctl", "--user", "restart", *units], capture_output=True, text=True, timeout=600)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        systemd_drain.drain(url, lambda line: log_line(paths, line))
+        try:
+            done = subprocess.run(
+                ["systemctl", "--user", "restart", *units], capture_output=True, text=True, timeout=600
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return 1, [str(exc)]
+        if done.returncode:
+            return done.returncode, (done.stderr or "").strip().splitlines()[-1:] or [""]
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            systemd_drain.undrain(url)
+            if healthy(url):
+                return 0, [""]
+            time.sleep(1)
+        return 1, [f"{url} not healthy 90s after systemctl restart"]
+    finally:
         systemd_drain.undrain(url)
-        return 1, [str(exc)]
-    if done.returncode:
-        systemd_drain.undrain(url)
-        return done.returncode, (done.stderr or "").strip().splitlines()[-1:] or [""]
-    deadline = time.monotonic() + 90
-    while time.monotonic() < deadline:
-        if healthy(url):
-            return 0, [""]
-        time.sleep(1)
-    return 1, [f"{url} not healthy 90s after systemctl restart"]
+        signal.signal(signal.SIGTERM, previous_handler)
 
 
 def failed(paths: Paths, state: dict, want: str, saved: Path, old_lock: str, before: str, why: str) -> bool:
