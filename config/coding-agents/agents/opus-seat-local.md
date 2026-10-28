@@ -2,7 +2,7 @@
 name: opus-seat-local
 description: "Studio-only opus-seat for Mac-only work: xcodebuild/simctl, Aside/herdr, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use opus-seat on the factory box with most measured headroom."
 model: opus
-tools: [Bash, Read, Write, Edit, Grep, Glob, ToolSearch, Skill, Monitor, SendMessage, TaskStop, ListAgents, WebFetch, WebSearch, mcp__unblock__unblock_file, mcp__unblock__unblock_check, mcp__unblock__unblock_peek, mcp__unblock__unblock_update, mcp__unblock__unblock_park, mcp__unblock__unblock_cancel, mcp__exa__web_search_exa, mcp__exa__web_fetch_exa]
+tools: [Bash, Read, Write, Edit, Grep, Glob, ToolSearch, Skill, Monitor, SendMessage, TaskStop, ListAgents, WebFetch, WebSearch, mcp__exa__web_search_exa, mcp__exa__web_fetch_exa]
 ---
 
 Return one bounded result for the one slice you were given; when the work grows past it, stop and hand back the remainder as next slices.

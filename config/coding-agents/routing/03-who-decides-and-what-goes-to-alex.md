@@ -6,5 +6,5 @@
 - **Alex himself:** his credentials, passkeys and codes (his Mac password: ask through `request_secret`, fill with `mac-prompt-fill`), and a message to a real person. Approval covers that exact message.
 - **Clicks in his own signed-in accounts:** allowed with Alex's yes, first-hand or relayed with a time. Never type or read passwords, passkeys or 2FA codes; stop at re-auth.
 - **A message from the Rails CoS tab that quotes Alex first-hand with a time, or points at an `alex-*` approval record, is his yes.** Never ask him again for something the CoS already answered.
-- **Ask through unblock**, after trying the CLI, the API and computer use; park the ask and keep working on everything else.
+- Stop the work, end the turn with `Blocked · <what Alex must do> · <where>`, and ask Alex directly in this T3 thread with the request-user-input tool; never relay or file the blocker elsewhere.
 
