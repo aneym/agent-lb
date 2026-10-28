@@ -29,13 +29,13 @@ from app.core.anthropic.parsing import collect_usage_from_chunk as _collect_usag
 from app.core.anthropic.quota_headers import capture_unified_headers, exhausted_account_reset
 from app.core.anthropic.quota_headers import parse_reset_epoch as _parse_reset_epoch
 from app.core.anthropic.quota_headers import parse_unified_utilization as _parse_unified_utilization
+from app.core.anthropic.entrypoint_label import relabel_billing_block
 from app.core.anthropic.quota_keys import model_quota_key
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.balancer.error_rules import match_error_rule
 from app.core.balancer.types import UpstreamError
 from app.core.clients import upstream_body
 from app.core.clients.http import lease_http_session
-from app.core.clients.proxy import filter_inbound_headers
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
@@ -66,6 +66,7 @@ from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.account_warmup import WarmupBusy, admitted_http_session
+from app.modules.proxy.anthropic_outbound_headers import build_anthropic_headers, merge_anthropic_beta_header
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError, require_claude_code_client
 from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, overloaded_backoff_jitter
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
@@ -114,8 +115,6 @@ _FRAME_UNAVAILABLE_STATUSES = frozenset(
 )
 
 _ANTHROPIC_PLANNER_MODEL = "claude-opus-5-5"
-_ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
-_ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 
 
 _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER = "anthropic-ratelimit-unified-overage-in-use"
@@ -513,7 +512,7 @@ class AnthropicProxyService(AnthropicTransport):
                             last_error_status = exc.status_code
                             last_error_message = exc.message
                             continue
-                        headers = _build_anthropic_headers(
+                        headers = build_anthropic_headers(
                             inbound_headers,
                             access_token,
                             provider_name=provider_name,
@@ -537,6 +536,8 @@ class AnthropicProxyService(AnthropicTransport):
 
                         if openai_body is None:
                             body_payload, _ = strip_eval_web_tools(body_payload, "anthropic")
+                        if provider_name == ANTHROPIC_PROVIDER_NAME:
+                            relabel_billing_block(body_payload, get_settings().anthropic_entrypoint_label)
                         nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
 
                         first_byte_seconds = get_settings().anthropic_first_byte_timeout_seconds
@@ -1133,7 +1134,7 @@ class AnthropicProxyService(AnthropicTransport):
             url = URL(_upstream_base_url(ANTHROPIC_PROVIDER_NAME).rstrip("/") + path_and_query, encoded=True)
             async with lease_http_session() as session:
                 for attempt in range(2):
-                    headers = _build_anthropic_headers(inbound_headers, token)
+                    headers = build_anthropic_headers(inbound_headers, token)
                     seat = normalized_headers.get("x-agent-lb-seat")
                     if seat:
                         headers["x-agent-lb-seat"] = seat
@@ -1215,7 +1216,7 @@ class AnthropicProxyService(AnthropicTransport):
             quota_key=_count_tokens_quota_key(provider_name),
         )
         access_token = await self._fresh_access_token(account)
-        headers = _build_anthropic_headers(inbound_headers, access_token, provider_name=provider_name)
+        headers = build_anthropic_headers(inbound_headers, access_token, provider_name=provider_name)
         started_at = time.monotonic()
         session_id = _anthropic_session_header(inbound_headers)
         nbytes = len(json.dumps(body, separators=(",", ":")).encode())
@@ -2500,7 +2501,7 @@ def _upgrade_helper_cache(
             block["cache_control"]["ttl"] = "1h"
             upgraded += 1
     if upgraded:
-        _merge_anthropic_beta_header(headers, ["extended-cache-ttl-2025-04-11"])
+        merge_anthropic_beta_header(headers, ["extended-cache-ttl-2025-04-11"])
         return "1h"
     return None
 
@@ -2519,53 +2520,6 @@ def _frame_end_to_end_headers(headers: Mapping[str, str]) -> dict[str, str]:
         "content-length",
     }
     return {key: value for key, value in headers.items() if key.lower() not in excluded}
-
-
-def _build_anthropic_headers(
-    inbound_headers: Mapping[str, str],
-    access_token: str,
-    *,
-    provider_name: str = ANTHROPIC_PROVIDER_NAME,
-    fast_mode: bool = False,
-) -> dict[str, str]:
-    settings = get_settings()
-    headers = {
-        key: value
-        for key, value in filter_inbound_headers(inbound_headers).items()
-        if key.lower() not in {"api-key", "x-api-key"}
-    }
-    lower_keys = {key.lower() for key in headers}
-    headers["Authorization"] = f"Bearer {access_token}"
-    if "anthropic-version" not in lower_keys:
-        headers["anthropic-version"] = settings.anthropic_version
-    if "content-type" not in lower_keys:
-        headers["content-type"] = "application/json"
-    if "accept" not in lower_keys:
-        headers["accept"] = "text/event-stream"
-    if provider_name == ANTHROPIC_PROVIDER_NAME:
-        required_betas = [_ANTHROPIC_OAUTH_BETA]
-        if fast_mode:
-            required_betas.append(_ANTHROPIC_FAST_MODE_BETA)
-        _merge_anthropic_beta_header(headers, required_betas)
-    return headers
-
-
-def _merge_anthropic_beta_header(headers: dict[str, str], required_betas: list[str]) -> None:
-    beta_key = next((key for key in headers if key.lower() == "anthropic-beta"), "anthropic-beta")
-    existing = headers.get(beta_key, "")
-    merged: list[str] = []
-    seen: set[str] = set()
-    for raw_value in [*existing.split(","), *required_betas]:
-        beta = raw_value.strip()
-        if not beta:
-            continue
-        normalized = beta.lower()
-        if normalized in seen:
-            continue
-        merged.append(beta)
-        seen.add(normalized)
-    if merged:
-        headers[beta_key] = ", ".join(merged)
 
 
 def _usage_from_json_body(raw: bytes) -> AnthropicUsage | None:

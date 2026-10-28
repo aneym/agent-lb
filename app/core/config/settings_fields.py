@@ -130,6 +130,8 @@ class SettingsFields(BaseSettings):
 
     refuse_untagged_headless_opus: bool = False
 
+    anthropic_entrypoint_label: str = "agent-lb"
+
     anthropic_pool_exhausted_wait_enabled: bool = False
     anthropic_pool_exhausted_wait_max_seconds: float = Field(default=21600.0, gt=0)
     account_pulse_enabled: bool = True

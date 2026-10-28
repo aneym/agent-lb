@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncIterator, Mapping
 from typing import cast
 
+from app.core.anthropic.entrypoint_label import BILLING_HEADER_PREFIX
 from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonObject, JsonValue
@@ -408,9 +409,6 @@ def _text_message(role: str, text: str) -> JsonObject:
         "role": role,
         "content": [{"type": "output_text" if role == "assistant" else "input_text", "text": text}],
     }
-
-
-BILLING_HEADER_PREFIX = "x-anthropic-billing-header:"
 
 
 def _system_text(value: JsonValue | None) -> str:
