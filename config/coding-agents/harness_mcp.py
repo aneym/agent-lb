@@ -12,14 +12,16 @@ from urllib.parse import urlsplit
 
 
 CANONICAL_SERVERS = {
-    "unblock": {"command": "node", "args": ["$HOME/.local/share/unblock-headless/bin/unblock.js", "mcp"]},
     "exa": {"url": "https://mcp.exa.ai/mcp"},
 }
 RETIRED_COMMAND = "agent-kit-mcp"
+RETIRED_SERVERS = {"unblock"}
 
 
-def retired(entry):
-    return isinstance(entry, dict) and Path(str(entry.get("command", ""))).name == RETIRED_COMMAND
+def retired(name, entry):
+    return name in RETIRED_SERVERS or (
+        isinstance(entry, dict) and Path(str(entry.get("command", ""))).name == RETIRED_COMMAND
+    )
 
 
 def ensure_harness_mcp(host_home, run):
@@ -107,7 +109,7 @@ def ensure_harness_mcp(host_home, run):
     bundled = Path(__file__).resolve().parent if Path(__file__).is_file() else None
     for pattern in ("**/*.json", "**/*.toml") if bundled else ():
         fallbacks.extend(read_servers(path) for path in sorted(bundled.glob(pattern)))
-    for name in ("unblock", "exa"):
+    for name in ("exa",):
         for entries in [*plugin_sources, *fallbacks]:
             if name not in servers and name in entries:
                 servers[name] = entries[name]
@@ -115,18 +117,13 @@ def ensure_harness_mcp(host_home, run):
         servers.setdefault(name, entry)
     reference = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
     desired = {}
-    for name in ("unblock", "exa"):
+    for name in ("exa",):
         if name not in servers:
             continue
         try:
             entry = servers[name]
             if not isinstance(entry, dict):
                 raise ValueError(f"invalid MCP source entry: {name}")
-            if name == "unblock" and any(
-                not isinstance(value, str) or not reference.fullmatch(value)
-                for key in ("env", "headers") for value in entry.get(key, {}).values()
-            ):
-                entry = CANONICAL_SERVERS[name]
             transport = entry.get("type", "stdio" if "command" in entry else "http")
             if transport not in ("stdio", "http"):
                 raise ValueError(f"unsupported MCP transport: {name}")
@@ -140,10 +137,6 @@ def ensure_harness_mcp(host_home, run):
             if transport == "stdio":
                 wanted["command"] = local_path(wanted["command"])
                 wanted["args"] = [local_path(value) for value in wanted.get("args", [])]
-                if name == "unblock" and wanted["args"] and not Path(wanted["args"][0]).exists():
-                    alternative = home / "repos/personal/unblock/bin/unblock.js"
-                    if alternative.is_file():
-                        wanted["args"][0] = str(alternative)
                 command = wanted["command"]
                 unavailable = not shutil.which(command, path=search_path)
                 unavailable |= any(value.startswith(str(home) + "/") and not Path(value).exists()
@@ -186,7 +179,7 @@ def ensure_harness_mcp(host_home, run):
         if harness == "claude":
             current = read_servers(path)
             result[harness] = "ok"
-            for name in [name for name, entry in current.items() if retired(entry)]:
+            for name in [name for name, entry in current.items() if retired(name, entry)]:
                 run(["claude", "mcp", "remove", "--scope", "user", name], check=True, capture_output=True,
                     text=True, timeout=30, env={**os.environ, "HOME": str(home), "PATH": search_path})
                 result[harness] = "fixed"
@@ -219,7 +212,7 @@ def ensure_harness_mcp(host_home, run):
                 item["default_tools_approval_mode"] = "approve"
                 translated[name] = item
             current = config.get("mcp_servers", {})
-            stale = {name for name, entry in current.items() if retired(entry)}
+            stale = {name for name, entry in current.items() if retired(name, entry)}
             if not stale and all(current.get(name) == entry for name, entry in translated.items()):
                 result[harness] = "ok"
                 continue
@@ -250,7 +243,7 @@ def ensure_harness_mcp(host_home, run):
                     for key in ("env", "headers"):
                         if key in entry:
                             entry[key] = {k: reference.sub(r"${env:\1}", v) for k, v in entry[key].items()}
-            stale = [name for name, entry in current.items() if retired(entry)]
+            stale = [name for name, entry in current.items() if retired(name, entry)]
             if not stale and all(current.get(name) == entry for name, entry in translated.items()):
                 result[harness] = "ok"
                 continue

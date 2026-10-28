@@ -144,9 +144,6 @@ def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
                 command = re.sub(factory_bin + r'(?=[^\s"\':;/]+(?:$|[\s"\';]))', "$HOME/.local/bin/", command)
                 command = re.sub(factory_bin, "$HOME/.agent-rails/factory-runtime/bin/", command)
                 from_factory = command != before and "/.local/bin/" in command
-                command = re.sub(
-                    r'/[^\s"\':;]*/repos/personal/unblock/', "$HOME/.local/share/unblock-headless/", command
-                )
                 command = re.sub(r'/[^\s"\':;]*/repos/skill-stats/', "$HOME/.local/share/skill-stats/", command)
 
                 match = re.fullmatch(r'((?:"[^"\n]+"|[^\s]+)\s+)?"((?:\$HOME)?/[^"\n]+)"(.*)', command)
@@ -158,7 +155,6 @@ def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
                             path in command
                             for path in (
                                 "/.agent-rails/factory-runtime/",
-                                "/.local/share/unblock-headless/",
                                 "/.local/share/skill-stats/",
                             )
                         )
