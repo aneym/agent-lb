@@ -15,3 +15,5 @@
 - [13-waits-watchers-and-leads.md](13-waits-watchers-and-leads.md)
 - [14-ga-restores.md](14-ga-restores.md)
 - [core.md](core.md)
+
+GPT-6.1 Terra fast: computer use and video editing, not code (Alex, 2026-10-28: "terra isnt for coding though"). Seat: `computer-use-terra-local` on Studio.
