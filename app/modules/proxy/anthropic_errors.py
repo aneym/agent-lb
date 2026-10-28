@@ -13,7 +13,7 @@ from app.modules.api_keys.service_data import (
     ApiKeyRequestUsageBudget,
     ApiKeyUsageReservationData,
 )
-from app.modules.proxy.anthropic_service import AnthropicProxyError
+from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError
 from app.modules.proxy.reservations import release_reservation
 
 

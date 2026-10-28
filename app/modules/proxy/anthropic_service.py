@@ -19,7 +19,6 @@ from pydantic import ValidationError
 from yarl import URL
 
 from app.core import upload_admission
-from app.core.anthropic.identity import ensure_claude_code_identity_body
 from app.core.anthropic.models import (
     AnthropicErrorEvent,
     AnthropicMessageRequest,
@@ -66,6 +65,7 @@ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservation
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_cache import get_account_selection_cache
+from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError, require_claude_code_client
 from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, overloaded_backoff_jitter
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
 from app.modules.proxy.anthropic_transport import AnthropicTransport
@@ -385,24 +385,6 @@ class _AnthropicErrorDetails:
     details: Any | None = None
 
 
-class AnthropicProxyError(Exception):
-    def __init__(
-        self,
-        status_code: int,
-        message: str,
-        *,
-        code: str = "anthropic_proxy_error",
-        retry_at: int | None = None,
-        details: Any | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.status_code = status_code
-        self.message = message
-        self.code = code
-        self.retry_at = retry_at
-        self.details = details
-
-
 def _upload_admission_error(exc: upload_admission.UploadAdmissionTimeout) -> tuple[str, str]:
     code = (
         "upload_admission_rejected"
@@ -443,6 +425,8 @@ class AnthropicProxyService(AnthropicTransport):
         affinity_quota_key = _messages_affinity_quota_key(payload, provider_name=provider_name)
         session_id = anthropic_request_session_id(payload, inbound_headers)
         useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
+        if provider_name == ANTHROPIC_PROVIDER_NAME:
+            require_claude_code_client(useragent_group)
         sticky_key = _messages_sticky_key(
             payload,
             inbound_headers,
@@ -551,11 +535,6 @@ class AnthropicProxyService(AnthropicTransport):
                         )
                         if provider_name == "openrouter" and is_deepseek_model(payload.model):
                             body_payload = map_deepseek_body(body_payload)
-                        if (
-                            provider_name == ANTHROPIC_PROVIDER_NAME
-                            and get_settings().anthropic_claude_code_identity_enabled
-                        ):
-                            body_payload = ensure_claude_code_identity_body(body_payload)
 
                         unified_headers: dict[str, str] | None = None
                         quota_observed_at: datetime | None = None
@@ -1148,9 +1127,10 @@ class AnthropicProxyService(AnthropicTransport):
     ) -> AnthropicFrameResult:
         normalized_headers = {key.lower(): value for key, value in inbound_headers.items()}
         session_id = _anthropic_session_header(inbound_headers) or normalized_headers.get("x-agent-lb-seat")
+        useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
+        require_claude_code_client(useragent_group)
         account = await self._frame_account()
         started_at = time.monotonic()
-        useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
         status = "error"
         error_code = "upstream_error"
         unified_headers: dict[str, str] | None = None
@@ -1232,6 +1212,8 @@ class AnthropicProxyService(AnthropicTransport):
                 media_type="application/json",
             )
 
+        if provider_name == ANTHROPIC_PROVIDER_NAME:
+            require_claude_code_client(_request_log_useragent_fields(inbound_headers)[1])
         account = await self._select_account(
             model,
             provider_name=provider_name,

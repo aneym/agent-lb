@@ -25,7 +25,7 @@ from app.modules.proxy.anthropic_errors import (
     collect_anthropic_body,
     estimate_anthropic_request_usage,
 )
-from app.modules.proxy.anthropic_service import AnthropicProxyError
+from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError
 from app.modules.proxy.api_dependencies import proxy_dependencies
 from app.modules.proxy.classifier_route import classifier_payload
 from app.modules.proxy.claude_codex_bridge import (

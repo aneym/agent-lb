@@ -25,7 +25,7 @@ from app.modules.proxy._service.compaction_breaker import (
     get_compaction_retry_breaker,
 )
 from app.modules.proxy.anthropic_errors import openai_error_type_for_status, retry_headers
-from app.modules.proxy.anthropic_service import AnthropicProxyError
+from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError
 from app.modules.proxy.api_dependencies import proxy_dependencies
 from app.modules.proxy.constants import (
     ANTHROPIC_SESSION_ROUTE_AFFINITY_QUOTA_KEYS,

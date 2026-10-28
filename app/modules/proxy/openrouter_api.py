@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from app.core.anthropic.models import AnthropicMessageRequest
 from app.dependencies import get_anthropic_proxy_context
 from app.modules.api_keys.service_data import ApiKeyData
-from app.modules.proxy.anthropic_service import AnthropicProxyError
+from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError
 
 
 async def _prime_stream(request: Request, body: AsyncIterator[bytes]) -> bytes | None:
