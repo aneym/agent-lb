@@ -36,6 +36,7 @@ MANAGED_SEATS = (
     "codex-verifier-local",
     "codex-test-runner-local",
     "computer-use-local",
+    "computer-use-terra-local",
 )
 ADOPTED_KEEP_NAMES = (
     "no-chrome-guard.sh",

@@ -1,0 +1,13 @@
+diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/codex.mjs
+--- a/plugins/codex/scripts/lib/codex.mjs
++++ b/plugins/codex/scripts/lib/codex.mjs
+@@ -1179,7 +1179,8 @@ export async function runAppServerTurn(cwd, options = {}) {
+           input: buildTurnInput(prompt),
+           model: options.model ?? null,
+           effort: options.effort ?? null,
+-          outputSchema: options.outputSchema ?? null
++          outputSchema: options.outputSchema ?? null,
++          ...(process.env.CODEX_COMPANION_SERVICE_TIER ? { serviceTier: process.env.CODEX_COMPANION_SERVICE_TIER } : {})
+         }),
+       { onProgress: options.onProgress }
+     );

@@ -273,6 +273,6 @@ RELAY_SEATS = frozenset(
     codex-sol codex-sol-local codex-verifier codex-verifier-local
     codex-test-runner codex-test-runner-local gpt-implementer grok-implementer
     gpt-explorer sonnet-implementer verifier cursor-seat devin-seat
-    muse-seat muse-seat-local computer-use computer-use-local host-relay pi-durable-seat
+    muse-seat muse-seat-local computer-use computer-use-local computer-use-terra-local host-relay pi-durable-seat
     """.split()
 )

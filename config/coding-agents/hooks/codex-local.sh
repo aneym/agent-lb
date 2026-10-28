@@ -23,14 +23,21 @@ done
 [[ ${1:-} == task ]] || { echo 'usage: codex-local.sh [--dry-run] task [companion options]' >&2; exit 2; }
 
 review=0
+service_tier=""
 args=()
-for arg in "$@"; do
-  if [[ $arg == --review ]]; then
-    review=1
-  else
-    args+=("$arg")
-  fi
+while (($#)); do
+  case "$1" in
+    --review) review=1 ;;
+    --service-tier) service_tier=${2:-}; shift ;;
+    --service-tier=*) service_tier=${1#--service-tier=} ;;
+    *) args+=("$1") ;;
+  esac
+  shift
 done
+case "$service_tier" in
+  ""|fast|flex) ;;
+  *) echo "codex-local: --service-tier must be fast or flex, not '$service_tier'" >&2; exit 2 ;;
+esac
 set -- "${args[@]}"
 prompt_file=""
 for ((i=0; i<${#args[@]}; i++)); do
@@ -98,6 +105,7 @@ fi
 if [[ $dry_run == 1 ]]; then
   printf 'host=studio background=false\n'
   printf 'cwd=%s\n' "$PWD"
+  printf 'service_tier=%s\n' "${service_tier:-default}"
   printf 'BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only node codex-companion.mjs'
   printf ' %q' "$@"
   printf '\n'
@@ -112,6 +120,11 @@ companion="$HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-c
 node "$companion" "$@" --dry-run >&2
 export BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only
 export CODEX_LOCAL_WRITE_SANDBOX=danger-full-access
+if [[ -n $service_tier ]]; then
+  export CODEX_COMPANION_SERVICE_TIER=$service_tier
+else
+  unset CODEX_COMPANION_SERVICE_TIER
+fi
 
 if [[ -n $prompt_file ]]; then
   contract_dir=$(dirname "$prompt_file")

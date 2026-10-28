@@ -17,6 +17,7 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 | Plans, specs, verdicts, design | Opus (planner, plan-reviewer) | opus-latest medium, never Sol (2026-10-16, E19); under the Claude reserve these wait |
 | Tabs Alex talks to, leads, orchestrators | Opus tab; full-tier ultracode on; workflow helpers on Sol | opus-latest medium for top-level tabs and workflow orchestrators; sol-latest for helpers |
 | Remote-machine relay (batch templates) | host-relay | sol-latest low |
+| Mac computer use and video editing (HyperFrames Studio and other Mac apps); never code | computer-use-terra-local | terra-latest medium, service tier fast (Alex, 2026-10-28: "terra isnt for coding though") |
 
 Available optional seat: `muse-seat` via `muse-seat-local` on Studio, Muse Code `1.4.9-R6297.1` (re-pinned 2026-10-16 after launcher auto-update; seat runs set `MUSE_NO_AUTO_UPDATE=1`), `muse-latest` pins `muse-wonder-1.0`. Alex reports login complete on 2026-10-13; a trivial brief passed on 2026-10-16. Boxes are not yet provisioned. No ladder promotion before interleaved evals.
 

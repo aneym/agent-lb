@@ -187,6 +187,12 @@
       "model": "sol-latest",
       "effort": "high"
     },
+    "computer-use-terra-local": {
+      "vendor": "openai",
+      "box": null,
+      "model": "terra-latest",
+      "effort": "medium"
+    },
     "opus-seat-local": {
       "vendor": "anthropic",
       "box": null,
