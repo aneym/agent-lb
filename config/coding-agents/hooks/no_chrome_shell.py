@@ -370,6 +370,7 @@ def simple_commands(text, redirects=None, arrays=None):
     except ValueError:
         raise Doubt
     command, target, here, piped, array = [], False, [], False, False
+    array_done = False
     array_values = []
     for word in words + [";"]:
         if array:
@@ -379,18 +380,34 @@ def simple_commands(text, redirects=None, arrays=None):
                 if arrays is not None:
                     arrays.append((command, array_values))
                 array, word = False, word[1:]
+                array_done = True
                 if not word:
                     continue
             else:
                 array_values.append(word.translate(restore))
                 continue
-        if word.startswith("()") and not target and len(command) == 1 and ARRAY_START.fullmatch(command[0]):
+        if (
+            word.startswith("()")
+            and not target
+            and command
+            and all(value in KEYWORDS for value in command[:-1])
+            and ARRAY_START.fullmatch(command[-1])
+        ):
+            command[:] = command[-1:]
+            array_done = True
             if arrays is not None:
                 arrays.append((command, []))
             word = word[2:]
             if not word:
                 continue
-        if word == "(" and not target and len(command) == 1 and ARRAY_START.fullmatch(command[0]):
+        if (
+            word == "("
+            and not target
+            and command
+            and all(value in KEYWORDS for value in command[:-1])
+            and ARRAY_START.fullmatch(command[-1])
+        ):
+            command[:] = command[-1:]
             array = word == "("
             array_values = []
             if not array and arrays is not None:
@@ -404,6 +421,7 @@ def simple_commands(text, redirects=None, arrays=None):
             if command:
                 yield command, here, piped
             command, target, here, piped = [], False, [], word in ("|", "|&")
+            array_done = False
         elif target:
             if redirects is not None and target != "here":
                 redirects.append(word.translate(restore))
@@ -411,6 +429,8 @@ def simple_commands(text, redirects=None, arrays=None):
                 here.append(word.translate(restore))
             target = False
         else:
+            if array_done:
+                raise Doubt
             command.append(word.translate(restore))
 
 
