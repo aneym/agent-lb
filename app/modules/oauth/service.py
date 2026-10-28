@@ -124,9 +124,12 @@ class OauthService(OAuthCallbackHandlers):
             return await self._start_device_flow()
 
         try:
-            if provider.name == OPENAI_PROVIDER_NAME:
-                return await self._start_browser_flow()
-            return await self._start_browser_flow(provider.name)
+            return await self._start_browser_flow(
+                provider.name,
+                warmup_hours=request.warmup_hours,
+                warmup_capacity_percent=request.warmup_capacity_percent,
+                warmup_max_concurrent=request.warmup_max_concurrent,
+            )
         except OSError:
             if provider.name != OPENAI_PROVIDER_NAME:
                 raise
@@ -170,7 +173,14 @@ class OauthService(OAuthCallbackHandlers):
                 return OauthCompleteResponse(status="error")
             return OauthCompleteResponse(status="pending")
 
-    async def _start_browser_flow(self, provider_name: str = OPENAI_PROVIDER_NAME) -> OauthStartResponse:
+    async def _start_browser_flow(
+        self,
+        provider_name: str = OPENAI_PROVIDER_NAME,
+        *,
+        warmup_hours: float | None = None,
+        warmup_capacity_percent: float | None = None,
+        warmup_max_concurrent: int | None = None,
+    ) -> OauthStartResponse:
         flow_id = secrets.token_urlsafe(12)
         code_verifier, code_challenge = generate_pkce_pair()
         provider = get_provider(provider_name)
@@ -208,6 +218,9 @@ class OauthService(OAuthCallbackHandlers):
                     code_verifier=code_verifier,
                     started_at=time.time(),
                     expires_at=time.time() + _PENDING_BROWSER_OAUTH_FLOW_TTL_SECONDS,
+                    warmup_hours=warmup_hours,
+                    warmup_capacity_percent=warmup_capacity_percent,
+                    warmup_max_concurrent=warmup_max_concurrent,
                 )
             )
 
@@ -310,7 +323,7 @@ class OauthService(OAuthCallbackHandlers):
                     allow_direct_egress=route is None,
                 )
                 if tokens:
-                    await self._persist_tokens(tokens, provider_name=OPENAI_PROVIDER_NAME)
+                    await self._persist_tokens(tokens, provider_name=OPENAI_PROVIDER_NAME, flow_id=flow_id)
                     await self._set_success(flow_id)
                     return
                 await _async_sleep(context.interval_seconds)
@@ -373,8 +386,12 @@ class OauthService(OAuthCallbackHandlers):
             allow_direct_egress=route is None,
         )
 
-    async def _persist_tokens(self, tokens: OAuthTokens, *, provider_name: str = OPENAI_PROVIDER_NAME) -> None:
-        account = account_from_tokens(tokens, provider_name, self._encryptor)
+    async def _persist_tokens(
+        self, tokens: OAuthTokens, *, provider_name: str = OPENAI_PROVIDER_NAME, flow_id: str | None = None
+    ) -> None:
+        async with self._store.lock:
+            flow = self._store.get_flow_locked(flow_id)
+        account = account_from_tokens(tokens, provider_name, self._encryptor, flow=flow)
         raw_account_id = account.chatgpt_account_id
         workspace_id = account.workspace_id
         if self._repo_factory:

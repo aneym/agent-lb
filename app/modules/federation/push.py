@@ -11,6 +11,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.core.account_warmup import warmup_active
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
@@ -83,6 +84,8 @@ async def build_push_request(
             seen.add(account.id)
     accounts = []
     for account in selected:
+        if warmup_active(account):
+            continue
         token = encryptor.decrypt(account.access_token_encrypted)
         accounts.append(
             FederationMirrorAccount(

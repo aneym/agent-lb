@@ -404,6 +404,11 @@ def _apply_account_updates(target: Account, source: Account) -> None:
     target.deactivation_reason = source.deactivation_reason
     target.reset_at = source.reset_at
     target.blocked_at = source.blocked_at
+    if source.warmup_until is not None and target.warmup_until is None:
+        target.warmup_until = source.warmup_until
+        target.warmup_capacity_percent = source.warmup_capacity_percent
+        target.warmup_max_concurrent = source.warmup_max_concurrent
+        target.warmup_owner_instance = source.warmup_owner_instance
 
 
 def _slot_lock_keys(account: Account, *, preserve_unknown_workspace_duplicates: bool = True) -> tuple[str, ...]:

@@ -22,6 +22,8 @@ def _project_account(account: dict[str, Any]) -> dict[str, Any]:
         "email": _text(account.get("email"), "unknown"),
         "problems": account.get("problems", []),
         "status": status,
+        "warmup_until": _optional_text(account.get("warmupUntil")),
+        "warmup_status": _optional_text(account.get("warmupStatus")),
         "subscription": {
             "status": subscription_status,
             "usable": None if subscription_status is None else _subscription_usable(subscription_status),

@@ -76,6 +76,10 @@ class Account(Base):
     )
 
     owner_instance: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    warmup_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    warmup_capacity_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    warmup_max_concurrent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    warmup_owner_instance: Mapped[str | None] = mapped_column(String, nullable=True)
 
     api_key_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(  # type: ignore[unknown-name]  # noqa: F821
         "ApiKeyAccountAssignment",

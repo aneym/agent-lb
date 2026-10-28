@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import datetime
 
+from app.core.account_warmup import warmup_active
 from app.core.openai.model_registry import get_model_registry
 from app.core.plan_types import account_plan_matches_allowed
 from app.core.providers import ANTHROPIC_PROVIDER_NAME
@@ -33,6 +34,8 @@ class WarmupDispatch:
         latest_attempts: dict[str, AccountLimitWarmup],
         now: datetime | None = None,
     ) -> tuple[asyncio.Task[LimitWarmupSendOutcome], AccountLimitWarmup] | None:
+        if warmup_active(account):
+            return None
         continuous = window in {_ANTHROPIC_CONTINUOUS_WINDOW, _OPENAI_CONTINUOUS_WINDOW}
         model = (
             _DEFAULT_ANTHROPIC_WARMUP_MODEL

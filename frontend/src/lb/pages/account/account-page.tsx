@@ -316,6 +316,11 @@ export function AccountPage() {
             resetAt={account.rateLimitResetAt || account.resetAtPrimary}
             sub={account.status === "rate_limited" ? "· 5-hour window used up" : undefined}
           />
+          {account.warmupUntil && new Date(account.warmupUntil).getTime() > Date.now() && (
+            <span className="meta">
+              Warming up until {new Date(account.warmupUntil).toLocaleString()}
+            </span>
+          )}
         </div>
         <div className="actions">
           {account.status !== "reauth_required" && (

@@ -28,6 +28,9 @@ class OAuthState:
     expires_at: float | None = None
     finished_at: float | None = None
     started_at: float | None = None
+    warmup_hours: float | None = None
+    warmup_capacity_percent: float | None = None
+    warmup_max_concurrent: int | None = None
     callback_server: "OAuthCallbackServer | None" = None
     poll_task: asyncio.Task[None] | None = None
 
@@ -92,6 +95,9 @@ class OAuthStateStore:
             expires_at=flow.expires_at,
             finished_at=flow.finished_at,
             started_at=flow.started_at,
+            warmup_hours=flow.warmup_hours,
+            warmup_capacity_percent=flow.warmup_capacity_percent,
+            warmup_max_concurrent=flow.warmup_max_concurrent,
             poll_task=flow.poll_task,
         )
 

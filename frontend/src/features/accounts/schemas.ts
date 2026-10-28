@@ -103,6 +103,8 @@ export const AccountSummarySchema = z.object({
   planType: z.string(),
   routingPolicy: z.enum(["normal", "burn_first", "preserve"]).optional(),
   status: z.string(),
+  warmupUntil: z.string().datetime({ offset: true }).nullable().optional(),
+  warmupStatus: z.string().nullable().optional(),
   securityWorkAuthorized: z.boolean().optional(),
   usage: AccountUsageSchema.nullable().optional(),
   resetAtPrimary: z.string().datetime({ offset: true }).nullable().optional(),

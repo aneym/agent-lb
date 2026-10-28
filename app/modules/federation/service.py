@@ -4,6 +4,7 @@ import logging
 import secrets
 from datetime import datetime
 
+from app.core.account_warmup import warmup_active
 from app.core.auth import token_expiry_epoch_ms
 from app.core.config.settings import Settings, get_settings
 from app.core.crypto import TokenEncryptor
@@ -11,10 +12,31 @@ from app.core.utils.time import naive_utc_to_epoch, utcnow
 from app.db.federation_models import AccountTransferDirection, AccountTransferState
 from app.db.models import Account
 from app.modules.accounts.refresh_lock import _cross_process_refresh_lock
-from app.modules.federation.exceptions import FederationConflictError, FederationNotConfiguredError, FederationNotFoundError  # noqa: I001  # fmt: skip
+from app.modules.federation.exceptions import (  # noqa: I001  # fmt: skip
+    FederationConflictError,
+    FederationNotConfiguredError,
+    FederationNotFoundError,
+)
 from app.modules.federation.peer_client import AiohttpFederationPeerClient, FederationPeerClient
 from app.modules.federation.repository import FederationRepository
-from app.modules.federation.schemas import FederationAuthPayload, FederationCheckinExecuteResponse, FederationCheckoutExecuteResponse, FederationCheckoutResponse, FederationMirrorAccount, FederationMirrorResponse, FederationRequestLogRow, FederationRequestLogsResponse, FederationTransferStatusResponse, FederationUsageAccount, FederationUsageDay, FederationUsageDayRollup, FederationUsageInstance, FederationUsageInstancesResponse, FederationUsageReportResponse, FederationUsageTotals  # noqa: I001  # fmt: skip
+from app.modules.federation.schemas import (  # noqa: I001  # fmt: skip
+    FederationAuthPayload,
+    FederationCheckinExecuteResponse,
+    FederationCheckoutExecuteResponse,
+    FederationCheckoutResponse,
+    FederationMirrorAccount,
+    FederationMirrorResponse,
+    FederationRequestLogRow,
+    FederationRequestLogsResponse,
+    FederationTransferStatusResponse,
+    FederationUsageAccount,
+    FederationUsageDay,
+    FederationUsageDayRollup,
+    FederationUsageInstance,
+    FederationUsageInstancesResponse,
+    FederationUsageReportResponse,
+    FederationUsageTotals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +104,8 @@ class FederationService:
         )
         mirror_accounts = []
         for account in accounts:
+            if warmup_active(account):
+                continue
             try:
                 access_token = self._encryptor.decrypt(account.access_token_encrypted)
             except Exception:
@@ -112,7 +136,7 @@ class FederationService:
         account = await self._repo.reload_account(account_id)
         if account is None:
             raise FederationNotFoundError(account_id)
-        if await self._repo.has_exchange_intent(account_id):
+        if warmup_active(account) or await self._repo.has_exchange_intent(account_id):
             raise FederationConflictError(account_id, current_owner=account.owner_instance)
 
         transfer = await self._repo.release_for_checkout(

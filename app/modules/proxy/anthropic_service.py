@@ -8,7 +8,7 @@ import re
 import time
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -65,6 +65,7 @@ from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservation
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_cache import get_account_selection_cache
+from app.modules.proxy.account_warmup import WarmupBusy, admitted_http_session
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError, require_claude_code_client
 from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, overloaded_backoff_jitter
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
@@ -136,16 +137,6 @@ _CONNECT_ERRORS: tuple[type[BaseException], ...] = (
     aiohttp.ClientOSError,
     asyncio.TimeoutError,
 )
-
-
-@asynccontextmanager
-async def _admitted_http_session(
-    session_key: str | None, nbytes: int, upload_class: str
-) -> AsyncIterator[tuple[aiohttp.ClientSession, AsyncExitStack]]:
-    async with AsyncExitStack() as admission_stack:
-        await admission_stack.enter_async_context(upload_admission.admission().admit(session_key, nbytes, upload_class))
-        async with lease_http_session() as session:
-            yield session, admission_stack
 
 
 class UpstreamStallTimeout(Exception):
@@ -553,7 +544,7 @@ class AnthropicProxyService(AnthropicTransport):
                         stall_catcher = _StallCatcher()
                         async with (
                             stall_catcher,
-                            _admitted_http_session(session_id or sticky_key, nbytes, upload_class) as (
+                            admitted_http_session(account, session_id or sticky_key, nbytes, upload_class) as (
                                 session,
                                 admission_stack,
                             ),
@@ -1025,6 +1016,8 @@ class AnthropicProxyService(AnthropicTransport):
                         )
                         yield f"event: error\ndata: {error_event}\n\n".encode()
                         return
+                except WarmupBusy:
+                    continue
                 except upload_admission.UploadAdmissionTimeout as exc:
                     code, message = _upload_admission_error(exc)
                     await self._persist_request_log(
@@ -1228,7 +1221,7 @@ class AnthropicProxyService(AnthropicTransport):
         nbytes = len(json.dumps(body, separators=(",", ":")).encode())
         upload_class = upload_admission.upload_class(inbound_headers)
         try:
-            async with _admitted_http_session(session_id, nbytes, upload_class) as (session, admission_stack):
+            async with admitted_http_session(account, session_id, nbytes, upload_class) as (session, admission_stack):
                 async with self._open_count_tokens_response(
                     session,
                     provider_name=provider_name,
@@ -1239,6 +1232,8 @@ class AnthropicProxyService(AnthropicTransport):
                     raw = await resp.read()
                     media_type = resp.headers.get("content-type") or "application/json"
                     return AnthropicCountTokensResult(status_code=resp.status, body=raw, media_type=media_type)
+        except WarmupBusy as exc:
+            raise AnthropicProxyError(503, "Warm-up concurrency is full", code="warmup_concurrency") from exc
         except upload_admission.UploadAdmissionTimeout as exc:
             code, message = _upload_admission_error(exc)
             useragent, useragent_group = _request_log_useragent_fields(inbound_headers)

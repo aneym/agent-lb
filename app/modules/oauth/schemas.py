@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from pydantic import Field
+
 from app.modules.shared.schemas import DashboardModel
 
 
 class OauthStartRequest(DashboardModel):
     force_method: str | None = None
     provider: str | None = None
+    warmup_hours: float | None = Field(default=None, gt=0, le=168)
+    warmup_capacity_percent: float | None = Field(default=None, gt=0, le=100)
+    warmup_max_concurrent: int | None = Field(default=None, ge=1, le=32)
 
 
 class OauthStartResponse(DashboardModel):

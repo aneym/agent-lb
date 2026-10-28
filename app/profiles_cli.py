@@ -39,6 +39,9 @@ def add_parser(subparsers) -> None:
     reauth.add_argument("--base-url")
     reauth.add_argument("--dry-run", action="store_true")
     reauth.add_argument("--json", action="store_true")
+    reauth.add_argument("--warmup-hours", type=float)
+    reauth.add_argument("--warmup-capacity-percent", type=float, default=15.0)
+    reauth.add_argument("--warmup-max-concurrent", type=int, default=2)
 
 
 def chrome_argv(profile: BrowserProfile, url: str) -> list[str]:
@@ -219,6 +222,14 @@ def run_reauth(args) -> None:
         if provider not in PROVIDERS:
             raise ProfilesError("choose --provider anthropic or openai; dry-run cannot query account providers")
         body = {"provider": provider, "forceMethod": "browser"}
+        if args.warmup_hours is not None:
+            body.update(
+                {
+                    "warmupHours": args.warmup_hours,
+                    "warmupCapacityPercent": args.warmup_capacity_percent,
+                    "warmupMaxConcurrent": args.warmup_max_concurrent,
+                }
+            )
         if args.dry_run:
             print(
                 json.dumps(

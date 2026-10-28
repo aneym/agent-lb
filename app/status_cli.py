@@ -308,11 +308,12 @@ def _emit(payload: dict[str, Any], *, json_output: bool) -> None:
             else ""
         )
         status_label = "no balance" if "no balance" in account["usability_reasons"] else account["status"]
+        warmup = f"; {account['warmup_status']}" if account.get("warmup_status") else ""
         print(
             f"  {account['account_id']} [{status_label}/{account['usable']}]: "
             f"primary {_format_window(account['primary'])}; weekly {_format_window(account['weekly'])}; "
             f"banked resets {_format_reset_credits(account['reset_credits_available'])}; "
-            f"last primed {account['last_primed_at'] or 'never'}{fable}"
+            f"last primed {account['last_primed_at'] or 'never'}{fable}{warmup}"
         )
     if model := payload.get("model"):
         print(f"model {model['name']}: {model['status']}")

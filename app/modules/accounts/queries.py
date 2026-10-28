@@ -19,7 +19,7 @@ from app.db.session import get_background_session
 from app.modules.accounts import probes
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.credits import CREDITS_USAGE_WINDOW
-from app.modules.accounts.mappers import build_account_summaries, build_account_usage_trends
+from app.modules.accounts.mappers import build_account_summaries
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.reset_credit_attempts import ResetCreditAttemptsRepository
 from app.modules.accounts.schemas import (
@@ -31,6 +31,7 @@ from app.modules.accounts.schemas import (
     AnthropicModelsResponse,
 )
 from app.modules.accounts.service_caches import quota_cache, usage_cache
+from app.modules.accounts.usage_trends import build_account_usage_trends
 from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.usage.additional_quota_keys import (
     get_additional_display_label_for_quota_key,

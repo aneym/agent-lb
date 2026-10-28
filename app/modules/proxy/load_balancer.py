@@ -64,6 +64,8 @@ from app.db.models import Account, AccountStatus, AdditionalUsageHistory, Sticky
 from app.modules.accounts.auth_manager import access_token_hard_expired, is_locally_owned
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.proxy.account_cache import get_account_selection_cache
+from app.modules.proxy.account_lease_policy import stale_ttl_seconds
+from app.modules.proxy.account_warmup import candidates
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.request_policy import resolve_model_alias
@@ -86,7 +88,6 @@ _UsageWindowEntry = UsageHistory | AdditionalUsageHistory
 
 _MAX_SELECTION_ATTEMPTS = 4
 
-_ACCOUNT_STREAM_LEASE_STALE_GRACE_SECONDS = 60.0
 _STICKY_GRACE_PERIOD_SECONDS = 10.0
 _STICKY_EXISTING_UNSET = object()
 _RECOVERABLE_STATUSES = frozenset(
@@ -265,7 +266,7 @@ class LoadBalancer:
             stale = [
                 lease
                 for lease in runtime.leases.values()
-                if now - lease.acquired_at >= _account_lease_stale_ttl_seconds(lease.kind, settings)
+                if now - lease.acquired_at >= stale_ttl_seconds(lease.kind, settings)
             ]
             for lease in stale:
                 self._release_account_lease_locked(lease, reason="stale")
@@ -409,6 +410,7 @@ class LoadBalancer:
                         ignore_standard_quota_account_ids=selection_inputs.ignore_standard_quota_account_ids,
                         ignore_primary_quota_account_ids=request_ignore_primary_quota_ids,
                         burn_first_account_ids=request_burn_first_ids,
+                        sticky_key=sticky_key,
                     )
                     effective_routing_costs = (
                         routing_costs_by_account_id
@@ -587,6 +589,7 @@ class LoadBalancer:
                         ignore_standard_quota_account_ids=selection_inputs.ignore_standard_quota_account_ids,
                         ignore_primary_quota_account_ids=request_ignore_primary_quota_ids,
                         burn_first_account_ids=request_burn_first_ids,
+                        sticky_key=sticky_key,
                     )
                     effective_routing_costs = (
                         routing_costs_by_account_id
@@ -1759,10 +1762,11 @@ def _build_states(
     ignore_standard_quota_account_ids: frozenset[str] = frozenset(),
     ignore_primary_quota_account_ids: frozenset[str] = frozenset(),
     burn_first_account_ids: frozenset[str] = frozenset(),
+    sticky_key: str | None = None,
 ) -> tuple[list[AccountState], dict[str, Account]]:
     states: list[AccountState] = []
     account_map: dict[str, Account] = {}
-    for account in accounts:
+    for account in candidates(accounts, sticky_key):
         secondary_entry: UsageHistory | AdditionalUsageHistory | None = latest_secondary.get(account.id)
         if account.id not in ignore_standard_quota_account_ids:
             secondary_entry = _select_long_window_entry(
@@ -1785,19 +1789,6 @@ def _build_states(
         states.append(state)
         account_map[account.id] = account
     return states, account_map
-
-
-def _account_lease_stale_ttl_seconds(kind: AccountLeaseKind, settings: object) -> float:
-    ttl_seconds = float(getattr(settings, "proxy_account_lease_ttl_seconds", 900.0))
-    if kind != "stream":
-        return ttl_seconds
-    valid_stream_budget_seconds = max(
-        ttl_seconds,
-        float(getattr(settings, "proxy_request_budget_seconds", ttl_seconds)),
-        float(getattr(settings, "http_responses_stream_request_budget_seconds", ttl_seconds)),
-        float(getattr(settings, "http_responses_session_bridge_request_budget_seconds", ttl_seconds)),
-    )
-    return max(ttl_seconds, valid_stream_budget_seconds + _ACCOUNT_STREAM_LEASE_STALE_GRACE_SECONDS)
 
 
 def _filter_states_for_account_caps(

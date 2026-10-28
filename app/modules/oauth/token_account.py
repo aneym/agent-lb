@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from app.core.auth import (
     DEFAULT_EMAIL,
     DEFAULT_PLAN,
@@ -8,15 +10,23 @@ from app.core.auth import (
     normalize_seat_type,
 )
 from app.core.clients.oauth import OAuthError, OAuthTokens
+from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
 from app.core.providers import OPENAI_PROVIDER_NAME, get_provider
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
 from app.modules.accounts.auth_manager import expiry_datetime
+from app.modules.oauth.state import OAuthState
 
 
-def account_from_tokens(tokens: OAuthTokens, provider_name: str, encryptor: TokenEncryptor) -> Account:
+def account_from_tokens(
+    tokens: OAuthTokens,
+    provider_name: str,
+    encryptor: TokenEncryptor,
+    *,
+    flow: OAuthState | None = None,
+) -> Account:
     provider = get_provider(provider_name)
     metadata = provider.account_metadata_from_id_token(tokens.id_token)
     metadata_plan_type = metadata.plan_type if tokens.id_token else None
@@ -45,6 +55,10 @@ def account_from_tokens(tokens: OAuthTokens, provider_name: str, encryptor: Toke
         email = metadata.email or tokens.email or DEFAULT_EMAIL
     account_id = generate_unique_account_id(raw_account_id, email, workspace_id)
 
+    warmup_hours = flow.warmup_hours if flow else None
+    warmup_capacity_percent = flow.warmup_capacity_percent if flow else None
+    warmup_max_concurrent = flow.warmup_max_concurrent if flow else None
+    warmup_until = utcnow() + timedelta(hours=warmup_hours) if warmup_hours is not None else None
     account = Account(
         id=account_id,
         provider=provider.name,
@@ -61,5 +75,9 @@ def account_from_tokens(tokens: OAuthTokens, provider_name: str, encryptor: Toke
         access_expires_at=expiry_datetime(tokens.access_token, tokens.expires_in),
         status=AccountStatus.ACTIVE,
         deactivation_reason=None,
+        warmup_until=warmup_until,
+        warmup_capacity_percent=warmup_capacity_percent,
+        warmup_max_concurrent=warmup_max_concurrent,
+        warmup_owner_instance=get_settings().local_instance_id if warmup_until else None,
     )
     return account

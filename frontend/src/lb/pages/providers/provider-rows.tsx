@@ -313,7 +313,11 @@ export function ProxyAccountRow({
         <AccountState
           status={a.status}
           resetAt={a.rateLimitResetAt || a.resetAtSecondary}
-          sub={a.status === "active" && sessions ? `holding ${sessions} sessions` : undefined}
+          sub={
+            a.warmupUntil && new Date(a.warmupUntil).getTime() > now
+              ? `warming up until ${new Date(a.warmupUntil).toLocaleString()}`
+              : a.status === "active" && sessions ? `holding ${sessions} sessions` : undefined
+          }
         />
       }
       limit={

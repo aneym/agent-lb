@@ -74,7 +74,7 @@ class OAuthCallbackHandlers:
             tokens = await self._exchange_authorization_code(
                 provider.name, code=code, code_verifier=verifier, state=state
             )
-            await self._persist_tokens(tokens, provider_name=provider.name)
+            await self._persist_tokens(tokens, provider_name=provider.name, flow_id=flow.flow_id)
             await self._set_success(flow.flow_id)
             asyncio.create_task(self._stop_callback_server_if_idle())
             return ManualCallbackResponse(status="success")
@@ -123,7 +123,7 @@ class OAuthCallbackHandlers:
             tokens = await self._exchange_authorization_code(
                 provider.name, code=code, code_verifier=verifier, state=state
             )
-            await self._persist_tokens(tokens, provider_name=provider.name)
+            await self._persist_tokens(tokens, provider_name=provider.name, flow_id=flow.flow_id)
             await self._set_success(flow.flow_id)
             html = _success_html()
         except OAuthError as exc:
