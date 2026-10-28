@@ -9,22 +9,27 @@ _draining: bool = False
 _admit_until: float = 0.0
 _bridge_drain_active: bool = False
 _in_flight: int = 0
+_websockets: int = 0
+_websockets_closing: bool = False
 _exchanges: int = 0
 
 
 def reset() -> None:
-    global _draining, _admit_until, _bridge_drain_active, _in_flight, _exchanges
+    global _draining, _admit_until, _bridge_drain_active, _in_flight, _websockets, _websockets_closing, _exchanges
     _draining = False
     _admit_until = 0.0
     _bridge_drain_active = False
     _in_flight = 0
+    _websockets = 0
+    _websockets_closing = False
     _exchanges = 0
 
 
 def set_draining(val: bool = True, admit_grace_seconds: float = 0.0) -> None:
-    global _draining, _admit_until
+    global _draining, _admit_until, _websockets_closing
     _draining = val
     _admit_until = time.monotonic() + admit_grace_seconds if val else 0.0
+    _websockets_closing = False
 
 
 def is_draining() -> bool:
@@ -54,8 +59,31 @@ def decrement_in_flight() -> None:
     _in_flight = max(0, _in_flight - 1)
 
 
+def increment_websockets() -> None:
+    global _websockets
+    _websockets += 1
+
+
+def decrement_websockets() -> None:
+    global _websockets
+    _websockets = max(0, _websockets - 1)
+
+
+def get_websockets() -> int:
+    return _websockets
+
+
+def close_websockets() -> None:
+    global _websockets_closing
+    _websockets_closing = _draining
+
+
+def websockets_closing() -> bool:
+    return _websockets_closing
+
+
 def get_in_flight() -> int:
-    return _in_flight
+    return _in_flight + _websockets
 
 
 async def wait_for_in_flight_drain(timeout_seconds: float, poll_interval_seconds: float = 0.1) -> bool:

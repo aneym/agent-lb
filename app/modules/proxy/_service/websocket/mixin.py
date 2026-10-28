@@ -320,6 +320,7 @@ from app.modules.proxy._service.warmup import (
 from app.modules.proxy._service.warmup import (
     _WarmupUsageSnapshot as _WarmupUsageSnapshot,
 )
+from app.modules.proxy._service.websocket import downstream_close
 from app.modules.proxy._service.websocket.helpers import (
     _app_error_to_websocket_event,
     _assign_websocket_response_id,
@@ -564,36 +565,23 @@ class _WebSocketMixin:
                             ),
                         )
                     except asyncio.TimeoutError:
-                        if not await proxy._downstream_websocket_is_idle(
-                            pending_requests,
-                            pending_lock=pending_lock,
-                            downstream_activity=downstream_activity,
-                            idle_timeout_seconds=downstream_idle_timeout_seconds,
-                        ):
+                        close_args = {
+                            "pending_lock": pending_lock,
+                            "activity": downstream_activity,
+                            "idle_timeout_seconds": downstream_idle_timeout_seconds,
+                        }
+                        if await downstream_close.due(pending_requests, **close_args) is None:
                             continue
-                        idle_close = False
+                        closed = False
                         async with client_send_lock:
-                            if await proxy._downstream_websocket_is_idle(
-                                pending_requests,
-                                pending_lock=pending_lock,
-                                downstream_activity=downstream_activity,
-                                idle_timeout_seconds=downstream_idle_timeout_seconds,
-                            ):
-                                try:
-                                    message = await asyncio.wait_for(websocket.receive(), timeout=0.05)
-                                except asyncio.TimeoutError:
-                                    try:
-                                        await websocket.close(
-                                            code=1001, reason=_facade()._DOWNSTREAM_WEBSOCKET_IDLE_CLOSE_REASON
-                                        )
-                                    except Exception:
-                                        _facade().logger.debug(
-                                            "Failed to close idle downstream websocket", exc_info=True
-                                        )
-                                    idle_close = True
-                        if idle_close:
+                            try:
+                                message = await asyncio.wait_for(websocket.receive(), timeout=0.05)
+                            except asyncio.TimeoutError:
+                                closed = await downstream_close.close_if_due(websocket, pending_requests, **close_args)
+                        if closed:
                             break
-                    assert message is not None
+                        if message is None:
+                            continue
                     downstream_activity.mark()
                     message_type = message["type"]
 
@@ -602,6 +590,12 @@ class _WebSocketMixin:
                         break
                     if message_type != "websocket.receive":
                         continue
+                    if downstream_close.draining():
+                        async with client_send_lock:
+                            if await downstream_close.close_if_due(
+                                websocket, pending_requests, pending_lock=pending_lock
+                            ):
+                                break
 
                     text_data = message.get("text")
                     bytes_data = message.get("bytes")
@@ -3028,21 +3022,6 @@ class _WebSocketMixin:
                 )
                 emitted = True
         return emitted
-
-    async def _downstream_websocket_is_idle(
-        self,
-        pending_requests: deque[_WebSocketRequestState],
-        *,
-        pending_lock: anyio.Lock,
-        downstream_activity: _DownstreamWebSocketActivity,
-        idle_timeout_seconds: float,
-    ) -> bool:
-        proxy = cast(_WebSocketServiceProtocol, self)
-        _ = proxy
-        async with pending_lock:
-            if pending_requests:
-                return False
-        return (time.monotonic() - downstream_activity.last_activity_at) >= idle_timeout_seconds
 
     async def _fail_expired_pending_websocket_requests(
         self,

@@ -9,7 +9,6 @@ class _WebSocketServiceProtocol(Protocol):
     _cancel_request_state_api_key_reservation_heartbeat: Any
     _connect_proxy_websocket: Any
     _decide_websocket_failover_action: Any
-    _downstream_websocket_is_idle: Any
     _emit_pending_websocket_keepalive: Any
     _emit_websocket_connect_failure: Any
     _emit_websocket_connect_timeout: Any

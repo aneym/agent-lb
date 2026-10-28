@@ -158,6 +158,26 @@ async def stop_internal_drain(request: Request) -> HealthCheckResponse:
     return HealthCheckResponse(status="ok", checks={"draining": "false"})
 
 
+@router.post("/internal/drain/close-websockets", include_in_schema=False)
+async def close_drain_websockets(request: Request) -> HealthCheckResponse:
+    client_host = request.client.host if request.client is not None else None
+    if not _is_internal_client_host(client_host):
+        raise HTTPException(status_code=403, detail="Internal access required")
+    await _require_trusted_drain_client(request)
+
+    import app.core.shutdown as shutdown_state
+
+    shutdown_state.close_websockets()
+
+    return HealthCheckResponse(
+        status="ok",
+        checks={
+            "websockets_closing": str(shutdown_state.websockets_closing()).lower(),
+            "websockets": str(shutdown_state.get_websockets()),
+        },
+    )
+
+
 @router.get("/internal/drain/status", include_in_schema=False)
 async def internal_drain_status(request: Request) -> HealthCheckResponse:
     client_host = request.client.host if request.client is not None else None
@@ -173,6 +193,7 @@ async def internal_drain_status(request: Request) -> HealthCheckResponse:
             "admitting": str(shutdown_state.admits_requests()).lower(),
             "bridge_drain_active": str(shutdown_state.is_bridge_drain_active()).lower(),
             "in_flight": str(shutdown_state.get_in_flight()),
+            "websockets": str(shutdown_state.get_websockets()),
             "token_exchanges": str(shutdown_state.get_exchanges()),
         },
     )
