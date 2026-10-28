@@ -21,6 +21,11 @@ PORT_KILL = (
     re.compile(r"\bkill\b[^|;&\n]*(?:\$\(|`)\s*" + LSOF_T),
 )
 
+T3_CODEX_STOP = re.compile(
+    r"\b(?:systemctl\b[^;&|\n]*\b(?:stop|kill|restart|try-restart|reload-or-restart|mask|freeze)\b|pkill\b|killall\b)"
+    r"[^;&|\n]*(?:t3code-codex-|codex[ .*]+app-server)"
+)
+
 
 class Doubt(Exception):
     pass
@@ -422,6 +427,14 @@ def main():
     except ValueError:
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
+    stop = T3_CODEX_STOP.search(command)
+    if stop:
+        print(
+            "BLOCKED (%s): `%s` stops a shared T3 Codex app-server and fails every turn on it. Leave it to T3; "
+            "report a runaway one to the t3-nightly lane with lane-post." % (FLOOR, stop.group(0)[:80]),
+            file=sys.stderr,
+        )
+        return 2
     if not re.search(r"\b(kill|pkill|killall|pgrep)\b", command):
         return 0
     try:
