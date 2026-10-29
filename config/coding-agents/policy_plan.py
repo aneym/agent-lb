@@ -7,7 +7,7 @@ from pathlib import Path
 from policy_documents import read_text  # type: ignore[missing-import]
 from policy_files import desired_routing_table  # type: ignore[missing-import]
 from policy_hook_groups import installed_manifest  # type: ignore[missing-import]
-from policy_layout import ADOPTED_KEEP, DISPATCH_SCRIPT, HOOK_MANIFEST, MANAGED_AGENTS, MANAGED_DIR, POLICY_DIR, POLICY_FILES, POLICY_SNAPSHOT, RETIRED_AGENTS, RETIRED_HOOKS, ROUTE_FILES, ROUTING_TABLE, ROUTING_TABLE_OWNER  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
+from policy_layout import ADOPTED_KEEP, DISPATCH_SCRIPT, HOOK_MANIFEST, MANAGED_AGENTS, MANAGED_DIR, POLICY_DIR, POLICY_FILES, POLICY_SNAPSHOT, RETIRED_AGENTS, ROUTE_FILES, ROUTING_TABLE, ROUTING_TABLE_OWNER  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 from policy_inventory import MANAGED_SEATS, OPTIONAL_SEATS  # type: ignore[missing-import]
 from policy_settings import seat_template  # type: ignore[missing-import]
 
@@ -36,7 +36,9 @@ def evict_shadows(home, changes):
 
 def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link, kept):
     shipped = {path.name for path in (source / "hooks").iterdir() if path.is_file()}
-    settings = "".join(read_text(home / ".claude" / name) or "" for name in ("settings.json", "settings.local.json"))
+    referrers = [home / ".claude/settings.json", home / ".claude/settings.local.json", home / ".codex/hooks.json"]
+    referrers += sorted((home / ".claude/hooks/dispatch").glob("registry*.json"))
+    settings = "".join(read_text(path) or "" for path in referrers)
     record = home / POLICY_HOOKS_RECORD
     recorded = read_text(record) or ""
     header = "agent-lb:policy-hooks:v1\n"
@@ -148,14 +150,6 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes, kept):
                 path = args.home / relative
                 if path.is_file() and path.resolve().parent != source / "agents":
                     changes[path] = None
-        for name in RETIRED_HOOKS:
-            stub = args.home / ".claude/hooks" / name
-            if (stub.is_file() or stub.is_symlink()) and stub not in kept:
-                changes[stub] = None
-            for relative in (POLICY_DIR / "hooks" / name, MANAGED_DIR / Path(name).stem):
-                target = args.home / relative
-                if target.is_file() and not target.is_symlink() and target not in kept:
-                    changes[target] = None
         for name in RETIRED_AGENTS:
             for relative in (
                 Path(".claude/agents") / f"{name}.md",

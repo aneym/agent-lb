@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from hook_retired_invocation import sole_invocation  # type: ignore[missing-import]
+from hook_retired_invocation import retired_invocation  # type: ignore[missing-import]
 from policy_layout import DISPATCH_DROPPED, DISPATCH_HOOK_KEYS, DISPATCH_SCRIPT, DISPATCH_SKIP_MATCHERS, HOOK_MANIFEST, NAME_LIST, RETIRED_HOOKS, SIMPLE_MATCHER, TOOL_ALIASES, UNREGISTERED_HOOKS  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
 
@@ -206,7 +206,7 @@ def drop_hooks(
 ) -> tuple[dict[str, Any], list[str], list[str]]:
 
     kept, dropped, refused = {}, [], []
-    names = tuple(n for n in (*RETIRED_HOOKS, *UNREGISTERED_HOOKS, "/_root/hooks/") if n not in retired_kept)
+    names = tuple(n for n in (*RETIRED_HOOKS, *UNREGISTERED_HOOKS) if n not in retired_kept)
     for event, groups in hooks.items():
         kept[event] = groups
         if not isinstance(groups, list):
@@ -223,10 +223,10 @@ def drop_hooks(
                 if isinstance(command, str):
                     name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
                     if not name:
-                        invoked = sole_invocation(command) or ""
-                        name = next((n for n in names if n in invoked), None)
                         mentioned = next((n for n in names if n in command), None)
-                        if mentioned and not name:
+                        if mentioned and retired_invocation(command, names):
+                            name = mentioned
+                        elif mentioned:
                             refused.append(
                                 f"{event} {group.get('matcher') or '*'}: {mentioned} in ~/.claude/settings.json: "
                                 f"not a single retired invocation, left untouched: {command}"

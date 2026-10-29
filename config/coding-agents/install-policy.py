@@ -331,7 +331,7 @@ def main() -> int:
         args, source, snapshot, keep_fold, changes, kept
     )
 
-    retire_hook_registries(args.home, changes, kept, nxt)
+    retire_hook_registries(args.home, changes, kept)
     validate_hook_changes(args.home, changes, nxt, kept)
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
