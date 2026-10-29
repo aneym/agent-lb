@@ -52,6 +52,15 @@ class RequestLogLike(Protocol):
     def cost_usd(self) -> float | None: ...
 
 
+def input_tokens_from_log(log: RequestLogLike) -> int | None:
+    if log.input_tokens is None:
+        return None
+    tokens = int(log.input_tokens)
+    if getattr(log, "provider", None) == KIMI_PROVIDER_NAME:
+        tokens += int(log.cache_creation_tokens or 0) + int(log.cache_read_tokens or 0)
+    return tokens
+
+
 def cached_input_tokens_from_log(log: RequestLogLike) -> int | None:
     if getattr(log, "provider", None) == KIMI_PROVIDER_NAME:
         tokens = log.cache_read_tokens
@@ -67,7 +76,7 @@ def cached_input_tokens_from_log(log: RequestLogLike) -> int | None:
 
 
 def usage_tokens_from_log(log: RequestLogLike) -> UsageTokens | None:
-    input_tokens = log.input_tokens
+    input_tokens = input_tokens_from_log(log)
     if input_tokens is None:
         return None
     output_tokens = output_tokens_from_log(log)
@@ -96,6 +105,12 @@ def calculated_cost_from_log(log: RequestLogLike, *, precision: int | None = Non
         return None
     provider = getattr(log, "provider", None) or OPENAI_PROVIDER_NAME
     if provider == KIMI_PROVIDER_NAME and (log.input_tokens is None or output_tokens_from_log(log) is None):
+        return None
+    if (
+        provider == KIMI_PROVIDER_NAME
+        and getattr(log, "cache_creation_tier", None) == "mixed"
+        and log.cache_creation_tokens
+    ):
         return None
     if provider in {ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME}:
         resolved_anthropic = get_anthropic_pricing_for_model(log.model)
@@ -238,7 +253,7 @@ def cost_breakdown_from_log(log: RequestLogLike, *, precision: int | None = None
 
 
 def total_tokens_from_log(log: RequestLogLike) -> int | None:
-    input_tokens = log.input_tokens
+    input_tokens = input_tokens_from_log(log)
     output_tokens = output_tokens_from_log(log)
     if input_tokens is None and output_tokens is None:
         return None
@@ -248,7 +263,12 @@ def total_tokens_from_log(log: RequestLogLike) -> int | None:
 def _kimi_cost_breakdown(log: RequestLogLike, *, precision: int | None) -> UsageCostBreakdown:
     resolved = get_anthropic_pricing_for_model(log.model or "")
     breakdown = None
-    if resolved is not None and log.input_tokens is not None and output_tokens_from_log(log) is not None:
+    if (
+        resolved is not None
+        and log.input_tokens is not None
+        and output_tokens_from_log(log) is not None
+        and not (getattr(log, "cache_creation_tier", None) == "mixed" and log.cache_creation_tokens)
+    ):
         breakdown = calculate_anthropic_cost_breakdown(
             AnthropicUsage(
                 input_tokens=log.input_tokens,

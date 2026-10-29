@@ -55,7 +55,7 @@ class RequestLogAggregates:
         result = await self._session.execute(
             select(
                 func.coalesce(
-                    func.sum(func.coalesce(RequestLog.input_tokens, 0) + func.coalesce(RequestLog.output_tokens, 0)), 0
+                    func.sum(func.coalesce(_reported_input(), 0) + func.coalesce(RequestLog.output_tokens, 0)), 0
                 )
             ).where(RequestLog.provider == provider, RequestLog.requested_at >= since)
         )
@@ -90,9 +90,9 @@ class RequestLogAggregates:
             RequestLog.service_tier,
             func.count().label("request_count"),
             func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)).label("error_count"),
-            func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(_reported_input()), 0).label("input_tokens"),
             func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
-            func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
+            func.coalesce(func.sum(_reported_cached()), 0).label("cached_input_tokens"),
             func.coalesce(func.sum(RequestLog.reasoning_tokens), 0).label("reasoning_tokens"),
             func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
             _unpriced_requests().label("unpriced_requests"),
@@ -143,9 +143,9 @@ class RequestLogAggregates:
                 func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)),
                 0,
             ).label("error_count"),
-            func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(_reported_input()), 0).label("input_tokens"),
             func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
-            func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
+            func.coalesce(func.sum(_reported_cached()), 0).label("cached_input_tokens"),
             func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
             _unpriced_requests().label("unpriced_requests"),
             _unpriced_tokens().label("unpriced_tokens"),
@@ -212,9 +212,10 @@ class RequestLogAggregates:
         ]
 
         output_tokens_expr = func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)
-        tokens_expr = func.coalesce(RequestLog.input_tokens, 0) + output_tokens_expr
+        tokens_expr = func.coalesce(_reported_input(), 0) + output_tokens_expr
         cached_clamped = _least(dialect, _greatest(dialect, RequestLog.cached_input_tokens, 0), RequestLog.input_tokens)
         cached_expr = case(
+            (RequestLog.provider == "kimi", func.coalesce(RequestLog.cache_read_tokens, 0)),
             (RequestLog.cached_input_tokens.is_(None), 0),
             (RequestLog.input_tokens.is_not(None), cached_clamped),
             else_=_greatest(dialect, RequestLog.cached_input_tokens, 0),
@@ -290,7 +291,7 @@ class RequestLogAggregates:
                 caller_user,
                 caller_machine,
                 func.count().label("requests"),
-                func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(_reported_input()), 0).label("input_tokens"),
                 func.coalesce(
                     func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)), 0
                 ).label("output_tokens"),
@@ -328,7 +329,7 @@ def _unpriced_clause() -> ColumnElement[bool]:
 
 
 def _row_tokens() -> ColumnElement:
-    return func.coalesce(RequestLog.input_tokens, 0) + func.coalesce(RequestLog.output_tokens, 0)
+    return func.coalesce(_reported_input(), 0) + func.coalesce(RequestLog.output_tokens, 0)
 
 
 def _unpriced_requests() -> ColumnElement:
@@ -367,3 +368,19 @@ def _greatest(dialect: str, a: ColumnElement, b: ColumnElement) -> ColumnElement
     if dialect == "postgresql":
         return func.greatest(a, b)
     return func.max(a, b)
+
+
+def _reported_input() -> ColumnElement:
+    return case(
+        (
+            RequestLog.provider == "kimi",
+            RequestLog.input_tokens
+            + func.coalesce(RequestLog.cache_creation_tokens, 0)
+            + func.coalesce(RequestLog.cache_read_tokens, 0),
+        ),
+        else_=RequestLog.input_tokens,
+    )
+
+
+def _reported_cached() -> ColumnElement:
+    return case((RequestLog.provider == "kimi", RequestLog.cache_read_tokens), else_=RequestLog.cached_input_tokens)

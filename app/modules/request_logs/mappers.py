@@ -6,6 +6,7 @@ from app.core.usage.logs import (  # noqa: I001  # fmt: skip
     RequestLogLike,
     cached_input_tokens_from_log,
     cost_breakdown_from_log,
+    input_tokens_from_log,
     output_tokens_from_log,
     total_tokens_from_log,
 )
@@ -77,7 +78,7 @@ def to_request_log_entry(log: RequestLog, *, api_key_name: str | None = None) ->
         upstream_error_code=log.upstream_error_code,
         bridge_stage=log.bridge_stage,
         tokens=total_tokens_from_log(log_like),
-        input_tokens=log.input_tokens,
+        input_tokens=input_tokens_from_log(log_like),
         output_tokens=output_tokens_from_log(log_like),
         cached_input_tokens=cached_input_tokens_from_log(log_like),
         cost_usd=cost_breakdown.total_usd,

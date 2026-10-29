@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from yarl import URL
 
 from app.core import upload_admission
+from app.core.anthropic.entrypoint_label import relabel_billing_block
 from app.core.anthropic.models import (
     AnthropicErrorEvent,
     AnthropicMessageRequest,
@@ -29,7 +30,6 @@ from app.core.anthropic.parsing import collect_usage_from_chunk as _collect_usag
 from app.core.anthropic.quota_headers import capture_unified_headers, exhausted_account_reset
 from app.core.anthropic.quota_headers import parse_reset_epoch as _parse_reset_epoch
 from app.core.anthropic.quota_headers import parse_unified_utilization as _parse_unified_utilization
-from app.core.anthropic.entrypoint_label import relabel_billing_block
 from app.core.anthropic.quota_keys import model_quota_key
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.balancer.error_rules import match_error_rule
@@ -2472,6 +2472,22 @@ def _upgrade_helper_cache(
     inbound_headers: Mapping[str, str],
     provider_name: str,
 ) -> str | None:
+
+    if provider_name == "kimi":
+        controls = []
+        pending = [body]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, dict):
+                control = value.get("cache_control")
+                if isinstance(control, dict) and control.get("type") == "ephemeral":
+                    ttl = control.get("ttl", "5m")
+                    controls.append(ttl if ttl in ("5m", "1h") else "mixed")
+                pending.extend(v for k, v in value.items() if k != "cache_control")
+            elif isinstance(value, list):
+                pending.extend(value)
+        tiers = set(controls)
+        return next(iter(tiers)) if len(tiers) == 1 else "mixed" if tiers else None
 
     agent_id = next((value for key, value in inbound_headers.items() if key.lower() == "x-claude-code-agent-id"), "")
     if (

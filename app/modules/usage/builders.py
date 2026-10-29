@@ -7,11 +7,30 @@ from datetime import datetime, timezone
 from app.core import usage as usage_core
 from app.core.providers import OPENAI_PROVIDER_NAME
 from app.core.usage.logs import cached_input_tokens_from_log, cost_from_log, total_tokens_from_log
-from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate, UsageCostByModel, UsageCostSummary, UsageMetricsSummary, UsageSummaryPayload, UsageWindowRow, UsageWindowSnapshot  # noqa: I001  # fmt: skip
+from app.core.usage.types import (  # noqa: I001  # fmt: skip
+    BucketModelAggregate,
+    RequestActivityAggregate,
+    UsageCostByModel,
+    UsageCostSummary,
+    UsageMetricsSummary,
+    UsageSummaryPayload,
+    UsageWindowRow,
+    UsageWindowSnapshot,
+)
 from app.core.utils.time import from_epoch_seconds
 from app.db.models import Account, AdditionalUsageHistory
 from app.db.request_models import RequestLog
-from app.modules.usage.schemas import MetricsTrends, TrendPoint, UsageCost, UsageHistoryItem, UsageHistoryResponse, UsageMetrics, UsageSummaryResponse, UsageWindow, UsageWindowResponse  # noqa: I001  # fmt: skip
+from app.modules.usage.schemas import (  # noqa: I001  # fmt: skip
+    MetricsTrends,
+    TrendPoint,
+    UsageCost,
+    UsageHistoryItem,
+    UsageHistoryResponse,
+    UsageMetrics,
+    UsageSummaryResponse,
+    UsageWindow,
+    UsageWindowResponse,
+)
 
 _BUCKET_COUNT = 28
 _BUCKET_SECONDS = 21600
@@ -288,7 +307,7 @@ def _cost_summary_from_logs(logs: list[RequestLog]) -> UsageCostSummary:
     for log in logs:
         cost = cost_from_log(log)
         if cost is None:
-            tokens = (log.input_tokens or 0) + (log.output_tokens or 0)
+            tokens = total_tokens_from_log(log) or 0
             if tokens > 0:
                 unpriced_requests += 1
                 unpriced_tokens += tokens
