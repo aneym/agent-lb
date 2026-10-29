@@ -70,3 +70,9 @@ def caller_host_paths(brief: str, root: Path) -> list[str]:
     if capped[0]:
         return [*found, f"(more than {MAX_TOKENS} path tokens)"]
     return found
+
+
+def remote_brief(brief: str, roots: set[Path], scratch: str) -> str:
+    spellings = sorted({str(root) for root in roots}, key=len, reverse=True)
+    pattern = re.compile("(?:" + "|".join(map(re.escape, spellings)) + r")(?![\w-]|\.[\w-])")
+    return pattern.sub(lambda _: scratch, brief)

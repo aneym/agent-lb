@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from route_brief_paths import caller_host_paths  # pyrefly: ignore [missing-import]
+from route_brief_paths import caller_host_paths, remote_brief  # pyrefly: ignore [missing-import]
 from route_pace_state import reservation_request  # pyrefly: ignore [missing-import]
 from route_resolve_one import append_decision  # pyrefly: ignore [missing-import]
 from route_run_checkout import (  # pyrefly: ignore [missing-import]
@@ -31,6 +31,21 @@ from route_versioned_rules import EXIT_OK, EXIT_WAIT, load_table, now_iso, setup
 def provider_command(row: dict, cwd: str, write: bool, help_text: str) -> list[str]:
     provider = row["target"]["providerInstanceId"]
     if provider == "codex":
+        if write:
+            sandbox = ["--sandbox", "danger-full-access"]
+        elif row.get("remote_scratch"):
+            common = row["remote_common_dir"]
+            git_roots = [row["remote_git_dir"], *(f"{common}/{name}" for name in ("objects", "refs", "logs"))]
+            sandbox = [
+                "--sandbox",
+                "workspace-write",
+                "-c",
+                "sandbox_workspace_write.network_access=true",
+                "-c",
+                "sandbox_workspace_write.writable_roots=" + json.dumps(git_roots),
+            ]
+        else:
+            sandbox = ["--sandbox", "read-only"]
         return [
             "codex",
             "exec",
@@ -38,8 +53,7 @@ def provider_command(row: dict, cwd: str, write: bool, help_text: str) -> list[s
             row["model"],
             "-c",
             "model_reasoning_effort=" + json.dumps(row["effort"]),
-            "--sandbox",
-            "danger-full-access" if write else "read-only",
+            *sandbox,
             "--cd=" + cwd,
             "--skip-git-repo-check",
             "--json",
@@ -121,6 +135,8 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
                         raise ValueError("brief names caller-host paths " + ", ".join(named[:3]))
                 row.update(prepare_remote(cwd, row))
                 execution_cwd = row["execution_cwd"]
+                top = Path(git_value(cwd, "rev-parse", "--show-toplevel"))
+                brief = remote_brief(brief, {top, top.resolve(), repo_root(cwd)}, row["remote_scratch"])
                 host = row["ssh_host"]
             except ValueError as error:
                 row["placement_reason"] += f"; {error}"

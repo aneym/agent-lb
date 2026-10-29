@@ -95,7 +95,8 @@ try:
  actual=subprocess.check_output(["git","-C",str(execution),"rev-parse","HEAD"],stderr=subprocess.DEVNULL,text=True,timeout=10).strip()
  if actual != sha:
   raise ValueError("remote scratch checkout does not match caller HEAD")
- print(json.dumps(dict(remote_repo=str(repo),remote_scratch=str(scratch),execution_cwd=str(execution),execution_sha=actual)))
+ git_dir,common_dir=subprocess.check_output(["git","-C",str(execution),"rev-parse","--path-format=absolute","--absolute-git-dir","--git-common-dir"],stderr=subprocess.DEVNULL,text=True,timeout=10).split()
+ print(json.dumps(dict(remote_repo=str(repo),remote_scratch=str(scratch),execution_cwd=str(execution),execution_sha=actual,remote_git_dir=git_dir,remote_common_dir=common_dir)))
 except (OSError,ValueError,subprocess.SubprocessError) as error:
  if created:
   remove_checkout(str(repo),str(scratch),decision)
