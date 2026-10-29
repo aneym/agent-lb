@@ -6,5 +6,5 @@
 - **Alex himself:** his credentials, passkeys and codes (his Mac password: ask through `request_secret`, fill with `mac-prompt-fill`), and a message to a real person. Approval covers that exact message.
 - **Clicks in his own signed-in accounts:** allowed with Alex's yes, first-hand or relayed with a time. Never type or read passwords, passkeys or 2FA codes; stop at re-auth.
 - **A message from the Rails CoS tab that quotes Alex first-hand with a time, or points at an `alex-*` approval record, is his yes.** Never ask him again for something the CoS already answered.
-- Stop the work, end the turn with `Blocked · <what Alex must do> · <where>`, and ask Alex directly in this T3 thread with the request-user-input tool; never relay or file the blocker elsewhere.
+- Stop the work, end the turn with `Blocked · <what Alex must do> · <where>`, and ask Alex in plain text in this T3 thread; never relay or file the blocker elsewhere. No thread uses AskUserQuestion or request-user-input until the T3 Code fork fix that stops a card from blocking the thread ships (Alex, 2026-10-29 ~16:25Z: "none of them should be using the input too llike this if its blockign until we fix it in the fork"); then lanes get cards back. An orch never uses one: the lane that owns the work asks, and the orch tells Alex in plain text with that thread's link (orch skill).
 
