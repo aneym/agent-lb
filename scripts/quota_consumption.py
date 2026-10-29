@@ -104,8 +104,11 @@ def activity_sql(args: argparse.Namespace, accounts: list[str]) -> str:
         cohort = f"{COHORT_COLUMNS[kind]} like {literal(value)}"
     listed = ", ".join(literal(account) for account in accounts) or "null"
     return f"""
-select account_id, count(*) as requests, count(*) filter (where {cohort}) as cohort_requests,
-  count(*) filter (where status <> 'success') as error_requests
+select account_id,
+  count(distinct coalesce(request_id, id::text)) filter (where status = 'success') as requests,
+  count(distinct coalesce(request_id, id::text)) filter (where status = 'success' and {cohort}) as cohort_requests,
+  count(*) filter (where status <> 'success') as error_requests,
+  count(*) as attempts
 from request_logs where {range_sql(args, "requested_at")} and deleted_at is null and account_id in ({listed})
 group by account_id
 """
@@ -136,6 +139,7 @@ def main() -> None:
         seen = activity.get(row["account_id"], {})
         row["requests"] = seen.get("requests", 0)
         row["error_requests"] = seen.get("error_requests", 0)
+        row["attempts"] = seen.get("attempts", 0)
         if args.cohort:
             row["cohort_requests"] = seen.get("cohort_requests", 0)
             share = row["cohort_requests"] / row["requests"] if row["requests"] else 0
