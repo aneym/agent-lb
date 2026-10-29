@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from codex_home import BRANCH_GUARD_COMMAND  # type: ignore[missing-import]
+from codex_home import FLOOR_COMMANDS  # type: ignore[missing-import]
 
 
 def rpc(proc: subprocess.Popen[str], request_id: int, method: str, params: dict[str, object]) -> dict[str, Any]:
@@ -49,7 +49,7 @@ def trust_floor_hooks(home: Path, timeout: float = 90) -> str:
         pending = {
             hook["key"]: {"trusted_hash": hook["currentHash"]}
             for hook in hooks
-            if hook.get("command") == BRANCH_GUARD_COMMAND
+            if hook.get("command") in FLOOR_COMMANDS
             and str(hook.get("key", "")).startswith(f"{hooks_file}:")
             and hook.get("trustStatus") in {"untrusted", "modified"}
         }

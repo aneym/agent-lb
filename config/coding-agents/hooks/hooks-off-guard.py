@@ -10,6 +10,38 @@ WRITES = re.compile(
     r"|\bconfig\s+set\b|--settings\b"
 )
 BARE = re.compile(r"\bclaude\b[^|;&]*\s--(?:bare|safe-mode)\b")
+PATCH_FILE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$")
+
+
+def settings_path(path, cwd):
+    path = os.path.join(cwd, os.path.expanduser(path.strip()))
+    return any(SETTINGS_FILE.search(p) for p in (path, os.path.realpath(path)))
+
+
+def patched(data, cwd):
+    patch = str(data.get("command") or data.get("patch") or data.get("input") or "")
+    sections, current = [], None
+    for line in patch.splitlines():
+        match = PATCH_FILE.match(line)
+        if match:
+            if match[1] == "Move to" and current is not None:
+                current["targets"].append(match[2])
+                try:
+                    with open(os.path.join(cwd, os.path.expanduser(current["targets"][0].strip()))) as handle:
+                        current["added"].append(handle.read())
+                except OSError:
+                    pass
+                continue
+            current = {"targets": [match[2]], "added": []}
+            sections.append(current)
+        elif current is not None and line.startswith("+"):
+            current["added"].append(line[1:])
+    return "\n".join(
+        text
+        for section in sections
+        if any(settings_path(t, cwd) for t in section["targets"])
+        for text in section["added"]
+    )
 
 
 def edited(tool, data):
@@ -45,6 +77,14 @@ def reason(payload):
         if mentioned and WRITES.search(command):
             return f"Writing {', '.join(mentioned)} switches every floor hook off; that is a kept floor."
         return None
+    if tool == "apply_patch":
+        text = patched(data, str(payload.get("cwd") or os.getcwd()))
+        mentioned = [name for name in names if name.lower() in text.lower()]
+        return (
+            f"Patching {', '.join(mentioned)} into Claude Code settings switches every floor hook off; that is a kept floor."
+            if mentioned
+            else None
+        )
     text = edited(tool, data)
     if text is None:
         return None

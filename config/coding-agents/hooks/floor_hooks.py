@@ -1,9 +1,9 @@
 import codecs
-import functools
 import hashlib
 import os
 import re
 import shlex
+import stat
 from pathlib import Path
 
 FLOOR_HOOKS = {
@@ -95,23 +95,21 @@ def path_tokens(command):
     return {re.sub(r"^(?:\$HOME|\$\{HOME\}|~)(?=/|$)", home, token) for token in tokens}
 
 
-@functools.lru_cache(maxsize=4096)
-def file_digest(path, mtime, size):
-    try:
-        with open(path, "rb") as handle:
-            return hashlib.sha256(handle.read()).hexdigest()
-    except OSError:
-        return None
-
-
 def digest(path):
     try:
-        info = os.stat(path)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except OSError:
         return None
-    if not os.path.isfile(path) or info.st_size > MAX_DIGEST_BYTES:
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            data = handle.read(MAX_DIGEST_BYTES + 1)
+    except OSError:
         return None
-    return file_digest(path, info.st_mtime_ns, info.st_size)
+    finally:
+        os.close(fd)
+    return hashlib.sha256(data).hexdigest() if len(data) <= MAX_DIGEST_BYTES else None
 
 
 def floor_digests():
@@ -186,7 +184,12 @@ FAIL_OPEN = re.compile(
     r'if \[ -r "(?P<path>[^"]+)" \]; then (?P<run>[^;]+); '
     r"else printf '%s\\n' \"hook warning: missing (?P=path); continuing\" >&2; fi # hook missing: fail open"
 )
-INTERPRETERS = {"node", "bash", "sh", "zsh"}
+INTERPRETERS = tuple(
+    path
+    for path in ("/usr/bin/python3", "/opt/homebrew/bin/python3", "/opt/homebrew/bin/node", "/bin/bash")
+    if os.path.isfile(path)
+)
+ENV = ("env", "/usr/bin/env")
 UNSAFE = set(";&|<>()`$*?[]{}!\\'\"\n")
 
 
@@ -204,14 +207,11 @@ def script_path(command):
     words = [re.sub(r"^(?:\$HOME|\$\{HOME\}|~)(?=/)", lambda _: home, word) for word in words]
     if not words or any(set(word) & UNSAFE for word in words):
         return None
-    head = os.path.basename(words[0])
-    if head.startswith("python") or head in INTERPRETERS:
-        if "/" in words[0] and not words[0].startswith("/"):
-            return None
+    if words[0] in ENV:
         words = words[1:]
-    if not words or not words[0].startswith("/") or any("/" in word for word in words[1:]):
+    if len(words) != 2 or words[0] not in INTERPRETERS or not words[1].startswith("/"):
         return None
-    real = os.path.realpath(words[0])
+    real = os.path.realpath(words[1])
     return real if os.path.isfile(real) else None
 
 
@@ -222,7 +222,8 @@ def non_floor(command, scripts, exact=frozenset()):
     if inner is not None:
         return non_floor(inner, scripts, exact)
     if command in exact:
-        return True
+        reals = {os.path.realpath(token) for token in path_tokens(command)}
+        return all(digest(real) in scripts[real] for real in reals if real in scripts)
     real = script_path(command)
     if not real:
         return False

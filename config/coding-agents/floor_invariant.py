@@ -104,7 +104,7 @@ def hooks_off_problems(home: Path, changes: dict[Path, str | None]) -> list[str]
 
 
 def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
-    problems, check = [], non_floor_check(home, changes)
+    problems, check = [], non_floor_check(home)
     registry, settings = home / REGISTRY_DIR / "registry.json", home / ".claude/settings.json"
     for path, content in changes.items():
         owner = managed_dir(home, path)
@@ -129,6 +129,9 @@ def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             problems.append(f"{path}: {exc}")
             continue
+        for context, matcher, hook in after:
+            if floor_unwrap(json.loads(hook).get("command") or "", check):
+                problems.append(f"{path}: floor entry at {context} matcher {matcher} keeps a fail-open wrapper: {hook}")
         for context, matcher, hook in gone:
             problems.append(f"{path}: floor entry at {context} matcher {matcher} would change or go: {hook}")
         for context, matcher, hook in (Counter(after) - Counter(before)).elements():

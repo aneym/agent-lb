@@ -31,7 +31,7 @@ def hook_targets(value: Any, home: Path) -> Iterator[Path]:
 
 
 def keep_floor_targets(home: Path, changes: dict[Path, str | None], value: Any, check: Any = None) -> None:
-    check = check or non_floor_check(home, changes)
+    check = check or non_floor_check(home)
     if isinstance(value, dict):
         command = value.get("command")
         if isinstance(command, str) and not check(command):

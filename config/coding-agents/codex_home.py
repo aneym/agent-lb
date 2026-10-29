@@ -9,7 +9,13 @@ OFFLOAD_COMMAND = (
     '[ -x "$P" ] || P=python3; if [ -r "$H" ]; then exec "$P" "$H"; fi'
 )
 BRANCH_GUARD_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/branch-guard.py"'
-MANAGED_COMMANDS = {OFFLOAD_COMMAND: 20, BRANCH_GUARD_COMMAND: 10}
+HOOKS_OFF_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/hooks-off-guard.py"'
+FLOOR_COMMANDS = (BRANCH_GUARD_COMMAND, HOOKS_OFF_COMMAND)
+MANAGED_COMMANDS = {
+    OFFLOAD_COMMAND: (20, "Bash"),
+    BRANCH_GUARD_COMMAND: (10, "Bash"),
+    HOOKS_OFF_COMMAND: (10, "apply_patch"),
+}
 
 
 def reconcile_codex_config(text: str, model: str) -> str:
@@ -57,9 +63,9 @@ def reconcile_codex_hooks(text: str, install: bool) -> str:
         if hooks or not group.get("hooks"):
             kept.append(dict(group, hooks=hooks))
     if install:
-        for command, timeout in MANAGED_COMMANDS.items():
+        for command, (timeout, matcher) in MANAGED_COMMANDS.items():
             entry: dict[str, object] = {"type": "command", "command": command, "timeout": timeout}
-            kept.append({"matcher": "Bash", "hooks": [entry]})
+            kept.append({"matcher": matcher, "hooks": [entry]})
     data["hooks"]["PreToolUse"] = kept
     desired = json.dumps(data, indent=2) + "\n"
     return text if text.strip() and json.loads(text) == data else desired
