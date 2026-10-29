@@ -375,45 +375,23 @@ def commands(text, cwd, depth=0):
     return found
 
 
-TRUSTED_CALLERS = (".agent-rails/factory-runtime.releases", ".agent-rails/factory-runtime", ".agent-rails/overlay")
-
-
-def caller_script(pid):
-    try:
-        argv = [part.decode() for part in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:-1]]
-        base = os.readlink(f"/proc/{pid}/cwd")
-    except OSError:
-        ps = subprocess.run(
-            ["ps", "-o", "command=", "-p", pid], capture_output=True, text=True, timeout=10, check=False
-        )
-        argv, base = ps.stdout.split(), "/"
-    if not argv or not Path(argv[0]).name.startswith("python"):
-        return None
-    skip = False
-    for arg in argv[1:]:
-        if skip or arg in {"-X", "-W"}:
-            skip = not skip
-        elif arg in {"-c", "-m", "-"}:
-            return None
-        elif not arg.startswith("-"):
-            return Path(os.path.realpath(Path(base) / arg))
-    return None
-
-
-def argv_main(pid, args):
+def argv_main(args):
     found = commands(shlex.join(["git", *args]), os.getcwd())
     reasons = [action.removeprefix("push denied: ") for action, _ in found if action.startswith("push denied: ")]
-    script = caller_script(pid) if reasons else None
-    roots = [Path(os.path.realpath(Path.home() / root)) for root in TRUSTED_CALLERS]
-    if not reasons or script and any(script.is_relative_to(root) for root in roots):
+    if not reasons:
         return 0
     print(f"git push refused: {reasons[0]}", file=sys.stderr)
     return 2
 
 
 def main():
-    if sys.argv[1:2] == ["--git-argv"] and sys.argv[3:4] == ["--"]:
-        return argv_main(sys.argv[2], sys.argv[4:])
+    if sys.argv[1:2] == ["--git-argv"]:
+        if sys.argv[2:3] == ["--"]:
+            return argv_main(sys.argv[3:])
+        print(
+            "git push refused: branch-guard --git-argv expects `-- <git args>`; update the git shim.", file=sys.stderr
+        )
+        return 2
     try:
         payload = json.load(sys.stdin)
         tool = payload.get("tool_input") or {}
