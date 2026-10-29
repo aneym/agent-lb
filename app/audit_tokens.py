@@ -119,10 +119,28 @@ def load_receipts(args, since, until, notes):
                 for r in cursor.fetchall()
             }
             cursor.execute(
-                """SELECT account_id,provider,"window",window_minutes,used_percent,recorded_at,reset_at
+                """WITH quota AS (
+                SELECT id,account_id,provider,"window",window_minutes,used_percent,recorded_at,reset_at,
+                CASE WHEN provider='anthropic' AND "window"='secondary' THEN 'weekly'
+                WHEN provider='openai' AND window_minutes=10080 AND "window"='primary' THEN 'weekly'
+                ELSE '5h' END AS quota_window
                 FROM usage_history WHERE recorded_at >= %s AND recorded_at <= %s
+                AND used_percent IS NOT NULL AND reset_at IS NOT NULL
+                AND ((provider='anthropic' AND "window"='secondary')
+                OR (provider='openai' AND window_minutes=10080 AND "window"='primary')
+                OR (provider='anthropic' AND window_minutes=300 AND "window"='primary'))
+                ), changes AS (
+                SELECT *, lag(used_percent) OVER run AS prior_used, lag(reset_at) OVER run AS prior_reset
+                FROM quota WINDOW run AS (PARTITION BY provider,account_id,quota_window ORDER BY recorded_at,id)
+                )
+                SELECT account_id,provider,"window",window_minutes,used_percent,recorded_at,reset_at FROM changes
+                WHERE recorded_at >= %s OR prior_used IS NULL OR prior_used <> used_percent OR prior_reset <> reset_at
                 ORDER BY provider,account_id,recorded_at""",
-                ((since - timedelta(days=14)).replace(tzinfo=None), until.replace(tzinfo=None)),
+                (
+                    (since - timedelta(days=14)).replace(tzinfo=None),
+                    until.replace(tzinfo=None),
+                    since.replace(tzinfo=None),
+                ),
             )
             snapshots = cursor.fetchall()
             cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='request_logs'")
