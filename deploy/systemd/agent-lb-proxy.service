@@ -1,0 +1,14 @@
+[Unit]
+Description=Box-local agent-lb failover proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/agent-lb/lb-proxy.env
+ExecStart=%h/.local/bin/caddy run --config %h/.config/agent-lb/lb-proxy/Caddyfile --adapter caddyfile
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

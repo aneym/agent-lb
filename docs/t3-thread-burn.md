@@ -80,7 +80,7 @@ Writes are idempotent upserts. Threads key on `(host, thread_id)`, using dialect
 
 Transport:
 - **Studio** posts to `http://127.0.0.1:2455` (local, trusted).
-- **ax42** posts to `http://127.0.0.1:2457`, the `factory-lb-proxy` Caddy hop that goes only to the primary `https://studio.tailf266ac.ts.net:2455`. Studio admits ax42's tailnet address without a key. Checked: `GET /api/pools` returns 200 through 2457, and an empty `POST /api/pools/reservations` returns 422 rather than 401. Do **not** use 2456. Its default route fails over to the ax42 edge on 2458, which has its own database. If Studio cannot be reached, the post fails, the collector exits 1 without moving its cursor, and the next tick retries.
+- **ax42** posts to `http://127.0.0.1:2457`, the `agent-lb-proxy` Caddy hop that goes only to the primary `https://studio.tailf266ac.ts.net:2455`. Studio admits ax42's tailnet address without a key. Checked: `GET /api/pools` returns 200 through 2457, and an empty `POST /api/pools/reservations` returns 422 rather than 401. Do **not** use 2456. Its default route fails over to the ax42 edge on 2458, which has its own database. If Studio cannot be reached, the post fails, the collector exits 1 without moving its cursor, and the next tick retries.
 
 The collector never sends message text, prompts or attachments. It sends titles, project names, workspace paths, ids and timestamps only.
 

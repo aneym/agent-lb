@@ -1,0 +1,57 @@
+{
+	admin off
+	default_bind 127.0.0.1
+	grace_period 10s
+}
+
+http://127.0.0.1:{$AGENT_LB_HOP_PORT:2457} {
+	handle_errors {
+		abort
+	}
+	reverse_proxy {$AGENT_LB_PRIMARY} {
+		flush_interval -1
+		header_up Host {upstream_hostport}
+		transport http {
+			read_timeout 20m
+			write_timeout 20m
+			keepalive 10m
+			keepalive_interval 15s
+			keepalive_idle_conns 128
+			keepalive_idle_conns_per_host 64
+		}
+	}
+}
+
+http://127.0.0.1:{$AGENT_LB_PROXY_PORT:2456} {
+	log
+	log_append upstream {http.reverse_proxy.upstream.address}
+	@pool_state {
+		method GET
+		path /api/pools /api/pools/* /api/accounts /api/models /api/models/*
+	}
+	reverse_proxy @pool_state http://127.0.0.1:{$AGENT_LB_HOP_PORT:2457} {
+		flush_interval -1
+	}
+	@reservations path /api/pools/reservations /api/pools/reservations/*
+	reverse_proxy @reservations http://127.0.0.1:{$AGENT_LB_HOP_PORT:2457} {
+		flush_interval -1
+	}
+	reverse_proxy {$AGENT_LB_OUTER_UPSTREAMS} {
+		lb_policy first
+		health_uri /health/ready
+		health_interval 5s
+		health_timeout 2s
+		health_status 200
+		health_fails 2
+		fail_duration 30s
+		lb_try_duration 10s
+		lb_try_interval 100ms
+		max_fails 1
+		flush_interval -1
+		header_up Host {upstream_hostport}
+		transport http {
+			read_timeout 20m
+			write_timeout 20m
+		}
+	}
+}
