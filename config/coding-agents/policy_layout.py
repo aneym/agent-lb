@@ -134,6 +134,7 @@ POLICY_FILES = (
     "hookd_install.py",
     "hook_retired_invocation.py",
     "floor_invariant.py",
+    "floor_allowlist.py",
     "claude_config_hooks.py",
     *(path.name for path in sorted(Path(__file__).resolve().parent.glob("policy_*.py"))),
     "dispatch_parity.py",

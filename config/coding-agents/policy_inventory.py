@@ -63,6 +63,7 @@ MANAGED_HOOKS = (
     "no_chrome_doubt.py",
     "idle-agents.py",
     "branch-guard.py",
+    "hooks-off-guard.py",
     "hook_output.py",
     "hook_failure_recovery.py",
     "hook_prefilters.py",

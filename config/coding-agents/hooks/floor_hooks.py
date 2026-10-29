@@ -23,10 +23,11 @@ FLOOR_HOOKS = {
     "gh-write-guard.py": "git: no gh writes",
     "kill-scope-guard.py": "destructive: kills limited to the agent's own scope",
     "merge-gate-guard.py": "git: no merge around the gate",
+    "desktop-guard": "real people, his accounts and spend: agents stay off his desktop, where those happen",
+    "wide-scan-guard.sh": "secrets: no recursive reads that print secrets",
+    "hooks-off-guard.py": "every floor: no setting that switches Claude Code hooks off",
 }
 NON_FLOOR_GUARDS = {
-    "desktop-guard": "routing rule (computer use off his desktop), not a kept floor",
-    "wide-scan-guard.sh": "house-tools rule against wide greps, not a kept floor",
     "sleep-loop-guard.py": "wait hygiene, not a kept floor",
     "seat-guard.py": "seat routing advice, not a kept floor",
     "herdr-shell-host-guard.py": "herdr pane host check, not a kept floor",
@@ -163,3 +164,72 @@ def unclassified_guards(command):
 
 def accepted_forms(command):
     return (command,) + ACCEPTED_FORMS.get(command, ())
+
+
+HOOKS_OFF_KEYS = ("disableAllHooks", "allowManagedHooksOnly")
+HOOKS_OFF_ENV = ("CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SAFE_MODE")
+
+
+def hooks_off(settings):
+    if not isinstance(settings, dict):
+        return []
+    found = [key for key in HOOKS_OFF_KEYS if settings.get(key) not in (None, False)]
+    env = settings.get("env")
+    if isinstance(env, dict):
+        found += [
+            f"env.{name}" for name in HOOKS_OFF_ENV if str(env.get(name, "")).strip().lower() not in {"", "0", "false"}
+        ]
+    return found
+
+
+FAIL_OPEN = re.compile(
+    r'if \[ -r "(?P<path>[^"]+)" \]; then (?P<run>[^;]+); '
+    r"else printf '%s\\n' \"hook warning: missing (?P=path); continuing\" >&2; fi # hook missing: fail open"
+)
+INTERPRETERS = {"node", "bash", "sh", "zsh"}
+UNSAFE = set(";&|<>()`$*?[]{}!\\'\"\n")
+
+
+def unwrapped(command):
+    match = FAIL_OPEN.fullmatch(command) if isinstance(command, str) else None
+    return match["run"] if match else None
+
+
+def script_path(command):
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return None
+    home = os.path.expanduser("~")
+    words = [re.sub(r"^(?:\$HOME|\$\{HOME\}|~)(?=/)", lambda _: home, word) for word in words]
+    if not words or any(set(word) & UNSAFE for word in words):
+        return None
+    head = os.path.basename(words[0])
+    if head.startswith("python") or head in INTERPRETERS:
+        if "/" in words[0] and not words[0].startswith("/"):
+            return None
+        words = words[1:]
+    if not words or not words[0].startswith("/") or any("/" in word for word in words[1:]):
+        return None
+    real = os.path.realpath(words[0])
+    return real if os.path.isfile(real) else None
+
+
+def non_floor(command, scripts, exact=frozenset()):
+    if not isinstance(command, str) or mentioned_floors(command):
+        return False
+    inner = unwrapped(command)
+    if inner is not None:
+        return non_floor(inner, scripts, exact)
+    if command in exact:
+        return True
+    real = script_path(command)
+    if not real:
+        return False
+    value = digest(real)
+    return (
+        value is not None
+        and value in scripts.get(real, ())
+        and value not in floor_digests()
+        and stem(os.path.basename(real)) not in FLOOR_STEMS
+    )

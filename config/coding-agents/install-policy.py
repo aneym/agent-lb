@@ -20,6 +20,7 @@ from typing import Any
 from claude_config_hooks import claude_config_files  # type: ignore[missing-import]
 from codex_home import codex_changes  # type: ignore[missing-import]
 from codex_hook_trust import trust_floor_hooks  # type: ignore[missing-import]
+from floor_allowlist import non_floor_check, unwrap_floors  # type: ignore[missing-import]
 from dispatch_parity import run_parity  # type: ignore[missing-import]
 from harness_mcp import ensure_harness_mcp  # type: ignore[missing-import]
 from floor_invariant import refuse_floor_changes  # type: ignore[missing-import]
@@ -146,14 +147,12 @@ def main() -> int:
     new_registry: dict[str, Any] | None = None
     keep_fold = False
     if mode != "off" and isinstance(nxt.get("hooks"), dict):
-        only = None
+        only, check = None, non_floor_check(args.home)
         if mode == "sticky" and old_registry is not None:
             only = {}
             for event, groups in old_registry["per_hook"].items():
-                folded_groups = json.loads(
-                    json.dumps(
-                        [group for group in groups if group not in old_registry.get("dispatch", {}).get(event, [])]
-                    )
+                folded_groups = unwrap_floors(
+                    [group for group in groups if group not in old_registry.get("dispatch", {}).get(event, [])], check
                 )
                 only[event] = folded_groups
             for event, groups in handlers.items():
@@ -274,7 +273,7 @@ def main() -> int:
             def relocate(value: Any) -> None:
                 if isinstance(value, dict):
                     if isinstance(value.get("command"), str):
-                        internal_hook_commands({"legacy": [{"hooks": [value]}]})
+                        internal_hook_commands({"legacy": [{"hooks": [value]}]}, non_floor_check(args.home))
                     for child in value.values():
                         relocate(child)
                 elif isinstance(value, list):

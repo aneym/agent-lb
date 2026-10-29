@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_config_hooks import claude_config_hooks  # type: ignore[missing-import]
-from floor_hooks import mentioned_floors  # type: ignore[missing-import]
+from floor_allowlist import floor_unwrap, non_floor_check  # type: ignore[missing-import]
 from policy_documents import read_text  # type: ignore[missing-import]
 from policy_hook_groups import drop_hooks, is_settings_hook, settled_matcher  # type: ignore[missing-import]  # fmt: skip
 from policy_layout import EFFORT_LEVEL, HAIKU_ENV, MANAGED_AGENTS, MODEL, OBSERVATIONAL_HOOKS, POLICY_DIR, POLICY_SNAPSHOT, RELAY_SEATS, SETTINGS_HOOKS, SOL_ID, SOL_MODEL, SONNET_ENV, SONNET_ID, SONNET_MODEL  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
@@ -126,13 +126,19 @@ def check_policy(source: Path, home: Path, snapshot: dict[str, Any]) -> int:
     return int(bool(problems))
 
 
-def internal_hook_commands(hooks: dict[str, Any]) -> None:
+def internal_hook_commands(hooks: dict[str, Any], check: Any) -> None:
 
     for groups in hooks.values():
         for group in groups:
             for hook in group.get("hooks", []):
                 command = hook.get("command")
-                if not isinstance(command, str) or mentioned_floors(command):
+                if not isinstance(command, str):
+                    continue
+                inner = floor_unwrap(command, check)
+                if inner:
+                    hook["command"] = inner
+                    continue
+                if not check(command):
                     continue
 
                 command = re.sub(r'/[^\s"\':;]*/repos/skill-stats/', "$HOME/.local/share/skill-stats/", command)
@@ -157,7 +163,7 @@ def reconcile_settings(
     home: Path | None = None,
 ) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
-    hooks = updated.get("hooks", {})
+    hooks, check = updated.get("hooks", {}), non_floor_check(home)
     if isinstance(hooks, dict):
         hooks, dropped, refused = drop_hooks(hooks, retired_kept)
         for line in dropped:
@@ -172,7 +178,7 @@ def reconcile_settings(
             for group in groups:
                 for hook in group["hooks"]:
                     command = hook.get("command", "")
-                    if event == "PreToolUse" or mentioned_floors(command):
+                    if event == "PreToolUse" or not check(command):
                         continue
                     if "skill-stats" in command:
                         hook["timeout"] = 3
@@ -199,7 +205,7 @@ def reconcile_settings(
                     "hooks": [
                         hook
                         for hook in group.get("hooks", [])
-                        if mentioned_floors(hook.get("command"))
+                        if not check(hook.get("command"))
                         or not any(is_settings_hook(hook.get("command"), owned) for owned in managed)
                     ],
                 }
@@ -261,7 +267,7 @@ def reconcile_settings(
                 new_group["matcher"] = matcher
             event_groups.append(new_group)
     if not uninstall and source is not None:
-        internal_hook_commands(updated.get("hooks", {}))
+        internal_hook_commands(updated.get("hooks", {}), check)
     dedupe_hooks(updated.get("hooks"))
     return updated
 

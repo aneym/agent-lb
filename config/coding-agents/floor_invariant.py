@@ -7,7 +7,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from floor_hooks import FLOOR_MENTIONS, accepted_forms, mentioned_floors, unclassified_guards  # type: ignore[missing-import]
+from floor_allowlist import floor_unwrap, non_floor_check  # type: ignore[missing-import]
+from floor_hooks import accepted_forms, hooks_off, unclassified_guards  # type: ignore[missing-import]
 
 HOOK_DOCUMENTS = {
     ".claude/settings.json": ".claude",
@@ -16,6 +17,8 @@ HOOK_DOCUMENTS = {
 }
 REGISTRY_DIR = ".claude/hooks/dispatch"
 NAME_LIST = re.compile(r"[A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*")
+DISPATCH_REV = re.compile(r"(hook-dispatch\.py\" \S+ '[^']*' )[0-9a-f]{12}")
+SETTINGS_DOCUMENTS = (".claude/settings.json", ".claude/settings.local.json")
 
 
 def managed_dir(home: Path, path: Path) -> Path | None:
@@ -32,27 +35,33 @@ def outside(path: Path, home: Path, owner: Path) -> bool:
     return os.path.commonpath([real, root]) != root
 
 
-def floor_entries(value: Any, context: tuple[str, ...] = (), matcher: Any = None):
+def entry_text(value: dict[str, Any], check: Any, live: bool) -> str:
+    command = value["command"]
+    if DISPATCH_REV.search(command):
+        return json.dumps({"command": DISPATCH_REV.sub(r"\1<rev>", command)})
+    inner = floor_unwrap(command, check) if live else None
+    return json.dumps(dict(value, command=inner) if inner else value, sort_keys=True)
+
+
+def floor_entries(value: Any, check: Any, live: bool, context: tuple[str, ...] = (), matcher: Any = None):
     if isinstance(value, dict):
         matcher = value.get("matcher", matcher)
-        if mentioned_floors(value.get("command")):
-            yield "/".join(context), json.dumps(matcher), json.dumps(value, sort_keys=True)
+        if isinstance(value.get("command"), str) and not check(value["command"]):
+            yield "/".join(context), json.dumps(matcher), entry_text(value, check, live)
         for key, child in value.items():
-            yield from floor_entries(child, context + (str(key),), matcher)
+            yield from floor_entries(child, check, live, context + (str(key),), matcher)
     elif isinstance(value, list):
         for child in value:
-            yield from floor_entries(child, context, matcher)
+            yield from floor_entries(child, check, live, context, matcher)
 
 
-def document_entries(text: str | None, label: str) -> list[tuple[str, str, str]]:
+def document_entries(text: str | None, label: str, check: Any, live: bool = False) -> list[tuple[str, str, str]]:
     if text is None or not text.strip():
         return []
     try:
-        return list(floor_entries(json.loads(text)))
+        return list(floor_entries(json.loads(text), check, live))
     except ValueError:
-        if mentioned_floors(text) or any(term in text for term in FLOOR_MENTIONS):
-            raise ValueError(f"{label} does not parse as JSON and mentions a floor hook")
-        return []
+        raise ValueError(f"{label} does not parse as JSON, so no hook entry in it can be checked") from None
 
 
 def placed(entry: tuple[str, str, str]) -> tuple[str, str, str]:
@@ -78,8 +87,24 @@ def planned_text(path: Path, changes: dict[Path, str | None]) -> str | None:
     return path.read_text() if path.is_file() else None
 
 
-def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
+def hooks_off_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
     problems = []
+    for name in SETTINGS_DOCUMENTS:
+        path = home / name
+        for label, text in (
+            ("live", path.read_text() if path.is_file() else None),
+            ("planned", planned_text(path, changes)),
+        ):
+            try:
+                found = hooks_off(json.loads(text)) if text and text.strip() else []
+            except ValueError:
+                continue
+            problems += [f"{path}: {label} settings set {key}, which switches floor hooks off" for key in found]
+    return list(dict.fromkeys(problems))
+
+
+def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
+    problems, check = [], non_floor_check(home, changes)
     registry, settings = home / REGISTRY_DIR / "registry.json", home / ".claude/settings.json"
     for path, content in changes.items():
         owner = managed_dir(home, path)
@@ -89,14 +114,14 @@ def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
             problems.append(f"{path}: resolves outside {owner}")
             continue
         try:
-            before = document_entries(path.read_text() if path.is_file() else None, f"live {path}")
-            after = document_entries(content, f"planned {path}")
+            before = document_entries(path.read_text() if path.is_file() else None, f"live {path}", check, True)
+            after = document_entries(content, f"planned {path}", check)
             if content is None and owner == home / REGISTRY_DIR:
                 kept = Counter(
                     placed(entry)
                     for doc in (registry, settings)
                     if doc != path
-                    for entry in document_entries(planned_text(doc, changes), f"planned {doc}")
+                    for entry in document_entries(planned_text(doc, changes), f"planned {doc}", check)
                 )
                 gone = [entry for entry in before if not kept[placed(entry)]]
             else:
@@ -146,7 +171,7 @@ def guard_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
 
 
 def refuse_floor_changes(home: Path, changes: dict[Path, str | None]) -> None:
-    problems = floor_problems(home, changes) + guard_problems(home, changes)
+    problems = floor_problems(home, changes) + guard_problems(home, changes) + hooks_off_problems(home, changes)
     if problems:
         for line in problems:
             print(f"floor invariant: {line}")
