@@ -8,6 +8,30 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+try:
+    from git_push_floor import (  # type: ignore[missing-import]
+        ASSIGNMENT,
+        BYPASS,
+        COMMON_COMMANDS,
+        DASHED,
+        FORCE_PUSH,
+        PUSH_VERBS,
+        UNRESOLVED,
+        judge,
+        push_reason,
+        split_globals,
+    )
+except ImportError as error:
+    text = " ".join(sys.argv[3:]) if sys.argv[1:2] == ["--git-argv"] else sys.stdin.read()
+    if sys.argv[1:2] == ["--git-argv"] or re.search(r"(?<![\w-])git(?![\w-])", text):
+        print(
+            f"git refused: the force-push floor cannot load git_push_floor.py ({error}); run coding-agents-sync.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    sys.exit(0)
+
 SHARED = (Path("/Volumes") / "StudioExt" / "repos", Path.home() / "repos")
 
 
@@ -145,84 +169,17 @@ def fallback_commands(text, cwd):
     return found
 
 
-BYPASS = "Git hook bypass is forbidden: do not use --no-verify, -n or core.hooksPath overrides; fix the hook failure."
-FORCE_PUSH = (
-    "Force pushes (--force, -f, --force-with-lease, --force-if-includes, --mirror, +refspec) are a kept floor; "
-    "push rebased work to a new branch instead."
-)
+WRAPPERS = {"env", "command", "exec", "sudo", "doas", "nohup", "time", "timeout", "nice", "setsid", "stdbuf"}
+CONFIG_NAME = re.compile(r"(?:GIT_\w*|HOME|XDG_CONFIG_HOME)(?:=|$)")
 
 
-CONFIG_ENV = "git --config-env on a push or alias hides its value; use -c."
-RECEIVE = "git receive-pack skips the force check; use git push."
-PUSH_VERBS = {"push", "send-pack", "http-push"}
-DASHED = {"git-send-pack", "git-receive-pack", "git-http-push"}
-FORCE_OPTIONS = ("force", "mirror", "force-with-lease", "force-if-includes")
-COMMON_COMMANDS = frozenset(
-    "add am apply bisect blame branch cat-file checkout cherry-pick clean clone commit config describe diff fetch "
-    "for-each-ref format-patch gc grep init log ls-files ls-remote ls-tree merge merge-base mv notes pull push rebase "
-    "reflog remote reset restore rev-list rev-parse revert rm show show-ref stash status submodule switch symbolic-ref "
-    "tag update-index update-ref worktree".split()
-)
-TRUE = {"", "true", "yes", "on", "1"}
+def changes_git_env(segment):
+    if segment[0] in {"export", "declare", "typeset", "local", "readonly", "unset"}:
+        return any(CONFIG_NAME.match(word) for word in segment[1:])
+    return all(ASSIGNMENT.fullmatch(word) for word in segment) and any(CONFIG_NAME.match(word) for word in segment)
 
 
-@lru_cache(maxsize=64)
-def config_items(where, inline):
-    items = [(value.split("=", 1) + [""])[:2] for value in inline]
-    if where:
-        flags = [part for value in inline for part in ("-c", value)]
-        try:
-            result = subprocess.run(
-                ["git", *flags, "-C", where, "config", "--get-regexp", r"^(remote\..*\.(push|mirror)|alias\..*)$"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            if result.returncode in {0, 1}:
-                items = [(line.split(" ", 1) + [""])[:2] for line in result.stdout.splitlines()]
-        except (OSError, subprocess.SubprocessError):
-            pass
-    return tuple((key, value) for key, value in items)
-
-
-def push_reason(args, items=()):
-    force, options, skip, operands, remote = False, True, None, [], None
-    for arg in args:
-        if skip:
-            remote = arg if skip == "--repo" else remote
-            skip = None
-            continue
-        if options and arg == "--":
-            options = False
-        elif options and arg.startswith("--"):
-            name = arg[2:].split("=", 1)[0]
-            force |= any(option.startswith(name) for option in FORCE_OPTIONS)
-            remote = arg.split("=", 1)[1] if arg.startswith("--repo=") else remote
-            skip = arg if arg in {"--repo", "--receive-pack", "--exec", "--push-option"} else None
-        elif options and arg.startswith("-") and arg != "-":
-            force |= "f" in arg[1:].split("o", 1)[0]
-            skip = "-o" if arg[1:].split("o", 1)[1:] == [""] else None
-        else:
-            operands.append(arg)
-    force |= any(operand.startswith("+") for operand in operands)
-    remote = operands[0] if operands else remote
-    for key, value in items:
-        lowered = key.lower()
-        if not lowered.startswith("remote.") or remote is not None and key[7:].rsplit(".", 1)[0] != remote:
-            continue
-        force |= lowered.endswith(".mirror") and value.strip().lower() in TRUE
-        force |= lowered.endswith(".push") and len(operands) < 2 and value.strip().startswith("+")
-    return FORCE_PUSH if force else None
-
-
-def alias_text(action, items):
-    if action in COMMON_COMMANDS:
-        return None
-    return next((value for key, value in reversed(items) if key.lower() == f"alias.{action.lower()}"), None)
-
-
-def commands(text, cwd, depth=0):
+def commands(text, cwd, depth=0, moved_env=False):
     if depth > 8:
         return [("unknown", None)]
     lexer = shlex.shlex(strip_heredocs(text).replace("\\\n", ""), posix=True, punctuation_chars=";&|()\n")
@@ -243,6 +200,8 @@ def commands(text, cwd, depth=0):
     for segment in segments:
         if not segment:
             continue
+        if changes_git_env(segment):
+            moved_env = True
         if any(word.startswith(("GIT_DIR=", "GIT_WORK_TREE=")) for word in segment):
             unsafe = True
         dashed = next((i for i, word in enumerate(segment) if Path(word).name in DASHED), None)
@@ -250,24 +209,29 @@ def commands(text, cwd, depth=0):
             segment = [*segment[:dashed], "git", Path(segment[dashed]).name[4:], *segment[dashed + 1 :]]
         git_index = next((i for i, word in enumerate(segment) if Path(word).name == "git"), None)
         if git_index is not None:
-            prefix_head = next((word for word in segment[:git_index] if "=" not in word), None)
-            if prefix_head is not None and Path(prefix_head).name not in {
-                "env",
-                "command",
-                "exec",
-                "sudo",
-                "nohup",
-                "time",
-                "timeout",
-            }:
+            pre = segment[:git_index]
+            prefix_head = next((word for word in pre if not ASSIGNMENT.fullmatch(word)), None)
+            if prefix_head is not None and Path(prefix_head).name not in WRAPPERS:
                 rest = segment[git_index + 1 :]
                 verb = next((word for word in rest if word in PUSH_VERBS | {"receive-pack"}), None)
-                if verb == "receive-pack" or verb and push_reason(rest[rest.index(verb) + 1 :]):
+                if verb == "receive-pack" or verb and push_reason(rest[rest.index(verb) + 1 :], None, None):
                     found.append(("push denied: " + FORCE_PUSH, None))
                 continue
+            env = dict(os.environ)
+            env.update(word.split("=", 1) for word in pre if ASSIGNMENT.fullmatch(word))
+            names = {Path(word).name for word in pre}
+            opaque = (
+                moved_env
+                or bool(names & {"sudo", "doas"})
+                or "env" in names
+                and any(word.startswith("-") for word in pre)
+                or any(
+                    any(c in word for c in "$`") and (not ASSIGNMENT.fullmatch(word) or CONFIG_NAME.match(word))
+                    for word in pre
+                )
+            )
             args, where = segment[git_index + 1 :], cwd
-            bypass, inline, config_env = False, [], False
-            pre = segment[:git_index]
+            bypass = False
             if any(word in {"-C", "--chdir", "-D"} or word.startswith("--chdir=") for word in pre):
                 where = None
             if unsafe:
@@ -287,44 +251,23 @@ def commands(text, cwd, depth=0):
                     if args:
                         value = args.pop(0)
                         bypass |= arg in {"-c", "--config-env"} and value.lower().startswith("core.hookspath=")
-                        config_env |= arg == "--config-env"
-                        inline += [value] if arg == "-c" else []
                     if arg in {"--git-dir", "--work-tree"}:
                         where = None
                 elif arg.startswith("-c"):
                     bypass |= arg[2:].lower().startswith("core.hookspath=")
-                    inline.append(arg[2:])
                 elif arg.startswith("--config-env="):
                     bypass |= arg.split("=", 1)[1].lower().startswith("core.hookspath=")
-                    config_env = True
                 elif arg.startswith(("--git-dir=", "--work-tree=")):
                     where = None
             if bypass:
                 found.append(("hook bypass", None))
-            if config_env and args and (args[0] in PUSH_VERBS or args[0] not in COMMON_COMMANDS):
-                found.append(("push denied: " + CONFIG_ENV, None))
-            items = (
-                config_items(where or cwd, tuple(inline)) if args and args[0] not in COMMON_COMMANDS - {"push"} else ()
-            )
-            alias = alias_text(args[0], items) if args else None
-            if alias is not None:
-                head = (
-                    alias[1:]
-                    if alias.startswith("!")
-                    else shlex.join([segment[git_index], *[f"-c{v}" for v in inline]]) + " " + alias
-                )
-                found.extend(commands(head + " " + shlex.join(args[1:]), where or cwd, depth + 1))
-                args = []
+            if args and (args[0] in PUSH_VERBS | {"receive-pack"} or args[0] not in COMMON_COMMANDS):
+                split = split_globals(segment[git_index + 1 :])
+                reason = judge(*split, None if opaque else cwd, env) if split else UNRESOLVED
+                if reason:
+                    found.append(("push denied: " + reason, None))
             if args:
                 action, rest = args[0], args[1:]
-                if action == "receive-pack":
-                    found.append(("push denied: " + RECEIVE, None))
-                if action in PUSH_VERBS:
-                    reason = push_reason(rest, items if action == "push" else ())
-                    if reason:
-                        found.append(("push denied: " + reason, None))
-                    if any(len(arg) > 5 and "--no-verify".startswith(arg) for arg in rest):
-                        found.append(("push hook bypass", None))
                 if action == "commit":
                     takes_value = {
                         "-m",
@@ -378,7 +321,7 @@ def commands(text, cwd, depth=0):
         if name in {"sh", "bash", "zsh"}:
             index = next((i for i, arg in enumerate(segment[1:], 1) if arg.startswith("-") and "c" in arg[1:]), None)
             if index is not None and index + 1 < len(segment):
-                found.extend(commands(segment[index + 1], None if unsafe else cwd, depth + 1))
+                found.extend(commands(segment[index + 1], None if unsafe else cwd, depth + 1, moved_env))
         if name in {"cd", "pushd", "popd"}:
             targets = [word for word in segment[1:] if not word.startswith("-")]
             target = targets[0] if targets else str(Path.home())

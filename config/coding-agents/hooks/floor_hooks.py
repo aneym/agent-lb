@@ -8,6 +8,7 @@ from pathlib import Path
 
 FLOOR_HOOKS = {
     "branch-guard.py": "git: no force push on any branch, no hook bypass, no branch switch in a shared checkout",
+    "git_push_floor.py": "git: the force-push floor's push and alias resolver",
     "rm-dynamic-deny": "destructive data: rm needs an approval record",
     "stash-guard": "git: no stash in a shared checkout",
     "railway-vars-guard.sh": "secrets: Railway variable values never printed",
