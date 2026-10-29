@@ -11,17 +11,19 @@ import sys
 import time
 from pathlib import Path
 
+from route_brief_paths import caller_host_paths  # pyrefly: ignore [missing-import]
 from route_pace_state import reservation_request  # pyrefly: ignore [missing-import]
+from route_resolve_one import append_decision  # pyrefly: ignore [missing-import]
 from route_run_checkout import (  # pyrefly: ignore [missing-import]
     REMOTE_CLEANUP_GRACE_S,
     cleanup_remote,
     git_value,
     prepare_remote,
     remote_command,
+    repo_root,
     validate_worktree,
 )
 from route_run_jobs import launch_run, run_path, save_run  # pyrefly: ignore [missing-import]
-from route_resolve_one import append_decision  # pyrefly: ignore [missing-import]
 from route_target import local_environment, resolve_target, t3_settings  # pyrefly: ignore [missing-import]
 from route_versioned_rules import EXIT_OK, EXIT_WAIT, load_table, now_iso, setup_error  # pyrefly: ignore [missing-import]
 
@@ -113,6 +115,10 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
         execution_cwd = str(cwd)
         if row["environment"] != local and not args.write:
             try:
+                if not args.on:
+                    named = caller_host_paths(brief, repo_root(cwd))
+                    if named:
+                        raise ValueError("brief names caller-host paths " + ", ".join(named[:3]))
                 row.update(prepare_remote(cwd, row))
                 execution_cwd = row["execution_cwd"]
                 host = row["ssh_host"]

@@ -28,6 +28,13 @@ def git_value(cwd: Path, *argv: str) -> str:
     return result.stdout.strip()
 
 
+def repo_root(cwd: Path) -> Path:
+    try:
+        return Path(git_value(cwd, "rev-parse", "--show-toplevel")).resolve()
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return cwd.resolve()
+
+
 def validate_worktree(cwd: Path) -> None:
     root = Path(git_value(cwd, "rev-parse", "--show-toplevel")).resolve()
     git_dir = Path(git_value(cwd, "rev-parse", "--absolute-git-dir")).resolve()
