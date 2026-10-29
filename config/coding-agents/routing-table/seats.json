@@ -163,6 +163,12 @@
       "model": "sol-latest",
       "effort": "low"
     },
+    "sol-general": {
+      "vendor": "openai",
+      "box": null,
+      "model": "sol-latest",
+      "effort": "medium"
+    },
     "codex-sol-local": {
       "vendor": "openai",
       "box": null,
