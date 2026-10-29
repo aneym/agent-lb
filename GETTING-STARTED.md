@@ -363,3 +363,4 @@ and/or a Codex one-shot if Codex is configured.
 ## After setup
 
 Account states and day-to-day commands are in [docs/account-health.md](docs/account-health.md).
+<!-- remote write proof from ax42 -->
