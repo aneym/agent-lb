@@ -1,0 +1,1 @@
+{"hosts": [{"name": "studio", "ssh": null}, {"name": "book", "ssh": "macbook-ts"}, {"name": "pc-wsl", "ssh": "pc-wsl"}, {"name": "ax42", "ssh": "ax42"}]}

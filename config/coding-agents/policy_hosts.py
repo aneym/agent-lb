@@ -6,12 +6,11 @@ from typing import Any
 
 def policy_box_hosts(home: Path) -> list[str]:
     registry = Path(os.environ.get("FACTORY_HOME") or home / ".agent-rails/factory").expanduser()
-    defaults = home / ".agent-rails/factory-runtime/fleet/config"
 
     def load(name: str, override: str | None = None) -> Any:
         path = Path(override).expanduser() if override else registry / name
         if not path.exists() and not override:
-            path = defaults / name
+            return []
         return json.loads(path.read_text())
 
     machines = load("machines.json", os.environ.get("FACTORY_MACHINES"))

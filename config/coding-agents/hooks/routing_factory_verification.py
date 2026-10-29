@@ -113,6 +113,8 @@ def verify_factory(SOURCE, source_table, classes, check, read, frontmatter_model
         "codex-verifier-local",
         "computer-use-local",
         "computer-use-terra-local",
+        "verifier-local",
+        "gpt-explorer-local",
     }
     VENDORS = ("anthropic", "openai", "cursor", "devin", "glm", "kimi", "muse")
     BOX_ADAPTERS = {"codex": "openai", "claude-code": "anthropic", "cursor": "cursor", "devin": "devin"}

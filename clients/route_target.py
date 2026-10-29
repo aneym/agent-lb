@@ -12,6 +12,7 @@ from typing import Any
 
 from route_anthropic_models import family_alias  # pyrefly: ignore [missing-import]
 from route_class_candidates import alias_vendor, table_digest  # pyrefly: ignore [missing-import]
+from route_headroom import measured_placement  # pyrefly: ignore [missing-import]
 from route_dispatch import command_dispatch  # pyrefly: ignore [missing-import]
 from route_pick import command_reserve  # pyrefly: ignore [missing-import]
 from route_reserve_state import new_ulid, seat_opts  # pyrefly: ignore [missing-import]
@@ -59,8 +60,16 @@ def placement(args: argparse.Namespace, settings: dict) -> dict:
     local = local_environment(environments)
     if args.here and args.here not in environments:
         setup_error("unknown_environment", f"unknown --here environment {args.here!r}", args.json)
+    if args.on and args.on not in environments:
+        setup_error("unknown_environment", f"unknown --on environment {args.on!r}", args.json)
+    if args.on and args.here and args.on != args.here:
+        setup_error("conflicting_environment", "--on and --here must name the same environment", args.json)
+    if args.on and args.mac and args.on != "studio":
+        setup_error("conflicting_environment", "--mac requires --on studio", args.json)
     remote_write = args.write and args.here is not None and args.here != local
-    if args.mac:
+    if args.on:
+        name, reason = args.on, "caller pinned --on"
+    elif args.mac:
         name, reason = "studio", "mac required: studio"
     elif args.write:
         name, reason = (
@@ -68,7 +77,7 @@ def placement(args: argparse.Namespace, settings: dict) -> dict:
             "write stays on the caller environment; linked-environment worktrees unsupported",
         )
     else:
-        name, reason = local, "no per-box headroom signal in route; using the local environment"
+        name, reason = measured_placement(environments, local)
     if args.write and name != local:
         remote_write = True
     return {
@@ -159,7 +168,7 @@ def reserve_target(args: argparse.Namespace, table: dict, row: dict, vendor: str
     return code, json.loads(output.getvalue() or "{}")
 
 
-def command_target(args: argparse.Namespace) -> int:
+def resolve_target(args: argparse.Namespace) -> tuple[int, dict]:
     table = load_table()
     settings = t3_settings(table)
     class_name = (table.get("class_aliases") or {}).get(args.task_class, args.task_class)
@@ -170,7 +179,7 @@ def command_target(args: argparse.Namespace) -> int:
     placed = placement(args, settings)
     code, row, fallback = dispatch_target(args, table, settings)
     if code not in (EXIT_OK, EXIT_WAIT):
-        return code
+        return code, row
     if not row.get("decision_id"):
         row.update(
             v=1,
@@ -183,6 +192,8 @@ def command_target(args: argparse.Namespace) -> int:
             table_sha256=table_digest(),
             policy_rev=str(table.get("policy_rev") or "unversioned"),
         )
+    if getattr(args, "decision_id", None):
+        row["decision_id"] = args.decision_id
     row.setdefault("seat", None)
     row.setdefault("vendor", None)
     row.setdefault("reason", "no T3-compatible dispatch candidate")
@@ -199,7 +210,7 @@ def command_target(args: argparse.Namespace) -> int:
     if code == EXIT_OK:
         provider = provider_for(settings, table, row["model_alias"], row["seat"])
         if provider is None:
-            return EXIT_UNROUTABLE
+            return EXIT_UNROUTABLE, row
         model = row.get("model") or provider["model"]
         vendor = alias_vendor(table, row["model_alias"])
         effort = args.effort or row.get("effort") or "medium"
@@ -233,8 +244,15 @@ def command_target(args: argparse.Namespace) -> int:
                 row["reason"] = lease.get("reason") or lease.get("message") or "admission unavailable"
     if not args.dry_run:
         append_decision(row)
+    return EXIT_OK, row
+
+
+def command_target(args: argparse.Namespace) -> int:
+    code, row = resolve_target(args)
     if args.json:
         print(json.dumps(row, sort_keys=True))
     else:
-        print(f"{row['status']}: {class_name} -> {row.get('seat') or 'none'} on {row['environment']}")
-    return EXIT_OK
+        print(
+            f"{row['status']}: {row.get('class', args.task_class)} -> {row.get('seat') or 'none'} on {row['environment']}"
+        )
+    return code

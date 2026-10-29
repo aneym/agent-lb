@@ -34,7 +34,6 @@ from route_anthropic_models import command_plan
 from route_build_outcomes import command_outcomes
 from route_class_candidates import command_reservations
 from route_dispatch import command_dispatch
-from route_target import command_target
 from route_ladder_walk import AUDIT_VERDICTS
 from route_learn import command_standings
 from route_pace_state import command_heartbeat
@@ -46,6 +45,7 @@ from route_pace_state import command_release
 from route_pace_state import command_resolve
 from route_pick import command_menu
 from route_pick import command_pick
+from route_parser_t3 import add_t3_parsers
 from route_pick import command_policy
 from route_pick import command_reserve
 from route_probe_model import command_doctor
@@ -54,7 +54,6 @@ from route_probe_model import command_report
 from route_seat import command_seat
 from route_seat import command_seats
 from route_seat import command_stand_ins
-from route_seat_run_import import command_import_seat_run
 from route_workflow_args import command_eval_seat
 from route_workflow_args import command_workflow_args
 import argparse
@@ -159,20 +158,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="route", description="Route a task class to a live seat.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    target = sub.add_parser("target", help="T3 delegate target and admission lease for a task class",
-                            description="Route through dispatch policy, then lease capacity for at most 10 minutes. "
-                            "Release the lease with route release ID --outcome ok when the child starts.")
-    target.add_argument("task_class", metavar="class")
-    target.add_argument("--write", action="store_true", help="write child: local environment only")
-    target.add_argument("--mac", action="store_true", help="require Studio")
-    target.add_argument("--here", metavar="ENV_NAME", help="caller's environment; remote writes are unsupported")
-    target.add_argument("--caller")
-    target.add_argument("--job")
-    target.add_argument("--author-vendor")
-    target.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"))
-    target.add_argument("--json", action="store_true")
-    target.add_argument("--dry-run", action="store_true", help="no decision log or lease")
-    target.set_defaults(handler=command_target)
+    add_t3_parsers(sub)
 
     quota_status = sub.add_parser("quota-mode", help="show Anthropic quota swap mode")
     quota_status.add_argument("--json", action="store_true")
@@ -310,13 +296,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     dispatch.add_argument("--json", action="store_true")
     dispatch.set_defaults(handler=command_dispatch)
 
-    seat_import = sub.add_parser("import-seat-run", help="append historical seat-run routing decisions")
-    seat_import.add_argument("--from", dest="source_dir", default="~/.agent-rails/jobs/seat-run")
-    seat_import.add_argument("--host")
-    seat_import.add_argument("--out")
-    seat_import.add_argument("--dry-run", action="store_true")
-    seat_import.add_argument("--json", action="store_true")
-    seat_import.set_defaults(handler=command_import_seat_run)
+
 
     outcomes = sub.add_parser("outcomes", help="outcome events and one outcome row per routed job")
     outcomes.add_argument("action", choices=("ingest", "build", "replay"))

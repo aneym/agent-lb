@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from app.core.thread_delivery import send  # type: ignore[missing-import]
+
+SHA = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+SSH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]*$")
+STAMP = "%Y-%m-%dT%H:%M:%SZ"
+HOSTS = Path(__file__).resolve().parent / "fleet-hosts.json"
+ALERT_TO = "rails"
+BAD = {"unreachable", "missing", "failed", "stale", "behind"}
+PROBE = """import json,os,time
+from pathlib import Path
+h=Path(os.environ["HOME"])
+l=Path(os.environ.get("AGENT_LB_POLICY_SRC",str(h/".agent-lb/policy-src"))).parent
+def load(p):
+ try:
+  v=json.loads(p.read_text())
+  return (v,None) if isinstance(v,dict) else (None,"%s is not an object"%p.name)
+ except FileNotFoundError:return None,None
+ except Exception as x:return None,str(x)
+a,e=load(l/"managed/coding-agents/APPLIED")
+r,f=load(l/"coding-agents-sync.last.json")
+print(json.dumps({"applied":a,"last_run":r,"error":e or f,"now":int(time.time())}))
+"""
+
+
+def stamp():
+    return datetime.now(timezone.utc).strftime(STAMP)
+
+
+def seconds(value):
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (AttributeError, ValueError, OverflowError):
+        return None
+
+
+def load_hosts(path):
+    hosts = json.loads(path.read_text())
+    if not isinstance(hosts, dict) or set(hosts) != {"hosts"} or not isinstance(hosts["hosts"], list):
+        raise ValueError("expected hosts list")
+    seen = set()
+    for host in hosts["hosts"]:
+        if (
+            not isinstance(host, dict)
+            or set(host) != {"name", "ssh"}
+            or not isinstance(host["name"], str)
+            or not NAME.fullmatch(host["name"])
+            or host["name"] in seen
+            or (host["ssh"] is not None and (not isinstance(host["ssh"], str) or not SSH.fullmatch(host["ssh"])))
+        ):
+            raise ValueError("invalid or duplicate host")
+        seen.add(host["name"])
+    return hosts["hosts"]
+
+
+def origin_commit(warnings):
+    try:
+        proc = subprocess.run(
+            ["git", "ls-remote", "https://github.com/aneym/agent-lb.git", "refs/heads/main"],
+            capture_output=True,
+            timeout=30,
+            env=dict(os.environ, GIT_TERMINAL_PROMPT="0"),
+        )
+        if proc.returncode:
+            raise ValueError(proc.stderr.decode("utf-8", "replace").strip())
+        commit = proc.stdout.decode().split()[0]
+        if not SHA.fullmatch(commit):
+            raise ValueError("invalid origin commit")
+        return commit
+    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError) as exc:
+        warnings.append("origin unreadable: %s" % exc)
+        return None
+
+
+def probe(address):
+    command = (
+        [sys.executable, "-"]
+        if address is None
+        else ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", address, "python3", "-"]
+    )
+    try:
+        proc = subprocess.run(command, input=PROBE.encode(), capture_output=True, timeout=30)
+        if proc.returncode:
+            raise ValueError(proc.stderr.decode("utf-8", "replace")[:300] or "probe exit %d" % proc.returncode)
+        found = json.loads(proc.stdout)
+        if not isinstance(found, dict) or not {"applied", "last_run", "error", "now"} <= set(found):
+            raise ValueError("invalid probe result")
+        return found, None
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError) as exc:
+        return None, str(exc)[:300]
+
+
+def assess(found, error, origin, origin_age, grace):
+    applied = found.get("applied") if found else None
+    commit = applied.get("commit") if isinstance(applied, dict) else None
+    commit = commit if isinstance(commit, str) and SHA.fullmatch(commit) else None
+    last = found.get("last_run") if found else None
+    last = last if isinstance(last, dict) else {}
+    ran = seconds(last.get("at"))
+    age = int(found["now"] - ran) if found and ran is not None else None
+    if found is None:
+        status = "unreachable"
+    elif commit is None:
+        status = "missing"
+    elif last.get("result") == "failed":
+        status = "failed"
+    elif age is None or age > grace:
+        status = "stale"
+    elif origin is not None and commit != origin:
+        status = "behind" if origin_age > grace else "syncing"
+    else:
+        status = "ok"
+    failure = {k: last.get(k) for k in ("at", "reason", "detail")} if status == "failed" else None
+    return {
+        "status": status,
+        "applied": commit,
+        "applied_at": applied.get("applied_at") if commit else None,
+        "last_run_age_s": age,
+        "failure": failure,
+        "error": error or (found.get("error") if found else None),
+    }
+
+
+def alert(name, result, origin):
+    detail = (result["failure"] or {}).get("detail") or result["error"] or ""
+    text = "coding-agents-sync on %s is %s (applied %s, main %s) %s" % (
+        name,
+        result["status"],
+        (result["applied"] or "none")[:12],
+        (origin or "unknown")[:12],
+        detail[:400],
+    )
+    try:
+        send(ALERT_TO, text.strip())
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print("coding-agents-fleet-status: alert not sent: %s" % exc, file=sys.stderr)
+
+
+def write_state(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(json.dumps(value, ensure_ascii=False) + "\n")
+    os.replace(temp, path)
+
+
+def main():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--hosts", type=Path, default=HOSTS)
+    args = parser.parse_args()
+    grace = int(os.environ.get("CODING_AGENTS_SYNC_GRACE", "900"))
+    state_path = Path.home() / ".agent-lb/coding-agents-fleet-status.json"
+    try:
+        hosts = load_hosts(args.hosts)
+    except (OSError, ValueError, TypeError) as exc:
+        print(json.dumps({"result": "failed", "reason": "bad_hosts", "detail": str(exc)}))
+        return 1
+    warnings = []
+    origin = origin_commit(warnings)
+    try:
+        prior = json.loads(state_path.read_text())
+        prior = prior if isinstance(prior, dict) else {}
+    except (OSError, ValueError):
+        prior = {}
+    now = stamp()
+    seen = prior.get("origin", {})
+    first_seen = (seen.get("first_seen") if seen.get("commit") == origin else now) if origin else None
+    origin_age = int(seconds(now) - seconds(first_seen)) if first_seen and seconds(first_seen) else 0
+    results = {}
+    for host in hosts:
+        found, error = probe(host["ssh"])
+        results[host["name"]] = assess(found, error, origin, origin_age, grace)
+    state = {
+        "checked_at": now,
+        "grace_s": grace,
+        "origin": {"commit": origin, "first_seen": first_seen},
+        "hosts": results,
+        "warnings": warnings,
+    }
+    write_state(state_path, state)
+    for name, result in results.items():
+        if result["status"] in BAD and result["status"] != prior.get("hosts", {}).get(name, {}).get("status"):
+            alert(name, result, origin)
+    print(json.dumps(state, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

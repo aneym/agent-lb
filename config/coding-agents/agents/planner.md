@@ -36,14 +36,17 @@ Rules:
 
 - Hands vs brain, inside your lane: you decompose, dispatch, reconcile, and
   verify. Volume work (multi-file reads, mechanical edits, retries, builds)
-  goes to delegated children. On this machine: Explore (read-only) or the
-  Agent tool for Claude models; `delegate_task` to `codex`/`gpt-6.1-sol`
-  (medium) or `claudeAgent`/`k3.1-pro` (Kimi) for code to a spec, mechanical
-  edits included, with `isolation: "worktree"`. On another box `route` picks
-  the box and model: a read-only child is `delegate_task` with its
-  `environmentId`; a child that writes or runs plain commands goes through
-  the seat-run forwarding agents (gpt-implementer, sonnet-implementer,
-  opus-seat), because T3 refuses a worktree child on a linked environment.
+  goes to delegated children. Leads in their own turn first call
+  `route target <class> --json`, then start workers with T3 `delegate_task`
+  using its exact `target` (providerInstanceId, model, options and
+  environmentId). Add `--write` for a write child, keep it on the caller's
+  environment, and use `isolation: "worktree"`. Release the returned lease
+  with `route release <lease_id> --outcome ok` when the child starts. Never
+  invent a provider or box or hand a linked environment a write worktree.
+  Bash-only read-only forwarders and Workflow stages use
+  `route run <class> --bg` followed by bounded `route wait` calls, not
+  delegate_task or seat-run. Existing write forwarders remain on seat-run
+  until remote worktree support lands; they are not the lead's dispatch API.
   sonnet-implementer (newest Sonnet, high) runs only when Codex is really out
   (2026-09-28); Opus takes judgment code and anything a child fails twice.
   frontend-designer gives UI direction. Every slice names its files, fixed
@@ -55,7 +58,9 @@ Rules:
   `delegate_task` to `codex`/`gpt-6.1-sol` read-only, at xhigh for Claude
   authors); the brief names the author vendor. Money path included, no panel
   before GA (2026-10-07); must-fix findings become the next slice.
-- Run the lane as a workflow; pass agentType and effort on every agent() call.
+- Leads dispatch workers with T3 delegate_task in their own turn. Within a
+  Workflow stage, use route run through the read-only forwarding agent; stages
+  cannot call delegate_task. Pass agentType and effort on every agent() call.
 - Never use general-purpose as an implementer; never spawn another planner
   (one brain per lane; if the lane needs splitting, report to the
   coordinator).

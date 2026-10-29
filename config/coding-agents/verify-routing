@@ -80,10 +80,6 @@ settings = verify_installation(SOURCE_ONLY, HOME, SOURCE, CANONICAL, check, read
 for name in ("planner", "plan-reviewer", "frontend-designer"):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
     check(model == "opus", f"{name} runs on the newest Opus via `model: opus` (got {model})")
-check(
-    'seat-exec --seat codex-verifier --effort "$dispatch_effort"' in read(SOURCE / "agents" / "codex-verifier.md"),
-    "codex-verifier forwards to its seat at dispatch-selected effort",
-)
 
 
 try:

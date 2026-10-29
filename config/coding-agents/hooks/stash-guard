@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+import importlib.machinery
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+
+FLOOR = "BLOCKED (floor: data loss, a shared stash can take another seat's changes): "
+MESSAGE = ("BLOCKED: git stash is one stack shared by every worktree of {repo} ({count}); a stash push/pop "
+           "can take another seat's changes (incident 2026-10-07). For base content use `git show <rev>:<path>`; for "
+           "a clean tree use `lane-worktree ensure --repo <repo> --branch <branch> [--lane <lane>]`; "
+           "plain `git worktree add` also goes through the shared copy-on-write path."
+           "If it truly must stash, end the command with the comment '# stash-ok', or with "
+           "'# owner-approval: ~/.open-factory/approvals/owner-<topic>-2026-<date>.md'.")
+MESSAGE = MESSAGE.replace("BLOCKED: ", FLOOR, 1)
+UNKNOWN = ("the directory it runs in, which cannot be known before it runs",
+           "a cd to a missing or computed path, popd or `cd -` makes it unknown, so it is treated as shared")
+UNREADABLE = FLOOR + "stash-guard could not read this hook payload; it is refused."
+UNCOUNTED = FLOOR + "stash-guard could not count the worktrees of {repo} ({why}); this git stash is refused."
+READ_ONLY = {"list", "show"}
+GIT_VALUE_OPTS = {"-c", "--work-tree", "--namespace", "--exec-path", "--config-env"}
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+SHELL_VALUE_OPTS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+PIPES = ("|", "|&")
+CHDIR = {"env": ("-C", "--chdir"), "sudo": ("-D", "--chdir")}
+
+
+def shell_reader():
+    path = os.path.expanduser("~/.local/bin/rm-dynamic-deny")
+    loader = importlib.machinery.SourceFileLoader("rm_dynamic_deny", path)
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(module)
+    return module
+
+
+def worktrees(target):
+    kind, path = target
+    if not os.path.exists(path):
+        return 0
+    where = ["-C", path] if kind == "dir" else ["--git-dir", path]
+    try:
+        out = subprocess.run(["git", *where, "worktree", "list", "--porcelain"], capture_output=True, text=True,
+                             timeout=10)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise OSError(str(error))
+    if out.returncode:
+        if "not a git repository" in out.stderr:
+            return 0
+        raise OSError(out.stderr.strip() or "git exit %d" % out.returncode)
+    return sum(1 for line in out.stdout.splitlines() if line.startswith("worktree "))
+
+
+def place(base, word, skip=0):
+    lit, mask = word[0][skip:], word[1][skip:]
+    if "$" in mask or "`" in mask or any(c in mask for c in "*?["):
+        return None
+    if mask[:1] == "~":
+        lit = os.path.expanduser(lit)
+    if base is None and not os.path.isabs(lit):
+        return None
+    return os.path.normpath(os.path.join(base or "/", lit))
+
+
+def change_dir(head, args, cwds, old):
+    operands = [w for w in args if not (w[0].startswith("-") and w[0] != "-")]
+    if head == "popd" or (head == "pushd" and not operands):
+        return [None]
+    if not operands:
+        return [os.path.expanduser("~")]
+    if operands[0][0] == "-":
+        return list(old)
+    return [d if d is not None and os.path.isdir(d) else None for d in (place(c, operands[0]) for c in cwds)]
+
+
+def shell_strings(words):
+    found, has_c, i = [], False, 0
+    while i < len(words):
+        a = words[i][0]
+        if a == "--" or a in ("-", "+"):
+            i += 1
+            break
+        if a in SHELL_VALUE_OPTS:
+            i += 2
+        elif a.startswith(("-", "+")):
+            has_c = has_c or (not a.startswith("--") and "c" in a[1:])
+            i += 1
+        else:
+            break
+    if has_c and i < len(words):
+        found.append(words[i][0])
+    return found
+
+
+def wrapped(pre, cwds):
+    dirs, git_dir, wrapper = list(cwds), None, None
+    for j, w in enumerate(pre):
+        name = w[0].rsplit("/", 1)[-1]
+        if name in CHDIR:
+            wrapper = name
+        elif wrapper and w[0] in CHDIR[wrapper] and j + 1 < len(pre):
+            dirs = [place(d, pre[j + 1]) for d in dirs]
+        elif wrapper and w[0].startswith("--chdir="):
+            dirs = [place(d, w, len("--chdir=")) for d in dirs]
+        elif w[3].startswith("GIT_DIR="):
+            git_dir = (w, len("GIT_DIR="))
+    return dirs, git_dir
+
+
+def git_targets(pre, args, cwds):
+    dirs, git_dir = wrapped(pre, cwds)
+    i = 0
+    while i < len(args) and args[i][0].startswith("-"):
+        a = args[i][0]
+        if a in ("-C", "--git-dir") and i + 1 < len(args):
+            if a == "-C":
+                dirs = [place(d, args[i + 1]) for d in dirs]
+            else:
+                git_dir = (args[i + 1], 0)
+            i += 2
+        elif a.startswith("-C"):
+            dirs = [place(d, args[i], 2) for d in dirs]
+            i += 1
+        elif a.startswith("--git-dir="):
+            git_dir = (args[i], len("--git-dir="))
+            i += 1
+        else:
+            i += 2 if a in GIT_VALUE_OPTS else 1
+    if git_dir is None:
+        return [None if d is None else ("dir", d) for d in dirs], i
+    paths = [place(d, *git_dir) for d in dirs]
+    return [None if p is None else ("git-dir", p) for p in paths], i
+
+
+def stash_targets(sh, text, cwds, notes=None, depth=0):
+    notes = {"segs": [], "comments": []} if notes is None else notes
+    found = []
+    here, old, after, launches = {}, {}, {}, {}
+
+    def start(g):
+        if g not in here:
+            parent = notes["parents"][g]
+            if parent is None:
+                here[g] = list(cwds)
+            else:
+                history = after[start(parent)]
+                span = history[notes["anchor"][g]:notes["until"][g] + 1] or [here[parent]]
+                if notes["consumer"][g]:
+                    span += launches[parent][notes["anchor"][g]:notes["until"][g]]
+                here[g] = list(dict.fromkeys(d for dirs in span for d in dirs))
+            old[g], after[g], launches[g] = [None], [list(here[g])], []
+        return g
+
+    segs = sh.segments(text, notes)
+    for segment, meta in zip(segs, notes["segs"]):
+        g = start(meta["group"])
+        words = [w for w in segment if not w[2]]
+        strings = []
+        k = sh.command_word(words, strings)
+        inner = strings[:]
+        head = None if k is None else sh.base(words[k])
+        launches[g].append(wrapped(words if k is None else words[:k], here[g])[0])
+        if head in SHELLS:
+            inner += shell_strings(words[k + 1:])
+        if depth < 3 and inner:
+            starts = wrapped(words if k is None else words[:k], here[g])[0]
+            for s in inner:
+                found += stash_targets(sh, s, starts, None, depth + 1)
+        if head in ("cd", "pushd", "popd"):
+            new = change_dir(head, words[k + 1:], here[g], old[g])
+            lasting = not (meta["depth"] or meta["compound"] or meta["start"] in PIPES + ("&&", "||") or meta["end"] in PIPES + ("&",))
+            moved = here[g] + (old[g] if None in new else [])
+            old[g] = moved if lasting else old[g] + moved
+            here[g] = list(dict.fromkeys(new if lasting else here[g] + new))
+        elif head == "git":
+            targets, i = git_targets(words[:k], words[k + 1:], here[g])
+            if i < len(words) - k - 1 and words[k + 1 + i][0] == "stash" and \
+                    (words[k + 2 + i:k + 3 + i] or [("",)])[0][0] not in READ_ONLY:
+                found += targets
+        after[g].append(list(here[g]))
+    return found
+
+
+def overridden(cmd, comments):
+    return any(text.rstrip() == "# stash-ok" and not cmd[end:].strip() for text, end in comments)
+
+
+def main():
+    raw = sys.stdin.read()
+    if "git" not in raw:
+        return 0
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        payload = None
+    if not isinstance(payload, dict):
+        sys.stderr.write(UNREADABLE + "\n")
+        return 2
+    ti = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    cmd = ti.get("command") or ""
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else os.getcwd()
+    if not isinstance(cmd, str) or "git" not in cmd:
+        return 0
+    notes = {"segs": [], "comments": []}
+    reader = shell_reader()
+    targets = stash_targets(reader, cmd, [cwd], notes)
+    if overridden(cmd, notes["comments"]) or reader.approved(cmd):
+        return 0
+    for target in dict.fromkeys(targets):
+        if target is None:
+            sys.stderr.write(MESSAGE.format(repo=UNKNOWN[0], count=UNKNOWN[1]) + "\n")
+            return 2
+        try:
+            count = worktrees(target)
+        except OSError as error:
+            sys.stderr.write(UNCOUNTED.format(repo=target[1], why=error) + "\n")
+            return 2
+        if count > 1:
+            sys.stderr.write(MESSAGE.format(repo=target[1], count="%d worktrees" % count) + "\n")
+            return 2
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        code = main()
+    except Exception as e:
+        sys.stderr.write(FLOOR + "stash-guard: guard error (%s); refused.\n" % type(e).__name__)
+        sys.exit(2)
+    if code == 0 and os.environ.get("HOOK_FLOOR_RECEIPT"):
+        sys.stdout.write("floor-ok stash-guard\n")
+    sys.exit(code)

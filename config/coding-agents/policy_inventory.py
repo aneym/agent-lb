@@ -87,6 +87,7 @@ MANAGED_HOOKS = (
     "link-cli-guard.sh",
     "plutil-guard.sh",
     "kill-scope-guard.py",
+    "stash-guard",
     "host-credential-guard.py",
     "gh-write-guard.py",
     "merge-gate-guard.py",

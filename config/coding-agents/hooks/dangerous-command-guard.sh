@@ -186,7 +186,7 @@ def provider_approved(text):
         return False
     home = os.path.expanduser("~")
     path = os.path.expanduser(match[1].replace("${HOME}", home).replace("$HOME", home))
-    root = os.path.expanduser("~/.open-factory/approvals")
+    root = os.path.expanduser("~/.agent-rails/approvals")
     if os.path.dirname(path) != root or not re.fullmatch(r"alex-.*\.md", os.path.basename(path)) or os.path.islink(path):
         return False
     try:
@@ -206,7 +206,7 @@ def rails_target(words, text, cwd):
             return word.split("=", 1)[1] in RAILS
         if word in ("-s", "--service"):
             return i + 1 < len(words) and words[i + 1] in RAILS
-    return "agent-rails" in cwd + " " + text
+    return "agent-rails" in re.sub(r"\S*\.agent-rails/approvals\S*", "", cwd + " " + text)
 
 
 def without_heredocs(source):

@@ -214,6 +214,7 @@ DISPATCH_DROPPED = {
     "55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": "global prettier --write",
     "70e4747d8e5cf5206a535899bcc19eb6e3acff6e2325fce6932d0e014c59acaa": "load-governor",
     "9185b387b7e583755f8534b4f1ef3cb3dbc08e860ba4270684920bd9bfd39e7e": "repeat-read-warn",
+    "ce0d9c515ec1f3a44ac8e76013bfaf95e982e96616003d99bb508b585fed441b": "stash-guard from the engine",
 }
 
 
@@ -245,7 +246,7 @@ RELAY_SEATS = frozenset(
     """
     codex-sol codex-sol-local codex-verifier codex-verifier-local
     codex-test-runner codex-test-runner-local gpt-implementer grok-implementer
-    gpt-explorer sonnet-implementer verifier cursor-seat devin-seat
+    gpt-explorer gpt-explorer-local sonnet-implementer verifier verifier-local cursor-seat devin-seat
     muse-seat muse-seat-local computer-use computer-use-local computer-use-terra-local host-relay pi-durable-seat
     """.split()
 )

@@ -32,7 +32,7 @@ from route_reserve_state import (  # pyrefly: ignore [missing-import]
     workflow_quota,
     workflow_stage_effort,
 )
-from route_resolve_one import workflow_opus_stage, workflow_seat, workflow_table  # pyrefly: ignore [missing-import]
+from route_resolve_one import decisions_path, workflow_opus_stage, workflow_seat, workflow_table  # pyrefly: ignore [missing-import]
 from route_seat_states import api_request_logs  # pyrefly: ignore [missing-import]
 from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     EXIT_DEGRADED,
@@ -134,13 +134,30 @@ def live_sources(since: timedelta) -> OutcomeSources:
     receipts = read_jsonl(merge_receipts_path())
     reverts_file = (os.environ.get("ROUTE_OUTCOME_REVERTS") or "").strip()
     logs_file = (os.environ.get("ROUTE_REQUEST_LOGS") or "").strip()
+    decisions = read_decisions()
+    index = DecisionIndex(decisions)
+    runs = []
+    for row in read_jsonl(decisions_path()):
+        if row.get("kind") != "route.run.outcome":
+            continue
+        decision = index.lookup(row.get("decision_id"))
+        stamp = row_time(row)
+        if decision is not None and stamp is not None and stamp >= start:
+            data = {
+                "ok": row.get("exit_code") == 0,
+                "wall_s": row.get("seconds"),
+                "exit_code": row.get("exit_code"),
+                "timed_out": row.get("timed_out"),
+                "log_path": row.get("log_path"),
+            }
+            runs.append(outcome_event("closeout", "route-run", row["decision_id"], stamp, decision, data))
     return OutcomeSources(
-        decisions=read_decisions(),
+        decisions=decisions,
         ledger=read_jsonl(ledger_path()),
         receipts=receipts,
         reverts=read_jsonl(Path(reverts_file).expanduser()) if reverts_file else git_reverts(receipts, start),
         request_logs=read_jsonl(Path(logs_file).expanduser()) if logs_file else api_request_logs(start),
-        seeds=[],
+        seeds=runs,
         now=now,
     )
 
