@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 UNIT = "agent-lb-proxy.service"
 OLD_UNIT = "factory-lb-proxy.service"
 KEYS = ("PRIMARY", "HOP_PORT", "PROXY_PORT", "OUTER_UPSTREAMS")
+LOCAL_HOPS = ("http://127.0.0.1:2457", "http://127.0.0.1:2458")
 
 
 def stamp():
@@ -40,7 +41,7 @@ def read_env(path):
     return values
 
 
-def migrated_env(home, drop):
+def migrated_values(home):
     source = home / ".config/factory/lb-proxy.env"
     if not source.is_file():
         raise SystemExit(f"no env at {source}; write {home / '.config/agent-lb/lb-proxy.env'} by hand")
@@ -48,12 +49,43 @@ def migrated_env(home, drop):
     missing = [key for key in KEYS if f"FACTORY_LB_{key}" not in old]
     if missing:
         raise SystemExit(f"{source} lacks FACTORY_LB_{', FACTORY_LB_'.join(missing)}")
-    values = {key: old[f"FACTORY_LB_{key}"] for key in KEYS}
-    upstreams = [item for item in values["OUTER_UPSTREAMS"].split() if item not in drop]
-    if not upstreams:
-        raise SystemExit("dropping those upstreams leaves none")
-    values["OUTER_UPSTREAMS"] = " ".join(upstreams)
-    return "".join(f'AGENT_LB_{key}="{values[key]}"\n' for key in KEYS)
+    return {key: old[f"FACTORY_LB_{key}"] for key in KEYS}
+
+
+def current_values(env):
+    current = read_env(env)
+    missing = [key for key in KEYS if f"AGENT_LB_{key}" not in current]
+    if missing:
+        raise SystemExit(f"{env} lacks AGENT_LB_{', AGENT_LB_'.join(missing)}")
+    return {key: current[f"AGENT_LB_{key}"] for key in KEYS}
+
+
+def allowlisted(values):
+    allowed = {values["PRIMARY"], *LOCAL_HOPS}
+    listed = values["OUTER_UPSTREAMS"].split()
+    dropped = [item for item in listed if item not in allowed]
+    if dropped:
+        print(f"dropped outer upstreams outside the allowlist ({' '.join(sorted(allowed))}): {' '.join(dropped)}")
+    kept = [item for item in listed if item in allowed]
+    if not kept:
+        raise SystemExit("no allowlisted outer upstream left")
+    return {**values, "OUTER_UPSTREAMS": " ".join(kept)}, bool(dropped)
+
+
+def render(values):
+    return "".join(f'AGENT_LB_{key}="{values[key]}"\n' for key in KEYS).encode()
+
+
+def retire_old_unit(unit_dir):
+    if systemctl("cat", OLD_UNIT, check=False).returncode == 0:
+        systemctl("disable", "--now", OLD_UNIT)
+        print(f"{OLD_UNIT} stopped and disabled")
+    when = stamp()
+    for path in (unit_dir / OLD_UNIT, unit_dir / f"{OLD_UNIT}.d"):
+        if path.exists():
+            backup = path.with_name(f"{path.name}.bak-{when}")
+            path.rename(backup)
+            print(f"{path} moved to {backup}")
 
 
 def systemctl(*args, check=True):
@@ -61,11 +93,7 @@ def systemctl(*args, check=True):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="install the box-local agent-lb failover proxy from this checkout")
-    parser.add_argument(
-        "--drop-upstream", action="append", default=[], help="outer upstream to leave out when migrating the old env"
-    )
-    args = parser.parse_args()
+    argparse.ArgumentParser(description="install the box-local agent-lb failover proxy from this checkout").parse_args()
     if sys.platform == "darwin":
         raise SystemExit("the failover proxy runs on Linux boxes only")
     home = Path.home()
@@ -73,9 +101,10 @@ def main():
         raise SystemExit(f"caddy missing at {home / '.local/bin/caddy'}")
     config = home / ".config/agent-lb"
     env = config / "lb-proxy.env"
-    if not env.is_file():
-        env.parent.mkdir(parents=True, exist_ok=True)
-        env.write_text(migrated_env(home, set(args.drop_upstream)))
+    existing = env.is_file()
+    values, dropped = allowlisted(current_values(env) if existing else migrated_values(home))
+    if not existing or dropped:
+        replace_backed_up(env, render(values))
         env.chmod(0o600)
     caddyfile = config / "lb-proxy/Caddyfile"
     changed = replace_backed_up(caddyfile, (ROOT / "deploy/lb-proxy/Caddyfile").read_bytes())
@@ -91,15 +120,13 @@ def main():
     )
     if validate.returncode:
         raise SystemExit(f"caddy validate failed: {validate.stderr.strip()[-400:]}")
-    unit_changed = replace_backed_up(
-        home / ".config/systemd/user" / UNIT, (ROOT / "deploy/systemd" / UNIT).read_bytes()
-    )
+    unit_dir = home / ".config/systemd/user"
+    unit_changed = replace_backed_up(unit_dir / UNIT, (ROOT / "deploy/systemd" / UNIT).read_bytes())
     systemctl("daemon-reload")
-    if systemctl("cat", OLD_UNIT, check=False).returncode == 0:
-        systemctl("disable", "--now", OLD_UNIT)
-        print(f"{OLD_UNIT} stopped and disabled")
+    retire_old_unit(unit_dir)
+    systemctl("daemon-reload")
     systemctl("enable", UNIT)
-    systemctl("restart" if changed or unit_changed else "start", UNIT)
+    systemctl("restart" if changed or unit_changed or dropped else "start", UNIT)
     state = systemctl("is-active", UNIT, check=False).stdout.strip()
     print(f"{UNIT} {state} with {caddyfile}")
     if state != "active":
