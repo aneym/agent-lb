@@ -79,8 +79,7 @@ def refusal(paths):
         f"Warning: this writes a tracked file in the shared main checkout {repo}. "
         "Use a T3 thread with workspaceStrategy worktree, delegate_task with isolation worktree, "
         f"or git worktree add <root>/{repo.name}/<topic> -b <topic> origin/main. "
-        "T3 roots: Studio /Volumes/StudioExt/repos/t3-wt; ax42 and pc-wsl /srv/cow/t3-wt; "
-        "forge /data/jobs/worktrees. Edit that dedicated worktree instead. "
+        "Use this host's T3 worktree root and edit that dedicated worktree instead. "
         "Main checkouts belong to the merge step."
     )
 
