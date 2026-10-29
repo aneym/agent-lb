@@ -1,0 +1,204 @@
+#!/bin/bash
+set -euo pipefail
+if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+  printf '%s\n' 'usage: claude-box-launch [--ready | --config-path | Claude arguments]'
+  exit 0
+fi
+if [[ -f ${AGENT_HOLD_FILE:-$HOME/.agent-rails/agent-hold.json} ]]; then
+  printf '%s\n' 'claude-box-launch: agent hold is active' >&2
+  exit 3
+fi
+envfile=${FACTORY_CLAUDE_ENV:-$HOME/.config/factory/claude-code.env}
+if [[ -n ${FACTORY_CLAUDE_CONFIG_DIR+x} ]]; then
+  cfg=$FACTORY_CLAUDE_CONFIG_DIR
+else
+  cfg=
+  if [[ -f $envfile ]]; then
+    cfg=$(sed -n 's/^FACTORY_CLAUDE_CONFIG_DIR=//p' "$envfile" | tail -1)
+  fi
+  cfg=${cfg:-${CLAUDE_CONFIG_DIR:-}}
+fi
+if [[ ${1:-} == --config-path ]]; then
+  python3 -c 'import os,sys; print(os.path.abspath(os.path.join(sys.argv[1] or os.path.expanduser("~"), ".claude.json")))' "$cfg"
+  exit 0
+fi
+base=$(sed -n 's/^FACTORY_ANTHROPIC_BASE_URL=//p' "$envfile" 2>/dev/null | tail -1)
+[[ $base =~ ^https?://[^[:space:]]+$ ]] || { echo "claude-box-launch: no LB address in $envfile" >&2; exit 2; }
+if [[ ${1:-} == --ready ]]; then
+  [[ -x ${FACTORY_CLAUDE_BIN:-$HOME/.local/bin/claude} ]] || exit 1
+  curl --fail --silent --max-time 5 "${base%/}/health" >/dev/null 2>&1 || exit 1
+  printf 'true\n'
+  exit 0
+fi
+local_url=${CLAUDE_LB_LOCAL_URL-$(sed -n 's/^CLAUDE_LB_LOCAL_URL=//p' "$envfile" 2>/dev/null | tail -1)}
+[[ $local_url =~ ^https?://[^[:space:]]+$ ]] || local_url=$base
+codex_url=${REVIEW_PR_CODEX_BASE_URL-$(sed -n 's/^REVIEW_PR_CODEX_BASE_URL=//p' "$envfile" 2>/dev/null | tail -1)}
+[[ $codex_url =~ ^https?://[^[:space:]]+$ ]] || codex_url=${base%/}/backend-api/codex
+
+argv=("$@")
+n=${#argv[@]}
+
+opt_value() {
+  local kind=$1 i=0 a nxt
+  while [[ $i -lt $n ]]; do
+    a=${argv[$i]}
+    if [[ $kind == session ]]; then
+      if [[ $a == --session-id && $((i + 1)) -lt $n ]]; then
+        nxt=${argv[$((i + 1))]}
+        if [[ -n $nxt ]]; then
+          printf '%s' "$nxt"
+          return 0
+        fi
+      elif [[ $a == --session-id=* ]]; then
+        nxt=${a#--session-id=}
+        if [[ -n $nxt ]]; then
+          printf '%s' "$nxt"
+          return 0
+        fi
+      fi
+    elif [[ $kind == resume ]]; then
+      if [[ ( $a == --resume || $a == -r ) && $((i + 1)) -lt $n ]]; then
+        nxt=${argv[$((i + 1))]}
+        if [[ -n $nxt && $nxt != -* ]]; then
+          printf '%s' "$nxt"
+          return 0
+        fi
+      elif [[ $a == --resume=* ]]; then
+        nxt=${a#--resume=}
+        if [[ -n $nxt && $nxt != -* ]]; then
+          printf '%s' "$nxt"
+          return 0
+        fi
+      fi
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+sid=${CLAUDE_LB_SESSION_ID-}
+if [[ -z $sid ]]; then
+  if found=$(opt_value session); then
+    sid=$found
+  elif found=$(opt_value resume); then
+    sid=$found
+  else
+    blocked=0
+    for ((i = 0; i < n; i++)); do
+      case ${argv[i]} in
+        --continue|-c|--resume|-r|--session-id|--version|-v|--help|-h|--session-id=*|--resume=*)
+          blocked=1
+          ;;
+      esac
+    done
+    if [[ $blocked -eq 0 && ( $n -eq 0 || ${argv[0]} == -* ) ]]; then
+      if raw=$(uuidgen 2>/dev/null); then
+        sid=$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')
+      else
+        sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
+      fi
+      set -- --session-id "$sid" "$@"
+    else
+      sid=box-$(hostname -s)-$$-$(date +%s)
+    fi
+  fi
+fi
+
+if [[ -n ${FACTORY_CLAUDE_CACHE_1H+x} ]]; then
+  cache=$FACTORY_CLAUDE_CACHE_1H
+else
+  cache_line=$(sed -n '/^FACTORY_CLAUDE_CACHE_1H=/p' "$envfile" 2>/dev/null | tail -1)
+  if [[ -n $cache_line ]]; then
+    cache=${cache_line#FACTORY_CLAUDE_CACHE_1H=}
+  else
+    cache=1
+  fi
+fi
+
+lb_seat=${AGENT_LB_SEAT-}
+headers="x-claude-session-id: $sid"
+if [[ -n $lb_seat && $lb_seat != *$'\r'* && $lb_seat != *$'\n'* ]]; then
+  headers+=$'\n'"x-agent-lb-seat: $lb_seat"
+fi
+while IFS= read -r line; do
+  line=${line%$'\r'}
+  name=$(printf '%s' "${line%%:*}" | tr '[:upper:]' '[:lower:]')
+  case $name in
+    ''|x-claude-session-id|x-agent-lb-seat) ;;
+    *) [[ $line == *:* ]] && headers+=$'\n'"$line" ;;
+  esac
+done <<< "${ANTHROPIC_CUSTOM_HEADERS-}"
+
+env_args=(-u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION \
+  -u CLAUDE_CONFIG_DIR -u ENABLE_PROMPT_CACHING_1H)
+if [[ -n $cfg ]]; then
+  mkdir -p -m 700 -- "$cfg"
+  env_args+=(CLAUDE_CONFIG_DIR="$cfg")
+fi
+if [[ $cache == 1 ]]; then
+  env_args+=(ENABLE_PROMPT_CACHING_1H=1)
+fi
+bypass=0
+for ((i = 0; i < n; i++)); do
+  case ${argv[i]} in
+    --dangerously-skip-permissions|--permission-mode=bypassPermissions) bypass=1 ;;
+    --permission-mode) [[ ${argv[i + 1]:-} == bypassPermissions ]] && bypass=1 ;;
+  esac
+done
+if [[ $bypass == 1 ]]; then
+  python3 - "${cfg:-$HOME/.claude}" <<'PY' || echo "claude-box-launch: could not seed skipDangerousModePermissionPrompt" >&2
+import json, os, sys, tempfile
+d = sys.argv[1]
+os.makedirs(d, mode=0o700, exist_ok=True)
+p = os.path.join(d, "settings.json")
+try:
+    with open(p) as f:
+        data = json.load(f)
+except FileNotFoundError:
+    data = {}
+except ValueError:
+    sys.exit(0)
+if not isinstance(data, dict) or data.get("skipDangerousModePermissionPrompt") is True:
+    sys.exit(0)
+data["skipDangerousModePermissionPrompt"] = True
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".settings.", suffix=".tmp")
+with os.fdopen(fd, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+os.chmod(tmp, 0o600)
+os.replace(tmp, p)
+PY
+fi
+policy=$(command -v claude-launch || true)
+[[ -n $policy && -x $policy ]] || { printf '%s\n' 'claude-box-launch: claude-launch is not on PATH; install the Rails agent runtime' >&2; exit 2; }
+launch=("$policy" -- "${FACTORY_CLAUDE_BIN:-$HOME/.local/bin/claude}")
+lb_host=${base#*://}
+lb_host=${lb_host%%[:/]*}
+no_proxy="$lb_host,127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}"
+workflow_model=${CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL-}
+if [[ -z $workflow_model ]]; then
+  case " ${argv[*]} " in
+    *" --model claude-opus-5-5 "*) workflow_model=claude-opus-5-5 ;;
+    *" --model claude-sonnet-5-5 "*) workflow_model=claude-sonnet-5-5 ;;
+  esac
+fi
+workflow_model=${workflow_model:-claude-opus-5-5}
+shell_prefix=
+for candidate in "${CLAUDE_CODE_SHELL_PREFIX:-}" "$HOME/.local/bin/agent-scan-shell"; do
+  [[ -n $candidate && -f $candidate && -x $candidate ]] && { shell_prefix=$candidate; break; }
+done
+[[ -n $shell_prefix ]] || { printf '%s\n' 'claude-box-launch: no executable agent-scan-shell; install claude-config bin' >&2; exit 2; }
+exec env "${env_args[@]}" \
+  ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-5-5" \
+  ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-5-5" \
+  ANTHROPIC_DEFAULT_OPUS_MODEL="$workflow_model" \
+  ANTHROPIC_SMALL_FAST_MODEL="claude-haiku-5-5" \
+  CLAUDE_CODE_SUBAGENT_MODEL="$workflow_model" \
+  CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL="$workflow_model" \
+  ANTHROPIC_BASE_URL="$base" CLAUDE_LB_LOCAL_URL="$local_url" REVIEW_PR_CODEX_BASE_URL="$codex_url" \
+  NO_PROXY="$no_proxy" no_proxy="$no_proxy" \
+  ANTHROPIC_AUTH_TOKEN=factory-box-placeholder \
+  CLAUDE_CODE_SHELL_PREFIX="$shell_prefix" \
+  CLAUDE_CODE_WORKFLOWS="${CLAUDE_CODE_WORKFLOWS:-1}" ENABLE_TOOL_SEARCH="${ENABLE_TOOL_SEARCH:-true}" \
+  ANTHROPIC_CUSTOM_HEADERS="$headers" DISABLE_AUTOUPDATER=1 \
+  "${launch[@]}" "$@"

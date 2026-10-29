@@ -133,6 +133,7 @@ def remote_command(argv: list[str], row: dict, timeout: float) -> list[str]:
         + """brief=sys.stdin.buffer.read()
 os.environ.pop("OPENAI_API_KEY",None)
 os.environ.pop("CLAUDECODE",None)
+os.environ["PATH"]=str(Path.home()/".agent-lb/bin")+os.pathsep+os.environ.get("PATH", "")
 repo,scratch,decision,cwd,limit=sys.argv[1:6]
 try:
  p=subprocess.Popen(sys.argv[6:],cwd=cwd,stdin=subprocess.PIPE,start_new_session=True)

@@ -12,7 +12,7 @@ from policy_layout import ROUTE_FILES  # type: ignore[missing-import]
 
 STAGED_DIRS = (Path(".agent-lb/bin"), Path(".agent-lb/managed/coding-agents"))
 VERIFY_SEAT = "codex-verifier"
-EXECUTABLE_NAMES = ("verify-routing", "route", "seat")
+EXECUTABLE_NAMES = ("verify-routing", *ROUTE_FILES)
 
 
 def executable(path: Path) -> bool:

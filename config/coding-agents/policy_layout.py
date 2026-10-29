@@ -36,6 +36,7 @@ CLIENTS_DIR = Path(__file__).resolve().parents[2] / "clients"
 ROUTE_FILES = (
     "route",
     "seat",
+    "claude-box-launch",
     *sorted(path.name for path in CLIENTS_DIR.glob("seat_*.py")),
     *sorted(path.name for path in CLIENTS_DIR.glob("route_*.py")),
 )
