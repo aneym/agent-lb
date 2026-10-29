@@ -1,6 +1,6 @@
 ---
 name: fable-orchestrator
-description: "Use when Alex or dispatch requests Fable (fable-latest) for a lead tab or factory decider. Otherwise use Opus medium with Ultracode off; only Alex explicitly opts in to Ultracode. Decides and delegates; never implements."
+description: "Use when Alex or dispatch requests Fable (fable-latest) for a lead tab or factory decider. Otherwise use Opus medium with Ultracode off; explicit settings remain available. Decides and delegates; never implements."
 model: inherit
 effort: medium
 tools: "*"
