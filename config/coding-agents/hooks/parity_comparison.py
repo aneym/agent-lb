@@ -53,6 +53,16 @@ def same(value, run):
     return json.loads(json.dumps(value).replace(run, "<run>"))
 
 
+def segments(event, old_results, new_results):
+    unfolded = {result["command"] for result in new_results if not result["trace"]}
+    folded = (effect(event, [result for result in old_results if result["command"] not in unfolded]), True)
+    own = {result["command"]: (effect(event, [result]), False) for result in old_results}
+    order = [own[result["command"]] for result in new_results if not result["trace"] and result["command"] in own]
+    first = next((i for i, result in enumerate(new_results) if result["trace"]), 0)
+    before = sum(1 for result in new_results[:first] if not result["trace"] and result["command"] in own)
+    return order[:before] + [folded] + order[before:]
+
+
 def run_case(sandbox, registry, case):
     event, tool = case["event"], case.get("tool")
     olds = old_hooks(registry["per_hook"], event, tool)
@@ -66,7 +76,10 @@ def run_case(sandbox, registry, case):
     execd = {record["exec"] for result in new_results for record in result["trace"] if record.get("exec")}
     old_plain = same(effect(event, old_results), run)
     expected = with_exec_timer(old_results, execd)
-    old_view = same(expected_presentation(effect(event, with_floor(event, expected, unfolded)), run, run2), run2)
+    floored = with_floor(event, expected, unfolded)
+    old_view = same(
+        expected_presentation(effect(event, floored), segments(event, floored, new_results), run, run2), run2
+    )
     new_view = same(effect(event, new_results), run2)
 
     if not same_effect(old_view, new_view):

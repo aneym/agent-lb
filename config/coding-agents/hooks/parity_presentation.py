@@ -3,17 +3,28 @@ import json
 import re
 
 
-def expected_presentation(view, old_root, new_root):
-    view = json.loads(json.dumps(view).replace(old_root, new_root))
-    remaining = 1024
+def capped(view):
+    remaining, out = 1024, {}
     for key in ("context", "shown"):
         value = view.get(key, "")
         raw = value.encode("utf-8")
         if len(raw) > 1024:
             marker = "\n[hook-context:" + hashlib.sha256(raw).hexdigest()[:12] + "]"
             value = raw[: 1024 - len(marker.encode())].decode("utf-8", "ignore") + marker
-        view[key] = value.encode()[:remaining].decode("utf-8", "ignore")
-        remaining -= len(view[key].encode())
+        out[key] = value.encode()[:remaining].decode("utf-8", "ignore")
+        remaining -= len(out[key].encode())
+    return out
+
+
+def expected_presentation(view, segments, old_root, new_root):
+
+    def moved(value):
+        return json.loads(json.dumps(value).replace(old_root, new_root))
+
+    view = moved(view)
+    parts = [capped(moved(segment)) if folded else moved(segment) for segment, folded in segments]
+    for key in ("context", "shown"):
+        view[key] = "\n".join(part[key] for part in parts if part.get(key))
     return view
 
 
