@@ -3,14 +3,36 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 HELPER = Path("/usr/local/sbin/agent-floors")
+CLAUDE_MANAGED = Path(
+    "/Library/Application Support/ClaudeCode/managed-settings.json"
+    if sys.platform == "darwin"
+    else "/etc/claude-code/managed-settings.json"
+)
+CODEX_MANAGED = Path("/etc/codex/requirements.toml")
+ROOT_FLOOR = re.compile(r"floor-root/run[\"\s,]+floor[\"\s,]+([A-Za-z0-9_.-]+)")
 
 
 def root_floors() -> bool:
     return HELPER.is_file()
+
+
+def root_floor_names(codex: bool) -> set[str]:
+    path = CODEX_MANAGED if codex else CLAUDE_MANAGED
+    try:
+        info = path.stat()
+        text = path.read_text() if info.st_uid == 0 and not info.st_mode & 0o022 else ""
+    except OSError:
+        text = ""
+    return set(ROOT_FLOOR.findall(text))
+
+
+def held_by_root(command: str, names: set[str]) -> bool:
+    return any(re.search(r"(?:^|[/\s\"'])%s(?=$|[\s\"'])" % re.escape(name), command) for name in names)
 
 
 def floor_word(source: Path) -> re.Pattern[str]:
