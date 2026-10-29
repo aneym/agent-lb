@@ -1,7 +1,15 @@
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+def require_tool(name: str, search_path: str) -> str:
+    executable = shutil.which(name, path=search_path)
+    if executable is None:
+        raise SystemExit(f"T3 setup requires {name}; install it or add it to PATH")
+    return executable
 
 
 def store_directory(override: str, candidates: tuple[str, ...]) -> str | None:
@@ -44,6 +52,15 @@ def setup() -> None:
         raise RuntimeError("run setup from the T3 worktree")
     copy_configuration(root, tree)
     env = dict(os.environ, UV_LINK_MODE="clone", UV_PROJECT_ENVIRONMENT=str(tree / ".venv"))
+    env["PATH"] = os.pathsep.join(
+        [
+            env.get("PATH", os.defpath),
+            str(Path.home() / ".local/bin"),
+            str(Path.home() / ".local/share/pnpm"),
+            "/opt/homebrew/bin",
+        ]
+    )
+    uv = require_tool("uv", env["PATH"])
     env.pop("UV_NO_SYNC", None)
     cache = store_directory(
         "T3_SETUP_UV_CACHE",
@@ -52,7 +69,7 @@ def setup() -> None:
     if cache is not None:
         env["UV_CACHE_DIR"] = cache
     subprocess.run(
-        ["uv", "sync", "--frozen", "--all-extras", "--all-groups"],
+        [uv, "sync", "--frozen", "--all-extras", "--all-groups"],
         env=env,
         check=True,
     )
