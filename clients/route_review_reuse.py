@@ -41,7 +41,7 @@ def review_key(args, row: dict, cwd: Path, brief: str) -> dict | None:
             "permissions": {"write": args.write},
             "author_vendor": args.author_vendor,
         }
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
         return None
 
 
@@ -57,6 +57,8 @@ def structured_pass(row: dict) -> bool:
             return False
         if row.get("execution_sha") != key.get("head"):
             return False
+        if row.get("log_path") != str(run_path(row["decision_id"], ".log")):
+            return False
         events = [json.loads(line) for line in run_path(row["decision_id"], ".log").read_text().splitlines()]
         provider = row["target"]["providerInstanceId"]
         if key.get("provider") != provider:
@@ -66,11 +68,16 @@ def structured_pass(row: dict) -> bool:
             if start < 0:
                 return False
             messages = [
-                e["item"].get("text")
+                e["item"]
                 for e in events[start:]
                 if e.get("type") == "item.completed" and e.get("item", {}).get("type") == "agent_message"
             ]
-            return bool(messages and messages[-1] == row["result"] and events[-1].get("type") == "turn.completed")
+            return bool(
+                messages
+                and messages[-1].get("phase") in (None, "final", "final_answer")
+                and messages[-1].get("text") == row["result"]
+                and events[-1].get("type") == "turn.completed"
+            )
         return bool(
             provider == "claudeAgent"
             and events[-1].get("type") == "result"
