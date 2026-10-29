@@ -108,7 +108,7 @@ def calculated_cost_from_log(log: RequestLogLike, *, precision: int | None = Non
         return None
     if (
         provider == KIMI_PROVIDER_NAME
-        and getattr(log, "cache_creation_tier", None) == "mixed"
+        and getattr(log, "cache_creation_tier", None) == "mx"
         and log.cache_creation_tokens
     ):
         return None
@@ -267,7 +267,7 @@ def _kimi_cost_breakdown(log: RequestLogLike, *, precision: int | None) -> Usage
         resolved is not None
         and log.input_tokens is not None
         and output_tokens_from_log(log) is not None
-        and not (getattr(log, "cache_creation_tier", None) == "mixed" and log.cache_creation_tokens)
+        and not (getattr(log, "cache_creation_tier", None) == "mx" and log.cache_creation_tokens)
     ):
         breakdown = calculate_anthropic_cost_breakdown(
             AnthropicUsage(

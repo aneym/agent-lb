@@ -26,12 +26,12 @@ def upgrade_helper_cache(
                 control = value.get("cache_control")
                 if isinstance(control, dict) and control.get("type") == "ephemeral":
                     ttl = control.get("ttl", "5m")
-                    controls.append(ttl if ttl in ("5m", "1h") else "mixed")
+                    controls.append(ttl if ttl in ("5m", "1h") else "mx")
                 pending.extend(v for k, v in value.items() if k != "cache_control")
             elif isinstance(value, list):
                 pending.extend(value)
         tiers = set(controls)
-        return next(iter(tiers)) if len(tiers) == 1 else "mixed" if tiers else None
+        return next(iter(tiers)) if len(tiers) == 1 else "mx" if tiers else None
 
     agent_id = next((value for key, value in inbound_headers.items() if key.lower() == "x-claude-code-agent-id"), "")
     if (
