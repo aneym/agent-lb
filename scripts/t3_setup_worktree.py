@@ -4,6 +4,13 @@ import sys
 from pathlib import Path
 
 
+def store_directory(override: str, candidates: tuple[str, ...]) -> str | None:
+    directory = os.environ.get(override)
+    if directory:
+        return str(Path(directory).expanduser())
+    return next((path for path in candidates if Path(path).is_dir()), None)
+
+
 def copy_configuration(root: Path, tree: Path) -> None:
     candidates = [*root.glob(".env*"), root / ".npmrc", root / "uv.toml"]
     for directory in ("apps", "packages"):
@@ -38,9 +45,12 @@ def setup() -> None:
     copy_configuration(root, tree)
     env = dict(os.environ, UV_LINK_MODE="clone", UV_PROJECT_ENVIRONMENT=str(tree / ".venv"))
     env.pop("UV_NO_SYNC", None)
-    cache = Path("/srv/cow/cache/uv" if sys.platform == "linux" else "/Volumes/StudioExt/cache/uv")
-    if cache.is_dir():
-        env["UV_CACHE_DIR"] = str(cache)
+    cache = store_directory(
+        "T3_SETUP_UV_CACHE",
+        ("/srv/cow/cache/uv", "/data/jobs/cache/uv", "/Volumes/StudioExt/cache/uv"),
+    )
+    if cache is not None:
+        env["UV_CACHE_DIR"] = cache
     subprocess.run(
         ["uv", "sync", "--frozen", "--all-extras", "--all-groups"],
         env=env,
