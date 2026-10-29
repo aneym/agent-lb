@@ -32,6 +32,13 @@ def refused_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
     return path in ('/', home, '/Users', '/Volumes', '/Users/aneyman') or re.fullmatch(r'/Volumes/[^/]+', path) is not None
+COW_MESSAGE = 'BLOCKED: no recursive walk of /srv, /srv/data, /srv/cow or their direct children; full /srv/cow walks churn XFS and overlay metadata on ax42 (2026-10-29). Use df or the disk meter, or name one tree below them.'
+DU_VALUES = ('-d', '-B', '-t', '-X', '--max-depth', '--block-size', '--threshold', '--exclude', '--exclude-from', '--time-style', '--files0-from')
+def cow_root(path, cwd):
+    parts = [part for part in resolve_path(path, cwd).split('/') if part]
+    if parts[:1] != ['srv']:
+        return False
+    return len(parts) <= (3 if parts[1:2] == ['cow'] else 4 if parts[1:3] == ['data', 'cow'] else 2)
 def wide_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
@@ -222,6 +229,18 @@ def unsafe(args, depth, cwd):
     if name == 'git' and 'grep' in args and '--no-index' in args:
         name, args = 'rg', ['rg'] + args[args.index('grep') + 1:]
         args = [arg for arg in args if arg != '--no-index']
+    if name in ('du', 'tree'):
+        paths, skip = [], False
+        for arg in args[1:]:
+            if skip:
+                skip = False
+            elif arg in DU_VALUES:
+                skip = True
+            elif not arg.startswith('-'):
+                paths.append(arg)
+        if any(cow_root(path, cwd) for path in paths or ['.']):
+            raise Refused(COW_MESSAGE)
+        return False
     if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep', 'ugrep', 'ack', 'ag'):
         roots, recursive, word = search_paths(name, args[1:])
         recursive |= tool.startswith('rtk ')
@@ -235,6 +254,8 @@ def unsafe(args, depth, cwd):
                 resolved = resolve_path(path, cwd)
                 current = resolve_path('.', cwd)
                 protected = refused_root(path, cwd)
+                if cow_root(path, cwd) and not (name == 'find' and re.search(r'-maxdepth\s+[01]\b', ' '.join(args))):
+                    raise Refused(COW_MESSAGE)
                 if content and protected:
                     raise Refused('BLOCKED (floor: secrets and protected credentials): recursive content reads must stay inside one repository or directory.')
                 if refused_root(path, cwd) or wide_root(path, cwd):
