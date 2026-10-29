@@ -14,6 +14,19 @@ PYTHON = "/Library/Developer/CommandLineTools/usr/bin/python3" if DARWIN else "/
 GROUP = 0
 
 
+def trusted(path):
+    current = os.path.realpath(path)
+    while not os.path.lexists(current):
+        current = os.path.dirname(current)
+    while True:
+        info = os.lstat(current)
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            sys.exit(f"install-root: {current} is not root-owned and closed to other writers")
+        if current == "/":
+            return
+        current = os.path.dirname(current)
+
+
 def place(path, text, mode):
     os.makedirs(os.path.dirname(path), 0o755, exist_ok=True)
     tmp = f"{path}.tmp-{os.getpid()}"
@@ -35,6 +48,8 @@ def main():
         sys.exit("install-root: bad user name")
     pwd.getpwnam(args.user)
     python = os.path.realpath(PYTHON)
+    for path in (python, HELPER, SUDOERS, "/usr/local/lib/agent-floors", "/var/lib/agent-floors"):
+        trusted(os.path.dirname(path))
     info = os.stat(python)
     if info.st_uid != 0 or info.st_mode & 0o022:
         sys.exit(f"install-root: {python} is not root-owned")

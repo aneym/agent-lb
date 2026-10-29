@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -14,21 +15,42 @@ CLAUDE_MANAGED = Path(
     else "/etc/claude-code/managed-settings.json"
 )
 CODEX_MANAGED = Path("/etc/codex/requirements.toml")
-ROOT_FLOOR = re.compile(r"floor-root/run[\"\s,]+floor[\"\s,]+([A-Za-z0-9_.-]+)")
+LAUNCH = ["-I", "-S", "/usr/local/lib/agent-floors/current/floor-root/run", "floor"]
+TOML_COMMAND = re.compile(r'^command = ("(?:[^"\\]|\\.)*")$', re.M)
 
 
 def root_floors() -> bool:
     return HELPER.is_file()
 
 
-def root_floor_names(codex: bool) -> set[str]:
-    path = CODEX_MANAGED if codex else CLAUDE_MANAGED
+def root_text(path: Path) -> str:
     try:
         info = path.stat()
-        text = path.read_text() if info.st_uid == 0 and not info.st_mode & 0o022 else ""
+        return path.read_text() if info.st_uid == 0 and not info.st_mode & 0o022 else ""
     except OSError:
-        text = ""
-    return set(ROOT_FLOOR.findall(text))
+        return ""
+
+
+def launched(argv: list[str]) -> str | None:
+    return argv[5] if len(argv) > 5 and argv[1:5] == LAUNCH else None
+
+
+def root_floor_names(codex: bool) -> set[str]:
+    text = root_text(CODEX_MANAGED if codex else CLAUDE_MANAGED)
+    argvs: list[list[str]] = []
+    try:
+        if codex:
+            argvs = [shlex.split(json.loads(value)) for value in TOML_COMMAND.findall(text)]
+        elif text:
+            hooks = json.loads(text).get("hooks") or {}
+            for groups in hooks.values():
+                for group in groups:
+                    for hook in group.get("hooks") or []:
+                        if isinstance(hook.get("args"), list):
+                            argvs.append([hook.get("command"), *hook["args"]])
+    except (ValueError, AttributeError, TypeError):
+        return set()
+    return {name for name in map(launched, argvs) if name}
 
 
 def held_by_root(command: str, names: set[str]) -> bool:
