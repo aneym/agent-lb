@@ -453,6 +453,7 @@ def main():
                         }
                     )
                 )
+                print(reason, file=sys.stderr)
                 return 2
     except (OSError, ValueError, TypeError) as error:
         print(f"branch-guard: cannot classify command: {error}", file=sys.stderr)

@@ -19,6 +19,7 @@ from typing import Any
 
 from claude_config_hooks import claude_config_files  # type: ignore[missing-import]
 from codex_home import codex_changes  # type: ignore[missing-import]
+from codex_hook_trust import trust_floor_hooks  # type: ignore[missing-import]
 from dispatch_parity import run_parity  # type: ignore[missing-import]
 from harness_mcp import ensure_harness_mcp  # type: ignore[missing-import]
 from floor_invariant import refuse_floor_changes  # type: ignore[missing-import]
@@ -340,6 +341,7 @@ def main() -> int:
         for reason, path in preserved_agents:
             print(f"preserved {reason} {path}")
         print("managed routing configuration already converged")
+        print("codex floor hooks: " + ("skipped" if args.uninstall else trust_floor_hooks(args.home)))
         return 0
 
     if read_text(settings_path) != settings_text:
@@ -380,6 +382,7 @@ def main() -> int:
     hookd_install.ensure_daemon(args.home, any(path.parent == args.home / ".claude/hooks" for path in changes))
     for reason, path in preserved_agents:
         print(f"preserved {reason} {path}")
+    print("codex floor hooks: " + ("skipped" if args.uninstall else trust_floor_hooks(args.home)))
     return 0
 
 
