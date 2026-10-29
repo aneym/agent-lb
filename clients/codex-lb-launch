@@ -194,10 +194,10 @@ def _header_value(headers: list[tuple[str, str]], wanted: str) -> str | None:
     return next((value for name, value in headers if name.lower() == wanted), None)
 
 
-def _error(connection: socket.socket, status: int, reason: str) -> None:
+def _error(connection: socket.socket, status: int, reason: str, extra: str = "") -> None:
     body = f"{status} {reason}\n".encode("ascii", "replace")
     connection.sendall(
-        f"HTTP/1.1 {status} {reason}\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode(
+        f"HTTP/1.1 {status} {reason}\r\n{extra}Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode(
             "ascii"
         )
         + body
@@ -242,7 +242,12 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
             f"codex:{self.server.proxy_state.token}".encode()
         ).decode()
         if _header_value(headers, "Proxy-Authorization") != expected:
-            _error(self.request, 407, "Proxy Authentication Required")
+            _error(
+                self.request,
+                407,
+                "Proxy Authentication Required",
+                'Proxy-Authenticate: Basic realm="codex-lb"\r\n',
+            )
             return
         if method == "GET" and target == "/__codex_lb_health":
             self.request.sendall(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
