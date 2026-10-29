@@ -255,3 +255,16 @@ def drop_hooks(
                 out.append(group)
         kept[event] = out
     return kept, dropped, refused
+
+
+def settled_matcher(event: str, matcher: Any, command: Any) -> Any:
+    if (
+        event == "PostToolUse"
+        and isinstance(command, str)
+        and "idle-agents.py" in command
+        and isinstance(matcher, str)
+        and matcher != "*"
+        and "TaskStop" not in matcher.split("|")
+    ):
+        return matcher + "|TaskStop"
+    return matcher

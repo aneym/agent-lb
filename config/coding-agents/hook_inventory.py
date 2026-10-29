@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any, Iterator
 
+from floor_hooks import mentioned_floors  # type: ignore[missing-import]
+
 HOOK_TARGET = re.compile(r'(?:\$HOME|\$\{HOME\}|~|/)[^\s"\';|&)<>]*')
 
 
@@ -26,6 +28,20 @@ def hook_targets(value: Any, home: Path) -> Iterator[Path]:
     elif isinstance(value, list):
         for child in value:
             yield from hook_targets(child, home)
+
+
+def keep_floor_targets(home: Path, changes: dict[Path, str | None], value: Any) -> None:
+    if isinstance(value, dict):
+        command = value.get("command")
+        if isinstance(command, str) and mentioned_floors(command):
+            for path in command_paths(command, home):
+                if changes.get(path, "") is None:
+                    del changes[path]
+        for child in value.values():
+            keep_floor_targets(home, changes, child)
+    elif isinstance(value, list):
+        for child in value:
+            keep_floor_targets(home, changes, child)
 
 
 def validate_hook_changes(home: Path, changes: dict[Path, str | None], settings: Any, kept: Any = ()) -> None:

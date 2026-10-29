@@ -17,13 +17,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from claude_config_hooks import claude_config_files  # type: ignore[missing-import]
 from codex_home import codex_changes  # type: ignore[missing-import]
 from dispatch_parity import run_parity  # type: ignore[missing-import]
 from harness_mcp import ensure_harness_mcp  # type: ignore[missing-import]
-from hook_inventory import hook_path_problems, validate_hook_changes  # type: ignore[missing-import]
+from hook_inventory import hook_path_problems, keep_floor_targets, validate_hook_changes  # type: ignore[missing-import]
 from policy_documents import install_adapter, install_codex_doc, read_text, render_codex_body, uninstall_adapter  # type: ignore[missing-import]  # fmt: skip
 from policy_files import autocompact_text, checkpoint_changes, write_atomic  # type: ignore[missing-import]
-from policy_hook_groups import dispatcher_module, opaque_floor_commands  # type: ignore[missing-import]
+from policy_hook_groups import opaque_floor_commands  # type: ignore[missing-import]
 from policy_hook_handlers import apply_handlers, handler_folds_known, load_handlers  # type: ignore[missing-import]  # fmt: skip
 from policy_hook_install import dispatch_worth, managed_hooks, pin_inproc  # type: ignore[missing-import]
 from policy_hook_registry import fold_hooks, folded_rev, is_folded, read_registry, registry_rev, unfold_hooks  # type: ignore[missing-import]  # fmt: skip
@@ -35,20 +36,6 @@ from policy_registry_retirement import kept_retired_hooks, kept_warning, retire_
 from policy_plan import plan_managed_files  # type: ignore[missing-import]
 from policy_stage import install_staged  # type: ignore[missing-import]
 from policy_settings import check_policy, internal_hook_commands, policy_snapshot, reconcile_settings, resolve_sol, snapshot_model  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
-
-
-def rewrite_floor_commands(hooks: dict[str, Any], source: Path) -> list[str]:
-
-    module = dispatcher_module(source)
-    changed = []
-    for group in hooks.get("PreToolUse") or []:
-        for hook in (group.get("hooks") or []) if isinstance(group, dict) else []:
-            command = hook.get("command") if isinstance(hook, dict) else None
-            direct = module.legacy_floor(command) if isinstance(command, str) else None
-            if direct:
-                changed.append(f"{command[:60]!r} -> {direct}")
-                hook["command"] = direct
-    return changed
 
 
 def main() -> int:
@@ -95,7 +82,7 @@ def main() -> int:
                 if read_text(settings_path) != settings_text:
                     raise SystemExit("error: settings changed during install")
                 checkpoint_changes(args.home, {settings_path: desired})
-                for path, content in install_staged(args.home, {settings_path: desired}, False).items():
+                for path, content in install_staged(args.home, {settings_path: desired}).items():
                     write_atomic(path, content)
         print(f"autoCompactWindow={window}")
         return 0
@@ -133,9 +120,7 @@ def main() -> int:
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
     sonnet_model = SONNET_MODEL if args.uninstall else snapshot_model(snapshot, "sonnet-latest")
-    nxt = reconcile_settings(
-        settings, args.uninstall, rewrite_floor_commands, sonnet_model, source, frozenset(kept.values())
-    )
+    nxt = reconcile_settings(settings, args.uninstall, sonnet_model, source, frozenset(kept.values()), args.home)
     handlers = {} if args.uninstall else apply_handlers(nxt, load_handlers(args.home, source), args.home)
     if not args.uninstall:
         nxt["autoCompactWindow"] = snapshot["autocompact_window"]["tab"]
@@ -168,7 +153,6 @@ def main() -> int:
                         [group for group in groups if group not in old_registry.get("dispatch", {}).get(event, [])]
                     )
                 )
-                rewrite_floor_commands({"PreToolUse": folded_groups} if event == "PreToolUse" else {}, source)
                 only[event] = folded_groups
             for event, groups in handlers.items():
                 only.setdefault(event, []).extend(groups)
@@ -329,11 +313,13 @@ def main() -> int:
             ):
                 changes[path] = None
     changes.update(codex_changes(args.home, None if args.uninstall else resolve_sol(source, args.home)))
+    changes.update({} if args.uninstall else claude_config_files(args.home))
     preserved_agents, replace_policy_link, policy_link_target = plan_managed_files(
         args, source, snapshot, keep_fold, changes, kept
     )
 
     retire_hook_registries(args.home, changes, kept)
+    keep_floor_targets(args.home, changes, nxt)
     validate_hook_changes(args.home, changes, nxt, kept)
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
@@ -381,7 +367,7 @@ def main() -> int:
             return 0
         return 2 if path in latest_files else 1
 
-    for path, content in sorted(install_staged(args.home, changes, args.uninstall).items(), key=write_order):
+    for path, content in sorted(install_staged(args.home, changes).items(), key=write_order):
         if content is None:
             path.unlink()
         else:

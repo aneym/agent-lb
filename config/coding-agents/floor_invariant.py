@@ -2,26 +2,34 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from floor_hooks import FLOOR_MENTIONS, accepted_forms, mentioned_floors  # type: ignore[missing-import]
-from policy_layout import SETTINGS_HOOKS  # type: ignore[missing-import]
 
-HOOK_DOCUMENTS = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json")
+HOOK_DOCUMENTS = {
+    ".claude/settings.json": ".claude",
+    ".claude/settings.local.json": ".claude",
+    ".codex/hooks.json": ".codex",
+}
 REGISTRY_DIR = ".claude/hooks/dispatch"
+NAME_LIST = re.compile(r"[A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*")
 
 
-def hook_document(home: Path, path: Path) -> bool:
-    real = os.path.realpath(path)
-    if real in {os.path.realpath(home / name) for name in HOOK_DOCUMENTS}:
-        return True
-    return (
-        os.path.dirname(real) == os.path.realpath(home / REGISTRY_DIR)
-        and path.name.startswith("registry")
-        and path.suffix == ".json"
-    )
+def managed_dir(home: Path, path: Path) -> Path | None:
+    for name, owner in HOOK_DOCUMENTS.items():
+        if path == home / name or os.path.realpath(path) == os.path.realpath(home / name):
+            return home / owner
+    if path.parent == home / REGISTRY_DIR and path.name.startswith("registry") and path.suffix == ".json":
+        return home / REGISTRY_DIR
+    return None
+
+
+def outside(path: Path, home: Path, owner: Path) -> bool:
+    real, root = os.path.realpath(path), os.path.join(os.path.realpath(home), os.path.relpath(owner, home))
+    return os.path.commonpath([real, root]) != root
 
 
 def floor_entries(value: Any, context: tuple[str, ...] = (), matcher: Any = None):
@@ -42,9 +50,26 @@ def document_entries(text: str | None, label: str) -> list[tuple[str, str, str]]
     try:
         return list(floor_entries(json.loads(text)))
     except ValueError:
-        if any(term in text for term in FLOOR_MENTIONS):
+        if mentioned_floors(text) or any(term in text for term in FLOOR_MENTIONS):
             raise ValueError(f"{label} does not parse as JSON and mentions a floor hook")
         return []
+
+
+def placed(entry: tuple[str, str, str]) -> tuple[str, str, str]:
+    context, matcher, hook = entry
+    parts = context.split("/")
+    if len(parts) == 3 and parts[0] == "entries":
+        return parts[1], json.dumps(parts[2]), hook
+    if len(parts) == 3 and parts[0] in ("hooks", "per_hook") and parts[2] == "hooks":
+        return parts[1], matcher, hook
+    return context, matcher, hook
+
+
+def overlaps(first: str, second: str) -> bool:
+    names = [json.loads(matcher) for matcher in (first, second)]
+    if any(not isinstance(name, str) or name in ("", "*") or not NAME_LIST.fullmatch(name) for name in names):
+        return True
+    return bool(set(names[0].split("|")) & set(names[1].split("|")))
 
 
 def planned_text(path: Path, changes: dict[Path, str | None]) -> str | None:
@@ -53,36 +78,48 @@ def planned_text(path: Path, changes: dict[Path, str | None]) -> str | None:
     return path.read_text() if path.is_file() else None
 
 
-def floor_problems(home: Path, changes: dict[Path, str | None], removable: frozenset[str]) -> list[str]:
+def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
     problems = []
-    active = home / REGISTRY_DIR / "registry.json"
+    registry, settings = home / REGISTRY_DIR / "registry.json", home / ".claude/settings.json"
     for path, content in changes.items():
-        if not hook_document(home, path):
+        owner = managed_dir(home, path)
+        if owner is None:
+            continue
+        if (path.is_symlink() or os.path.realpath(path) != str(path)) and outside(path, home, owner):
+            problems.append(f"{path}: resolves outside {owner}")
             continue
         try:
             before = document_entries(path.read_text() if path.is_file() else None, f"live {path}")
-            if content is None and path.name != active.name and path.parent == active.parent:
-                after = document_entries(planned_text(active, changes), f"planned {active}")
+            after = document_entries(content, f"planned {path}")
+            if content is None and owner == home / REGISTRY_DIR:
+                kept = Counter(
+                    placed(entry)
+                    for doc in (registry, settings)
+                    if doc != path
+                    for entry in document_entries(planned_text(doc, changes), f"planned {doc}")
+                )
+                gone = [entry for entry in before if not kept[placed(entry)]]
             else:
-                after = document_entries(content, f"planned {path}")
+                gone = list((Counter(before) - Counter(after)).elements())
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             problems.append(f"{path}: {exc}")
             continue
-        for context, matcher, hook in (Counter(before) - Counter(after)).elements():
-            if json.loads(hook).get("command") not in removable:
-                problems.append(f"{path}: floor entry at {context} matcher {matcher} would change or go: {hook}")
+        for context, matcher, hook in gone:
+            problems.append(f"{path}: floor entry at {context} matcher {matcher} would change or go: {hook}")
         for context, matcher, hook in (Counter(after) - Counter(before)).elements():
             forms = accepted_forms(json.loads(hook).get("command"))
-            if any((c, m) == (context, matcher) and json.loads(old).get("command") in forms for c, m, old in before):
+            if any(
+                c == context and overlaps(m, matcher) and json.loads(old).get("command") in forms
+                for c, m, old in before
+            ):
                 problems.append(
                     f"{path}: floor entry at {context} matcher {matcher} added beside a form already there: {hook}"
                 )
     return problems
 
 
-def refuse_floor_changes(home: Path, changes: dict[Path, str | None], uninstall: bool) -> None:
-    managed = {form for _event, _matcher, hook, _source in SETTINGS_HOOKS for form in accepted_forms(hook["command"])}
-    problems = floor_problems(home, changes, frozenset(managed if uninstall else ()))
+def refuse_floor_changes(home: Path, changes: dict[Path, str | None]) -> None:
+    problems = floor_problems(home, changes)
     if problems:
         for line in problems:
             print(f"floor invariant: {line}")

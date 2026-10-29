@@ -1,4 +1,6 @@
+import codecs
 import re
+import shlex
 
 FLOOR_HOOKS = (
     "branch-guard.py",
@@ -29,8 +31,36 @@ ACCEPTED_FORMS = {
 }
 
 
+ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
+
+
+def ansi_c(command):
+    def decode(match):
+        try:
+            return codecs.decode(match.group(1), "unicode_escape")
+        except (UnicodeDecodeError, ValueError):
+            return match.group(1)
+
+    return ANSI_C.sub(decode, command)
+
+
+def readings(command):
+    decoded = ansi_c(command)
+    texts = [command, decoded]
+    texts += [text.replace("\\", "").replace("'", "").replace('"', "") for text in texts]
+    for text in (command, decoded):
+        try:
+            texts += shlex.split(text)
+        except ValueError:
+            pass
+    return [text.lower() for text in texts]
+
+
 def mentioned_floors(command):
-    return {term for term in FLOOR_MENTIONS if term in command} if isinstance(command, str) else set()
+    if not isinstance(command, str):
+        return set()
+    texts = readings(command)
+    return {term for term in FLOOR_MENTIONS if any(term.lower() in text for text in texts)}
 
 
 def accepted_forms(command):

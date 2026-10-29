@@ -8,9 +8,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from claude_config_hooks import claude_config_hooks  # type: ignore[missing-import]
 from floor_hooks import mentioned_floors  # type: ignore[missing-import]
 from policy_documents import read_text  # type: ignore[missing-import]
-from policy_hook_groups import drop_hooks, is_settings_hook  # type: ignore[missing-import]  # fmt: skip
+from policy_hook_groups import drop_hooks, is_settings_hook, settled_matcher  # type: ignore[missing-import]  # fmt: skip
 from policy_layout import EFFORT_LEVEL, HAIKU_ENV, MANAGED_AGENTS, MODEL, OBSERVATIONAL_HOOKS, POLICY_DIR, POLICY_SNAPSHOT, RELAY_SEATS, SETTINGS_HOOKS, SOL_ID, SOL_MODEL, SONNET_ENV, SONNET_ID, SONNET_MODEL  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
 
@@ -150,10 +151,10 @@ def internal_hook_commands(hooks: dict[str, Any]) -> None:
 def reconcile_settings(
     settings: dict[str, Any],
     uninstall: bool,
-    rewrite_commands,
     sonnet_model: str = SONNET_MODEL,
     source: Path | None = None,
     retired_kept: frozenset[str] = frozenset(),
+    home: Path | None = None,
 ) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
     hooks = updated.get("hooks", {})
@@ -164,6 +165,8 @@ def reconcile_settings(
         for line in refused:
             print(f"refused retiring {line}")
         updated["hooks"] = hooks
+        if home is not None and not uninstall:
+            claude_config_hooks(home, hooks)
     if not uninstall:
         for event, groups in hooks.items():
             for group in groups:
@@ -175,14 +178,10 @@ def reconcile_settings(
                         hook["timeout"] = 3
                     if any(event == name and marker in command for name, marker in OBSERVATIONAL_HOOKS):
                         hook["async"] = True
-                    if event == "PostToolUse" and "idle-agents.py" in command:
-                        matcher = group.get("matcher", "*")
-                        if matcher != "*" and "TaskStop" not in matcher.split("|"):
-                            group["matcher"] = matcher + "|TaskStop"
+                    settled = settled_matcher(event, group.get("matcher"), command)
+                    if settled != group.get("matcher"):
+                        group["matcher"] = settled
             hooks[event] = [g for g in groups if g["hooks"]]
-    if not uninstall and source is not None and isinstance(hooks, dict):
-        for line in rewrite_commands(hooks, source):
-            print(f"hook policy: floor guard registered as a direct exec: {line}")
     groups = hooks.get("PreToolUse", [])
     cleaned: list[dict[str, Any]] = []
     for group in groups:
@@ -200,7 +199,8 @@ def reconcile_settings(
                     "hooks": [
                         hook
                         for hook in group.get("hooks", [])
-                        if not any(is_settings_hook(hook.get("command"), owned) for owned in managed)
+                        if mentioned_floors(hook.get("command"))
+                        or not any(is_settings_hook(hook.get("command"), owned) for owned in managed)
                     ],
                 }
                 for group in (cleaned if event == "PreToolUse" else hooks.get(event, []))
