@@ -1,7 +1,10 @@
+import ctypes
+import errno
 import json
 import os
 import re
 import shutil
+import sys
 import threading
 
 PATH_REF = re.compile(r'(?:\$HOME|~)/([^\s"\'$`\\;&|<>(){}]+)')
@@ -115,6 +118,13 @@ class Sandbox(object):
         with self.lock:
             self.count += 1
             path = os.path.join(self.root, "run-%04d" % self.count)
+        if sys.platform == "darwin":
+            clonefile = ctypes.CDLL(None, use_errno=True).clonefile
+            if clonefile(os.fsencode(self.template), os.fsencode(path), 0) == 0:
+                return path
+            error = ctypes.get_errno()
+            if error not in (errno.EXDEV, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS, errno.EINVAL):
+                raise OSError(error, os.strerror(error), path)
         shutil.copytree(self.template, path, symlinks=True)
         return path
 
