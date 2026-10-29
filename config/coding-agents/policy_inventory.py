@@ -117,7 +117,6 @@ DISPATCH_INPROC = (
     "rm-cd-rewrite.py",
     "no-direct-merge.py",
     "box-offload-hook",
-    "lane-bulletin-hook",
     "herdr-tab-autoname.py",
     "idle-agents.py",
     "merge-gate-guard.py",

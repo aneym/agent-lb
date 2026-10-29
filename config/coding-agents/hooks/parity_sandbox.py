@@ -16,9 +16,6 @@ CONFIG_COPIES = (".agent-lb/managed/coding-agents/routing-table.json", ".claude/
 TEST_PANE = "hp:t1"
 
 
-RUN_KEYED = {os.path.join("home", ".cache", "lane-bulletin-quiet")}
-
-
 FAKE_NPX = r"""#!/bin/sh
 echo "$*" >> "$NPX_CALL_LOG"
 if [ "$2" = "--find-config-path" ]; then
@@ -178,7 +175,7 @@ def files_of(run):
             path = os.path.join(dirpath, name)
             if path in skip or name.startswith("hook-dispatch-") or name.endswith(".pyc"):
                 continue
-            found.add(os.path.join(rel_dir, "<stamp>") if rel_dir in RUN_KEYED else os.path.relpath(path, run))
+            found.add(os.path.relpath(path, run))
     return found
 
 

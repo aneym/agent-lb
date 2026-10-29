@@ -100,6 +100,7 @@ RETIRED_HOOKS = (
     "herdr-send-guard.py",
     "aside-regular-tabs.py",
     "workflow-readback.py",
+    "lane-bulletin-hook",
 )
 
 
