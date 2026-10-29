@@ -77,8 +77,8 @@ def refusal(paths):
         return None
     return (
         f"Warning: this writes a tracked file in the shared main checkout {repo}. "
-        f"Work in a T3 worktree or git worktree add ../{repo.name}-wt/<topic> -b <branch> origin/main, "
-        "and edit that worktree instead. Main checkouts belong to the merge step."
+        f"Use lane-worktree ensure --repo {repo.name} --branch <topic>, "
+        "and edit the -wt worktree instead. Main checkouts belong to the merge step."
     )
 
 

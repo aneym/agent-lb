@@ -464,7 +464,7 @@ def main():
         words = argv.split()
         exe = os.path.basename(words[0]) if words else ""
         if exe in {"claude", "codex"} or re.search(
-            r"@anthropic-ai/claude-code|agent-lb(?:\s|/|$)|(?:^|[/\s])t3\s+serve(?:\s|$)", argv
+            r"@anthropic-ai/claude-code|(?:seat-exec|seat-run|agent-lb)(?:\s|/|$)|(?:^|[/\s])t3\s+serve(?:\s|$)", argv
         ):
             live.update(descendants(table, pid))
     for sel in selections:
