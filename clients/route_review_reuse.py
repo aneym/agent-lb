@@ -60,9 +60,10 @@ def structured_pass(row: dict) -> bool:
         events = [json.loads(line) for line in run_path(row["decision_id"], ".log").read_text().splitlines()]
         provider = row["target"]["providerInstanceId"]
         if provider == "codex":
+            start = max((i for i, e in enumerate(events) if e.get("type") == "turn.started"), default=0)
             messages = [
                 e["item"].get("text")
-                for e in events
+                for e in events[start:]
                 if e.get("type") == "item.completed" and e.get("item", {}).get("type") == "agent_message"
             ]
             return bool(messages and messages[-1] == row["result"] and events[-1].get("type") == "turn.completed")
@@ -83,7 +84,9 @@ def reusable_receipt(key: dict | None) -> dict | None:
     for path in sorted(run_path("dcn_index", ".json").parent.glob("dcn_*.json"), reverse=True):
         try:
             receipt = json.loads(path.read_text())
-            if receipt.get("review_key") == key and structured_pass(receipt):
+            if json.dumps(receipt.get("review_key"), sort_keys=True) == json.dumps(
+                key, sort_keys=True
+            ) and structured_pass(receipt):
                 return receipt
         except (OSError, ValueError, AttributeError):
             continue
