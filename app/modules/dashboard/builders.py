@@ -87,6 +87,8 @@ def build_dashboard_overview_summary(
         cost=DashboardUsageCost(
             currency=activity_cost.currency,
             totalUsd=activity_cost.total_usd,
+            unpricedRequests=activity_cost.unpriced_requests,
+            unpricedTokens=activity_cost.unpriced_tokens,
         ),
         metrics=DashboardUsageMetrics.model_validate(
             {

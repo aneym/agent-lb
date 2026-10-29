@@ -98,8 +98,12 @@ def group_weights(groups: list[RequestGroup]) -> list[float]:
     for group in groups:
         cost[group.provider] += group.cost
         priced[group.provider] += group.priced_equivalents
-    rate = {provider: cost[provider] / priced[provider] for provider in priced if priced[provider] > 0}
-    return [group.cost + group.unpriced_equivalents * rate.get(group.provider, 0.0) for group in groups]
+    rate = {
+        provider: cost[provider] / priced[provider]
+        for provider in priced
+        if priced[provider] > 0 and cost[provider] > 0
+    }
+    return [group.cost + group.unpriced_equivalents * rate.get(group.provider, 1.0) for group in groups]
 
 
 def pool_accounts(summaries: list[AccountSummary]) -> tuple[dict[str, float], dict[str, str]]:

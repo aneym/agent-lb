@@ -129,8 +129,10 @@ class UsageService:
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     cost_usd=cost_usd,
+                    unpriced_requests=unpriced_requests,
+                    unpriced_tokens=unpriced_tokens,
                 )
-                for user, machine, requests, input_tokens, output_tokens, cost_usd in rows
+                for user, machine, requests, input_tokens, output_tokens, cost_usd, unpriced_requests, unpriced_tokens in rows
             ],
         )
 

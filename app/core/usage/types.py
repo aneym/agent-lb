@@ -63,6 +63,8 @@ class UsageCostSummary:
     currency: str
     total_usd_7d: float
     by_model: list[UsageCostByModel]
+    unpriced_requests: int = 0
+    unpriced_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,8 @@ class BucketModelAggregate:
     cached_input_tokens: int
     reasoning_tokens: int
     cost_usd: float = 0.0
+    unpriced_requests: int = 0
+    unpriced_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -133,3 +137,5 @@ class RequestActivityAggregate:
     output_tokens: int
     cached_input_tokens: int
     cost_usd: float
+    unpriced_requests: int = 0
+    unpriced_tokens: int = 0

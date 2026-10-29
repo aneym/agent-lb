@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Iterable, Mapping
 
 from app.core.openai.models import ResponseUsage
-from app.core.usage.types import UsageCostByModel, UsageCostSummary
 
 
 @dataclass(frozen=True)
@@ -40,13 +38,6 @@ class UsageCostBreakdown:
     cached_input_usd: float | None
     output_usd: float | None
     total_usd: float | None
-
-
-@dataclass(frozen=True)
-class CostItem:
-    model: str
-    usage: UsageTokens
-    service_tier: str | None = None
 
 
 def _as_number(value: int | float | None) -> float | None:
@@ -536,36 +527,4 @@ def calculate_cost_breakdown_from_usage(
         cached_input_usd=cached_input_usd,
         output_usd=output_usd,
         total_usd=total_usd,
-    )
-
-
-def calculate_costs(
-    items: Iterable[CostItem],
-    pricing: Mapping[str, ModelPrice] | None = None,
-    aliases: Mapping[str, str] | None = None,
-) -> UsageCostSummary:
-    pricing = pricing or DEFAULT_PRICING_MODELS
-    aliases = aliases or DEFAULT_MODEL_ALIASES
-
-    totals: dict[str, float] = defaultdict(float)
-    total_usd = 0.0
-
-    for item in items:
-        model = item.model
-        usage = item.usage
-        resolved = get_pricing_for_model(model, pricing, aliases)
-        if not resolved:
-            continue
-        canonical, price = resolved
-        cost = calculate_cost_from_usage(usage, price, service_tier=item.service_tier)
-        if cost is None:
-            continue
-        totals[canonical] += cost
-        total_usd += cost
-
-    by_model = [UsageCostByModel(model=model, usd=round(value, 6)) for model, value in sorted(totals.items())]
-    return UsageCostSummary(
-        currency="USD",
-        total_usd_7d=round(total_usd, 6),
-        by_model=by_model,
     )

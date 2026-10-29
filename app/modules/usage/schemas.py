@@ -19,6 +19,8 @@ class UsageWindow(DashboardModel):
 class UsageCost(DashboardModel):
     currency: str
     total_usd_7d: float = Field(alias="totalUsd7d")
+    unpriced_requests_7d: int = Field(default=0, alias="unpricedRequests7d")
+    unpriced_tokens_7d: int = Field(default=0, alias="unpricedTokens7d")
 
 
 class UsageMetrics(DashboardModel):
@@ -57,6 +59,8 @@ class CallerUsageRow(DashboardModel):
     input_tokens: int
     output_tokens: int
     cost_usd: float
+    unpriced_requests: int = 0
+    unpriced_tokens: int = 0
 
 
 class CallerUsageResponse(DashboardModel):

@@ -22,6 +22,8 @@ class DashboardOverviewTimeframe(DashboardModel):
 class DashboardUsageCost(DashboardModel):
     currency: str
     total_usd: float = Field(alias="totalUsd")
+    unpriced_requests: int = Field(default=0, alias="unpricedRequests")
+    unpriced_tokens: int = Field(default=0, alias="unpricedTokens")
 
 
 class DashboardUsageMetrics(DashboardModel):

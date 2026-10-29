@@ -95,6 +95,8 @@ class RequestLogAggregates:
             func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
             func.coalesce(func.sum(RequestLog.reasoning_tokens), 0).label("reasoning_tokens"),
             func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+            _unpriced_requests().label("unpriced_requests"),
+            _unpriced_tokens().label("unpriced_tokens"),
         )
         if exclude_canceled_subscription_accounts:
             stmt = stmt.outerjoin(Account, Account.id == RequestLog.account_id)
@@ -116,6 +118,8 @@ class RequestLogAggregates:
                 cached_input_tokens=int(row.cached_input_tokens),
                 reasoning_tokens=int(row.reasoning_tokens),
                 cost_usd=float(row.cost_usd or 0.0),
+                unpriced_requests=int(row.unpriced_requests),
+                unpriced_tokens=int(row.unpriced_tokens),
             )
             for row in result.all()
         ]
@@ -143,6 +147,8 @@ class RequestLogAggregates:
             func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
             func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
             func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+            _unpriced_requests().label("unpriced_requests"),
+            _unpriced_tokens().label("unpriced_tokens"),
         )
         if exclude_canceled_subscription_accounts:
             stmt = stmt.outerjoin(Account, Account.id == RequestLog.account_id)
@@ -156,6 +162,8 @@ class RequestLogAggregates:
             output_tokens=int(row.output_tokens),
             cached_input_tokens=int(row.cached_input_tokens),
             cost_usd=float(row.cost_usd or 0.0),
+            unpriced_requests=int(row.unpriced_requests),
+            unpriced_tokens=int(row.unpriced_tokens),
         )
 
     async def top_error_since(
@@ -219,6 +227,8 @@ class RequestLogAggregates:
             ),
             func.coalesce(func.sum(tokens_expr), 0).label("tokens_sum"),
             func.coalesce(func.sum(cached_expr), 0).label("cached_tokens_sum"),
+            _unpriced_requests().label("unpriced_requests"),
+            _unpriced_tokens().label("unpriced_tokens"),
         ).where(and_(*conditions))
         overall_row = (await self._session.execute(overall_stmt)).one()
 
@@ -255,7 +265,13 @@ class RequestLogAggregates:
             row_cost = float(row.cost_usd or 0.0)
             total_cost += row_cost
             by_model.append(UsageCostByModel(model=row.model, usd=round(row_cost, 6)))
-        cost = UsageCostSummary(currency="USD", total_usd_7d=round(total_cost, 6), by_model=by_model)
+        cost = UsageCostSummary(
+            currency="USD",
+            total_usd_7d=round(total_cost, 6),
+            by_model=by_model,
+            unpriced_requests=int(overall_row.unpriced_requests),
+            unpriced_tokens=int(overall_row.unpriced_tokens),
+        )
 
         return metrics, cost
 
@@ -265,7 +281,7 @@ class RequestLogAggregates:
         until: datetime,
         *,
         account_ids: Collection[str],
-    ) -> list[tuple[str, str, int, int, int, float]]:
+    ) -> list[tuple[str, str, int, int, int, float, int, int]]:
 
         caller_user = func.coalesce(RequestLog.caller_user, "unattributed")
         caller_machine = func.coalesce(RequestLog.caller_machine, "unattributed")
@@ -279,6 +295,8 @@ class RequestLogAggregates:
                     func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)), 0
                 ).label("output_tokens"),
                 func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+                _unpriced_requests().label("unpriced_requests"),
+                _unpriced_tokens().label("unpriced_tokens"),
             )
             .where(
                 RequestLog.requested_at >= since,
@@ -298,9 +316,27 @@ class RequestLogAggregates:
                 int(input_tokens),
                 int(output_tokens),
                 round(float(cost_usd), 6),
+                int(unpriced_requests),
+                int(unpriced_tokens),
             )
-            for user, machine, requests, input_tokens, output_tokens, cost_usd in rows
+            for user, machine, requests, input_tokens, output_tokens, cost_usd, unpriced_requests, unpriced_tokens in rows
         ]
+
+
+def _unpriced_clause() -> ColumnElement[bool]:
+    return and_(RequestLog.cost_usd.is_(None), _row_tokens() > 0)
+
+
+def _row_tokens() -> ColumnElement:
+    return func.coalesce(RequestLog.input_tokens, 0) + func.coalesce(RequestLog.output_tokens, 0)
+
+
+def _unpriced_requests() -> ColumnElement:
+    return func.coalesce(func.sum(case((_unpriced_clause(), 1), else_=0)), 0)
+
+
+def _unpriced_tokens() -> ColumnElement:
+    return func.coalesce(func.sum(case((_unpriced_clause(), _row_tokens()), else_=0)), 0)
 
 
 def _visible_account_log_clause() -> ColumnElement[bool]:

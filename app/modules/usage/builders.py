@@ -22,6 +22,8 @@ class ActivityCostSummary:
     currency: str
     total_usd: float
     by_model: list[UsageCostByModel]
+    unpriced_requests: int = 0
+    unpriced_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,8 @@ def build_trends_from_buckets(
     total_tokens = 0
     total_cached_tokens = 0
     total_cost_usd = 0.0
+    unpriced_requests = 0
+    unpriced_tokens = 0
 
     for row in rows:
         epoch = row.bucket_epoch
@@ -93,6 +97,8 @@ def build_trends_from_buckets(
         total_tokens += row.input_tokens + row.output_tokens
         total_cached_tokens += row.cached_input_tokens
         total_cost_usd += float(row.cost_usd)
+        unpriced_requests += row.unpriced_requests
+        unpriced_tokens += row.unpriced_tokens
 
     requests_points: list[TrendPoint] = []
     tokens_points: list[TrendPoint] = []
@@ -139,6 +145,8 @@ def build_trends_from_buckets(
         by_model=[
             UsageCostByModel(model=model, usd=round(cost, 6)) for model, cost in sorted(total_costs_by_model.items())
         ],
+        unpriced_requests=unpriced_requests,
+        unpriced_tokens=unpriced_tokens,
     )
 
     return trends, metrics, total_cost
@@ -168,6 +176,8 @@ def build_activity_summaries(
             currency="USD",
             total_usd=round(aggregate.cost_usd, 6),
             by_model=[],
+            unpriced_requests=aggregate.unpriced_requests,
+            unpriced_tokens=aggregate.unpriced_tokens,
         ),
     )
 
@@ -273,9 +283,15 @@ def _build_account_history(
 def _cost_summary_from_logs(logs: list[RequestLog]) -> UsageCostSummary:
     total = 0.0
     by_model: dict[str, float] = defaultdict(float)
+    unpriced_requests = 0
+    unpriced_tokens = 0
     for log in logs:
         cost = cost_from_log(log)
         if cost is None:
+            tokens = (log.input_tokens or 0) + (log.output_tokens or 0)
+            if tokens > 0:
+                unpriced_requests += 1
+                unpriced_tokens += tokens
             continue
         total += cost
         by_model[log.model] += cost
@@ -283,6 +299,8 @@ def _cost_summary_from_logs(logs: list[RequestLog]) -> UsageCostSummary:
         currency="USD",
         total_usd_7d=round(total, 6),
         by_model=[UsageCostByModel(model=model, usd=round(cost, 6)) for model, cost in sorted(by_model.items())],
+        unpriced_requests=unpriced_requests,
+        unpriced_tokens=unpriced_tokens,
     )
 
 
@@ -359,6 +377,8 @@ def _cost_summary_to_model(cost: UsageCostSummary) -> UsageCost:
     return UsageCost(
         currency=cost.currency,
         totalUsd7d=cost.total_usd_7d,
+        unpricedRequests7d=cost.unpriced_requests,
+        unpricedTokens7d=cost.unpriced_tokens,
     )
 
 
