@@ -1,0 +1,355 @@
+#!/usr/bin/python3 -IS
+import fcntl
+import io
+import json
+import os
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import time
+
+URL = "https://github.com/aneym/agent-lb.git"
+LIB = "/usr/local/lib/agent-floors"
+STATE = "/var/lib/agent-floors"
+ACCEPTED = "/etc/agent-floors/accepted.json"
+CODEX = "/etc/codex/requirements.toml"
+DARWIN = sys.platform == "darwin"
+CLAUDE = (
+    "/Library/Application Support/ClaudeCode/managed-settings.json"
+    if DARWIN
+    else "/etc/claude-code/managed-settings.json"
+)
+PYTHONS = ("/Library/Developer/CommandLineTools/usr/bin/python3",) if DARWIN else ("/usr/bin/python3",)
+PREFIX = "config/coding-agents/"
+TREES = ("hooks/", "floor-root/")
+RUN = LIB + "/current/floor-root/run"
+OS = "darwin" if DARWIN else "linux"
+EVENTS = {"PreToolUse", "SessionStart"}
+NAME = re.compile(r"[A-Za-z0-9_.-]{1,80}")
+ARG = re.compile(r"[A-Za-z0-9_=.,:/-]{0,100}")
+MATCHER = re.compile(r"[A-Za-z0-9_|*.^$()-]{1,100}")
+USER_EVENT = re.compile(r"[A-Za-z]{1,40}")
+PINS = {"LD_PRELOAD": "", "LD_AUDIT": "", "LD_LIBRARY_PATH": ""}
+if DARWIN:
+    PINS.update(DYLD_INSERT_LIBRARIES="", DYLD_LIBRARY_PATH="", DYLD_FRAMEWORK_PATH="")
+MAX_INPUT = 1 << 20
+MAX_TREE = 64 << 20
+
+
+class Refused(Exception):
+    pass
+
+
+def git(*args, capture=True):
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": STATE,
+        "LC_ALL": "C",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    pins = ["-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always"]
+    pins += ["-c", "credential.helper=", "-c", "core.fsmonitor=false"]
+    done = subprocess.run(["/usr/bin/git", *pins, *args], env=env, capture_output=capture, timeout=300)
+    if done.returncode:
+        raise Refused(f"git {args[0]} failed: {done.stderr.decode('utf-8', 'replace').strip()[:400]}")
+    return done.stdout
+
+
+def interpreter():
+    for path in PYTHONS:
+        real = os.path.realpath(path)
+        try:
+            info = os.stat(real)
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022:
+            return real
+    raise Refused("no root-owned python3 for the hooks")
+
+
+def root_dir(path, mode=0o755):
+    os.makedirs(path, mode=mode, exist_ok=True)
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode):
+        raise Refused(f"{path} is not a directory")
+    if info.st_uid != 0 or info.st_mode & 0o022:
+        os.chown(path, 0, 0)
+        os.chmod(path, mode)
+
+
+def write_root(path, text, mode=0o644):
+    parent = os.path.dirname(path)
+    root_dir(parent)
+    tmp = f"{path}.tmp-{os.getpid()}"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chown(tmp, 0, 0)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def fetch():
+    root_dir(STATE, 0o700)
+    repo = os.path.join(STATE, "agent-lb.git")
+    if not os.path.isdir(repo):
+        git("clone", "--bare", "--filter=blob:none", URL, repo)
+    git("-C", repo, "fetch", "--filter=blob:none", URL, "+refs/heads/main:refs/heads/main")
+    return repo, git("-C", repo, "rev-parse", "refs/heads/main").decode().strip()
+
+
+def installed():
+    try:
+        with open(os.path.join(STATE, "state.json")) as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
+def export(repo, sha):
+    data = git("-C", repo, "archive", "--format=tar", sha, *(PREFIX + tree for tree in TREES))
+    if len(data) > MAX_TREE:
+        raise Refused("release tree is too large")
+    root_dir(LIB + "/releases")
+    stage = f"{LIB}/releases/.stage-{sha}-{os.getpid()}"
+    os.mkdir(stage, 0o755)
+    with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+        for member in archive.getmembers():
+            name = member.name
+            if not name.startswith(PREFIX) or ".." in name.split("/") or name.startswith("/"):
+                raise Refused(f"unexpected path in release: {name}")
+            relative = name[len(PREFIX) :].rstrip("/")
+            target = os.path.join(stage, relative)
+            if member.isdir():
+                os.makedirs(target, 0o755, exist_ok=True)
+            elif member.isfile():
+                os.makedirs(os.path.dirname(target), 0o755, exist_ok=True)
+                body = archive.extractfile(member).read()
+                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(body)
+                os.chmod(target, 0o755 if member.mode & 0o111 else 0o644)
+            else:
+                raise Refused(f"release holds a link or special file: {name}")
+    for dirpath, dirnames, filenames in os.walk(stage):
+        for entry in dirnames + filenames:
+            os.lchown(os.path.join(dirpath, entry), 0, 0)
+    os.lchown(stage, 0, 0)
+    return stage
+
+
+def floors(stage):
+    with open(os.path.join(stage, "hooks/floors.json")) as handle:
+        entries = json.load(handle)["floors"]
+    if not os.path.isfile(os.path.join(stage, "floor-root/run")):
+        raise Refused("release has no floor launcher")
+    checked = []
+    for entry in entries:
+        harness, event, matcher = entry["harness"], entry["event"], entry["matcher"]
+        name, args, timeout, systems = entry["file"], entry["args"], entry["timeout"], entry["os"]
+        ok = harness in ("claude", "codex") and event in EVENTS and NAME.fullmatch(name) is not None
+        ok = ok and (matcher is None or (isinstance(matcher, str) and MATCHER.fullmatch(matcher) is not None))
+        ok = (
+            ok
+            and isinstance(args, list)
+            and len(args) <= 8
+            and all(isinstance(a, str) and ARG.fullmatch(a) for a in args)
+        )
+        ok = ok and type(timeout) is int and 1 <= timeout <= 60 and set(systems) <= {"linux", "darwin"}
+        ok = ok and os.path.isfile(os.path.join(stage, "hooks", name)) and not name.startswith(".")
+        if not ok:
+            raise Refused(f"invalid floor entry: {json.dumps(entry)[:300]}")
+        checked.append(entry)
+    return checked
+
+
+def key(entry):
+    return [entry["harness"], entry["event"], entry["matcher"], entry["file"], list(entry["args"])]
+
+
+def accepted_check(entries):
+    try:
+        with open(ACCEPTED) as handle:
+            accepted = json.load(handle)
+    except FileNotFoundError:
+        accepted = []
+    current = [key(entry) for entry in entries]
+    missing = [item for item in accepted if item not in current]
+    if missing:
+        raise Refused("release drops accepted floors: " + json.dumps(missing)[:600])
+    return accepted + [item for item in current if item not in accepted]
+
+
+def mentions(entries):
+    names = sorted({entry["file"] for entry in entries}, key=len, reverse=True)
+    return re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in names))
+
+
+def user_hooks(raw, floor_word):
+    kept = {}
+    if not isinstance(raw, dict):
+        raise Refused("hooks input must be an object")
+    for event, groups in raw.items():
+        if not isinstance(event, str) or not USER_EVENT.fullmatch(event) or not isinstance(groups, list):
+            raise Refused(f"invalid hook event {event!r}")
+        for group in groups:
+            matcher = group.get("matcher") if isinstance(group, dict) else None
+            if matcher is not None and (
+                not isinstance(matcher, str) or len(matcher) > 200 or not matcher.isprintable()
+            ):
+                raise Refused(f"invalid matcher in {event}")
+            for hook in group.get("hooks", []) if isinstance(group, dict) else []:
+                command = hook.get("command") if isinstance(hook, dict) else None
+                if hook.get("type") != "command" or not isinstance(command, str):
+                    continue
+                if len(command) > 4000 or "\x00" in command or "\x7f" in command or floor_word.search(command):
+                    continue
+                item = {"command": command}
+                timeout = hook.get("timeout")
+                if type(timeout) is int and 1 <= timeout <= 600:
+                    item["timeout"] = timeout
+                if hook.get("async") is True:
+                    item["async"] = True
+                if isinstance(hook.get("statusMessage"), str) and len(hook["statusMessage"]) <= 200:
+                    item["statusMessage"] = hook["statusMessage"]
+                kept.setdefault((event, matcher), []).append(item)
+    return kept
+
+
+def claude_settings(entries, advisory, python):
+    hooks = {}
+    for entry in entries:
+        if entry["harness"] != "claude" or OS not in entry["os"]:
+            continue
+        hook = {"type": "command", "command": python, "args": ["-I", "-S", RUN, "floor", entry["file"], *entry["args"]]}
+        hook["timeout"] = entry["timeout"]
+        if entry["event"] == "PreToolUse":
+            hook["onFailure"] = "block"
+        group = {} if entry["matcher"] is None else {"matcher": entry["matcher"]}
+        hooks.setdefault(entry["event"], []).append({**group, "hooks": [hook]})
+    for (event, matcher), items in advisory.items():
+        wrapped = []
+        for item in items:
+            hook = {"type": "command", "command": python, "args": ["-I", "-S", RUN, "advisory", item["command"]]}
+            hook.update({k: v for k, v in item.items() if k != "command"})
+            wrapped.append(hook)
+        group = {} if matcher is None else {"matcher": matcher}
+        hooks.setdefault(event, []).append({**group, "hooks": wrapped})
+    settings = {"allowManagedHooksOnly": True, "env": dict(PINS), "hooks": hooks}
+    return json.dumps(settings, indent=2, ensure_ascii=True) + "\n"
+
+
+def toml(value):
+    return json.dumps(value, ensure_ascii=True)
+
+
+def codex_requirements(entries, advisory, python):
+    lines = ["allow_managed_hooks_only = true", "", "[features]", "hooks = true", "", "[hooks]"]
+    lines += [f"managed_dir = {toml(LIB + '/current')}", ""]
+    groups = []
+    for entry in entries:
+        if entry["harness"] == "codex" and OS in entry["os"]:
+            command = shlex.join([python, "-I", "-S", RUN, "floor", entry["file"], *entry["args"]])
+            groups.append((entry["event"], entry["matcher"], [{"command": command, "timeout": entry["timeout"]}]))
+    for (event, matcher), items in advisory.items():
+        wrapped = []
+        for item in items:
+            command = shlex.join([python, "-I", "-S", RUN, "advisory", item["command"]])
+            wrapped.append({"command": command, **({"timeout": item["timeout"]} if "timeout" in item else {})})
+        groups.append((event, matcher, wrapped))
+    for event, matcher, items in groups:
+        lines.append(f"[[hooks.{event}]]")
+        if matcher is not None:
+            lines.append(f"matcher = {toml(matcher)}")
+        lines.append("")
+        for item in items:
+            lines += [f"[[hooks.{event}.hooks]]", 'type = "command"', f"command = {toml(item['command'])}"]
+            if "timeout" in item:
+                lines.append(f"timeout = {item['timeout']}")
+            lines.append("")
+    return "\n".join(lines)
+
+
+def publish(stage, sha):
+    release = f"{LIB}/releases/{sha}"
+    if os.path.isdir(release):
+        shutil.rmtree(stage)
+    else:
+        os.rename(stage, release)
+    link = f"{LIB}/current.tmp-{os.getpid()}"
+    os.symlink(f"releases/{sha}", link)
+    os.replace(link, LIB + "/current")
+    keep = {sha, installed().get("sha")}
+    entries = sorted(os.scandir(LIB + "/releases"), key=lambda e: e.stat(follow_symlinks=False).st_mtime)
+    for entry in entries[:-3]:
+        if entry.name not in keep:
+            shutil.rmtree(entry.path, ignore_errors=True)
+
+
+def sync():
+    raw = sys.stdin.buffer.read(MAX_INPUT + 1)
+    if len(raw) > MAX_INPUT:
+        raise Refused("hook input is too large")
+    wanted = json.loads(raw.decode("utf-8")) if raw.strip() else {}
+    if not isinstance(wanted, dict):
+        raise Refused("input must be a JSON object")
+    python = interpreter()
+    root_dir(LIB)
+    repo, sha = fetch()
+    before = installed().get("sha")
+    if before and before != sha:
+        done = subprocess.run(
+            ["/usr/bin/git", "-C", repo, "merge-base", "--is-ancestor", before, sha],
+            env={"PATH": "/usr/bin:/bin", "HOME": STATE, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"},
+        )
+        if done.returncode:
+            raise Refused(f"main {sha[:12]} does not descend from installed {before[:12]}")
+    stage = export(repo, sha)
+    try:
+        entries = floors(stage)
+        accepted = accepted_check(entries)
+        floor_word = mentions(entries)
+        claude = claude_settings(entries, user_hooks(wanted.get("claude") or {}, floor_word), python)
+        codex = codex_requirements(entries, user_hooks(wanted.get("codex") or {}, floor_word), python)
+    except (Refused, KeyError, TypeError, ValueError) as exc:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise Refused(f"release {sha[:12]} refused: {exc}") from exc
+    publish(stage, sha)
+    write_root(CLAUDE, claude)
+    write_root(CODEX, codex)
+    write_root(ACCEPTED, json.dumps(accepted, indent=1) + "\n")
+    state = {"sha": sha, "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "claude": CLAUDE}
+    state["codex"] = CODEX
+    write_root(os.path.join(STATE, "state.json"), json.dumps(state) + "\n", 0o600)
+    print(json.dumps({**state, "floors": len(entries)}))
+
+
+def main(argv):
+    if os.geteuid() != 0:
+        print("agent-floors: run through sudo", file=sys.stderr)
+        return 2
+    if argv != ["sync"]:
+        print("usage: agent-floors sync < hooks.json", file=sys.stderr)
+        return 2
+    os.umask(0o022)
+    root_dir(STATE, 0o700)
+    with open(os.path.join(STATE, "lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            sync()
+        except Refused as exc:
+            print(f"agent-floors: {exc}; the installed floors are unchanged", file=sys.stderr)
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

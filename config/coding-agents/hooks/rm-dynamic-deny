@@ -1,0 +1,654 @@
+#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from git_lock_delete import stale_worktree_lock
+
+FLOOR = "BLOCKED (floor: destructive delete with no approval on record): "
+APPROVAL = (
+    "An approved delete passes with a trailing '# owner-approval: ~/.agent-rails/approvals/"
+    "owner-<topic>-2026-<date>.md' (a first-hand the owner quote with a time)."
+)
+RUN_BODIES = True
+ROOTS = {
+    "/",
+    "/*",
+    "~",
+    "~/",
+    "~/*",
+    "$HOME",
+    "$HOME/",
+    "$HOME/*",
+    "/home",
+    "/root",
+    "/Users",
+    "/Volumes",
+    "/etc",
+    "/usr",
+    "/var",
+    "/opt",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/System",
+    "/Library",
+    "/Applications",
+    "/private",
+    ".",
+    "..",
+    "*",
+}
+HINT = (
+    'Rewrite it: guard every variable as "${VAR:?}" with an absolute path (rm -rf "${DIR:?}/sub"), or resolve '
+    "the paths first and rm the literal list, or use `git -C <worktree> clean -fdX -- <path>`."
+)
+KEYWORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{", "}"}
+WRAPPERS = {
+    "sudo": {
+        "-u",
+        "-g",
+        "-C",
+        "-D",
+        "-h",
+        "-p",
+        "-r",
+        "-t",
+        "-U",
+        "-T",
+        "--user",
+        "--group",
+        "--close-from",
+        "--chdir",
+        "--host",
+        "--prompt",
+        "--role",
+        "--type",
+        "--other-user",
+        "--command-timeout",
+    },
+    "doas": {"-u", "-C"},
+    "env": {"-u", "-C", "--unset", "--chdir"},
+    "xargs": {
+        "-I",
+        "-L",
+        "-n",
+        "-P",
+        "-d",
+        "-E",
+        "-s",
+        "-a",
+        "--max-args",
+        "--max-procs",
+        "--delimiter",
+        "--arg-file",
+        "--max-lines",
+        "--max-chars",
+        "--eof",
+    },
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-s", "-k", "--signal", "--kill-after"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "ionice": {"-c", "-n", "-p", "--class", "--classdata", "--pid"},
+    "caffeinate": {"-t", "-w"},
+    "exec": {"-a"},
+    "command": set(),
+    "builtin": set(),
+    "nohup": set(),
+    "time": set(),
+    "chronic": set(),
+}
+WRAPPERS["gtimeout"] = WRAPPERS["timeout"]
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "ssh"}
+DATA_READERS = {
+    "cat",
+    "tee",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "jq",
+    "yq",
+    "wc",
+    "head",
+    "tail",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "tac",
+    "rev",
+    "nl",
+    "fold",
+    "fmt",
+    "column",
+    "paste",
+    "comm",
+    "diff",
+    "cmp",
+    "base64",
+    "od",
+    "xxd",
+    "iconv",
+    "shasum",
+    "sha256sum",
+    "md5",
+    "pbcopy",
+    "less",
+    "more",
+    "git",
+    "gh",
+    "true",
+    ":",
+    "echo",
+    "printf",
+}
+COMPOUND = {
+    "if",
+    "then",
+    "else",
+    "elif",
+    "fi",
+    "while",
+    "until",
+    "do",
+    "done",
+    "for",
+    "case",
+    "esac",
+    "select",
+    "function",
+    "coproc",
+    "{",
+    "}",
+    "!",
+    "[[",
+    "(",
+    ")",
+}
+OPS = ("&>>", "&>", "<<<", "<<-", "<<", "<>", "<&", ">&", ">>", ">|", "<", ">")
+
+
+def refusal(why):
+    if why.startswith("a protected root"):
+        return FLOOR + "rm-dynamic-deny: this is a delete of %s. %s" % (why, APPROVAL)
+    return (
+        FLOOR + "rm-dynamic-deny: this rm has %s target, which raises a permission dialog nobody can answer in an "
+        "unattended lane. %s %s" % (why, HINT, APPROVAL)
+    )
+
+
+def protected_root(word):
+    import posixpath
+    import re
+
+    w = re.sub(r"/+", "/", word.replace("${HOME}", "$HOME"))
+    w = posixpath.normpath(os.path.expanduser(w))
+    return (
+        w in {"", "/", os.path.expanduser("~"), "/Volumes/StudioExt/repos", "$HOME", "${HOME}"}
+        or re.fullmatch(r"/Volumes/[^/]+", w) is not None
+        or ".git" in w.split("/")
+    )
+
+
+def approved(cmd):
+    import re
+
+    notes = {"segs": [], "comments": []}
+    segments(cmd, notes)
+    comments = [text for text, end in notes["comments"] if cmd[end:].strip() == ""]
+    if not comments:
+        return False
+    comment = comments[-1]
+    before = cmd[: cmd.rfind(comment)].rsplit("\n", 1)[-1]
+    if not before.strip() or not before[-1:].isspace():
+        return False
+    earlier = cmd[: cmd.rfind(comment)].rsplit("\n", 1)
+    if len(earlier) == 2 and any(offending(seg) for seg in segments(earlier[0])):
+        return False
+    m = re.fullmatch(r"#\s*(?:owner|alex)-approval:\s*(\S+)\s*", comment)
+    if not m:
+        return False
+    home = os.path.expanduser("~")
+    path = re.sub(r"^(?:~|\$HOME|\$\{HOME\})/", home + "/", m.group(1))
+    refs = os.path.join(home, ".agent-rails/approvals") + "/"
+    name = path[len(refs) :]
+    if (
+        ".." in path
+        or not path.startswith(refs)
+        or "/" in name
+        or not re.fullmatch(r"(?:owner|alex)-.+-2026-.+\.md", name)
+    ):
+        return False
+    if os.path.islink(path):
+        return False
+    try:
+        with open(path) as fh:
+            return re.search(r"\b\d{1,2}:\d{2}\b", fh.read()) is not None
+    except OSError:
+        return False
+
+
+def substitution_end(cmd, i):
+    n = len(cmd)
+    if cmd[i] == "`":
+        k = i + 1
+        while k < n and cmd[k] != "`":
+            k += 2 if cmd[k] == "\\" else 1
+        return min(k + 1, n)
+    depth, k = 1, i + 2
+    while k < n and depth:
+        c = cmd[k]
+        if c == "\\":
+            k += 2
+        elif c == "'":
+            j = cmd.find("'", k + 1)
+            k = n if j < 0 else j + 1
+        elif c == '"':
+            k += 1
+            while k < n and cmd[k] != '"':
+                k += 2 if cmd[k] == "\\" else 1
+            k += 1
+        else:
+            depth += {"(": 1, ")": -1}.get(c, 0)
+            k += 1
+    return min(k, n)
+
+
+def segments(cmd, notes=None, parent=None, anchor=None, until=None, consumer=False):
+    group = None
+    if notes is not None:
+        group = len(notes.setdefault("parents", []))
+        notes["parents"].append(parent)
+        notes.setdefault("count", []).append(0)
+        if anchor is None:
+            anchor = 0 if parent is None else notes["count"][parent]
+        notes.setdefault("anchor", []).append(anchor)
+        notes.setdefault("until", []).append(anchor if until is None else until)
+        notes.setdefault("consumer", []).append(consumer)
+    out, seg, held, pending, pipes = [], [], [], [], [[]]
+    lit, mask, raw = [], [], []
+    cases = []
+    st = {
+        "word": False,
+        "redir": False,
+        "heredoc": None,
+        "here": False,
+        "cont": False,
+        "start": "",
+        "depth": 0,
+        "brace": 0,
+        "compound": 0,
+    }
+
+    def at():
+        return None if notes is None else notes["count"][group]
+
+    def end_word():
+        if st["word"]:
+            w = ("".join(lit), "".join(mask), st["redir"], "".join(raw))
+            if st["heredoc"] is not None:
+                pending.append((w[0], st["heredoc"], not any(q in w[3] for q in "'\"\\"), len(pipes) - 1, at()))
+                st["heredoc"] = None
+            elif st["here"]:
+                held.append((w[0], False, len(pipes) - 1, at()))
+                st["here"] = False
+            seg.append(w)
+            st["redir"] = st["cont"] = False
+        lit.clear()
+        mask.clear()
+        raw.clear()
+        st["word"] = False
+
+    def end_seg(end=""):
+        end_word()
+        if seg:
+            out.append(list(seg))
+            pipes[-1].append(list(seg))
+            if notes is not None:
+                notes["segs"].append(
+                    {"start": st["start"], "end": end, "depth": st["depth"], "compound": st["compound"], "group": group}
+                )
+                notes["count"][group] += 1
+        for w in seg:
+            if cases and cases[-1] and not (w[3] == "esac" and end != ")"):
+                break
+            if w[3] not in COMPOUND:
+                break
+            if w[3] in ("if", "while", "until", "for", "case", "select"):
+                st["compound"] += 1
+                if w[3] == "case":
+                    cases.append(True)
+            elif w[3] in ("fi", "done", "esac"):
+                st["compound"] = max(0, st["compound"] - 1)
+                if w[3] == "esac" and cases:
+                    cases.pop()
+        for w in seg:
+            if w[3] not in ("{", "}"):
+                break
+            st["brace"] = max(0, st["brace"] + (1 if w[3] == "{" else -1))
+        seg.clear()
+        st["start"] = end
+
+    def add(text, masked, source):
+        lit.append(text)
+        mask.append(masked)
+        raw.append(source)
+        st["word"] = True
+
+    def substitution(start):
+        end = substitution_end(cmd, start)
+        text = cmd[start:end]
+        add(text, text, text)
+        body = text[1:] if text[0] == "`" else text[2:]
+        out.extend(segments(body[:-1] if body[-1:] in ")`" else body, notes, group))
+        return end
+
+    def settle():
+        for body, expands, pipe, start in held:
+            if (RUN_BODIES and not all(data_reader(s) for s in pipes[pipe])) or any(
+                command_name(s) in {"sh", "bash", "zsh", "dash", "ksh"} for s in pipes[pipe]
+            ):
+                out.extend(segments(body, notes, group, start, at(), consumer=True))
+            elif expands:
+                out.extend(substitutions(body, notes, group, start, at()))
+        held.clear()
+        pipes[:] = [[]]
+
+    i, n = 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if c == "'":
+            k = cmd.find("'", i + 1)
+            k = n if k < 0 else k
+            add(cmd[i + 1 : k], "." * (k - i - 1), cmd[i : k + 1])
+            i = k + 1
+        elif c == '"':
+            raw.append('"')
+            k = i + 1
+            while k < n and cmd[k] != '"':
+                if cmd[k] == "\\" and k + 1 < n:
+                    add(cmd[k + 1], ".", cmd[k : k + 2])
+                    k += 2
+                elif cmd.startswith("$(", k) or cmd[k] == "`":
+                    k = substitution(k)
+                else:
+                    add(cmd[k], cmd[k], cmd[k])
+                    k += 1
+            raw.append('"')
+            st["word"] = True
+            i = k + 1
+        elif c == "\\":
+            if cmd.startswith("\\\n", i):
+                i += 2
+            else:
+                add(cmd[i + 1 : i + 2], ".", cmd[i : i + 2])
+                i += 2
+        elif cmd.startswith("$(", i) or c == "`":
+            i = substitution(i)
+        elif c == "#" and not st["word"]:
+            k = cmd.find("\n", i)
+            k = n if k < 0 else k
+            if notes is not None and parent is None:
+                notes["comments"].append((cmd[i:k], k))
+            i = k
+        elif c == "\n":
+            end_seg("\n")
+            i += 1
+            for delim, tabs, expands, pipe, start in pending:
+                body = []
+                while i < n:
+                    k = cmd.find("\n", i)
+                    k = n if k < 0 else k
+                    text = cmd[i:k]
+                    i = k + 1
+                    if (text.lstrip("\t") if tabs else text) == delim:
+                        break
+                    body.append(text)
+                held.append(("\n".join(body), expands, pipe, start))
+            pending.clear()
+            if not st["cont"]:
+                settle()
+        elif c in "<>" or cmd.startswith("&>", i):
+            op = next(o for o in OPS if cmd.startswith(o, i))
+            if st["word"] and "".join(lit).isdigit():
+                lit.clear()
+                mask.clear()
+                raw.clear()
+                st["word"] = False
+            else:
+                end_word()
+            st["redir"] = True
+            if op in ("<<", "<<-"):
+                st["heredoc"] = op == "<<-"
+            st["here"] = op == "<<<"
+            i += len(op)
+        elif c in ";&|()":
+            op = next((o for o in ("&&", "||", ";;&", ";;", ";&", "|&") if cmd.startswith(o, i)), c)
+            pattern = bool(cases and cases[-1])
+            end_seg(op)
+            if pattern and op in ("(", ")", "|"):
+                if op == ")":
+                    cases[-1] = False
+                i += len(op)
+                continue
+            if cases and op in (";;", ";&", ";;&"):
+                cases[-1] = True
+            if op == "(":
+                pipes[-1].append([("(", "(", False, "(")])
+            st["depth"] = max(0, st["depth"] + {"(": 1, ")": -1}.get(op, 0))
+            if op not in ("|", "|&", "(", ")") and not st["depth"] and not st["brace"] and not st["compound"]:
+                pipes.append([])
+            st["cont"] = op in ("|", "|&", "&&", "||")
+            i += len(op)
+        elif c in " \t":
+            end_word()
+            i += 1
+        else:
+            add(c, c, c)
+            i += 1
+    end_seg()
+    settle()
+    return out
+
+
+def substitutions(text, notes=None, parent=None, anchor=None, until=None):
+    out, k = [], 0
+    while k < len(text):
+        if text[k] == "\\":
+            k += 2
+        elif text.startswith("$(", k) or text[k] == "`":
+            e = substitution_end(text, k)
+            body = text[k + 1 : e] if text[k] == "`" else text[k + 2 : e]
+            out.extend(segments(body[:-1] if body[-1:] in ")`" else body, notes, parent, anchor, until))
+            k = e
+        else:
+            k += 1
+    return out
+
+
+def is_assignment(word):
+    name, eq, _ = word[3].partition("=")
+    return bool(eq) and name.rstrip("+").isidentifier()
+
+
+def base(word):
+    return word[0].rsplit("/", 1)[-1]
+
+
+def command_word(words, strings):
+    k = 0
+    while k < len(words) and (words[k][0] in KEYWORDS or is_assignment(words[k])):
+        k += 1
+    while k < len(words) and base(words[k]) in WRAPPERS:
+        name = base(words[k])
+        takes, duration, k = WRAPPERS[name], name in ("timeout", "gtimeout"), k + 1
+        while k < len(words):
+            w = words[k][0]
+            if name == "env" and w in ("-S", "--split-string") and k + 1 < len(words):
+                strings.append(words[k + 1][0])
+                k += 2
+            elif name == "env" and w.startswith(("--split-string=", "-S")) and len(w) > 2:
+                strings.append(w.split("=", 1)[1] if w.startswith("--") else w[2:])
+                k += 1
+            elif w.startswith("-") and len(w) > 1:
+                k += 2 if w in takes else 1
+            elif is_assignment(words[k]):
+                k += 1
+            elif duration:
+                duration, k = False, k + 1
+            else:
+                break
+    return k if k < len(words) else None
+
+
+def command_name(segment):
+    words = [w for w in segment if not w[2]]
+    k = command_word(words, [])
+    return None if k is None else base(words[k])
+
+
+def data_reader(segment):
+    words = [w for w in segment if not w[2]]
+    if not words:
+        return True
+    if words[0][3] in COMPOUND:
+        return False
+    strings = []
+    k = command_word(words, strings)
+    if strings:
+        return False
+    if any(base(w) == "xargs" for w in words[:k]):
+        return False
+    if k is None:
+        return True
+    return base(words[k]) in DATA_READERS
+
+
+def offending(segment, assignments=None):
+    assignments = assignments or {}
+    import re
+
+    words = [w for w in segment if not w[2]]
+    strings = []
+    k = command_word(words, strings)
+    for s in strings:
+        for inner in segments(s):
+            why = offending(inner)
+            if why:
+                return why
+    if k is None:
+        return None
+    name = base(words[k])
+    if name in {"sh", "bash", "zsh", "dash", "ksh"}:
+        for i, w in enumerate(words[k + 1 :], k + 1):
+            if w[0].startswith("-") and "c" in w[0][1:] and i + 1 < len(words):
+                for inner in segments(words[i + 1][0]):
+                    why = offending(inner)
+                    if why:
+                        return why
+                break
+    if name == "find" and any(w[0] == "-delete" for w in words[k + 1 :]):
+        for w in words[k + 1 :]:
+            if w[0].startswith("-"):
+                break
+            if protected_root(w[0]):
+                return "a protected root path (%s) via find -delete" % w[3]
+    if name != "rm":
+        return None
+    flags = [w[0] for w in words[k + 1 :] if w[0].startswith("-") and w[0] != "--"]
+    recursive = any(
+        f in ("--recursive", "-r", "-R") or (not f.startswith("--") and ("r" in f or "R" in f)) for f in flags
+    )
+    for w in words[k + 1 :]:
+        home_root = re.fullmatch(r"\$(?:HOME|\{HOME(?::\?[^}]*)?\})(?:/|/\*)?", w[1])
+        literal_root = "$" not in w[0] and "`" not in w[0] and protected_root(w[0])
+        repo_root = "$" not in w[0] and "`" not in w[0] and (Path(w[0]) / ".git").exists()
+        if recursive and (home_root or literal_root or repo_root):
+            return "a protected root path (%s)" % w[3]
+    for w in words[k + 1 :]:
+        if w[0].startswith("-"):
+            continue
+        value = w[0]
+        for v in re.finditer(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?::\?[^}]*)?\}|([A-Za-z_][A-Za-z0-9_]*))", value):
+            key = v[1] or v[2]
+            if key in assignments:
+                value = value.replace(v[0], assignments[key])
+            elif key == "HOME":
+                value = value.replace(v[0], os.path.expanduser("~"))
+            else:
+                return "an unresolved parameter"
+        if not value or protected_root(value):
+            operands = [item for item in words[k + 1 :] if not item[0].startswith("-")]
+            if (
+                not recursive
+                and not strings
+                and len(operands) == 1
+                and all(flag in {"-f", "--force"} for flag in flags)
+                and w[0] == value
+                and not any(char in w[1] for char in "$`*?[")
+                and stale_worktree_lock(value)
+            ):
+                continue
+            return "a protected root path (%s)" % w[3]
+        if "$" in value or "`" in value:
+            return "an unresolved target"
+    return None
+
+
+def main():
+    global RUN_BODIES
+    RUN_BODIES = False
+    raw = sys.stdin.read()
+    if "rm" not in raw and "find" not in raw and "\\u" not in raw:
+        return 0
+    import json
+
+    try:
+        data = json.loads(raw)
+        if data.get("tool_name", "Bash") != "Bash":
+            return 0
+        cmd = (data.get("tool_input") or {}).get("command")
+        if not isinstance(cmd, str):
+            raise ValueError("command is not a string")
+    except Exception:
+        try:
+            text = json.dumps(json.loads(raw), ensure_ascii=False)
+        except Exception:
+            text = raw
+        if "rm" not in text:
+            return 0
+        sys.stderr.write(FLOOR + "rm-dynamic-deny: could not read this hook payload; it is refused (S-01). %s\n" % HINT)
+        return 2
+    if "rm" not in cmd and "find" not in cmd:
+        return 0
+    import re
+
+    assignments = {}
+    for seg in segments(cmd):
+        for word in seg:
+            match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", word[0], re.S)
+            if match:
+                value = match[2]
+                if value.startswith("$(mktemp ") or value == "$(mktemp)":
+                    value = os.path.join(os.environ.get("TMPDIR", "/private/tmp"), "rm-guard-temporary")
+                assignments[match[1]] = value
+        why = offending(seg, assignments)
+        if why:
+            if approved(cmd):
+                return 0
+            sys.stderr.write(refusal(why) + "\n")
+            return 2
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        code = main()
+    except Exception as e:
+        sys.stderr.write(FLOOR + "rm-dynamic-deny: guard error (%s); refused. %s\n" % (type(e).__name__, HINT))
+        sys.exit(2)
+    if code == 0 and __import__("os").environ.get("HOOK_FLOOR_RECEIPT"):
+        sys.stdout.write("floor-ok rm-dynamic-deny\n")
+    sys.exit(code)

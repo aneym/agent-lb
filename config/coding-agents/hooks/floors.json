@@ -1,0 +1,24 @@
+{
+  "floors": [
+    {"harness": "claude", "event": "SessionStart", "matcher": null, "file": "gh-write-guard.py", "args": ["--session-env"], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "branch-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "gh-write-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "merge-gate-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "stash-guard", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "rm-dynamic-deny", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "dangerous-command-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "dangerous-cmd-guard.py", "args": [], "timeout": 10, "os": ["linux"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "kill-scope-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "host-credential-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Read", "file": "host-credential-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "railway-vars-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "link-cli-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "wide-scan-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "no-chrome-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "plutil-guard.sh", "args": [], "timeout": 10, "os": ["darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "agent-lb-bootout-guard.sh", "args": [], "timeout": 5, "os": ["darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash|Edit|Write|MultiEdit", "file": "hooks-off-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "codex", "event": "PreToolUse", "matcher": "Bash", "file": "branch-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "codex", "event": "PreToolUse", "matcher": "apply_patch", "file": "hooks-off-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]}
+  ]
+}

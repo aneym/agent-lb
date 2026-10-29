@@ -27,7 +27,7 @@ CHDIR = {"env": ("-C", "--chdir"), "sudo": ("-D", "--chdir")}
 
 
 def shell_reader():
-    path = os.path.expanduser("~/.local/bin/rm-dynamic-deny")
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "rm-dynamic-deny")
     loader = importlib.machinery.SourceFileLoader("rm_dynamic_deny", path)
     module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
     loader.exec_module(module)

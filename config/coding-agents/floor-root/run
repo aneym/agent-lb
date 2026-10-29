@@ -1,0 +1,116 @@
+import json
+import os
+import pwd
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+HOOKS = os.path.join(os.path.dirname(HERE), "hooks")
+PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+DROP_PREFIXES = ("LD_", "DYLD_", "PYTHON", "BASH_FUNC_", "GIT_", "PERL", "GCONV_", "MALLOC_", "GLIBC_", "RUBY")
+DROP = {
+    "BASH_ENV",
+    "ENV",
+    "ZDOTDIR",
+    "SHELLOPTS",
+    "BASHOPTS",
+    "PS4",
+    "IFS",
+    "CDPATH",
+    "GLOBIGNORE",
+    "PROMPT_COMMAND",
+    "NODE_OPTIONS",
+    "DEVELOPER_DIR",
+    "SDKROOT",
+    "CLAUDE_CODE_SHELL_PREFIX",
+}
+GIT_PINS = {"core.fsmonitor": "false", "core.hooksPath": "/dev/null"}
+TOP = {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason", "hookSpecificOutput"}
+SPECIFIC = {"hookEventName", "additionalContext", "permissionDecision", "permissionDecisionReason"}
+
+
+def floor_env():
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in DROP and not key.startswith(DROP_PREFIXES) and "%%" not in key
+    }
+    entry = pwd.getpwuid(os.getuid())
+    env.update(HOME=entry.pw_dir, USER=entry.pw_name, LOGNAME=entry.pw_name, PATH=PATH, SHELL="/bin/sh")
+    env["GIT_CONFIG_COUNT"] = str(len(GIT_PINS))
+    for index, (key, value) in enumerate(GIT_PINS.items()):
+        env[f"GIT_CONFIG_KEY_{index}"] = key
+        env[f"GIT_CONFIG_VALUE_{index}"] = value
+    return env
+
+
+def floor(name, args):
+    path = os.path.join(HOOKS, name)
+    if "/" in name or name.startswith(".") or not os.path.isfile(path):
+        sys.stderr.write(f"BLOCKED: floor hook {name!r} is not installed, so this call is refused.\n")
+        return 2
+    if name.endswith(".sh"):
+        argv = ["/bin/bash", path, *args]
+    else:
+        argv = [sys.executable, "-E", "-s", path, *args]
+    os.execve(argv[0], argv, floor_env())
+
+
+def unique(pairs):
+    seen = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValueError(f"duplicate key {key}")
+        seen[key] = value
+    return seen
+
+
+def kept(data):
+    if not isinstance(data, dict):
+        return None
+    out = {}
+    for key, value in data.items():
+        if key not in TOP:
+            continue
+        if key == "continue" and value is not False:
+            continue
+        if key == "decision" and value != "block":
+            continue
+        if key == "hookSpecificOutput":
+            if not isinstance(value, dict):
+                continue
+            specific = {k: v for k, v in value.items() if k in SPECIFIC}
+            if specific.get("permissionDecision") not in (None, "deny", "ask"):
+                specific.pop("permissionDecision")
+            value = specific
+        out[key] = value
+    return out
+
+
+def advisory(command):
+    result = subprocess.run(["/bin/sh", "-c", command], stdout=subprocess.PIPE)
+    text = result.stdout.decode("utf-8", "replace")
+    head = text.lstrip().lstrip("﻿").lstrip()
+    if head[:1] in ("{", "["):
+        try:
+            data = kept(json.loads(head, object_pairs_hook=unique))
+        except ValueError:
+            data = None
+        if data:
+            sys.stdout.write(json.dumps(data))
+    else:
+        sys.stdout.write(text)
+    return result.returncode if result.returncode >= 0 else 1
+
+
+def main(argv):
+    if len(argv) >= 2 and argv[0] == "floor":
+        return floor(argv[1], argv[2:])
+    if len(argv) == 2 and argv[0] == "advisory":
+        return advisory(argv[1])
+    sys.stderr.write("usage: run floor <hook> [args...] | run advisory <command>\n")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

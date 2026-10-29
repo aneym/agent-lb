@@ -6,7 +6,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), "hooks"))
-import hashlib
 import json
 import os
 import re
@@ -17,13 +16,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import hookd_install  # type: ignore[missing-import]
 from claude_config_hooks import claude_config_files  # type: ignore[missing-import]
 from codex_home import codex_changes  # type: ignore[missing-import]
 from codex_hook_trust import trust_floor_hooks  # type: ignore[missing-import]
-from floor_allowlist import non_floor_check, unwrap_floors  # type: ignore[missing-import]
 from dispatch_parity import run_parity  # type: ignore[missing-import]
-from harness_mcp import ensure_harness_mcp  # type: ignore[missing-import]
+from floor_allowlist import non_floor_check, unwrap_floors  # type: ignore[missing-import]
 from floor_invariant import refuse_floor_changes  # type: ignore[missing-import]
+from harness_mcp import ensure_harness_mcp  # type: ignore[missing-import]
 from hook_inventory import hook_path_problems, keep_floor_targets, validate_hook_changes  # type: ignore[missing-import]
 from policy_documents import install_adapter, install_codex_doc, read_text, render_codex_body, uninstall_adapter  # type: ignore[missing-import]  # fmt: skip
 from policy_files import autocompact_text, checkpoint_changes, write_atomic  # type: ignore[missing-import]
@@ -31,14 +31,30 @@ from policy_hook_groups import opaque_floor_commands  # type: ignore[missing-imp
 from policy_hook_handlers import apply_handlers, handler_folds_known, load_handlers  # type: ignore[missing-import]  # fmt: skip
 from policy_hook_install import dispatch_worth, managed_hooks, pin_inproc  # type: ignore[missing-import]
 from policy_hook_registry import fold_hooks, folded_rev, is_folded, read_registry, registry_rev, unfold_hooks  # type: ignore[missing-import]  # fmt: skip
-from policy_layout import CORE_SOURCE, DISPATCH_EVENTS, DISPATCH_REGISTRY, DISPATCH_SCRIPT, HAIKU_ENV, MODELS_FULL, MODELS_MARKER, POLICY_DIR, RETIRED_HOOKS, REV_FILE, REV_KEEP_SECONDS, SONNET_MODEL  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
-
-import hookd_install  # type: ignore[missing-import]
+from policy_layout import (  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
+    DISPATCH_EVENTS,
+    DISPATCH_REGISTRY,
+    DISPATCH_SCRIPT,
+    HAIKU_ENV,
+    RETIRED_HOOKS,
+    REV_FILE,
+    REV_KEEP_SECONDS,
+    SONNET_MODEL,
+)
 from policy_lock import locked_main, parse_args  # type: ignore[missing-import]
-from policy_registry_retirement import kept_retired_hooks, kept_warning, retire_hook_registries  # type: ignore[missing-import]
 from policy_plan import plan_managed_files  # type: ignore[missing-import]
+from policy_registry_retirement import kept_retired_hooks, kept_warning, retire_hook_registries  # type: ignore[missing-import]
+from policy_root_hooks import hand_off, root_floors  # type: ignore[missing-import]
+from policy_routing_docs import routing_changes  # type: ignore[missing-import]
+from policy_settings import (  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
+    check_policy,
+    internal_hook_commands,
+    policy_snapshot,
+    reconcile_settings,
+    resolve_sol,
+    snapshot_model,
+)
 from policy_stage import install_staged  # type: ignore[missing-import]
-from policy_settings import check_policy, internal_hook_commands, policy_snapshot, reconcile_settings, resolve_sol, snapshot_model  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
 
 def main() -> int:
@@ -135,7 +151,7 @@ def main() -> int:
     else:
         background = snapshot.get("background_model") or snapshot["standards"]["background_model"]
         nxt["env"][HAIKU_ENV] = snapshot_model(snapshot, background)
-    mode = "off" if args.uninstall else (args.hook_dispatcher or ("sticky" if folded_now else "off"))
+    mode = "off" if args.uninstall or root_floors() else (args.hook_dispatcher or ("sticky" if folded_now else "off"))
     hookd_install.prepare(source, args.home, mode != "off" and not args.preview)
     if mode != "off" and isinstance(nxt.get("hooks"), dict):
         opaque = opaque_floor_commands(nxt["hooks"], source)
@@ -209,52 +225,7 @@ def main() -> int:
     changes: dict[Path, str | None] = {
         path: desired for path, desired in desired_docs.items() if desired != originals[path]
     }
-    models_path = args.home / ".claude/rules/models.md"
-    models_text = models_path.read_bytes().decode("utf-8") if models_path.exists() else ""
-    full_path = args.home / MODELS_FULL
-    full_disk = full_path.read_bytes().decode("utf-8") if full_path.exists() else ""
-    if args.uninstall:
-        if models_text.startswith(MODELS_MARKER):
-            changes[models_path] = None
-        if full_disk.startswith(MODELS_MARKER):
-            changes[full_path] = None
-    else:
-        section_paths = sorted((source / "routing").glob("*.md"))
-        if not section_paths:
-            raise SystemExit("error: missing canonical routing sections")
-        for section in section_paths:
-            target = args.home / ".claude/docs/models" / section.name
-            desired = section.read_text()
-            if read_text(target) != desired:
-                changes[target] = desired
-        core = (source / CORE_SOURCE).read_text()
-        desired_models = MODELS_MARKER + " from routing/core.md; generated, do not edit. -->\n\n" + core
-        if models_text and not models_text.startswith(MODELS_MARKER):
-            backup = (
-                args.home
-                / ".claude/ledgers"
-                / ("models-handkept-" + hashlib.sha256(models_text.encode()).hexdigest()[:12] + ".md")
-            )
-            if not backup.exists():
-                changes[backup] = models_text
-        if desired_models != models_text:
-            changes[models_path] = desired_models
-        if full_disk.startswith(MODELS_MARKER):
-            changes[full_path] = None
-        old_policy = args.home / POLICY_DIR / "ROUTING.md"
-        pointer = "# Routing reference\n\nRead `~/.claude/docs/models/README.md` and its named sections. This compatibility pointer contains no duplicate policy.\n"
-        if not old_policy.exists() and not old_policy.is_symlink():
-            changes[old_policy] = pointer
-        elif old_policy.is_file() and not old_policy.is_symlink():
-            old_text = old_policy.read_text()
-            legacy = source / "routing-legacy-sha256.json"
-            known = json.loads(legacy.read_text()) if legacy.is_file() else []
-            if old_text == pointer:
-                pass
-            elif hashlib.sha256(old_text.encode()).hexdigest() in known:
-                changes[old_policy] = pointer
-            else:
-                print(f"PRESERVE {old_policy}: modified or unrecognized legacy routing document")
+    changes.update(routing_changes(source, args.home, args.uninstall))
 
     if nxt != disk_settings:
         changes[settings_path] = nxt_text
@@ -334,6 +305,8 @@ def main() -> int:
         if not changes:
             print("managed routing configuration already converged")
         return 0
+    if not args.uninstall and root_floors():
+        print(hand_off(source, args.home, changes))
     if not args.uninstall:
         print("local MCP: " + json.dumps(ensure_harness_mcp(args.home, subprocess.run), sort_keys=True))
     if not changes:
