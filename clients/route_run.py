@@ -30,7 +30,7 @@ def provider_command(row: dict, cwd: str, write: bool, help_text: str) -> list[s
             "-c",
             "model_reasoning_effort=" + json.dumps(row["effort"]),
             "--sandbox",
-            "workspace-write" if write else "read-only",
+            "danger-full-access" if write else "read-only",
             "--cd=" + cwd,
             "--skip-git-repo-check",
             "--json",
