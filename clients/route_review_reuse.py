@@ -38,6 +38,8 @@ def review_key(args, row: dict, cwd: Path, brief: str) -> dict | None:
             "model": row["model"],
             "effort": row["effort"],
             "provider": row["target"]["providerInstanceId"],
+            "seat": row["seat"],
+            "routing_sha256": row["table_sha256"],
             "permissions": {"write": args.write},
             "author_vendor": args.author_vendor,
         }
@@ -59,7 +61,14 @@ def structured_pass(row: dict) -> bool:
             return False
         if row.get("log_path") != str(run_path(row["decision_id"], ".log")):
             return False
-        events = [json.loads(line) for line in run_path(row["decision_id"], ".log").read_text().splitlines()]
+        events = []
+        for line in run_path(row["decision_id"], ".log").read_text(errors="replace").splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict):
+                events.append(event)
         provider = row["target"]["providerInstanceId"]
         if key.get("provider") != provider:
             return False
