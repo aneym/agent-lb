@@ -15,7 +15,7 @@ def remove_checkout(repo, scratch, decision):
  if not re.fullmatch(r"dcn_[A-Za-z0-9]+",decision) or path != root/decision:
   raise ValueError("refused cleanup outside the decision scratch checkout")
  if path.exists():
-  subprocess.run(["git","-C",repo,"worktree","remove","--force",str(path)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
+  subprocess.run(["git","-C",repo,"worktree","remove","--force",str(path)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=60)
 """
 
 
@@ -119,7 +119,7 @@ def cleanup_remote(row: dict) -> None:
         ssh_python(row["ssh_host"], script, row["remote_repo"], row["remote_scratch"], row["decision_id"]),
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=90,
     )
     if result.returncode:
         raise ValueError("remote decision scratch checkout cleanup failed")
@@ -143,7 +143,10 @@ try:
   sys.exit(124)
  sys.exit(p.returncode if p.returncode >= 0 else 128-p.returncode)
 finally:
- remove_checkout(repo,scratch,decision)
+ try:
+  remove_checkout(repo,scratch,decision)
+ except (OSError,ValueError,subprocess.SubprocessError):
+  print("route-run: in-run scratch cleanup deferred to caller",file=sys.stderr)
 """
     )
     return ssh_python(
