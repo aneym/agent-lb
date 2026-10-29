@@ -10,7 +10,7 @@ else
 fi
 
 if [ -f atoms.toml ]; then
-    "${FACTORY_BIN:-$HOME/.agent-rails/factory-runtime/bin}/atoms" validate --repo . --base origin/main
+    atoms validate --repo . --base origin/main
 fi
 
 test_guard="$gate/test-guard"
