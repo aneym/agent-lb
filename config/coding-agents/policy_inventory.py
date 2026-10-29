@@ -28,6 +28,7 @@ MANAGED_SEATS = (
     "host-relay",
     "gpt-implementer-local",
     "gpt-explorer-local",
+    "sol-general",
     "sonnet-implementer-local",
     "verifier-local",
     "opus-seat-local",
