@@ -335,3 +335,9 @@ Alex: "never do raw dollar amount, we're using subsidized subscriptions and the 
 ## 2026-10-29: Headless credentials
 
 Alex, first-hand, 2026-10-29 ~21:42Z: "assume all our machines including studio are headless effectively". Routing core and floors carry his full instruction. Supersedes the Mac password prompt procedure: never request his Mac or Studio password, keychain unlock or Always Allow click. Use agent-secret, file or env tokens, a build keychain agents create and unlock, or drop the step. Never print or write a secret.
+
+## 2026-10-30: Retired workflow guards
+
+Classify t3-live-restart-guard as non-floor. Verify retired non-floor hooks
+against committed blobs: Studio sync refused five stale references. Keep hash
+and path checks and all floor guards.

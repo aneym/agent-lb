@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from codex_home import OFFLOAD_COMMAND  # type: ignore[missing-import]
-from floor_hooks import FLOOR_STEMS, non_floor, stem, unwrapped  # type: ignore[missing-import]
+from floor_hooks import FLOOR_STEMS, NON_FLOOR_GUARDS, non_floor, stem, unwrapped  # type: ignore[missing-import]
 from policy_layout import SETTINGS_HOOKS  # type: ignore[missing-import]
 
 SOURCE_HOOKS = Path(__file__).resolve().parent / "hooks"
@@ -84,6 +84,7 @@ def shipped_files(home: Path) -> Iterator[tuple[str, bytes, list[Path]]]:
                 yield relative.name, data, [top / name, hooks / relative.name]
     entries, blobs = shipped_manifest(home)
     names = {name for entry in entries for name in entry.get("files") or [] if isinstance(name, str)}
+    names |= {f"hooks/{name}" for name in NON_FLOOR_GUARDS if f"hooks/{name}" in blobs}
     for name in sorted(names):
         relative = PurePosixPath(name)
         if name in blobs and relative.parts[:1] == ("hooks",) and len(relative.parts) == 2:

@@ -29,6 +29,7 @@ FLOOR_HOOKS = {
     "hooks-off-guard.py": "every floor: no setting that switches Claude Code hooks off",
 }
 NON_FLOOR_GUARDS = {
+    "t3-live-restart-guard.py": "T3 installer and restart workflow, not a kept floor",
     "sleep-loop-guard.py": "wait hygiene, not a kept floor",
     "seat-guard.py": "seat routing advice, not a kept floor",
     "herdr-shell-host-guard.py": "herdr pane host check, not a kept floor",
