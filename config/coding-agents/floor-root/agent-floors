@@ -124,6 +124,8 @@ def export(repo, sha):
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
         for member in archive.getmembers():
             name = member.name
+            if member.isdir() and PREFIX.startswith(name.rstrip("/") + "/"):
+                continue
             if not name.startswith(PREFIX) or ".." in name.split("/") or name.startswith("/"):
                 raise Refused(f"unexpected path in release: {name}")
             relative = name[len(PREFIX) :].rstrip("/")
