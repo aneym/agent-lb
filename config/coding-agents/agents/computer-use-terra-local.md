@@ -1,10 +1,13 @@
 ---
 name: computer-use-terra-local
-description: "Studio-only computer use and video editing on GPT-6.1 Terra (terra-latest) in fast mode (service tier fast, sent upstream as priority). Same harness as computer-use-local. Never for code (Alex, 2026-10-28)."
+description: "Use when Studio-only computer use or video editing needs Terra fast (upstream priority), through the computer-use-local harness. Never code (Alex, 2026-10-28)."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
+omitClaudeMd: true
 ---
+
+Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 
 

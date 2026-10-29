@@ -1,3 +1,5 @@
+OPTIONAL_SEATS = ("muse-seat", "muse-seat-local", "pi-durable-seat")
+
 MANAGED_SEATS = (
     "computer-use",
     "frontend-designer",
@@ -9,9 +11,6 @@ MANAGED_SEATS = (
     "opus-seat-full",
     "cursor-seat",
     "devin-seat",
-    "muse-seat",
-    "muse-seat-local",
-    "pi-durable-seat",
     "codex-verifier",
     "codex-test-runner",
     "verifier",

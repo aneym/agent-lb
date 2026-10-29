@@ -1,6 +1,6 @@
 ---
 name: sol-consult
-description: Second-opinion seat on GPT (newest Sol via sol-latest, high effort) through the agent-lb bridge; bills the Codex pool. Use for Opus to consult on plans, architecture and specs for complex or risky work. It reads code and critiques; it never edits.
+description: "Use when Opus needs a read-only Sol high second opinion on plans, architecture or specs for complex or risky work. Uses Codex quota via agent-lb; reads and critiques, never edits."
 model: sol-latest-high
 tools: [Read, Grep, Glob, Bash]
 ---

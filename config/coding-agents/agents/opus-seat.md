@@ -1,6 +1,6 @@
 ---
 name: opus-seat
-description: "General-purpose newest-Opus seat (opus alias), placed by measured factory-box headroom; Mac-only briefs forward to Studio. Use when subagent work must run on Opus, not the session model. Pass a descriptive kebab-case name."
+description: "Use when subagent work must run on newest Opus (opus alias). Placed by factory-box headroom; Mac-only briefs go to Studio. Pass a descriptive kebab-case name."
 model: opus
 tools: [Bash, Read, Write, Edit, Grep, Glob, ToolSearch, Skill, Monitor, SendMessage, TaskStop, ListAgents, WebFetch, WebSearch, mcp__exa__web_search_exa, mcp__exa__web_fetch_exa]
 ---

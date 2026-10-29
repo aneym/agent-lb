@@ -1,10 +1,13 @@
 ---
 name: gpt-explorer
-description: "Read-only code exploration on Sol (sol-latest low), placed by measured factory-box headroom; Codex quota, not Anthropic. Use to find files, trace code or answer codebase questions. Mac-only work uses gpt-explorer-local."
+description: "Use when finding files, tracing code or answering codebase questions on Sol low, read-only. Placed by factory-box headroom; Codex quota. Mac-only work uses gpt-explorer-local."
 model: claude-sonnet-5-5
 tools: [Bash]
+omitClaudeMd: true
 effort: low
 ---
+
+Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 Do not create report, summary, findings or analysis Markdown files by default. When the brief names an exact report output path, write that file only; this includes the calling lane's research directory outside the repository. Do not create additional report files or modify unrelated personal files.
 

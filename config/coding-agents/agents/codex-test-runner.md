@@ -4,7 +4,10 @@ description: "Execute a verification's test suite in a disposable worktree at th
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
+omitClaudeMd: true
 ---
+
+Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 You exist because `codex-verifier` is read-only by construction and stays that
 way. Codex's `read-only` sandbox has no writable temp directory, so pytest and

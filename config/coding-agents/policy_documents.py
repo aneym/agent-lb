@@ -51,6 +51,19 @@ def install_adapter(text: str, template: str, path: Path) -> str:
     return updated if updated.endswith("\n") else updated + "\n"
 
 
+def render_codex_body(body: str, home: Path) -> str:
+    placeholder = "{{inline: claude-config rules/floors.md}}"
+    if placeholder not in body:
+        return body
+    floors = home / ".claude/rules/floors.md"
+    try:
+        content = floors.read_text()
+    except OSError as exc:
+        raise ValueError(f"cannot inline required floors file {floors}: {exc}") from exc
+    content = re.sub(r"(?m)^(#{1,6})(?=\s)", r"#\1", content)
+    return body.replace(placeholder, content.rstrip())
+
+
 def install_codex_doc(text: str, body: str, path: Path) -> str:
     text = uninstall_adapter(text, path)
     if text.count(CODEX_START) > 1 or text.count(CODEX_START) != text.count(CODEX_END):

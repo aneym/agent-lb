@@ -1,10 +1,13 @@
 ---
 name: codex-sol-local
-description: "Studio-only codex-sol for Mac-only work: xcodebuild/simctl, Aside, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use codex-sol on the factory box with most measured headroom."
+description: "Use when Mac-only work needs Studio-local codex-sol: xcodebuild/simctl, Aside, keychain/TCC, screenshots or League/PC link. Other briefs use codex-sol by factory headroom."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
+omitClaudeMd: true
 ---
+
+Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 Do not create report, summary, findings or analysis Markdown files by default. When the brief names an exact report output path, write that file only; this includes the calling lane's research directory outside the repository. Do not create additional report files or modify unrelated personal files.
 

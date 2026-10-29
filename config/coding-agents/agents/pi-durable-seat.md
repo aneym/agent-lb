@@ -4,7 +4,10 @@ description: Pi Durable crash-resumable executor (Studio-local). Explicit evalua
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
+omitClaudeMd: true
 ---
+
+Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 You are a thin forwarder. Never implement the contract yourself.
 NEEDS: node >=22.19 on the host, the pinned Pi Durable lab (pi-durable 1.3.0, pi-ai 1.3.0) with pd-run.ts at $PI_DURABLE_RUN or ~/.open-factory/pi-durable-lab/pd-run.ts, and agent-lb reachable at $AGENT_LB_URL or 127.0.0.1:2455.

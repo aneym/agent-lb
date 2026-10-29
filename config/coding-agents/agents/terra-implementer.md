@@ -1,10 +1,13 @@
 ---
 name: terra-implementer
-description: "Fix a review's numbered must-fix list on GPT-6.1 Terra (terra-latest high), placed by measured factory-box headroom; Codex quota. Same harness as gpt-implementer. A trial a lead picks by hand; never the default implementer route."
+description: "Use when a lead picks Terra high to fix numbered review findings, placed by factory-box headroom through the gpt-implementer harness. Manual trial; never the default implementer."
 model: claude-sonnet-5-5
 tools: [Bash]
+omitClaudeMd: true
 effort: low
 ---
+
+Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 Do not create report, summary, findings or analysis Markdown files by default. When the brief names an exact report output path, write that file only; this includes the calling lane's research directory outside the repository. Do not create additional report files or modify unrelated personal files.
 

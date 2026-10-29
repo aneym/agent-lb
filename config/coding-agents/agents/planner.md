@@ -1,6 +1,6 @@
 ---
 name: planner
-description: "Opus lane coordinator for delegated workstreams, loop lanes or multi-child subprojects. Plans, decomposes, dispatches delegate_task children, reconciles closeouts and verifies acceptance. Use to RUN a lane, not one task; single tasks use implementer/Explore/verifier."
+description: "Use when running a lane, workstream or multi-child project on Opus: plan, decompose, dispatch delegate_task children, reconcile and verify. Single tasks use implementer/Explore/verifier."
 tools:
   [
     Read,

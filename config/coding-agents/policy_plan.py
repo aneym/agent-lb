@@ -8,7 +8,7 @@ from policy_documents import read_text  # type: ignore[missing-import]
 from policy_files import desired_routing_table  # type: ignore[missing-import]
 from policy_hook_groups import installed_manifest  # type: ignore[missing-import]
 from policy_layout import ADOPTED_KEEP, DISPATCH_SCRIPT, HOOK_MANIFEST, MANAGED_AGENTS, MANAGED_DIR, POLICY_DIR, POLICY_FILES, POLICY_SNAPSHOT, RETIRED_AGENTS, RETIRED_HOOKS, ROUTE_FILES, ROUTING_TABLE, ROUTING_TABLE_OWNER  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
-from policy_inventory import MANAGED_SEATS  # type: ignore[missing-import]
+from policy_inventory import MANAGED_SEATS, OPTIONAL_SEATS  # type: ignore[missing-import]
 from policy_settings import seat_template  # type: ignore[missing-import]
 
 SHADOWED_AGENTS = Path(".agent-lb/shadowed-agents")
@@ -164,6 +164,13 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes, kept):
             ):
                 if (args.home / relative).is_file() and (args.home / relative).resolve().parent != source / "agents":
                     changes[args.home / relative] = None
+        for name in OPTIONAL_SEATS:
+            owner = args.home / MANAGED_DIR / name
+            if read_text(owner) == f"agent-lb:{name}:v1\n":
+                target = args.home / ".claude/agents" / f"{name}.md"
+                if target.is_file():
+                    changes[target] = None
+                changes[owner] = None
         evict_shadows(args.home, changes)
         table_path = args.home / ROUTING_TABLE
         desired_table = desired_routing_table(source / "routing-table", table_path)

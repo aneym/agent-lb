@@ -1,6 +1,6 @@
 ---
 name: effort-xhigh
-description: "General executor at xhigh effort on the session model. Use for hard bounded bugs, algorithms or races, or a brief requesting xhigh: Agent has no per-call effort setting. Pass a descriptive kebab-case name."
+description: "Use when hard bounded bugs, algorithms, races or a brief need xhigh on the session model; Agent has no per-call effort setting. Pass a descriptive kebab-case name."
 effort: xhigh
 model: inherit
 tools: [Read, Edit, Write, Bash, Grep, Glob]

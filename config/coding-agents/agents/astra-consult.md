@@ -1,6 +1,6 @@
 ---
 name: astra-consult
-description: "Read-only second opinion on GPT Astra (astra-latest, high) via agent-lb/Codex quota. Use for Fable or Opus plan, architecture and spec critiques; one consult per plan, brief under 2k tokens. Never edits."
+description: "Use when Fable or Opus needs a read-only Astra high second opinion on plans, architecture or specs via Codex quota. One consult per plan, brief under 2k tokens. Never edits."
 model: astra-latest-high
 tools: [Read, Grep, Glob, Bash]
 ---

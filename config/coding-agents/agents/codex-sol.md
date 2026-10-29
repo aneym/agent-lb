@@ -1,10 +1,13 @@
 ---
 name: codex-sol
-description: "General Codex Sol (sol-latest) judgment or hands: research/web, exploration, planning/review, deliberation/councils, long-running work or coding in a worktree. Forward any contract, not just implementation. Pass a descriptive kebab-case name."
+description: "Use when a brief needs Sol judgment or hands: research, exploration, planning, review, councils, long work or coding in a worktree. Forward any contract; pass a descriptive kebab-case name."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
+omitClaudeMd: true
 ---
+
+Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 Do not create report, summary, findings or analysis Markdown files by default. When the brief names an exact report output path, write that file only; this includes the calling lane's research directory outside the repository. Do not create additional report files or modify unrelated personal files.
 

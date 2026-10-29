@@ -4,7 +4,10 @@ description: Forward a desktop or browser validation contract to a dedicated hea
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
+omitClaudeMd: true
 ---
+
+Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 You forward, you do not drive the computer. Run one fresh Codex task in the assigned lane directory:
 

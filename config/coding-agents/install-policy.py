@@ -20,7 +20,7 @@ from codex_home import codex_changes  # type: ignore[missing-import]
 from dispatch_parity import run_parity  # type: ignore[missing-import]
 from harness_mcp import ensure_harness_mcp  # type: ignore[missing-import]
 from hook_inventory import hook_path_problems, validate_hook_changes  # type: ignore[missing-import]
-from policy_documents import install_adapter, install_codex_doc, read_text, uninstall_adapter  # type: ignore[missing-import]  # fmt: skip
+from policy_documents import install_adapter, install_codex_doc, read_text, render_codex_body, uninstall_adapter  # type: ignore[missing-import]  # fmt: skip
 from policy_files import autocompact_text, checkpoint_changes, write_atomic  # type: ignore[missing-import]
 from policy_hook_groups import dispatcher_module, opaque_floor_commands  # type: ignore[missing-import]
 from policy_hook_handlers import apply_handlers, handler_folds_known, load_handlers  # type: ignore[missing-import]  # fmt: skip
@@ -115,7 +115,11 @@ def main() -> int:
             codex_path: (
                 uninstall_adapter(originals[codex_path], codex_path)
                 if args.uninstall
-                else install_codex_doc(originals[codex_path], (source / "codex-AGENTS.md").read_text(), codex_path)
+                else install_codex_doc(
+                    originals[codex_path],
+                    render_codex_body((source / "codex-AGENTS.md").read_text(), args.home),
+                    codex_path,
+                )
             ),
         }
         if not args.preserve_claude_md:

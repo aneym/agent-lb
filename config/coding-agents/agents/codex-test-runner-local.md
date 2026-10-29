@@ -1,10 +1,13 @@
 ---
 name: codex-test-runner-local
-description: "Studio-only codex-test-runner for Mac-only work: xcodebuild/simctl, Aside, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use codex-test-runner on the factory box with most measured headroom."
+description: "Use when Mac-only work needs Studio-local codex-test-runner: xcodebuild/simctl, Aside, keychain/TCC, screenshots or League/PC link. Other briefs use codex-test-runner by factory headroom."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
+omitClaudeMd: true
 ---
+
+Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 
 

@@ -1,6 +1,6 @@
 ---
 name: gpt-explorer-local
-description: "Studio-only gpt-explorer for Mac-only work: xcodebuild/simctl, Aside, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use gpt-explorer on the factory box with most measured headroom."
+description: "Use when Mac-only work needs Studio-local gpt-explorer: xcodebuild/simctl, Aside, keychain/TCC, screenshots or League/PC link. Other briefs use gpt-explorer by factory headroom."
 model: sol-latest-low
 tools: [Read, Grep, Glob, Bash]
 disallowedTools: [Write, Edit]

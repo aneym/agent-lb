@@ -1,6 +1,6 @@
 ---
 name: frontend-designer
-description: "UI design direction and visual critique: hierarchy, tokens, layout/interaction specs and ranked screenshot critiques. Use for new UI, redesigns, feel/bolder/quieter requests or built-UI review. Produces specs and critique, never product code."
+description: "Use when UI needs design, redesign, visual critique or review: hierarchy, tokens, interaction specs and ranked screenshot critiques. Produces specs and critique; never product code."
 tools: [Read, Grep, Glob, Bash, Skill]
 model: opus
 ---

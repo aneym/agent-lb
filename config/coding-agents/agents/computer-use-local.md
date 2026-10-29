@@ -1,10 +1,13 @@
 ---
 name: computer-use-local
-description: "Studio-only computer-use for Mac-only work: xcodebuild/simctl, Aside, keychain/TCC, screenshots, League/PC link. Runs in-process; all other briefs use computer-use on the factory box with most measured headroom."
+description: "Use when Mac-only work needs Studio-local computer-use: xcodebuild/simctl, Aside, keychain/TCC, screenshots or League/PC link. Other briefs use computer-use by factory headroom."
 model: claude-sonnet-5-5
 effort: low
 tools: [Bash]
+omitClaudeMd: true
 ---
+
+Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 
 

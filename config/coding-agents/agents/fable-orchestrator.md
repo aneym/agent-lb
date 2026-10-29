@@ -1,6 +1,6 @@
 ---
 name: fable-orchestrator
-description: "Fable lead/orchestrator (fable-latest) only when Alex or dispatch requests Fable: user-facing lead tabs or factory decider. Otherwise leads default to Opus medium/ultracode. Decides and delegates; never implements."
+description: "Use when Alex or dispatch requests Fable (fable-latest) for a lead tab or factory decider. Otherwise use Opus medium/ultracode. Decides and delegates; never implements."
 model: inherit
 effort: medium
 tools: "*"

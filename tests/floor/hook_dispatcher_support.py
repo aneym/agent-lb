@@ -138,6 +138,9 @@ def make_home(tmp_path: Path) -> tuple[Path, dict]:
 
 
 def installer(tmp_path: Path, home: Path):
+    floors = home / ".claude/rules/floors.md"
+    floors.parent.mkdir(parents=True, exist_ok=True)
+    floors.write_text("# Install fixture\n\nFixture body.\n")
     env = os.environ | {
         "HOME": str(home),
         "AGENT_LB_URL": "http://127.0.0.1:1",
