@@ -67,7 +67,7 @@ def test_exported_hook_environment(tmp_path):
 
 
 def test_an_approval_record_never_opens_alexs_railway_login(tmp_path):
-    root = tmp_path / ".open-factory/approvals"
+    root = tmp_path / ".agent-rails/approvals"
     root.mkdir(parents=True)
     approval = root / "alex-provider.md"
     approval.write_text("Alex approved at 22:44Z\n`railway ssh`\n")

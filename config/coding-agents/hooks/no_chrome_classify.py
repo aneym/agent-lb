@@ -322,7 +322,7 @@ def launchers(tool=LAUNCHER):
     return {
         tool,
         home + "/.local/bin/" + tool,
-        home + "/.agent-rails/factory-runtime/bin/" + tool,
+        home + "/.agent-rails/rails-host-runtime/current/packages/agent-runtime/bin/" + tool,
     }
 
 
@@ -335,15 +335,19 @@ def guest_space(argv, plain):
 
 def lane_tool(argv, first):
     home = os.path.expanduser("~")
-    link, source = (
-        home + "/.local/bin/" + LANE_TOOL,
+    link = home + "/.local/bin/" + LANE_TOOL
+    sources = (
+        home + "/.agent-rails/rails-host-runtime/current/packages/agent-runtime/bin/" + LANE_TOOL,
         home + "/.agent-rails/overlay/engine/bin/" + LANE_TOOL,
     )
     if not first or argv[0] not in (LANE_TOOL, link):
         return False
     if argv[0] == LANE_TOOL and os.path.normpath(shutil.which(LANE_TOOL) or "") != link:
         return False
-    if not (os.path.islink(link) and os.path.isfile(source) and os.path.realpath(link) == os.path.realpath(source)):
+    if not (
+        os.path.islink(link)
+        and any(os.path.isfile(source) and os.path.realpath(link) == os.path.realpath(source) for source in sources)
+    ):
         return False
     rest = argv[3:] if argv[2:3] == ["--"] else argv[2:]
     if len(argv) < 3 or not SESSION.fullmatch(argv[1]) or not rest or rest[0] not in LANE_SUBS:

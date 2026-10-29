@@ -36,7 +36,7 @@ def approved(command):
         ref = os.path.join(os.environ["HOME"], ref[2:])
     elif ref.startswith("$HOME/"):
         ref = os.path.join(os.environ["HOME"], ref[6:])
-    directory = os.path.join(os.environ["HOME"], ".open-factory/approvals")
+    directory = os.path.join(os.environ["HOME"], ".agent-rails/approvals")
     if ".." in ref or os.path.dirname(ref) != directory:
         return False
     if not re.fullmatch(r"(?:owner|alex)-.*-2026-.*\.md", os.path.basename(ref)):
