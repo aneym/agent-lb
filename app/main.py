@@ -85,6 +85,7 @@ from app.modules.settings import api as settings_api
 from app.modules.sticky_sessions import api as sticky_sessions_api
 from app.modules.sticky_sessions.cleanup_scheduler import build_sticky_session_cleanup_scheduler
 from app.modules.t3_threads import api as t3_threads_api
+from app.modules.verifier_receipts import api as verifier_receipts_api
 from app.modules.team import api as team_api
 from app.modules.usage import api as usage_api
 from app.modules.usage.additional_quota_keys import reload_additional_quota_registry
@@ -434,6 +435,7 @@ def configure_app(app: FastAPI, settings) -> None:
         federation_api.router,
         federation_api.dashboard_router,
         t3_threads_api.router,
+        verifier_receipts_api.router,
     ):
         app.include_router(dashboard_router)
 
