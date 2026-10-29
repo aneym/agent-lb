@@ -14,6 +14,7 @@ from pathlib import Path
 from route_brief_paths import caller_host_paths, remote_brief  # pyrefly: ignore [missing-import]
 from route_pace_state import reservation_request  # pyrefly: ignore [missing-import]
 from route_resolve_one import append_decision  # pyrefly: ignore [missing-import]
+from route_review_reuse import reusable_receipt, review_key  # pyrefly: ignore [missing-import]
 from route_run_checkout import (  # pyrefly: ignore [missing-import]
     REMOTE_CLEANUP_GRACE_S,
     cleanup_remote,
@@ -23,7 +24,6 @@ from route_run_checkout import (  # pyrefly: ignore [missing-import]
     repo_root,
     validate_worktree,
 )
-from route_review_reuse import review_key, reusable_receipt  # pyrefly: ignore [missing-import]
 from route_run_jobs import launch_run, run_path, save_run  # pyrefly: ignore [missing-import]
 from route_target import local_environment, resolve_target, t3_settings  # pyrefly: ignore [missing-import]
 from route_versioned_rules import EXIT_OK, EXIT_WAIT, load_table, now_iso, setup_error  # pyrefly: ignore [missing-import]
