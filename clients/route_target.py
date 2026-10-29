@@ -12,6 +12,7 @@ from typing import Any
 
 from route_anthropic_models import family_alias  # pyrefly: ignore [missing-import]
 from route_class_candidates import alias_vendor, table_digest  # pyrefly: ignore [missing-import]
+from route_headroom import measured_placement  # pyrefly: ignore [missing-import]
 from route_dispatch import command_dispatch  # pyrefly: ignore [missing-import]
 from route_pick import command_reserve  # pyrefly: ignore [missing-import]
 from route_reserve_state import new_ulid, seat_opts  # pyrefly: ignore [missing-import]
@@ -76,7 +77,7 @@ def placement(args: argparse.Namespace, settings: dict) -> dict:
             "write stays on the caller environment; linked-environment worktrees unsupported",
         )
     else:
-        name, reason = local, "no per-box headroom signal in route; using the local environment"
+        name, reason = measured_placement(environments, local)
     if args.write and name != local:
         remote_write = True
     return {
@@ -191,6 +192,8 @@ def resolve_target(args: argparse.Namespace) -> tuple[int, dict]:
             table_sha256=table_digest(),
             policy_rev=str(table.get("policy_rev") or "unversioned"),
         )
+    if getattr(args, "decision_id", None):
+        row["decision_id"] = args.decision_id
     row.setdefault("seat", None)
     row.setdefault("vendor", None)
     row.setdefault("reason", "no T3-compatible dispatch candidate")

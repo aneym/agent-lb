@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from route_run_jobs import command_wait  # pyrefly: ignore [missing-import]
 from route_run import command_run  # pyrefly: ignore [missing-import]
 from route_seat_run_import import command_import_seat_run  # pyrefly: ignore [missing-import]
 from route_target import command_target  # pyrefly: ignore [missing-import]
@@ -16,14 +17,21 @@ def add_t3_parsers(sub: Any) -> None:
     brief.add_argument("--brief-stdin", action="store_true")
     run.add_argument("--cwd", type=Path)
     run.add_argument("--on", metavar="ENV_NAME", help="pin execution to this environment")
+    run.add_argument("--bg", action="store_true", help="detach and print the decision id")
     run.add_argument("--write", action="store_true")
     run.add_argument("--author-vendor")
     run.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"))
     run.add_argument("--caller")
     run.add_argument("--job")
-    run.add_argument("--timeout", type=float, default=600)
+    run.add_argument("--timeout", type=float, default=600, help="run limit in seconds; foreground waits at most 240")
     run.add_argument("--json", action="store_true")
     run.set_defaults(handler=command_run)
+
+    wait = sub.add_parser("wait", help="collect a detached run; exit 3 while queued or running")
+    wait.add_argument("decision_id")
+    wait.add_argument("--max", type=float, default=240, help="wait seconds, capped at 240")
+    wait.add_argument("--json", action="store_true")
+    wait.set_defaults(handler=command_wait)
 
     target = sub.add_parser(
         "target",

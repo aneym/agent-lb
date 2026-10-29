@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from route_pace_state import reservation_request  # pyrefly: ignore [missing-import]
+from route_run_jobs import launch_run, run_path, save_run  # pyrefly: ignore [missing-import]
 from route_resolve_one import append_decision  # pyrefly: ignore [missing-import]
 from route_target import local_environment, resolve_target, t3_settings  # pyrefly: ignore [missing-import]
 from route_versioned_rules import EXIT_OK, EXIT_WAIT, load_table, now_iso, setup_error  # pyrefly: ignore [missing-import]
@@ -34,6 +35,12 @@ def validate_worktree(cwd: Path) -> None:
 
 
 def remote_checkout(cwd: Path, host: str, environment: str) -> str | None:
+    try:
+        git_value(cwd, "rev-parse", "--show-toplevel")
+    except ValueError:
+        raise ValueError(
+            "--cwd is not a git checkout; remote read-only runs map a repo checkout to $HOME/repos/<name>"
+        ) from None
     try:
         origin = git_value(cwd, "remote", "get-url", "origin")
         name = origin.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
@@ -73,7 +80,7 @@ def provider_command(row: dict, cwd: str, write: bool, help_text: str) -> list[s
     if provider != "claudeAgent":
         raise ValueError(f"unsupported headless provider: {provider}")
     return [
-        "claude",
+        "claude" if row["environment"] == "studio" else "claude-box-launch",
         "-p",
         "--model",
         row["model"],
@@ -146,7 +153,7 @@ def release_lease(row: dict, outcome: str) -> None:
 
 def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> int:
     started = time.monotonic()
-    log_path = Path.home() / ".agent-lb/logs/route-run" / (row["decision_id"] + ".log")
+    log_path = run_path(row["decision_id"], ".log")
     process = None
     timed_out = False
     exit_code = 127
@@ -160,15 +167,13 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
             execution_cwd = remote_checkout(cwd, row["ssh_host"], row["environment"])
             if execution_cwd:
                 host = row["ssh_host"]
-            elif args.on:
-                row["placement_reason"] += "; pinned host has no matching checkout; execution refused"
-                raise ValueError("pinned environment has no matching repo checkout")
             else:
-                row["placement_reason"] += "; no matching remote checkout; running locally"
-                row["environment"] = local
-                execution_cwd = str(cwd)
+                row["placement_reason"] += "; selected host has no matching checkout; execution refused"
+                raise ValueError("selected environment has no matching repo checkout")
         if args.write:
             row["environment"] = local
+        row.update(status="running", log_path=str(log_path))
+        save_run(row)
         provider = row["target"]["providerInstanceId"]
         argv = provider_command(row, execution_cwd, args.write, cli_help(provider, host))
         if host:
@@ -176,6 +181,9 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
         env = os.environ.copy()
         env.pop("OPENAI_API_KEY", None)
         env.pop("CLAUDECODE", None)
+        args.timeout = max(0.01, min(args.timeout, args.run_deadline - time.monotonic()))
+        row.update(execution_transport="ssh" if host else "local", execution_cwd=execution_cwd)
+        save_run(row)
         with log_path.open("w", encoding="utf-8") as transcript:
             process = subprocess.Popen(
                 argv,
@@ -197,12 +205,16 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
                 process.communicate()
                 exit_code, timed_out = 124, True
         result = final_message(log_path, provider)
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+    except ValueError as error:
+        result = f"route run: {error}"
+        print(result, file=sys.stderr)
+    except (OSError, subprocess.SubprocessError) as error:
         result = f"route run: {type(error).__name__}; see execution configuration"
         print(result, file=sys.stderr)
     finally:
         if process is None:
             release_lease(row, "cancelled")
+    exit_code = exit_code if exit_code >= 0 else 128 - exit_code
     seconds = round(time.monotonic() - started, 3)
     append_decision(
         {
@@ -219,6 +231,7 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
         }
     )
     output = {
+        **row,
         "status": "ok" if exit_code == 0 else "timeout" if timed_out else "failed",
         **{key: row[key] for key in ("decision_id", "seat", "model", "environment", "placement_reason")},
         "exit_code": exit_code,
@@ -226,6 +239,7 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
         "result": result,
         "log_path": str(log_path),
     }
+    save_run(output)
     print(json.dumps(output, sort_keys=True) if args.json else result)
     return exit_code if exit_code >= 0 else 128 - exit_code
 
@@ -241,11 +255,17 @@ def command_run(args: argparse.Namespace) -> int:
             if args.cwd is None:
                 raise ValueError("--write requires --cwd")
             validate_worktree(cwd)
-        brief = sys.stdin.read() if args.brief_stdin else args.brief.read_text(encoding="utf-8")
+            if args.on and args.on != local_environment(t3_settings(load_table())["environments"]):
+                raise ValueError("remote writes unsupported; --write stays on the caller environment")
+        brief = getattr(args, "run_brief", None)
+        if brief is None:
+            brief = sys.stdin.read() if args.brief_stdin else args.brief.read_text(encoding="utf-8")
         if not brief.strip():
             raise ValueError("brief must not be empty")
     except (OSError, ValueError) as error:
         return setup_error("invalid_run", str(error), args.json)
+    if not getattr(args, "detached", False):
+        return launch_run(args, cwd, brief)
     target_args = argparse.Namespace(
         task_class=args.task_class,
         job=args.job,
@@ -258,9 +278,13 @@ def command_run(args: argparse.Namespace) -> int:
         mac=False,
         dry_run=False,
         json=args.json,
+        decision_id=getattr(args, "decision_id", None),
     )
     code, row = resolve_target(target_args)
     if code != EXIT_OK or row.get("status") != "ok":
+        if row.get("decision_id"):
+            row["log_path"] = str(run_path(row["decision_id"], ".log"))
+            save_run(row)
         print(json.dumps(row, sort_keys=True))
         return EXIT_WAIT if row.get("status") == "queued" else code
     return execute_run(args, row, cwd, brief)
