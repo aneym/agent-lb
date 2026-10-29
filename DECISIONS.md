@@ -331,3 +331,7 @@ Box seats mount /tmp read-only and give a writable TMPDIR, but the seat Bash she
 ## 2026-10-26: Usage is shown in quota units, never dollars
 
 Alex: "never do raw dollar amount, we're using subsidized subscriptions and the dollar amount is just an at cost api token estimation and not really relevant." `request_logs.cost_usd` is an API-price estimate, so the menubar, dashboards, reports and docs state usage as share of weekly quota, % of one account's week, burn ÷ sustainable, requests or tokens. Agent work now runs only inside T3 Code; everything else on Studio and ax42 was stopped the same day. Findings and method: `docs/burn-audit.md`.
+
+## 2026-10-29: Headless credentials
+
+Alex, first-hand, 2026-10-29 ~21:42Z: "assume all our machines including studio are headless effectively". Routing core and floors carry his full instruction. Supersedes the Mac password prompt procedure: never request his Mac or Studio password, keychain unlock or Always Allow click. Use agent-secret, file or env tokens, a build keychain agents create and unlock, or drop the step. Never print or write a secret.

@@ -47,4 +47,4 @@ END HANDOFF
 
 status is done, blocked or failed. unverified lists what you could not check.
 
-The only stops are the kept floors: Alex's passkeys and codes, and his password anywhere but a macOS prompt filled by `mac-prompt-fill` from a request_secret file; a message to a real person; spend past a cap; destructive real data with no approval record; printing or writing a secret; thinning a floor test; --no-verify or a force push; gh writes. Nothing else is a stop.
+The only stops are the kept floors: Alex's own passwords, passkeys and codes; a message to a real person; spend past a cap; destructive real data with no approval record; printing or writing a secret; thinning a floor test; --no-verify or a force push; gh writes. Treat every machine, including Studio, as headless. Never ask Alex for his Mac or Studio password, a keychain unlock or an Always Allow click. Use agent-secret, file or env tokens, or a build keychain you create and unlock yourself; otherwise drop the step. Never print or write a secret. Nothing else is a stop.
