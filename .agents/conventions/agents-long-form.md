@@ -79,6 +79,10 @@ right away. This is a standing instruction from the repo owner.
   watchdog runs `check` every 5 min and flags drift older than 30 min. Pause with
   `touch ~/.agent-lb/follow.pause`. Merge to main and wait one tick; there is no manual
   deploy step.
+  A host that runs no agent-lb service (Studio since the 2026-10-27 primary move to ax42)
+  installs it with `scripts/install-runtime-follow.sh --cli-only`: launchd label
+  `com.agent-rails.agent-lb-follow`, `AGENT_LB_FOLLOW_CLI_ONLY=1`, every main change syncs
+  on the next tick and no restart runs.
 - **Anthropic request path (`app/core/anthropic/**`, `app/modules/proxy/anthropic*`)**: after the
   restart, run `python3 scripts/claude_cache_eval.py` and keep its receipt. It drives a real Claude
   Code session with a subagent through the proxy and fails if any steady turn rewrote its context.

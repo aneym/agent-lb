@@ -27,6 +27,10 @@ MAX_ATTEMPTS = 3
 LABEL = "follow"
 
 
+def cli_only() -> bool:
+    return os.environ.get("AGENT_LB_FOLLOW_CLI_ONLY") == "1"
+
+
 def epoch(stamp: str | None) -> float | None:
     if not stamp:
         return None
@@ -121,7 +125,10 @@ def deploy(paths: Paths, state: dict, want: str, manage_static: bool, bin_todo: 
         f"sync ok {want[:10]} (runtime-follow{', bin ' + ','.join(report.refreshed) if report.refreshed else ''})",
     )
     units = os.environ.get("AGENT_LB_FOLLOW_SYSTEMD_UNITS", "").split()
-    if units:
+    if cli_only():
+        rc, tail = 0, [""]
+        log_line(paths, f"runtime-follow: cli-only host, no local service to restart for {want[:10]}")
+    elif units:
         front_after = systemd_drain.front_digest(paths.runtime)
         rc, tail = systemd_restart(systemd_drain.units_to_restart(units, front_before, front_after), paths)
     else:
@@ -301,10 +308,10 @@ def step(paths: Paths, state: dict, now: float, *, force: bool) -> int:
     due, next_at, reason = runtime_plan.restart_due(state, now)
     state["next_restart_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(next_at))
     state["restart_wait_reason"] = reason
-    if not due and not force:
+    if not due and not force and not cli_only():
         return 0
     hand_deploy = state.get("deployed") == want
-    if hand_deploy and not force:
+    if hand_deploy and not force and not cli_only():
         since = epoch(state["drift_since"]) or now
         if now - since < HAND_DEPLOY_GRACE_S:
             return 0
