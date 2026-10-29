@@ -30,15 +30,6 @@ def on_main(repo):
 
 def candidate_repo(path):
     path = path.expanduser().resolve()
-    if any(
-        path.is_relative_to(root)
-        for root in (
-            Path("/Volumes/StudioExt/repos/t3-wt"),
-            Path("/srv/cow/t3-wt"),
-            Path("/data/jobs/worktrees"),
-        )
-    ):
-        return None
     if path.is_dir():
         return None
     repo = main_checkout(path)
