@@ -12,8 +12,8 @@ from typing import Any
 
 from route_anthropic_models import family_alias  # pyrefly: ignore [missing-import]
 from route_class_candidates import alias_vendor, table_digest  # pyrefly: ignore [missing-import]
-from route_headroom import measured_placement  # pyrefly: ignore [missing-import]
 from route_dispatch import command_dispatch  # pyrefly: ignore [missing-import]
+from route_headroom import measured_placement  # pyrefly: ignore [missing-import]
 from route_pick import command_reserve  # pyrefly: ignore [missing-import]
 from route_reserve_state import new_ulid, seat_opts  # pyrefly: ignore [missing-import]
 from route_resolve_one import append_decision  # pyrefly: ignore [missing-import]
@@ -66,25 +66,16 @@ def placement(args: argparse.Namespace, settings: dict) -> dict:
         setup_error("conflicting_environment", "--on and --here must name the same environment", args.json)
     if args.on and args.mac and args.on != "studio":
         setup_error("conflicting_environment", "--mac requires --on studio", args.json)
-    remote_write = args.write and args.here is not None and args.here != local
     if args.on:
         name, reason = args.on, "caller pinned --on"
     elif args.mac:
         name, reason = "studio", "mac required: studio"
-    elif args.write:
-        name, reason = (
-            args.here or local,
-            "write stays on the caller environment; linked-environment worktrees unsupported",
-        )
     else:
-        name, reason = measured_placement(environments, local)
-    if args.write and name != local:
-        remote_write = True
+        name, reason = measured_placement(environments, args.here or local)
     return {
         "environment": name,
         "ssh_host": environments[name]["ssh_host"],
         "placement_reason": reason,
-        **({"remote_write": "unsupported"} if remote_write else {}),
     }
 
 
@@ -227,9 +218,7 @@ def resolve_target(args: argparse.Namespace) -> tuple[int, dict]:
             "options": {provider["effort_option"]: effort},
             "environmentId": settings["environments"][placed["environment"]]["environmentId"],
         }
-        if args.write and row.get("remote_write"):
-            row["reason"] = "remote writes unsupported; run route target on the write environment"
-        elif args.dry_run:
+        if args.dry_run:
             row.update(status="ok", target=target)
         else:
             reserve_code, lease = reserve_target(args, table, row, vendor, model)

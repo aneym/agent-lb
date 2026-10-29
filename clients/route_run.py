@@ -28,6 +28,14 @@ from route_target import local_environment, resolve_target, t3_settings  # pyref
 from route_versioned_rules import EXIT_OK, EXIT_WAIT, load_table, now_iso, setup_error  # pyrefly: ignore [missing-import]
 
 
+def caller_environment(row: dict, local: str, note: str) -> None:
+    environment = t3_settings(load_table())["environments"][local]
+    row["placement_reason"] += f"; {note}"
+    row["environment"] = local
+    row["ssh_host"] = environment["ssh_host"]
+    row["target"]["environmentId"] = environment["environmentId"]
+
+
 def provider_command(row: dict, cwd: str, write: bool, help_text: str) -> list[str]:
     provider = row["target"]["providerInstanceId"]
     if provider == "codex":
@@ -143,12 +151,9 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
                 if args.on:
                     row["placement_reason"] += "; pinned remote execution refused"
                     raise
-                row["placement_reason"] += "; fallback to caller environment"
-                row["environment"] = local
-                row["ssh_host"] = t3_settings(load_table())["environments"][local]["ssh_host"]
-                row["target"]["environmentId"] = t3_settings(load_table())["environments"][local]["environmentId"]
-        if args.write:
-            row["environment"] = local
+                caller_environment(row, local, "fallback to caller environment")
+        if args.write and row["environment"] != local:
+            caller_environment(row, local, "route run writes in the caller checkout")
         row.update(status="running", log_path=str(log_path))
         save_run(row)
         if not host:
@@ -250,7 +255,9 @@ def command_run(args: argparse.Namespace) -> int:
                 raise ValueError("--write requires --cwd")
             validate_worktree(cwd)
             if args.on and args.on != local_environment(t3_settings(load_table())["environments"]):
-                raise ValueError("remote writes unsupported; --write stays on the caller environment")
+                raise ValueError(
+                    "route run --write runs in the caller checkout; remote writes use route target --write and delegate_task"
+                )
         brief = getattr(args, "run_brief", None)
         if brief is None:
             brief = sys.stdin.read() if args.brief_stdin else args.brief.read_text(encoding="utf-8")

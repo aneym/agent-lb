@@ -6,7 +6,8 @@ How a child starts:
 - **Local, Claude model:** Agent tool with `model: opus|sonnet|haiku` (or Workflow), in-process. No alias or default-model remap is in effect: on ax42 the `sonnet` and `haiku` aliases resolve to `claude-sonnet-5-5`, an untyped Agent child runs the launcher's helper model (`sol-latest`, served as `gpt-6.1-sol`) unless it names one, and a Workflow `agent()` that names no model inherits the lead's model. Pass explicit ids and check the served `message.model` in the child transcript and on the agent-lb row (2026-10-29).
 - **Local, other provider or work outliving this turn:** `delegate_task` with `target.providerInstanceId` + `model`, effort in `target.options` (`reasoningEffort` for codex, `effort` for claudeAgent), `isolation: "worktree"` when it writes.
 - **Another machine, read-only:** `delegate_task` with the `environmentId` of the box `route` picked (from `t3_environment_links`), no worktree.
-- **Another machine, writes or runs plain commands:** the seat-run forwarding agent for the job (opus-seat, gpt-implementer, verifier and the like). T3 refuses a worktree child on a linked environment (invalid_request, 2026-10-29).
+- **Another machine, writes:** in the lead's own turn, `route target <class> --write`, then `delegate_task` with that target and `isolation: "worktree"`; T3 makes the worktree on the box and brings the branch back (2026-10-29). From a Bash-only agent or a Workflow stage, the seat-run forwarding agent for the job (opus-seat, gpt-implementer and the like).
+- **Another machine, plain commands:** `route run <class> --on <box>` for read-only runs; CI-style command jobs stay on `seat-run`.
 
 | Job | Local | Another machine (writes) | Model, effort |
 |---|---|---|---|

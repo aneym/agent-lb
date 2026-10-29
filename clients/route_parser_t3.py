@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from route_run_jobs import command_wait  # pyrefly: ignore [missing-import]
 from route_run import command_run  # pyrefly: ignore [missing-import]
+from route_run_jobs import command_wait  # pyrefly: ignore [missing-import]
 from route_seat_run_import import command_import_seat_run  # pyrefly: ignore [missing-import]
 from route_target import command_target  # pyrefly: ignore [missing-import]
 
@@ -42,7 +42,9 @@ def add_t3_parsers(sub: Any) -> None:
     target.add_argument("task_class", metavar="class")
     target.add_argument("--write", action="store_true", help="write child: local environment only")
     target.add_argument("--mac", action="store_true", help="require Studio")
-    target.add_argument("--here", metavar="ENV_NAME", help="caller's environment; remote writes are unsupported")
+    target.add_argument(
+        "--here", metavar="ENV_NAME", help="caller's environment; the fallback when no box has measured room"
+    )
     target.add_argument("--on", metavar="ENV_NAME", help="pin execution to this environment")
     target.add_argument("--caller")
     target.add_argument("--job")
