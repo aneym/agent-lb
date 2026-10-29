@@ -5,78 +5,108 @@ import json
 import os
 import subprocess
 from collections.abc import Callable, Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-from claude_config_hooks import manifest_root  # type: ignore[missing-import]
 from codex_home import OFFLOAD_COMMAND  # type: ignore[missing-import]
-from floor_hooks import FLOOR_STEMS, MAX_DIGEST_BYTES, non_floor, stem, unwrapped  # type: ignore[missing-import]
+from floor_hooks import FLOOR_STEMS, non_floor, stem, unwrapped  # type: ignore[missing-import]
 from policy_layout import SETTINGS_HOOKS  # type: ignore[missing-import]
 
 SOURCE_HOOKS = Path(__file__).resolve().parent / "hooks"
 
 
-def file_bytes(path: Path) -> bytes | None:
+def git(top: Path, *args: str, data: bytes | None = None) -> bytes | None:
     try:
-        if not path.is_file() or path.stat().st_size > MAX_DIGEST_BYTES:
-            return None
-        return path.read_bytes()
-    except OSError:
+        result = subprocess.run(["git", "-C", str(top), *args], input=data, capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
         return None
+    return result.stdout if result.returncode == 0 else None
 
 
-def committed_reader(root: Path) -> Callable[[str], bytes | None]:
-    def read(name: str) -> bytes | None:
-        try:
-            top = subprocess.run(
-                ["git", "-C", str(root), "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=20
-            )
-            if top.returncode or os.path.realpath(top.stdout.strip()) != os.path.realpath(root):
-                return None
-            shown = subprocess.run(["git", "-C", str(root), "show", f"HEAD:{name}"], capture_output=True, timeout=20)
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return shown.stdout if shown.returncode == 0 else None
-
-    return read
+def checkout(path: Path) -> tuple[Path, str] | None:
+    top = git(path, "rev-parse", "--show-toplevel")
+    sha = git(path, "rev-parse", "--verify", "HEAD^{commit}")
+    if top is None or sha is None:
+        return None
+    return Path(os.path.realpath(top.decode().strip())), sha.decode().strip()
 
 
-def shipped_manifest(home: Path) -> tuple[list[dict[str, Any]], Callable[[str], bytes | None]]:
-    root = manifest_root(home)
-    if root is None:
-        return [], lambda _name: None
-    live = os.path.realpath(root) == os.path.realpath(home / ".claude")
-    read = committed_reader(root) if live else lambda name: file_bytes(root / name)
+def committed(top: Path, sha: str, prefix: str) -> dict[str, bytes]:
+    listing = git(top, "ls-tree", "-r", "-z", sha, "--", prefix)
+    if not listing:
+        return {}
+    blobs = {}
+    for row in listing.split(b"\0"):
+        meta, _, name = row.partition(b"\t")
+        parts = meta.split()
+        if len(parts) == 3 and parts[0] in (b"100644", b"100755") and parts[1] == b"blob":
+            blobs[name.decode()] = parts[2].decode()
+    found = {}
+    for name, oid in blobs.items():
+        data = git(top, "cat-file", "blob", oid)
+        if data is not None:
+            found[name] = data
+    return found
+
+
+def claude_config(home: Path) -> tuple[Path, str] | None:
+    candidates = [home / ".claude", Path(os.path.realpath(home / ".local/bin/gh")).parent.parent]
+    for candidate in candidates:
+        found = checkout(candidate) if (candidate / "hooks.json").is_file() else None
+        if found and found[0] == Path(os.path.realpath(candidate)):
+            return found
+    return None
+
+
+def shipped_manifest(home: Path) -> tuple[list[dict[str, Any]], dict[str, bytes]]:
+    found = claude_config(home)
+    if found is None:
+        return [], {}
+    top, sha = found
     try:
-        manifest = json.loads(read("hooks.json") or b"")
+        manifest = json.loads(committed(top, sha, "hooks.json").get("hooks.json") or b"")
     except ValueError:
-        return [], read
+        return [], {}
     entries = manifest.get("hooks") if isinstance(manifest, dict) else None
-    return [entry for entry in entries or [] if isinstance(entry, dict)], read
+    entries = [entry for entry in entries or [] if isinstance(entry, dict)]
+    return entries, committed(top, sha, "hooks")
 
 
-def shipped_files(home: Path) -> Iterator[tuple[str, bytes | None, list[Path]]]:
-    for path in sorted(SOURCE_HOOKS.iterdir()):
-        yield path.name, file_bytes(path), [path, home / ".claude/hooks" / path.name]
-    entries, read = shipped_manifest(home)
+def shipped_files(home: Path) -> Iterator[tuple[str, bytes, list[Path]]]:
+    hooks = home / ".claude/hooks"
+    found = checkout(SOURCE_HOOKS)
+    if found is not None:
+        top, sha = found
+        prefix = os.path.relpath(SOURCE_HOOKS, top)
+        for name, data in committed(top, sha, prefix).items():
+            relative = PurePosixPath(name).relative_to(prefix)
+            if len(relative.parts) == 1:
+                yield relative.name, data, [top / name, hooks / relative.name]
+    entries, blobs = shipped_manifest(home)
     names = {name for entry in entries for name in entry.get("files") or [] if isinstance(name, str)}
     for name in sorted(names):
-        yield Path(name).name, read(name), [home / ".claude/hooks" / Path(name).name]
-    analytics = home / "repos/skill-stats/dist"
-    if analytics.is_dir():
-        for path in sorted(analytics.rglob("*")):
-            target = home / ".local/share/skill-stats/dist" / path.relative_to(analytics)
-            yield path.name, file_bytes(path), [path, target]
+        relative = PurePosixPath(name)
+        if name in blobs and relative.parts[:1] == ("hooks",) and len(relative.parts) == 2:
+            yield relative.name, blobs[name], [hooks / relative.name]
+
+
+def plain(target: Path) -> str | None:
+    if target.is_symlink():
+        return None
+    real = os.path.realpath(target)
+    return real if real == os.path.join(os.path.realpath(target.parent), target.name) else None
 
 
 def allowed_scripts(home: Path) -> dict[str, set[str]]:
     scripts: dict[str, set[str]] = {}
     for name, data, targets in shipped_files(home):
-        if data is None or stem(name) in FLOOR_STEMS:
+        if stem(name) in FLOOR_STEMS:
             continue
         value = hashlib.sha256(data).hexdigest()
         for target in targets:
-            scripts.setdefault(os.path.realpath(target), set()).add(value)
+            real = plain(target)
+            if real:
+                scripts.setdefault(real, set()).add(value)
     return scripts
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from floor_allowlist import floor_unwrap, non_floor_check  # type: ignore[missing-import]
-from floor_hooks import accepted_forms, hooks_off, unclassified_guards  # type: ignore[missing-import]
+from floor_hooks import FAIL_OPEN_MARKS, accepted_forms, hooks_off, unclassified_guards  # type: ignore[missing-import]
 from policy_root_hooks import held_by_root, root_floor_names  # type: ignore[missing-import]
 
 HOOK_DOCUMENTS = {
@@ -131,7 +131,8 @@ def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
             problems.append(f"{path}: {exc}")
             continue
         for context, matcher, hook in after:
-            if floor_unwrap(json.loads(hook).get("command") or "", check):
+            command = json.loads(hook).get("command") or ""
+            if floor_unwrap(command, check) or any(mark in command for mark in FAIL_OPEN_MARKS):
                 problems.append(f"{path}: floor entry at {context} matcher {matcher} keeps a fail-open wrapper: {hook}")
         held = root_floor_names(owner == home / ".codex")
         for context, matcher, hook in gone:

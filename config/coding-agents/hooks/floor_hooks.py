@@ -215,22 +215,29 @@ def script_path(command):
     return real if os.path.isfile(real) else None
 
 
+SYSTEM = frozenset((*INTERPRETERS, *ENV[1:], "/bin/sh", "/bin/zsh", "/usr/bin/bash", "/dev/null"))
+FAIL_OPEN_MARKS = ("hook missing: fail open", "hook warning: missing")
+
+
+def provenance(command, scripts):
+    for token in path_tokens(command):
+        if token in SYSTEM or os.path.isdir(token) and not os.path.islink(token):
+            continue
+        real = os.path.realpath(token)
+        if os.path.islink(token) or real not in scripts or digest(real) not in scripts[real]:
+            return False
+    return True
+
+
 def non_floor(command, scripts, exact=frozenset()):
     if not isinstance(command, str) or mentioned_floors(command):
         return False
     inner = unwrapped(command)
     if inner is not None:
-        return non_floor(inner, scripts, exact)
-    if command in exact:
-        reals = {os.path.realpath(token) for token in path_tokens(command)}
-        return all(digest(real) in scripts[real] for real in reals if real in scripts)
-    real = script_path(command)
-    if not real:
+        return not any(mark in inner for mark in FAIL_OPEN_MARKS) and non_floor(inner, scripts, exact)
+    if any(mark in command for mark in FAIL_OPEN_MARKS) or not provenance(command, scripts):
         return False
-    value = digest(real)
-    return (
-        value is not None
-        and value in scripts.get(real, ())
-        and value not in floor_digests()
-        and stem(os.path.basename(real)) not in FLOOR_STEMS
-    )
+    if command in exact:
+        return True
+    real = script_path(command)
+    return bool(real) and real not in map(os.path.realpath, SYSTEM) and digest(real) not in floor_digests()
