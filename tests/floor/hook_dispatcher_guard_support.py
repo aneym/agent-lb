@@ -17,8 +17,8 @@ DANGEROUS = (
 
 FLOOR_LEAVES = {
     "rm-dynamic-deny": (
-        '/usr/bin/python3 "$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny"',
-        ".agent-rails/factory-runtime/bin/rm-dynamic-deny",
+        '/usr/bin/python3 "$HOME/.local/bin/rm-dynamic-deny"',
+        ".local/bin/rm-dynamic-deny",
         "py",
     ),
     "stash-guard": (

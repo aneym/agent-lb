@@ -63,8 +63,8 @@ def test_a_non_floor_guard_that_fails_still_fails_open_and_is_logged(tmp_path: P
 
 def test_a_floor_guards_block_stands_under_its_fallback_wrapper(tmp_path: Path) -> None:
 
-    command = 'python3 "$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny" 2>/dev/null || true'
-    rel = ".agent-rails/factory-runtime/bin/rm-dynamic-deny"
+    command = 'python3 "$HOME/.local/bin/rm-dynamic-deny" 2>/dev/null || true'
+    rel = ".local/bin/rm-dynamic-deny"
     home, env = failing_guard_home(tmp_path, command, rel, "py", "crash")
     (home / rel).write_text(
         "import sys\nsys.stdin.read()\nsys.stderr.write('rm-dynamic-deny: blocked removal\\n')\nsys.exit(2)\n"

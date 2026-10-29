@@ -167,7 +167,7 @@ def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path)
             "hooks": [
                 {
                     "type": "command",
-                    "command": "bash -c 'python3 \"$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny\" || true'",
+                    "command": "bash -c 'python3 \"$HOME/.local/bin/rm-dynamic-deny\" || true'",
                 }
             ],
         }
