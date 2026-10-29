@@ -78,7 +78,6 @@ MANAGED_HOOKS = (
     "parity_offload.py",
     "subagent-closeout.py",
     "transcript_navigation.py",
-    "workflow-readback.py",
     "factory-context.py",
     "compact-checkpoint.py",
     "wide-scan-guard.sh",

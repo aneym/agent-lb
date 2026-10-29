@@ -431,7 +431,7 @@ def main():
     if stop:
         print(
             "BLOCKED (%s): `%s` stops a shared T3 Codex app-server and fails every turn on it. Leave it to T3; "
-            "report a runaway one to the t3-nightly lane with lane-post." % (FLOOR, stop.group(0)[:80]),
+            "report a runaway one to the t3-nightly thread with t3_thread_send." % (FLOOR, stop.group(0)[:80]),
             file=sys.stderr,
         )
         return 2
@@ -464,7 +464,7 @@ def main():
         words = argv.split()
         exe = os.path.basename(words[0]) if words else ""
         if exe in {"claude", "codex"} or re.search(
-            r"@anthropic-ai/claude-code|(?:seat-exec|seat-run|agent-lb)(?:\s|/|$)|(?:^|[/\s])t3\s+serve(?:\s|$)", argv
+            r"@anthropic-ai/claude-code|agent-lb(?:\s|/|$)|(?:^|[/\s])t3\s+serve(?:\s|$)", argv
         ):
             live.update(descendants(table, pid))
     for sel in selections:

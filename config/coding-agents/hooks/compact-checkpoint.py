@@ -229,12 +229,10 @@ def git_head(cwd: str):
 
 
 def build(payload: dict, context) -> tuple:
-    lanes = Path(os.environ.get("FACTORY_LANES_DIR") or "~/.agent-rails/lanes").expanduser()
-    agents = Path(os.environ.get("FACTORY_AGENTS_DIR") or "~/.agent-rails/agents").expanduser()
-    thread_id, host = context.t3_selection(payload)
-    lane, agent, _ = context.identity(payload, lanes, agents, thread_id, host)
+    thread_id, environment = context.t3_selection(payload)
+    home, record = context.identity(payload, context.AGENT_HOMES, thread_id, environment)
     session = str(payload.get("session_id") or "")
-    path, owner = context.checkpoint_path(lanes, agents, lane, agent, session)
+    path, owner = context.checkpoint_path(home, record, session)
     cwd = str(payload.get("cwd") or os.getcwd())
     checkpoint = {
         "schema": "compact-checkpoint.v1",
@@ -246,14 +244,6 @@ def build(payload: dict, context) -> tuple:
         "git_head": {"value": git_head(cwd), "source": "git rev-parse HEAD in cwd"},
         "rule": "pointers only; approval ids are references, never consent",
     }
-    if owner.get("kind") == "lane":
-        state = Path(owner["dir"]) / "STATE.md"
-        if state.is_file():
-            checkpoint["state_md"] = {
-                "path": str(state),
-                "mtime": datetime.fromtimestamp(state.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"),
-                "source": "stat",
-            }
     transcript = Path(str(payload.get("transcript_path") or "")).expanduser()
     if payload.get("transcript_path") and transcript.is_file():
         records, size, start = tail_records(transcript)

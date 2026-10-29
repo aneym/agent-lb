@@ -127,6 +127,7 @@ RETIRED_HOOKS = (
     "repeat-read-warn.py",
     "herdr-send-guard.py",
     "aside-regular-tabs.py",
+    "workflow-readback.py",
 )
 
 

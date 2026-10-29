@@ -144,16 +144,6 @@
       "needs_source": false
     },
     {
-      "event": "PostToolUse",
-      "matcher": "Workflow",
-      "hook": {
-        "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/workflow-readback.py\"",
-        "timeout": 5
-      },
-      "needs_source": false
-    },
-    {
       "event": "SessionStart",
       "matcher": "startup|compact|resume",
       "hook": {
