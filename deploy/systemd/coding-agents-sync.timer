@@ -1,0 +1,10 @@
+[Unit]
+Description=Run coding-agents-sync every 10 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+Unit=coding-agents-sync.service
+
+[Install]
+WantedBy=timers.target

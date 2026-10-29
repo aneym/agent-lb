@@ -1,0 +1,8 @@
+[Unit]
+Description=Sync coding-agent routing rules from agent-lb main
+
+[Service]
+Type=oneshot
+Environment=CODING_AGENTS_SYNC_INSTALL_TIMEOUT=1500
+ExecStart=/usr/bin/python3 %h/.local/bin/coding-agents-sync
+TimeoutStartSec=1800

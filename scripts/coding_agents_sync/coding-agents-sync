@@ -321,6 +321,11 @@ def main():
     clone = Path(os.environ.get("AGENT_LB_POLICY_SRC", str(home / ".agent-lb/policy-src")))
     result = sync(home, clone, os.environ.get("CODING_AGENTS_ORIGIN", ORIGIN), wait, timeout)
     result["claude_config"] = pull_claude_config(home)
+    if result["result"] != "busy":
+        try:
+            durable(clone.parent / "coding-agents-sync.last.json", dict(result, at=utc()))
+        except OSError as exc:
+            result["warnings"].append("last run not recorded: %s" % exc)
     print(json.dumps(result, ensure_ascii=False))
     return 1 if result["result"] == "failed" else 0
 
