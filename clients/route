@@ -54,6 +54,7 @@ from route_probe_model import command_report
 from route_seat import command_seat
 from route_seat import command_seats
 from route_seat import command_stand_ins
+from route_seat_run_import import command_import_seat_run
 from route_workflow_args import command_eval_seat
 from route_workflow_args import command_workflow_args
 import argparse
@@ -309,7 +310,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     dispatch.add_argument("--json", action="store_true")
     dispatch.set_defaults(handler=command_dispatch)
 
-    from route_seat_run_import import command_import_seat_run
     seat_import = sub.add_parser("import-seat-run", help="append historical seat-run routing decisions")
     seat_import.add_argument("--from", dest="source_dir", default="~/.agent-rails/jobs/seat-run")
     seat_import.add_argument("--host")

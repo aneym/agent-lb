@@ -18,13 +18,14 @@ from route_versioned_rules import load_table  # pyrefly: ignore [missing-import]
 
 SOURCE_SCRIPT = r"""
 import json
+import shlex
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1]).expanduser()
 if not root.is_dir():
     raise SystemExit("seat-run source directory does not exist")
-fields = "key job job_id seat model model_alias effective_model effective_seat effort worker_model worker_effort class klass caller caller_host caller_lane lane box node submitted started_at ended_at start end status outcome exit_status exit_code rc code at seconds wall_s verdict ok tokens_in tokens_out input_tokens output_tokens cache_read_tokens cache_read total_tokens".split()
+fields = "key job job_id seat model model_alias effective_model effective_seat effort worker_model worker_effort class klass caller caller_host caller_lane lane box node submitted started_at ended_at start end status outcome exit_status exit_code rc code at seconds wall_s verdict ok tokens_in tokens_out input_tokens output_tokens cache_read_tokens cache_read total_tokens worker_effort_effective timed_out died no_verdict verdict_valid started_at_source ended_at_source seat_source".split()
 paths = sorted(root.glob("*.job.json"))
 for directory in sorted(root.iterdir()):
     if directory.is_dir():
@@ -68,7 +69,90 @@ for path in paths:
                 options[name[2:]] = argv[index + 1]
     row["options"] = options
     print(json.dumps({"record": row}, sort_keys=True), flush=True)
-print(json.dumps({"summary": {"files": len(paths), "invalid": len(invalid), "invalid_samples": invalid[:5]}}, sort_keys=True))
+top_level_records = len(paths) - len(invalid)
+archive = root / "archive"
+groups = []
+suffixes = (".state.json", ".identity.json", ".verdict.json", ".rc", ".remote.json", ".contract.json", ".log")
+if archive.is_dir():
+    for directory in sorted(archive.iterdir()):
+        if not directory.is_dir():
+            continue
+        jobs = {}
+        for path in sorted(directory.iterdir()):
+            suffix = next((suffix for suffix in suffixes if path.name.endswith(suffix)), None)
+            if suffix and path.is_file():
+                jobs.setdefault(path.name[:-len(suffix)], {})[suffix] = path
+        groups.extend((directory, stem, files) for stem, files in jobs.items())
+for directory, stem, files in groups:
+    documents = {}
+    for suffix in (".state.json", ".identity.json", ".verdict.json", ".rc", ".remote.json"):
+        path = files.get(suffix)
+        if path is None:
+            continue
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            if suffix == ".rc" and type(document) is int:
+                document = {"rc": document}
+            if not isinstance(document, dict):
+                raise ValueError("not an object")
+        except (OSError, UnicodeError, ValueError):
+            invalid.append(str(path.relative_to(root)))
+            continue
+        documents[suffix] = document
+    state = documents.get(".state.json", {})
+    result = documents.get(".rc", {})
+    identity = documents.get(".identity.json", {})
+    verdict = documents.get(".verdict.json", {})
+    remote = documents.get(".remote.json", {})
+    row = {}
+    for document in (state, result):
+        row.update({key: document[key] for key in fields if key in document and document[key] is not None})
+    row["job_id"] = stem
+    row["source_record"] = str((directory / stem).relative_to(root))
+    row["source_files"] = [str(path.relative_to(root)) for path in files.values()]
+    commands = []
+    command = identity.get("command")
+    if isinstance(command, str):
+        try:
+            commands.append(shlex.split(command))
+        except ValueError:
+            invalid.append(str(files[".identity.json"].relative_to(root)))
+    for document in (result, state):
+        if isinstance(document.get("cmd"), list):
+            commands.append(document["cmd"])
+    options = {}
+    for argv in commands:
+        for index, word in enumerate(argv):
+            if not isinstance(word, str):
+                continue
+            name, equals, value = word.partition("=")
+            key = {"--seat": "seat", "--model": "model", "--effort": "effort", "--reasoning-effort": "effort", "--class": "class", "--caller": "caller", "--box": "box"}.get(name)
+            if key:
+                value = value if equals else argv[index + 1] if index + 1 < len(argv) else None
+                if isinstance(value, str):
+                    options[key] = value
+            if name == "model_reasoning_effort" and equals:
+                options["effort"] = value.strip("\"'")
+    row["options"] = options
+    if not row.get("box"):
+        row["box"] = options.get("box") or remote.get("host")
+    if verdict.get("verdict") is not None:
+        row["verdict"] = verdict["verdict"]
+        row["verdict_valid"] = verdict.get("valid")
+    if not row.get("ended_at"):
+        result_path = files.get(".rc") or files.get(".state.json")
+        if result_path is not None:
+            row["ended_at"] = result_path.stat().st_mtime
+            row["ended_at_source"] = result_path.suffix + ".mtime"
+        elif verdict.get("at"):
+            row["ended_at"] = verdict["at"]
+            row["ended_at_source"] = "verdict.at"
+    if not row.get("started_at") and isinstance(row.get("ended_at"), (int, float)) and isinstance(row.get("seconds"), (int, float)):
+        row["started_at"] = row["ended_at"] - row["seconds"]
+        row["started_at_source"] = "ended_at-seconds"
+    row.pop("start", None)
+    print(json.dumps({"record": row}, sort_keys=True), flush=True)
+print(json.dumps({"summary": {"files": len(paths), "top_level_records": top_level_records, "archive_records": len(groups), "invalid": len(invalid), "invalid_samples": invalid[:5]}}, sort_keys=True))
 """
 
 
@@ -113,10 +197,10 @@ def baseline_row(record: dict[str, Any], host: str, table: dict[str, Any]) -> di
         task_class = candidates[0]
     job_id = str(record["job_id"])
     started = first_value([record, receipt], "started_at", "start")
-    start_source = "started_at" if started is not None else "submitted"
+    start_source = record.get("started_at_source") or ("started_at" if started is not None else "submitted")
     started = timestamp(started if started is not None else record.get("submitted"))
     ended = first_value([record, receipt], "ended_at", "end")
-    end_source = "ended_at" if ended is not None else "final.at"
+    end_source = record.get("ended_at_source") or ("ended_at" if ended is not None else "final.at")
     ended = timestamp(ended if ended is not None else final.get("at"))
     model = first_value(identity, "effective_model", "worker_model", "model")
     row = {
@@ -129,6 +213,7 @@ def baseline_row(record: dict[str, Any], host: str, table: dict[str, Any]) -> di
         "job_id": job_id,
         "source_job": record.get("job"),
         "source_record": record["source_record"],
+        "source_files": record.get("source_files", [record["source_record"]]),
         "ts": started or ended,
         "class": task_class,
         "class_source": "record"
@@ -140,7 +225,7 @@ def baseline_row(record: dict[str, Any], host: str, table: dict[str, Any]) -> di
         "seat": seat,
         "model": model,
         "model_alias": first_value(identity, "model_alias"),
-        "effort": first_value(identity, "worker_effort", "effort"),
+        "effort": first_value(identity, "worker_effort_effective", "worker_effort", "effort"),
         "caller": first_value([record, request, options], "caller", "caller_lane", "lane"),
         "caller_host": record.get("caller_host"),
         "caller_lane": record.get("caller_lane"),
@@ -172,6 +257,10 @@ def baseline_row(record: dict[str, Any], host: str, table: dict[str, Any]) -> di
         "cache_read_tokens",
         "cache_read",
         "total_tokens",
+        "timed_out",
+        "died",
+        "no_verdict",
+        "verdict_valid",
     ):
         value = first_value([record, final, receipt, handoff], key)
         if value is not None:
@@ -219,14 +308,17 @@ def source_records(directory: str, host: str | None) -> tuple[list[dict[str, Any
     return records, summary
 
 
-def append_baseline(path: Path, rows: list[dict[str, Any]], dry_run: bool) -> tuple[int, int]:
+def new_source_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    archive = sum(row["source_record"].startswith("archive/") for row in rows)
+    return {"new_top_level_rows": len(rows) - archive, "new_archive_rows": archive}
+
+
+def append_baseline(path: Path, rows: list[dict[str, Any]], dry_run: bool) -> tuple[int, int, dict[str, int]]:
     if not dry_run:
         path.parent.mkdir(parents=True, exist_ok=True)
     if dry_run and not path.exists():
-        seen = set()
-        for row in rows:
-            seen.add(row["decision_id"])
-        return len(seen), len(rows) - len(seen)
+        unique = {row["decision_id"]: row for row in reversed(rows)}
+        return len(unique), len(rows) - len(unique), new_source_counts(list(unique.values()))
     with path.open("r" if dry_run else "a+", encoding="utf-8") as stream:
         fcntl.flock(stream, fcntl.LOCK_SH if dry_run else fcntl.LOCK_EX)
         stream.seek(0)
@@ -244,7 +336,7 @@ def append_baseline(path: Path, rows: list[dict[str, Any]], dry_run: bool) -> tu
             stream.write("".join(json.dumps(row, sort_keys=True) + "\n" for row in fresh))
             stream.flush()
             os.fsync(stream.fileno())
-        return len(fresh), len(rows) - len(fresh)
+        return len(fresh), len(rows) - len(fresh), new_source_counts(fresh)
 
 
 def baseline_outcomes(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -285,7 +377,7 @@ def command_import_seat_run(args: argparse.Namespace) -> int:
         records, summary = source_records(args.source_dir, args.host)
         table = load_table()
         rows = [baseline_row(record, host, table) for record in records]
-        new, existing = append_baseline(path, rows, args.dry_run)
+        new, existing, sources = append_baseline(path, rows, args.dry_run)
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
         print("route: seat-run import failed; check source, SSH access and baseline JSONL", file=sys.stderr)
         return 2
@@ -297,6 +389,7 @@ def command_import_seat_run(args: argparse.Namespace) -> int:
         "records": len(rows),
         "new_rows": new,
         "existing_rows": existing,
+        **sources,
         **summary,
     }
     print(
