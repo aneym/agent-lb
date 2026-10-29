@@ -126,36 +126,19 @@ def cleanup_remote(row: dict) -> None:
 
 
 def remote_command(argv: list[str], row: dict, timeout: float) -> list[str]:
-    script = (
-        REMOVE_CHECKOUT
-        + """brief=sys.stdin.buffer.read()
+    script = """import os,subprocess,sys
+brief=sys.stdin.buffer.read()
 os.environ.pop("OPENAI_API_KEY",None)
 os.environ.pop("CLAUDECODE",None)
-repo,scratch,decision,cwd,limit=sys.argv[1:6]
+cwd,limit=sys.argv[1:3]
+p=subprocess.Popen(sys.argv[3:],cwd=cwd,stdin=subprocess.PIPE,start_new_session=True)
 try:
- p=subprocess.Popen(sys.argv[6:],cwd=cwd,stdin=subprocess.PIPE,start_new_session=True)
- try:
-  p.communicate(brief,timeout=float(limit))
- except subprocess.TimeoutExpired:
-  import signal
-  os.killpg(p.pid,signal.SIGKILL)
-  p.communicate()
-  sys.exit(124)
- sys.exit(p.returncode if p.returncode >= 0 else 128-p.returncode)
-finally:
- try:
-  remove_checkout(repo,scratch,decision)
- except (OSError,ValueError,subprocess.SubprocessError):
-  print("route-run: in-run scratch cleanup deferred to caller",file=sys.stderr)
+ p.communicate(brief,timeout=float(limit))
+except subprocess.TimeoutExpired:
+ import signal
+ os.killpg(p.pid,signal.SIGKILL)
+ p.communicate()
+ sys.exit(124)
+sys.exit(p.returncode if p.returncode >= 0 else 128-p.returncode)
 """
-    )
-    return ssh_python(
-        row["ssh_host"],
-        script,
-        row["remote_repo"],
-        row["remote_scratch"],
-        row["decision_id"],
-        row["execution_cwd"],
-        str(timeout),
-        *argv,
-    )
+    return ssh_python(row["ssh_host"], script, row["execution_cwd"], str(timeout), *argv)
