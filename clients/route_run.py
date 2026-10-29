@@ -4,7 +4,6 @@ import argparse
 import json
 import math
 import os
-import re
 import shlex
 import signal
 import subprocess
@@ -13,51 +12,11 @@ import time
 from pathlib import Path
 
 from route_pace_state import reservation_request  # pyrefly: ignore [missing-import]
+from route_run_checkout import cleanup_remote, git_value, prepare_remote, remote_command, validate_worktree  # pyrefly: ignore [missing-import]
 from route_run_jobs import launch_run, run_path, save_run  # pyrefly: ignore [missing-import]
 from route_resolve_one import append_decision  # pyrefly: ignore [missing-import]
 from route_target import local_environment, resolve_target, t3_settings  # pyrefly: ignore [missing-import]
 from route_versioned_rules import EXIT_OK, EXIT_WAIT, load_table, now_iso, setup_error  # pyrefly: ignore [missing-import]
-
-
-def git_value(cwd: Path, *argv: str) -> str:
-    result = subprocess.run(["git", "-C", str(cwd), *argv], capture_output=True, text=True, timeout=10)
-    if result.returncode:
-        raise ValueError("cwd must be a git checkout")
-    return result.stdout.strip()
-
-
-def validate_worktree(cwd: Path) -> None:
-    root = Path(git_value(cwd, "rev-parse", "--show-toplevel")).resolve()
-    git_dir = Path(git_value(cwd, "rev-parse", "--absolute-git-dir")).resolve()
-    common = Path(git_value(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
-    if root != cwd or git_dir == common:
-        raise ValueError("--write requires --cwd at the root of a linked git worktree, not a main checkout")
-
-
-def remote_checkout(cwd: Path, host: str, environment: str) -> str | None:
-    try:
-        git_value(cwd, "rev-parse", "--show-toplevel")
-    except ValueError:
-        raise ValueError(
-            "--cwd is not a git checkout; remote read-only runs map a repo checkout to $HOME/repos/<name>"
-        ) from None
-    try:
-        origin = git_value(cwd, "remote", "get-url", "origin")
-        name = origin.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
-            return None
-        base = "/Volumes/StudioExt/repos/" if environment == "studio" else "$HOME/repos/"
-        path = base + name
-        probe = f'git -C "{path}" rev-parse --show-toplevel 2>/dev/null'
-        result = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host, probe],
-            capture_output=True,
-            text=True,
-            timeout=12,
-        )
-        return result.stdout.strip() if result.returncode == 0 else None
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return None
 
 
 def provider_command(row: dict, cwd: str, write: bool, help_text: str) -> list[str]:
@@ -105,24 +64,6 @@ def cli_help(provider: str, host: str | None) -> str:
     return result.stdout
 
 
-def remote_command(argv: list[str], cwd: str, host: str, timeout: float) -> list[str]:
-    script = """import os,signal,subprocess,sys
-brief=sys.stdin.buffer.read()
-os.environ.pop("OPENAI_API_KEY",None)
-os.environ.pop("CLAUDECODE",None)
-p=subprocess.Popen(sys.argv[3:],cwd=sys.argv[1],stdin=subprocess.PIPE,start_new_session=True)
-try:
- p.communicate(brief,timeout=float(sys.argv[2]))
-except subprocess.TimeoutExpired:
- os.killpg(p.pid,signal.SIGKILL)
- p.communicate()
- sys.exit(124)
-sys.exit(p.returncode if p.returncode >= 0 else 128-p.returncode)
-"""
-    command = shlex.join(["python3", "-c", script, cwd, str(timeout), *argv])
-    return ["ssh", "-o", "BatchMode=yes", host, "bash -lc " + shlex.quote(command)]
-
-
 def final_message(path: Path, provider: str) -> str:
     final = ""
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -164,20 +105,32 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
         host = None
         execution_cwd = str(cwd)
         if row["environment"] != local and not args.write:
-            execution_cwd = remote_checkout(cwd, row["ssh_host"], row["environment"])
-            if execution_cwd:
+            try:
+                row.update(prepare_remote(cwd, row))
+                execution_cwd = row["execution_cwd"]
                 host = row["ssh_host"]
-            else:
-                row["placement_reason"] += "; selected host has no matching checkout; execution refused"
-                raise ValueError("selected environment has no matching repo checkout")
+            except ValueError as error:
+                row["placement_reason"] += f"; {error}"
+                if args.on:
+                    row["placement_reason"] += "; pinned remote execution refused"
+                    raise
+                row["placement_reason"] += "; fallback to caller environment"
+                row["environment"] = local
+                row["ssh_host"] = t3_settings(load_table())["environments"][local]["ssh_host"]
+                row["target"]["environmentId"] = t3_settings(load_table())["environments"][local]["environmentId"]
         if args.write:
             row["environment"] = local
         row.update(status="running", log_path=str(log_path))
         save_run(row)
+        if not host:
+            try:
+                row["execution_sha"] = git_value(cwd, "rev-parse", "HEAD")
+            except ValueError:
+                row["execution_sha"] = None
         provider = row["target"]["providerInstanceId"]
         argv = provider_command(row, execution_cwd, args.write, cli_help(provider, host))
         if host:
-            argv = remote_command(argv, execution_cwd, host, args.timeout)
+            argv = remote_command(argv, row, max(0.01, args.run_deadline - time.monotonic()))
         env = os.environ.copy()
         env.pop("OPENAI_API_KEY", None)
         env.pop("CLAUDECODE", None)
@@ -214,6 +167,15 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
     finally:
         if process is None:
             release_lease(row, "cancelled")
+        try:
+            cleanup_remote(row)
+            if row.get("remote_scratch"):
+                row["checkout_cleaned"] = True
+        except (OSError, ValueError, subprocess.SubprocessError):
+            row["checkout_cleaned"] = False
+            result += "\nroute run: remote decision scratch checkout cleanup failed"
+            if exit_code == 0:
+                exit_code = 127
     exit_code = exit_code if exit_code >= 0 else 128 - exit_code
     seconds = round(time.monotonic() - started, 3)
     append_decision(
@@ -228,6 +190,9 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
             "log_path": str(log_path),
             "environment": row["environment"],
             "placement_reason": row["placement_reason"],
+            "execution_sha": row.get("execution_sha"),
+            "execution_cwd": row.get("execution_cwd"),
+            "checkout_cleaned": row.get("checkout_cleaned"),
         }
     )
     output = {
@@ -282,9 +247,13 @@ def command_run(args: argparse.Namespace) -> int:
     )
     code, row = resolve_target(target_args)
     if code != EXIT_OK or row.get("status") != "ok":
-        if row.get("decision_id"):
-            row["log_path"] = str(run_path(row["decision_id"], ".log"))
-            save_run(row)
+        queued = code in (EXIT_OK, EXIT_WAIT) and row.get("status") == "queued"
+        row["decision_id"] = args.decision_id
+        row["log_path"] = str(run_path(args.decision_id, ".log"))
+        if not queued:
+            row.update(status="failed", exit_code=code if code != EXIT_OK else 2)
+            row["result"] = row.get("message") or row.get("reason") or "route run: target resolution failed"
+        save_run(row)
         print(json.dumps(row, sort_keys=True))
-        return EXIT_WAIT if row.get("status") == "queued" else code
+        return EXIT_WAIT if queued else row["exit_code"]
     return execute_run(args, row, cwd, brief)

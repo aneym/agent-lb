@@ -91,6 +91,6 @@ def command_wait(args: argparse.Namespace) -> int:
                     stream.seek(max(0, log.stat().st_size - 8192))
                     print(stream.read().decode("utf-8", errors="replace"))
             print(f"{row['status']}: {args.decision_id}; log: {log}")
-        return 3 if row["status"] in ("queued", "running") else row["exit_code"]
+        return 3 if row["status"] in ("queued", "running") else row.get("exit_code", 0 if row["status"] == "ok" else 2)
     except (OSError, ValueError, KeyError) as error:
         return setup_error("invalid_wait", str(error), args.json)
