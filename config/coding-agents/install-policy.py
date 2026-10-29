@@ -241,17 +241,17 @@ def main() -> int:
                 continue
             before = json.dumps(legacy, sort_keys=True)
 
-            def relocate(value: Any) -> None:
+            def relocate(value: Any, check: Any) -> None:
                 if isinstance(value, dict):
                     if isinstance(value.get("command"), str):
-                        internal_hook_commands({"legacy": [{"hooks": [value]}]}, non_floor_check(args.home))
+                        internal_hook_commands({"legacy": [{"hooks": [value]}]}, check)
                     for child in value.values():
-                        relocate(child)
+                        relocate(child, check)
                 elif isinstance(value, list):
                     for child in value:
-                        relocate(child)
+                        relocate(child, check)
 
-            relocate(legacy)
+            relocate(legacy, non_floor_check(args.home))
             if json.dumps(legacy, sort_keys=True) != before:
                 changes[path] = json.dumps(legacy, indent=2, ensure_ascii=False) + "\n"
     backup_path = registry_path.with_name("registry.json.bak")
