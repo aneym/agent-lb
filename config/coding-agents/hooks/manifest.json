@@ -36,7 +36,7 @@
       "matcher": "Bash",
       "hook": {
         "type": "command",
-        "command": "bash \"$HOME/.claude/hooks/railway-vars-guard.sh\"",
+        "command": "\"$HOME/.claude/hooks/railway-vars-guard.sh\"",
         "timeout": 10
       },
       "needs_source": false

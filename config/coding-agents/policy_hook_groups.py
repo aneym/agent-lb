@@ -6,12 +6,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+import hookd_install  # type: ignore[missing-import]
 from hook_retired_invocation import retired_invocation  # type: ignore[missing-import]
-from policy_layout import DISPATCH_DROPPED, DISPATCH_HOOK_KEYS, DISPATCH_SCRIPT, DISPATCH_SKIP_MATCHERS, HOOK_MANIFEST, NAME_LIST, RETIRED_HOOKS, SIMPLE_MATCHER, TOOL_ALIASES, UNREGISTERED_HOOKS  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
-
-
-def is_owned_hook(command: Any) -> bool:
-    return isinstance(command, str) and "ccdex-gpt-only.sh" in command
+from policy_layout import DISPATCH_DROPPED, DISPATCH_HOOK_KEYS, DISPATCH_SCRIPT, DISPATCH_SKIP_MATCHERS, HOOK_MANIFEST, NAME_LIST, RETIRED_EVENT_HOOKS, RETIRED_HOOKS, SIMPLE_MATCHER, TOOL_ALIASES, UNREGISTERED_HOOKS  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
 
 def installed_manifest(source: Path) -> str:
@@ -30,8 +27,7 @@ def installed_manifest(source: Path) -> str:
 
 
 def is_settings_hook(command: Any, hook: dict[str, Any]) -> bool:
-    path = re.search(r'hooks/[^"\s]+', hook["command"])
-    return isinstance(command, str) and path is not None and path.group() in command
+    return isinstance(command, str) and command == hook["command"]
 
 
 def dispatcher_module(source: Path) -> Any:
@@ -63,8 +59,24 @@ def opaque_floor_commands(hooks: dict[str, Any], source: Path) -> list[str]:
     return found
 
 
+DISPATCH_COMMAND = re.compile(
+    "|".join(
+        re.escape(template)
+        .replace(re.escape("{script}"), re.escape(DISPATCH_SCRIPT))
+        .replace(re.escape("{event}"), r"\w+")
+        .replace(re.escape("{key}"), r"[^']*")
+        .replace(re.escape("{rev}"), r"[0-9a-f]{12}")
+        for template in (hookd_install.PLAIN_COMMAND, hookd_install.CLIENT_COMMAND)
+    )
+)
+
+
 def is_dispatch_hook(hook: Any) -> bool:
-    return isinstance(hook, dict) and isinstance(hook.get("command"), str) and DISPATCH_SCRIPT in hook["command"]
+    return (
+        isinstance(hook, dict)
+        and isinstance(hook.get("command"), str)
+        and bool(DISPATCH_COMMAND.fullmatch(hook["command"]))
+    )
 
 
 def matcher_key(group: dict[str, Any]) -> str | None:
@@ -212,6 +224,7 @@ def drop_hooks(
         if not isinstance(groups, list):
             continue
         out = []
+        retired = names + RETIRED_EVENT_HOOKS.get(event, ())
         for group in groups:
             if not (isinstance(group, dict) and isinstance(group.get("hooks"), list)):
                 out.append(group)
@@ -223,20 +236,14 @@ def drop_hooks(
                 if isinstance(command, str):
                     name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
                     if not name:
-                        mentioned = next((n for n in names if n in command), None)
-                        if mentioned and retired_invocation(command, names):
+                        mentioned = next((n for n in retired if n in command), None)
+                        if mentioned and retired_invocation(command, retired):
                             name = mentioned
                         elif mentioned:
                             refused.append(
                                 f"{event} {group.get('matcher') or '*'}: {mentioned} in ~/.claude/settings.json: "
                                 f"not a single retired invocation, left untouched: {command}"
                             )
-                    if (
-                        (event == "PostToolUse" and "factory-lint-hook" in command)
-                        or (event == "PreToolUse" and "idle-agents.py" in command and command.endswith(" pre"))
-                        or (event == "UserPromptSubmit" and ".jev/hooks/route.sh" in command)
-                    ):
-                        name = "factory-lint-hook"
                 if name:
                     dropped.append(f"{event} {group.get('matcher') or '*'}: {name}")
                 else:

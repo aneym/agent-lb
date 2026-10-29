@@ -105,7 +105,14 @@ RETIRED_HOOKS = (
 )
 
 
-UNREGISTERED_HOOKS = ("seat-guard.py",)
+UNREGISTERED_HOOKS = ("seat-guard.py", "ccdex-gpt-only.sh")
+
+
+RETIRED_EVENT_HOOKS = {
+    "PostToolUse": ("factory-lint-hook",),
+    "PreToolUse": ("idle-agents.py",),
+    "UserPromptSubmit": ("route.sh",),
+}
 
 
 ROUTING_TABLE = Path(".agent-lb/managed/coding-agents/routing-table.json")
@@ -125,6 +132,7 @@ POLICY_FILES = (
     "claude-adapter.md",
     "install-policy.py",
     "hookd_install.py",
+    "hook_retired_invocation.py",
     *(path.name for path in sorted(Path(__file__).resolve().parent.glob("policy_*.py"))),
     "dispatch_parity.py",
     "codex_home.py",

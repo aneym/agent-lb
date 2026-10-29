@@ -34,11 +34,35 @@ def evict_shadows(home, changes):
             changes[path] = None
 
 
+def decoded_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            yield key
+            yield from decoded_strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from decoded_strings(child)
+
+
+def referenced_names(home):
+    documents = [home / ".claude/settings.json", home / ".claude/settings.local.json", home / ".codex/hooks.json"]
+    documents += sorted((home / ".claude/hooks/dispatch").glob("registry*.json"))
+    strings = []
+    for path in documents:
+        if not path.exists() and not path.is_symlink():
+            continue
+        try:
+            strings += decoded_strings(json.loads(path.read_text()))
+        except (OSError, ValueError):
+            return lambda _name: True
+    return lambda name: any(name in text for text in strings)
+
+
 def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link, kept):
     shipped = {path.name for path in (source / "hooks").iterdir() if path.is_file()}
-    referrers = [home / ".claude/settings.json", home / ".claude/settings.local.json", home / ".codex/hooks.json"]
-    referrers += sorted((home / ".claude/hooks/dispatch").glob("registry*.json"))
-    settings = "".join(read_text(path) or "" for path in referrers)
+    referenced = referenced_names(home)
     record = home / POLICY_HOOKS_RECORD
     recorded = read_text(record) or ""
     header = "agent-lb:policy-hooks:v1\n"
@@ -52,7 +76,7 @@ def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link
             and not path.is_symlink()
             and path.name not in shipped
             and path.name in owned
-            and path.name not in settings
+            and not referenced(path.name)
             and path not in kept
         ):
             changes[path] = None
@@ -71,7 +95,7 @@ def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link
         ):
             continue
         names = [marker.name + suffix for suffix in (".py", ".sh")]
-        if any(name in shipped or name in settings for name in names):
+        if any(name in shipped or referenced(name) for name in names):
             continue
         stale = [home / ".claude/hooks" / name for name in names]
         stale = [hook for hook in stale if hook.is_file() and not hook.is_symlink() and hook not in kept]

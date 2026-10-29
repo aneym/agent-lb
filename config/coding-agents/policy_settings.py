@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from policy_documents import read_text  # type: ignore[missing-import]
-from policy_hook_groups import dispatcher_module, drop_hooks, is_owned_hook, is_settings_hook  # type: ignore[missing-import]  # fmt: skip
+from policy_hook_groups import dispatcher_module, drop_hooks, is_settings_hook  # type: ignore[missing-import]  # fmt: skip
 from policy_layout import EFFORT_LEVEL, HAIKU_ENV, MANAGED_AGENTS, MODEL, OBSERVATIONAL_HOOKS, POLICY_DIR, POLICY_SNAPSHOT, RELAY_SEATS, SETTINGS_HOOKS, SOL_ID, SOL_MODEL, SONNET_ENV, SONNET_ID, SONNET_MODEL  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
 
@@ -170,20 +170,17 @@ def reconcile_settings(
             print(f"refused retiring {line}")
         updated["hooks"] = hooks
     if not uninstall:
+        floor_name = dispatcher_module(source).floor_name if source is not None else lambda _command: True
         for event, groups in hooks.items():
             for group in groups:
                 for hook in group["hooks"]:
                     command = hook.get("command", "")
+                    if event == "PreToolUse" or floor_name(command):
+                        continue
                     if "skill-stats" in command:
                         hook["timeout"] = 3
                     if any(event == name and marker in command for name, marker in OBSERVATIONAL_HOOKS):
                         hook["async"] = True
-                    if "CACHE_ALERT" in command:
-                        hook["command"] = (
-                            'f="$HOME/.agent-lb/CACHE_ALERT"; [ ! -f "$f" ] || '
-                            '{ printf "agent-lb CACHE ALERT (tell Alex): "; '
-                            'LC_ALL=C head -c 980 "$f" | tr "\\r\\n" "  "; printf "\\n"; }'
-                        )
                     if event == "PostToolUse" and "idle-agents.py" in command:
                         matcher = group.get("matcher", "*")
                         if matcher != "*" and "TaskStop" not in matcher.split("|"):
@@ -196,7 +193,7 @@ def reconcile_settings(
     cleaned: list[dict[str, Any]] = []
     for group in groups:
         group_copy = dict(group)
-        remaining = [hook for hook in group.get("hooks", []) if not is_owned_hook(hook.get("command"))]
+        remaining = list(group.get("hooks", []))
         if remaining:
             group_copy["hooks"] = remaining
             cleaned.append(group_copy)
