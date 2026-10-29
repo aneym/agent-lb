@@ -120,6 +120,13 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
         cache_read_input_per_1m=0.30,
         output_per_1m=15.0,
     ),
+    "claude-haiku-5-5": AnthropicModelPrice(
+        input_per_1m=0.10,
+        cache_creation_5m_input_per_1m=0.125,
+        cache_creation_1h_input_per_1m=0.20,
+        cache_read_input_per_1m=0.01,
+        output_per_1m=0.50,
+    ),
     "claude-haiku-4-5": AnthropicModelPrice(
         input_per_1m=1.0,
         cache_creation_5m_input_per_1m=1.25,
@@ -199,6 +206,7 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
     "claude-sonnet-4-6*": "claude-sonnet-4-6",
     "claude-opus-4-5*": "claude-opus-4-5",
     "claude-sonnet-4-5*": "claude-sonnet-4-5",
+    "claude-haiku-5-5*": "claude-haiku-5-5",
     "claude-haiku-4-5*": "claude-haiku-4-5",
     "claude-opus-4-1*": "claude-opus-4.1",
     "claude-opus-4*": "claude-opus-4",

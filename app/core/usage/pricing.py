@@ -109,6 +109,15 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
         long_context_cached_input_per_1m=0.20,
         long_context_output_per_1m=15.0,
     ),
+    "gpt-6.1-terra": ModelPrice(
+        input_per_1m=1.0,
+        cached_input_per_1m=0.05,
+        output_per_1m=5.0,
+        long_context_threshold_tokens=272_000,
+        long_context_input_per_1m=2.0,
+        long_context_cached_input_per_1m=0.10,
+        long_context_output_per_1m=7.5,
+    ),
     "gpt-6-sol": ModelPrice(
         input_per_1m=2.0,
         cached_input_per_1m=0.2,
@@ -334,7 +343,7 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
     "gpt-6-astra*": "gpt-6-astra",
     **{
         f"{model}-{suffix}": model
-        for model in ("gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol")
+        for model in ("gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra")
         for suffix in ("minimal", "low", "medium", "high", "xhigh", "fast")
     },
     "gpt-5.6-sol*": "gpt-5.6-sol",
