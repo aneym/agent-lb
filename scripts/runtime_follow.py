@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.core.thread_delivery import send
 from scripts import runtime_bin, runtime_plan, systemd_drain
 from scripts import runtime_tree as tree
 from scripts.runtime_tree import Paths, log_line, utc
@@ -56,12 +57,8 @@ def alert(paths: Paths, state: dict, key: str, text: str) -> None:
     target = os.environ.get("AGENT_LB_FOLLOW_ALERT_TO")
     if target:
         try:
-            subprocess.run(
-                ["lane-post", "post", "--to", target, "--kind", "info", "--topic", "agent-lb-runtime-follow", text],
-                capture_output=True,
-                timeout=30,
-            )
-        except (OSError, subprocess.TimeoutExpired):
+            send(target, text)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
             pass
 
 

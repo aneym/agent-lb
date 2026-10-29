@@ -157,7 +157,7 @@ card each cycle. Account health flags it 7 days out (`renewal_payment`). The
 runs `agent-lb recard run` every 15 minutes: 2 days before renewal it checks the
 account's browser profile is signed in to claude.ai, creates a Link card request
 for the ledger amount (Link prompts the operator's app; the approval URL is also
-posted with lane-post), and once approved puts the card on the billing page,
+sent to its owning thread with t3_thread_send), and once approved puts the card on the billing page,
 records the last 4 digits in the ledger note and rolls `renewsOn` forward after the
 renewal date passes. By hand: `agent-lb recard start EMAIL`, then
 `agent-lb recard finish EMAIL` after approval; `agent-lb recard status` shows

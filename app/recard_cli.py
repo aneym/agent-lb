@@ -3,7 +3,6 @@ from __future__ import annotations
 import calendar
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,6 +11,7 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
+from app.core.thread_delivery import send
 from app.core.browser_profiles import profile_for
 from app.core.cdp_page import CdpError
 from app.core.claude_billing import BillingError, put_card, signed_in_email
@@ -46,15 +46,10 @@ def add_parser(subparsers) -> None:
 
 def _notify(message: str) -> None:
     print(message)
-    lane_post = shutil.which("lane-post")
-    if lane_post and not os.getenv("AGENT_LB_RECARD_QUIET"):
+    if not os.getenv("AGENT_LB_RECARD_QUIET"):
         try:
-            subprocess.run(
-                [lane_post, "post", "--to", "factory", "--from", "agent-lb-recard", "--kind", "info", message[:799]],
-                timeout=30,
-                capture_output=True,
-            )
-        except (OSError, subprocess.TimeoutExpired):
+            send("rails", message)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
             pass
 
 

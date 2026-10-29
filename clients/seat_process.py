@@ -193,20 +193,19 @@ def post_stall(vendor: str, cwd: Path, error: str) -> None:
     if not owner or owner == "none":
         print("seat: STALLED with no owner pane to tell (set SEAT_OWNER_PANE)", file=sys.stderr)
         return
-    poster = os.environ.get("SEAT_LANE_POST") or str(Path.home() / ".agent-rails/factory-runtime/bin/lane-post")
-    sender = os.environ.get("HERDR_PANE_ID") or owner
+    owner = os.environ.get("SEAT_OWNER_THREAD_ID") or owner
     text = f"{vendor} seat stalled in {cwd}: {error}; the run was stopped and failed. Relaunch or reassign it."
     try:
         completed = subprocess.run(
-            [poster, "post", "--to", owner, "--from", sender, "--kind", "task", text],
+            ["t3", "thread", "send", owner, text, "--mode", "queue"],
             capture_output=True,
             text=True,
             timeout=30,
             check=False,
         )
-        print(f"seat: stall bulletin to {owner} rc={completed.returncode}", file=sys.stderr)
+        print(f"seat: stall message to {owner} rc={completed.returncode}", file=sys.stderr)
     except (OSError, subprocess.TimeoutExpired) as error_:
-        print(f"seat: stall bulletin to {owner} failed: {error_}", file=sys.stderr)
+        print(f"seat: stall message to {owner} failed: {error_}", file=sys.stderr)
 
 
 def muse_call(call: dict[str, Any]) -> str:

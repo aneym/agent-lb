@@ -6,13 +6,19 @@ import argparse
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import sys
 from zoneinfo import ZoneInfo
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from routing_audit_metrics import summarize, timestamp_rows  # type: ignore[missing-import]
 from routing_audit_outcomes import load_outcomes, overlay_outcomes, proposals, resolve_rungs, summarize_outcomes  # type: ignore[missing-import]
 from routing_audit_reports import daily_report, write_daily_report, write_outputs  # type: ignore[missing-import]
 from routing_audit_sources import dispatch, fold_acceptance, prs, stand_ins, store  # type: ignore[missing-import]
 from routing_audit_values import command, date, document, job  # type: ignore[missing-import]
+
+
+from app.core.thread_delivery import thread_id
 
 
 def main():
@@ -152,23 +158,9 @@ def main():
     if args.post:
         before = len(errors)
         command(
-            [
-                "lane-post",
-                "post",
-                "--to",
-                "w5H:pNE",
-                "--from",
-                "routing-audit",
-                "--kind",
-                "info",
-                "--topic",
-                "routing-audit",
-                "--wake",
-                "never",
-                line,
-            ],
+            ["t3", "thread", "send", thread_id("rails"), line, "--mode", "queue"],
             errors,
-            "lane-post",
+            "t3 thread send",
         )
         if len(errors) != before:
             write_outputs(report, out, page)

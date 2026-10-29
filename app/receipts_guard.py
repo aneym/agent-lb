@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import socket
 import subprocess
 import sys
-from datetime import UTC, datetime
 
+from app.core.thread_delivery import send
 from app.core.config.service_database import LOCAL_DATABASE_URL, primary_database_url
 
 
@@ -26,23 +25,13 @@ def receipt_count(url: str, minutes: int) -> int:
 
 
 def alert(target: str, sender: str, host: str, problem: str) -> int:
-    lane_post = shutil.which("lane-post")
-    if not lane_post:
-        print("receipts guard: lane-post not on PATH", file=sys.stderr)
-        return 1
     text = (
         f"agent-lb receipts guard on {host}: {problem}. Token and efficiency audits read empty until this clears. "
         "Check the primary request_logs writer and this host's primary-database.url path."
     )
-    key = f"agent-lb-receipts-zero:{host}:{datetime.now(UTC):%Y-%m-%d}"
-    result = subprocess.run(
-        [lane_post, "post", "--to", target, "--from", sender, "--kind", "info", "--key", key, text],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    if result.returncode not in (0, 4):
-        print(f"receipts guard: lane-post exited {result.returncode}: {result.stderr.strip()}", file=sys.stderr)
+    result = send(target, text, timeout=60)
+    if result.returncode != 0:
+        print(f"receipts guard: T3 send exited {result.returncode}: {result.stderr.strip()}", file=sys.stderr)
         return 1
     return 0
 
@@ -50,7 +39,7 @@ def alert(target: str, sender: str, host: str, problem: str) -> int:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Post to a lane when agent-lb receipts stop arriving.")
     parser.add_argument("--minutes", type=int, default=60)
-    parser.add_argument("--to", default="organizer")
+    parser.add_argument("--to", default="rails")
     parser.add_argument("--from", dest="sender", default="agentlb-receipts")
     args = parser.parse_args(argv)
     host = socket.gethostname().split(".")[0]

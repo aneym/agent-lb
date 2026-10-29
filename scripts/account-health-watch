@@ -44,15 +44,17 @@ def inspect(state_path, dry_run):
         print(message)
     if dry_run:
         return
-    lane_post = shutil.which("lane-post")
+    record = json.loads((Path.home() / ".agent-rails/agents/rails/agent.json").read_text())
+    target = record["t3"]["thread_id"]
+    t3 = shutil.which("t3")
     saved = dict(current)
     with state_path.with_suffix(".log").open("a") as log:
         for key, message in fresh.items():
-            posted = True
-            if lane_post:
+            posted = False
+            if t3:
                 try:
                     result = subprocess.run(
-                        [lane_post, "post", "--to", "factory", "--from", "agent-lb-health", "--kind", "info", message],
+                        [t3, "thread", "send", target, message, "--mode", "queue"],
                         timeout=30,
                     )
                     posted = result.returncode == 0

@@ -171,7 +171,6 @@ DATA_READERS = {
     "readlink",
     "test",
     "[",
-    "lane-post",
     "review-ledger",
     "factory",
     "unblock",
