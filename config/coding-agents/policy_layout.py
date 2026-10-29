@@ -179,7 +179,6 @@ OBSERVATIONAL_HOOKS = (
     ("SessionStart", "/.claude/hooks/register-session.sh"),
     ("SessionStart", "/.claude/hooks/herdr-display-icon.sh"),
     ("SessionStart", "/.claude/hooks/herdr-agent-state.sh"),
-    ("PostToolUse", "/skill-stats/dist/cli.js"),
     ("SubagentStop", '/.claude/hooks/idle-agents.py" mark'),
     ("TeammateIdle", '/.claude/hooks/idle-agents.py" mark'),
 )

@@ -127,7 +127,6 @@ def check_policy(source: Path, home: Path, snapshot: dict[str, Any]) -> int:
 
 
 def internal_hook_commands(hooks: dict[str, Any], check: Any) -> None:
-
     for groups in hooks.values():
         for group in groups:
             for hook in group.get("hooks", []):
@@ -137,21 +136,6 @@ def internal_hook_commands(hooks: dict[str, Any], check: Any) -> None:
                 inner = floor_unwrap(command, check)
                 if inner:
                     hook["command"] = inner
-                    continue
-                if not check(command):
-                    continue
-
-                command = re.sub(r'/[^\s"\':;]*/repos/skill-stats/', "$HOME/.local/share/skill-stats/", command)
-
-                match = re.fullmatch(r'((?:"[^"\n]+"|[^\s]+)\s+)?"((?:\$HOME)?/[^"\n]+)"(.*)', command)
-                if match and "/.local/share/skill-stats/" in command and "# hook missing: fail open" not in command:
-                    script = match[2]
-                    command = (
-                        f'if [ -r "{script}" ]; then {command}; else '
-                        f"printf '%s\\n' \"hook warning: missing {script}; continuing\" >&2; "
-                        "fi # hook missing: fail open"
-                    )
-                hook["command"] = command
 
 
 def reconcile_settings(
@@ -180,8 +164,6 @@ def reconcile_settings(
                     command = hook.get("command", "")
                     if event == "PreToolUse" or not check(command):
                         continue
-                    if "skill-stats" in command:
-                        hook["timeout"] = 3
                     if any(event == name and marker in command for name, marker in OBSERVATIONAL_HOOKS):
                         hook["async"] = True
                     settled = settled_matcher(event, group.get("matcher"), command)
