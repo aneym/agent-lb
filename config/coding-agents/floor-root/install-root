@@ -3,6 +3,7 @@ import argparse
 import os
 import pwd
 import re
+import stat
 import subprocess
 import sys
 
@@ -15,16 +16,16 @@ GROUP = 0
 
 
 def trusted(path):
-    current = os.path.realpath(path)
-    while not os.path.lexists(current):
-        current = os.path.dirname(current)
-    while True:
-        info = os.lstat(current)
-        if info.st_uid != 0 or info.st_mode & 0o022:
-            sys.exit(f"install-root: {current} is not root-owned and closed to other writers")
-        if current == "/":
-            return
-        current = os.path.dirname(current)
+    for current in (os.path.abspath(path), os.path.realpath(path)):
+        while not os.path.lexists(current):
+            current = os.path.dirname(current)
+        while True:
+            info = os.lstat(current)
+            if info.st_uid != 0 or (not stat.S_ISLNK(info.st_mode) and info.st_mode & 0o022):
+                sys.exit(f"install-root: {current} is not root-owned and closed to other writers")
+            if current == "/":
+                break
+            current = os.path.dirname(current)
 
 
 def place(path, text, mode):
