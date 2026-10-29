@@ -193,8 +193,6 @@ exec env "${env_args[@]}" \
   ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-5-5" \
   ANTHROPIC_DEFAULT_OPUS_MODEL="$workflow_model" \
   ANTHROPIC_SMALL_FAST_MODEL="claude-haiku-5-5" \
-  CLAUDE_CODE_SUBAGENT_MODEL="$workflow_model" \
-  CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL="$workflow_model" \
   ANTHROPIC_BASE_URL="$base" CLAUDE_LB_LOCAL_URL="$local_url" REVIEW_PR_CODEX_BASE_URL="$codex_url" \
   NO_PROXY="$no_proxy" no_proxy="$no_proxy" \
   ANTHROPIC_AUTH_TOKEN=factory-box-placeholder \
