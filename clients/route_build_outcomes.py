@@ -27,6 +27,7 @@ from route_reserve_state import (  # pyrefly: ignore [missing-import]
     utc_stamp,
 )
 from route_seat import fetch_pools  # pyrefly: ignore [missing-import]
+from route_seat_run_import import baseline_outcomes, baseline_path  # pyrefly: ignore [missing-import]
 from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     CLI_SEAT_HOLD_AFTER_FAILURES,
     CLI_SEAT_HOLD_SECONDS,
@@ -144,6 +145,8 @@ def build_outcomes(
     logs: list[dict[str, Any]],
     now: datetime,
 ) -> list[dict[str, Any]]:
+    baseline = [row for row in decisions if row.get("kind") == "route.decision.baseline"]
+    decisions = [row for row in decisions if row.get("kind") != "route.decision.baseline"]
     index = DecisionIndex([row for row in decisions if row.get("v") == 1 and row.get("decision_id")])
     unique: dict[str, dict[str, Any]] = {}
     for event in events:
@@ -220,7 +223,7 @@ def build_outcomes(
             if value is not None:
                 row[key] = value
         rows.append(row)
-    return rows
+    return rows + baseline_outcomes(baseline)
 
 
 def ingest_outcomes(
@@ -230,6 +233,7 @@ def ingest_outcomes(
     events_file: Path,
     outcomes_file: Path,
     write: bool,
+    baseline: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     existing = stored_events(events_file)
     seen = {row["event_id"] for row in existing}
@@ -238,7 +242,7 @@ def ingest_outcomes(
         if event["event_id"] not in seen:
             seen.add(event["event_id"])
             fresh.append(event)
-    outcomes = build_outcomes(table, existing + fresh, src.decisions, src.request_logs, src.now)
+    outcomes = build_outcomes(table, existing + fresh, src.decisions + (baseline or []), src.request_logs, src.now)
     if write:
         if fresh:
             events_file.parent.mkdir(parents=True, exist_ok=True)
@@ -252,6 +256,10 @@ def command_outcomes(args: argparse.Namespace) -> int:
     import tempfile
 
     table = load_table()
+    baseline = []
+    if args.with_baseline and baseline_path().exists():
+        baseline = [json.loads(line) for line in baseline_path().read_text().splitlines() if line.strip()]
+        baseline = [row for row in baseline if row.get("v") == 1 and row.get("kind") == "route.decision.baseline"]
     if args.action == "replay":
         if not args.directory or not Path(args.directory).is_dir():
             print(f"route: outcomes replay needs a fixture directory, got {args.directory!r}", file=sys.stderr)
@@ -260,9 +268,9 @@ def command_outcomes(args: argparse.Namespace) -> int:
         with tempfile.TemporaryDirectory(prefix="route-outcomes-") as scratch:
             events_file = Path(scratch) / "outcome-events.jsonl"
             outcomes_file = Path(scratch) / "outcomes.jsonl"
-            first_new, _ = ingest_outcomes(table, src, None, events_file, outcomes_file, True)
+            first_new, _ = ingest_outcomes(table, src, None, events_file, outcomes_file, True, baseline)
             first_text = outcomes_file.read_text(encoding="utf-8")
-            second_new, outcomes = ingest_outcomes(table, src, None, events_file, outcomes_file, True)
+            second_new, outcomes = ingest_outcomes(table, src, None, events_file, outcomes_file, True, baseline)
             idempotent = outcomes_file.read_text(encoding="utf-8") == first_text and not second_new
             events = stored_events(events_file)
         document = {
@@ -285,7 +293,9 @@ def command_outcomes(args: argparse.Namespace) -> int:
         return EXIT_UNROUTABLE
     src = live_sources(since)
     if args.action == "ingest":
-        fresh, outcomes = ingest_outcomes(table, src, since, outcome_events_path(), outcomes_path(), args.write)
+        fresh, outcomes = ingest_outcomes(
+            table, src, since, outcome_events_path(), outcomes_path(), args.write, baseline
+        )
         document = {
             "new_events": len(fresh),
             "written": args.write,
@@ -293,7 +303,9 @@ def command_outcomes(args: argparse.Namespace) -> int:
             "summary": outcome_summary(outcomes),
         }
     else:
-        outcomes = build_outcomes(table, stored_events(outcome_events_path()), src.decisions, src.request_logs, src.now)
+        outcomes = build_outcomes(
+            table, stored_events(outcome_events_path()), src.decisions + baseline, src.request_logs, src.now
+        )
         if args.write:
             write_atomic(outcomes_path(), outcome_lines(outcomes))
         document = {"written": args.write, "outcomes": outcomes, "summary": outcome_summary(outcomes)}

@@ -309,10 +309,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     dispatch.add_argument("--json", action="store_true")
     dispatch.set_defaults(handler=command_dispatch)
 
+    from route_seat_run_import import command_import_seat_run
+    seat_import = sub.add_parser("import-seat-run", help="append historical seat-run routing decisions")
+    seat_import.add_argument("--from", dest="source_dir", default="~/.agent-rails/jobs/seat-run")
+    seat_import.add_argument("--host")
+    seat_import.add_argument("--out")
+    seat_import.add_argument("--dry-run", action="store_true")
+    seat_import.add_argument("--json", action="store_true")
+    seat_import.set_defaults(handler=command_import_seat_run)
+
     outcomes = sub.add_parser("outcomes", help="outcome events and one outcome row per routed job")
     outcomes.add_argument("action", choices=("ingest", "build", "replay"))
     outcomes.add_argument("directory", nargs="?", default=None, help="fixture directory for replay")
     outcomes.add_argument("--since", default="7d")
+    outcomes.add_argument("--with-baseline", action="store_true")
     outcomes.add_argument("--write", action="store_true")
     outcomes.add_argument("--json", action="store_true")
     outcomes.set_defaults(handler=command_outcomes)
