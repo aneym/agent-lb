@@ -174,8 +174,8 @@ def arm_cap_block(ctx: DispatchContext, arm: dict[str, Any], today: list[dict[st
     return None
 
 
-def command_dispatch(args: argparse.Namespace) -> int:
-    table = load_table()
+def command_dispatch(args: argparse.Namespace, table: dict[str, Any] | None = None) -> int:
+    table = load_table() if table is None else table
     standards = table.get("standards") if isinstance(table.get("standards"), dict) else {}
     requested_class = args.task_class
     class_name = (table.get("class_aliases") or {}).get(requested_class, requested_class)
@@ -203,7 +203,9 @@ def command_dispatch(args: argparse.Namespace) -> int:
     mode_state = (
         {"mode": pools_doc.get("quotaMode", "anthropic")}
         if args.pools_file
-        else quota_swap_state(table, fetch_pools, api_request_logs, append_ledger)
+        else quota_swap_state(
+            table, fetch_pools, api_request_logs, append_ledger if not args.dry_run else lambda _row: None
+        )
     )
     explicit = any(value is not None for value in (args.seat, args.model, args.effort))
     if not explicit:

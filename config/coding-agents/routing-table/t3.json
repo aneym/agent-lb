@@ -1,0 +1,91 @@
+{
+  "t3": {
+    "providers": {
+      "sol-latest": {
+        "providerInstanceId": "codex",
+        "model": "gpt-6.1-sol",
+        "effort_option": "reasoningEffort"
+      },
+      "astra-latest": {
+        "providerInstanceId": "codex",
+        "model": "gpt-6-astra",
+        "effort_option": "reasoningEffort"
+      },
+      "terra-latest": {
+        "providerInstanceId": "codex",
+        "model": "gpt-6.1-terra",
+        "effort_option": "reasoningEffort"
+      },
+      "opus-latest": {
+        "providerInstanceId": "claudeAgent",
+        "model": "claude-opus-5-5",
+        "effort_option": "effort"
+      },
+      "sonnet-latest": {
+        "providerInstanceId": "claudeAgent",
+        "model": "claude-sonnet-5-5",
+        "effort_option": "effort"
+      },
+      "fable-latest": {
+        "providerInstanceId": "claudeAgent",
+        "model": "claude-fable-5-1",
+        "effort_option": "effort"
+      },
+      "haiku-latest": {
+        "providerInstanceId": "claudeAgent",
+        "model": "claude-haiku-5-5",
+        "effort_option": "effort"
+      },
+      "kimi-latest": {
+        "providerInstanceId": "claudeAgent",
+        "model": "k3.1-pro",
+        "effort_option": "effort"
+      }
+    },
+    "environments": {
+      "studio": {
+        "environmentId": "78038392-71c3-4cd9-bfc8-19fc12031eee",
+        "ssh_host": "studio",
+        "mac": true
+      },
+      "ax42": {
+        "environmentId": "6b4caa07-35a2-49dd-987b-efbc18af7843",
+        "ssh_host": "ax42",
+        "mac": false
+      },
+      "pc-wsl": {
+        "environmentId": "f7485ca4-2ee1-45db-9b83-30791f625d38",
+        "ssh_host": "pc-wsl",
+        "mac": false
+      },
+      "forge": {
+        "environmentId": "04884bbf-2969-47af-9f86-2e64f35c8d01",
+        "ssh_host": "forge",
+        "mac": false
+      }
+    },
+    "seat_vendors": {
+      "cursor": {
+        "not_t3": true
+      },
+      "devin": {
+        "not_t3": true
+      },
+      "cognition": {
+        "not_t3": true
+      },
+      "muse": {
+        "not_t3": true
+      },
+      "pi": {
+        "not_t3": true
+      },
+      "grok": {
+        "not_t3": true
+      },
+      "xai": {
+        "not_t3": true
+      }
+    }
+  }
+}

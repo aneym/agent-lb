@@ -34,6 +34,7 @@ from route_anthropic_models import command_plan
 from route_build_outcomes import command_outcomes
 from route_class_candidates import command_reservations
 from route_dispatch import command_dispatch
+from route_target import command_target
 from route_ladder_walk import AUDIT_VERDICTS
 from route_learn import command_standings
 from route_pace_state import command_heartbeat
@@ -156,6 +157,21 @@ def command_learn(args: argparse.Namespace) -> int:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="route", description="Route a task class to a live seat.")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    target = sub.add_parser("target", help="T3 delegate target and admission lease for a task class",
+                            description="Route through dispatch policy, then lease capacity for at most 10 minutes. "
+                            "Release the lease with route release ID --outcome ok when the child starts.")
+    target.add_argument("task_class", metavar="class")
+    target.add_argument("--write", action="store_true", help="write child: local environment only")
+    target.add_argument("--mac", action="store_true", help="require Studio")
+    target.add_argument("--here", metavar="ENV_NAME", help="caller's environment; remote writes are unsupported")
+    target.add_argument("--caller")
+    target.add_argument("--job")
+    target.add_argument("--author-vendor")
+    target.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"))
+    target.add_argument("--json", action="store_true")
+    target.add_argument("--dry-run", action="store_true", help="no decision log or lease")
+    target.set_defaults(handler=command_target)
 
     quota_status = sub.add_parser("quota-mode", help="show Anthropic quota swap mode")
     quota_status.add_argument("--json", action="store_true")

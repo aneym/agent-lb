@@ -34,10 +34,10 @@ from route_versioned_rules import (  # pyrefly: ignore [missing-import]
 )
 
 
-def command_reserve(args: argparse.Namespace) -> int:
+def command_reserve(args: argparse.Namespace, table: dict | None = None) -> int:
     import signal
 
-    table = load_table()
+    table = load_table() if table is None else table
     args.effort = None
     if args.prefer and not args.reason:
         setup_error("missing_reason", "--prefer needs --reason <why>; it goes to the routing ledger", args.json)
