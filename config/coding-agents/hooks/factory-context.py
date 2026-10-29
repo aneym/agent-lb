@@ -172,7 +172,7 @@ def main() -> None:
         return
     thread_id, environment = t3_selection(payload)
     home, record = identity(payload, AGENT_HOMES, thread_id, environment)
-    orch = record.get("role") == "orch"
+    orch = record.get("role") == "orch" and bound(record, thread_id, environment)
     if source == "startup":
         emit([ORCH_LINE] if orch else [])
         return
