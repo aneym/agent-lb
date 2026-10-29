@@ -37,7 +37,7 @@ Validate with `feature-map check`.
 
 ## Repo facts
 - The serving machine runs the launchd service on `http://127.0.0.1:2455`; see `scripts/install-service.sh`.
-- Worktree setup: `sh scripts/worktree-setup.sh`; use `.venv/bin/python` or `uv run --no-sync`, not `uv sync`.
+- Worktree setup: T3 runs `python3 scripts/t3_setup_worktree.py`; use `.venv/bin/python` or `uv run --no-sync`, not `uv sync`.
 - New machine setup: `GETTING-STARTED.md`; account operations: `.agents/skills/agent-lb-account-operator/SKILL.md`.
 
 Floors here: outbound approval, spend caps, destructive-data approval, secret redaction and Alex's credentials.
