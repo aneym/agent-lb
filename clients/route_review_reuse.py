@@ -59,8 +59,12 @@ def structured_pass(row: dict) -> bool:
             return False
         events = [json.loads(line) for line in run_path(row["decision_id"], ".log").read_text().splitlines()]
         provider = row["target"]["providerInstanceId"]
+        if key.get("provider") != provider:
+            return False
         if provider == "codex":
-            start = max((i for i, e in enumerate(events) if e.get("type") == "turn.started"), default=0)
+            start = max((i for i, e in enumerate(events) if e.get("type") == "turn.started"), default=-1)
+            if start < 0:
+                return False
             messages = [
                 e["item"].get("text")
                 for e in events[start:]
