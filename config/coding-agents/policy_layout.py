@@ -30,42 +30,14 @@ HAIKU_ENV = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
 POLICY_SNAPSHOT = Path(".agent-lb/managed/coding-agents/policy-snapshot.json")
 
 
+CLIENTS_DIR = Path(__file__).resolve().parents[2] / "clients"
+
+
 ROUTE_FILES = (
     "route",
     "seat",
-    "seat_accounts.py",
-    "seat_environment.py",
-    "seat_leases.py",
-    "seat_models.py",
-    "seat_outcome.py",
-    "seat_probe.py",
-    "seat_process.py",
-    "seat_quota.py",
-    "seat_run.py",
-    "seat_storage.py",
-    "route_quota.py",
-    "route_storage.py",
-    "route_cache.py",
-    "route_grok.py",
-    "route_heal.py",
-    "route_spread.py",
-    "route_anthropic_models.py",
-    "route_build_outcomes.py",
-    "route_class_candidates.py",
-    "route_dispatch.py",
-    "route_ladder_walk.py",
-    "route_learn.py",
-    "route_learning_text.py",
-    "route_pace.py",
-    "route_pace_state.py",
-    "route_pick.py",
-    "route_probe_model.py",
-    "route_reserve_state.py",
-    "route_resolve_one.py",
-    "route_seat.py",
-    "route_seat_states.py",
-    "route_versioned_rules.py",
-    "route_workflow_args.py",
+    *sorted(path.name for path in CLIENTS_DIR.glob("seat_*.py")),
+    *sorted(path.name for path in CLIENTS_DIR.glob("route_*.py")),
 )
 
 
