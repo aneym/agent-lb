@@ -295,7 +295,7 @@ def read_decisions() -> list[dict[str, Any]]:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(row, dict) and row.get("v") == 1:
+        if isinstance(row, dict) and row.get("v") == 1 and row.get("kind") != "route.run.outcome":
             rows.append(row)
     return rows
 
