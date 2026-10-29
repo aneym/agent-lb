@@ -40,7 +40,11 @@ def add_t3_parsers(sub: Any) -> None:
         "Release the lease with route release ID --outcome ok when the child starts.",
     )
     target.add_argument("task_class", metavar="class")
-    target.add_argument("--write", action="store_true", help="write child: local environment only")
+    target.add_argument(
+        "--write",
+        action="store_true",
+        help="write child: placed by headroom; pass the target to delegate_task with isolation worktree",
+    )
     target.add_argument("--mac", action="store_true", help="require Studio")
     target.add_argument(
         "--here", metavar="ENV_NAME", help="caller's environment; the fallback when no box has measured room"
