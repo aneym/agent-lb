@@ -4,8 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from hook_command_segments import without_segments  # type: ignore[missing-import]
-from hook_inventory import command_paths, hook_targets  # type: ignore[missing-import]
+from hook_inventory import command_paths  # type: ignore[missing-import]
+from hook_retired_invocation import sole_invocation  # type: ignore[missing-import]
 from policy_layout import POLICY_DIR, RETIRED_HOOKS  # type: ignore[missing-import]
 
 SHIPPED_SHA256 = {
@@ -116,31 +116,51 @@ def retired_paths(home: Path, kept: dict[Path, str]) -> set[Path]:
     return {folder / name for name in RETIRED_HOOKS for folder in folders} - kept.keys()
 
 
-def without_retired_hooks(value, home, retired):
-    def calls_retired(segment):
-        return bool(retired.intersection(command_paths(segment, home)))
+def commands(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "command" and isinstance(child, str):
+                yield child
+            else:
+                yield from commands(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from commands(child)
 
+
+def without_retired_hooks(value, home, retired, refused, path):
     if isinstance(value, list):
         out = []
         for child in value:
-            if isinstance(child, dict) and isinstance(child.get("command"), str):
-                rest = without_segments(child["command"], calls_retired)
-                if rest is None:
+            command = child.get("command") if isinstance(child, dict) else None
+            if isinstance(command, str):
+                invoked = sole_invocation(command)
+                if invoked and next(command_paths(invoked, home), None) in retired:
                     continue
-                child = {**child, "command": rest}
-            out.append(without_retired_hooks(child, home, retired))
+                if any(target.name in command for target in retired):
+                    refused.append(f"{path}: not a single retired invocation, left untouched: {command}")
+            out.append(without_retired_hooks(child, home, retired, refused, path))
         return out
     if isinstance(value, dict):
-        return {key: without_retired_hooks(child, home, retired) for key, child in value.items()}
+        return {key: without_retired_hooks(child, home, retired, refused, path) for key, child in value.items()}
     return value
 
 
-def retire_hook_registries(home: Path, changes: dict[Path, str | None], kept: dict[Path, str]) -> None:
+def keep_referenced(document, home: Path, changes: dict[Path, str | None]) -> None:
+    for command in commands(document):
+        for target in command_paths(command, home):
+            if target in changes and changes[target] is None:
+                changes.pop(target)
+
+
+def retire_hook_registries(home: Path, changes: dict[Path, str | None], kept: dict[Path, str], settings) -> None:
     retired = retired_paths(home, kept)
     changes.update({path: None for path in retired if path.parent == home / ".claude/hooks" and path.exists()})
+    keep_referenced(settings, home, changes)
     folder = home / ".claude/hooks/dispatch"
     paths = set(folder.glob("registry*.json"))
     paths.update(path for path in changes if path.parent == folder and path.name.startswith("registry"))
+    refused: list[str] = []
     for path in paths:
         deleting = path in changes and changes[path] is None
         pending = changes.pop(path, None)
@@ -150,16 +170,17 @@ def retire_hook_registries(home: Path, changes: dict[Path, str | None], kept: di
             registry = json.loads(path.read_text())
         else:
             continue
-        cleaned = without_retired_hooks(registry, home, retired)
-        if isinstance(registry, dict) and registry.get("rev") and "entries" in registry:
-            cleaned = {
-                key: value if key == "entries" else without_retired_hooks(value, home, retired)
-                for key, value in registry.items()
-            }
         if deleting:
             changes[path] = None
-        elif pending is not None or cleaned != registry:
+            continue
+        if isinstance(registry, dict) and registry.get("rev"):
+            cleaned = registry
+        else:
+            cleaned = without_retired_hooks(registry, home, retired, refused, path)
+        if pending is not None:
+            changes[path] = pending if cleaned is registry else json.dumps(cleaned, indent=2, ensure_ascii=False) + "\n"
+        elif cleaned != registry:
             changes[path] = json.dumps(cleaned, indent=2, ensure_ascii=False) + "\n"
-        for target in hook_targets(cleaned, home):
-            if target in changes and changes[target] is None:
-                changes.pop(target)
+        keep_referenced(cleaned, home, changes)
+    for line in refused:
+        print(f"refused retiring {line}")

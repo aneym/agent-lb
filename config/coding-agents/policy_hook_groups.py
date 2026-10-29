@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from hook_command_segments import without_segments  # type: ignore[missing-import]
+from hook_retired_invocation import sole_invocation  # type: ignore[missing-import]
 from policy_layout import DISPATCH_DROPPED, DISPATCH_HOOK_KEYS, DISPATCH_SCRIPT, DISPATCH_SKIP_MATCHERS, HOOK_MANIFEST, NAME_LIST, RETIRED_HOOKS, SIMPLE_MATCHER, TOOL_ALIASES, UNREGISTERED_HOOKS  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
 
@@ -201,9 +201,11 @@ def keep_config_order(groups: list[Any], eligible: list[bool], event: str) -> li
     return eligible
 
 
-def drop_hooks(hooks: dict[str, Any], retired_kept: frozenset[str] = frozenset()) -> tuple[dict[str, Any], list[str]]:
+def drop_hooks(
+    hooks: dict[str, Any], retired_kept: frozenset[str] = frozenset()
+) -> tuple[dict[str, Any], list[str], list[str]]:
 
-    kept, dropped = {}, []
+    kept, dropped, refused = {}, [], []
     names = tuple(n for n in (*RETIRED_HOOKS, *UNREGISTERED_HOOKS, "/_root/hooks/") if n not in retired_kept)
     for event, groups in hooks.items():
         kept[event] = groups
@@ -217,22 +219,26 @@ def drop_hooks(hooks: dict[str, Any], retired_kept: frozenset[str] = frozenset()
             left = []
             for hook in group["hooks"]:
                 command = hook.get("command") if isinstance(hook, dict) else None
-                name, rest = None, None
+                name = None
                 if isinstance(command, str):
                     name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
                     if not name:
-                        name = next((n for n in names if n in command), None)
-                        rest = without_segments(command, lambda segment: any(n in segment for n in names))
+                        invoked = sole_invocation(command) or ""
+                        name = next((n for n in names if n in invoked), None)
+                        mentioned = next((n for n in names if n in command), None)
+                        if mentioned and not name:
+                            refused.append(
+                                f"{event} {group.get('matcher') or '*'}: {mentioned} in ~/.claude/settings.json: "
+                                f"not a single retired invocation, left untouched: {command}"
+                            )
                     if (
                         (event == "PostToolUse" and "factory-lint-hook" in command)
                         or (event == "PreToolUse" and "idle-agents.py" in command and command.endswith(" pre"))
                         or (event == "UserPromptSubmit" and ".jev/hooks/route.sh" in command)
                     ):
-                        name, rest = "factory-lint-hook", None
-                if name and rest != command:
+                        name = "factory-lint-hook"
+                if name:
                     dropped.append(f"{event} {group.get('matcher') or '*'}: {name}")
-                    if rest is not None:
-                        left.append({**hook, "command": rest})
                 else:
                     left.append(hook)
             if left:
@@ -240,4 +246,4 @@ def drop_hooks(hooks: dict[str, Any], retired_kept: frozenset[str] = frozenset()
             elif not group["hooks"]:
                 out.append(group)
         kept[event] = out
-    return kept, dropped
+    return kept, dropped, refused

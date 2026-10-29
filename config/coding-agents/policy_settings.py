@@ -163,9 +163,11 @@ def reconcile_settings(
     updated = json.loads(json.dumps(settings))
     hooks = updated.get("hooks", {})
     if isinstance(hooks, dict):
-        hooks, dropped = drop_hooks(hooks, retired_kept)
+        hooks, dropped, refused = drop_hooks(hooks, retired_kept)
         for line in dropped:
             print(f"dropped {line}")
+        for line in refused:
+            print(f"refused retiring {line}")
         updated["hooks"] = hooks
     if not uninstall:
         for event, groups in hooks.items():
