@@ -1,23 +1,30 @@
-## Model ladder and seats (2026-09-30; updated 2026-10-13)
+## Model picks (2026-09-30; updated 2026-10-29)
 
-Best first, and only Claude is precious; use family aliases (`route resolve <alias>`). Alex, 2026-09-30: "use things up that are best always first, using fallbacks when we need to ... the only precious thing i think is claude usage".
+Best first, and only Claude is precious; `route` picks the model and, for another machine, the box. Alex, 2026-09-30: "use things up that are best always first, using fallbacks when we need to ... the only precious thing i think is claude usage".
 
-| Job | Seat | Model, effort |
-|---|---|---|
-| Code to a spec | gpt-implementer; grok-implementer; devin-seat; sonnet-implementer | sol-latest medium; grok-latest medium when Codex is short (2026-10-20); sonnet-implementer off while quota is tight (2026-10-13) |
-| Fixing a review's numbered must-fix list (trial, lead picks it by hand) | terra-implementer | terra-latest high; never medium, never the default route (terra-eval, 2026-10-27) |
-| Opus-written stories: browser steps and mechanical loops | story-driver | deepseek-flash; luna-latest low when OpenRouter has no headroom |
-| Mechanical sweeps | gpt-implementer; grok-implementer; devin-seat | sol-latest low; grok-latest-low when Codex is short (2026-10-20) |
-| Judgment code, or work a seat failed twice | opus-seat | opus-latest; overrides the 2026-10-13 off-while-tight note (Opus architects, 2026-10-14) |
-| UI-critical, contract and trust-boundary code | opus-seat | opus-latest; overrides the 2026-10-13 off-while-tight note (Opus architects, 2026-10-14) |
-| Read-only exploration | gpt-explorer | sol-latest low |
-| Review, on request only (non-Claude author) | verifier (Sonnet) | sonnet-latest high (2026-10-16, E15) |
-| Review, on request only (Claude author) | codex-verifier | sol-latest high; money path keeps xhigh (2026-10-16) |
-| Plan and architecture second opinion | astra-consult (one per plan, brief under 2k tokens) | astra-latest high; never sol-consult (2026-10-14) |
-| Plans, specs, verdicts, design | Opus (planner, plan-reviewer) | opus-latest medium, never Sol (2026-10-16, E19); under the Claude reserve these wait |
-| Tabs Alex talks to, leads, orchestrators | Opus tab; full-tier ultracode on; workflow helpers on Sol | opus-latest medium for top-level tabs and workflow orchestrators; sol-latest for helpers |
-| Remote-machine relay (batch templates) | host-relay | sol-latest low |
-| Mac computer use and video editing (HyperFrames Studio and other Mac apps); never code | computer-use-terra-local | terra-latest medium, service tier fast (Alex, 2026-10-28: "terra isnt for coding though") |
+How a child starts:
+- **Local, Claude model:** Agent tool with `model: opus|sonnet|haiku` (or Workflow), in-process.
+- **Local, other provider or work outliving this turn:** `delegate_task` with `target.providerInstanceId` + `model`, effort in `target.options` (`reasoningEffort` for codex, `effort` for claudeAgent), `isolation: "worktree"` when it writes.
+- **Another machine, read-only:** `delegate_task` with the `environmentId` of the box `route` picked (from `t3_environment_links`), no worktree.
+- **Another machine, writes or runs plain commands:** the seat-run forwarding agent for the job (opus-seat, gpt-implementer, verifier and the like). T3 refuses a worktree child on a linked environment (invalid_request, 2026-10-29).
+
+| Job | Local | Another machine (writes) | Model, effort |
+|---|---|---|---|
+| Code to a spec | `delegate_task` `codex`/`gpt-6.1-sol`, worktree; or `claudeAgent`/`k3.1-pro` (Kimi) | gpt-implementer; sonnet-implementer | sol-latest medium; k3.1-pro spreads load; Sonnet high only when Codex is out (2026-10-13) |
+| Fixing a review's numbered must-fix list (trial, lead picks it by hand) | `delegate_task` `codex`/`gpt-6.1-terra`, worktree | terra-implementer | terra-latest high; never medium, never the default route (terra-eval, 2026-10-27) |
+| Mechanical sweeps | `delegate_task` `codex`/`gpt-6.1-sol` or Kimi, worktree | gpt-implementer; grok-implementer | sol-latest low; grok-latest-low when Codex is short (2026-10-20) |
+| Judgment code, or work a child failed twice | Agent `model: opus` | opus-seat | opus-latest (Opus architects, 2026-10-14) |
+| UI-critical, contract and trust-boundary code | Agent `model: opus` | opus-seat | opus-latest (Opus architects, 2026-10-14) |
+| Read-only exploration | Agent Explore; `delegate_task` `codex`/`gpt-6.1-sol` | `delegate_task` with environmentId | sol-latest low |
+| Research | `delegate_task` `codex`/`gpt-6.1-sol` | codex-sol | sol-latest high |
+| Review, on request only (non-Claude author) | Agent `model: sonnet` with the verifier role | verifier | sonnet-latest high (2026-10-16, E15) |
+| Review, on request only (Claude author) | `delegate_task` `codex`/`gpt-6.1-sol`, read-only | codex-verifier | sol-latest high; money path keeps xhigh (2026-10-16) |
+| A suite that must run for a review | `delegate_task` `codex`, worktree at the PR head | codex-test-runner | sol-latest |
+| Plan and architecture second opinion (one per plan, brief under 2k tokens) | astra-consult, or `delegate_task` `codex`/`gpt-6-astra` read-only | `delegate_task` with environmentId | astra-latest high; never sol-consult (2026-10-14) |
+| Plans, specs, verdicts, design | Agent planner, plan-reviewer, frontend-designer | opus-seat | opus-latest medium, never Sol (2026-10-16, E19); under the Claude reserve these wait |
+| Tabs Alex talks to, leads, orchestrators | the thread itself | | opus-latest medium; workflow helpers on Sol |
+| Remote-machine relay (batch templates) | host-relay | host-relay | sol-latest low |
+| Mac computer use and video editing (HyperFrames Studio and other Mac apps); never code | on Studio: `delegate_task` `codex`/`gpt-6.1-terra`, serviceTier priority | computer-use | terra-latest medium, service tier fast (Alex, 2026-10-28: "terra isnt for coding though") |
 
 Available optional seat: `muse-seat` via `muse-seat-local` on Studio, Muse Code `1.4.9-R6297.1` (re-pinned 2026-10-16 after launcher auto-update; seat runs set `MUSE_NO_AUTO_UPDATE=1`), `muse-latest` pins `muse-wonder-1.0`. Alex reports login complete on 2026-10-13; a trivial brief passed on 2026-10-16. Boxes are not yet provisioned. No ladder promotion before interleaved evals.
 
