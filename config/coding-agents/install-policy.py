@@ -21,6 +21,7 @@ from claude_config_hooks import claude_config_files  # type: ignore[missing-impo
 from codex_home import codex_changes  # type: ignore[missing-import]
 from dispatch_parity import run_parity  # type: ignore[missing-import]
 from harness_mcp import ensure_harness_mcp  # type: ignore[missing-import]
+from floor_invariant import refuse_floor_changes  # type: ignore[missing-import]
 from hook_inventory import hook_path_problems, keep_floor_targets, validate_hook_changes  # type: ignore[missing-import]
 from policy_documents import install_adapter, install_codex_doc, read_text, render_codex_body, uninstall_adapter  # type: ignore[missing-import]  # fmt: skip
 from policy_files import autocompact_text, checkpoint_changes, write_atomic  # type: ignore[missing-import]
@@ -321,6 +322,7 @@ def main() -> int:
     retire_hook_registries(args.home, changes, kept)
     keep_floor_targets(args.home, changes, nxt)
     validate_hook_changes(args.home, changes, nxt, kept)
+    refuse_floor_changes(args.home, changes)
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
     )

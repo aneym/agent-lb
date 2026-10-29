@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from floor_hooks import FLOOR_MENTIONS, accepted_forms, mentioned_floors  # type: ignore[missing-import]
+from floor_hooks import FLOOR_MENTIONS, accepted_forms, mentioned_floors, unclassified_guards  # type: ignore[missing-import]
 
 HOOK_DOCUMENTS = {
     ".claude/settings.json": ".claude",
@@ -118,8 +118,35 @@ def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
     return problems
 
 
+def commands(value: Any):
+    if isinstance(value, dict):
+        if isinstance(value.get("command"), str):
+            yield value["command"]
+        for child in value.values():
+            yield from commands(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from commands(child)
+
+
+def guard_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
+    paths = {home / name for name in HOOK_DOCUMENTS} | set((home / REGISTRY_DIR).glob("registry*.json"))
+    paths |= {path for path in changes if managed_dir(home, path) is not None}
+    problems = []
+    for path in sorted(paths):
+        for text in (path.read_text() if path.is_file() else None, changes.get(path)):
+            try:
+                value = json.loads(text) if text else None
+            except ValueError:
+                continue
+            for command in commands(value):
+                for name in sorted(unclassified_guards(command)):
+                    problems.append(f"{path}: hook script {name} is a guard with no floor classification: {command}")
+    return list(dict.fromkeys(problems))
+
+
 def refuse_floor_changes(home: Path, changes: dict[Path, str | None]) -> None:
-    problems = floor_problems(home, changes)
+    problems = floor_problems(home, changes) + guard_problems(home, changes)
     if problems:
         for line in problems:
             print(f"floor invariant: {line}")
