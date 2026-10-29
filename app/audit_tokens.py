@@ -88,10 +88,10 @@ def connect(args, notes):
 
     url = args.db or os.environ.get("AGENT_LB_DATABASE_URL") or get_settings().database_url
     if not args.db and url.startswith("sqlite"):
-        from app.core.config.service_database import service_database_url
+        from app.core.config.service_database import LOCAL_DATABASE_URL, primary_database_url
 
-        notes.append("Configured SQLite default has no live receipts; using the service PostgreSQL audit source.")
-        url = service_database_url() or "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb"
+        notes.append("Configured SQLite default has no live receipts; using the primary PostgreSQL audit source.")
+        url = primary_database_url() or LOCAL_DATABASE_URL
     url = url.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
     with psycopg.connect(
         url, options="-c default_transaction_read_only=on -c statement_timeout=90000", row_factory=dict_row

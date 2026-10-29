@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.audit_pricing import price_row, token_classes
 from app.audit_quota import quota_allocation
-from app.audit_tokens import AuditUsageError, load_receipts, window
+from app.audit_tokens import AuditUsageError, connect, load_receipts, window
 from app.audit_transcripts import pane_maps
 
 
@@ -23,6 +23,7 @@ class TabRow:
     pane: str
     configured_model: str
     configured_effort: str
+    thread: str | None = None
     requests: int = 0
     models: dict[str, int] = field(default_factory=dict)
     dominant_model: str | None = None
@@ -81,6 +82,19 @@ def sqlite_receipts(url: str, since: datetime, until: datetime):
         stamp = datetime.fromisoformat(snapshot["recorded_at"])
         snapshot["recorded_at"] = stamp.astimezone(UTC).replace(tzinfo=None) if stamp.tzinfo else stamp
     return rows, snapshots
+
+
+def thread_sessions(args, notes, threads: list[str]) -> dict[str, str]:
+    if not threads:
+        return {}
+    with connect(args, notes) as connection:
+        rows = connection.execute(
+            """SELECT s.native_id, s.thread_id, t.root_thread_id FROM t3_native_sessions s
+            LEFT JOIN t3_threads t ON t.host = s.host AND t.thread_id = s.thread_id
+            WHERE s.thread_id = ANY(%s) OR t.root_thread_id = ANY(%s)""",
+            (threads, threads),
+        ).fetchall()
+    return {r["native_id"]: r["thread_id"] if r["thread_id"] in threads else r["root_thread_id"] for r in rows}
 
 
 def markdown(rows: list[TabRow]) -> str:
@@ -142,18 +156,22 @@ def run(args: argparse.Namespace) -> None:
                     config["pane"],
                     config["model"],
                     config["effort"],
+                    (config.get("t3") or {}).get("thread_id"),
                 )
             )
         panes, notes = pane_maps()
         if args.db and args.db.startswith(("sqlite:///", "sqlite+aiosqlite:///")):
             receipts, snapshots = sqlite_receipts(args.db, since, until)
+            sessions = {}
         else:
             receipts, snapshots, _, _, _ = load_receipts(args, since, until, notes)
+            sessions = thread_sessions(args, notes, [row.thread for row in result if row.thread])
         points, _ = quota_allocation(receipts, snapshots, since, until)
         for row in result:
             input_cost = write_cost = 0.0
             for receipt, quota in zip(receipts, points, strict=True):
-                if panes.get(receipt["sid"], {}).get("pane") != row.pane:
+                in_thread = row.thread is not None and sessions.get(receipt["sid"]) == row.thread
+                if not in_thread and panes.get(receipt["sid"], {}).get("pane") != row.pane:
                     continue
                 count = receipt["requests"]
                 row.requests += count
@@ -176,7 +194,7 @@ def run(args: argparse.Namespace) -> None:
             )
             row.cache_write_share_of_input_cost = write_cost / input_cost if input_cost else 0.0
             if not row.requests:
-                row.note = "No receipts attributed to this pane in the window."
+                row.note = "No receipts attributed to this pane or T3 thread in the window."
         output = args.out_jsonl.expanduser()
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("a") as stream:
@@ -188,7 +206,7 @@ def run(args: argparse.Namespace) -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(report)
         print(json.dumps([asdict(row) for row in result]) if args.json else report, end="\n" if args.json else "")
-        for note in notes:
+        for note in dict.fromkeys(notes):
             print(note, file=sys.stderr)
     except AuditUsageError as exc:
         print(str(exc), file=sys.stderr)
