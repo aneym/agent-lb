@@ -3,7 +3,7 @@
 Best first, and only Claude is precious; `route` picks the model and, for another machine, the box. Alex, 2026-09-30: "use things up that are best always first, using fallbacks when we need to ... the only precious thing i think is claude usage".
 
 How a child starts:
-- **Local, Claude model:** Agent tool with `model: opus|sonnet|haiku` (or Workflow), in-process.
+- **Local, Claude model:** Agent tool with `model: opus|sonnet|haiku` (or Workflow), in-process. T3 Claude seats remap the `sonnet` and `haiku` aliases and the default subagent model to `sol-latest`; when the vendor matters, pass the explicit id (`claude-sonnet-5-5`) and check `requestedModel` in the agent transcript (2026-10-29).
 - **Local, other provider or work outliving this turn:** `delegate_task` with `target.providerInstanceId` + `model`, effort in `target.options` (`reasoningEffort` for codex, `effort` for claudeAgent), `isolation: "worktree"` when it writes.
 - **Another machine, read-only:** `delegate_task` with the `environmentId` of the box `route` picked (from `t3_environment_links`), no worktree.
 - **Another machine, writes or runs plain commands:** the seat-run forwarding agent for the job (opus-seat, gpt-implementer, verifier and the like). T3 refuses a worktree child on a linked environment (invalid_request, 2026-10-29).
@@ -17,7 +17,7 @@ How a child starts:
 | UI-critical, contract and trust-boundary code | Agent `model: opus` | opus-seat | opus-latest (Opus architects, 2026-10-14) |
 | Read-only exploration | Agent Explore; `delegate_task` `codex`/`gpt-6.1-sol` | `delegate_task` with environmentId | sol-latest low |
 | Research | `delegate_task` `codex`/`gpt-6.1-sol` | codex-sol | sol-latest high |
-| Review, on request only (non-Claude author) | Agent `model: sonnet` with the verifier role | verifier | sonnet-latest high (2026-10-16, E15) |
+| Review, on request only (non-Claude author) | `delegate_task` `claudeAgent`/`claude-sonnet-5-5`, read-only; or Workflow `model: claude-sonnet-5-5`, never the `sonnet` alias (it resolves to Sol in T3 seats, the author's vendor) | verifier | sonnet-latest high (2026-10-16, E15) |
 | Review, on request only (Claude author) | `delegate_task` `codex`/`gpt-6.1-sol`, read-only | codex-verifier | sol-latest high; money path keeps xhigh (2026-10-16) |
 | A suite that must run for a review | `delegate_task` `codex`, worktree at the PR head | codex-test-runner | sol-latest |
 | Plan and architecture second opinion (one per plan, brief under 2k tokens) | astra-consult, or `delegate_task` `codex`/`gpt-6-astra` read-only | `delegate_task` with environmentId | astra-latest high; never sol-consult (2026-10-14) |
