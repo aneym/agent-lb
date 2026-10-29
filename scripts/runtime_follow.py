@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.thread_delivery import send
-from scripts import runtime_bin, runtime_plan, systemd_drain
+from scripts import runtime_bin, runtime_imports, runtime_plan, systemd_drain
 from scripts import runtime_tree as tree
 from scripts.runtime_tree import Paths, log_line, utc
 
@@ -277,7 +277,8 @@ def step(paths: Paths, state: dict, now: float, *, force: bool) -> int:
     state["bin_drift"] = bin_report.drift
     state["drift_paths"] = len(changes)
     state["drift_sample"] = changes[:5]
-    live, need = runtime_plan.split(changes)
+    own = runtime_imports.closure(paths.stage)
+    live, need, held = runtime_plan.split(changes, own, state.get("restart_held", []))
     if live:
         deleted = [
             runtime_plan.rel_of(line)
@@ -301,6 +302,8 @@ def step(paths: Paths, state: dict, now: float, *, force: bool) -> int:
         state["in_sync"] = True
         return 0
     state["in_sync"] = False
+    if held:
+        state["restart_held"] = held
     state.setdefault("drift_since", utc())
     state["restart_paths"] = need[:5]
     state["restart_count"] = len(need)

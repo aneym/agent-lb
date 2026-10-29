@@ -41,7 +41,14 @@ LIVE_TOP = (
     "docker-compose.yml",
 )
 RESTART_EXCEPT = ("scripts/run-agent-lb.sh",)
-PENDING_KEYS = ("restart_pending_since", "restart_paths", "restart_count", "next_restart_at", "restart_wait_reason")
+PENDING_KEYS = (
+    "restart_pending_since",
+    "restart_paths",
+    "restart_count",
+    "next_restart_at",
+    "restart_wait_reason",
+    "restart_held",
+)
 
 
 def epoch(stamp: str | None) -> float:
@@ -52,13 +59,19 @@ def rel_of(line: str) -> str:
     return line.split(None, 1)[1].strip().split(" -> ", 1)[0]
 
 
-def split(changes: list[str]) -> tuple[list[str], list[str]]:
+def split(changes: list[str], own: set[str], held: list[str]) -> tuple[list[str], list[str], list[str]]:
     live, need = [], []
     for line in changes:
         rel = rel_of(line)
         top = "/" not in rel and (rel in LIVE_TOP or rel.endswith(".md"))
-        (live if rel not in RESTART_EXCEPT and (top or rel.startswith(LIVE_PREFIXES)) else need).append(rel)
-    return live, need
+        is_live = rel not in RESTART_EXCEPT and (top or rel.startswith(LIVE_PREFIXES))
+        if is_live or (rel in own and not line.startswith("*deleting")):
+            live.append(rel)
+        if not is_live:
+            need.append(rel)
+    held = sorted({*held, *(rel for rel in live if rel in need)})
+    need.extend(rel for rel in held if rel not in need)
+    return live, need, held
 
 
 def restart_due(state: dict, now: float) -> tuple[bool, float, str]:
