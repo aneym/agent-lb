@@ -21,7 +21,7 @@ This skill allows you to batch-archive changes, handling spec conflicts intellig
 
 2. **Prompt for change selection**
 
-   Use **AskUserQuestion tool** (in a T3 thread: a plain-text question instead, until the T3 Code fork fix ships) with multi-select to let user choose changes:
+   Use **AskUserQuestion tool** (in a T3 thread: a plain-text question instead) with multi-select to let user choose changes:
    - Show each change with its schema
    - Include an option for "All changes"
    - Allow any number of selections (1+ works, 2+ is the typical use case)
@@ -102,7 +102,7 @@ This skill allows you to batch-archive changes, handling spec conflicts intellig
 
 7. **Confirm batch operation**
 
-   Use **AskUserQuestion tool** (in a T3 thread: a plain-text question instead, until the T3 Code fork fix ships) with a single confirmation:
+   Use **AskUserQuestion tool** (in a T3 thread: a plain-text question instead) with a single confirmation:
 
    - "Archive N changes?" with options based on status
    - Options might include:

@@ -17,7 +17,7 @@ Archive a completed change in the experimental workflow.
 
 1. **If no change name provided, prompt for selection**
 
-   Run `openspec list --json` to get available changes. Use the **AskUserQuestion tool** (in a T3 thread: a plain-text question instead, until the T3 Code fork fix ships) to let the user select.
+   Run `openspec list --json` to get available changes. Use the **AskUserQuestion tool** (in a T3 thread: a plain-text question instead) to let the user select.
 
    Show only active changes (not already archived).
    Include the schema used for each change if available.
@@ -34,7 +34,7 @@ Archive a completed change in the experimental workflow.
 
    **If any artifacts are not `done`:**
    - Display warning listing incomplete artifacts
-   - Use **AskUserQuestion tool** (in a T3 thread: a plain-text question instead, until the T3 Code fork fix ships) to confirm user wants to proceed
+   - Use **AskUserQuestion tool** (in a T3 thread: a plain-text question instead) to confirm user wants to proceed
    - Proceed if user confirms
 
 3. **Check task completion status**
@@ -45,7 +45,7 @@ Archive a completed change in the experimental workflow.
 
    **If incomplete tasks found:**
    - Display warning showing count of incomplete tasks
-   - Use **AskUserQuestion tool** (in a T3 thread: a plain-text question instead, until the T3 Code fork fix ships) to confirm user wants to proceed
+   - Use **AskUserQuestion tool** (in a T3 thread: a plain-text question instead) to confirm user wants to proceed
    - Proceed if user confirms
 
    **If no tasks file exists:** Proceed without task-related warning.

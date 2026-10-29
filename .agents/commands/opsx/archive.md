@@ -13,7 +13,7 @@ Archive a completed change in the experimental workflow.
 
 1. **If no change name provided, prompt for selection**
 
-   Run `openspec list --json` to get available changes. Use the **AskUserQuestion tool** (in a T3 thread: a plain-text question instead, until the T3 Code fork fix ships) to let the user select.
+   Run `openspec list --json` to get available changes. Use the **AskUserQuestion tool** (in a T3 thread: a plain-text question instead) to let the user select.
 
    Show only active changes (not already archived).
    Include the schema used for each change if available.
