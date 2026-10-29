@@ -4,7 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from hook_inventory import hook_targets  # type: ignore[missing-import]
+from hook_command_segments import without_segments  # type: ignore[missing-import]
+from hook_inventory import command_paths, hook_targets  # type: ignore[missing-import]
 from policy_layout import POLICY_DIR, RETIRED_HOOKS  # type: ignore[missing-import]
 
 SHIPPED_SHA256 = {
@@ -110,21 +111,33 @@ def kept_warning(path: Path) -> str:
     return f"WARNING kept {path}: retired hook name, but no agent-lb marker and no shipped hash; not ours to delete"
 
 
+def retired_paths(home: Path, kept: dict[Path, str]) -> set[Path]:
+    folders = (home / ".claude/hooks", home / POLICY_DIR / "hooks", home / ".local/bin")
+    return {folder / name for name in RETIRED_HOOKS for folder in folders} - kept.keys()
+
+
 def without_retired_hooks(value, home, retired):
+    def calls_retired(segment):
+        return bool(retired.intersection(command_paths(segment, home)))
+
     if isinstance(value, list):
-        return [
-            without_retired_hooks(child, home, retired)
-            for child in value
-            if not (isinstance(child, dict) and "command" in child and retired.intersection(hook_targets(child, home)))
-        ]
+        out = []
+        for child in value:
+            if isinstance(child, dict) and isinstance(child.get("command"), str):
+                rest = without_segments(child["command"], calls_retired)
+                if rest is None:
+                    continue
+                child = {**child, "command": rest}
+            out.append(without_retired_hooks(child, home, retired))
+        return out
     if isinstance(value, dict):
         return {key: without_retired_hooks(child, home, retired) for key, child in value.items()}
     return value
 
 
 def retire_hook_registries(home: Path, changes: dict[Path, str | None], kept: dict[Path, str]) -> None:
-    retired = {home / ".claude/hooks" / name for name in RETIRED_HOOKS} - kept.keys()
-    changes.update({path: None for path in retired if path.exists()})
+    retired = retired_paths(home, kept)
+    changes.update({path: None for path in retired if path.parent == home / ".claude/hooks" and path.exists()})
     folder = home / ".claude/hooks/dispatch"
     paths = set(folder.glob("registry*.json"))
     paths.update(path for path in changes if path.parent == folder and path.name.startswith("registry"))
@@ -138,10 +151,15 @@ def retire_hook_registries(home: Path, changes: dict[Path, str | None], kept: di
         else:
             continue
         cleaned = without_retired_hooks(registry, home, retired)
+        if isinstance(registry, dict) and registry.get("rev") and "entries" in registry:
+            cleaned = {
+                key: value if key == "entries" else without_retired_hooks(value, home, retired)
+                for key, value in registry.items()
+            }
         if deleting:
             changes[path] = None
         elif pending is not None or cleaned != registry:
             changes[path] = json.dumps(cleaned, indent=2, ensure_ascii=False) + "\n"
-        for target in hook_targets(registry, home):
-            if target not in retired and target in changes and changes[target] is None:
+        for target in hook_targets(cleaned, home):
+            if target in changes and changes[target] is None:
                 changes.pop(target)

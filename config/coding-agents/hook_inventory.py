@@ -9,13 +9,16 @@ from typing import Any, Iterator
 HOOK_TARGET = re.compile(r'(?:\$HOME|\$\{HOME\}|~|/)[^\s"\';|&)<>]*')
 
 
+def command_paths(command: str, home: Path) -> Iterator[Path]:
+    for word in HOOK_TARGET.findall(command):
+        yield Path(re.sub(r"^(?:\$HOME|\$\{HOME\}|~)(?=/)", str(home), word))
+
+
 def hook_targets(value: Any, home: Path) -> Iterator[Path]:
     if isinstance(value, dict):
         for key, child in value.items():
             if key == "command" and isinstance(child, str):
-                for word in HOOK_TARGET.findall(child):
-                    expanded = re.sub(r"^(?:\$HOME|\$\{HOME\}|~)(?=/)", str(home), word)
-                    path = Path(expanded)
+                for path in command_paths(child, home):
                     if ".claude/hooks" in path.as_posix():
                         yield path
             else:

@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from hook_command_segments import without_segments  # type: ignore[missing-import]
 from policy_layout import DISPATCH_DROPPED, DISPATCH_HOOK_KEYS, DISPATCH_SCRIPT, DISPATCH_SKIP_MATCHERS, HOOK_MANIFEST, NAME_LIST, RETIRED_HOOKS, SIMPLE_MATCHER, TOOL_ALIASES, UNREGISTERED_HOOKS  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
 
@@ -203,6 +204,7 @@ def keep_config_order(groups: list[Any], eligible: list[bool], event: str) -> li
 def drop_hooks(hooks: dict[str, Any], retired_kept: frozenset[str] = frozenset()) -> tuple[dict[str, Any], list[str]]:
 
     kept, dropped = {}, []
+    names = tuple(n for n in (*RETIRED_HOOKS, *UNREGISTERED_HOOKS, "/_root/hooks/") if n not in retired_kept)
     for event, groups in hooks.items():
         kept[event] = groups
         if not isinstance(groups, list):
@@ -215,25 +217,22 @@ def drop_hooks(hooks: dict[str, Any], retired_kept: frozenset[str] = frozenset()
             left = []
             for hook in group["hooks"]:
                 command = hook.get("command") if isinstance(hook, dict) else None
-                name = None
+                name, rest = None, None
                 if isinstance(command, str):
                     name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode()).hexdigest())
-                    name = name or next(
-                        (
-                            n
-                            for n in (*RETIRED_HOOKS, *UNREGISTERED_HOOKS, "/_root/hooks/")
-                            if n in command and n not in retired_kept
-                        ),
-                        None,
-                    )
+                    if not name:
+                        name = next((n for n in names if n in command), None)
+                        rest = without_segments(command, lambda segment: any(n in segment for n in names))
                     if (
                         (event == "PostToolUse" and "factory-lint-hook" in command)
                         or (event == "PreToolUse" and "idle-agents.py" in command and command.endswith(" pre"))
                         or (event == "UserPromptSubmit" and ".jev/hooks/route.sh" in command)
                     ):
-                        name = "factory-lint-hook"
-                if name:
+                        name, rest = "factory-lint-hook", None
+                if name and rest != command:
                     dropped.append(f"{event} {group.get('matcher') or '*'}: {name}")
+                    if rest is not None:
+                        left.append({**hook, "command": rest})
                 else:
                     left.append(hook)
             if left:
