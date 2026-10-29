@@ -8,6 +8,8 @@ OFFLOAD_COMMAND = (
     'H="$HOME/.local/bin/box-offload-hook"; P="$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14"; '
     '[ -x "$P" ] || P=python3; if [ -r "$H" ]; then exec "$P" "$H"; fi'
 )
+BRANCH_GUARD_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/branch-guard.py"'
+MANAGED_COMMANDS = {OFFLOAD_COMMAND: 20, BRANCH_GUARD_COMMAND: 10}
 
 
 def reconcile_codex_config(text: str, model: str) -> str:
@@ -49,12 +51,15 @@ def reconcile_codex_hooks(text: str, install: bool) -> str:
     groups = data["hooks"].setdefault("PreToolUse", [])
     kept: list[dict[str, object]] = []
     for group in groups:
-        hooks = [h for h in group.get("hooks", []) if not isinstance(h, dict) or h.get("command") != OFFLOAD_COMMAND]
+        hooks = [
+            h for h in group.get("hooks", []) if not isinstance(h, dict) or h.get("command") not in MANAGED_COMMANDS
+        ]
         if hooks or not group.get("hooks"):
             kept.append(dict(group, hooks=hooks))
     if install:
-        entry: dict[str, object] = {"type": "command", "command": OFFLOAD_COMMAND, "timeout": 20}
-        kept.append({"matcher": "Bash", "hooks": [entry]})
+        for command, timeout in MANAGED_COMMANDS.items():
+            entry: dict[str, object] = {"type": "command", "command": command, "timeout": timeout}
+            kept.append({"matcher": "Bash", "hooks": [entry]})
     data["hooks"]["PreToolUse"] = kept
     desired = json.dumps(data, indent=2) + "\n"
     return text if text.strip() and json.loads(text) == data else desired

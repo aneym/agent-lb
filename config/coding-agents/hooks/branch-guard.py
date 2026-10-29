@@ -63,6 +63,7 @@ def strip_heredocs(text):
     marker = re.compile(r"<<(?P<tabs>-)?[ \t]*(?:'(?P<single>[^'\n]+)'|\"(?P<double>[^\"\n]+)\"|(?P<bare>[\w-]+))")
     quote = None
     for line in text.splitlines(keepends=True):
+        comment = False
         if pending:
             delimiter, tabs = pending[0]
             if (line.lstrip("\t") if tabs else line).rstrip("\r\n") == delimiter:
@@ -80,6 +81,7 @@ def strip_heredocs(text):
             elif char in "'\"":
                 quote = char
             elif char == "#" and (index == 0 or line[index - 1].isspace()):
+                comment = True
                 break
             elif line.startswith("<<<", index):
                 index += 3
@@ -97,7 +99,7 @@ def strip_heredocs(text):
                     index = start = match.end()
                     continue
             index += 1
-        kept.append(line[start:])
+        kept.append(line[start:index] + ("\n" if line.endswith("\n") else "") if comment else line[start:])
     return "".join(kept)
 
 
@@ -112,7 +114,7 @@ def fallback_commands(text, cwd):
         action, args = match.group("action"), match.group("args").strip()
         target = match.group("target")
         if action == "push":
-            if re.search(r"--force|(?:^|\s)-[a-zA-Z]*f|(?:^|\s)\+", args):
+            if re.search(r"--force|--mir|(?:^|\s)-[a-zA-Z]*f|(?:^|\s)\+", args):
                 found.append(("push denied: " + FORCE_PUSH, None))
             continue
         moved = re.search(r"(?:^|[;\n|&])\s*(?:cd|pushd|popd)\b", text[: match.start()])
@@ -149,34 +151,84 @@ FORCE_PUSH = (
 )
 
 
-def push_reason(args):
-    force, options, skip, operands = False, True, False, []
+FORCE_OPTIONS = ("force", "mirror", "force-with-lease", "force-if-includes")
+COMMON_COMMANDS = frozenset(
+    "add am apply bisect blame branch cat-file checkout cherry-pick clean clone commit config describe diff fetch "
+    "for-each-ref format-patch gc grep init log ls-files ls-remote ls-tree merge merge-base mv notes pull push rebase "
+    "reflog remote reset restore rev-list rev-parse revert rm show show-ref stash status submodule switch symbolic-ref "
+    "tag update-index update-ref worktree".split()
+)
+TRUE = {"", "true", "yes", "on", "1"}
+
+
+@lru_cache(maxsize=64)
+def config_items(where, inline):
+    items = [(value.split("=", 1) + [""])[:2] for value in inline]
+    if where:
+        flags = [part for value in inline for part in ("-c", value)]
+        try:
+            result = subprocess.run(
+                ["git", *flags, "-C", where, "config", "--get-regexp", r"^(remote\..*\.(push|mirror)|alias\..*)$"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if result.returncode in {0, 1}:
+                items = [(line.split(" ", 1) + [""])[:2] for line in result.stdout.splitlines()]
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return tuple((key, value) for key, value in items)
+
+
+def push_reason(args, items=()):
+    force, options, skip, operands, remote = False, True, None, [], None
     for arg in args:
         if skip:
-            skip = False
+            remote = arg if skip == "--repo" else remote
+            skip = None
             continue
         if options and arg == "--":
             options = False
-        elif options and arg.startswith("-"):
-            force |= arg in {"--force", "--mirror"} or bool(re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", arg))
-            force |= arg.startswith(("--force-with-lease", "--force-if-includes"))
-            skip = arg in {"--repo", "--receive-pack", "--exec", "--push-option", "-o"}
+        elif options and arg.startswith("--"):
+            name = arg[2:].split("=", 1)[0]
+            force |= any(option.startswith(name) for option in FORCE_OPTIONS)
+            remote = arg.split("=", 1)[1] if arg.startswith("--repo=") else remote
+            skip = arg if arg in {"--repo", "--receive-pack", "--exec", "--push-option"} else None
+        elif options and arg.startswith("-") and arg != "-":
+            force |= "f" in arg[1:].split("o", 1)[0]
+            skip = "-o" if arg[1:].split("o", 1)[1:] == [""] else None
         else:
             operands.append(arg)
     force |= any(operand.startswith("+") for operand in operands)
+    remote = operands[0] if operands else remote
+    for key, value in items:
+        lowered = key.lower()
+        if not lowered.startswith("remote.") or remote is not None and key[7:].rsplit(".", 1)[0] != remote:
+            continue
+        force |= lowered.endswith(".mirror") and value.strip().lower() in TRUE
+        force |= lowered.endswith(".push") and len(operands) < 2 and value.strip().startswith("+")
     return FORCE_PUSH if force else None
+
+
+def alias_text(action, items):
+    if action in COMMON_COMMANDS:
+        return None
+    return next((value for key, value in reversed(items) if key.lower() == f"alias.{action.lower()}"), None)
 
 
 def commands(text, cwd, depth=0):
     if depth > 8:
         return [("unknown", None)]
-    lexer = shlex.shlex(strip_heredocs(text), posix=True, punctuation_chars=";&|()")
+    lexer = shlex.shlex(strip_heredocs(text).replace("\\\n", ""), posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace_split = True
+    lexer.whitespace = " \t\r"
+    lexer.commenters = ""
     words = list(lexer)
-    unsafe = any(word in {"(", ")", "|", "&"} for word in words)
+    unsafe = any(word.strip("\n") in {"(", ")", "|", "&"} for word in words)
     segments, current = [], []
     for word in words + [";"]:
-        if word and set(word) <= set(";&|()"):
+        if word and set(word) <= set(";&|()\n"):
             if current:
                 segments.append(current)
                 current = []
@@ -205,7 +257,7 @@ def commands(text, cwd, depth=0):
                     found.append(("push denied: " + FORCE_PUSH, None))
                 continue
             args, where = segment[git_index + 1 :], cwd
-            bypass = False
+            bypass, inline = False, []
             pre = segment[:git_index]
             if any(word in {"-C", "--chdir", "-D"} or word.startswith("--chdir=") for word in pre):
                 where = None
@@ -226,22 +278,38 @@ def commands(text, cwd, depth=0):
                     if args:
                         value = args.pop(0)
                         bypass |= arg in {"-c", "--config-env"} and value.lower().startswith("core.hookspath=")
+                        inline += [value] if arg == "-c" else []
                     if arg in {"--git-dir", "--work-tree"}:
                         where = None
                 elif arg.startswith("-c"):
                     bypass |= arg[2:].lower().startswith("core.hookspath=")
+                    inline.append(arg[2:])
                 elif arg.startswith("--config-env="):
                     bypass |= arg.split("=", 1)[1].lower().startswith("core.hookspath=")
                 elif arg.startswith(("--git-dir=", "--work-tree=")):
                     where = None
             if bypass:
                 found.append(("hook bypass", None))
+            items = (
+                config_items(where or cwd, tuple(inline)) if args and args[0] not in COMMON_COMMANDS - {"push"} else ()
+            )
+            alias = alias_text(args[0], items) if args else None
+            if alias is not None:
+                head = (
+                    alias[1:]
+                    if alias.startswith("!")
+                    else shlex.join([segment[git_index], *[f"-c{v}" for v in inline]]) + " " + alias
+                )
+                found.extend(commands(head + " " + shlex.join(args[1:]), where or cwd, depth + 1))
+                args = []
             if args:
                 action, rest = args[0], args[1:]
                 if action == "push":
-                    reason = push_reason(rest)
+                    reason = push_reason(rest, items)
                     if reason:
                         found.append(("push denied: " + reason, None))
+                    if "--no-verify" in rest:
+                        found.append(("hook bypass", None))
                 if action == "commit":
                     takes_value = {
                         "-m",
@@ -307,7 +375,45 @@ def commands(text, cwd, depth=0):
     return found
 
 
+TRUSTED_CALLERS = (".agent-rails/factory-runtime.releases", ".agent-rails/factory-runtime", ".agent-rails/overlay")
+
+
+def caller_script(pid):
+    try:
+        argv = [part.decode() for part in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:-1]]
+        base = os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        ps = subprocess.run(
+            ["ps", "-o", "command=", "-p", pid], capture_output=True, text=True, timeout=10, check=False
+        )
+        argv, base = ps.stdout.split(), "/"
+    if not argv or not Path(argv[0]).name.startswith("python"):
+        return None
+    skip = False
+    for arg in argv[1:]:
+        if skip or arg in {"-X", "-W"}:
+            skip = not skip
+        elif arg in {"-c", "-m", "-"}:
+            return None
+        elif not arg.startswith("-"):
+            return Path(os.path.realpath(Path(base) / arg))
+    return None
+
+
+def argv_main(pid, args):
+    found = commands(shlex.join(["git", *args]), os.getcwd())
+    reasons = [action.removeprefix("push denied: ") for action, _ in found if action.startswith("push denied: ")]
+    script = caller_script(pid) if reasons else None
+    roots = [Path(os.path.realpath(Path.home() / root)) for root in TRUSTED_CALLERS]
+    if not reasons or script and any(script.is_relative_to(root) for root in roots):
+        return 0
+    print(f"git push refused: {reasons[0]}", file=sys.stderr)
+    return 2
+
+
 def main():
+    if sys.argv[1:2] == ["--git-argv"] and sys.argv[3:4] == ["--"]:
+        return argv_main(sys.argv[2], sys.argv[4:])
     try:
         payload = json.load(sys.stdin)
         tool = payload.get("tool_input") or {}
