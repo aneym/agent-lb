@@ -112,7 +112,13 @@ def allowed_scripts(home: Path) -> dict[str, set[str]]:
 
 
 def exact_commands(home: Path) -> frozenset[str]:
-    shipped = [entry.get("command") for entry in shipped_manifest(home)[0]]
+    entries, blobs = shipped_manifest(home)
+    shipped = [entry.get("command") for entry in entries]
+    shipped += [
+        f'python3 "$HOME/.claude/hooks/{name}"'
+        for name in NON_FLOOR_GUARDS
+        if name.endswith(".py") and f"hooks/{name}" in blobs
+    ]
     return frozenset(
         [hook["command"] for _event, _matcher, hook, _source in SETTINGS_HOOKS]
         + [OFFLOAD_COMMAND]
