@@ -129,6 +129,7 @@ def retire_hook_registries(home: Path, changes: dict[Path, str | None], kept: di
     paths = set(folder.glob("registry*.json"))
     paths.update(path for path in changes if path.parent == folder and path.name.startswith("registry"))
     for path in paths:
+        deleting = path in changes and changes[path] is None
         pending = changes.pop(path, None)
         if pending is not None:
             registry = json.loads(pending)
@@ -137,7 +138,9 @@ def retire_hook_registries(home: Path, changes: dict[Path, str | None], kept: di
         else:
             continue
         cleaned = without_retired_hooks(registry, home, retired)
-        if pending is not None or cleaned != registry:
+        if deleting:
+            changes[path] = None
+        elif pending is not None or cleaned != registry:
             changes[path] = json.dumps(cleaned, indent=2, ensure_ascii=False) + "\n"
         for target in hook_targets(registry, home):
             if target not in retired and target in changes and changes[target] is None:
