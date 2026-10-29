@@ -75,16 +75,34 @@ def interpreter():
 
 
 def trusted(path):
-    for current in (os.path.abspath(path), os.path.realpath(path)):
-        while not os.path.lexists(current):
+    pending = [part for part in os.path.abspath(path).split("/") if part]
+    current, hops = "/", 0
+    info = os.lstat(current)
+    if info.st_uid != 0 or info.st_mode & 0o022:
+        raise Refused(f"{current} is not root-owned and closed to other writers")
+    while pending:
+        part = pending.pop(0)
+        if part == ".":
+            continue
+        if part == "..":
             current = os.path.dirname(current)
-        while True:
-            info = os.lstat(current)
-            if info.st_uid != 0 or (not stat.S_ISLNK(info.st_mode) and info.st_mode & 0o022):
+            continue
+        step = os.path.join(current, part)
+        if not os.path.lexists(step):
+            return
+        info = os.lstat(step)
+        if stat.S_ISLNK(info.st_mode):
+            hops += 1
+            if info.st_uid != 0 or hops > 40:
+                current = step
                 raise Refused(f"{current} is not root-owned and closed to other writers")
-            if current == "/":
-                break
-            current = os.path.dirname(current)
+            target = os.readlink(step)
+            current = "/" if target.startswith("/") else current
+            pending = [piece for piece in target.split("/") if piece] + pending
+            continue
+        current = step
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            raise Refused(f"{current} is not root-owned and closed to other writers")
 
 
 def root_dir(path, mode=0o755):
