@@ -37,14 +37,27 @@ def _module_level(tree: ast.AST) -> list[ast.AST]:
     return found
 
 
-def _imported(tree: ast.AST) -> list[str]:
+def _base(rel: str, node: ast.ImportFrom) -> str | None:
+    if not node.level:
+        return node.module
+    package = Path(rel).parent.parts
+    if node.level > 1:
+        package = package[: len(package) - node.level + 1]
+    if not package:
+        return None
+    return ".".join([*package, *([node.module] if node.module else [])])
+
+
+def _imported(rel: str, tree: ast.AST) -> list[str]:
     names: list[str] = []
     for node in _module_level(tree):
         if isinstance(node, ast.Import):
             names.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            names.append(node.module)
-            names.extend(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = _base(rel, node)
+            if base:
+                names.append(base)
+                names.extend(f"{base}.{alias.name}" for alias in node.names)
     return [name for name in names if name.split(".", 1)[0] in LOCAL_ROOTS]
 
 
@@ -60,7 +73,7 @@ def closure(root: Path, entry: str = FOLLOWER) -> set[str]:
             tree = ast.parse((root / rel).read_text(), filename=rel)
         except (OSError, SyntaxError, ValueError):
             continue
-        for dotted in _imported(tree):
+        for dotted in _imported(rel, tree):
             todo.extend(_packages(root, dotted))
             found = _module_file(root, dotted)
             if found:
