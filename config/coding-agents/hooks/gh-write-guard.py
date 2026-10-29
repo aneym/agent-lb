@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 WRITES = {
@@ -20,6 +21,10 @@ WRITES = {
     "variable": {"set", "delete"},
 }
 REFUSAL = "BLOCKED: kept floor \"Alex's credentials\": gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN)."
+REF_REFUSAL = 'BLOCKED: kept floor "git": gh api may not force-update a ref or delete the default branch. Push a new branch instead.'
+REF_ENDPOINT = re.compile(r"(?:^|/)repos/[^/]+/[^/]+/git/refs(?:/(?P<ref>[^?]+))?(?:\?.*)?$")
+DEFAULT_REFS = {"heads/main", "heads/master"}
+TRUE = {"true", "1", "yes"}
 PARSE_REFUSAL = "BLOCKED: gh-write-guard could not parse this command ({}), and a gh or git token may be present, so it fails closed. Split it into simpler commands, or use the Edit and Write tools."
 
 
@@ -129,6 +134,53 @@ def write(args):
             )
         )
     return input_body or bool(fields) and method != "GET"
+
+
+def ref_rewrite(args):
+    if not args or args[0] != "api":
+        return False
+    method, endpoint, fields, inputs, queries, i = "", "", {}, [], [], 1
+    while i < len(args):
+        arg, value = args[i], None
+        if arg in {"-X", "--method", "-f", "-F", "--field", "--raw-field", "--input"}:
+            i += 1
+            value = args[i] if i < len(args) else ""
+        elif arg.startswith(("--method=", "--field=", "--raw-field=", "--input=")):
+            arg, value = arg.split("=", 1)
+        elif arg.startswith(("-X", "-f", "-F")) and len(arg) > 2:
+            arg, value = arg[:2], arg[2:]
+        elif not arg.startswith("-") and not endpoint:
+            endpoint = arg.strip("/")
+        if arg in {"-X", "--method"}:
+            method = (value or "").upper()
+        elif arg in {"-f", "-F", "--field", "--raw-field"}:
+            key, _, field = (value or "").partition("=")
+            fields[key] = field
+            if key == "query":
+                queries.append(field)
+        elif arg == "--input":
+            inputs.append(value or "")
+        i += 1
+    if endpoint == "graphql":
+        text = " ".join(queries)
+        return bool(inputs) or bool(re.search(r"updateRefs?\b[^}]*\bforce\s*:\s*true|\bdeleteRef\b", text))
+    match = REF_ENDPOINT.search(endpoint)
+    if not match:
+        return False
+    method = method or ("POST" if fields or inputs else "GET")
+    ref = urllib.parse.unquote(match["ref"] or "").removeprefix("refs/")
+    if method == "DELETE":
+        return ref in DEFAULT_REFS
+    if method not in {"POST", "PATCH", "PUT"}:
+        return False
+    for name in inputs:
+        try:
+            body = json.loads(Path(name).read_text()) if name != "-" else None
+        except (OSError, ValueError):
+            body = None
+        if not isinstance(body, dict) or str(body.get("force", "")).lower() in TRUE:
+            return True
+    return str(fields.get("force", "")).lower() in TRUE
 
 
 def shell_words(text, heredoc=False):
@@ -384,6 +436,8 @@ def check(command, environ=None, depth=0):
         app = token.startswith("ghs_") or (
             not token and env.get("GH_APP") == "on" and env.get("GH_APP_FALLBACK") == "off" and app_shim
         )
+        if ref_rewrite(args):
+            raise PermissionError(REF_REFUSAL)
         if write(args) and (not app or token and token_login(token, env) in {"aneym", "alexneyman"}):
             raise PermissionError(REFUSAL)
 
@@ -403,8 +457,8 @@ def main():
         if not isinstance(command, str):
             raise ValueError("command is not text")
         check(command)
-    except PermissionError:
-        print(REFUSAL, file=sys.stderr)
+    except PermissionError as exc:
+        print(str(exc) or REFUSAL, file=sys.stderr)
         return 2
     except (ValueError, TypeError, AttributeError) as exc:
         print(PARSE_REFUSAL.format(exc), file=sys.stderr)

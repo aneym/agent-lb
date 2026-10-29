@@ -145,12 +145,17 @@ def fallback_commands(text, cwd):
     return found
 
 
+BYPASS = "Git hook bypass is forbidden: do not use --no-verify, -n or core.hooksPath overrides; fix the hook failure."
 FORCE_PUSH = (
     "Force pushes (--force, -f, --force-with-lease, --force-if-includes, --mirror, +refspec) are a kept floor; "
     "push rebased work to a new branch instead."
 )
 
 
+CONFIG_ENV = "git --config-env on a push or alias hides its value; use -c."
+RECEIVE = "git receive-pack skips the force check; use git push."
+PUSH_VERBS = {"push", "send-pack", "http-push"}
+DASHED = {"git-send-pack", "git-receive-pack", "git-http-push"}
 FORCE_OPTIONS = ("force", "mirror", "force-with-lease", "force-if-includes")
 COMMON_COMMANDS = frozenset(
     "add am apply bisect blame branch cat-file checkout cherry-pick clean clone commit config describe diff fetch "
@@ -240,6 +245,9 @@ def commands(text, cwd, depth=0):
             continue
         if any(word.startswith(("GIT_DIR=", "GIT_WORK_TREE=")) for word in segment):
             unsafe = True
+        dashed = next((i for i, word in enumerate(segment) if Path(word).name in DASHED), None)
+        if dashed is not None:
+            segment = [*segment[:dashed], "git", Path(segment[dashed]).name[4:], *segment[dashed + 1 :]]
         git_index = next((i for i, word in enumerate(segment) if Path(word).name == "git"), None)
         if git_index is not None:
             prefix_head = next((word for word in segment[:git_index] if "=" not in word), None)
@@ -253,11 +261,12 @@ def commands(text, cwd, depth=0):
                 "timeout",
             }:
                 rest = segment[git_index + 1 :]
-                if "push" in rest and push_reason(rest[rest.index("push") + 1 :]):
+                verb = next((word for word in rest if word in PUSH_VERBS | {"receive-pack"}), None)
+                if verb == "receive-pack" or verb and push_reason(rest[rest.index(verb) + 1 :]):
                     found.append(("push denied: " + FORCE_PUSH, None))
                 continue
             args, where = segment[git_index + 1 :], cwd
-            bypass, inline = False, []
+            bypass, inline, config_env = False, [], False
             pre = segment[:git_index]
             if any(word in {"-C", "--chdir", "-D"} or word.startswith("--chdir=") for word in pre):
                 where = None
@@ -278,6 +287,7 @@ def commands(text, cwd, depth=0):
                     if args:
                         value = args.pop(0)
                         bypass |= arg in {"-c", "--config-env"} and value.lower().startswith("core.hookspath=")
+                        config_env |= arg == "--config-env"
                         inline += [value] if arg == "-c" else []
                     if arg in {"--git-dir", "--work-tree"}:
                         where = None
@@ -286,10 +296,13 @@ def commands(text, cwd, depth=0):
                     inline.append(arg[2:])
                 elif arg.startswith("--config-env="):
                     bypass |= arg.split("=", 1)[1].lower().startswith("core.hookspath=")
+                    config_env = True
                 elif arg.startswith(("--git-dir=", "--work-tree=")):
                     where = None
             if bypass:
                 found.append(("hook bypass", None))
+            if config_env and args and (args[0] in PUSH_VERBS or args[0] not in COMMON_COMMANDS):
+                found.append(("push denied: " + CONFIG_ENV, None))
             items = (
                 config_items(where or cwd, tuple(inline)) if args and args[0] not in COMMON_COMMANDS - {"push"} else ()
             )
@@ -304,12 +317,14 @@ def commands(text, cwd, depth=0):
                 args = []
             if args:
                 action, rest = args[0], args[1:]
-                if action == "push":
-                    reason = push_reason(rest, items)
+                if action == "receive-pack":
+                    found.append(("push denied: " + RECEIVE, None))
+                if action in PUSH_VERBS:
+                    reason = push_reason(rest, items if action == "push" else ())
                     if reason:
                         found.append(("push denied: " + reason, None))
-                    if "--no-verify" in rest:
-                        found.append(("hook bypass", None))
+                    if any(len(arg) > 5 and "--no-verify".startswith(arg) for arg in rest):
+                        found.append(("push hook bypass", None))
                 if action == "commit":
                     takes_value = {
                         "-m",
@@ -377,7 +392,11 @@ def commands(text, cwd, depth=0):
 
 def argv_main(args):
     found = commands(shlex.join(["git", *args]), os.getcwd())
-    reasons = [action.removeprefix("push denied: ") for action, _ in found if action.startswith("push denied: ")]
+    reasons = [
+        action.removeprefix("push denied: ") if action != "push hook bypass" else BYPASS
+        for action, _ in found
+        if action.startswith("push denied: ") or action == "push hook bypass"
+    ]
     if not reasons:
         return 0
     print(f"git push refused: {reasons[0]}", file=sys.stderr)
@@ -412,8 +431,8 @@ def main():
                 reason = (
                     action.removeprefix("push denied: ")
                     if action.startswith("push denied: ")
-                    else "Git hook bypass is forbidden: do not use --no-verify, -n or core.hooksPath overrides; fix the hook failure."
-                    if action == "hook bypass"
+                    else BYPASS
+                    if action in {"hook bypass", "push hook bypass"}
                     else "git worktree remove --force would discard uncommitted files in that worktree; commit or move "
                     "them first, then remove it without --force."
                     if action == "worktree remove"
