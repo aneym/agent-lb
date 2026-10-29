@@ -22,9 +22,10 @@ def expected_presentation(view, segments, old_root, new_root):
         return json.loads(json.dumps(value).replace(old_root, new_root))
 
     view = moved(view)
-    parts = [capped(moved(segment)) if folded else moved(segment) for segment, folded in segments]
-    for key in ("context", "shown"):
-        view[key] = "\n".join(part[key] for part in parts if part.get(key))
+    parts = [(capped(moved(segment)) if folded else moved(segment), plain) for segment, folded, plain in segments]
+    contexts = [part for part, plain in parts if not plain] + [part for part, plain in parts if plain]
+    view["context"] = "\n".join(part["context"] for part in contexts if part.get("context"))
+    view["shown"] = "\n".join(part["shown"] for part, _plain in parts if part.get("shown"))
     return view
 
 

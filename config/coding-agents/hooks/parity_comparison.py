@@ -5,7 +5,7 @@ import signal
 import parity_offload  # type: ignore[missing-import]
 from parity_cases import payload_for, setup_case  # type: ignore[missing-import]
 
-from parity_execution import direct_argv, effect, effective, floor_failed, floor_of, hook_timeout, run_direct, run_shell, with_exec_timer, with_floor  # type: ignore[missing-import]  # isort: skip  # fmt: skip
+from parity_execution import direct_argv, effect, effective, floor_failed, floor_of, hook_timeout, parse_json, run_direct, run_shell, with_exec_timer, with_floor  # type: ignore[missing-import]  # isort: skip  # fmt: skip
 from parity_presentation import expected_presentation, same_effect  # type: ignore[missing-import]
 from parity_registry import new_hooks, old_hooks  # type: ignore[missing-import]
 from parity_sandbox import TEST_PANE, files_of  # type: ignore[missing-import]
@@ -54,11 +54,17 @@ def same(value, run):
 
 
 def segments(event, old_results, new_results):
+
+    def plain(result):
+        return event == "UserPromptSubmit" and result["code"] == 0 and parse_json(result["out"]) is None
+
     unfolded = {result["command"] for result in new_results if not result["trace"]}
-    folded = (effect(event, [result for result in old_results if result["command"] not in unfolded]), True)
-    own = {result["command"]: (effect(event, [result]), False) for result in old_results}
+    traced = [result for result in new_results if result["trace"]]
+    folded_results = [result for result in old_results if result["command"] not in unfolded]
+    folded = (effect(event, folded_results), True, bool(traced) and plain(traced[0]))
+    own = {result["command"]: (effect(event, [result]), False, plain(result)) for result in old_results}
     order = [own[result["command"]] for result in new_results if not result["trace"] and result["command"] in own]
-    first = next((i for i, result in enumerate(new_results) if result["trace"]), 0)
+    first = new_results.index(traced[0]) if traced else 0
     before = sum(1 for result in new_results[:first] if not result["trace"] and result["command"] in own)
     return order[:before] + [folded] + order[before:]
 
