@@ -12,7 +12,14 @@ import time
 from pathlib import Path
 
 from route_pace_state import reservation_request  # pyrefly: ignore [missing-import]
-from route_run_checkout import cleanup_remote, git_value, prepare_remote, remote_command, validate_worktree  # pyrefly: ignore [missing-import]
+from route_run_checkout import (  # pyrefly: ignore [missing-import]
+    REMOTE_CLEANUP_GRACE_S,
+    cleanup_remote,
+    git_value,
+    prepare_remote,
+    remote_command,
+    validate_worktree,
+)
 from route_run_jobs import launch_run, run_path, save_run  # pyrefly: ignore [missing-import]
 from route_resolve_one import append_decision  # pyrefly: ignore [missing-import]
 from route_target import local_environment, resolve_target, t3_settings  # pyrefly: ignore [missing-import]
@@ -150,7 +157,7 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
             )
             release_lease(row, "ok")
             try:
-                process.communicate(brief, timeout=args.timeout + (5 if host else 0))
+                process.communicate(brief, timeout=args.timeout + (REMOTE_CLEANUP_GRACE_S if host else 0))
                 exit_code = process.returncode
                 timed_out = exit_code == 124 and host is not None
             except subprocess.TimeoutExpired:
