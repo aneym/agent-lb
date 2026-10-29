@@ -134,31 +134,12 @@ def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
                 if not isinstance(command, str):
                     continue
 
-                before = command
-                factory_bin = r'(?:\$HOME|/[^\s"\':;]*)/(?:(?:repos/)?factory|\.agent-rails/factory-runtime)/bin/'
-                command = re.sub(
-                    factory_bin + r'agent-shims(?=[\s"\':;/]|$)',
-                    "$HOME/.local/share/desktop-guard/agent-shims",
-                    command,
-                )
-                command = re.sub(factory_bin + r'(?=[^\s"\':;/]+(?:$|[\s"\';]))', "$HOME/.local/bin/", command)
-                command = re.sub(factory_bin, "$HOME/.agent-rails/factory-runtime/bin/", command)
-                from_factory = command != before and "/.local/bin/" in command
                 command = re.sub(r'/[^\s"\':;]*/repos/skill-stats/', "$HOME/.local/share/skill-stats/", command)
 
                 match = re.fullmatch(r'((?:"[^"\n]+"|[^\s]+)\s+)?"((?:\$HOME)?/[^"\n]+)"(.*)', command)
                 if (
                     match
-                    and (
-                        from_factory
-                        or any(
-                            path in command
-                            for path in (
-                                "/.agent-rails/factory-runtime/",
-                                "/.local/share/skill-stats/",
-                            )
-                        )
-                    )
+                    and "/.local/share/skill-stats/" in command
                     and not dispatcher.floor_name(command)
                     and "# hook missing: fail open" not in command
                 ):

@@ -39,13 +39,6 @@ def ensure_harness_mcp(host_home, run):
         binaries = (binary, "cursor", "agent") if name == "cursor" else (binary,)
         installed[name] = any(shutil.which(item, path=search_path) for item in binaries)
     result = {name: "absent" for name in paths}
-    for name in ("page-shot", "agent-test-account"):
-        source_bin = home / ".agent-rails/factory-runtime/bin" / name
-        link = home / ".local/bin" / name
-        if source_bin.is_file() and not link.exists() and not link.is_symlink():
-            link.parent.mkdir(parents=True, exist_ok=True)
-            link.symlink_to(Path("../../.agent-rails/factory-runtime/bin") / name)
-            result[name] = "fixed"
     source = home / ".claude.json"
 
     def read_servers(path):

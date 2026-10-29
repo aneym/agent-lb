@@ -22,8 +22,8 @@ FLOOR_LEAVES = {
         "py",
     ),
     "stash-guard": (
-        '/usr/bin/python3 "$HOME/.agent-rails/factory-runtime/bin/stash-guard"',
-        ".agent-rails/factory-runtime/bin/stash-guard",
+        '/usr/bin/python3 "$HOME/.claude/hooks/stash-guard"',
+        ".claude/hooks/stash-guard",
         "py",
     ),
     "host-credential-guard.py": (
