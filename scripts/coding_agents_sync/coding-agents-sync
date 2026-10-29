@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+import argparse
+import fcntl
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from claude_config_pull import pull_claude_config  # type: ignore[missing-import]
+from export_prune import prune_exports  # type: ignore[missing-import]
+from routing_table_digest import table_digest  # type: ignore[missing-import]
+from sync_records import (  # type: ignore[missing-import]
+    applied_commit,
+    checkpoints,
+    delete_marker,
+    durable,
+    restore,
+    utc,
+)
+
+ORIGIN = "https://github.com/aneym/agent-lb.git"
+
+
+def run(command, timeout=30, env=None):
+    return subprocess.run(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, env=env, close_fds=True
+    )
+
+
+def output(proc):
+    return proc.stdout.decode("utf-8", "replace").strip()
+
+
+def stderr(proc):
+    return proc.stderr.decode("utf-8", "replace").strip()
+
+
+class Failure(Exception):
+    def __init__(self, reason, detail):
+        self.reason, self.detail = reason, str(detail)[:2000]
+
+
+def git(args, reason, timeout=30, tool="git"):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+    try:
+        proc = run([tool] + args, timeout=timeout, env=env)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise Failure(reason, exc)
+    if proc.returncode:
+        raise Failure(reason, stderr(proc) or "git exit %d" % proc.returncode)
+    return proc
+
+
+def rollback(marker, checkpoint_root, home, marker_path):
+    try:
+        restored = restore(marker, checkpoint_root, home)
+        delete_marker(marker_path)
+    except Exception as exc:
+        raise Failure("restore_failed", exc)
+    return restored
+
+
+def drop_lock(clone, after, before):
+    lock = clone / ".git/index.lock"
+    try:
+        if after <= lock.stat().st_mtime < before:
+            lock.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def advance(clone, candidate, warnings):
+    start = time.time()
+    drop_lock(clone, 0, start - 900)
+    try:
+        git(["-C", str(clone), "checkout", "-q", "-B", "main", candidate], "checkout_failed", 600)
+    except Failure as exc:
+        drop_lock(clone, start, start + 3600)
+        warnings.append("clone not advanced: %s" % exc.detail)
+
+
+def payload(result, commit=None, previous=None, reason=None, detail=None, warnings=None):
+    return {
+        "result": result,
+        "commit": commit,
+        "previous": previous,
+        "reason": reason,
+        "detail": str(detail)[:2000] if detail is not None else None,
+        "warnings": warnings or [],
+    }
+
+
+def sync(home, clone, origin, wait, install_timeout):
+    warnings = []
+    previous = candidate = None
+    lb = clone.parent
+    lb.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(str(lb / "coding-agents-sync.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    until = time.monotonic() + wait
+    try:
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= until:
+                    return payload("busy")
+                time.sleep(min(0.5, max(0, until - time.monotonic())))
+        marker_path = lb / "coding-agents-sync.inflight.json"
+        checkpoint_root = home / ".agent-lb/config-checkpoints/coding-agents"
+        applied_path = lb / "managed/coding-agents/APPLIED"
+        applied_tmp = applied_path.with_name("APPLIED.tmp.%d" % os.getpid())
+        try:
+            if marker_path.exists():
+                try:
+                    marker = json.loads(marker_path.read_text())
+                    if (
+                        not isinstance(marker, dict)
+                        or marker.get("phase") not in ("installing", "finalizing")
+                        or not isinstance(marker.get("installer_checkpoints_before"), list)
+                        or not isinstance(marker.get("candidate"), str)
+                        or (
+                            marker["phase"] == "finalizing"
+                            and (
+                                not isinstance(marker.get("applied"), dict)
+                                or marker["applied"].get("commit") != marker["candidate"]
+                            )
+                        )
+                    ):
+                        raise ValueError("invalid marker")
+                except (OSError, ValueError, TypeError, KeyError) as exc:
+                    raise Failure("restore_failed", "marker: %s" % exc)
+                candidate, previous = marker["candidate"], marker.get("previous")
+                if marker["phase"] == "installing":
+                    warnings.append(
+                        "interrupted install rolled back: %s" % rollback(marker, checkpoint_root, home, marker_path)
+                    )
+                else:
+                    try:
+                        try:
+                            recorded = json.loads(applied_path.read_text()) == marker["applied"]
+                        except (OSError, ValueError):
+                            recorded = False
+                        if not recorded:
+                            durable(applied_path, marker["applied"], applied_tmp)
+                        delete_marker(marker_path)
+                    except OSError as exc:
+                        raise Failure("record_failed", exc)
+                    warnings.append(("recovered %s" if recorded else "recovered APPLIED %s") % candidate[:12])
+            candidate = None
+            if not clone.exists():
+                git(["clone", "-q", "--origin", "origin", origin, str(clone)], "clone_failed", 120)
+            else:
+                try:
+                    git(["-C", str(clone), "rev-parse", "--git-dir"], "clone_failed")
+                except Failure:
+                    raise Failure("clone_failed", "not a repository")
+            prune_exports(clone, lb, warnings)
+            actual = output(git(["-C", str(clone), "remote", "get-url", "origin"], "origin_mismatch"))
+            if actual != origin:
+                raise Failure("origin_mismatch", "%s != %s" % (actual, origin))
+            git(
+                ["-C", str(clone), "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main"],
+                "fetch_failed",
+                300,
+            )
+            candidate = output(
+                git(["-C", str(clone), "rev-parse", "--verify", "refs/remotes/origin/main^{commit}"], "fetch_failed")
+            )
+            previous = applied_commit(applied_path, warnings)
+            head = output(git(["-C", str(clone), "rev-parse", "HEAD"], "non_fast_forward"))
+            ancestry = [["merge-base", "--is-ancestor", head, candidate]]
+            if previous:
+                ancestry.extend(
+                    [["cat-file", "-e", previous + "^{commit}"], ["merge-base", "--is-ancestor", previous, candidate]]
+                )
+            for args in ancestry:
+                try:
+                    git(["-C", str(clone)] + args, "non_fast_forward")
+                except Failure:
+                    raise Failure("non_fast_forward", "%s %s %s" % (head, previous, candidate))
+            export = lb / "coding-agents-export"
+            eg = ["-C", str(export)]
+            if not export.exists():
+                git(
+                    ["-C", str(clone), "worktree", "add", "--no-checkout", "--detach", str(export), candidate],
+                    "export_failed",
+                    120,
+                    "/usr/bin/git",
+                )
+            if not (export / "config/coding-agents/install-policy.py").exists():
+                git(eg + ["sparse-checkout", "set", "config/coding-agents", "clients", "scripts"], "export_failed", 120)
+                git(eg + ["read-tree", "-mu", "HEAD"], "export_failed", 120)
+            if output(git(eg + ["rev-parse", "HEAD"], "export_failed")) != candidate:
+                git(eg + ["checkout", "--detach", candidate], "export_failed", 120)
+            policy = export / "config/coding-agents"
+            if previous == candidate:
+                preview = run(
+                    [sys.executable, str(policy / "install-policy.py"), "--home", str(home), "--print"], install_timeout
+                )
+                if (
+                    preview.returncode == 0
+                    and b"managed routing configuration already converged" in preview.stdout.splitlines()
+                ):
+                    if head != candidate:
+                        advance(clone, candidate, warnings)
+                    return payload("unchanged", candidate, previous, warnings=warnings)
+            try:
+                verification = run(
+                    [sys.executable, str(policy / "verify-routing"), "--source-only"],
+                    120,
+                    dict(os.environ, AGENT_LB_USER_HOME=str(home)),
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise Failure("verify_failed", exc)
+            if verification.returncode:
+                lines = (output(verification) + "\n" + stderr(verification)).splitlines()
+                raise Failure("verify_failed", "\n".join(line for line in lines if line.startswith("FAIL ")))
+            marker = {
+                "phase": "installing",
+                "candidate": candidate,
+                "previous": previous,
+                "started_at": utc(),
+                "pid": os.getpid(),
+                "installer_checkpoints_before": checkpoints(checkpoint_root),
+                "applied": None,
+            }
+            try:
+                durable(marker_path, marker)
+            except OSError as exc:
+                raise Failure("install_failed", "marker: %s" % exc)
+            try:
+                proc = subprocess.Popen(
+                    [sys.executable, str(policy / "install-policy.py"), "--home", str(home)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                    close_fds=True,
+                    env=dict(os.environ, AGENT_LB_POLICY_FETCHED=candidate),
+                )
+                try:
+                    stdout, err = proc.communicate(timeout=install_timeout)
+                    problem = (
+                        ("signal %d" % -proc.returncode if proc.returncode < 0 else "exit %d" % proc.returncode)
+                        if proc.returncode
+                        else None
+                    )
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    stdout, err = proc.communicate()
+                    problem = "timeout after %d s" % install_timeout
+            except OSError as exc:
+                stdout, err, problem = b"", b"", "exit: %s" % exc
+            if problem:
+                rollback(marker, checkpoint_root, home, marker_path)
+                raise Failure("install_failed", "%s %s" % (problem, err.decode("utf-8", "replace")[-500:]))
+            applied = {
+                "commit": candidate,
+                "source_table_sha256": table_digest(policy),
+                "applied_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "host": socket.gethostname().split(".")[0],
+                "result": "unchanged"
+                if b"managed routing configuration already converged" in stdout.splitlines()
+                else "applied",
+            }
+            marker_final = dict(marker, phase="finalizing", applied=applied)
+            try:
+                durable(marker_path, marker_final)
+            except OSError as exc:
+                error = "marker not advanced: %s" % exc
+            else:
+                try:
+                    durable(applied_path, applied, applied_tmp)
+                except OSError as exc:
+                    error = str(exc)
+                    if applied_tmp.is_file():
+                        applied_tmp.unlink()
+                    try:
+                        durable(marker_path, marker)
+                    except OSError as reset_exc:
+                        raise Failure(
+                            "record_failed", "APPLIED not written: %s; marker not reset: %s" % (error, reset_exc)
+                        )
+                else:
+                    error = None
+            if error is not None:
+                restored = rollback(marker, checkpoint_root, home, marker_path)
+                raise Failure("record_failed", "APPLIED not written: %s; restored %s" % (error, restored))
+            advance(clone, candidate, warnings)
+            try:
+                delete_marker(marker_path)
+            except OSError as exc:
+                warnings.append("marker not removed: %s" % exc)
+            return payload(applied["result"], candidate, previous, warnings=warnings)
+        except Failure as exc:
+            return payload("failed", candidate, previous, exc.reason, exc.detail, warnings)
+    finally:
+        os.close(lock_fd)
+
+
+def main():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--wait")
+    try:
+        args = parser.parse_args()
+        wait = int(args.wait) if args.wait is not None else 0
+        home = os.environ.get("HOME")
+        timeout = int(os.environ.get("CODING_AGENTS_SYNC_INSTALL_TIMEOUT", "120"))
+        if not home or not 0 <= wait <= 3600 or timeout < 1:
+            raise ValueError("invalid arguments")
+    except (ValueError, SystemExit) as exc:
+        print(json.dumps(payload("usage", reason="invalid arguments", detail=str(exc))))
+        return 2
+    home = Path(home)
+    clone = Path(os.environ.get("AGENT_LB_POLICY_SRC", str(home / ".agent-lb/policy-src")))
+    result = sync(home, clone, os.environ.get("CODING_AGENTS_ORIGIN", ORIGIN), wait, timeout)
+    result["claude_config"] = pull_claude_config(home)
+    print(json.dumps(result, ensure_ascii=False))
+    return 1 if result["result"] == "failed" else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
