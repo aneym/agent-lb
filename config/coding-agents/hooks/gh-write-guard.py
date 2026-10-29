@@ -21,10 +21,30 @@ WRITES = {
     "variable": {"set", "delete"},
 }
 REFUSAL = "BLOCKED: kept floor \"Alex's credentials\": gh writes may not use Alex's account. Use the factory gh App shim with GH_APP=on GH_APP_FALLBACK=off, or an explicit GitHub App installation token (GH_TOKEN/GITHUB_TOKEN)."
-REF_REFUSAL = 'BLOCKED: kept floor "git": gh api may not force-update a ref or delete the default branch. Push a new branch instead.'
-REF_ENDPOINT = re.compile(r"(?:^|/)repos/[^/]+/[^/]+/git/refs(?:/(?P<ref>[^?]+))?(?:\?.*)?$")
-DEFAULT_REFS = {"heads/main", "heads/master"}
-TRUE = {"true", "1", "yes"}
+API_REFUSAL = 'BLOCKED: kept floor "no gh writes": gh api may only read (GET, HEAD or a GraphQL query), and {}.'
+API_VALUES = {
+    "-H": "header",
+    "--header": "header",
+    "-X": "method",
+    "--method": "method",
+    "-f": "raw-field",
+    "--raw-field": "raw-field",
+    "-F": "field",
+    "--field": "field",
+    "--input": "input",
+    "--hostname": "hostname",
+    "-q": "jq",
+    "--jq": "jq",
+    "-t": "template",
+    "--template": "template",
+    "--cache": "cache",
+    "-p": "preview",
+    "--preview": "preview",
+    "-R": "repo",
+    "--repo": "repo",
+}
+API_FLAGS = {"-i", "--include", "--paginate", "--silent", "--slurp", "--verbose", "-h", "--help"}
+GLOBALS = {"-R": "repo", "--repo": "repo", "--hostname": "hostname"}
 PARSE_REFUSAL = "BLOCKED: gh-write-guard could not parse this command ({}), and a gh or git token may be present, so it fails closed. Split it into simpler commands, or use the Edit and Write tools."
 
 
@@ -76,111 +96,80 @@ def guarded_shim(path):
     return os.path.basename(beside) != os.path.basename(path) and guarded_shim(beside)
 
 
-def write(args):
-    if not args:
-        return False
-    if args[0] != "api":
-        return len(args) > 1 and args[1] in WRITES.get(args[0], set())
-    method, endpoint = "", ""
-    fields, queries = [], []
-    input_body = False
-    i = 1
+def flag_pairs(args, values, flags, stop):
+    pairs, positional, i = [], [], 0
     while i < len(args):
         arg = args[i]
-        value = ""
-        if arg in {
-            "-X",
-            "--method",
-            "-f",
-            "-F",
-            "--field",
-            "--raw-field",
-            "--input",
-            "-H",
-            "--header",
-            "--hostname",
-            "--jq",
-            "-q",
-            "--template",
-            "-t",
-            "--cache",
-        }:
-            i += 1
-            value = args[i] if i < len(args) else ""
-        elif arg.startswith(("--method=", "--field=", "--raw-field=", "--input=")):
-            arg, value = arg.split("=", 1)
-        elif arg.startswith(("-X", "-f", "-F")):
-            arg, value = arg[:2], arg[2:]
-        elif not arg.startswith("-") and not endpoint:
-            endpoint = arg.strip("/")
-        if arg in {"-X", "--method"}:
-            method = value.upper()
-        elif arg in {"-f", "-F", "--field", "--raw-field"}:
-            fields.append(value)
-            if value.startswith("query="):
-                queries.append(value[6:])
-        elif arg == "--input":
-            input_body = True
         i += 1
-    if method in {"POST", "PATCH", "PUT", "DELETE"}:
-        return True
-    if endpoint == "graphql":
-        return (
-            input_body
-            or not queries
-            or any(
-                not query.lstrip().startswith(("query", "{")) or re.search(r"\bmutation\b", query, re.IGNORECASE)
-                for query in queries
-            )
-        )
-    return input_body or bool(fields) and method != "GET"
+        if arg == "--":
+            positional += args[i:]
+            break
+        if arg == "-" or not arg.startswith("-"):
+            positional.append(arg)
+            if stop:
+                positional += args[i:]
+                break
+            continue
+        if arg.startswith("--"):
+            name, eq, value = arg.partition("=")
+            if name in flags:
+                continue
+            if name not in values:
+                raise PermissionError(API_REFUSAL.format(f"{name} is not a flag the guard knows"))
+            if not eq:
+                if i >= len(args):
+                    raise PermissionError(API_REFUSAL.format(f"{name} has no value"))
+                value, i = args[i], i + 1
+            pairs.append((values[name], value))
+            continue
+        for j in range(1, len(arg)):
+            short = "-" + arg[j]
+            if short in flags:
+                continue
+            if short not in values:
+                raise PermissionError(API_REFUSAL.format(f"{short} is not a flag the guard knows"))
+            value = arg[j + 1 :]
+            if not value:
+                if i >= len(args):
+                    raise PermissionError(API_REFUSAL.format(f"{short} has no value"))
+                value, i = args[i], i + 1
+            pairs.append((values[short], value))
+            break
+    return pairs, positional
 
 
-def ref_rewrite(args):
-    if not args or args[0] != "api":
-        return False
-    method, endpoint, fields, inputs, queries, i = "", "", {}, [], [], 1
-    while i < len(args):
-        arg, value = args[i], None
-        if arg in {"-X", "--method", "-f", "-F", "--field", "--raw-field", "--input"}:
-            i += 1
-            value = args[i] if i < len(args) else ""
-        elif arg.startswith(("--method=", "--field=", "--raw-field=", "--input=")):
-            arg, value = arg.split("=", 1)
-        elif arg.startswith(("-X", "-f", "-F")) and len(arg) > 2:
-            arg, value = arg[:2], arg[2:]
-        elif not arg.startswith("-") and not endpoint:
-            endpoint = arg.strip("/")
-        if arg in {"-X", "--method"}:
-            method = (value or "").upper()
-        elif arg in {"-f", "-F", "--field", "--raw-field"}:
-            key, _, field = (value or "").partition("=")
-            fields[key] = field
-            if key == "query":
-                queries.append(field)
-        elif arg == "--input":
-            inputs.append(value or "")
-        i += 1
-    if endpoint == "graphql":
-        text = " ".join(queries)
-        return bool(inputs) or bool(re.search(r"updateRefs?\b[^}]*\bforce\s*:\s*true|\bdeleteRef\b", text))
-    match = REF_ENDPOINT.search(endpoint)
-    if not match:
-        return False
-    method = method or ("POST" if fields or inputs else "GET")
-    ref = urllib.parse.unquote(match["ref"] or "").removeprefix("refs/")
-    if method == "DELETE":
-        return ref in DEFAULT_REFS
-    if method not in {"POST", "PATCH", "PUT"}:
-        return False
-    for name in inputs:
-        try:
-            body = json.loads(Path(name).read_text()) if name != "-" else None
-        except (OSError, ValueError):
-            body = None
-        if not isinstance(body, dict) or str(body.get("force", "")).lower() in TRUE:
-            return True
-    return str(fields.get("force", "")).lower() in TRUE
+def api_refusal(args):
+    pairs, positional = flag_pairs(args, API_VALUES, API_FLAGS, False)
+    if len(positional) != 1:
+        return "it needs exactly one endpoint"
+    split = urllib.parse.urlsplit(positional[0])
+    endpoint = (split.path if split.scheme else positional[0]).strip("/").removeprefix("api/v3/")
+    methods = [value.upper() for kind, value in pairs if kind == "method"]
+    fields = [(kind, value) for kind, value in pairs if kind in {"field", "raw-field"}]
+    inputs = [value for kind, value in pairs if kind == "input"]
+    if endpoint in {"graphql", "api/graphql"}:
+        queries = [value.partition("=")[2] for _kind, value in fields if value.partition("=")[0] == "query"]
+        if methods and methods[-1] != "POST" or inputs:
+            return "a GraphQL body from --input or another method cannot be read"
+        if any(kind == "field" and value.partition("=")[2].startswith("@") for kind, value in fields):
+            return "a GraphQL field read from a file cannot be read"
+        if len(queries) != 1:
+            return "the GraphQL query cannot be read"
+        query = queries[0].lstrip()
+        if re.search(r"\bmutation\b", query, re.IGNORECASE) or not query.startswith(("query", "{")):
+            return "a GraphQL mutation is a write"
+        return None
+    method = methods[-1] if methods else "POST" if fields or inputs else "GET"
+    return None if method in {"GET", "HEAD"} else f"{method} is a write"
+
+
+def gh_command(args):
+    _pairs, positional = flag_pairs(args, GLOBALS, {"--version", "--help", "-h"}, True)
+    return positional
+
+
+def write(args):
+    return len(args) > 1 and args[1] in WRITES.get(args[0], set())
 
 
 def shell_words(text, heredoc=False):
@@ -426,18 +415,18 @@ def check(command, environ=None, depth=0):
                     break
         if os.path.basename(word) not in {"gh", "gh-shim.py"}:
             continue
-        while args and (
-            args[0] in {"-R", "--repo", "--hostname"} or args[0].startswith(("--repo=", "-R", "--hostname="))
-        ):
-            args = args[2:] if args[0] in {"-R", "--repo", "--hostname"} else args[1:]
+        args = gh_command(args)
+        if args[:1] == ["api"]:
+            why = api_refusal(args[1:])
+            if why:
+                raise PermissionError(API_REFUSAL.format(why))
+            continue
         token = env.get("GH_TOKEN") or env.get("GITHUB_TOKEN") or ""
         path = shutil.which(word, path=env.get("PATH")) or word
         app_shim = guarded_shim(os.path.realpath(path))
         app = token.startswith("ghs_") or (
             not token and env.get("GH_APP") == "on" and env.get("GH_APP_FALLBACK") == "off" and app_shim
         )
-        if ref_rewrite(args):
-            raise PermissionError(REF_REFUSAL)
         if write(args) and (not app or token and token_login(token, env) in {"aneym", "alexneyman"}):
             raise PermissionError(REFUSAL)
 
