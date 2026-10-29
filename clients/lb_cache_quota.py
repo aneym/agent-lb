@@ -6,9 +6,19 @@ import re
 import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import cast
 
 DEFAULT_DB = "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb"
+PRIMARY_URL_FILE = Path.home() / ".agent-lb/primary-database.url"
+
+
+def default_db() -> str:
+    try:
+        return PRIMARY_URL_FILE.read_text().strip() or DEFAULT_DB
+    except OSError:
+        return DEFAULT_DB
+
 
 PSQL = shutil.which("psql") or next(
     (p for p in ("/opt/homebrew/bin/psql", "/usr/local/bin/psql") if os.access(p, os.X_OK)), "psql"
@@ -29,7 +39,7 @@ def sql_time(value: datetime) -> str:
 
 
 def query(sql: str) -> list[list[str]]:
-    dsn = os.environ.get("AGENT_LB_DATABASE_URL") or DEFAULT_DB
+    dsn = os.environ.get("AGENT_LB_DATABASE_URL") or default_db()
     dsn = re.sub(r"^postgresql\+\w+://", "postgresql://", dsn)
     result = subprocess.run(
         [PSQL, "-X", "-At", "-F|", "-v", "ON_ERROR_STOP=1", "-c", sql, dsn],

@@ -11,12 +11,21 @@ import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 DEFAULT_DB = "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb"
+PRIMARY_URL_FILE = Path.home() / ".agent-lb/primary-database.url"
+
+
+def default_db() -> str:
+    try:
+        return PRIMARY_URL_FILE.read_text().strip() or DEFAULT_DB
+    except OSError:
+        return DEFAULT_DB
 
 
 def _dsn() -> str:
-    url = os.environ.get("AGENT_LB_DATABASE_URL") or DEFAULT_DB
+    url = os.environ.get("AGENT_LB_DATABASE_URL") or default_db()
     return re.sub(r"^postgresql\+\w+://", "postgresql://", url)
 
 

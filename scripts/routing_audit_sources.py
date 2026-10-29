@@ -10,7 +10,18 @@ from pathlib import Path
 
 from routing_audit_values import command, date, document, job, number  # type: ignore[missing-import]
 
+LIVE_DB = "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb"
+PRIMARY_URL_FILE = Path.home() / ".agent-lb/primary-database.url"
 VERDICT = re.compile(r"<!--\s*rails-verdict\s+(\{.*?\})\s*-->", re.S)
+
+
+def live_dsn():
+    try:
+        url = PRIMARY_URL_FILE.read_text().strip() or LIVE_DB
+    except OSError:
+        url = LIVE_DB
+    url = re.sub(r"^postgresql\+\w+://", "postgresql://", url)
+    return url + ("&" if "?" in url else "?") + "connect_timeout=5"
 
 
 def dispatch(path, since, until, errors):
@@ -93,7 +104,7 @@ def store(path, since, until, errors):
         raw = command(
             [
                 "psql",
-                "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb?connect_timeout=5",
+                live_dsn(),
                 "-w",
                 "-At",
                 "-c",
@@ -114,7 +125,7 @@ def store(path, since, until, errors):
         raw = command(
             [
                 "psql",
-                "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb?connect_timeout=5",
+                live_dsn(),
                 "-w",
                 "-At",
                 "-c",
