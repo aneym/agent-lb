@@ -4,7 +4,6 @@ import json
 import re
 from pathlib import Path
 
-OFFLOAD_TAG = "box-offload-hook"
 OFFLOAD_COMMAND = (
     'H="$HOME/.local/bin/box-offload-hook"; P="$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14"; '
     '[ -x "$P" ] || P=python3; if [ -r "$H" ]; then exec "$P" "$H"; fi'
@@ -50,7 +49,7 @@ def reconcile_codex_hooks(text: str, install: bool) -> str:
     groups = data["hooks"].setdefault("PreToolUse", [])
     kept: list[dict[str, object]] = []
     for group in groups:
-        hooks = [h for h in group.get("hooks", []) if OFFLOAD_TAG not in str(h.get("command", ""))]
+        hooks = [h for h in group.get("hooks", []) if not isinstance(h, dict) or h.get("command") != OFFLOAD_COMMAND]
         if hooks or not group.get("hooks"):
             kept.append(dict(group, hooks=hooks))
     if install:

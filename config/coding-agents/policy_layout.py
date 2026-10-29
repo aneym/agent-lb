@@ -133,6 +133,7 @@ POLICY_FILES = (
     "install-policy.py",
     "hookd_install.py",
     "hook_retired_invocation.py",
+    "floor_invariant.py",
     *(path.name for path in sorted(Path(__file__).resolve().parent.glob("policy_*.py"))),
     "dispatch_parity.py",
     "codex_home.py",

@@ -8,6 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from floor_invariant import refuse_floor_changes  # type: ignore[missing-import]
 from policy_layout import ROUTE_FILES  # type: ignore[missing-import]
 
 STAGED_DIRS = (Path(".agent-lb/bin"), Path(".agent-lb/managed/coding-agents"))
@@ -153,7 +154,8 @@ def swap_in(live: Path, stage: Path, snapshot: dict[str, tuple], owned: set[str]
     print(f"swapped in {live}")
 
 
-def install_staged(home: Path, changes: dict[Path, str | None]) -> dict[Path, str | None]:
+def install_staged(home: Path, changes: dict[Path, str | None], uninstall: bool) -> dict[Path, str | None]:
+    refuse_floor_changes(home, changes, uninstall)
     roots = [(home / relative) for relative in STAGED_DIRS]
     lives = [root.resolve() if root.is_symlink() else root for root in roots]
     grouped: dict[Path, dict[Path, str | None]] = {live: {} for live in lives}

@@ -11,6 +11,7 @@ import sys
 
 sys.path[:0] = [os.path.dirname(os.path.abspath(__file__)), os.path.dirname(os.path.realpath(__file__))]
 try:
+    from floor_hooks import FLOOR_TEXT, FLOOR_WORD, INLINE_FLOOR  # type: ignore[missing-import]
     from hook_dispatch_answers import (  # type: ignore[missing-import]
         Result,
         answer,
@@ -24,16 +25,14 @@ try:
     from hook_dispatch_planning import (  # type: ignore[missing-import]
         DEFAULT_TIMEOUT,
         FLOOR_EXEC,
-        FLOOR_TEXT,
         FLOOR_TIMEOUT,
-        floor_budget,
-        INLINE_FLOOR,
         REV_SHA,
         REWRITERS,
         SHAPE,
         cached,
         env_sensitive,
         expand_word,
+        floor_budget,
         hazardous,
         interpreter_of,
         python_like,
@@ -59,8 +58,8 @@ try:
     from hook_failure_recovery import deny_reason, parse_json  # type: ignore[missing-import]
     from hook_prefilters import (  # type: ignore[missing-import]
         COMMAND_PREFILTERS,
-        SCRIPT_NEEDS,
         PYTHON_PREFILTERED,
+        SCRIPT_NEEDS,
         SCRIPT_PREFILTERS,
         escapes_in_input,
         never,
@@ -81,22 +80,7 @@ IF_READABLE = re.compile(
     r'^if \[ -r "(?P<path>\$HOME/[^"$`\\]+)" \]; then (?P<run>(?:/usr/bin/python3|python3) "(?P=path)"); '
     r"else printf '%s\\n' \"hook warning: missing (?P=path); continuing\" >&2; fi(?: #[^\n]*)?$"
 )
-FLOOR_SCRIPTS = (
-    "branch-guard.py",
-    "rm-dynamic-deny",
-    "stash-guard",
-    "railway-vars-guard.sh",
-    "link-cli-guard.sh",
-    "plutil-guard.sh",
-    "kill-guard",
-    "agent-lb-bootout-guard.sh",
-    "dangerous-command-guard.sh",
-    "no-chrome-guard.sh",
-    "host-credential-guard.py",
-    "gh-write-guard.py",
-    "kill-scope-guard.py",
-)
-FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
+
 
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DISPATCH_TIMEOUT = 8.0

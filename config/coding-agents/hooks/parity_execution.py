@@ -6,6 +6,8 @@ import signal
 import subprocess
 import time
 
+from floor_hooks import FLOOR_TEXT, FLOOR_WORD, INLINE_FLOOR  # type: ignore[missing-import]
+
 DEFAULT_TIMEOUT = 600.0
 
 
@@ -133,26 +135,6 @@ def effect(event, results):
     return view
 
 
-FLOOR_NAMES = (
-    "branch-guard.py",
-    "rm-dynamic-deny",
-    "stash-guard",
-    "railway-vars-guard.sh",
-    "link-cli-guard.sh",
-    "plutil-guard.sh",
-    "kill-guard",
-    "agent-lb-bootout-guard.sh",
-    "dangerous-command-guard.sh",
-    "no-chrome-guard.sh",
-    "host-credential-guard.py",
-    "gh-write-guard.py",
-    "kill-scope-guard.py",
-)
-
-
-FLOOR_INLINE = "BLOCKED: Dangerous command"
-
-
 FLOOR_MESSAGE = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard [^\n]*(?:\n.*)?$", re.S)
 
 
@@ -179,10 +161,10 @@ def legacy(command):
 
 def floor_of(command):
     command = legacy(command) or command
-    for name in FLOOR_NAMES:
-        if re.search(r"(?:^|[/\s\"'])%s(?=$|[\s\"';|&)])" % re.escape(name), command):
-            return name
-    return "dangerous-command" if FLOOR_INLINE in command else None
+    match = FLOOR_WORD.search(command)
+    if match:
+        return match.group(1)
+    return INLINE_FLOOR if FLOOR_TEXT in command else None
 
 
 def direct_argv(command, name, home):

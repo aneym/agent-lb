@@ -97,6 +97,7 @@ MANAGED_HOOKS = (
     "hook-client.c",
     "hook_dispatch_answers.py",
     "hook_dispatch_planning.py",
+    "floor_hooks.py",
     "hook_dispatch_processes.py",
     "hook_dispatch_registry.py",
     "hook_current_settings.py",

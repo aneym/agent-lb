@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import hookd_install  # type: ignore[missing-import]
+from floor_hooks import FLOOR_HOOKS, accepted_forms  # type: ignore[missing-import]
 from hook_retired_invocation import retired_invocation  # type: ignore[missing-import]
 from policy_layout import DISPATCH_DROPPED, DISPATCH_HOOK_KEYS, DISPATCH_SCRIPT, DISPATCH_SKIP_MATCHERS, HOOK_MANIFEST, NAME_LIST, RETIRED_EVENT_HOOKS, RETIRED_HOOKS, SIMPLE_MATCHER, TOOL_ALIASES, UNREGISTERED_HOOKS  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
@@ -20,14 +21,14 @@ def installed_manifest(source: Path) -> str:
         name = found.group(1) if found else ""
         script = source / "hooks" / name
         prefilter = module.SCRIPT_PREFILTERS.get(name)
-        entry["floor"] = name in module.FLOOR_SCRIPTS
+        entry["floor"] = name in FLOOR_HOOKS
         entry["prefilter"] = prefilter[1].__name__ if prefilter else None
         entry["sha256"] = hashlib.sha256(script.read_bytes()).hexdigest() if script.is_file() else None
     return json.dumps(doc, indent=2) + "\n"
 
 
 def is_settings_hook(command: Any, hook: dict[str, Any]) -> bool:
-    return isinstance(command, str) and command == hook["command"]
+    return isinstance(command, str) and command in accepted_forms(hook["command"])
 
 
 def dispatcher_module(source: Path) -> Any:

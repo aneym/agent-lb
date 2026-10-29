@@ -8,8 +8,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from floor_hooks import mentioned_floors  # type: ignore[missing-import]
 from policy_documents import read_text  # type: ignore[missing-import]
-from policy_hook_groups import dispatcher_module, drop_hooks, is_settings_hook  # type: ignore[missing-import]  # fmt: skip
+from policy_hook_groups import drop_hooks, is_settings_hook  # type: ignore[missing-import]  # fmt: skip
 from policy_layout import EFFORT_LEVEL, HAIKU_ENV, MANAGED_AGENTS, MODEL, OBSERVATIONAL_HOOKS, POLICY_DIR, POLICY_SNAPSHOT, RELAY_SEATS, SETTINGS_HOOKS, SOL_ID, SOL_MODEL, SONNET_ENV, SONNET_ID, SONNET_MODEL  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
 
 
@@ -124,25 +125,19 @@ def check_policy(source: Path, home: Path, snapshot: dict[str, Any]) -> int:
     return int(bool(problems))
 
 
-def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
+def internal_hook_commands(hooks: dict[str, Any]) -> None:
 
-    dispatcher = dispatcher_module(source)
     for groups in hooks.values():
         for group in groups:
             for hook in group.get("hooks", []):
                 command = hook.get("command")
-                if not isinstance(command, str):
+                if not isinstance(command, str) or mentioned_floors(command):
                     continue
 
                 command = re.sub(r'/[^\s"\':;]*/repos/skill-stats/', "$HOME/.local/share/skill-stats/", command)
 
                 match = re.fullmatch(r'((?:"[^"\n]+"|[^\s]+)\s+)?"((?:\$HOME)?/[^"\n]+)"(.*)', command)
-                if (
-                    match
-                    and "/.local/share/skill-stats/" in command
-                    and not dispatcher.floor_name(command)
-                    and "# hook missing: fail open" not in command
-                ):
+                if match and "/.local/share/skill-stats/" in command and "# hook missing: fail open" not in command:
                     script = match[2]
                     command = (
                         f'if [ -r "{script}" ]; then {command}; else '
@@ -170,12 +165,11 @@ def reconcile_settings(
             print(f"refused retiring {line}")
         updated["hooks"] = hooks
     if not uninstall:
-        floor_name = dispatcher_module(source).floor_name if source is not None else lambda _command: True
         for event, groups in hooks.items():
             for group in groups:
                 for hook in group["hooks"]:
                     command = hook.get("command", "")
-                    if event == "PreToolUse" or floor_name(command):
+                    if event == "PreToolUse" or mentioned_floors(command):
                         continue
                     if "skill-stats" in command:
                         hook["timeout"] = 3
@@ -267,7 +261,7 @@ def reconcile_settings(
                 new_group["matcher"] = matcher
             event_groups.append(new_group)
     if not uninstall and source is not None:
-        internal_hook_commands(updated.get("hooks", {}), source)
+        internal_hook_commands(updated.get("hooks", {}))
     dedupe_hooks(updated.get("hooks"))
     return updated
 

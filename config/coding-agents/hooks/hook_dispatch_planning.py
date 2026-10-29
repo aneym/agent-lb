@@ -20,9 +20,6 @@ REWRITERS = {"rtk hook claude"}
 
 REV_SHA = re.compile(r"[0-9a-f]{64}")
 
-FLOOR_TEXT = "BLOCKED: Dangerous command"
-
-INLINE_FLOOR = "dangerous-command"
 
 RECEIPT_ENV = "HOOK_FLOOR_RECEIPT"
 

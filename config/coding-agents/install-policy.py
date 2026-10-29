@@ -5,6 +5,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), "hooks"))
 import hashlib
 import json
 import os
@@ -94,7 +95,8 @@ def main() -> int:
                 if read_text(settings_path) != settings_text:
                     raise SystemExit("error: settings changed during install")
                 checkpoint_changes(args.home, {settings_path: desired})
-                write_atomic(settings_path, desired)
+                for path, content in install_staged(args.home, {settings_path: desired}, False).items():
+                    write_atomic(path, content)
         print(f"autoCompactWindow={window}")
         return 0
 
@@ -286,7 +288,7 @@ def main() -> int:
             def relocate(value: Any) -> None:
                 if isinstance(value, dict):
                     if isinstance(value.get("command"), str):
-                        internal_hook_commands({"legacy": [{"hooks": [value]}]}, source)
+                        internal_hook_commands({"legacy": [{"hooks": [value]}]})
                     for child in value.values():
                         relocate(child)
                 elif isinstance(value, list):
@@ -379,7 +381,7 @@ def main() -> int:
             return 0
         return 2 if path in latest_files else 1
 
-    for path, content in sorted(install_staged(args.home, changes).items(), key=write_order):
+    for path, content in sorted(install_staged(args.home, changes, args.uninstall).items(), key=write_order):
         if content is None:
             path.unlink()
         else:

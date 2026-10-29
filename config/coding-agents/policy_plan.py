@@ -60,7 +60,7 @@ def referenced_names(home):
     return lambda name: any(name in text for text in strings)
 
 
-def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link, kept):
+def report_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link, kept):
     shipped = {path.name for path in (source / "hooks").iterdir() if path.is_file()}
     referenced = referenced_names(home)
     record = home / POLICY_HOOKS_RECORD
@@ -70,16 +70,8 @@ def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link
     hooks = policy_dir / "hooks"
     copied = replace_policy_link or policy_dir.resolve() != source
     for path in sorted(hooks.iterdir()) if copied and hooks.is_dir() and not hooks.is_symlink() else []:
-        if (
-            path.suffix in (".py", ".sh")
-            and path.is_file()
-            and not path.is_symlink()
-            and path.name not in shipped
-            and path.name in owned
-            and not referenced(path.name)
-            and path not in kept
-        ):
-            changes[path] = None
+        if path.name not in shipped and path.name in owned and not referenced(path.name) and path not in kept:
+            print(f"unreferenced hook kept: {path}")
     if copied:
         wanted = header + "".join(f"{name}\n" for name in sorted(shipped) if name.endswith((".py", ".sh")))
         if recorded != wanted:
@@ -87,22 +79,14 @@ def prune_unshipped_hooks(home, source, policy_dir, changes, replace_policy_link
     owners = {owner.name for _target, owner, _marker, _template in MANAGED_AGENTS}
     markers = home / MANAGED_DIR
     for marker in sorted(markers.iterdir()) if markers.is_dir() else []:
-        if (
-            marker.name in owners
-            or not marker.is_file()
-            or marker.stat().st_size > 200
-            or read_text(marker) != f"agent-lb:{marker.name}:v1\n"
-        ):
+        if marker.name in owners or not marker.is_file() or read_text(marker) != f"agent-lb:{marker.name}:v1\n":
             continue
         names = [marker.name + suffix for suffix in (".py", ".sh")]
         if any(name in shipped or referenced(name) for name in names):
             continue
-        stale = [home / ".claude/hooks" / name for name in names]
-        stale = [hook for hook in stale if hook.is_file() and not hook.is_symlink() and hook not in kept]
-        for hook in stale:
-            changes[hook] = None
-        if stale:
-            changes[marker] = None
+        for hook in (home / ".claude/hooks" / name for name in names):
+            if hook.is_file() and hook not in kept:
+                print(f"unreferenced hook kept: {hook}")
 
 
 def plan_managed_files(args, source, snapshot, keep_fold, changes, kept):
@@ -218,7 +202,7 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes, kept):
                 changes[decider_path] = decider_source.read_text()
 
         replace_policy_link = policy_dir.is_symlink()
-        prune_unshipped_hooks(args.home, source, policy_dir, changes, replace_policy_link, kept)
+        report_unshipped_hooks(args.home, source, policy_dir, changes, replace_policy_link, kept)
         if replace_policy_link:
             policy_link_target = os.readlink(policy_dir)
         if replace_policy_link or policy_dir.resolve() != source:
