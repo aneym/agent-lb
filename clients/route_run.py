@@ -23,6 +23,7 @@ from route_run_checkout import (  # pyrefly: ignore [missing-import]
     repo_root,
     validate_worktree,
 )
+from route_review_reuse import review_key, reusable_receipt  # pyrefly: ignore [missing-import]
 from route_run_jobs import launch_run, run_path, save_run  # pyrefly: ignore [missing-import]
 from route_target import local_environment, resolve_target, t3_settings  # pyrefly: ignore [missing-import]
 from route_versioned_rules import EXIT_OK, EXIT_WAIT, load_table, now_iso, setup_error  # pyrefly: ignore [missing-import]
@@ -238,6 +239,8 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
         "result": result,
         "log_path": str(log_path),
     }
+    if row.get("review_key") != review_key(args, row, cwd, getattr(args, "run_brief", brief)):
+        output.pop("review_key", None)
     save_run(output)
     print(json.dumps(output, sort_keys=True) if args.json else result)
     return exit_code if exit_code >= 0 else 128 - exit_code
@@ -292,4 +295,34 @@ def command_run(args: argparse.Namespace) -> int:
         save_run(row)
         print(json.dumps(row, sort_keys=True))
         return EXIT_WAIT if queued else row["exit_code"]
+    key = review_key(args, row, cwd, brief)
+    receipt = reusable_receipt(key)
+    if receipt:
+        release_lease(row, "cancelled")
+        row.update(
+            status="ok",
+            exit_code=0,
+            result=receipt["result"],
+            review_key=key,
+            reused_from=receipt["decision_id"],
+            seconds=0,
+            log_path=receipt["log_path"],
+        )
+        save_run(row)
+        append_decision(
+            {
+                "kind": "route.run.reuse",
+                "decision_id": row["decision_id"],
+                "reused_from": receipt["decision_id"],
+                "ts": now_iso(),
+            }
+        )
+        print(json.dumps(row, sort_keys=True) if args.json else row["result"])
+        return 0
+    if key:
+        row["review_key"] = key
+        brief += (
+            "\nReturn the final review as a JSON object with a verdict field: "
+            "PASS only if this review passes, otherwise FAIL. Do not wrap it in Markdown."
+        )
     return execute_run(args, row, cwd, brief)

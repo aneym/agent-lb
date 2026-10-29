@@ -15,6 +15,9 @@ def add_t3_parsers(sub: Any) -> None:
     brief = run.add_mutually_exclusive_group(required=True)
     brief.add_argument("--brief", type=Path)
     brief.add_argument("--brief-stdin", action="store_true")
+    run.add_argument(
+        "--review-key", help="opt-in JSON file with base, scope and lens; reuse terminal structured PASS only"
+    )
     run.add_argument("--cwd", type=Path)
     run.add_argument("--on", metavar="ENV_NAME", help="pin execution to this environment")
     run.add_argument("--bg", action="store_true", help="detach and print the decision id")
