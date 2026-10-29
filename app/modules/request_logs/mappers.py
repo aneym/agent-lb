@@ -81,6 +81,7 @@ def to_request_log_entry(log: RequestLog, *, api_key_name: str | None = None) ->
         output_tokens=output_tokens_from_log(log_like),
         cached_input_tokens=cached_input_tokens_from_log(log_like),
         cost_usd=cost_breakdown.total_usd,
+        cost_basis="API-equivalent estimate" if log.provider == "kimi" else None,
         cost_breakdown=RequestLogCostBreakdown(**cost_breakdown.__dict__),
         latency_ms=log.latency_ms,
         latency_first_token_ms=log.latency_first_token_ms,

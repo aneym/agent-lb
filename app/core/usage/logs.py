@@ -4,12 +4,13 @@ from typing import Protocol
 
 from app.core.anthropic.models import AnthropicUsage
 from app.core.anthropic.pricing import (
+    calculate_anthropic_cost_breakdown,
     calculate_anthropic_cost_from_usage,
 )
 from app.core.anthropic.pricing import (
     get_pricing_for_model as get_anthropic_pricing_for_model,
 )
-from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.usage.pricing import (
     UsageCostBreakdown,
     UsageTokens,
@@ -52,6 +53,9 @@ class RequestLogLike(Protocol):
 
 
 def cached_input_tokens_from_log(log: RequestLogLike) -> int | None:
+    if getattr(log, "provider", None) == KIMI_PROVIDER_NAME:
+        tokens = log.cache_read_tokens
+        return max(0, int(tokens)) if tokens is not None else None
     cached_tokens = log.cached_input_tokens
     if cached_tokens is None:
         return None
@@ -91,7 +95,9 @@ def calculated_cost_from_log(log: RequestLogLike, *, precision: int | None = Non
     if not log.model:
         return None
     provider = getattr(log, "provider", None) or OPENAI_PROVIDER_NAME
-    if provider == ANTHROPIC_PROVIDER_NAME:
+    if provider == KIMI_PROVIDER_NAME and (log.input_tokens is None or output_tokens_from_log(log) is None):
+        return None
+    if provider in {ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME}:
         resolved_anthropic = get_anthropic_pricing_for_model(log.model)
         if not resolved_anthropic:
             return None
@@ -144,6 +150,8 @@ def _totals_match(left: float | None, right: float | None, *, precision: int | N
 
 
 def cost_breakdown_from_log(log: RequestLogLike, *, precision: int | None = None) -> UsageCostBreakdown:
+    if getattr(log, "provider", None) == KIMI_PROVIDER_NAME:
+        return _kimi_cost_breakdown(log, precision=precision)
     full_breakdown: UsageCostBreakdown | None = None
     input_usd: float | None = None
     cached_input_usd: float | None = None
@@ -235,3 +243,39 @@ def total_tokens_from_log(log: RequestLogLike) -> int | None:
     if input_tokens is None and output_tokens is None:
         return None
     return (input_tokens or 0) + (output_tokens or 0)
+
+
+def _kimi_cost_breakdown(log: RequestLogLike, *, precision: int | None) -> UsageCostBreakdown:
+    resolved = get_anthropic_pricing_for_model(log.model or "")
+    breakdown = None
+    if resolved is not None and log.input_tokens is not None and output_tokens_from_log(log) is not None:
+        breakdown = calculate_anthropic_cost_breakdown(
+            AnthropicUsage(
+                input_tokens=log.input_tokens,
+                output_tokens=output_tokens_from_log(log),
+                cache_creation_input_tokens=log.cache_creation_tokens,
+                cache_read_input_tokens=log.cache_read_tokens,
+            ),
+            resolved[1],
+            cache_creation_tier="1h" if getattr(log, "cache_creation_tier", None) == "1h" else "5m",
+        )
+    persisted = cost_from_log(log)
+    if breakdown is None or (
+        persisted is not None and not _totals_match(persisted, breakdown.total_usd, precision=precision)
+    ):
+        return UsageCostBreakdown(
+            input_usd=None,
+            cached_input_usd=None,
+            output_usd=None,
+            total_usd=cost_from_log(log, precision=precision),
+        )
+
+    def rounded(value: float) -> float:
+        return value if precision is None else round(value, precision)
+
+    return UsageCostBreakdown(
+        input_usd=rounded(breakdown.input_usd + breakdown.cache_creation_input_usd),
+        cached_input_usd=rounded(breakdown.cache_read_input_usd),
+        output_usd=rounded(breakdown.output_usd),
+        total_usd=rounded(persisted if persisted is not None else breakdown.total_usd),
+    )

@@ -29,6 +29,20 @@ class AnthropicUsageCostBreakdown:
 
 
 DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
+    "kimi-k3.1-pro": AnthropicModelPrice(
+        input_per_1m=2.0,
+        output_per_1m=10.0,
+        cache_creation_5m_input_per_1m=2.0,
+        cache_creation_1h_input_per_1m=4.0,
+        cache_read_input_per_1m=0.20,
+    ),
+    "kimi-k3.1-pro-highspeed": AnthropicModelPrice(
+        input_per_1m=4.0,
+        output_per_1m=20.0,
+        cache_creation_5m_input_per_1m=4.0,
+        cache_creation_1h_input_per_1m=8.0,
+        cache_read_input_per_1m=0.20,
+    ),
     "claude-opus-5-5": AnthropicModelPrice(
         input_per_1m=4.0,
         cache_creation_5m_input_per_1m=5.0,
@@ -193,6 +207,8 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
 }
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
+    "k3.1-pro": "kimi-k3.1-pro",
+    "k3.1-pro-highspeed": "kimi-k3.1-pro-highspeed",
     "claude-opus-5-5*": "claude-opus-5-5",
     "claude-opus-5*": "claude-opus-5",
     "claude-fable-5-1*": "claude-fable-5-1",
