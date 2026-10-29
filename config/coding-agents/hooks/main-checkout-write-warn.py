@@ -30,6 +30,15 @@ def on_main(repo):
 
 def candidate_repo(path):
     path = path.expanduser().resolve()
+    if any(
+        path.is_relative_to(root)
+        for root in (
+            Path("/Volumes/StudioExt/repos/t3-wt"),
+            Path("/srv/cow/t3-wt"),
+            Path("/data/jobs/worktrees"),
+        )
+    ):
+        return None
     if path.is_dir():
         return None
     repo = main_checkout(path)
@@ -77,8 +86,11 @@ def refusal(paths):
         return None
     return (
         f"Warning: this writes a tracked file in the shared main checkout {repo}. "
-        f"Use lane-worktree ensure --repo {repo.name} --branch <topic>, "
-        "and edit the -wt worktree instead. Main checkouts belong to the merge step."
+        "Use a T3 thread with workspaceStrategy worktree, delegate_task with isolation worktree, "
+        f"or git worktree add <root>/{repo.name}/<topic> -b <topic> origin/main. "
+        "T3 roots: Studio /Volumes/StudioExt/repos/t3-wt; ax42 and pc-wsl /srv/cow/t3-wt; "
+        "forge /data/jobs/worktrees. Edit that dedicated worktree instead. "
+        "Main checkouts belong to the merge step."
     )
 
 
