@@ -55,9 +55,17 @@ class RequestLogsService:
         self._repo = repo
 
     async def list_factory_usage(
-        self, *, project: str, limit: int, offset: int = 0, before_id: int | None = None
+        self,
+        *,
+        project: str,
+        limit: int,
+        offset: int = 0,
+        before_id: int | None = None,
+        since: datetime | None = None,
     ) -> FactoryUsageResponse:
-        logs = await self._repo.list_factory_usage(project=project, limit=limit, offset=offset, before_id=before_id)
+        logs = await self._repo.list_factory_usage(
+            project=project, limit=limit, offset=offset, before_id=before_id, since=since
+        )
         rows = logs[:limit]
         has_more = len(logs) > limit
         return FactoryUsageResponse(

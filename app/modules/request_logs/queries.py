@@ -22,7 +22,13 @@ class RequestLogQueries:
     _session: AsyncSession
 
     async def list_factory_usage(
-        self, *, project: str, limit: int, offset: int = 0, before_id: int | None = None
+        self,
+        *,
+        project: str,
+        limit: int,
+        offset: int = 0,
+        before_id: int | None = None,
+        since: datetime | None = None,
     ) -> list[RequestLog]:
         stmt = select(RequestLog).where(
             RequestLog.factory_project == project,
@@ -32,6 +38,8 @@ class RequestLogQueries:
         )
         if before_id is not None:
             stmt = stmt.where(RequestLog.id < before_id)
+        if since is not None:
+            stmt = stmt.where(RequestLog.requested_at >= to_utc_naive(since))
         result = await self._session.execute(stmt.order_by(RequestLog.id.desc()).offset(offset).limit(limit + 1))
         return list(result.scalars().all())
 

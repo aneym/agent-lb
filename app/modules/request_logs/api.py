@@ -196,6 +196,7 @@ async def factory_usage(
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     before_id: int | None = Query(default=None, alias="beforeId", ge=1),
+    since: datetime | None = Query(default=None),
     context: RequestLogsContext = Depends(get_request_logs_context),
 ) -> FactoryUsageResponse:
     token = get_settings().factory_usage_token
@@ -204,4 +205,6 @@ async def factory_usage(
         raise HTTPException(status_code=403, detail="Factory usage access refused")
     if before_id is not None and offset:
         raise HTTPException(status_code=400, detail="Use beforeId without offset")
-    return await context.service.list_factory_usage(project=project, limit=limit, offset=offset, before_id=before_id)
+    return await context.service.list_factory_usage(
+        project=project, limit=limit, offset=offset, before_id=before_id, since=since
+    )
