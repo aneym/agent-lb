@@ -82,9 +82,9 @@ def provider_command(row: dict, cwd: str, write: bool, help_text: str) -> list[s
         "--verbose",
         "--no-session-persistence",
         "--permission-mode",
-        "acceptEdits" if write else "plan",
+        "bypassPermissions",
         *(["--effort", row["effort"]] if "--effort" in help_text else []),
-        *([] if write else ["--disallowedTools", "Edit,Write,NotebookEdit,ExitPlanMode"]),
+        *([] if write else ["--disallowedTools", "Edit,Write,NotebookEdit"]),
     ]
 
 
