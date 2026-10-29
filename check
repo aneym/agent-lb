@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-css_guard="${FACTORY_BIN:-$HOME/.agent-rails/factory-runtime/bin}/css-changed"
+gate="${AGENT_RAILS_GATE_DIR:-/Volumes/StudioExt/repos/agent-rails/tools/gate}"
+css_guard="$gate/css-changed"
 if [ "${1-}" = "--staged" ]; then
     "$css_guard" --staged
 else
@@ -12,7 +13,7 @@ if [ -f atoms.toml ]; then
     "${FACTORY_BIN:-$HOME/.agent-rails/factory-runtime/bin}/atoms" validate --repo . --base origin/main
 fi
 
-test_guard="${FACTORY_BIN:-$HOME/.agent-rails/factory-runtime/bin}/test-guard"
+test_guard="$gate/test-guard"
 if [ "${1-}" = "--staged" ]; then
     "$test_guard" --staged
 else
@@ -21,9 +22,9 @@ fi
 
 
 if [ "${1-}" = "--staged" ]; then
-    "$HOME/.agent-rails/factory-runtime/bin/gate-precheck" --staged
+    "$gate/gate-precheck" --staged
 else
-    "$HOME/.agent-rails/factory-runtime/bin/no-new-comments" origin/main HEAD --repo .
+    "$gate/no-new-comments" origin/main HEAD --repo .
 fi
 
 
@@ -60,6 +61,6 @@ if [ "$mode" = full ]; then
   run_step 'make test-floor' make test-floor
 fi
 if [ "$mode" != staged ]; then
-  run_step 'filecap check' filecap check --rev HEAD
+  run_step 'filecap check' "$gate/filecap" check --rev HEAD
 fi
 run_step 'feature-map check' "${FACTORY_BIN:-$HOME/.agent-rails/factory-runtime/bin}/feature-map" check --repo .

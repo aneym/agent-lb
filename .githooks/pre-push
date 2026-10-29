@@ -1,9 +1,10 @@
 #!/bin/sh
 set -eu
+gate="${AGENT_RAILS_GATE_DIR:-/Volumes/StudioExt/repos/agent-rails/tools/gate}"
 zero=0000000000000000000000000000000000000000
 while read -r local_ref local_sha remote_ref remote_sha; do
     [ -n "$local_ref" ] || continue
     [ "$local_sha" != "$zero" ] || continue
     case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac
-    "$HOME/.agent-rails/factory-runtime/bin/gate-precheck" --rev "$local_sha" --fast
+    "$gate/gate-precheck" --rev "$local_sha" --fast
 done
