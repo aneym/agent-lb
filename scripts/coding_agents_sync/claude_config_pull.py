@@ -2,6 +2,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from claude_config_alert import notify  # type: ignore[missing-import]
+
 ORIGINS = (
     "https://github.com/aneym/claude-config.git",
     "https://github.com/aneym/claude-config",
@@ -149,12 +151,22 @@ def link_skills(home):
 
 
 def pull_claude_config(home):
+    kept = []
     try:
         outcome = advance(home, home / ".claude")
         if outcome["result"] == "absent":
             linked = link_skills(home)
             if linked:
                 outcome = linked
+        else:
+            kept = sorted(path for path in dirty_paths(home / ".claude") if not generated(home, path))
+            if kept and outcome["result"] in ("current", "pulled"):
+                outcome = dict(outcome, drift=kept)
     except Blocked as exc:
         outcome = {"result": exc.result, "detail": exc.detail}
+    if outcome["result"] != "absent":
+        try:
+            notify(home, outcome, kept)
+        except (OSError, subprocess.SubprocessError) as exc:
+            outcome = dict(outcome, alert_failed=str(exc))
     return outcome
