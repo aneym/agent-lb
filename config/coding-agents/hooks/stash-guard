@@ -10,9 +10,8 @@ FLOOR = "BLOCKED (floor: data loss, a shared stash can take another seat's chang
 MESSAGE = ("BLOCKED: git stash is one stack shared by every worktree of {repo} ({count}); a stash push/pop "
            "can take another seat's changes (incident 2026-10-07). For base content use `git show <rev>:<path>`; for "
            "a clean tree use a T3 thread with workspaceStrategy worktree, `delegate_task` with isolation "
-           "worktree, or `git worktree add <root>/<repo>/<topic> -b <branch> origin/main`. "
-           "T3 roots: Studio /Volumes/StudioExt/repos/t3-wt; ax42 and pc-wsl /srv/cow/t3-wt; "
-           "forge /data/jobs/worktrees. "
+           "worktree, or `git worktree add <root>/<repo>/<topic> -b <branch> origin/main` "
+           "under this host's T3 worktree root. "
            "If it truly must stash, end the command with the comment '# stash-ok', or with "
            "'# owner-approval: ~/.open-factory/approvals/owner-<topic>-2026-<date>.md'.")
 MESSAGE = MESSAGE.replace("BLOCKED: ", FLOOR, 1)
