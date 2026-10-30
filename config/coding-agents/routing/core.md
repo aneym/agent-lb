@@ -11,3 +11,7 @@ Floors, who decides and seat authority: `rules/floors.md`. How work starts and f
 - Non-Mac box work runs where `route` and `seat-run` place it; Mac-only work runs on Studio. Computer use never runs on Alex's desktop.
 
 - **Headless credentials (2026-10-29).** Treat every machine, including Studio, as headless. Never ask Alex for his Mac or Studio password, a keychain unlock or an Always Allow click. Use agent-secret, file or env tokens, or a build keychain you create and unlock yourself; otherwise drop the step. Never print or write a secret. Alex, first-hand, 2026-10-29 ~21:42Z: "all work needs to be done without requesting studio passwords, headless password and stuff. otherwise get this shit out of here. fuck keychain. use other mechnisms. i should not have to approve blocking work because of keychain, assume all our machines including studio are headless effectively".
+
+- Real Sonnet reviews use `delegate_task` with `providerInstanceId: "claudeAgent"`, `model: "claude-sonnet-5-5"`, and explicit effort. Native Agent `model: "sonnet"` resolves to Claude Sonnet only with launcher repair `8d68cef` installed; older sessions may still carry the former Sol alias. Verify served model in request logs before calling a verdict cross-vendor. Untyped helper defaults never redefine family aliases.
+
+Routing diagnostics are advisory. Explicit user routes remain authoritative. A prior Sol review of a Sol parent is same-vendor evidence.
