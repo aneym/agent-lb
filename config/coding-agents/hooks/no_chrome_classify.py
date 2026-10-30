@@ -138,7 +138,7 @@ UV_TOOL_ADMIN = (["tool", "install"], ["tool", "upgrade"], ["tool", "uninstall"]
 SESSION = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 PLAIN = re.compile(r"[A-Za-z0-9_./:=%+,@ -]+")
 LAUNCH_CODE = re.compile(
-    r"\bbrowser_harness\b|\bwebbrowser\b|puppeteer\.launch|chromium\.launch|launchPersistentContext|launch_persistent_context|storage_state\s*=|--storage-state|--user-data-dir|\bconnectOverCDP\s*\(|\bconnect_over_cdp\s*\(|--cdp\b|--remote-debugging-port\b|wss?://[^\s\"']+:\d+/devtools"
+    r"\bbrowser[_-]harness\b|\bwebbrowser\b|puppeteer\.launch|chromium\.launch|launchPersistentContext|launch_persistent_context|storage_state\s*=|--storage-state|--user-data-dir|\bconnectOverCDP\s*\(|\bconnect_over_cdp\s*\(|--cdp\b|--remote-debugging-port\b|wss?://[^\s\"']+:\d+/devtools"
 )
 DATA_READERS = {
     "echo",
