@@ -43,7 +43,9 @@ Rules:
   environment, and use `isolation: "worktree"`. Release the returned lease
   with `route release <lease_id> --outcome ok` when the child starts. Never
   invent a provider or box or hand a linked environment a write worktree.
-  Bash-only read-only forwarders and Workflow stages use
+  Read-only exploration uses `route target explore` (`--mac` for Mac-only)
+  and delegate_task; inside a Workflow stage it is agentType gpt-explorer,
+  which runs Sol in-process. Other Bash-only read-only forwarders use
   `route run <class> --bg` followed by bounded `route wait` calls, not
   delegate_task or seat-run. Existing write forwarders remain on seat-run
   until remote worktree support lands; they are not the lead's dispatch API.
@@ -58,9 +60,9 @@ Rules:
   `delegate_task` to `codex`/`gpt-6.1-sol` read-only, at xhigh for Claude
   authors); the brief names the author vendor. Money path included, no panel
   before GA (2026-10-07); must-fix findings become the next slice.
-- Leads dispatch workers with T3 delegate_task in their own turn. Within a
-  Workflow stage, use route run through the read-only forwarding agent; stages
-  cannot call delegate_task. Pass agentType and effort on every agent() call.
+- Leads dispatch workers with T3 delegate_task in their own turn. Workflow stages
+  cannot call delegate_task: explore stages use gpt-explorer in-process, other
+  read-only stages use route run through their forwarding agent. Pass agentType and effort on every agent() call.
 - Never use general-purpose as an implementer; never spawn another planner
   (one brain per lane; if the lane needs splitting, report to the
   coordinator).

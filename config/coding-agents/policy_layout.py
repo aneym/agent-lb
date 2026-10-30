@@ -82,7 +82,7 @@ MANAGED_AGENTS = (
 ADOPTED_KEEP = tuple(Path(".claude/hooks") / name for name in ADOPTED_KEEP_NAMES)
 
 
-RETIRED_AGENTS = ("astra", "implementer")
+RETIRED_AGENTS = ("astra", "implementer", "gpt-explorer-local")
 
 
 RETIRED_HOOKS = (
@@ -259,7 +259,7 @@ RELAY_SEATS = frozenset(
     """
     codex-sol codex-sol-local codex-verifier codex-verifier-local
     codex-test-runner codex-test-runner-local gpt-implementer grok-implementer
-    gpt-explorer gpt-explorer-local sonnet-implementer verifier verifier-local cursor-seat devin-seat
+    sonnet-implementer verifier verifier-local cursor-seat devin-seat
     muse-seat muse-seat-local computer-use computer-use-local computer-use-terra-local host-relay pi-durable-seat
     """.split()
 )

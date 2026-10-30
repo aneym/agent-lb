@@ -27,7 +27,6 @@ MANAGED_SEATS = (
     "effort-xhigh",
     "host-relay",
     "gpt-implementer-local",
-    "gpt-explorer-local",
     "sol-general",
     "sonnet-implementer-local",
     "verifier-local",

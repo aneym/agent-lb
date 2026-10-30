@@ -36,7 +36,9 @@
     },
     "gpt-explorer": {
       "vendor": "openai",
-      "box": null
+      "box": null,
+      "model": "sol-latest",
+      "effort": "low"
     },
     "Explore": {
       "vendor": "anthropic",
@@ -156,12 +158,6 @@
       "box": null,
       "model": "sol-latest",
       "effort": "medium"
-    },
-    "gpt-explorer-local": {
-      "vendor": "openai",
-      "box": null,
-      "model": "sol-latest",
-      "effort": "low"
     },
     "sol-general": {
       "vendor": "openai",

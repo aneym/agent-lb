@@ -21,7 +21,6 @@ MANAGED = (
     ("effort-xhigh", ".claude/agents/effort-xhigh.md", "agents/effort-xhigh.md"),
     ("host-relay", ".claude/agents/host-relay.md", "agents/host-relay.md"),
     ("gpt-implementer-local", ".claude/agents/gpt-implementer-local.md", "agents/gpt-implementer-local.md"),
-    ("gpt-explorer-local", ".claude/agents/gpt-explorer-local.md", "agents/gpt-explorer-local.md"),
     ("sol-general", ".claude/agents/sol-general.md", "agents/sol-general.md"),
     ("sonnet-implementer-local", ".claude/agents/sonnet-implementer-local.md", "agents/sonnet-implementer-local.md"),
     ("verifier-local", ".claude/agents/verifier-local.md", "agents/verifier-local.md"),

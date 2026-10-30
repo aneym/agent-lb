@@ -71,7 +71,7 @@ def verify_installation(
             owner = HOME / ".agent-lb" / "managed" / "coding-agents" / name
             check(read(owner) == f"agent-lb:{name}:v1\n", f"{owner} records installer ownership")
 
-        for retired_seat in ("astra", "implementer"):
+        for retired_seat in ("astra", "implementer", "gpt-explorer-local"):
             installed = (HOME / ".claude" / "agents" / f"{retired_seat}.md").exists()
             check(not installed, f"the retired {retired_seat} seat is not installed")
 
