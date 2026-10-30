@@ -104,6 +104,26 @@ SPACE = "mac-space"
 HARNESS_TOOL = "lane-harness"
 HARNESS_SUBS = {"shot", "signin", "outdir", "stop"}
 HARNESS = {"browser-harness", "browser-harness-mcp"}
+HARNESS_FORBIDDEN = (
+    "BU_",
+    "BH_",
+    "BROWSER_USE",
+    "environ",
+    "putenv",
+    "unsetenv",
+    "daemon",
+    "subprocess",
+    "os.system",
+    "popen",
+    "spawn",
+    "execv",
+    "__import__",
+    "importlib",
+    "_ipc",
+    "admin",
+    "remote_debugging",
+    "chrome://",
+)
 HARNESS_SAFE = (
     ["--version"],
     ["--help"],
@@ -396,7 +416,11 @@ def classify(text, depth=0):
             found.add("mac")
         record_writes(argv, writes)
         if name == HARNESS_TOOL:
-            if argv != raw or not harness_tool(argv):
+            if (
+                argv != raw
+                or not harness_tool(argv)
+                or any(word.lower() in body.lower() for body in here for word in HARNESS_FORBIDDEN)
+            ):
                 found.add("mac")
             continue
         if name in HARNESS:
@@ -410,7 +434,9 @@ def classify(text, depth=0):
         ):
             found.add("mac")
             continue
-        if name in INTERPRETERS and any(a.startswith("browser_harness") for a in argv[1:]):
+        if (name in INTERPRETERS or re.fullmatch(r"python[0-9.]*", name)) and any(
+            "browser_harness" in a for a in argv[1:]
+        ):
             found.add("mac")
             continue
         if LAUNCHER in (name, os.path.basename(raw[0])):
