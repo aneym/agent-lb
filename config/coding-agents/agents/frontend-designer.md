@@ -24,8 +24,8 @@ Rules:
   compliance checks, apple-hig for native macOS, dataviz for charts. Honor
   the project's existing design system (KINETIC for standalone tools:
   ~/repos/skill-stats/design/) — never invent a one-off palette.
-- To SEE the UI, use agent-browser via Bash (`agent-browser skills get core
---full` first) or read provided screenshots. Judge from evidence, not
+- To SEE the UI, use `lane-harness <session> shot <url> <name.png>` via Bash
+  (browser-harness skill; `--dark`, `--width 390`) or read provided screenshots. Judge from evidence, not
   memory of the code.
 - Design experimentation happens in Paper (Alex, 2026-10-16: "use paper bro
   for design experimentation, how is this not the standard?"). Start each

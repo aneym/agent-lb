@@ -101,43 +101,24 @@ AGENT_BROWSER_REACH = (
 AGENT_BROWSER_SUBS = {"connect", "auth", "profiles", "state", "-p"}
 LAUNCHER = "agent-cdp-launch"
 SPACE = "mac-space"
-LANE_TOOL = "lane-browser"
-LANE_SUBS = {
-    "shot",
-    "outdir",
-    "stop",
-    "open",
-    "goto",
-    "tab-new",
-    "click",
-    "dblclick",
-    "fill",
-    "select",
-    "type",
-    "press",
-    "hover",
-    "check",
-    "uncheck",
-    "eval",
-    "snapshot",
-    "console",
-    "tab-close",
-    "tab-select",
-    "resize",
-    "set-color-scheme",
-    "screenshot",
-    "requests",
-    "tab-list",
-    "list",
-    "go-back",
-    "go-forward",
-    "reload",
-    "close",
-}
+HARNESS_TOOL = "lane-harness"
+HARNESS_SUBS = {"shot", "signin", "outdir", "stop"}
+HARNESS = {"browser-harness", "browser-harness-mcp"}
+HARNESS_SAFE = (
+    ["--version"],
+    ["--help"],
+    ["-h"],
+    ["skill"],
+    ["telemetry", "status"],
+    ["telemetry", "disable"],
+    ["recordings"],
+    ["recordings", "disable"],
+)
+UV_TOOL_ADMIN = (["tool", "install"], ["tool", "upgrade"], ["tool", "uninstall"], ["tool", "list"])
 SESSION = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 PLAIN = re.compile(r"[A-Za-z0-9_./:=%+,@ -]+")
 LAUNCH_CODE = re.compile(
-    r"\bwebbrowser\b|puppeteer\.launch|chromium\.launch|launchPersistentContext|launch_persistent_context|storage_state\s*=|--storage-state|--user-data-dir|\bconnectOverCDP\s*\(|\bconnect_over_cdp\s*\(|--cdp\b|--remote-debugging-port\b|wss?://[^\s\"']+:\d+/devtools"
+    r"\bbrowser_harness\b|\bwebbrowser\b|puppeteer\.launch|chromium\.launch|launchPersistentContext|launch_persistent_context|storage_state\s*=|--storage-state|--user-data-dir|\bconnectOverCDP\s*\(|\bconnect_over_cdp\s*\(|--cdp\b|--remote-debugging-port\b|wss?://[^\s\"']+:\d+/devtools"
 )
 DATA_READERS = {
     "echo",
@@ -333,27 +314,19 @@ def guest_space(argv, plain):
     return None
 
 
-def lane_tool(argv, first):
+def harness_tool(argv):
     home = os.path.expanduser("~")
-    link = home + "/.local/bin/" + LANE_TOOL
-    sources = (
-        home + "/.agent-rails/rails-host-runtime/current/packages/agent-runtime/bin/" + LANE_TOOL,
-        home + "/.agent-rails/overlay/engine/bin/" + LANE_TOOL,
-    )
-    if not first or argv[0] not in (LANE_TOOL, link):
+    link = home + "/.local/bin/" + HARNESS_TOOL
+    source = home + "/.agent-rails/rails-host-runtime/current/packages/agent-runtime/bin/" + HARNESS_TOOL
+    if argv[0] not in (HARNESS_TOOL, link):
         return False
-    if argv[0] == LANE_TOOL and os.path.normpath(shutil.which(LANE_TOOL) or "") != link:
+    if argv[0] == HARNESS_TOOL and os.path.normpath(shutil.which(HARNESS_TOOL) or "") != link:
         return False
-    if not (
-        os.path.islink(link)
-        and any(os.path.isfile(source) and os.path.realpath(link) == os.path.realpath(source) for source in sources)
-    ):
+    if not (os.path.islink(link) and os.path.isfile(source) and os.path.realpath(link) == os.path.realpath(source)):
         return False
-    rest = argv[3:] if argv[2:3] == ["--"] else argv[2:]
-    if len(argv) < 3 or not SESSION.fullmatch(argv[1]) or not rest or rest[0] not in LANE_SUBS:
-        return False
-    flags = [a for a in rest[1:] if a.startswith("-")]
-    return not flags or rest[0] == "shot" and all(a in ("--width", "--dark") for a in flags)
+    if argv[1:] == ["--list"] or argv[1:] in (["--help"], ["-h"]):
+        return True
+    return len(argv) >= 2 and SESSION.fullmatch(argv[1]) is not None and (len(argv) == 2 or argv[2] in HARNESS_SUBS)
 
 
 def classify(text, depth=0):
@@ -381,7 +354,6 @@ def classify(text, depth=0):
     if any(owner_path(value, variables) for value in redirects):
         found.add("mac")
     plain = depth == 0 and not (bodies or live or code) and len(commands) == 1 and PLAIN.fullmatch(original)
-    sole = depth == 0 and not (bodies or live or code)
     for index, (raw, here, piped) in enumerate(commands):
         if id(raw) in array_records:
             key = raw[0].removesuffix("=")
@@ -423,9 +395,22 @@ def classify(text, depth=0):
         if profile_tainted(argv, writes):
             found.add("mac")
         record_writes(argv, writes)
-        if lane_tool(argv, sole and index == 0 and argv == raw and not here):
+        if name == HARNESS_TOOL:
+            if argv != raw or not harness_tool(argv):
+                found.add("mac")
             continue
-        if name == LANE_TOOL or name == "lb" and argv[2:3] and argv[2] in LANE_SUBS:
+        if name in HARNESS:
+            if argv[1:] not in HARNESS_SAFE:
+                found.add("mac")
+            continue
+        if (
+            name in ("uv", "uvx")
+            and argv[1:3] not in UV_TOOL_ADMIN
+            and any("browser-harness" in a or "browser_harness" in a for a in argv[1:])
+        ):
+            found.add("mac")
+            continue
+        if name in INTERPRETERS and any(a.startswith("browser_harness") for a in argv[1:]):
             found.add("mac")
             continue
         if LAUNCHER in (name, os.path.basename(raw[0])):

@@ -12,7 +12,7 @@ Kept floors: ~/.claude/rules/floors.md applies to every forwarded brief.
 
 
 No browser runs inside this seat (keychain and Mach bootstrap are denied).
-Prod UI walks with a test account run on a box via playwright-cli or the computer-use seat; Aside is only for a lead's own shell on Studio.
+Prod UI walks with a test account run on a box via `lane-harness` (browser-harness skill) or the computer-use seat; Aside is only for a lead's own shell on Studio.
 
 This is a Studio-only Codex forwarding seat, including when `SEAT_EXEC` is set. Always use the foreground local wrapper below. It refuses other hosts, pins nested admission to Studio, and rejects companion background jobs. Never call seat-run or seat-exec from this seat.
 
