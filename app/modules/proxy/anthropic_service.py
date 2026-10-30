@@ -46,7 +46,7 @@ from app.core.providers import (
     get_anthropic_compat_profile,
     provider_name_for_anthropic_model,
 )
-from app.core.providers.openrouter import is_deepseek_model, map_deepseek_body
+from app.core.providers.request_body import prepare_provider_body
 from app.core.utils.client_session import get_dispatch_id
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import naive_utc_to_epoch
@@ -524,8 +524,7 @@ class AnthropicProxyService(AnthropicTransport):
                             if openai_body is not None
                             else payload.model_dump(mode="json", exclude_none=True)
                         )
-                        if provider_name == "openrouter" and is_deepseek_model(payload.model):
-                            body_payload = map_deepseek_body(body_payload)
+                        body_payload = prepare_provider_body(provider_name, payload.model, body_payload, headers)
 
                         unified_headers: dict[str, str] | None = None
                         quota_observed_at: datetime | None = None
