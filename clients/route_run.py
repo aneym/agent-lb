@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -62,6 +63,7 @@ def provider_command(row: dict, cwd: str, write: bool, help_text: str) -> list[s
             row["model"],
             "-c",
             "model_reasoning_effort=" + json.dumps(row["effort"]),
+            *(["-c", "features.multi_agent=false"] if row.get("class") == "verify" else []),
             *sandbox,
             "--cd=" + cwd,
             "--skip-git-repo-check",
@@ -116,6 +118,16 @@ def final_message(path: Path, provider: str) -> str:
                 block["text"] for block in event.get("message", {}).get("content", []) if block.get("type") == "text"
             )
     return final
+
+
+def review_verdict(text: str) -> bool:
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = None
+    if isinstance(value, dict) and value.get("verdict") in ("PASS", "FAIL"):
+        return True
+    return re.search(r"^VERDICT: (?:PASS|FAIL)(?:[ \t]+[^\n]+)?[ \t]*$", text.strip().split("\n")[-1]) is not None
 
 
 def release_lease(row: dict, outcome: str) -> None:
@@ -211,6 +223,9 @@ def execute_run(args: argparse.Namespace, row: dict, cwd: Path, brief: str) -> i
             result += "\nroute run: remote decision scratch checkout cleanup failed"
             if exit_code == 0:
                 exit_code = 127
+    if exit_code == 0 and row.get("class") == "verify" and not review_verdict(result):
+        exit_code = 65
+        result += "\nroute run: REVIEW-NO-VERDICT: provider exited without PASS or FAIL; review failed"
     exit_code = exit_code if exit_code >= 0 else 128 - exit_code
     seconds = round(time.monotonic() - started, 3)
     append_decision(
@@ -324,5 +339,11 @@ def command_run(args: argparse.Namespace) -> int:
         brief += (
             "\nReturn the final review as a JSON object with a verdict field: "
             "PASS only if this review passes, otherwise FAIL. Do not wrap it in Markdown."
+        )
+    if row.get("class") == "verify":
+        brief += (
+            "\nYou are the reviewer executing this task yourself. Do not delegate or spawn agents. "
+            "Complete this review in this run. End with VERDICT: PASS or VERDICT: FAIL, "
+            "or a JSON object whose verdict field is PASS or FAIL.\n"
         )
     return execute_run(args, row, cwd, brief)

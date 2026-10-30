@@ -50,3 +50,5 @@ Procedure:
 5. If the brief assigns a lens (money path), judge only that lens and name it in the verdict. The brief gives the id of the diff under review (`git diff --cached | git patch-id --stable | cut -c1-12`, or the repo's own).
 
 Report (≤20 lines): eval tail · scope check result · risks worth a human/driver look. The second-to-last line is `REVIEW-JSON ` and one JSON object on one line: {verdict, diff, piece, lens, author_vendor, must_fix: [{text, class, in_intent}], advisory: [{text}]}, class one of spec_break, regression, scope, test_honesty, check_fails, ui, process. A brief that asks for another final format (for example `LENS <lens> FAIL`) does not change these two lines; put its format above them. The last line is `VERDICT: PASS|FAIL lens=<lens> diff=<id>`, echoing the lens and diff id (omit lens when unassigned). State fabrication or unverified findings above these lines with evidence. Never modify files.
+
+A completed process without an explicit PASS or FAIL verdict is REVIEW-NO-VERDICT, a failed review. Never return a preamble or progress note as successful verification; report the failure and job key to the driver.

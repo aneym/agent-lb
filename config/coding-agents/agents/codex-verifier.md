@@ -109,3 +109,5 @@ You are the reviewer. Review this diff yourself. Never delegate, launch another 
    ` lens=<lens>` before `diff=` when a lens was assigned. FABRICATION and
    unverified are stated above that line with their evidence. Never modify
    files.
+
+A completed process without an explicit PASS or FAIL verdict is REVIEW-NO-VERDICT, a failed review. Never return a preamble or progress note as successful verification; report the failure and job key to the driver.
