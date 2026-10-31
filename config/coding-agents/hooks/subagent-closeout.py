@@ -28,6 +28,7 @@ INFRA = (
     ("usage limit", re.compile(r"\busage[- ]limit|\b429\b|rate limit reached", re.IGNORECASE)),
 )
 FORWARD_PREFIXES = ("gpt-", "codex-", "cursor-", "grok-", "devin-", "muse-", "computer-use", "host-relay")
+IN_PROCESS_SEATS = frozenset({"gpt-explorer"})
 SEAT_RUN_FORWARDERS = {"opus-seat", "opus-seat-full", "sonnet-implementer", "verifier"}
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 FAILURE = re.compile(
@@ -320,6 +321,8 @@ def decision_row(decision_id: str) -> dict:
 
 def in_process(seat: str) -> bool:
     seat = seat.lower()
+    if seat in IN_PROCESS_SEATS:
+        return True
     return not seat.startswith(FORWARD_PREFIXES) and (seat.endswith("-local") or seat not in SEAT_RUN_FORWARDERS)
 
 
