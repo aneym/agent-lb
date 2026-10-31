@@ -254,3 +254,7 @@ and path checks and all floor guards.
 ## 2026-10-30: Headless verification must finish with a verdict
 
 Three route-run Codex reviews spawned child agents and completed their root turn with no final message (dcn_01M6556SV4MD3M11TEF4PS23ZW, dcn_01M655G0FXMVN9QVNHQ0MCNCZV, dcn_01M655VV2H840P8VKKWNPV62DN). The parser returned the opening progress message and exit zero marked it successful. Disable Codex multi-agent tools for synchronous verification and require an explicit terminal PASS/FAIL verdict. Missing verdicts fail with exit 65 and REVIEW-NO-VERDICT; a FAIL verdict remains a completed review, not approval.
+
+## 2026-10-31: Terminal verdicts allow formatting trailers
+
+The terminal-verdict rule accepts markdown emphasis around the verdict line and trailing blank lines, bare code fences, or route-run diagnostics. Any other content after the verdict still fails, as does progress-only output; a verdict earlier in the response is not enough.

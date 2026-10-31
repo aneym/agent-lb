@@ -127,7 +127,14 @@ def review_verdict(text: str) -> bool:
         value = None
     if isinstance(value, dict) and value.get("verdict") in ("PASS", "FAIL"):
         return True
-    return re.search(r"^VERDICT: (?:PASS|FAIL)(?:[ \t]+[^\n]+)?[ \t]*$", text.strip().split("\n")[-1]) is not None
+    lines = text.strip().splitlines()
+    while lines:
+        line = lines.pop().strip()
+        if not line or re.fullmatch(r"(?:`{3,}|~{3,})[ \t]*", line) or line.startswith("route run:"):
+            continue
+        line = line.strip(" \t*_`")
+        return re.fullmatch(r"VERDICT: (?:PASS|FAIL)(?:[ \t]+[^\n]+)?", line) is not None
+    return False
 
 
 def release_lease(row: dict, outcome: str) -> None:
