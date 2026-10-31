@@ -340,8 +340,13 @@ def harness_tool(argv):
     source = home + "/.agent-rails/rails-host-runtime/current/packages/agent-runtime/bin/" + HARNESS_TOOL
     if argv[0] not in (HARNESS_TOOL, link):
         return False
-    if argv[0] == HARNESS_TOOL and os.path.normpath(shutil.which(HARNESS_TOOL) or "") != link:
-        return False
+    if argv[0] == HARNESS_TOOL:
+        resolved = shutil.which(HARNESS_TOOL)
+        if resolved is None:
+            if os.environ.get("PATH") != "/usr/bin:/bin:/usr/sbin:/sbin":
+                return False
+        elif os.path.normpath(resolved) != link:
+            return False
     if not (os.path.islink(link) and os.path.isfile(source) and os.path.realpath(link) == os.path.realpath(source)):
         return False
     if argv[1:] == ["--list"] or argv[1:] in (["--help"], ["-h"]):
