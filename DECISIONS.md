@@ -262,3 +262,11 @@ The terminal-verdict rule accepts markdown emphasis around the verdict line and 
 ## 2026-11-01: Refuse Codex home and volume walks
 
 The organizer recorded repeated pc-wsl home scans at 00:48Z; renicing left the metadata walks running. Register the existing wide-scan classifier as a managed Codex Bash hook with `--block-walks`. This mode denies the roots the classifier already identifies, including metadata searches and du, and denies unparseable commands. Claude behavior stays with its existing mode. Managed requirements force hooks on even for isolated seat homes. Proof: real Codex exec broad and scoped searches on ax42 and pc-wsl.
+
+## 2026-11-01: Wide-scan guard limits and failure modes
+
+A Sonnet review of the Codex walk guard asked for fixes. A path whose last part is a bare glob (`*`, `.*`, `**`) now resolves to its directory, so `cd ~; grep -r x *` counts as a home walk. `ls -R` and `ls --recursive` are classified like du. The generic mount-point test is gone because it refused any mount (`~/.codex`, the CI runner homes, `/srv/data` and the cow trees). The guarded roots are now named: `/`, home, `/data`, `/mnt`, `/media` and the macOS volumes. `find` with `-maxdepth 0` or `1` passes on any root, the same exemption the `/srv/cow` rule already had.
+
+The guard reads the command text only, so it does not cover every walk. A root that only appears at run time passes: `x=~; rg y $x`, `rg y $(echo ~)`, `eval`, and a script that walks on its own such as Python `os.walk`. Accept that; it stops the walks agents actually type.
+
+One guard file decides every Codex Bash call, so a missing guard file, `jq` or `python3` refuses every call. Accept that. The managed Codex hook starts the guard through `/usr/bin/python3.12`; if that interpreter goes away (a distro Python upgrade), the hook exits 127 and Codex treats that as non-blocking, so the guard fails open until `agent-floors sync` rewrites requirements with the new interpreter.

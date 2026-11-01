@@ -33,8 +33,11 @@ WALK_MESSAGE = 'BLOCKED: scope the search to one directory; home-wide and volume
 def refused_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
-    return (STRICT and os.path.ismount(path)) or path in ('/', home, '/Users', '/Volumes', '/Users/aneyman') or re.fullmatch(r'/Volumes/[^/]+', path) is not None
+    return (path in ('/', home, '/Users', '/Volumes', '/Users/aneyman', '/data', '/mnt', '/media')
+            or re.fullmatch(r'/Volumes/[^/]+|/mnt/[^/]+|/media/[^/]+/[^/]+', path) is not None)
 COW_MESSAGE = 'BLOCKED: no recursive walk of /srv, /srv/data, /srv/cow or their direct children; full /srv/cow walks churn XFS and overlay metadata on ax42 (2026-10-29). Use df or the disk meter, or name one tree below them.'
+LS_VALUES = ('--block-size', '--format', '--hide', '--ignore', '--indicator-style', '--quoting-style', '--sort',
+             '--tabsize', '--time', '--time-style', '--width')
 DU_VALUES = ('-d', '-B', '-t', '-X', '--max-depth', '--block-size', '--threshold', '--exclude', '--exclude-from', '--time-style', '--files0-from')
 def cow_root(path, cwd):
     parts = [part for part in resolve_path(path, cwd).split('/') if part]
@@ -104,13 +107,10 @@ def resolve_path(path, cwd):
     if path.startswith('~'):
         home, _, rest = path.partition('/')
         path = (os.path.expanduser('~') if home == '~' else '/home/' + home[1:]) + '/' + rest
-    if path in ('/*', '~/*'):
-        path = '/' if path == '/*' else os.path.expanduser('~')
-    elif path.startswith('//'):
+    if path.startswith('//'):
         path = '/' + path.lstrip('/')
-    if path == os.path.expanduser('~') + '/*':
-        path = os.path.expanduser('~')
-    return posixpath.normpath(path if path.startswith('/') else posixpath.join(cwd, path))
+    path = posixpath.normpath(path if path.startswith('/') else posixpath.join(cwd, path))
+    return posixpath.dirname(path) if re.fullmatch(r'\.?[*?]+', posixpath.basename(path)) else path
 wrapper_values = {
     'env': ('uC', ('--unset', '--chdir', '--split-string')),
     'timeout': ('sk', ('--signal', '--kill-after')),
@@ -245,6 +245,27 @@ def unsafe(args, depth, cwd):
         if any(cow_root(path, cwd) for path in paths or ['.']):
             raise Refused(COW_MESSAGE)
         return False
+    if name == 'ls':
+        paths, recursive, skip = [], False, False
+        for arg in args[1:]:
+            if skip:
+                skip = False
+            elif arg.startswith('--'):
+                recursive |= arg == '--recursive'
+                skip = arg in LS_VALUES
+            elif arg.startswith('-') and arg != '-':
+                for j, flag in enumerate(arg[1:], 1):
+                    recursive |= flag == 'R'
+                    if flag in 'IwT':
+                        skip = j == len(arg) - 1
+                        break
+            else:
+                paths.append(arg)
+        if recursive and STRICT and any(refused_root(path, cwd) or wide_root(path, cwd) for path in paths or ['.']):
+            raise Refused(WALK_MESSAGE)
+        if recursive and any(cow_root(path, cwd) for path in paths or ['.']):
+            raise Refused(COW_MESSAGE)
+        return False
     if name in ('rg', 'find', 'fd', 'fdfind', 'grep', 'egrep', 'fgrep', 'ggrep', 'ugrep', 'ack', 'ag'):
         roots, recursive, word = search_paths(name, args[1:])
         recursive |= tool.startswith('rtk ')
@@ -253,14 +274,13 @@ def unsafe(args, depth, cwd):
             content = any(arg in ('-x', '-X', '--exec', '--exec-batch') for arg in args)
         if name == 'find':
             content = any(arg in ('-exec', '-execdir', '-ok', '-okdir') for arg in args) or bool(re.search(r'\bxargs\b[^;]*\b(?:cat|grep|rg|ack|ag|ugrep)\b', os.environ['SCAN_COMMAND']))
+        shallow = name == 'find' and re.search(r'-maxdepth\s+[01]\b', ' '.join(args)) is not None
         if recursive:
             for path in (roots or ['.']):
-                resolved = resolve_path(path, cwd)
-                current = resolve_path('.', cwd)
                 protected = refused_root(path, cwd)
-                if cow_root(path, cwd) and not (name == 'find' and re.search(r'-maxdepth\s+[01]\b', ' '.join(args))):
+                if cow_root(path, cwd) and not shallow:
                     raise Refused(COW_MESSAGE)
-                if STRICT and (protected or wide_root(path, cwd)):
+                if STRICT and not shallow and (protected or wide_root(path, cwd)):
                     raise Refused(WALK_MESSAGE)
                 if content and protected:
                     raise Refused('BLOCKED (floor: secrets and protected credentials): recursive content reads must stay inside one repository or directory.')
