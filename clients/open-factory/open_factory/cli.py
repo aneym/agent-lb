@@ -421,7 +421,7 @@ def build_parser() -> argparse.ArgumentParser:
     job.add_argument("brief", nargs="*")
     job.set_defaults(func=cmd_run)
 
-    start = sub.add_parser("start", help="Launch the Opus orchestrator (cc) for this project")
+    start = sub.add_parser("start", help="Launch the Opus orchestrator (ccl) for this project")
     start.add_argument("--path", default=None)
     start.add_argument("--goal", default=None)
     start.add_argument("--name", default=None)

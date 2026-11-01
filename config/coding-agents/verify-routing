@@ -350,8 +350,8 @@ if not SOURCE_ONLY:
         check(False, f"route CLI exists at {route_bin}")
 
 
-    cc_text = read((HOME / ".local" / "bin" / "cc").resolve())
-    check('with_name("opus")' in cc_text, "~/.local/bin/cc execs the opus client")
+    cc_text = read((HOME / ".local" / "bin" / "ccl").resolve())
+    check('with_name("opus")' in cc_text, "~/.local/bin/ccl execs the opus client")
     check(
         'MODEL = "opus[1m]"' in read((HOME / ".local" / "bin" / "opus").resolve()),
         "~/.local/bin/opus launches Claude Code's newest Opus (opus[1m])",

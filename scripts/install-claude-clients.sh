@@ -31,12 +31,12 @@ esac
 
 
 
-CLIENT_NAMES=(cc fable opus claude-lb-launch kimi-lb-launch agent-defs-doctor claude-desktop-gateway claude-artifact-bridge)
+CLIENT_NAMES=(ccl fable opus claude-lb-launch kimi-lb-launch agent-defs-doctor claude-desktop-gateway claude-artifact-bridge)
 BUNDLE_NAMES=("${CLIENT_NAMES[@]}" opus-runtime-doctor route)
 POLICY_SOURCE="$REPO_DIR/config/coding-agents"
 POLICY_INSTALLER="$POLICY_SOURCE/install-policy.py"
 HOOK_TARGET="$USER_HOME/.claude/hooks/ccdex-gpt-only.sh"
-RETIRED_CLIENTS=(ccdex ccdex-worker-mcp)
+RETIRED_CLIENTS=(cc ccdex ccdex-worker-mcp)
 
 for name in "${BUNDLE_NAMES[@]}"; do
   if [[ ! -x "$REPO_DIR/clients/$name" ]]; then

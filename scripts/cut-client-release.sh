@@ -6,7 +6,7 @@ usage() { echo "usage: $0 [--ref <git ref>] [--link <client>]... [--print]" >&2;
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 RELEASES="${AGENT_LB_CLIENT_RELEASES:-$HOME/.agent-lb/client-releases}"
 BIN_DIR="${AGENT_LB_CLIENT_BIN_DIR:-$HOME/.local/bin}"
-CLIENTS=(claude-lb-launch cc fable opus agent-defs-doctor opus-runtime-doctor)
+CLIENTS=(claude-lb-launch ccl fable opus agent-defs-doctor opus-runtime-doctor)
 BUNDLE_FILES=("${CLIENTS[@]}" agent_defs_models.py)
 ref=origin/main
 links=()

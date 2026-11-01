@@ -193,7 +193,7 @@ kimi-cli login afterwards, because both sides rotate the same refresh token.
 
 ### Claude Code
 
-Recommended: install the vendored `cc` launcher and canonical routing policy. The
+Recommended: install the vendored `ccl` launcher and canonical routing policy. The
 installer is previewable, preserves pre-existing regular client and hook files as
 `.pre-agent-lb`, checkpoints changed global configuration under
 `~/.agent-lb/config-checkpoints/coding-agents/`, and removes retired CCDEX clients,
@@ -204,14 +204,14 @@ scripts/install-claude-clients.sh --print
 scripts/install-claude-clients.sh
 ```
 
-`cc` defaults normal Claude Code to Fable/high. GPT compatibility seats run inside
+`ccl` defaults normal Claude Code to Fable/high. GPT compatibility seats run inside
 the Claude Code harness through agent-lb's server-side model aliases. The installer
 replaces only routing-owned policy sections and the Claude model field; unrelated
 Claude/Codex instructions, settings, permissions, and hooks are preserved.
 
 ### Claude Desktop Code (macOS)
 
-Claude Desktop's embedded Code runtime does not start through the `cc` wrapper. Install
+Claude Desktop's embedded Code runtime does not start through the `ccl` wrapper. Install
 the dedicated loopback proxy after the main service and Claude accounts are healthy:
 
 ```bash
@@ -243,7 +243,7 @@ scripts/install-claude-desktop-proxy.sh --uninstall
 Minimal alternative (no launcher):
 
 ```zsh
-alias cc='ANTHROPIC_BASE_URL=http://127.0.0.1:2455 claude'
+alias ccl='ANTHROPIC_BASE_URL=http://127.0.0.1:2455 claude'
 ```
 
 Either way: **base URL only — never set `ANTHROPIC_AUTH_TOKEN`** (see ground rules). The

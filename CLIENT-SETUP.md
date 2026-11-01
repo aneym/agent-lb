@@ -133,7 +133,7 @@ Connect Claude (Anthropic) accounts first — `scripts/anthropic-auth.sh` or ste
 ANTHROPIC_BASE_URL=http://127.0.0.1:2455 claude
 ```
 
-or install the vendored `cc` launcher and canonical routing policy. Preview the exact
+or install the vendored `ccl` launcher and canonical routing policy. Preview the exact
 changes first; installation preserves existing regular client/hook files, checkpoints
 changed global configuration, and removes retired CCDEX artifacts when present:
 
@@ -142,7 +142,7 @@ scripts/install-claude-clients.sh --print
 scripts/install-claude-clients.sh
 ```
 
-`cc` defaults to Fable/high. GPT compatibility seats run inside the Claude Code harness
+`ccl` defaults to Fable/high. GPT compatibility seats run inside the Claude Code harness
 through agent-lb's server-side model aliases. The installer semantically updates only
 routing-owned Markdown blocks and the Claude model field; unrelated global
 configuration remains intact.

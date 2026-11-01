@@ -6,7 +6,7 @@
 
 ## How work is routed
 
-Opus drives this session (`cc`). Each piece of work gets its seat from
+Opus drives this session (`ccl`). Each piece of work gets its seat from
 `open-factory route --class <class> "<task>"`: the host lists the seats it can
 run now (`route menu`: installed, served, logged in, with pool headroom), Jev
 picks one or abstains, the host re-checks the pick and falls back to the
