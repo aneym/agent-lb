@@ -3,13 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import Integer, and_, cast, func, literal_column, or_, select
+from sqlalchemy import Integer, and_, cast, func, literal_column, or_, select, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account
 from app.db.request_models import RequestLog
 from app.db.session import analytics_work_mem
 from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS
+from app.modules.request_logs import daily_rollup
 
 _INTERNAL_LIMIT_WARMUP_SOURCE = "limit_warmup"
 _INTERNAL_WARMUP_REQUEST_KINDS = ("warmup", "limit_warmup")
@@ -92,19 +93,24 @@ class ReportsRepository:
         )
         await analytics_work_mem(self._session)
         result = await self._session.execute(stmt)
-        return [
-            DailyAggregateRow(
-                date=str(row.date),
-                request_count=int(row.request_count),
-                error_count=int(row.error_count),
-                input_tokens=int(row.input_tokens),
-                output_tokens=int(row.output_tokens),
-                cached_input_tokens=int(row.cached_input_tokens),
-                cost_usd=float(row.cost_usd),
-                active_accounts=int(row.active_accounts),
+        rolled = await daily_rollup.report_daily_rows(
+            self._session, daily_rollup.report_conditions(start_date, end_date, account_ids, model)
+        )
+        days: dict[str, DailyAggregateRow] = {}
+        for row in [*rolled, *result.all()]:
+            key = daily_rollup.merge_date(row.date)
+            seen = days.get(key)
+            days[key] = DailyAggregateRow(
+                date=key,
+                request_count=int(row.request_count or 0) + (seen.request_count if seen else 0),
+                error_count=int(row.error_count or 0) + (seen.error_count if seen else 0),
+                input_tokens=int(row.input_tokens or 0) + (seen.input_tokens if seen else 0),
+                output_tokens=int(row.output_tokens or 0) + (seen.output_tokens if seen else 0),
+                cached_input_tokens=int(row.cached_input_tokens or 0) + (seen.cached_input_tokens if seen else 0),
+                cost_usd=float(row.cost_usd or 0.0) + (seen.cost_usd if seen else 0.0),
+                active_accounts=max(int(row.active_accounts or 0), seen.active_accounts if seen else 0),
             )
-            for row in result.all()
-        ]
+        return [days[key] for key in sorted(days)]
 
     async def aggregate_by_model(
         self,
@@ -136,12 +142,14 @@ class ReportsRepository:
             .order_by(func.coalesce(func.sum(RequestLog.cost_usd), 0.0).desc())
         )
         result = await self._session.execute(stmt)
+        costs = await daily_rollup.report_model_costs(
+            self._session, daily_rollup.report_conditions(start_date, end_date, account_ids, model)
+        )
+        for row in result.all():
+            costs[row.model] = costs.get(row.model, 0.0) + float(row.cost_usd)
         return [
-            ModelAggregateRow(
-                model=row.model,
-                cost_usd=float(row.cost_usd),
-            )
-            for row in result.all()
+            ModelAggregateRow(model=name, cost_usd=cost)
+            for name, cost in sorted(costs.items(), key=lambda item: item[1], reverse=True)
         ]
 
     async def aggregate_by_account(
@@ -174,7 +182,16 @@ class ReportsRepository:
             .order_by(func.coalesce(func.sum(RequestLog.cost_usd), 0.0).desc())
         )
         result = await self._session.execute(stmt)
-        rows = result.all()
+        merged = await daily_rollup.report_account_rows(
+            self._session, daily_rollup.report_conditions(start_date, end_date, account_ids, model)
+        )
+        for row in result.all():
+            cost, count = merged.get(row.account_id, (0.0, 0))
+            merged[row.account_id] = (cost + float(row.cost_usd), count + int(row.request_count))
+        rows = [
+            AccountAggregateRow(account_id=account_id, alias=None, cost_usd=cost, request_count=count)
+            for account_id, (cost, count) in sorted(merged.items(), key=lambda item: item[1][0], reverse=True)
+        ]
 
         account_ids_found = [row.account_id for row in rows if row.account_id]
         alias_map: dict[str | None, str | None] = {}
@@ -213,11 +230,16 @@ class ReportsRepository:
         if model:
             conditions.append(RequestLog.model == model)
 
-        result = await self._session.execute(
-            select(func.count(func.distinct(RequestLog.account_id)))
+        live = (
+            select(RequestLog.account_id)
             .outerjoin(Account, Account.id == RequestLog.account_id)
             .where(and_(*conditions))
         )
+        rolled = daily_rollup.report_account_ids(
+            daily_rollup.report_conditions(start_date, end_date, account_ids, model)
+        )
+        accounts = union(live, rolled).subquery()
+        result = await self._session.execute(select(func.count()).select_from(accounts))
         return int(result.scalar_one() or 0)
 
 

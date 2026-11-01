@@ -11,7 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.utils.time import utcnow
 from app.db.request_models import RequestLog
-from app.modules.public_usage.schemas import PublicUsageByModel, PublicUsageByProvider, PublicUsageDaily, PublicUsagePeriod, PublicUsageProviderEntry, PublicUsageResponse, PublicUsageTotals, PublicUsageTrend  # noqa: I001  # fmt: skip
+from app.modules.public_usage.schemas import (  # noqa: I001  # fmt: skip
+    PublicUsageByModel,
+    PublicUsageByProvider,
+    PublicUsageDaily,
+    PublicUsagePeriod,
+    PublicUsageProviderEntry,
+    PublicUsageResponse,
+    PublicUsageTotals,
+    PublicUsageTrend,
+)
+from app.modules.request_logs import daily_rollup
 
 _INTERNAL_LIMIT_WARMUP_SOURCE = "limit_warmup"
 _WARMUP_REQUEST_KINDS = ("warmup", "limit_warmup")
@@ -78,7 +88,7 @@ async def build_public_usage(session: AsyncSession, days: int) -> PublicUsageRes
         .where(RequestLog.request_kind.not_in(_WARMUP_REQUEST_KINDS))
         .group_by(date_expr, RequestLog.model, RequestLog.provider)
     )
-    rows = (await session.execute(stmt)).all()
+    rows = [*(await daily_rollup.public_usage_rows(session, cutoff)), *(await session.execute(stmt)).all()]
 
     t_cost = 0.0
     t_in = t_out = t_cached = t_reasoning = t_requests = 0

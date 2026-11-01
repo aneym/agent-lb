@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account
 from app.db.request_models import RequestLog
-from app.modules.api_keys.repository_data import ApiKeyAccountCost, ApiKeyTrendBucket, ApiKeyUsageSummary, ApiKeyUsageTotals  # noqa: I001  # fmt: skip
+from app.modules.api_keys.repository_data import (  # noqa: I001  # fmt: skip
+    ApiKeyAccountCost,
+    ApiKeyTrendBucket,
+    ApiKeyUsageSummary,
+    ApiKeyUsageTotals,
+)
+from app.modules.request_logs import daily_rollup
 from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 
@@ -74,17 +80,22 @@ class ApiKeyUsageQueries:
             .group_by(RequestLog.api_key_id)
         )
         result = await self._session.execute(stmt)
+        rolled = await daily_rollup.api_key_totals(self._session)
+        live = {row[0]: row[1:] for row in result.all()}
         summaries: dict[str, ApiKeyUsageSummary] = {}
-        for (
-            api_key_id,
-            request_count,
-            input_tokens,
-            output_tokens,
-            cached_input_tokens,
-            total_cost_usd,
-        ) in result.all():
+        for api_key_id in live.keys() | rolled.keys():
             if not api_key_id:
                 continue
+            request_count, input_tokens, output_tokens, cached_input_tokens, total_cost_usd = live.get(
+                api_key_id, (0, 0, 0, 0, 0.0)
+            )
+            if api_key_id in rolled:
+                extra = rolled[api_key_id]
+                request_count = int(request_count or 0) + extra.requests
+                input_tokens = int(input_tokens or 0) + extra.input_tokens
+                output_tokens = int(output_tokens or 0) + extra.output_or_reasoning_tokens
+                cached_input_tokens = int(cached_input_tokens or 0) + extra.cached_input_tokens
+                total_cost_usd = float(total_cost_usd or 0.0) + extra.cost_usd
             input_sum = int(input_tokens or 0)
             output_sum = int(output_tokens or 0)
             cached_sum = int(cached_input_tokens or 0)
@@ -115,15 +126,16 @@ class ApiKeyUsageQueries:
         )
         result = await self._session.execute(stmt)
         row = result.one()
-        input_sum = int(row.input_tokens or 0)
-        output_sum = int(row.output_tokens or 0)
-        cached_sum = int(row.cached_input_tokens or 0)
+        extra = (await daily_rollup.api_key_totals(self._session, key_id)).get(key_id)
+        input_sum = int(row.input_tokens or 0) + (extra.input_tokens if extra else 0)
+        output_sum = int(row.output_tokens or 0) + (extra.output_or_reasoning_tokens if extra else 0)
+        cached_sum = int(row.cached_input_tokens or 0) + (extra.cached_input_tokens if extra else 0)
         cached_sum = max(0, min(cached_sum, input_sum))
         return ApiKeyUsageSummary(
-            request_count=int(row.request_count or 0),
+            request_count=int(row.request_count or 0) + (extra.requests if extra else 0),
             total_tokens=input_sum + output_sum,
             cached_input_tokens=cached_sum,
-            total_cost_usd=round(float(row.total_cost_usd or 0.0), 6),
+            total_cost_usd=round(float(row.total_cost_usd or 0.0) + (extra.cost_usd if extra else 0.0), 6),
         )
 
     async def usage_7d_by_account(

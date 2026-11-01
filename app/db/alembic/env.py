@@ -9,8 +9,10 @@ from app.core.config.settings import get_settings
 from app.db.base import Base
 from app.db.migration_url import to_sync_database_url
 from app.db.models_trace import RequestContextParts
+from app.db.rollup_models import RequestLogDaily
 
 assert RequestContextParts.metadata is Base.metadata
+assert RequestLogDaily.metadata is Base.metadata
 
 config = context.config
 

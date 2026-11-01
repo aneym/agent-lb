@@ -73,6 +73,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     from app.latency_cli import add_parser as add_latency_parser
 
     add_latency_parser(subparsers)
+    from app.retention_cli import add_parser as add_retention_parser
+
+    add_retention_parser(subparsers)
     from app.profiles_cli import add_parser as add_profiles_parser
 
     add_profiles_parser(subparsers)
@@ -256,6 +259,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         (run_profiles if args.command == "profiles" else run_reauth)(args)
         return
 
+    if args.command == "retention":
+        from app.retention_cli import run as run_retention
+
+        run_retention(args)
+        return
     if args.command == "latency":
         from app.latency_cli import run as run_latency
 

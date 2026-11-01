@@ -8,12 +8,10 @@ from sqlalchemy import delete, func, insert, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.settings import get_settings
-from app.core.utils.time import utcnow
 from app.db.account_state_models import AccountExchangeIntent
-from app.db.models import Account, AccountStatus, UsageHistory
-from app.db.request_models import RequestLog
-from app.db.session_models import StickySession
+from app.db.models import Account, AccountStatus
 from app.modules.accounts.identity_repository import AccountIdentityRepository, _slot_lock_keys
+from app.modules.accounts.removal_repository import AccountRemovalRepository
 from app.modules.accounts.state_repository import AccountStateRepository
 from app.modules.accounts.usage_repository import AccountUsageRepository
 
@@ -40,7 +38,9 @@ class ExchangeIntentWindow:
     ready: bool
 
 
-class AccountsRepository(AccountIdentityRepository, AccountUsageRepository, AccountStateRepository):
+class AccountsRepository(
+    AccountIdentityRepository, AccountUsageRepository, AccountStateRepository, AccountRemovalRepository
+):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -60,21 +60,6 @@ class AccountsRepository(AccountIdentityRepository, AccountUsageRepository, Acco
             stmt = stmt.execution_options(populate_existing=True)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
-
-    async def delete(self, account_id: str, *, delete_history: bool = False) -> bool:
-        await self._session.execute(delete(UsageHistory).where(UsageHistory.account_id == account_id))
-        if delete_history:
-            await self._session.execute(delete(RequestLog).where(RequestLog.account_id == account_id))
-        else:
-            await self._session.execute(
-                update(RequestLog)
-                .where(RequestLog.account_id == account_id)
-                .values(account_id=None, deleted_at=utcnow()),
-            )
-        await self._session.execute(delete(StickySession).where(StickySession.account_id == account_id))
-        result = await self._session.execute(delete(Account).where(Account.id == account_id).returning(Account.id))
-        await self._session.commit()
-        return result.scalar_one_or_none() is not None
 
     async def update_tokens(
         self,

@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly agent-lb request_logs retention (ships disabled; enable only with an approval record on file)
+
+[Timer]
+OnCalendar=Sun 05:10
+RandomizedDelaySec=15min
+Persistent=true
+Unit=agent-lb-retention.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=agent-lb request_logs retention: archive to the data volume, fold into request_log_daily, delete
+After=studio-pg.service agent-lb.service
+RequiresMountsFor=%h/.agent-rails/archive-pc-wsl
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.agent-lb-primary/agent-lb.env
+Environment=AGENT_LB_RETENTION_ARCHIVE_DIR=%h/.agent-rails/archive-pc-wsl/agent-lb-retention
+ExecStart=%h/.agent-lb-primary/runtime/agent-lb/.venv/bin/agent-lb retention run --apply --approval %h/.agent-lb-primary/retention-approval.md --receipt %h/.agent-rails/archive-pc-wsl/agent-lb-retention/receipts/last-apply.json
+Nice=15
+IOSchedulingClass=idle
+UMask=0077
+TimeoutStartSec=3600

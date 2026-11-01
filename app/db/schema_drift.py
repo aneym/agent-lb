@@ -9,8 +9,10 @@ from sqlalchemy.engine import Connection
 
 from app.db.base import Base
 from app.db.models_trace import RequestContextParts
+from app.db.rollup_models import RequestLogDaily
 
 assert RequestContextParts.metadata is Base.metadata
+assert RequestLogDaily.metadata is Base.metadata
 
 _MANUAL_DRIFT_INDEX_REQUIREMENTS: dict[str, frozenset[str]] = {
     "usage_history": frozenset(

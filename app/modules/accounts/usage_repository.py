@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.db.request_models import RequestLog
+from app.modules.request_logs import daily_rollup
 
 _REPLAYED_REQUEST_ID_CHUNK = 500
 
@@ -35,9 +36,7 @@ class AccountUsageRepository:
         ]
         if account_ids:
             conditions.append(RequestLog.account_id.in_(account_ids))
-        max_id = (await self._session.execute(select(func.max(RequestLog.id)))).scalar()
-        if max_id is None:
-            return {}
+        max_id = (await self._session.execute(select(func.max(RequestLog.id)))).scalar() or 0
         conditions.append(RequestLog.id <= max_id)
 
         usage_sums = (
@@ -95,6 +94,21 @@ class AccountUsageRepository:
                 for index, value in enumerate(counts):
                     account_totals[index] -= int(value or 0)
                 account_totals[6] -= float(cost or 0.0)
+
+        for account_id, rolled in (await daily_rollup.account_totals(self._session, account_ids)).items():
+            account_totals = totals.setdefault(account_id, [0, 0, 0, 0, 0, 0, 0.0])
+            for index, value in enumerate(
+                (
+                    rolled.requests,
+                    rolled.input_tokens,
+                    rolled.output_or_reasoning_tokens,
+                    rolled.cached_input_tokens,
+                    rolled.cache_creation_tokens,
+                    rolled.cache_read_tokens,
+                )
+            ):
+                account_totals[index] += value
+            account_totals[6] += rolled.cost_usd
 
         summaries: dict[str, AccountRequestUsageSummary] = {}
         for account_id, (
