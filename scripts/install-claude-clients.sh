@@ -134,7 +134,7 @@ install_link() {
   echo "linked $target -> $source"
 }
 
-remove_retired_artifacts() {
+remove_retired_clients() {
   for name in "${RETIRED_CLIENTS[@]}"; do
     target="$BIN_DIR/$name"
     if [[ -L "$target" && "$(readlink "$target")" == */clients/"$name" ]]; then
@@ -142,6 +142,10 @@ remove_retired_artifacts() {
       echo "removed retired $target"
     fi
   done
+}
+
+remove_retired_artifacts() {
+  remove_retired_clients
   if [[ -L "$HOOK_TARGET" ]]; then
     rm "$HOOK_TARGET"
     echo "removed retired $HOOK_TARGET"
@@ -158,7 +162,7 @@ if [[ "$MODE" == "print" ]]; then
   done
   echo "link $POLICY_DIR/coding-agents -> $CURRENT/config/coding-agents"
   "$POLICY_INSTALLER" --home "$USER_HOME" --print
-  echo "remove retired ccdex artifacts (clients, hook, MCP registration)"
+  echo "remove retired clients (${RETIRED_CLIENTS[*]}) and ccdex hook and MCP registration"
   exit 0
 fi
 
@@ -223,7 +227,9 @@ if [[ "$MODE" != "clients-only" ]]; then
   install_link "$POLICY_DIR/coding-agents" "$CURRENT/config/coding-agents"
 fi
 
-if [[ "$MODE" != "clients-only" ]]; then
+if [[ "$MODE" == "clients-only" ]]; then
+  remove_retired_clients
+else
   remove_retired_artifacts
   echo "removed retired ccdex artifacts where present"
 fi
