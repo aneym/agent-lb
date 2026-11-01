@@ -10,9 +10,11 @@ OFFLOAD_COMMAND = (
 )
 BRANCH_GUARD_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/branch-guard.py"'
 HOOKS_OFF_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/hooks-off-guard.py"'
-FLOOR_COMMANDS = (BRANCH_GUARD_COMMAND, HOOKS_OFF_COMMAND)
+WALK_GUARD_COMMAND = '/bin/bash "$HOME/.claude/hooks/wide-scan-guard.sh" --block-walks'
+FLOOR_COMMANDS = (BRANCH_GUARD_COMMAND, HOOKS_OFF_COMMAND, WALK_GUARD_COMMAND)
 MANAGED_COMMANDS = {
     OFFLOAD_COMMAND: (20, "Bash"),
+    WALK_GUARD_COMMAND: (10, "Bash"),
     BRANCH_GUARD_COMMAND: (10, "Bash"),
     HOOKS_OFF_COMMAND: (10, "apply_patch"),
 }

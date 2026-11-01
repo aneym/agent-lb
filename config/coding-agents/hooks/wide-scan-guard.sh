@@ -20,7 +20,7 @@ CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty') || refuse "could not read th
 PYTHONPATH="$(python3 -c 'import os, sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "${BASH_SOURCE[0]}")${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONPATH
 SCAN=0
-SCAN_COMMAND="$CMD" SCAN_CWD="$CWD" python3 - <<'PY' || SCAN=$?
+SCAN_STRICT="${1:-}" SCAN_COMMAND="$CMD" SCAN_CWD="$CWD" python3 - <<'PY' || SCAN=$?
 import os
 import re
 import posixpath
@@ -28,10 +28,12 @@ from hook_wide_scan_shell import join_continuations, shell_tokens, strip_heredoc
 class Refused(Exception):
     pass
 WARNED = []
+STRICT = os.environ.get('SCAN_STRICT') == '--block-walks'
+WALK_MESSAGE = 'BLOCKED: scope the search to one directory; home-wide and volume-root file walks are refused.'
 def refused_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
-    return path in ('/', home, '/Users', '/Volumes', '/Users/aneyman') or re.fullmatch(r'/Volumes/[^/]+', path) is not None
+    return (STRICT and os.path.ismount(path)) or path in ('/', home, '/Users', '/Volumes', '/Users/aneyman') or re.fullmatch(r'/Volumes/[^/]+', path) is not None
 COW_MESSAGE = 'BLOCKED: no recursive walk of /srv, /srv/data, /srv/cow or their direct children; full /srv/cow walks churn XFS and overlay metadata on ax42 (2026-10-29). Use df or the disk meter, or name one tree below them.'
 DU_VALUES = ('-d', '-B', '-t', '-X', '--max-depth', '--block-size', '--threshold', '--exclude', '--exclude-from', '--time-style', '--files0-from')
 def cow_root(path, cwd):
@@ -47,7 +49,7 @@ def wide_root(path, cwd):
             or re.fullmatch(r'/Volumes/[^/]+|/home/[^/]+(?:/repos)?', path) is not None
             or path.endswith('/.agent-rails') or path.endswith('/.agent-rails/lanes'))
 def search_paths(name, args):
-    paths, pattern, recursive = [], name == 'find' or (name == 'rg' and '--files' in args), name in ('rg', 'find', 'fd', 'ack', 'ag', 'ugrep')
+    paths, pattern, recursive = [], name == 'find' or (name == 'rg' and '--files' in args), name in ('rg', 'find', 'fd', 'fdfind', 'ack', 'ag', 'ugrep')
     word = None
     i, options = 0, True
     short_values = 'efmABCdD' if name in ('grep', 'egrep', 'fgrep', 'ggrep') else 'efgtdmABCj'
@@ -229,7 +231,7 @@ def unsafe(args, depth, cwd):
     if name == 'git' and 'grep' in args and '--no-index' in args:
         name, args = 'rg', ['rg'] + args[args.index('grep') + 1:]
         args = [arg for arg in args if arg != '--no-index']
-    if name in ('du', 'tree'):
+    if name in ('du', 'tree', 'locate', 'plocate', 'mlocate'):
         paths, skip = [], False
         for arg in args[1:]:
             if skip:
@@ -238,14 +240,16 @@ def unsafe(args, depth, cwd):
                 skip = True
             elif not arg.startswith('-'):
                 paths.append(arg)
+        if STRICT and any(refused_root(path, cwd) or wide_root(path, cwd) for path in paths or ['.']):
+            raise Refused(WALK_MESSAGE)
         if any(cow_root(path, cwd) for path in paths or ['.']):
             raise Refused(COW_MESSAGE)
         return False
-    if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep', 'ugrep', 'ack', 'ag'):
+    if name in ('rg', 'find', 'fd', 'fdfind', 'grep', 'egrep', 'fgrep', 'ggrep', 'ugrep', 'ack', 'ag'):
         roots, recursive, word = search_paths(name, args[1:])
         recursive |= tool.startswith('rtk ')
         content = name in ('rg', 'grep', 'egrep', 'fgrep', 'ggrep', 'ugrep', 'ack', 'ag') and '--files' not in args
-        if name == 'fd':
+        if name in ('fd', 'fdfind'):
             content = any(arg in ('-x', '-X', '--exec', '--exec-batch') for arg in args)
         if name == 'find':
             content = any(arg in ('-exec', '-execdir', '-ok', '-okdir') for arg in args) or bool(re.search(r'\bxargs\b[^;]*\b(?:cat|grep|rg|ack|ag|ugrep)\b', os.environ['SCAN_COMMAND']))
@@ -256,6 +260,8 @@ def unsafe(args, depth, cwd):
                 protected = refused_root(path, cwd)
                 if cow_root(path, cwd) and not (name == 'find' and re.search(r'-maxdepth\s+[01]\b', ' '.join(args))):
                     raise Refused(COW_MESSAGE)
+                if STRICT and (protected or wide_root(path, cwd)):
+                    raise Refused(WALK_MESSAGE)
                 if content and protected:
                     raise Refused('BLOCKED (floor: secrets and protected credentials): recursive content reads must stay inside one repository or directory.')
                 if refused_root(path, cwd) or wide_root(path, cwd):
@@ -378,6 +384,8 @@ if [ "$SCAN" -eq 0 ]; then
   warn "grep -r under ~/.agent-rails hangs on FIFOs; scope to one directory and use rg or add -D skip"
 elif [ "$SCAN" -eq 2 ]; then
   exit 2
+elif [ "$SCAN" -eq 4 ] && [ "${1:-}" = --block-walks ]; then
+  refuse "could not classify the command; scope the search to one directory"
 elif [ "$SCAN" -eq 6 ] || [ "$SCAN" -eq 4 ]; then
   allow
 elif [ "$SCAN" -ne 3 ]; then

@@ -258,3 +258,7 @@ Three route-run Codex reviews spawned child agents and completed their root turn
 ## 2026-10-31: Terminal verdicts allow formatting trailers
 
 The terminal-verdict rule accepts markdown emphasis around the verdict line and trailing blank lines, bare code fences, or route-run diagnostics. Any other content after the verdict still fails, as does progress-only output; a verdict earlier in the response is not enough.
+
+## 2026-11-01: Refuse Codex home and volume walks
+
+The organizer recorded repeated pc-wsl home scans at 00:48Z; renicing left the metadata walks running. Register the existing wide-scan classifier as a managed Codex Bash hook with `--block-walks`. This mode denies the roots the classifier already identifies, including metadata searches and du, and denies unparseable commands. Claude behavior stays with its existing mode. Managed requirements force hooks on even for isolated seat homes. Proof: real Codex exec broad and scoped searches on ax42 and pc-wsl.
