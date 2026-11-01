@@ -10,6 +10,8 @@ from no_chrome_classify import classify  # type: ignore[missing-import]
 from no_chrome_doubt import kind as doubt_kind  # type: ignore[missing-import]
 from no_chrome_shell import Doubt  # type: ignore[missing-import]
 
+RETIRED_LANE_BROWSER = re.compile(r"(?<![\w.-])lane-browser(?![\w.-])")
+
 
 def allow():
     if os.environ.get("HOOK_FLOOR_RECEIPT"):
@@ -103,6 +105,11 @@ def main():
         return allow()
     if kind in {"none", "pc"} or approved(command):
         return allow()
+    if RETIRED_LANE_BROWSER.search(command):
+        return refuse(
+            "no longer trusts the retired lane-browser; use lane-harness <session> shot <url> <name.png>"
+            " or a lane-harness <session> script for agent-owned headless pages"
+        )
     return refuse("requires a timestamped owner-approval record")
 
 

@@ -104,11 +104,10 @@ SPACE = "mac-space"
 HARNESS_TOOL = "lane-harness"
 HARNESS_SUBS = {"shot", "signin", "outdir", "stop"}
 HARNESS = {"browser-harness", "browser-harness-mcp"}
-HARNESS_FORBIDDEN = (
+HARNESS_FORBIDDEN_WORDS = (
     "BU_",
     "BH_",
     "BROWSER_USE",
-    "environ",
     "putenv",
     "unsetenv",
     "daemon",
@@ -123,6 +122,9 @@ HARNESS_FORBIDDEN = (
     "admin",
     "remote_debugging",
     "chrome://",
+)
+HARNESS_FORBIDDEN = re.compile(
+    "|".join(map(re.escape, HARNESS_FORBIDDEN_WORDS)) + r"|environb?(?![a-z])", re.IGNORECASE
 )
 HARNESS_SAFE = (
     ["--version"],
@@ -421,11 +423,7 @@ def classify(text, depth=0):
             found.add("mac")
         record_writes(argv, writes)
         if name == HARNESS_TOOL:
-            if (
-                argv != raw
-                or not harness_tool(argv)
-                or any(word.lower() in body.lower() for body in here for word in HARNESS_FORBIDDEN)
-            ):
+            if argv != raw or not harness_tool(argv) or any(HARNESS_FORBIDDEN.search(body) for body in here):
                 found.add("mac")
             continue
         if name in HARNESS:
