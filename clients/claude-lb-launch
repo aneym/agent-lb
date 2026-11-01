@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -57,13 +58,14 @@ def check_working_directory() -> None:
 
 
 def has_first_party_login() -> bool:
-    if sys.platform == "darwin":
-        return True
     path = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / ".credentials.json"
     try:
-        return "claudeAiOauth" in path.read_text()
-    except OSError:
+        login = json.loads(path.read_text()).get("claudeAiOauth") or {}
+    except FileNotFoundError:
+        return sys.platform == "darwin"
+    except (OSError, ValueError, AttributeError):
         return False
+    return bool(login.get("accessToken") or login.get("refreshToken"))
 
 
 def main() -> None:
