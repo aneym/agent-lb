@@ -299,6 +299,7 @@ class _HTTPBridgeSession:
     last_used_at: float
     idle_ttl_seconds: float
     lifecycle_lock: anyio.Lock = field(default_factory=anyio.Lock)
+    reconnect_lock: anyio.Lock = field(default_factory=anyio.Lock)
     api_key: ApiKeyData | None = None
     codex_session: bool = False
     prewarmed: bool = False
