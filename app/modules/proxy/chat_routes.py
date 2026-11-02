@@ -42,6 +42,7 @@ from app.modules.proxy.request_policy import (
     openai_validation_error,
     validate_model_access,
 )
+from app.modules.proxy.pre_attempt_timing import PreAttemptTimer
 from app.modules.proxy.reservations import effective_model_for_api_key, release_reservation
 from app.modules.proxy.response_errors import logged_error_json_response, mask_previous_response_not_found_error
 from app.modules.proxy.stream_iteration import prepend_first
@@ -73,6 +74,7 @@ async def v1_chat_completions(
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
+    timer = PreAttemptTimer(request)
     effective_model = effective_model_for_api_key(api_key, payload.model)
     if routes_openai_chat(effective_model):
         from app.modules.proxy.openrouter_api import chat_response
@@ -82,6 +84,7 @@ async def v1_chat_completions(
     validate_model_access(api_key, effective_model)
 
     rate_limit_headers = await context.service.rate_limit_headers()
+    timer.mark("rate_limit_headers")
     try:
         responses_shaped_payload = not payload.messages and payload.input is not None
         if not responses_shaped_payload:
@@ -102,6 +105,7 @@ async def v1_chat_completions(
         return logged_error_json_response(request, 400, error, headers=rate_limit_headers)
     apply_api_key_enforcement(responses_payload, api_key)
     admission_denial = await opportunistic_admission_denial(request, context, api_key, model=responses_payload.model)
+    timer.mark("admission")
     if admission_denial is not None:
         return admission_denial
     reservation = await enforce_request_limits(
@@ -110,6 +114,7 @@ async def v1_chat_completions(
         request_service_tier=responses_payload.service_tier,
         request_usage_budget=estimate_api_key_request_usage(responses_payload),
     )
+    timer.mark("request_limits")
     responses_payload.stream = True
     stream = context.service.stream_responses(
         responses_payload,
@@ -128,6 +133,8 @@ async def v1_chat_completions(
         else CHAT_COMPLETIONS_STARTUP_ERROR_PROBE_SECONDS
     )
     stream, startup_error = await probe_chat_stream_startup_error(stream, timeout_seconds=startup_probe_timeout)
+    timer.mark("first_upstream_event")
+    timer.log("chat_completions")
     if startup_error is not None:
         if cursor_compat_client and is_context_length_startup_error(startup_error):
             await release_reservation(reservation)

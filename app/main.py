@@ -29,6 +29,7 @@ from app.core.middleware import (
     add_request_decompression_middleware,
     add_request_id_middleware,
 )
+from app.core.middleware.arrival_timing import add_arrival_timing_middleware
 from app.core.middleware.client_session import ClientSessionMiddleware
 from app.core.middleware.identity import IdentityMiddleware
 from app.core.middleware.inflight import InFlightMiddleware
@@ -387,6 +388,7 @@ def configure_app(app: FastAPI, settings) -> None:
     )
     add_backend_api_codex_v1_alias_middleware(app)
     add_app_version_middleware(app)
+    add_arrival_timing_middleware(app)
     add_exception_handlers(app)
 
     for router in (

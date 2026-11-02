@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ def add_request_id_middleware(app: FastAPI) -> None:
         request: Request,
         call_next: Callable[[Request], Awaitable[JSONResponse]],
     ) -> JSONResponse:
+        request.state.request_id_at = time.monotonic()
         inbound_request_id = request.headers.get("x-request-id") or request.headers.get("request-id")
         request_id = inbound_request_id or str(uuid4())
         token = set_request_id(request_id)
