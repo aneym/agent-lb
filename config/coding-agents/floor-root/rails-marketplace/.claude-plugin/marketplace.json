@@ -1,0 +1,13 @@
+{
+  "name": "rails-managed",
+  "owner": {
+    "name": "Factory"
+  },
+  "plugins": [
+    {
+      "name": "rails-room",
+      "source": "./plugins/rails-room",
+      "version": "0.1.0"
+    }
+  ]
+}

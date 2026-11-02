@@ -277,7 +277,15 @@ def claude_settings(entries, advisory, python):
             wrapped.append(hook)
         group = {} if matcher is None else {"matcher": matcher}
         hooks.setdefault(event, []).append({**group, "hooks": wrapped})
-    settings = {"allowManagedHooksOnly": True, "env": dict(PINS), "hooks": hooks}
+    settings = {
+        "allowManagedHooksOnly": True,
+        "env": dict(PINS),
+        "hooks": hooks,
+        "extraKnownMarketplaces": {
+            "rails-managed": {"source": {"source": "directory", "path": LIB + "/current/floor-root/rails-marketplace"}}
+        },
+        "enabledPlugins": {"rails-room@rails-managed": True},
+    }
     return json.dumps(settings, indent=2, ensure_ascii=True) + "\n"
 
 
