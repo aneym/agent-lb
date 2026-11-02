@@ -285,6 +285,7 @@ def claude_settings(entries, advisory, python):
             "rails-managed": {"source": {"source": "directory", "path": LIB + "/current/floor-root/rails-marketplace"}}
         },
         "enabledPlugins": {"rails-room@rails-managed": True},
+        "strictKnownMarketplaces": [{"source": "directory", "path": LIB + "/current/floor-root/rails-marketplace"}],
     }
     return json.dumps(settings, indent=2, ensure_ascii=True) + "\n"
 

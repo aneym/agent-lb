@@ -182,20 +182,10 @@ export const register: Register = (on: any) => {
   on('tool.check', async ($: any, ev: any, next: any) => {
     const state = sessions.get(await $.session.id())
     if (!state) return next(ev)
-    const { emit, asks, request } = state
     const r = await next(ev)
-    if (r?.decision !== 'ask') return r
-    const askId = ev.tool_use_id, held: any = { answer: null }; asks.set(askId, held)
-    emit('ask', { askId, toolUseId: askId, tool: ev.tool, input: ev.input, reason: r.reason ?? '' })
-    try {
-      while (!held.answer && !next.signal.aborted && state.active) {
-        const woke = new Promise<void>(resolve => { held.wake = resolve })
-        await Promise.race([woke, request('/v0/hold?wait=1000').catch(() => $.clock.sleep(250))])
-      }
-      const a = held.answer ?? { decision: 'deny', by: 'interrupt' }
-      emit('ask.resolved', { askId, decision: a.decision, by: a.by ?? 'host' })
-      return { decision: a.decision, reason: 'Room answer' }
-    } finally { asks.delete(askId) }
+    if (r?.decision === 'ask')
+      state.emit('ask', { askId: ev.tool_use_id, toolUseId: ev.tool_use_id, tool: ev.tool, input: ev.input, reason: r.reason ?? '' })
+    return r
   })
   on('agent.spawn', async ($: any, ev: any, next: any) => {
     const state = sessions.get(await $.session.id())
