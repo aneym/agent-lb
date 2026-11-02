@@ -1,6 +1,7 @@
 import json
 import os
 import pwd
+import shlex
 import subprocess
 import sys
 
@@ -87,7 +88,30 @@ def kept(data):
     return out
 
 
+def missing_script(command):
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return None
+    if not words:
+        return None
+    interpreter = os.path.basename(words[0])
+    if not (interpreter.startswith("python") or interpreter in {"bash", "sh", "node", "ruby", "perl"}):
+        return None
+    for word in words[1:]:
+        if word in {"-c", "-m", "-e", "-p", "-"}:
+            return None
+        if word.startswith("-"):
+            continue
+        path = os.path.expanduser(os.path.expandvars(word))
+        return path if not os.path.exists(path) else None
+    return None
+
+
 def advisory(command):
+    if missing_script(command) is not None:
+        sys.stderr.write("hook warning: advisory script is missing; continuing\n")
+        return 0
     result = subprocess.run(["/bin/sh", "-c", command], stdout=subprocess.PIPE)
     text = result.stdout.decode("utf-8", "replace")
     head = text.lstrip().lstrip("﻿").lstrip()
