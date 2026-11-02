@@ -7,3 +7,9 @@ Every project is a personal project until launch. Alex, 2026-10-07 21:35 ET: "tr
 - **Agents decide after a scope is approved** (2026-10-05), log the reason in the lane thread and keep going.
 - **Lean on red tape (2026-10-14 23:55 ET).** Alex: "we need rules to stay lean on red tape here so we can move super quickly since we're building this mostly for low risk agents and low risk companies." Default to the lightest control that keeps undo plus a receipt. Hard stops are only the kept floors: Alex's own credentials, and irreversible deletes with no record. Enterprise controls go on the GA restore list, not into pre-launch work. Leads cut reviewer-driven weight: no reviewer sign-off on Opus calls unless a lead asks; one check per slice; fix forward.
 
+
+## Studio managed-policy gap: deferred and accepted
+
+On 2026-11-02, Alex accepted deferral if Studio has no headless root route. `sudo -n true` requires a password; `/usr/local/sbin/agent-floors` is absent. The existing launchd root jobs serve unrelated applications and provide no supported policy-install operation. No password or keychain prompt is permitted.
+
+Studio therefore retains user-writable floor hooks and the checkout plugin fallback. This does not provide the root-managed guarantee deployed on ax42 and forge. Close the gap when an approved headless administrator channel exists: run `config/coding-agents/floor-root/install-root --user aneyman` as root, then run `sudo -n /usr/local/sbin/agent-floors sync` as aneyman. Verify the root-owned `/Library/Application Support/ClaudeCode/managed-settings.json`, root release plugin load, Claude startup and a floor-denied Write.
