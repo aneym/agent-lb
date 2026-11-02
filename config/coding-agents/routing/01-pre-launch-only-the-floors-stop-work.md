@@ -8,7 +8,7 @@ Every project is a personal project until launch. Alex, 2026-10-07 21:35 ET: "tr
 - **Lean on red tape (2026-10-14 23:55 ET).** Alex: "we need rules to stay lean on red tape here so we can move super quickly since we're building this mostly for low risk agents and low risk companies." Default to the lightest control that keeps undo plus a receipt. Hard stops are only the kept floors: Alex's own credentials, and irreversible deletes with no record. Enterprise controls go on the GA restore list, not into pre-launch work. Leads cut reviewer-driven weight: no reviewer sign-off on Opus calls unless a lead asks; one check per slice; fix forward.
 
 
-## Studio managed-policy gap: Factory deferral
+## Studio managed-policy gap: Factory deferral (2026-11-02)
 
 On 2026-11-02, Factory deferred this gap under grant `a25fb24cd70c4041` and the headless rule. Alex did not accept the gap. Alex, 2026-10-29 ~21:42Z: "all work needs to be done without requesting studio passwords… assume all our machines including studio are headless effectively". No headless admin route exists on Studio today. `sudo -n true` requires a password; `/usr/local/sbin/agent-floors` is absent. The existing launchd root jobs serve unrelated applications and provide no supported policy-install operation. No password or keychain prompt is permitted.
 
