@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -14,6 +15,9 @@ APPROVAL = (
     "his words and whose Covers line names delete."
 )
 RUN_BODIES = True
+DATA = re.compile(
+    r"\.(?:sqlite3?|db)(?:-wal|-shm|-journal)?\b|/var/lib/|pgdata|postgres|statev2|\.agent-rails/approvals|\.open-factory/approvals"
+)
 ROOTS = {
     "/",
     "/*",
@@ -212,6 +216,8 @@ def approved(cmd, action="delete"):
     m = re.fullmatch(r"#\s*(?:owner|alex)-approval:\s*(\S+)\s*", comment)
     if not m:
         return False
+    if action == "delete" and DATA.search(cmd[: cmd.rfind(comment)]):
+        action = "data-delete"
     reason = approval_record.refusal(m.group(1), action)
     if reason:
         sys.stderr.write("approval record refused: " + reason + "\n")

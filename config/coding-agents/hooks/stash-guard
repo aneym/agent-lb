@@ -12,8 +12,9 @@ MESSAGE = ("BLOCKED: git stash is one stack shared by every worktree of {repo} (
            "a clean tree use a T3 thread with workspaceStrategy worktree, `delegate_task` with isolation "
            "worktree, or `git worktree add <root>/<repo>/<topic> -b <branch> origin/main` "
            "under this host's T3 worktree root. "
-           "If it truly must stash, end the command with the comment '# stash-ok', or with "
-           "'# owner-approval: ~/.open-factory/approvals/owner-<topic>-2026-<date>.md'.")
+           "If it truly must stash, end the command with "
+           "'# alex-approval: ~/.open-factory/approvals/alex-<topic>-2026-<date>.md' whose Evidence names "
+           "the T3 message Alex typed, whose Quote holds his words and whose Covers line names stash.")
 MESSAGE = MESSAGE.replace("BLOCKED: ", FLOOR, 1)
 UNKNOWN = ("the directory it runs in, which cannot be known before it runs",
            "a cd to a missing or computed path, popd or `cd -` makes it unknown, so it is treated as shared")
@@ -182,10 +183,6 @@ def stash_targets(sh, text, cwds, notes=None, depth=0):
     return found
 
 
-def overridden(cmd, comments):
-    return any(text.rstrip() == "# stash-ok" and not cmd[end:].strip() for text, end in comments)
-
-
 def main():
     raw = sys.stdin.read()
     if "git" not in raw:
@@ -205,7 +202,7 @@ def main():
     notes = {"segs": [], "comments": []}
     reader = shell_reader()
     targets = stash_targets(reader, cmd, [cwd], notes)
-    if overridden(cmd, notes["comments"]) or reader.approved(cmd, "stash"):
+    if reader.approved(cmd, "stash"):
         return 0
     for target in dict.fromkeys(targets):
         if target is None:
