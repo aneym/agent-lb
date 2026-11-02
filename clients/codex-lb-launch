@@ -554,7 +554,7 @@ def main(argv: list[str]) -> None:
         os.environ[name] = proxy_url
     _append_no_proxy(("127.0.0.1", "localhost", "::1"))
     overrides = _factory_header_overrides(argv)
-    os.execvp("codex", ["codex", *overrides, *argv])
+    os.execvp("codex", ["codex", *overrides, "-c", "features.memories=false", *argv])
 
 
 if __name__ == "__main__":
