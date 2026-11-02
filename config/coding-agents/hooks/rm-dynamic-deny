@@ -4,12 +4,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import approval_record
 from git_lock_delete import stale_worktree_lock
 
 FLOOR = "BLOCKED (floor: destructive delete with no approval on record): "
 APPROVAL = (
-    "An approved delete passes with a trailing '# owner-approval: ~/.agent-rails/approvals/"
-    "owner-<topic>-2026-<date>.md' (a first-hand the owner quote with a time)."
+    "An approved delete passes with a trailing '# alex-approval: ~/.open-factory/approvals/"
+    "alex-<topic>-2026-<date>.md' whose Evidence names the T3 message Alex typed, whose Quote holds "
+    "his words and whose Covers line names delete."
 )
 RUN_BODIES = True
 ROOTS = {
@@ -192,7 +194,7 @@ def protected_root(word):
     )
 
 
-def approved(cmd):
+def approved(cmd, action="delete"):
     import re
 
     notes = {"segs": [], "comments": []}
@@ -210,24 +212,10 @@ def approved(cmd):
     m = re.fullmatch(r"#\s*(?:owner|alex)-approval:\s*(\S+)\s*", comment)
     if not m:
         return False
-    home = os.path.expanduser("~")
-    path = re.sub(r"^(?:~|\$HOME|\$\{HOME\})/", home + "/", m.group(1))
-    refs = os.path.join(home, ".agent-rails/approvals") + "/"
-    name = path[len(refs) :]
-    if (
-        ".." in path
-        or not path.startswith(refs)
-        or "/" in name
-        or not re.fullmatch(r"(?:owner|alex)-.+-2026-.+\.md", name)
-    ):
-        return False
-    if os.path.islink(path):
-        return False
-    try:
-        with open(path) as fh:
-            return re.search(r"\b\d{1,2}:\d{2}\b", fh.read()) is not None
-    except OSError:
-        return False
+    reason = approval_record.refusal(m.group(1), action)
+    if reason:
+        sys.stderr.write("approval record refused: " + reason + "\n")
+    return not reason
 
 
 def substitution_end(cmd, i):

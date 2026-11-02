@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import approval_record  # type: ignore[missing-import]
 from no_chrome_classify import classify  # type: ignore[missing-import]
 from no_chrome_doubt import kind as doubt_kind  # type: ignore[missing-import]
 from no_chrome_shell import Doubt  # type: ignore[missing-import]
@@ -33,20 +34,10 @@ def approved(command):
     match = re.search(r"#[ \t]*(?:owner|alex)-approval:[ \t]*([^\s]+)[ \t]*$", command.splitlines()[-1])
     if not match:
         return False
-    ref = match[1]
-    if ref.startswith("~/"):
-        ref = os.path.join(os.environ["HOME"], ref[2:])
-    elif ref.startswith("$HOME/"):
-        ref = os.path.join(os.environ["HOME"], ref[6:])
-    directory = os.path.join(os.environ["HOME"], ".agent-rails/approvals")
-    if ".." in ref or os.path.dirname(ref) != directory:
-        return False
-    if not re.fullmatch(r"(?:owner|alex)-.*-2026-.*\.md", os.path.basename(ref)):
-        return False
-    try:
-        return bool(re.search(r"[0-9]{1,2}:[0-9]{2}", Path(ref).read_text()))
-    except (OSError, UnicodeError):
-        return False
+    reason = approval_record.refusal(match[1], "browser")
+    if reason:
+        print("approval record refused: " + reason, file=sys.stderr)
+    return not reason
 
 
 def main():
@@ -110,7 +101,7 @@ def main():
             "no longer trusts the retired lane-browser; use lane-harness <session> shot <url> <name.png>"
             " or a lane-harness <session> script for agent-owned headless pages"
         )
-    return refuse("requires a timestamped owner-approval record")
+    return refuse("requires an alex-approval record whose T3 evidence, quote and Covers: browser line check out")
 
 
 if __name__ == "__main__":

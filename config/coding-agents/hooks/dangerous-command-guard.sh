@@ -6,6 +6,9 @@ import re
 import shlex
 import sys
 
+sys.path.insert(0, sys.argv.pop(1))
+import approval_record
+
 FLOOR = "floor: destructive data with no approval on record"
 PROVIDERS = {
     "muse": ("Muse Code", ("META_API_KEY",)),
@@ -32,9 +35,6 @@ RAILWAY_WORD = re.compile(r"\brailway\b")
 UNPARSED_FLOOR = "DROP|TRUNCATE|launchctl[[:space:]]+disable"
 DESTRUCTIVE_SQL = "(DROP[[:space:]]+(DATABASE|TABLE)|TRUNCATE[[:space:]]+(TABLE[[:space:]]+)?[A-Za-z_])"
 REF_COMMENT = re.compile(r"#\s*alex-approval:\s*(\S+)\s*")
-REF_NAME = re.compile(r"alex-.+-2026-.+\.md")
-REF_TIME = re.compile(r"\b\d{1,2}:\d{2}\b")
-HOME_PREFIX = re.compile(r"^(?:~|\$HOME|\$\{HOME\})/")
 
 
 def on_path(name):
@@ -165,37 +165,21 @@ def approved(cmd):
                     comment = cmd[i:end]
             break
     m = REF_COMMENT.fullmatch(comment or "")
-    if not m:
-        return False
-    home = os.path.expanduser("~")
-    path = HOME_PREFIX.sub(home + "/", m[1])
-    refs = home + "/.agent-rails/lanes/orchestrator-refs/"
-    name = path[len(refs) :]
-    if not path.startswith(refs) or ".." in path or "/" in name or not REF_NAME.fullmatch(name) or os.path.islink(path):
-        return False
-    try:
-        with open(path) as f:
-            return REF_TIME.search(f.read()) is not None
-    except OSError:
-        return False
+    return bool(m) and checked(m[1], "destructive")
+
+
+def checked(ref, action, line=None):
+    reason = approval_record.refusal(ref, action, line)
+    if reason:
+        sys.stderr.write("approval record refused: " + reason + "\n")
+    return not reason
 
 
 def provider_approved(text):
     match = PROVIDER_APPROVAL.search(text)
     if not match or RAILWAY_WORD.search(text):
         return False
-    home = os.path.expanduser("~")
-    path = os.path.expanduser(match[1].replace("${HOME}", home).replace("$HOME", home))
-    root = os.path.expanduser("~/.agent-rails/approvals")
-    if os.path.dirname(path) != root or not re.fullmatch(r"alex-.*\.md", os.path.basename(path)) or os.path.islink(path):
-        return False
-    try:
-        with open(path) as handle:
-            approval = handle.read()
-    except OSError:
-        return False
-    exact = text[: match.start()].strip()
-    return any(line.strip().strip("`") == exact for line in approval.splitlines())
+    return not approval_record.refusal(match[1], "provider", text[: match.start()].strip())
 
 
 def rails_target(words, text, cwd):
@@ -469,8 +453,8 @@ def main():
     if match == 0 and not approved(cmd):
         sys.stderr.write(
             "BLOCKED: Dangerous command requires explicit user approval (%s). Approved: append "
-            "' # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-<topic>-2026-<date>.md' "
-            "(a first-hand Alex quote with a time).\n" % FLOOR
+            "' # alex-approval: ~/.open-factory/approvals/alex-<topic>-2026-<date>.md' "
+            "(Evidence: the T3 message Alex typed, Quote: his words, Covers: destructive).\n" % FLOOR
         )
         sys.exit(2)
     allow()
@@ -479,6 +463,6 @@ def main():
 main()
 PY
 shopt -s execfail
-exec python3 -I -S -c "$GUARD" "$@"
+exec python3 -I -S -c "$GUARD" "$(cd "$(dirname "$0")" && pwd -P)" "$@"
 echo "BLOCKED: dangerous-command-guard could not start python3, so this call is refused (the guard fails closed)." >&2
 exit 2

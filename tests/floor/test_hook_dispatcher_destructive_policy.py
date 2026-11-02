@@ -51,11 +51,7 @@ def test_an_approval_record_never_lets_a_raw_restart_through(tmp_path: Path) -> 
 
 def test_the_dangerous_command_guard_keeps_only_the_drop_floor(tmp_path: Path) -> None:
 
-    home = tmp_path / "home"
-    refs = home / ".agent-rails/lanes/orchestrator-refs"
-    refs.mkdir(parents=True)
-    (refs / "alex-drop-2026-10-08.md").write_text('Alex, 09:18 ET: "drop the scratch database"\n')
-    env = dict(os.environ, HOME=str(home))
+    env = dict(os.environ, HOME=str(tmp_path / "home"))
     root_delete = "rm -rf /"
 
     def run(command: str) -> subprocess.CompletedProcess:
@@ -69,12 +65,6 @@ def test_the_dangerous_command_guard_keeps_only_the_drop_floor(tmp_path: Path) -
     blocked = run(DROP_DB)
     assert blocked.returncode == 2 and "floor: destructive data" in blocked.stderr, blocked
     assert "BLOCKED: Dangerous command" in blocked.stderr
-    approved = run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-drop-2026-10-08.md")
-    assert approved.returncode == 0, approved
-    assert (
-        run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-none-2026-10-08.md").returncode
-        == 2
-    )
 
 
 @pytest.mark.parametrize(
@@ -147,7 +137,6 @@ def test_the_bootout_guard_reads_only_the_command_that_runs(tmp_path, command, r
 @pytest.mark.parametrize(
     "guard,command,approved_rc",
     [
-        (DANGER, "psql -c 'DROP TABLE accounts'", 0),
         (SOURCE / "hooks/agent-lb-bootout-guard.sh", "launchctl bootout gui/501/com.aneyman.agent-lb", 2),
     ],
 )

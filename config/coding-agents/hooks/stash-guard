@@ -205,7 +205,7 @@ def main():
     notes = {"segs": [], "comments": []}
     reader = shell_reader()
     targets = stash_targets(reader, cmd, [cwd], notes)
-    if overridden(cmd, notes["comments"]) or reader.approved(cmd):
+    if overridden(cmd, notes["comments"]) or reader.approved(cmd, "stash"):
         return 0
     for target in dict.fromkeys(targets):
         if target is None:
