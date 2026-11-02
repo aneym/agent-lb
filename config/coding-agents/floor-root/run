@@ -105,13 +105,16 @@ def missing_script(command):
                 return None
             continue
         path = os.path.expanduser(os.path.expandvars(word))
+        if any(mark in path for mark in ";&|<>()$`*?["):
+            return None
         return path if not os.path.exists(path) else None
     return None
 
 
 def advisory(command):
-    if missing_script(command) is not None:
-        sys.stderr.write("hook warning: advisory script is missing; continuing\n")
+    missing = missing_script(command)
+    if missing is not None:
+        sys.stdout.write(json.dumps({"systemMessage": "advisory hook skipped: " + missing + " is missing"}))
         return 0
     result = subprocess.run(["/bin/sh", "-c", command], stdout=subprocess.PIPE)
     text = result.stdout.decode("utf-8", "replace")
