@@ -98,10 +98,11 @@ def missing_script(command):
     interpreter = os.path.basename(words[0])
     if not (interpreter.startswith("python") or interpreter in {"bash", "sh", "node", "ruby", "perl"}):
         return None
+    options = {"-I", "-S", "-E", "-s", "-u", "-B"} if interpreter.startswith("python") else set()
     for word in words[1:]:
-        if word in {"-c", "-m", "-e", "-p", "-"}:
-            return None
         if word.startswith("-"):
+            if word not in options:
+                return None
             continue
         path = os.path.expanduser(os.path.expandvars(word))
         return path if not os.path.exists(path) else None
