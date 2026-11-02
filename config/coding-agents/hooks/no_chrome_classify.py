@@ -423,7 +423,8 @@ def classify(text, depth=0):
             found.add("mac")
         record_writes(argv, writes)
         if name == HARNESS_TOOL:
-            if argv != raw or not harness_tool(argv) or any(HARNESS_FORBIDDEN.search(body) for body in here):
+            literal = [os.path.expanduser(word) if word.startswith("~/") else word for word in raw]
+            if argv != literal or not harness_tool(argv) or any(HARNESS_FORBIDDEN.search(body) for body in here):
                 found.add("mac")
             continue
         if name in HARNESS:
