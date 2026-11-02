@@ -176,8 +176,6 @@ def targets(name, args):
     if name == "rsync":
         if not any(a == "--del" or a.startswith(("--delete", "--remove-source-files")) for a in args):
             return None
-        if any(a == "--dry-run" or (a[:1] == "-" and a[1:2] != "-" and "n" in a) for a in args):
-            return None
         found, skip = [], False
         for arg in args:
             if skip:
