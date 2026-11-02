@@ -76,7 +76,7 @@ class Paths:
         runtime = Path(os.environ.get("AGENT_LB_RUNTIME_DIR") or home / ".agent-lb/runtime/agent-lb")
         return cls(
             src=Path(os.environ.get("AGENT_LB_SYNC_SRC") or "/Volumes/StudioExt/repos/agent-lb"),
-            root=runtime.parent,
+            root=Path(os.environ.get("AGENT_LB_FOLLOW_ROOT") or runtime.parent),
             runtime=runtime,
             bin_dir=Path(os.environ.get("AGENT_LB_BIN_DIR") or home / ".agent-lb/bin"),
             uv=os.environ.get("AGENT_LB_SYNC_UV") or "/opt/homebrew/bin/uv",

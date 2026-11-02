@@ -1,0 +1,18 @@
+[Unit]
+Description=agent-lb edge follower: keep the box edge on agent-lb origin/main (pause with ~/.agent-lb-edge/follow.pause)
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+Environment=AGENT_LB_RUNTIME_DIR=%h/agent-lb-edge
+Environment=AGENT_LB_FOLLOW_ROOT=%h/.agent-lb-edge/follow
+Environment=AGENT_LB_SYNC_SRC=%h/repos/agent-lb
+Environment=AGENT_LB_BIN_DIR=%h/.agent-lb-edge/follow-bin
+Environment=AGENT_LB_SYNC_UV=uv
+Environment=AGENT_LB_FOLLOW_SYSTEMD_UNITS=agent-lb-edge
+Environment=AGENT_LB_FOLLOW_HEALTH_URL=http://127.0.0.1:2458/health
+ExecStart=/usr/bin/python3 %h/agent-lb-edge/scripts/runtime_follow.py tick
+StandardOutput=append:%h/.agent-lb-edge/follow.log
+StandardError=append:%h/.agent-lb-edge/follow.log
+TimeoutStartSec=2400
+Nice=10

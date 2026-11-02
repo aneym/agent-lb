@@ -1,0 +1,11 @@
+[Unit]
+Description=Run agent-lb-edge-follow every 600 s
+
+[Timer]
+OnBootSec=600
+OnUnitActiveSec=600
+Persistent=true
+Unit=agent-lb-edge-follow.service
+
+[Install]
+WantedBy=timers.target
