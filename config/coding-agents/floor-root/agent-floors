@@ -360,7 +360,8 @@ elif cache.exists():
         os.initgroups(user, entry.pw_gid)
         os.setgid(entry.pw_gid)
         os.setuid(entry.pw_uid)
-    subprocess.run([sys.executable, '-I', '-c', code], check=True,
+    subprocess.run([sys.executable, '-I', '-c', code], check=True, timeout=30,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    env={'HOME': entry.pw_dir, 'PATH': '/usr/bin:/bin'}, preexec_fn=as_user)
 
 
@@ -397,14 +398,20 @@ def sync():
     publish(stage, sha)
     write_root(CLAUDE, claude)
     write_root(CODEX, codex)
-    user = os.environ.get("SUDO_USER")
-    if user and user != "root":
-        clean_user_plugins(user)
     write_root(ACCEPTED, json.dumps(accepted, indent=1) + "\n")
     state = {"sha": sha, "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "claude": CLAUDE}
     state["codex"] = CODEX
     write_root(os.path.join(STATE, "state.json"), json.dumps(state) + "\n", 0o600)
-    print(json.dumps({**state, "floors": len(entries)}))
+    user = os.environ.get("SUDO_USER")
+    cleanup = {"status": "skipped"}
+    if user and user != "root":
+        try:
+            clean_user_plugins(user)
+            cleanup = {"status": "ok"}
+        except (OSError, KeyError, subprocess.SubprocessError) as exc:
+            cleanup = {"status": "failed", "error": type(exc).__name__}
+    write_root(os.path.join(STATE, "plugin-cleanup.json"), json.dumps(cleanup) + "\n", 0o600)
+    print(json.dumps({**state, "floors": len(entries), "plugin_cleanup": cleanup}))
 
 
 def main(argv):
