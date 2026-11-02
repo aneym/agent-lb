@@ -11,7 +11,7 @@ const digest = (text: string) => {
   return (h >>> 0).toString(36) + ':' + text.length
 }
 
-export function createIntake($: any, emit: (type: string, data?: any) => void, prompts: any[], asks: Map<string, any>,
+export function createIntake($: any, emit: (type: string, data?: any) => void, prompts: any[],
   current: () => { turnId: string; commandId: string | null }) {
   const taken = new Map<string, Taken>()
   const remember = <T>(map: Map<string, T>, id: string, value: T) => {
@@ -74,9 +74,7 @@ export function createIntake($: any, emit: (type: string, data?: any) => void, p
       else if (c.kind === 'interrupt') {
         const { turnId, commandId } = current()
         if (turnId && c.commandId === commandId) await $.turn.abort({ turnId })
-      } else if (c.kind === 'answer') {
-        const held = asks.get(c.askId)
-        if (held && !held.answer && ['allow', 'deny'].includes(c.decision)) { held.answer = c; held.wake?.() }
+
       }
     },
     started(commandId: string | null, turnId: string) {

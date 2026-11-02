@@ -31,7 +31,7 @@ export const register: Register = (on: any) => {
     if (!socket || !token || !session) return next(e)
     let active = true, connected = false, resumed = false, busy = false, delay = 100, retryAt = 0
     let turnId = '', commandId: string | null = null, dropped = 0
-    const pending: any[] = [], prompts: any[] = [], agents = new Map(), asks = new Map(), launches = new Map<string, string>()
+    const pending: any[] = [], prompts: any[] = [], agents = new Map(), launches = new Map<string, string>()
     const streamed = new Map<string, string[]>()
     const thoughts = new Map<string, number>()
     const hello = { pid: Number((await $.process.run(['sh', '-c', 'echo "$PPID"'])).stdout?.trim()) || 0,
@@ -57,7 +57,7 @@ export const register: Register = (on: any) => {
       ...(ev.agentId ? { agentId: ev.agentId } : {}) })
     const usage = (u: any = {}) => ({ model: u.model, inputTokens: u.input_tokens ?? 0, outputTokens: u.output_tokens ?? 0,
       cacheReadTokens: u.cache_read_input_tokens ?? 0, cacheWriteTokens: u.cache_creation_input_tokens ?? 0 })
-    const intake = createIntake($, emit, prompts, asks, () => ({ turnId, commandId }))
+    const intake = createIntake($, emit, prompts, () => ({ turnId, commandId }))
     const fail = () => { connected = false; retryAt = Date.now() + delay; delay = Math.min(2000, delay * 2) }
     let sending = false, polling = false
     const send = async () => {
@@ -101,7 +101,7 @@ export const register: Register = (on: any) => {
     }
     const timer = $.clock.every(25, pump)
     sessions.set(hello.harnessSessionId, {
-      emit, tag, usage, asks, agents, prompts, intake, timer, streamed, thoughts, launches, request, ended: '',
+      emit, tag, usage, agents, prompts, intake, timer, streamed, thoughts, launches, request, ended: '',
       get active() { return active }, set active(value) { active = value },
       get turnId() { return turnId }, set turnId(value) { turnId = value },
       get commandId() { return commandId }, set commandId(value) { commandId = value },
@@ -177,14 +177,6 @@ export const register: Register = (on: any) => {
     if (tool === 'Bash' && typeof r?.result?.backgroundTaskId === 'string')
       emit('system', { subtype: 'task_started', task_id: r.result.backgroundTaskId, task_type: 'local_bash', tool_use_id, description: input.description ?? 'Background shell', is_backgrounded: true, turnId: attribution.turnId })
     emit('tool.result', { ...attribution, toolUseId: tool_use_id, isError: !!(r?.isError || r?.deny), text: r?.text ?? r?.deny ?? '', ...(images.length ? { images } : {}) })
-    return r
-  })
-  on('tool.check', async ($: any, ev: any, next: any) => {
-    const state = sessions.get(await $.session.id())
-    if (!state) return next(ev)
-    const r = await next(ev)
-    if (r?.decision === 'ask')
-      state.emit('ask', { askId: ev.tool_use_id, toolUseId: ev.tool_use_id, tool: ev.tool, input: ev.input, reason: r.reason ?? '' })
     return r
   })
   on('agent.spawn', async ($: any, ev: any, next: any) => {
