@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import approval_record
 import data_delete
+from shell_vocabulary import COMPOUND, DATA_READERS, KEYWORDS, OPS, WRAPPERS
 from git_lock_delete import stale_worktree_lock
 
 FLOOR = "BLOCKED (floor: destructive delete with no approval on record): "
@@ -16,134 +17,11 @@ APPROVAL = (
     "his words and whose Covers line names delete."
 )
 RUN_BODIES = True
-TRIGGERS = ("rm", "find", "shred", "truncate", "unlink")
+TRIGGERS = ("rm", "find", "shred", "truncate", "unlink", "mv", "rsync", "clean")
 HINT = (
     'Rewrite it: guard every variable as "${VAR:?}" with an absolute path (rm -rf "${DIR:?}/sub"), or resolve '
     "the paths first and rm the literal list, or use `git -C <worktree> clean -fdX -- <path>`."
 )
-KEYWORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{", "}"}
-WRAPPERS = {
-    "sudo": {
-        "-u",
-        "-g",
-        "-C",
-        "-D",
-        "-h",
-        "-p",
-        "-r",
-        "-t",
-        "-U",
-        "-T",
-        "--user",
-        "--group",
-        "--close-from",
-        "--chdir",
-        "--host",
-        "--prompt",
-        "--role",
-        "--type",
-        "--other-user",
-        "--command-timeout",
-    },
-    "doas": {"-u", "-C"},
-    "env": {"-u", "-C", "--unset", "--chdir"},
-    "xargs": {
-        "-I",
-        "-L",
-        "-n",
-        "-P",
-        "-d",
-        "-E",
-        "-s",
-        "-a",
-        "--max-args",
-        "--max-procs",
-        "--delimiter",
-        "--arg-file",
-        "--max-lines",
-        "--max-chars",
-        "--eof",
-    },
-    "nice": {"-n", "--adjustment"},
-    "timeout": {"-s", "-k", "--signal", "--kill-after"},
-    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
-    "ionice": {"-c", "-n", "-p", "--class", "--classdata", "--pid"},
-    "caffeinate": {"-t", "-w"},
-    "exec": {"-a"},
-    "command": set(),
-    "builtin": set(),
-    "nohup": set(),
-    "time": set(),
-    "chronic": set(),
-}
-WRAPPERS["gtimeout"] = WRAPPERS["timeout"]
-DATA_READERS = {
-    "cat",
-    "tee",
-    "grep",
-    "egrep",
-    "fgrep",
-    "rg",
-    "jq",
-    "yq",
-    "wc",
-    "head",
-    "tail",
-    "sort",
-    "uniq",
-    "cut",
-    "tr",
-    "tac",
-    "rev",
-    "nl",
-    "fold",
-    "fmt",
-    "column",
-    "paste",
-    "comm",
-    "diff",
-    "cmp",
-    "base64",
-    "od",
-    "xxd",
-    "iconv",
-    "shasum",
-    "sha256sum",
-    "md5",
-    "pbcopy",
-    "less",
-    "more",
-    "git",
-    "gh",
-    "true",
-    ":",
-    "echo",
-    "printf",
-}
-COMPOUND = {
-    "if",
-    "then",
-    "else",
-    "elif",
-    "fi",
-    "while",
-    "until",
-    "do",
-    "done",
-    "for",
-    "case",
-    "esac",
-    "select",
-    "function",
-    "coproc",
-    "{",
-    "}",
-    "!",
-    "[[",
-    "(",
-    ")",
-}
-OPS = ("&>>", "&>", "<<<", "<<-", "<<", "<>", "<&", ">&", ">>", ">|", "<", ">")
 
 
 def refusal(why):
@@ -484,19 +362,32 @@ def data_reader(segment):
     return base(words[k]) in DATA_READERS
 
 
-def deletes_data(segment, assignments, cwd):
+def deletes_data(segment, assignments, cwd, defined, aliases):
     words = [w for w in segment if not w[2]]
     strings = []
     k = command_word(words, strings)
+    if any(data_delete.chdir(w[0]) for w in words[: len(words) if k is None else k]):
+        cwd = None
     if k is not None:
-        name, args = base(words[k]), [w[0] for w in words[k + 1 :]]
+        name, args = data_delete.resolved(words[k][0], assignments, os.path.expanduser("~")), [w[0] for w in words[k + 1 :]]
+        if name in aliases and name not in defined:
+            text = " ".join([aliases[name], *args])
+            return any(deletes_data(seg, assignments, cwd, defined | {name}, aliases) for seg in segments(text))
+        name = os.path.basename(name or "")
         if name in data_delete.DELETERS and any(base(w) in data_delete.FEEDERS for w in words[:k]):
             return True
         inner = data_delete.nested(name, args)
         strings += [inner] if inner is not None else []
+        cwd = None if name == "ssh" else cwd
         if data_delete.touches(name, args, assignments, cwd):
             return True
-    return any(deletes_data(seg, assignments, cwd) for s in strings for seg in segments(s))
+    for text in strings:
+        here = cwd
+        for seg in segments(text):
+            if deletes_data(seg, assignments, here, defined, aliases):
+                return True
+            here = data_delete.moved(command_name(seg), [w[0] for w in seg if not w[2]], assignments, here)
+    return False
 
 
 def offending(segment, assignments=None):
@@ -573,7 +464,7 @@ def main():
     global RUN_BODIES
     RUN_BODIES = False
     raw = sys.stdin.read()
-    if not any(word in raw for word in TRIGGERS) and "\\u" not in raw:
+    if not data_delete.mentions(raw, TRIGGERS) and "\\u" not in raw:
         return 0
     import json
 
@@ -589,27 +480,32 @@ def main():
             text = json.dumps(json.loads(raw), ensure_ascii=False)
         except Exception:
             text = raw
-        if not any(word in text for word in TRIGGERS):
+        if not data_delete.mentions(text, TRIGGERS):
             return 0
         sys.stderr.write(FLOOR + "rm-dynamic-deny: could not read this hook payload; it is refused (S-01). %s\n" % HINT)
         return 2
-    if not any(word in cmd for word in TRIGGERS):
+    if not data_delete.mentions(cmd, TRIGGERS):
         return 0
 
     assignments, shifting = {}, set()
     cwd = data.get("cwd") or os.getcwd()
-    for seg in segments(cmd):
+    defined = data_delete.defined(cmd)
+    aliases = {**data_delete.shell_aliases(), **data_delete.found_aliases(cmd)}
+    every = segments(cmd)
+    lines = cmd.rstrip().rsplit("\n", 1)
+    first = len(segments(lines[0])) if len(lines) == 2 else 0
+    if first and first + len(segments(lines[1])) != len(every):
+        first = len(every)
+    for i, seg in enumerate(every):
         fixed = data_delete.remember([w[0] for w in seg], assignments, shifting)
-        if deletes_data(seg, fixed, cwd):
-            if approved(cmd, "data-delete"):
+        if deletes_data(seg, fixed, cwd, defined, aliases):
+            if i >= first and approved(cmd, "data-delete"):
                 continue
             sys.stderr.write(FLOOR + "rm-dynamic-deny: " + data_delete.REFUSAL + "\n")
             return 2
         cwd = data_delete.moved(command_name(seg), [w[0] for w in seg if not w[2]], fixed, cwd)
         why = offending(seg, assignments)
-        if why:
-            if approved(cmd):
-                return 0
+        if why and not (i >= first and approved(cmd)):
             sys.stderr.write(refusal(why) + "\n")
             return 2
     return 0

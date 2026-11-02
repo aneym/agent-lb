@@ -95,6 +95,7 @@ MANAGED_HOOKS = (
     "rm-dynamic-deny",
     "git_lock_delete.py",
     "data_delete.py",
+    "shell_vocabulary.py",
     "git_lock_recovery.py",
     "dangerous-cmd-guard.py",
     "host-credential-guard.py",
