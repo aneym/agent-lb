@@ -54,6 +54,8 @@ ADOPTED_KEEP_NAMES = (
 )
 
 MANAGED_HOOKS = (
+    "approval_record.py",
+    "approval_grandfathered.txt",
     "no-chrome-guard.sh",
     "no_chrome_guard.py",
     "no_chrome_classify.py",
