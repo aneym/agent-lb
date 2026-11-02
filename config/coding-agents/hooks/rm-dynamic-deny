@@ -370,9 +370,11 @@ def deletes_data(segment, assignments, cwd, defined, aliases):
         cwd = None
     if k is not None:
         name, args = data_delete.resolved(words[k][0], assignments, os.path.expanduser("~")), [w[0] for w in words[k + 1 :]]
-        if name in aliases and name not in defined:
+        bare = words[k][1] == words[k][0] and not any(base(w) in WRAPPERS for w in words[:k])
+        if bare and name in aliases and name not in defined:
             text = " ".join([aliases[name], *args])
-            return any(deletes_data(seg, assignments, cwd, defined | {name}, aliases) for seg in segments(text))
+            if any(deletes_data(seg, assignments, cwd, defined | {name}, aliases) for seg in segments(text)):
+                return True
         name = os.path.basename(name or "")
         if name in data_delete.DELETERS and any(base(w) in data_delete.FEEDERS for w in words[:k]):
             return True
