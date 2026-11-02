@@ -4,13 +4,8 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sqlite3
-import ssl
-import subprocess
 import sys
-import urllib.error
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -22,12 +17,14 @@ LEGACY = {
     ".agent-rails/lanes/orchestrator-refs": {"destructive"},
     ".open-factory/approvals": set(),
 }
-SEALED = {"destructive", "provider", "data-delete"}
-ORIGIN = "https://rails.so"
-TOKEN = "approval-records-token"
+HELD = {"destructive", "provider", "data-delete"}
+NAMED = {
+    "browser": re.compile(r"\b(?:browsers?|chrome|tabs?)\b", re.I),
+    "stash": re.compile(r"\bstash", re.I),
+    "delete": re.compile(r"\b(?:delet\w*|remov\w*|rm|clean\w*)\b", re.I),
+}
 NAME = re.compile(r"(?:owner|alex)-[A-Za-z0-9._-]+\.md")
 UUID = re.compile(r"(?<![0-9a-f-])(?:mcp:)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f-])")
-APR = re.compile(r"(?<![A-Za-z0-9_])apr_[0-9a-f]{8,64}(?![A-Za-z0-9_])")
 QUOTE = re.compile(r"""^[\s>*_-]*Quote[s]?\s*:\s*[*_]*\s*["“](.+)["”]""", re.M | re.I)
 COVERS = re.compile(r"^[\s>*_-]*Covers\s*:\s*(.+)$", re.M | re.I)
 EXPIRES = re.compile(r"^[\s>*_-]*Expires\s*:(.*)$", re.M | re.I)
@@ -45,11 +42,6 @@ FORMAT = (
 
 class Refused(Exception):
     pass
-
-
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
 
 
 def resolve(ref):
@@ -86,72 +78,9 @@ def grandfathered(path, body, action):
     return action is None or action in LEGACY[section]
 
 
-def token():
-    home = os.path.expanduser("~")
-    search = os.pathsep.join([home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"])
-    secret = shutil.which("agent-secret", path=search)
-    if secret is None:
-        raise Refused("agent-secret is not installed, so the sealed record cannot be read")
-    done = subprocess.run(
-        [secret, "get", TOKEN],
-        capture_output=True,
-        text=True,
-        timeout=8,
-        env={"HOME": home, "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"},
-    )
-    if done.returncode or not done.stdout.strip():
-        raise Refused(f"this host holds no {TOKEN}, so the sealed record cannot be read")
-    return done.stdout.strip()
-
-
-def status(record_id):
-    paths = ssl.get_default_verify_paths()
-    cafile = paths.openssl_cafile if os.path.isfile(paths.openssl_cafile or "") else None
-    capath = paths.openssl_capath if os.path.isdir(paths.openssl_capath or "") else None
-    if cafile is None and capath is None:
-        raise Refused("this host has no system CA bundle to check rails.so against")
-    context = ssl.create_default_context(cafile=cafile, capath=capath)
-    opener = urllib.request.build_opener(
-        urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context), NoRedirect()
-    )
-    request = urllib.request.Request(
-        f"{ORIGIN}/api/mobile/v1/approval-records/{record_id}", headers={"authorization": "Bearer " + token()}
-    )
-    try:
-        with opener.open(request, timeout=6) as answer:
-            return json.loads(answer.read(1 << 16))
-    except urllib.error.HTTPError as exc:
-        raise Refused(f"Rails answered {exc.code} for {record_id}") from None
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise Refused(f"Rails could not be reached for {record_id}: {exc}") from None
-
-
 def moment(value):
     stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
-
-
-def sealed(text, action):
-    ids = sorted(set(APR.findall(text)))
-    if not ids:
-        raise Refused(f"the {action} floor takes only a Rails sealed record: Evidence: rails apr_<id>")
-    reasons = []
-    for record_id in ids:
-        row = status(record_id)
-        want = None if action is None else "floor." + action
-        if row.get("record_id") != record_id:
-            reasons.append(f"{record_id} came back as another record")
-        elif row.get("status") != "active" or row.get("spent_at") is not None:
-            reasons.append(f"{record_id} is {row.get('status')}{' and spent' if row.get('spent_at') else ''}")
-        elif row.get("source_kind") != "ask_card":
-            reasons.append(f"{record_id} was not minted from Alex's card decision")
-        elif not row.get("expires_at") or moment(row["expires_at"]) <= datetime.now(timezone.utc):
-            reasons.append(f"{record_id} has expired")
-        elif want is not None and row.get("action") != want:
-            reasons.append(f"{record_id} is for {row.get('action')!r}, not {want!r}")
-        else:
-            return {"basis": "rails", "records": [record_id], "expires": row["expires_at"]}
-    raise Refused("; ".join(reasons))
 
 
 def messages(ids):
@@ -240,14 +169,20 @@ def covers(text):
     return words
 
 
-def quoted(text, action, line):
+def quoted(text, action):
     matched = evidence(text)
     until = expiry(text, matched)
     result = {"basis": "t3", "messages": [m["id"] for m in matched], "expires": until.isoformat()}
     if until <= datetime.now(timezone.utc):
         raise Refused(f"it expired at {until.isoformat()}")
-    if action is not None and line is None and action not in covers(text):
+    if action is None:
+        return result
+    if action not in NAMED:
+        raise Refused(f"no quote record covers the {action!r} floor")
+    if action not in covers(text):
         raise Refused(f"its Covers line does not name {action!r}; {FORMAT}")
+    if not any(NAMED[action].search(quote) for quote in QUOTE.findall(text)):
+        raise Refused(f"Alex's quoted words do not name the {action!r} action themselves")
     return result
 
 
@@ -264,13 +199,17 @@ def verdict(ref, action=None, line=None):
         return {"ok": False, "reason": "the record does not hold this exact command line"}
     if grandfathered(path, body, action):
         return {"ok": True, "basis": "grandfathered"}
+    if action in HELD:
+        return {
+            "ok": False,
+            "reason": f"the {action} floor takes only a grandfathered record until Rails spends a sealed approval "
+            "for one target",
+        }
     try:
-        if action in SEALED or (action is None and APR.search(text)):
-            return {"ok": True, **sealed(text, action)}
-        return {"ok": True, **quoted(text, action, line)}
+        return {"ok": True, **quoted(text, action)}
     except Refused as exc:
         return {"ok": False, "reason": str(exc)}
-    except (sqlite3.Error, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError) as exc:
+    except (sqlite3.Error, ValueError, KeyError, TypeError, AttributeError) as exc:
         return {"ok": False, "reason": f"the evidence could not be checked: {exc}"}
 
 

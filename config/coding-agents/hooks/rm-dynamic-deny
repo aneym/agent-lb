@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import approval_record
+import data_delete
 from git_lock_delete import stale_worktree_lock
 
 FLOOR = "BLOCKED (floor: destructive delete with no approval on record): "
@@ -15,37 +16,7 @@ APPROVAL = (
     "his words and whose Covers line names delete."
 )
 RUN_BODIES = True
-DATA = re.compile(
-    r"\.(?:sqlite3?|db)(?:-wal|-shm|-journal)?\b|/var/lib/|pgdata|postgres|statev2|\.agent-rails/approvals|\.open-factory/approvals"
-)
-ROOTS = {
-    "/",
-    "/*",
-    "~",
-    "~/",
-    "~/*",
-    "$HOME",
-    "$HOME/",
-    "$HOME/*",
-    "/home",
-    "/root",
-    "/Users",
-    "/Volumes",
-    "/etc",
-    "/usr",
-    "/var",
-    "/opt",
-    "/bin",
-    "/sbin",
-    "/lib",
-    "/System",
-    "/Library",
-    "/Applications",
-    "/private",
-    ".",
-    "..",
-    "*",
-}
+TRIGGERS = ("rm", "find", "shred", "truncate", "unlink")
 HINT = (
     'Rewrite it: guard every variable as "${VAR:?}" with an absolute path (rm -rf "${DIR:?}/sub"), or resolve '
     "the paths first and rm the literal list, or use `git -C <worktree> clean -fdX -- <path>`."
@@ -106,7 +77,6 @@ WRAPPERS = {
     "chronic": set(),
 }
 WRAPPERS["gtimeout"] = WRAPPERS["timeout"]
-SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "ssh"}
 DATA_READERS = {
     "cat",
     "tee",
@@ -186,11 +156,8 @@ def refusal(why):
 
 
 def protected_root(word):
-    import posixpath
-    import re
-
     w = re.sub(r"/+", "/", word.replace("${HOME}", "$HOME"))
-    w = posixpath.normpath(os.path.expanduser(w))
+    w = os.path.normpath(os.path.expanduser(w))
     return (
         w in {"", "/", os.path.expanduser("~"), "/Volumes/StudioExt/repos", "$HOME", "${HOME}"}
         or re.fullmatch(r"/Volumes/[^/]+", w) is not None
@@ -199,7 +166,6 @@ def protected_root(word):
 
 
 def approved(cmd, action="delete"):
-    import re
 
     notes = {"segs": [], "comments": []}
     segments(cmd, notes)
@@ -216,8 +182,6 @@ def approved(cmd, action="delete"):
     m = re.fullmatch(r"#\s*(?:owner|alex)-approval:\s*(\S+)\s*", comment)
     if not m:
         return False
-    if action == "delete" and DATA.search(cmd[: cmd.rfind(comment)]):
-        action = "data-delete"
     reason = approval_record.refusal(m.group(1), action)
     if reason:
         sys.stderr.write("approval record refused: " + reason + "\n")
@@ -520,9 +484,23 @@ def data_reader(segment):
     return base(words[k]) in DATA_READERS
 
 
+def deletes_data(segment, assignments, cwd):
+    words = [w for w in segment if not w[2]]
+    strings = []
+    k = command_word(words, strings)
+    if k is not None:
+        name, args = base(words[k]), [w[0] for w in words[k + 1 :]]
+        if name in data_delete.DELETERS and any(base(w) in data_delete.FEEDERS for w in words[:k]):
+            return True
+        inner = data_delete.nested(name, args)
+        strings += [inner] if inner is not None else []
+        if data_delete.touches(name, args, assignments, cwd):
+            return True
+    return any(deletes_data(seg, assignments, cwd) for s in strings for seg in segments(s))
+
+
 def offending(segment, assignments=None):
     assignments = assignments or {}
-    import re
 
     words = [w for w in segment if not w[2]]
     strings = []
@@ -595,7 +573,7 @@ def main():
     global RUN_BODIES
     RUN_BODIES = False
     raw = sys.stdin.read()
-    if "rm" not in raw and "find" not in raw and "\\u" not in raw:
+    if not any(word in raw for word in TRIGGERS) and "\\u" not in raw:
         return 0
     import json
 
@@ -611,23 +589,23 @@ def main():
             text = json.dumps(json.loads(raw), ensure_ascii=False)
         except Exception:
             text = raw
-        if "rm" not in text:
+        if not any(word in text for word in TRIGGERS):
             return 0
         sys.stderr.write(FLOOR + "rm-dynamic-deny: could not read this hook payload; it is refused (S-01). %s\n" % HINT)
         return 2
-    if "rm" not in cmd and "find" not in cmd:
+    if not any(word in cmd for word in TRIGGERS):
         return 0
-    import re
 
-    assignments = {}
+    assignments, shifting = {}, set()
+    cwd = data.get("cwd") or os.getcwd()
     for seg in segments(cmd):
-        for word in seg:
-            match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", word[0], re.S)
-            if match:
-                value = match[2]
-                if value.startswith("$(mktemp ") or value == "$(mktemp)":
-                    value = os.path.join(os.environ.get("TMPDIR", "/private/tmp"), "rm-guard-temporary")
-                assignments[match[1]] = value
+        fixed = data_delete.remember([w[0] for w in seg], assignments, shifting)
+        if deletes_data(seg, fixed, cwd):
+            if approved(cmd, "data-delete"):
+                continue
+            sys.stderr.write(FLOOR + "rm-dynamic-deny: " + data_delete.REFUSAL + "\n")
+            return 2
+        cwd = data_delete.moved(command_name(seg), [w[0] for w in seg if not w[2]], fixed, cwd)
         why = offending(seg, assignments)
         if why:
             if approved(cmd):
