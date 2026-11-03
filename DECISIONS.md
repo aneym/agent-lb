@@ -270,3 +270,15 @@ A Sonnet review of the Codex walk guard asked for fixes. A path whose last part 
 The guard reads the command text only, so it does not cover every walk. A root that only appears at run time passes: `x=~; rg y $x`, `rg y $(echo ~)`, `eval`, and a script that walks on its own such as Python `os.walk`. Accept that; it stops the walks agents actually type.
 
 One guard file decides every Codex Bash call, so a missing guard file, `jq` or `python3` refuses every call. Accept that. The managed Codex hook starts the guard through `/usr/bin/python3.12`; if that interpreter goes away (a distro Python upgrade), the hook exits 127 and Codex treats that as non-blocking, so the guard fails open until `agent-floors sync` rewrites requirements with the new interpreter.
+
+### 2026-11-03: Gate T3 placement on host startup readiness
+
+Codex thread/start stalled for two minutes on pc-wsl with exhausted RAM and
+69% memory PSI full avg60, while core-first placement still selected it.
+Write, implement and Codex targets now require a live host probe alongside
+Nomad headroom: at least 3072 MB available and 1536 MB per app-server including
+the incoming server, PSI full avg60 at most 20%, and no recorded T3 startup
+timeout in 15 minutes. Missing probes and exhausted candidates queue without
+a caller fallback; pins use the same gates. Passing hosts retain their ranking.
+ROUTE_MIN_AVAILABLE_MB and ROUTE_MAX_MEMORY_FULL_AVG60 allow temporary tuning.
+The read-only T3 event log supplies timeout timestamps, excluding prompt text.

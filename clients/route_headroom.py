@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import math
 import os
@@ -19,7 +20,12 @@ def number(value: object) -> float | None:
         return None
 
 
-def measured_placement(environments: dict, local: str) -> tuple[str, str]:
+def measured_placement(environments: dict, local: str, protected: bool = False) -> tuple[str | None, str]:
+    host_rejections = importlib.import_module("route_host_gate").host_rejections
+
+    rejected = host_rejections(environments, local) if protected else {}
+    skipped = "; ".join(f"{name} skipped: {reason}" for name, reason in rejected.items())
+    suffix = f"; {skipped}" if skipped else ""
     try:
         fleet = json.loads((Path.home() / ".agent-rails/factory-runtime/fleet/config/fleet.json").read_text())
         stale_s = float(fleet.get("admit", {}).get("stale_s", 120))
@@ -61,7 +67,12 @@ def measured_placement(environments: dict, local: str) -> tuple[str, str]:
                 candidates = []
                 for node in nodes:
                     name = node.get("Name")
-                    if name not in environments or node.get("Status") != "ready" or node.get("Drain"):
+                    if (
+                        name not in environments
+                        or name in rejected
+                        or node.get("Status") != "ready"
+                        or node.get("Drain")
+                    ):
                         continue
                     if node.get("SchedulingEligibility") != "eligible":
                         continue
@@ -84,11 +95,11 @@ def measured_placement(environments: dict, local: str) -> tuple[str, str]:
                     cores, room, mb, name, age = min(candidates, key=lambda row: (-row[0], -row[1], -row[2], row[3]))
                     return name, (
                         f"fresh Nomad admit headroom: free_cores={cores:g} room={room:g} "
-                        f"free_mb={mb:g} age_s={age:.1f}; highest measured free cores, then room and memory"
+                        f"free_mb={mb:g} age_s={age:.1f}; highest measured free cores, then room and memory" + suffix
                     )
-                return local, "no fresh open Nomad admit headroom; fallback to caller environment"
+                return (None if protected else local), "no fresh open Nomad admit headroom" + suffix
             except (OSError, ValueError, urllib.error.URLError):
                 continue
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         pass
-    return local, "Nomad admit headroom unavailable; fallback to caller environment"
+    return (None if protected else local), "Nomad admit headroom unavailable" + suffix

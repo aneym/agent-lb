@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import copy
+import importlib
 import io
 import json
 import socket
@@ -55,7 +56,7 @@ def local_environment(environments: dict) -> str:
     return setup_error("unknown_environment", f"local host {hostname!r} has no T3 environment mapping", True)
 
 
-def placement(args: argparse.Namespace, settings: dict) -> dict:
+def placement(args: argparse.Namespace, settings: dict, protected: bool = False) -> dict:
     environments = settings["environments"]
     local = local_environment(environments)
     if args.here and args.here not in environments:
@@ -71,10 +72,16 @@ def placement(args: argparse.Namespace, settings: dict) -> dict:
     elif args.mac:
         name, reason = "studio", "mac required: studio"
     else:
-        name, reason = measured_placement(environments, args.here or local)
+        name, reason = measured_placement(environments, local if protected else args.here or local, protected)
+    if protected and name and (args.on or args.mac):
+        host_rejections = importlib.import_module("route_host_gate").host_rejections
+
+        rejected = host_rejections({name: environments[name]}, local)
+        if name in rejected:
+            reason, name = f"{name} skipped: {rejected[name]}", None
     return {
         "environment": name,
-        "ssh_host": environments[name]["ssh_host"],
+        "ssh_host": environments[name]["ssh_host"] if name else None,
         "placement_reason": reason,
     }
 
@@ -167,10 +174,12 @@ def resolve_target(args: argparse.Namespace) -> tuple[int, dict]:
         setup_error("unknown_class", f"unknown dispatch class {args.task_class!r}", args.json)
     if class_name == "verify" and not args.author_vendor:
         setup_error("unknown_author", "verify requires --author-vendor <vendor>", args.json)
-    placed = placement(args, settings)
     code, row, fallback = dispatch_target(args, table, settings)
     if code not in (EXIT_OK, EXIT_WAIT):
         return code, row
+    provider = provider_for(settings, table, row["model_alias"], row["seat"]) if row.get("model_alias") else None
+    protected = args.write or class_name == "implement" or bool(provider and provider["providerInstanceId"] == "codex")
+    placed = placement(args, settings, protected)
     if not row.get("decision_id"):
         row.update(
             v=1,
@@ -198,7 +207,9 @@ def resolve_target(args: argparse.Namespace) -> tuple[int, dict]:
         table_sha=row["table_sha256"],
         **placed,
     )
-    if code == EXIT_OK:
+    if placed["environment"] is None:
+        row["reason"] = "no host passed placement readiness"
+    if code == EXIT_OK and placed["environment"] is not None:
         provider = provider_for(settings, table, row["model_alias"], row["seat"])
         if provider is None:
             return EXIT_UNROUTABLE, row
