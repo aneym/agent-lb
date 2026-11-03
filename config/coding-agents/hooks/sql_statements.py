@@ -12,7 +12,7 @@ LEXEME = re.compile(
     r"|\\[^\n\\]*"
 )
 COMMENT_MARK = re.compile(r"/\*|\*/")
-DELETE_FROM = re.compile(r"(?<![" + IDENT + r"])DELETE\s+FROM(?![" + IDENT + r"])[^;]*", re.I)
+DELETE_FROM = re.compile(r"(?<![" + IDENT + r"])DELETE[\s\x01]+FROM(?![" + IDENT + r"])[^;\x01]*", re.I)
 WHERE = re.compile(r"(?<![" + IDENT + r"])WHERE(?![" + IDENT + r"])", re.I)
 
 
@@ -37,12 +37,16 @@ def lexed(piece):
             out.append(" ")
             i = i if end is None else end
         else:
-            out.append(" " if m[0][:1] == "-" else ";" if m[0][:1] == "\\" else '""' if m[0][:1] == '"' else "''")
+            out.append(" " if m[0][:1] == "-" else "\x01" if m[0][:1] == "\\" else '""' if m[0][:1] == '"' else "''")
     return "".join(out) + piece[i:]
 
 
 def code(pieces):
     return ";\n".join(map(lexed, pieces))
+
+
+def statements(pieces):
+    return code(pieces).replace("\x01", " ")
 
 
 def deletes_all(pieces):

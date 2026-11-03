@@ -10,6 +10,7 @@ sys.path.insert(0, sys.argv.pop(1))
 import approval_record
 import data_delete
 import psql_files
+import psql_stdin
 import shell_places
 import shell_words
 import sql_statements
@@ -422,6 +423,17 @@ def psql_sql(args, read, inline):
     return found
 
 
+def feeder_command(words):
+    k = shell_words.command_word([(w, w, False, shlex.quote(w)) for w in words], []) if words else None
+    while k is not None and k < len(words) and os.path.basename(words[k]) in ("builtin", "command"):
+        k += 1
+        while k < len(words) and words[k][:1] == "-":
+            k += 1
+    if k is None or k >= len(words):
+        return "", []
+    return os.path.basename(words[k]), words[k + 1 :]
+
+
 def sql_text(cmd, cwd):
     found, bodies, unread = [], [], []
     start = cwd if cwd and os.path.isdir(cwd) else os.getcwd()
@@ -433,6 +445,9 @@ def sql_text(cmd, cwd):
         while True:
             strings = []
             k = shell_words.command_word([(w, w, False, shlex.quote(w)) for w in words], strings)
+            if k is not None and words[k].isdigit() and words[k + 1 : k + 2] and words[k + 1] in REDIRECTS:
+                words = words[:k] + words[k + 1 :]
+                continue
             if k is None or words[k] not in REDIRECTS or k + 1 >= len(words):
                 break
             early += words[k : k + 2] if words[k] in ("<", "<<<") else []
@@ -449,11 +464,13 @@ def sql_text(cmd, cwd):
         if name != "psql":
             continue
         found += psql_sql(early + words[k + 1 :], read, inline)
-        feeder = parts[index - 1] if index else []
-        if feeder[:1] == ["cat"]:
-            found += [piece for path in feeder[1:] if path[:1] != "-" for piece in read(path, True)]
-        elif feeder[:1] in (["echo"], ["printf"]):
-            found += inline(re.sub(r"\\[ntr]", "\n", " ".join(feeder[1:])))
+        feeder, args = feeder_command(parts[index - 1] if index else [])
+        if feeder == "cat":
+            tops = []
+            found += [piece for path in args if path[:1] != "-" for piece in read(path, True, tops)]
+            found.append("\n".join(tops))
+        elif feeder in ("echo", "printf"):
+            found += [piece for text in psql_stdin.texts(feeder, args) for piece in inline(text)]
     for line, body in bodies:
         if any(os.path.basename(word) == "psql" for words in commands(line) for word in words):
             found += inline(body)
@@ -481,7 +498,7 @@ def main():
             refuse("could not parse a kept-floor command")
         sys.stderr.write("WARNING: destructive-data guard could not parse executable argv; allowing command.\n")
         allow()
-    match = grep(DESTRUCTIVE_SQL, re.sub(r"\s+", " ", "\n".join(sql) + "\n" + sql_statements.code(sql)))
+    match = grep(DESTRUCTIVE_SQL, re.sub(r"\s+", " ", "\n".join(sql) + "\n" + sql_statements.statements(sql)))
     if match == 1 and sql_statements.deletes_all(sql):
         match = 0
     if match not in (0, 1):

@@ -35,11 +35,11 @@ def reader(cwds, start, unread):
     def load(place, depth, stdin):
         here = [os.path.dirname(place)] + (known() if stdin else [])
         key = (os.path.realpath(place), tuple(map(os.path.realpath, here)), frozenset(cwds))
-        if key in seen:
-            return []
         text = file_text(place)
         if text is None:
             return None
+        if key in seen:
+            return [text]
         seen.add(key)
         return [text] + included(text, here, depth + 1)
 
@@ -65,12 +65,14 @@ def reader(cwds, start, unread):
             pieces += [piece for found in got for piece in found]
         return pieces
 
-    def read(path, stdin=False):
+    def read(path, stdin=False, tops=None):
         if path in ("", "-"):
             return []
         got = [t for t in (load(p, 0, stdin) for p in dict.fromkeys(places(path, known()))) if t is not None]
         if not got and None in cwds and not os.path.isabs(path) and not os.path.exists(os.path.join(start, path)):
             unread.append(path)
+        if tops is not None:
+            tops += [found[0] for found in got]
         return [piece for found in got for piece in found]
 
     def inline(text):
