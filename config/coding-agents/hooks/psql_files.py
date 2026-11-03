@@ -1,6 +1,5 @@
 import os
 import re
-import sys
 
 DEPTH = 16
 META = re.compile(
@@ -10,7 +9,7 @@ META = re.compile(
 
 
 def file_text(path):
-    if not os.path.exists(path):
+    if not os.path.isfile(path):
         return None
     try:
         if os.path.getsize(path) >= 1_000_000:
@@ -18,11 +17,10 @@ def file_text(path):
         with open(path) as f:
             return f.read(1_000_000)
     except (OSError, UnicodeError):
-        sys.stderr.write("dangerous-command-guard: SQL input unreadable or >=1 MB; passing without inspection.\n")
         return None
 
 
-def reader(cwds, start, unread):
+def reader(cwds, unread, loaded):
     seen = set()
 
     def known():
@@ -38,6 +36,7 @@ def reader(cwds, start, unread):
         text = file_text(place)
         if text is None:
             return None
+        loaded.add(os.path.realpath(place))
         if key in seen:
             return [text]
         seen.add(key)
@@ -55,24 +54,23 @@ def reader(cwds, start, unread):
                 cwds.update(dirs)
                 continue
             name = m[4].strip("'\"")
+            if name in ("-", "/dev/stdin") or name.startswith(("/dev/", "/proc/")):
+                unread.append(name)
+                continue
             if depth > DEPTH:
                 unread.append("%s (psql includes nested past %d)" % (name, DEPTH))
                 continue
             bases = here if m[3] in ("ir", "include_relative") else known()
             got = [t for t in (load(p, depth, False) for p in dict.fromkeys(places(name, bases))) if t is not None]
-            if not got and name != "-":
+            if not got:
                 unread.append(name)
             pieces += [piece for found in got for piece in found]
         return pieces
 
-    def read(path, stdin=False, tops=None):
-        if path in ("", "-"):
-            return []
+    def read(path, stdin=False):
         got = [t for t in (load(p, 0, stdin) for p in dict.fromkeys(places(path, known()))) if t is not None]
-        if not got and None in cwds and not os.path.isabs(path) and not os.path.exists(os.path.join(start, path)):
+        if not got:
             unread.append(path)
-        if tops is not None:
-            tops += [found[0] for found in got]
         return [piece for found in got for piece in found]
 
     def inline(text):

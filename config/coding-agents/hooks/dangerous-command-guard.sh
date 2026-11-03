@@ -9,8 +9,9 @@ import sys
 sys.path.insert(0, sys.argv.pop(1))
 import approval_record
 import data_delete
+import psql_argv
+import psql_commands
 import psql_files
-import psql_stdin
 import shell_places
 import shell_words
 import sql_statements
@@ -31,8 +32,6 @@ RAILS_FLOOR = (
 )
 PROVIDER_APPROVAL = re.compile(r"\s+# alex-approval:\s*(\S+)\s*$")
 HEREDOC_OPEN = re.compile(r"<<-?\s*(?:'([^']+)'|\"([^\"]+)\"|([\w]+))")
-SQL_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z_0-9]*)\1")
-SHELL_LINE = re.compile(r"\s*(?:bash|sh|zsh)\b")
 FACTORY_TOKEN = re.compile(r"\$\(\s*agent-secret\s+get\s+railway-factory-prod-token\s*\)")
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
 VARIABLE_REF = re.compile(r"\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?")
@@ -41,8 +40,6 @@ RAILWAY_WORD = re.compile(r"\brailway\b")
 UNPARSED_FLOOR = "DROP|TRUNCATE|launchctl[[:space:]]+disable"
 DESTRUCTIVE_SQL = "(DROP[[:space:]]+(DATABASE|TABLE)|TRUNCATE[[:space:]]+(TABLE[[:space:]]+)?[^[:space:];])"
 REF_COMMENT = re.compile(r"#\s*alex-approval:\s*(\S+)\s*")
-PSQL_VALUED = set("cdfFhLoPpRTUv")
-REDIRECTS = {"<", "<<<", ">", ">>", "<>", ">|", "&>", ">&"}
 
 
 def on_path(name):
@@ -366,114 +363,53 @@ def provider_block(text, cwd):
         return ""
 
 
-def commands(text, bodies=None):
-    lines = text.splitlines(keepends=True)
-    clean = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        m = SQL_HEREDOC.search(line)
-        clean.append(line)
-        i += 1
-        if m:
-            body = []
-            while i < len(lines) and lines[i].strip() != m[2]:
-                body.append(lines[i])
-                i += 1
-            i += 1
-            if SHELL_LINE.match(line):
-                yield from commands("".join(body), bodies)
-            elif bodies is not None:
-                bodies.append((line, "".join(body)))
-    lexer = shlex.shlex("".join(clean), posix=True, punctuation_chars=";|&<>()")
-    lexer.whitespace = " \t\r"
-    lexer.commenters = "#"
-    segment = []
-    for token in lexer:
-        if token == "\n" or (token and set(token) <= set(";|&()")):
-            if segment:
-                yield segment
-                segment = []
-        else:
-            segment.append(token)
-    if segment:
-        yield segment
-
-
-def psql_sql(args, read, inline):
-    found, i = [], 0
-    while i < len(args):
-        word, i = args[i], i + 1
-        key, eq, rest = word.partition("=")
-        if len(key) > 3 and "--command".startswith(key) or len(key) > 4 and "--file".startswith(key):
-            value = rest if eq else (args[i] if i < len(args) else "")
-            i += 0 if eq else 1
-            found += inline(value) if "--command".startswith(key) else read(value)
-        elif word in ("<", "<<<") and i < len(args):
-            found += read(args[i], True) if word == "<" else inline(args[i])
-            i += 1
-        elif word[:1] == "-" and word[1:2] != "-":
-            for j, flag in enumerate(word[1:], 1):
-                if flag in PSQL_VALUED:
-                    value = word[j + 1 :]
-                    if not value and i < len(args):
-                        value, i = args[i], i + 1
-                    found += inline(value) if flag == "c" else read(value) if flag == "f" else []
-                    break
-    return found
-
-
-def feeder_command(words):
-    k = shell_words.command_word([(w, w, False, shlex.quote(w)) for w in words], []) if words else None
-    while k is not None and k < len(words) and os.path.basename(words[k]) in ("builtin", "command"):
-        k += 1
-        while k < len(words) and words[k][:1] == "-":
-            k += 1
-    if k is None or k >= len(words):
-        return "", []
-    return os.path.basename(words[k]), words[k + 1 :]
-
-
 def sql_text(cmd, cwd):
-    found, bodies, unread = [], [], []
+    found, bodies, unread, feeds, writes, loaded, inherit = [], [], [], [], [], set(), False
     start = cwd if cwd and os.path.isdir(cwd) else os.getcwd()
     cwds = {start}
-    read, inline = psql_files.reader(cwds, start, unread)
-    parts = list(commands(cmd, bodies))
-    for index, words in enumerate(parts):
+    read, inline = psql_files.reader(cwds, unread, loaded)
+    parts = list(psql_commands.commands(cmd, bodies, feeds))
+    for words in parts:
         early = []
         while True:
             strings = []
             k = shell_words.command_word([(w, w, False, shlex.quote(w)) for w in words], strings)
-            if k is not None and words[k].isdigit() and words[k + 1 : k + 2] and words[k + 1] in REDIRECTS:
+            if k is not None and words[k].isdigit() and words[k + 1 : k + 2] and words[k + 1] in psql_argv.REDIRECTS:
+                early.append(words[k])
                 words = words[:k] + words[k + 1 :]
                 continue
-            if k is None or words[k] not in REDIRECTS or k + 1 >= len(words):
+            if k is None or words[k] not in psql_argv.REDIRECTS or k + 1 >= len(words):
                 break
-            early += words[k : k + 2] if words[k] in ("<", "<<<") else []
+            early += words[k : k + 2]
             words = words[:k] + words[k + 2 :]
         for text in strings:
-            parts.extend(commands(text, bodies))
+            parts.extend(psql_commands.commands(psql_commands.restore(text), bodies, feeds))
         if k is None:
+            writes += psql_argv.written("", early)
             continue
-        name = os.path.basename(words[k])
-        cwds |= {shell_places.moved(name, words[k:], {}, place) for place in cwds if place}
-        inner = data_delete.nested(name, words[k + 1 :])
+        plain = [psql_commands.restore(word) for word in words]
+        name = os.path.basename(plain[k])
+        if "command" in map(os.path.basename, plain[:k]) and {"-v", "-V"} & set(plain[:k]):
+            continue
+        cwds |= {shell_places.moved(name, plain[k:], {}, place) for place in cwds if place}
+        inner = data_delete.nested(name, plain[k + 1 :])
         if inner is not None:
-            parts.extend(commands(inner, bodies))
+            parts.extend(psql_commands.commands(inner, bodies, feeds))
+        args = early + words[k + 1 :] if name == "psql" else psql_argv.launched(name, words[k + 1 :])
         if name != "psql":
+            writes += psql_argv.written(name, early + words[k + 1 : len(words) - len(args or [])])
+        if args is None:
             continue
-        found += psql_sql(early + words[k + 1 :], read, inline)
-        feeder, args = feeder_command(parts[index - 1] if index else [])
-        if feeder == "cat":
-            tops = []
-            found += [piece for path in args if path[:1] != "-" for piece in read(path, True, tops)]
-            found.append("\n".join(tops))
-        elif feeder in ("echo", "printf"):
-            found += [piece for text in psql_stdin.texts(feeder, args) for piece in inline(text)]
-    for line, body in bodies:
-        if any(os.path.basename(word) == "psql" for words in commands(line) for word in words):
-            found += inline(body)
+        fans = [w for w in plain[: k + 1] if os.path.basename(w) in psql_argv.FANS_OUT]
+        if fans:
+            unread.append("psql run by %s with arguments from its input" % os.path.basename(fans[0]))
+        got, inherits, wrote = psql_argv.inspect(args, read, inline, unread, lambda w: psql_commands.body(w, bodies))
+        found += got
+        writes += wrote
+        inherit |= inherits
+    if inherit and feeds:
+        unread.append("%s: its stdin is fed through %s" % (psql_argv.FEEDS, " ".join(dict.fromkeys(feeds))))
+    unread += ["%s (written in the same command)" % word for word in psql_argv.touches(writes, cwds, loaded)]
     return [piece.replace("\x00", "") for piece in found], unread
 
 
@@ -505,7 +441,10 @@ def main():
         refuse("could not match the command (grep exit %d: missing or failed)" % match)
     if (match == 0 or unread) and not approved(cmd):
         if unread:
-            sys.stderr.write("dangerous-command-guard: psql would run SQL files it cannot read: %s\n" % ", ".join(unread))
+            sys.stderr.write(
+                "dangerous-command-guard: psql would run SQL it cannot see or read: %s. Pass the SQL with "
+                "psql -c '<sql>' or psql -f <file> (a readable file nothing in this command writes).\n" % "; ".join(unread)
+            )
         sys.stderr.write(
             "BLOCKED: Dangerous command requires explicit user approval (%s). Approved: append "
             "' # alex-approval: ~/.open-factory/approvals/alex-<topic>-2026-<date>.md' "
