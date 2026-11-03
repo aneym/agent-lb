@@ -118,9 +118,9 @@ def flags_of(word, args, i):
     return found, i
 
 
-def inspect(args, read, inline, unread, heredoc):
+def inspect(args, read, inline, unread, heredoc, posix=False):
     found, writes, source, sql, info, stdin = [], [], None, False, False, False
-    i, fd = 0, None
+    i, fd, ended = 0, None, False
     while i < len(args):
         word, i = args[i], i + 1
         if word.isdigit() and i < len(args) and args[i] in REDIRECTS:
@@ -135,7 +135,8 @@ def inspect(args, read, inline, unread, heredoc):
             fd = None
             continue
         fd = None
-        if word[:1] != "-" or len(word) < 2:
+        ended |= word == "--" or posix and word[:1] != "-"
+        if ended or word[:1] != "-" or len(word) < 2:
             continue
         flags, i = flags_of(word, args, i)
         for flag, value in flags:

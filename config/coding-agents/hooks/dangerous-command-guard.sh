@@ -403,7 +403,9 @@ def sql_text(cmd, cwd):
         fans = [w for w in plain[: k + 1] if os.path.basename(w) in psql_argv.FANS_OUT]
         if fans:
             unread.append("psql run by %s with arguments from its input" % os.path.basename(fans[0]))
-        got, inherits, wrote = psql_argv.inspect(args, read, inline, unread, lambda w: psql_commands.body(w, bodies))
+        got, inherits, wrote = psql_argv.inspect(
+            args, read, inline, unread, lambda w: psql_commands.body(w, bodies), "POSIXLY_CORRECT" in cmd
+        )
         found += got
         writes += wrote
         inherit |= inherits
