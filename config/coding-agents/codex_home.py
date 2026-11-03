@@ -11,12 +11,15 @@ OFFLOAD_COMMAND = (
 BRANCH_GUARD_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/branch-guard.py"'
 HOOKS_OFF_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/hooks-off-guard.py"'
 WALK_GUARD_COMMAND = '/bin/bash "$HOME/.claude/hooks/wide-scan-guard.sh" --block-walks'
+MEMORY_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/codex-memory-brief.py"'
 FLOOR_COMMANDS = (BRANCH_GUARD_COMMAND, HOOKS_OFF_COMMAND, WALK_GUARD_COMMAND)
-MANAGED_COMMANDS = {
-    OFFLOAD_COMMAND: (20, "Bash"),
-    WALK_GUARD_COMMAND: (10, "Bash"),
-    BRANCH_GUARD_COMMAND: (10, "Bash"),
-    HOOKS_OFF_COMMAND: (10, "apply_patch"),
+TRUSTED_COMMANDS = (*FLOOR_COMMANDS, MEMORY_COMMAND)
+MANAGED_COMMANDS: dict[str, tuple[str, int, str | None]] = {
+    OFFLOAD_COMMAND: ("PreToolUse", 20, "Bash"),
+    WALK_GUARD_COMMAND: ("PreToolUse", 10, "Bash"),
+    BRANCH_GUARD_COMMAND: ("PreToolUse", 10, "Bash"),
+    HOOKS_OFF_COMMAND: ("PreToolUse", 10, "apply_patch"),
+    MEMORY_COMMAND: ("SessionStart", 15, None),
 }
 
 
@@ -56,19 +59,20 @@ def reconcile_codex_hooks(text: str, install: bool) -> str:
     data = json.loads(text) if text.strip() else {}
     if not isinstance(data, dict) or not isinstance(data.setdefault("hooks", {}), dict):
         raise ValueError("hooks.json is not an object with a hooks object")
-    groups = data["hooks"].setdefault("PreToolUse", [])
-    kept: list[dict[str, object]] = []
-    for group in groups:
-        hooks = [
-            h for h in group.get("hooks", []) if not isinstance(h, dict) or h.get("command") not in MANAGED_COMMANDS
-        ]
-        if hooks or not group.get("hooks"):
-            kept.append(dict(group, hooks=hooks))
-    if install:
-        for command, (timeout, matcher) in MANAGED_COMMANDS.items():
-            entry: dict[str, object] = {"type": "command", "command": command, "timeout": timeout}
-            kept.append({"matcher": matcher, "hooks": [entry]})
-    data["hooks"]["PreToolUse"] = kept
+    for event in dict.fromkeys(event for event, _timeout, _matcher in MANAGED_COMMANDS.values()):
+        kept: list[dict[str, object]] = []
+        for group in data["hooks"].get(event, []):
+            hooks = [
+                h for h in group.get("hooks", []) if not isinstance(h, dict) or h.get("command") not in MANAGED_COMMANDS
+            ]
+            if hooks or not group.get("hooks"):
+                kept.append(dict(group, hooks=hooks))
+        for command, (wanted, timeout, matcher) in MANAGED_COMMANDS.items():
+            if install and wanted == event:
+                entry: dict[str, object] = {"type": "command", "command": command, "timeout": timeout}
+                kept.append({"hooks": [entry]} if matcher is None else {"matcher": matcher, "hooks": [entry]})
+        if kept or event in data["hooks"]:
+            data["hooks"][event] = kept
     desired = json.dumps(data, indent=2) + "\n"
     return text if text.strip() and json.loads(text) == data else desired
 

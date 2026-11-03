@@ -84,6 +84,7 @@ MANAGED_HOOKS = (
     "subagent-closeout.py",
     "transcript_navigation.py",
     "factory-context.py",
+    "codex-memory-brief.py",
     "compact-checkpoint.py",
     "wide-scan-guard.sh",
     "hook_wide_scan_shell.py",

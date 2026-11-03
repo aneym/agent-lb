@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from codex_home import OFFLOAD_COMMAND  # type: ignore[missing-import]
+from codex_home import MEMORY_COMMAND, OFFLOAD_COMMAND  # type: ignore[missing-import]
 from floor_hooks import FLOOR_STEMS, NON_FLOOR_GUARDS, non_floor, stem, unwrapped  # type: ignore[missing-import]
 from policy_layout import SETTINGS_HOOKS  # type: ignore[missing-import]
 
@@ -121,7 +121,7 @@ def exact_commands(home: Path) -> frozenset[str]:
     ]
     return frozenset(
         [hook["command"] for _event, _matcher, hook, _source in SETTINGS_HOOKS]
-        + [OFFLOAD_COMMAND]
+        + [OFFLOAD_COMMAND, MEMORY_COMMAND]
         + [command for command in shipped if isinstance(command, str)]
     )
 
