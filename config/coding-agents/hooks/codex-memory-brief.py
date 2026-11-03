@@ -17,8 +17,11 @@ CONNECT_HEAD = (
     "It is a partial summary: call memory.search before saying something is not saved."
 )
 PROTOCOL = "2025-06-18"
-HEADER = re.compile(r"^\s*\[([^\[\]]+)\]\s*(?:#.*)?$")
-PAIR = re.compile(r"^\s*(\"[^\"]*\"|'[^']*'|[A-Za-z0-9_-]+)\s*=\s*(.+?)\s*$")
+BASIC = r'"(?:[^"\\\n]|\\.)*"'
+LITERAL = r"'[^'\n]*'"
+KEY = rf"(?:{BASIC}|{LITERAL}|[A-Za-z0-9_-]+)"
+HEADER = re.compile(rf"^\s*\[\s*({KEY}(?:\s*\.\s*{KEY})*)\s*\]\s*(?:#.*)?$")
+PAIR = re.compile(rf"^\s*({KEY})\s*=\s*(.+?)\s*$")
 
 
 def rails_url(url):
@@ -34,25 +37,22 @@ def rails_url(url):
     return host == "rails.so" and re.fullmatch(r"/s/[A-Za-z0-9_-]+/mcp/?", parts.path) is not None
 
 
+def unquote(text):
+    if text[:1] == '"':
+        return json.loads(text)
+    return text[1:-1] if text[:1] == "'" else text
+
+
 def scalar(text):
     text = text.strip()
-    if text[:1] == '"':
-        end = text.find('"', 1)
-        return json.loads(text[: end + 1]) if end > 0 else None
-    if text[:1] == "'":
-        end = text.find("'", 1)
-        return text[1:end] if end > 0 else None
+    found = re.match(rf"{BASIC}|{LITERAL}", text)
+    if found:
+        return unquote(found[0])
     if text[:1] == "{":
-        out = {}
-        for key, value in re.findall(r"(\"[^\"]*\"|'[^']*'|[A-Za-z0-9_-]+)\s*=\s*(\"[^\"]*\"|'[^']*')", text):
-            out[key.strip("\"'")] = scalar(value)
-        return out
+        pairs = re.findall(rf"({KEY})\s*=\s*({BASIC}|{LITERAL}|true|false)", text)
+        return {unquote(key): scalar(value) for key, value in pairs}
     word = text.split("#", 1)[0].strip()
     return {"true": True, "false": False}.get(word, word)
-
-
-def split_key(text):
-    return [part.strip().strip("\"'") for part in re.findall(r"\"[^\"]*\"|'[^']*'|[^.]+", text.strip())]
 
 
 def read_toml(path):
@@ -68,18 +68,37 @@ def read_toml(path):
         pass
     except ValueError:
         return {}
-    data, table = {}, {}
-    data_root = data
+    data: dict = {}
+    table: dict = data
+    block = None
     for line in text.splitlines():
-        head = HEADER.match(line)
-        if head:
-            table = data_root
-            for part in split_key(head[1]):
-                table = table.setdefault(part, {}) if isinstance(table.get(part, {}), dict) else {}
+        if block:
+            if line.count(block) % 2:
+                block = None
             continue
-        pair = PAIR.match(line)
-        if pair and isinstance(table, dict):
-            table[pair[1].strip("\"'")] = scalar(pair[2])
+        if line.lstrip().startswith("[["):
+            table = {}
+            continue
+        try:
+            head = HEADER.match(line)
+            if head:
+                table = data
+                for part in re.findall(rf"{BASIC}|{LITERAL}|[A-Za-z0-9_-]+", head[1]):
+                    child = table.setdefault(unquote(part), {})
+                    table = child if isinstance(child, dict) else {}
+                continue
+            pair = PAIR.match(line)
+            if not pair:
+                continue
+            value = pair[2]
+            for mark in ('"""', "'''"):
+                if value.startswith(mark) and value.count(mark) == 1:
+                    block = mark
+            if block or value.startswith("["):
+                continue
+            table[unquote(pair[1])] = scalar(value)
+        except ValueError:
+            continue
     return data
 
 
@@ -204,7 +223,11 @@ def main():
     started = time.monotonic()
     sys.stdin.read()
     home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
-    found = servers(home)
+    try:
+        found = servers(home)
+    except Exception as exc:
+        log(home, "error:config:" + type(exc).__name__, started)
+        return 0
     if not found:
         log(home, "no_server", started)
         return 0
