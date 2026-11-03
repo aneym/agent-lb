@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, sys.argv.pop(1))
 import approval_record
 import data_delete
+import shell_places
 import shell_words
 
 FLOOR = "floor: destructive data with no approval on record"
@@ -38,6 +39,7 @@ UNPARSED_FLOOR = "DROP|TRUNCATE|launchctl[[:space:]]+disable"
 DESTRUCTIVE_SQL = "(DROP[[:space:]]+(DATABASE|TABLE)|TRUNCATE[[:space:]]+(TABLE[[:space:]]+)?[A-Za-z_])"
 REF_COMMENT = re.compile(r"#\s*alex-approval:\s*(\S+)\s*")
 PSQL_VALUED = set("cdfFhLoPpRTUv")
+INCLUDE = re.compile(r"\\(?:include_relative|include|ir|i)\s+('[^']*'|\"[^\"]*\"|\S+)")
 
 
 def on_path(name):
@@ -395,8 +397,9 @@ def commands(text, bodies=None):
         yield segment
 
 
-def read_file(path, cwd):
-    path = os.path.join(cwd, path) if cwd and os.path.isdir(cwd) else path
+def file_text(path):
+    if not os.path.exists(path):
+        return None
     try:
         if os.path.getsize(path) >= 1_000_000:
             raise OSError("larger than limit")
@@ -404,10 +407,24 @@ def read_file(path, cwd):
             return f.read(1_000_000)
     except (OSError, UnicodeError):
         sys.stderr.write("dangerous-command-guard: SQL input unreadable or >=1 MB; passing without inspection.\n")
-        return ""
+        return None
 
 
-def psql_sql(args, cwd):
+def sql_reader(cwds, start, unread):
+    def read(path):
+        path = os.path.expanduser(path)
+        if path in ("", "-"):
+            return ""
+        places = [path] if os.path.isabs(path) else [os.path.join(cwd, path) for cwd in cwds if cwd]
+        texts = [text for text in map(file_text, dict.fromkeys(places)) if text is not None]
+        if not texts and None in cwds and not os.path.isabs(path) and not os.path.exists(os.path.join(start, path)):
+            unread.append(path)
+        return "\n".join(texts)
+
+    return read
+
+
+def psql_sql(args, read):
     found, i = [], 0
     while i < len(args):
         word, i = args[i], i + 1
@@ -415,9 +432,9 @@ def psql_sql(args, cwd):
         if key in ("--command", "--file"):
             value = rest if eq else (args[i] if i < len(args) else "")
             i += 0 if eq else 1
-            found.append(value if key == "--command" else read_file(value, cwd))
+            found.append(value if key == "--command" else read(value))
         elif word in ("<", "<<<") and i < len(args):
-            found.append(read_file(args[i], cwd) if word == "<" else args[i])
+            found.append(read(args[i]) if word == "<" else args[i])
             i += 1
         elif word[:1] == "-" and word[1:2] != "-":
             for j, flag in enumerate(word[1:], 1):
@@ -425,13 +442,16 @@ def psql_sql(args, cwd):
                     value = word[j + 1 :]
                     if not value and i < len(args):
                         value, i = args[i], i + 1
-                    found += [value] if flag == "c" else [read_file(value, cwd)] if flag == "f" else []
+                    found += [value] if flag == "c" else [read(value)] if flag == "f" else []
                     break
     return found
 
 
 def sql_text(cmd, cwd):
-    found, bodies = [], []
+    found, bodies, unread = [], [], []
+    start = cwd if cwd and os.path.isdir(cwd) else os.getcwd()
+    cwds = {start}
+    read = sql_reader(cwds, start, unread)
     parts = list(commands(cmd, bodies))
     for index, words in enumerate(parts):
         strings = []
@@ -441,18 +461,20 @@ def sql_text(cmd, cwd):
         if k is None:
             continue
         name = os.path.basename(words[k])
+        cwds |= {shell_places.moved(name, words[k:], {}, place) for place in cwds if place}
         inner = data_delete.nested(name, words[k + 1 :])
         if inner is not None:
             parts.extend(commands(inner, bodies))
         if name != "psql":
             continue
-        found += psql_sql(words[k + 1 :], cwd)
+        found += psql_sql(words[k + 1 :], read)
         if index and parts[index - 1][0] == "cat" and len(parts[index - 1]) == 2:
-            found.append(read_file(parts[index - 1][1], cwd))
+            found.append(read(parts[index - 1][1]))
     for line, body in bodies:
         if any(os.path.basename(word) == "psql" for words in commands(line) for word in words):
             found.append(body)
-    return "\n".join(found).replace("\x00", "")
+    found += [read(m[1].strip("'\"")) for m in INCLUDE.finditer("\n".join(found))]
+    return re.sub(r"\s+", " ", "\n".join(found).replace("\x00", "")), unread
 
 
 def main():
@@ -467,7 +489,7 @@ def main():
         sys.stderr.write("BLOCKED: %s\n" % block)
         sys.exit(2)
     try:
-        sql = sql_text(cmd, cwd)
+        sql, unread = sql_text(cmd, cwd)
     except Exception:
         match = grep(UNPARSED_FLOOR, cmd)
         if match not in (0, 1):
@@ -479,7 +501,9 @@ def main():
     match = grep(DESTRUCTIVE_SQL, sql)
     if match not in (0, 1):
         refuse("could not match the command (grep exit %d: missing or failed)" % match)
-    if match == 0 and not approved(cmd):
+    if (match == 0 or unread) and not approved(cmd):
+        if unread:
+            sys.stderr.write("dangerous-command-guard: psql would run SQL files it cannot read: %s\n" % ", ".join(unread))
         sys.stderr.write(
             "BLOCKED: Dangerous command requires explicit user approval (%s). Approved: append "
             "' # alex-approval: ~/.open-factory/approvals/alex-<topic>-2026-<date>.md' "
