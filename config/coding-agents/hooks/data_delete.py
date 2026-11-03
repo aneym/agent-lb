@@ -41,17 +41,16 @@ SSH_VALUED = {
     "-W",
     "-w",
 }
+RSYNC_SHORT_VALUED = {"e", "f", "T", "B", "M"}
 RSYNC_VALUED = {
-    "-e",
     "--rsh",
-    "-f",
+    "--remote-option",
     "--filter",
     "--exclude",
     "--include",
     "--exclude-from",
     "--include-from",
     "--files-from",
-    "-T",
     "--temp-dir",
     "--partial-dir",
     "--backup-dir",
@@ -65,7 +64,6 @@ RSYNC_VALUED = {
     "--chown",
     "--suffix",
     "--port",
-    "-B",
 }
 GIT_VALUED = {"-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"}
 SHELL_FILES = (".bashrc", ".bash_aliases", ".bash_profile", ".profile", ".zshrc", ".zsh_aliases", ".zprofile")
@@ -180,19 +178,27 @@ def targets(name, args):
     if name == "git":
         return git_targets(args)
     if name == "rsync":
-        found, options, skip = [], [], False
+        found, deleting, value = [], [], None
         for i, arg in enumerate(args):
-            if skip:
-                skip = False
+            if value is not None:
+                deleting += [arg] if value in {"M", "--remote-option"} else []
+                value = None
             elif arg == "--":
                 found += args[i + 1 :]
                 break
-            elif arg.startswith("-"):
-                options.append(arg)
-                skip = arg in RSYNC_VALUED
+            elif arg.startswith("--"):
+                key, eq, rest = arg.partition("=")
+                deleting += [arg] if RSYNC_DELETE.fullmatch(arg) else [rest] if key == "--remote-option" else []
+                value = key if not eq and key in RSYNC_VALUED else None
+            elif arg.startswith("-") and len(arg) > 1:
+                at = next((j for j, flag in enumerate(arg[1:], 1) if flag in RSYNC_SHORT_VALUED), None)
+                if at is not None and arg[at + 1 :]:
+                    deleting += [arg[at + 1 :]] if arg[at] == "M" else []
+                elif at is not None:
+                    value = arg[at]
             else:
                 found.append(arg)
-        return found if any(RSYNC_DELETE.search(arg) for arg in options) else None
+        return found if any(RSYNC_DELETE.search(option) for option in deleting) else None
     if name == "mv":
         found, into, skip = [], [], None
         for arg in args:

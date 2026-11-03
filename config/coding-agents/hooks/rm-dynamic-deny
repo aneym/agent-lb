@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import approval_record
 import data_delete
 import shell_places
-from shell_vocabulary import COMPOUND, DATA_READERS, KEYWORDS, OPS, WRAPPERS
+import shell_words
+from shell_vocabulary import COMPOUND, DATA_READERS, OPS, WRAPPERS
 from git_lock_delete import stale_worktree_lock
 
 FLOOR = "BLOCKED (floor: destructive delete with no approval on record): "
@@ -318,45 +319,10 @@ def substitutions(text, notes=None, parent=None, anchor=None, until=None):
     return out
 
 
-def is_assignment(word):
-    name, eq, _ = word[3].partition("=")
-    return bool(eq) and name.rstrip("+").isidentifier()
-
-
-def base(word):
-    return word[0].rsplit("/", 1)[-1]
-
-
-def command_word(words, strings):
-    k = 0
-    while k < len(words) and (words[k][0] in KEYWORDS or is_assignment(words[k])):
-        k += 1
-    while k < len(words) and base(words[k]) in WRAPPERS:
-        name = base(words[k])
-        takes, duration, k = WRAPPERS[name], name in ("timeout", "gtimeout"), k + 1
-        while k < len(words):
-            w = words[k][0]
-            if name == "env" and w in ("-S", "--split-string") and k + 1 < len(words):
-                strings.append(words[k + 1][0])
-                k += 2
-            elif name == "env" and w.startswith(("--split-string=", "-S")) and len(w) > 2:
-                strings.append(w.split("=", 1)[1] if w.startswith("--") else w[2:])
-                k += 1
-            elif w.startswith("-") and len(w) > 1:
-                k += 2 if w in takes else 1
-            elif is_assignment(words[k]):
-                k += 1
-            elif duration:
-                duration, k = False, k + 1
-            else:
-                break
-    return k if k < len(words) else None
-
-
 def command_name(segment):
     words = [w for w in segment if not w[2]]
-    k = command_word(words, [])
-    return None if k is None else base(words[k])
+    k = shell_words.command_word(words, [])
+    return None if k is None else shell_words.base(words[k])
 
 
 def data_reader(segment):
@@ -366,31 +332,31 @@ def data_reader(segment):
     if words[0][3] in COMPOUND:
         return False
     strings = []
-    k = command_word(words, strings)
+    k = shell_words.command_word(words, strings)
     if strings:
         return False
-    if any(base(w) == "xargs" for w in words[:k]):
+    if any(shell_words.base(w) == "xargs" for w in words[:k]):
         return False
     if k is None:
         return True
-    return base(words[k]) in DATA_READERS
+    return shell_words.base(words[k]) in DATA_READERS
 
 
 def deletes_data(segment, assignments, cwd, defined, aliases):
     words = [w for w in segment if not w[2]]
     strings = []
-    k = command_word(words, strings)
+    k = shell_words.command_word(words, strings)
     if any(data_delete.chdir(w[0]) for w in words[: len(words) if k is None else k]):
         cwd = None
     if k is not None:
         name, args = data_delete.resolved(words[k][0], assignments, os.path.expanduser("~")), [w[0] for w in words[k + 1 :]]
-        bare = words[k][1] == words[k][0] and not any(base(w) in WRAPPERS for w in words[:k])
+        bare = words[k][1] == words[k][0] and not any(shell_words.base(w) in WRAPPERS for w in words[:k])
         if bare and name in aliases and name not in defined:
             text = " ".join([aliases[name], *args])
             if any(deletes_data(seg, assignments, cwd, defined | {name}, aliases) for seg in segments(text)):
                 return True
         name = os.path.basename(name or "")
-        if name in data_delete.DELETERS and any(base(w) in data_delete.FEEDERS for w in words[:k]):
+        if name in data_delete.DELETERS and any(shell_words.base(w) in data_delete.FEEDERS for w in words[:k]):
             return True
         inner = data_delete.nested(name, args)
         strings += [inner] if inner is not None else []
@@ -412,7 +378,7 @@ def offending(segment, assignments=None):
 
     words = [w for w in segment if not w[2]]
     strings = []
-    k = command_word(words, strings)
+    k = shell_words.command_word(words, strings)
     for s in strings:
         for inner in segments(s):
             why = offending(inner)
@@ -420,7 +386,7 @@ def offending(segment, assignments=None):
                 return why
     if k is None:
         return None
-    name = base(words[k])
+    name = shell_words.base(words[k])
     if name in {"sh", "bash", "zsh", "dash", "ksh"}:
         for i, w in enumerate(words[k + 1 :], k + 1):
             if w[0].startswith("-") and "c" in w[0][1:] and i + 1 < len(words):

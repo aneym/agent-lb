@@ -4,7 +4,6 @@ import data_delete  # type: ignore[missing-import]
 from shell_vocabulary import COMPOUND  # type: ignore[missing-import]
 
 MOVES = {"cd", "pushd", "popd"}
-CONDITIONAL = {"&&", "||"}
 PIPES = {"|", "|&"}
 
 
@@ -44,8 +43,6 @@ def places(name, words, assignments, state, link):
     new = {moved(name, words, assignments, cwd) for cwd in cwds}
     if inner or start == "||":
         cwds = cwds | new
-    elif start == "&&" or end in CONDITIONAL:
-        fallback, cwds = fallback | cwds, new
     else:
-        cwds = new
+        fallback, cwds = fallback | cwds, new
     return (cwds, fallback) if len(cwds | fallback) <= 16 else ({None}, set())

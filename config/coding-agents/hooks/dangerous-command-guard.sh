@@ -8,6 +8,8 @@ import sys
 
 sys.path.insert(0, sys.argv.pop(1))
 import approval_record
+import data_delete
+import shell_words
 
 FLOOR = "floor: destructive data with no approval on record"
 PROVIDERS = {
@@ -35,6 +37,7 @@ RAILWAY_WORD = re.compile(r"\brailway\b")
 UNPARSED_FLOOR = "DROP|TRUNCATE|launchctl[[:space:]]+disable"
 DESTRUCTIVE_SQL = "(DROP[[:space:]]+(DATABASE|TABLE)|TRUNCATE[[:space:]]+(TABLE[[:space:]]+)?[A-Za-z_])"
 REF_COMMENT = re.compile(r"#\s*alex-approval:\s*(\S+)\s*")
+PSQL_VALUED = set("cdfFhLoPpRTUv")
 
 
 def on_path(name):
@@ -377,12 +380,12 @@ def commands(text, bodies=None):
                 yield from commands("".join(body), bodies)
             elif bodies is not None:
                 bodies.append((line, "".join(body)))
-    lexer = shlex.shlex("".join(clean), posix=True, punctuation_chars=";|&<>")
+    lexer = shlex.shlex("".join(clean), posix=True, punctuation_chars=";|&<>()")
     lexer.whitespace = " \t\r"
     lexer.commenters = "#"
     segment = []
     for token in lexer:
-        if token == "\n" or token in (";", "&&", "||", "|", "&"):
+        if token == "\n" or (token and set(token) <= set(";|&()")):
             if segment:
                 yield segment
                 segment = []
@@ -392,7 +395,8 @@ def commands(text, bodies=None):
         yield segment
 
 
-def read_file(path):
+def read_file(path, cwd):
+    path = os.path.join(cwd, path) if cwd and os.path.isdir(cwd) else path
     try:
         if os.path.getsize(path) >= 1_000_000:
             raise OSError("larger than limit")
@@ -403,34 +407,48 @@ def read_file(path):
         return ""
 
 
-def sql_text(cmd):
+def psql_sql(args, cwd):
+    found, i = [], 0
+    while i < len(args):
+        word, i = args[i], i + 1
+        key, eq, rest = word.partition("=")
+        if key in ("--command", "--file"):
+            value = rest if eq else (args[i] if i < len(args) else "")
+            i += 0 if eq else 1
+            found.append(value if key == "--command" else read_file(value, cwd))
+        elif word in ("<", "<<<") and i < len(args):
+            found.append(read_file(args[i], cwd) if word == "<" else args[i])
+            i += 1
+        elif word[:1] == "-" and word[1:2] != "-":
+            for j, flag in enumerate(word[1:], 1):
+                if flag in PSQL_VALUED:
+                    value = word[j + 1 :]
+                    if not value and i < len(args):
+                        value, i = args[i], i + 1
+                    found += [value] if flag == "c" else [read_file(value, cwd)] if flag == "f" else []
+                    break
+    return found
+
+
+def sql_text(cmd, cwd):
     found, bodies = [], []
     parts = list(commands(cmd, bodies))
     for index, words in enumerate(parts):
-        name = os.path.basename(words[0])
-        if name in ("bash", "sh", "zsh") and "-c" in words:
-            at = words.index("-c")
-            if at + 1 < len(words):
-                parts.extend(commands(words[at + 1], bodies))
+        strings = []
+        k = shell_words.command_word([(w, w, False, shlex.quote(w)) for w in words], strings)
+        for text in strings:
+            parts.extend(commands(text, bodies))
+        if k is None:
+            continue
+        name = os.path.basename(words[k])
+        inner = data_delete.nested(name, words[k + 1 :])
+        if inner is not None:
+            parts.extend(commands(inner, bodies))
         if name != "psql":
             continue
-        for i, word in enumerate(words[1:], 1):
-            if word in ("-c", "--command") and i + 1 < len(words):
-                found.append(words[i + 1])
-            elif word[:1] == "-" and word[1:2] != "-" and "c" in word:
-                found += [word.split("c", 1)[1], *words[i + 1 : i + 2]]
-            elif word == "<<<" and i + 1 < len(words):
-                found.append(words[i + 1])
-            elif word.startswith("--command="):
-                found.append(word.split("=", 1)[1])
-            elif word in ("-f", "--file", "<") and i + 1 < len(words):
-                found.append(read_file(words[i + 1]))
-            elif word[:2] == "-f" and len(word) > 2:
-                found.append(read_file(word[2:]))
-            elif word.startswith("--file="):
-                found.append(read_file(word.split("=", 1)[1]))
+        found += psql_sql(words[k + 1 :], cwd)
         if index and parts[index - 1][0] == "cat" and len(parts[index - 1]) == 2:
-            found.append(read_file(parts[index - 1][1]))
+            found.append(read_file(parts[index - 1][1], cwd))
     for line, body in bodies:
         if any(os.path.basename(word) == "psql" for words in commands(line) for word in words):
             found.append(body)
@@ -449,7 +467,7 @@ def main():
         sys.stderr.write("BLOCKED: %s\n" % block)
         sys.exit(2)
     try:
-        sql = sql_text(cmd)
+        sql = sql_text(cmd, cwd)
     except Exception:
         match = grep(UNPARSED_FLOOR, cmd)
         if match not in (0, 1):

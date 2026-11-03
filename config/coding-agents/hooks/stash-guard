@@ -6,6 +6,9 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import shell_words  # type: ignore[missing-import]
+
 FLOOR = "BLOCKED (floor: data loss, a shared stash can take another seat's changes): "
 MESSAGE = ("BLOCKED: git stash is one stack shared by every worktree of {repo} ({count}); a stash push/pop "
            "can take another seat's changes (incident 2026-10-07). For base content use `git show <rev>:<path>`; for "
@@ -158,9 +161,9 @@ def stash_targets(sh, text, cwds, notes=None, depth=0):
         g = start(meta["group"])
         words = [w for w in segment if not w[2]]
         strings = []
-        k = sh.command_word(words, strings)
+        k = shell_words.command_word(words, strings)
         inner = strings[:]
-        head = None if k is None else sh.base(words[k])
+        head = None if k is None else shell_words.base(words[k])
         launches[g].append(wrapped(words if k is None else words[:k], here[g])[0])
         if head in SHELLS:
             inner += shell_strings(words[k + 1:])
