@@ -184,6 +184,76 @@
         "timeout": 10
       },
       "needs_source": true
+    },
+    {
+      "event": "SessionStart",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/agent-home-hooks.py\" SessionStart",
+        "timeout": 32
+      },
+      "needs_source": false
+    },
+    {
+      "event": "UserPromptSubmit",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/agent-home-hooks.py\" UserPromptSubmit",
+        "timeout": 12
+      },
+      "needs_source": false
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/agent-home-hooks.py\" PreToolUse",
+        "timeout": 12
+      },
+      "needs_source": false
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/agent-home-hooks.py\" PostToolUse",
+        "timeout": 12
+      },
+      "needs_source": false
+    },
+    {
+      "event": "Stop",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/agent-home-hooks.py\" Stop",
+        "timeout": 12
+      },
+      "needs_source": false
+    },
+    {
+      "event": "PreCompact",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/agent-home-hooks.py\" PreCompact",
+        "timeout": 12
+      },
+      "needs_source": false
+    },
+    {
+      "event": "SessionEnd",
+      "matcher": null,
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/agent-home-hooks.py\" SessionEnd",
+        "timeout": 32
+      },
+      "needs_source": false
     }
   ]
 }
