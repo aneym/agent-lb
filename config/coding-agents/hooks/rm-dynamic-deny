@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import approval_record
 import data_delete
+import shell_places
 from shell_vocabulary import COMPOUND, DATA_READERS, KEYWORDS, OPS, WRAPPERS
 from git_lock_delete import stale_worktree_lock
 
@@ -144,7 +145,14 @@ def segments(cmd, notes=None, parent=None, anchor=None, until=None, consumer=Fal
             pipes[-1].append(list(seg))
             if notes is not None:
                 notes["segs"].append(
-                    {"start": st["start"], "end": end, "depth": st["depth"], "compound": st["compound"], "group": group}
+                    {
+                        "start": st["start"],
+                        "end": end,
+                        "depth": st["depth"],
+                        "compound": st["compound"],
+                        "brace": st["brace"],
+                        "group": group,
+                    }
                 )
                 notes["count"][group] += 1
         for w in seg:
@@ -289,6 +297,12 @@ def segments(cmd, notes=None, parent=None, anchor=None, until=None, consumer=Fal
     return out
 
 
+def parsed(cmd):
+    notes = {"segs": [], "comments": []}
+    every = segments(cmd, notes)
+    return every, shell_places.links(notes, every)
+
+
 def substitutions(text, notes=None, parent=None, anchor=None, until=None):
     out, k = [], 0
     while k < len(text):
@@ -384,11 +398,12 @@ def deletes_data(segment, assignments, cwd, defined, aliases):
         if data_delete.touches(name, args, assignments, cwd):
             return True
     for text in strings:
-        here = cwd
-        for seg in segments(text):
-            if deletes_data(seg, assignments, here, defined, aliases):
+        here = ({cwd}, set())
+        for seg, link in zip(*parsed(text)):
+            here = shell_places.reached(here, link[0])
+            if any(deletes_data(seg, assignments, place, defined, aliases) for place in here[0]):
                 return True
-            here = data_delete.moved(command_name(seg), [w[0] for w in seg if not w[2]], assignments, here)
+            here = shell_places.places(command_name(seg), [w[0] for w in seg if not w[2]], assignments, here, link)
     return False
 
 
@@ -466,7 +481,7 @@ def main():
     global RUN_BODIES
     RUN_BODIES = False
     raw = sys.stdin.read()
-    if not data_delete.mentions(raw, TRIGGERS) and "\\u" not in raw:
+    if not data_delete.mentions(raw, TRIGGERS) and "\\" not in raw:
         return 0
     import json
 
@@ -490,22 +505,23 @@ def main():
         return 0
 
     assignments, shifting = {}, set()
-    cwd = data.get("cwd") or os.getcwd()
+    state = ({data.get("cwd") or os.getcwd()}, set())
     defined = data_delete.defined(cmd)
     aliases = {**data_delete.shell_aliases(), **data_delete.found_aliases(cmd)}
-    every = segments(cmd)
+    every, links = parsed(cmd)
     lines = cmd.rstrip().rsplit("\n", 1)
     first = len(segments(lines[0])) if len(lines) == 2 else 0
     if first and first + len(segments(lines[1])) != len(every):
         first = len(every)
     for i, seg in enumerate(every):
         fixed = data_delete.remember([w[0] for w in seg], assignments, shifting)
-        if deletes_data(seg, fixed, cwd, defined, aliases):
+        state = shell_places.reached(state, links[i][0])
+        if any(deletes_data(seg, fixed, cwd, defined, aliases) for cwd in state[0]):
             if i >= first and approved(cmd, "data-delete"):
                 continue
             sys.stderr.write(FLOOR + "rm-dynamic-deny: " + data_delete.REFUSAL + "\n")
             return 2
-        cwd = data_delete.moved(command_name(seg), [w[0] for w in seg if not w[2]], fixed, cwd)
+        state = shell_places.places(command_name(seg), [w[0] for w in seg if not w[2]], fixed, state, links[i])
         why = offending(seg, assignments)
         if why and not (i >= first and approved(cmd)):
             sys.stderr.write(refusal(why) + "\n")

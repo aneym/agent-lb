@@ -358,7 +358,7 @@ def provider_block(text, cwd):
         return ""
 
 
-def commands(text):
+def commands(text, bodies=None):
     lines = text.splitlines(keepends=True)
     clean = []
     i = 0
@@ -374,7 +374,9 @@ def commands(text):
                 i += 1
             i += 1
             if SHELL_LINE.match(line):
-                yield from commands("".join(body))
+                yield from commands("".join(body), bodies)
+            elif bodies is not None:
+                bodies.append((line, "".join(body)))
     lexer = shlex.shlex("".join(clean), posix=True, punctuation_chars=";|&<>")
     lexer.whitespace = " \t\r"
     lexer.commenters = "#"
@@ -402,27 +404,36 @@ def read_file(path):
 
 
 def sql_text(cmd):
-    found = []
-    parts = list(commands(cmd))
+    found, bodies = [], []
+    parts = list(commands(cmd, bodies))
     for index, words in enumerate(parts):
         name = os.path.basename(words[0])
         if name in ("bash", "sh", "zsh") and "-c" in words:
             at = words.index("-c")
             if at + 1 < len(words):
-                parts.extend(commands(words[at + 1]))
+                parts.extend(commands(words[at + 1], bodies))
         if name != "psql":
             continue
         for i, word in enumerate(words[1:], 1):
             if word in ("-c", "--command") and i + 1 < len(words):
                 found.append(words[i + 1])
+            elif word[:1] == "-" and word[1:2] != "-" and "c" in word:
+                found += [word.split("c", 1)[1], *words[i + 1 : i + 2]]
+            elif word == "<<<" and i + 1 < len(words):
+                found.append(words[i + 1])
             elif word.startswith("--command="):
                 found.append(word.split("=", 1)[1])
             elif word in ("-f", "--file", "<") and i + 1 < len(words):
                 found.append(read_file(words[i + 1]))
+            elif word[:2] == "-f" and len(word) > 2:
+                found.append(read_file(word[2:]))
             elif word.startswith("--file="):
                 found.append(read_file(word.split("=", 1)[1]))
         if index and parts[index - 1][0] == "cat" and len(parts[index - 1]) == 2:
             found.append(read_file(parts[index - 1][1]))
+    for line, body in bodies:
+        if any(os.path.basename(word) == "psql" for words in commands(line) for word in words):
+            found.append(body)
     return "\n".join(found).replace("\x00", "")
 
 

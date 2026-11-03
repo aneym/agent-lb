@@ -68,7 +68,6 @@ RSYNC_VALUED = {
     "-B",
 }
 GIT_VALUED = {"-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"}
-MOVES = {"cd", "pushd", "popd"}
 SHELL_FILES = (".bashrc", ".bash_aliases", ".bash_profile", ".profile", ".zshrc", ".zsh_aliases", ".zprofile")
 DEFINED_ALIAS = re.compile(r"(?:^|[\s;&|({])alias\s+(?:-\S+\s+)*([A-Za-z_][\w.:-]*)=(?:'([^']*)'|\"([^\"]*)\"|(\S*))")
 DEFINITION = re.compile(r"(?:^|[\s;&|({])(?:function\s+([A-Za-z_][\w.:-]*)|([A-Za-z_][\w.:-]*)\s*\(\s*\))")
@@ -81,6 +80,8 @@ REFUSAL = (
     "for one target."
 )
 VARIABLE_MARK = "$UNRESOLVED"
+RSYNC_DELETE = re.compile(r"--(?:del(?:ete[\w-]*)?|remove-(?:source|sent)-files)(?![\w-])")
+PROTECTED = (".t3/userdata", ".agent-rails/approvals", ".agent-rails/custody", ".open-factory/approvals")
 VARIABLE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?::\?[^}]*)?\}|([A-Za-z_][A-Za-z0-9_]*))")
 
 
@@ -138,7 +139,12 @@ def shell_aliases():
     return aliases
 
 
+def plain(text):
+    return re.sub(r"[\\'\"]", "", text.replace("\\\n", ""))
+
+
 def mentions(text, words):
+    text = plain(text)
     if any(word in text for word in words):
         return True
     risky = [name for name, body in shell_aliases().items() if any(word in body for word in words)]
@@ -174,17 +180,19 @@ def targets(name, args):
     if name == "git":
         return git_targets(args)
     if name == "rsync":
-        if not any(a == "--del" or a.startswith(("--delete", "--remove-source-files")) for a in args):
-            return None
-        found, skip = [], False
-        for arg in args:
+        found, options, skip = [], [], False
+        for i, arg in enumerate(args):
             if skip:
                 skip = False
+            elif arg == "--":
+                found += args[i + 1 :]
+                break
             elif arg.startswith("-"):
+                options.append(arg)
                 skip = arg in RSYNC_VALUED
             else:
                 found.append(arg)
-        return found
+        return found if any(RSYNC_DELETE.search(arg) for arg in options) else None
     if name == "mv":
         found, into, skip = [], [], None
         for arg in args:
@@ -202,8 +210,9 @@ def targets(name, args):
         return None
     deleting = any(
         arg == "-delete"
-        or (arg in FIND_EXEC and i + 1 < len(args) and os.path.basename(args[i + 1]) in DELETERS | SHELLS | FEEDERS)
+        or (arg in FIND_EXEC and any(os.path.basename(part) in DELETERS | SHELLS | FEEDERS for part in run))
         for i, arg in enumerate(args)
+        for run in [" ".join(args[i + 1 :]).split()]
     )
     if not deleting:
         return None
@@ -234,6 +243,13 @@ def located(word, assignments, cwd):
     return os.path.normpath(os.path.join(cwd or "/", value))
 
 
+def holds_data(path):
+    homes = {os.path.expanduser("~"), "/root", *glob.glob("/home/*"), *glob.glob("/Users/*")}
+    roots = ["/var/lib", *(os.path.join(home, sub) for home in homes for sub in PROTECTED)]
+    prefix = path.rstrip("/") + "/"
+    return any(root.startswith(prefix) or os.path.realpath(root).startswith(prefix) for root in roots)
+
+
 def touches(name, args, assignments, cwd):
     found = targets(name, args)
     if found is None:
@@ -246,6 +262,8 @@ def touches(name, args, assignments, cwd):
         heads = ["/".join(parts[: i + 1]) for i in range(1, len(parts))]
         paths = [path, *(match for head in heads if glob.has_magic(head) for match in glob.glob(head))]
         if any(DATA.search(p) or DATA.search(os.path.realpath(p)) for p in paths):
+            return True
+        if name != "mv" and any(holds_data(p) for p in [path, os.path.realpath(path), *glob.glob(path)]):
             return True
     return False
 
@@ -261,12 +279,3 @@ def remember(words, assignments, shifting):
                 shifting.add(match[1])
             assignments[match[1]] = value
     return {key: value for key, value in assignments.items() if key not in shifting}
-
-
-def moved(name, words, assignments, cwd):
-    if name not in MOVES:
-        return cwd
-    rest = [word for word in words[words.index(name) + 1 :] if not word.startswith("-")] if name in words else []
-    if name == "popd" or len(rest) != 1:
-        return None if name == "popd" or rest else os.path.expanduser("~")
-    return located(rest[0], assignments, cwd)
