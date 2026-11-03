@@ -1,14 +1,15 @@
 import os
 import re
 import shlex
-import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from no_chrome_argv import parse  # type: ignore
 from no_chrome_doubt import kind  # type: ignore[missing-import]
+from no_chrome_harness import HARNESS, HARNESS_FORBIDDEN, HARNESS_SAFE, harness_refused  # type: ignore
 from no_chrome_python import isolated_launches  # type: ignore[missing-import]
 from no_chrome_shell import (  # type: ignore
+    HARNESS_TOOL,
     INTERPRETERS,
     KEYWORDS,
     SCP_VALUE,
@@ -101,43 +102,7 @@ AGENT_BROWSER_REACH = (
 AGENT_BROWSER_SUBS = {"connect", "auth", "profiles", "state", "-p"}
 LAUNCHER = "agent-cdp-launch"
 SPACE = "mac-space"
-HARNESS_TOOL = "lane-harness"
-HARNESS_SUBS = {"shot", "signin", "outdir", "stop"}
-HARNESS = {"browser-harness", "browser-harness-mcp"}
-HARNESS_FORBIDDEN_WORDS = (
-    "BU_",
-    "BH_",
-    "BROWSER_USE",
-    "putenv",
-    "unsetenv",
-    "daemon",
-    "subprocess",
-    "os.system",
-    "popen",
-    "spawn",
-    "execv",
-    "__import__",
-    "importlib",
-    "_ipc",
-    "admin",
-    "remote_debugging",
-    "chrome://",
-)
-HARNESS_FORBIDDEN = re.compile(
-    "|".join(map(re.escape, HARNESS_FORBIDDEN_WORDS)) + r"|environb?(?![a-z])", re.IGNORECASE
-)
-HARNESS_SAFE = (
-    ["--version"],
-    ["--help"],
-    ["-h"],
-    ["skill"],
-    ["telemetry", "status"],
-    ["telemetry", "disable"],
-    ["recordings"],
-    ["recordings", "disable"],
-)
 UV_TOOL_ADMIN = (["tool", "install"], ["tool", "upgrade"], ["tool", "uninstall"], ["tool", "list"])
-SESSION = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 PLAIN = re.compile(r"[A-Za-z0-9_./:=%+,@ -]+")
 LAUNCH_CODE = re.compile(
     r"\bbrowser[_-]harness\b|\bwebbrowser\b|puppeteer\.launch|chromium\.launch|launchPersistentContext|launch_persistent_context|storage_state\s*=|--storage-state|--user-data-dir|\bconnectOverCDP\s*\(|\bconnect_over_cdp\s*\(|--cdp\b|--remote-debugging-port\b|wss?://[^\s\"']+:\d+/devtools"
@@ -336,26 +301,6 @@ def guest_space(argv, plain):
     return None
 
 
-def harness_tool(argv):
-    home = os.path.expanduser("~")
-    link = home + "/.local/bin/" + HARNESS_TOOL
-    source = home + "/.agent-rails/rails-host-runtime/current/packages/agent-runtime/bin/" + HARNESS_TOOL
-    if argv[0] not in (HARNESS_TOOL, link):
-        return False
-    if argv[0] == HARNESS_TOOL:
-        resolved = shutil.which(HARNESS_TOOL)
-        if resolved is None:
-            if os.environ.get("PATH") != "/usr/bin:/bin:/usr/sbin:/sbin":
-                return False
-        elif os.path.normpath(resolved) != link:
-            return False
-    if not (os.path.islink(link) and os.path.isfile(source) and os.path.realpath(link) == os.path.realpath(source)):
-        return False
-    if argv[1:] == ["--list"] or argv[1:] in (["--help"], ["-h"]):
-        return True
-    return len(argv) >= 2 and SESSION.fullmatch(argv[1]) is not None and (len(argv) == 2 or argv[2] in HARNESS_SUBS)
-
-
 def classify(text, depth=0):
     if depth > 4:
         raise Doubt
@@ -423,8 +368,7 @@ def classify(text, depth=0):
             found.add("mac")
         record_writes(argv, writes)
         if name == HARNESS_TOOL:
-            literal = [os.path.expanduser(word) if word.startswith("~/") else word for word in raw]
-            if argv != literal or not harness_tool(argv) or any(HARNESS_FORBIDDEN.search(body) for body in here):
+            if harness_refused(argv, raw, here):
                 found.add("mac")
             continue
         if name in HARNESS:
@@ -507,6 +451,10 @@ def classify(text, depth=0):
             if any(host_of(t) in PC_HOSTS for t in targets):
                 found.add("browser" if any("chrome" in a.lower() for a in argv[1:]) else "pc")
     for consumer, body in code:
+        if consumer == HARNESS_TOOL:
+            if HARNESS_FORBIDDEN.search(body):
+                found.add("mac")
+            continue
         if consumer not in ("python", "python3") and kind(body) == "browser":
             found.add("mac")
         if consumer in SHELLS:

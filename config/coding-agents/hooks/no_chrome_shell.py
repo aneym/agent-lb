@@ -56,6 +56,7 @@ ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 ARRAY_START = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 DURATION = re.compile(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)[smhd]?")
 SHELLS = {"bash", "sh", "zsh", "dash"}
+HARNESS_TOOL = "lane-harness"
 KEYWORDS = {"if", "then", "do", "while", "until", "else", "elif", "!", "{"}
 OPERATORS = "<>;&|()"
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(\\?)(['\"]?)([A-Za-z0-9_.-]+)\2")
@@ -278,7 +279,7 @@ def heredoc_split(text):
             if line.strip() == end or line.lstrip("\t") == end:
                 ends.pop(0)
                 name = os.path.basename(words[0]) if words else ""
-                if reads_stdin(name, without_redirects(words[1:]), False):
+                if name == HARNESS_TOOL or reads_stdin(name, without_redirects(words[1:]), False):
                     code.append((name, "\n".join(body)))
             else:
                 body.append(line)
