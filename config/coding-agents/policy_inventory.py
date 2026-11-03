@@ -100,6 +100,7 @@ MANAGED_HOOKS = (
     "shell_places.py",
     "shell_words.py",
     "sql_statements.py",
+    "psql_files.py",
     "shell_vocabulary.py",
     "git_lock_recovery.py",
     "dangerous-cmd-guard.py",

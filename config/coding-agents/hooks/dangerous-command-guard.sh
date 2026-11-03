@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, sys.argv.pop(1))
 import approval_record
 import data_delete
+import psql_files
 import shell_places
 import shell_words
 import sql_statements
@@ -40,8 +41,6 @@ UNPARSED_FLOOR = "DROP|TRUNCATE|launchctl[[:space:]]+disable"
 DESTRUCTIVE_SQL = "(DROP[[:space:]]+(DATABASE|TABLE)|TRUNCATE[[:space:]]+(TABLE[[:space:]]+)?[A-Za-z_])"
 REF_COMMENT = re.compile(r"#\s*alex-approval:\s*(\S+)\s*")
 PSQL_VALUED = set("cdfFhLoPpRTUv")
-INCLUDE_DEPTH = 16
-INCLUDE = re.compile(r"\\(include_relative|include|ir|i)\s+('[^']*'|\"[^\"]*\"|\S+)")
 
 
 def on_path(name):
@@ -399,65 +398,6 @@ def commands(text, bodies=None):
         yield segment
 
 
-def file_text(path):
-    if not os.path.exists(path):
-        return None
-    try:
-        if os.path.getsize(path) >= 1_000_000:
-            raise OSError("larger than limit")
-        with open(path) as f:
-            return f.read(1_000_000)
-    except (OSError, UnicodeError):
-        sys.stderr.write("dangerous-command-guard: SQL input unreadable or >=1 MB; passing without inspection.\n")
-        return None
-
-
-def sql_reader(cwds, start, unread):
-    seen = set()
-
-    def places(path, bases):
-        path = os.path.expanduser(path)
-        return [path] if os.path.isabs(path) else [os.path.join(base, path) for base in bases]
-
-    def load(place, depth, stdin):
-        here = [os.path.dirname(place)] + (sorted(c for c in cwds if c) if stdin else [])
-        key = (os.path.realpath(place), tuple(map(os.path.realpath, here)), frozenset(cwds))
-        if key in seen:
-            return ""
-        text = file_text(place)
-        if text is not None:
-            seen.add(key)
-            text += "\n" + included(text, here, depth + 1)
-        return text
-
-    def included(text, here, depth):
-        texts = []
-        for m in INCLUDE.finditer(text):
-            name = m[2].strip("'\"")
-            if depth > INCLUDE_DEPTH:
-                unread.append("%s (psql includes nested past %d)" % (name, INCLUDE_DEPTH))
-                continue
-            bases = here if m[1] in ("ir", "include_relative") else sorted(c for c in cwds if c)
-            got = [t for t in (load(p, depth, False) for p in dict.fromkeys(places(name, bases))) if t is not None]
-            if not got and name != "-":
-                unread.append(name)
-            texts += got
-        return "\n".join(texts)
-
-    def read(path, stdin=False):
-        if path in ("", "-"):
-            return ""
-        texts = [t for t in (load(p, 0, stdin) for p in dict.fromkeys(places(path, [c for c in cwds if c]))) if t is not None]
-        if not texts and None in cwds and not os.path.isabs(path) and not os.path.exists(os.path.join(start, path)):
-            unread.append(path)
-        return "\n".join(texts)
-
-    def inline(text):
-        return text + "\n" + included(text, sorted(c for c in cwds if c), 1)
-
-    return read, inline
-
-
 def psql_sql(args, read, inline):
     found, i = [], 0
     while i < len(args):
@@ -466,9 +406,9 @@ def psql_sql(args, read, inline):
         if key in ("--command", "--file"):
             value = rest if eq else (args[i] if i < len(args) else "")
             i += 0 if eq else 1
-            found.append(inline(value) if key == "--command" else read(value))
+            found += inline(value) if key == "--command" else read(value)
         elif word in ("<", "<<<") and i < len(args):
-            found.append(read(args[i], True) if word == "<" else inline(args[i]))
+            found += read(args[i], True) if word == "<" else inline(args[i])
             i += 1
         elif word[:1] == "-" and word[1:2] != "-":
             for j, flag in enumerate(word[1:], 1):
@@ -476,7 +416,7 @@ def psql_sql(args, read, inline):
                     value = word[j + 1 :]
                     if not value and i < len(args):
                         value, i = args[i], i + 1
-                    found += [inline(value)] if flag == "c" else [read(value)] if flag == "f" else []
+                    found += inline(value) if flag == "c" else read(value) if flag == "f" else []
                     break
     return found
 
@@ -485,7 +425,7 @@ def sql_text(cmd, cwd):
     found, bodies, unread = [], [], []
     start = cwd if cwd and os.path.isdir(cwd) else os.getcwd()
     cwds = {start}
-    read, inline = sql_reader(cwds, start, unread)
+    read, inline = psql_files.reader(cwds, start, unread)
     parts = list(commands(cmd, bodies))
     for index, words in enumerate(parts):
         strings = []
@@ -503,11 +443,11 @@ def sql_text(cmd, cwd):
             continue
         found += psql_sql(words[k + 1 :], read, inline)
         if index and parts[index - 1][0] == "cat" and len(parts[index - 1]) == 2:
-            found.append(read(parts[index - 1][1], True))
+            found += read(parts[index - 1][1], True)
     for line, body in bodies:
         if any(os.path.basename(word) == "psql" for words in commands(line) for word in words):
-            found.append(inline(body))
-    return "\n".join(found).replace("\x00", ""), unread
+            found += inline(body)
+    return [piece.replace("\x00", "") for piece in found], unread
 
 
 def main():
@@ -531,7 +471,7 @@ def main():
             refuse("could not parse a kept-floor command")
         sys.stderr.write("WARNING: destructive-data guard could not parse executable argv; allowing command.\n")
         allow()
-    match = grep(DESTRUCTIVE_SQL, re.sub(r"\s+", " ", sql + "\n" + sql_statements.code(sql)))
+    match = grep(DESTRUCTIVE_SQL, re.sub(r"\s+", " ", "\n".join(sql) + "\n" + sql_statements.code(sql)))
     if match == 1 and sql_statements.deletes_all(sql):
         match = 0
     if match not in (0, 1):
