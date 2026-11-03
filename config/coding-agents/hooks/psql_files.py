@@ -3,8 +3,10 @@ import re
 import sys
 
 DEPTH = 16
-INCLUDE = re.compile(r"\\(include_relative|include|ir|i)\s+('[^']*'|\"[^\"]*\"|\S+)")
-CD = re.compile(r"\\cd(?=\s|\\|$)[ \t]*('[^']*'|\"[^\"]*\"|[^\s\\]+)?")
+META = re.compile(
+    r"\\(?:(cd)(?=\s|\\|$)[ \t]*('[^']*'|\"[^\"]*\"|[^\s\\]+)?"
+    r"|(include_relative|include|ir|i)\s+('[^']*'|\"[^\"]*\"|\S+))"
+)
 
 
 def file_text(path):
@@ -42,20 +44,21 @@ def reader(cwds, start, unread):
         return [text] + included(text, here, depth + 1)
 
     def included(text, here, depth):
-        for m in CD.finditer(text):
-            target = os.path.expanduser((m[1] or "~").strip("'\""))
-            dirs = {os.path.realpath(os.path.join(c, target)) for c in known()}
-            dirs = {d for d in dirs if os.path.isdir(d)}
-            if not dirs:
-                unread.append("\\cd " + target)
-            cwds.update(dirs)
         pieces = []
-        for m in INCLUDE.finditer(text):
-            name = m[2].strip("'\"")
+        for m in META.finditer(text):
+            if m[1]:
+                target = os.path.expanduser((m[2] or "~").strip("'\""))
+                dirs = {os.path.realpath(os.path.join(c, target)) for c in known()}
+                dirs = {d for d in dirs if os.path.isdir(d)}
+                if not dirs:
+                    unread.append("\\cd " + target)
+                cwds.update(dirs)
+                continue
+            name = m[4].strip("'\"")
             if depth > DEPTH:
                 unread.append("%s (psql includes nested past %d)" % (name, DEPTH))
                 continue
-            bases = here if m[1] in ("ir", "include_relative") else known()
+            bases = here if m[3] in ("ir", "include_relative") else known()
             got = [t for t in (load(p, depth, False) for p in dict.fromkeys(places(name, bases))) if t is not None]
             if not got and name != "-":
                 unread.append(name)

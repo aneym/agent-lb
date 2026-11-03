@@ -38,9 +38,10 @@ VARIABLE_REF = re.compile(r"\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?")
 RAILWAY_CLI = re.compile(r"(?:@railway/cli|railway)(?:@[^/]+)?")
 RAILWAY_WORD = re.compile(r"\brailway\b")
 UNPARSED_FLOOR = "DROP|TRUNCATE|launchctl[[:space:]]+disable"
-DESTRUCTIVE_SQL = "(DROP[[:space:]]+(DATABASE|TABLE)|TRUNCATE[[:space:]]+(TABLE[[:space:]]+)?[A-Za-z_])"
+DESTRUCTIVE_SQL = "(DROP[[:space:]]+(DATABASE|TABLE)|TRUNCATE[[:space:]]+(TABLE[[:space:]]+)?[^[:space:];])"
 REF_COMMENT = re.compile(r"#\s*alex-approval:\s*(\S+)\s*")
 PSQL_VALUED = set("cdfFhLoPpRTUv")
+REDIRECTS = {"<", "<<<", ">", ">>", "<>", ">|", "&>", ">&"}
 
 
 def on_path(name):
@@ -403,10 +404,10 @@ def psql_sql(args, read, inline):
     while i < len(args):
         word, i = args[i], i + 1
         key, eq, rest = word.partition("=")
-        if key in ("--command", "--file"):
+        if len(key) > 3 and "--command".startswith(key) or len(key) > 4 and "--file".startswith(key):
             value = rest if eq else (args[i] if i < len(args) else "")
             i += 0 if eq else 1
-            found += inline(value) if key == "--command" else read(value)
+            found += inline(value) if "--command".startswith(key) else read(value)
         elif word in ("<", "<<<") and i < len(args):
             found += read(args[i], True) if word == "<" else inline(args[i])
             i += 1
@@ -428,8 +429,14 @@ def sql_text(cmd, cwd):
     read, inline = psql_files.reader(cwds, start, unread)
     parts = list(commands(cmd, bodies))
     for index, words in enumerate(parts):
-        strings = []
-        k = shell_words.command_word([(w, w, False, shlex.quote(w)) for w in words], strings)
+        early = []
+        while True:
+            strings = []
+            k = shell_words.command_word([(w, w, False, shlex.quote(w)) for w in words], strings)
+            if k is None or words[k] not in REDIRECTS or k + 1 >= len(words):
+                break
+            early += words[k : k + 2] if words[k] in ("<", "<<<") else []
+            words = words[:k] + words[k + 2 :]
         for text in strings:
             parts.extend(commands(text, bodies))
         if k is None:
@@ -441,9 +448,12 @@ def sql_text(cmd, cwd):
             parts.extend(commands(inner, bodies))
         if name != "psql":
             continue
-        found += psql_sql(words[k + 1 :], read, inline)
-        if index and parts[index - 1][0] == "cat" and len(parts[index - 1]) == 2:
-            found += read(parts[index - 1][1], True)
+        found += psql_sql(early + words[k + 1 :], read, inline)
+        feeder = parts[index - 1] if index else []
+        if feeder[:1] == ["cat"]:
+            found += [piece for path in feeder[1:] if path[:1] != "-" for piece in read(path, True)]
+        elif feeder[:1] in (["echo"], ["printf"]):
+            found += inline(re.sub(r"\\[ntr]", "\n", " ".join(feeder[1:])))
     for line, body in bodies:
         if any(os.path.basename(word) == "psql" for words in commands(line) for word in words):
             found += inline(body)

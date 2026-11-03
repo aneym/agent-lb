@@ -1,16 +1,19 @@
 import re
 
+IDENT = r"\w$\x80-\U0010FFFF"
 LEXEME = re.compile(
-    r"(?<![\w$])[Ee]'(?:[^'\\]|\\[\s\S]|'')*'"
+    r"(?<![" + IDENT + r"])[Ee]'(?:[^'\\]|\\[\s\S]|'')*'"
     r"|'(?:[^']|'')*'"
     r"|\"(?:[^\"]|\"\")*\""
-    r"|(?<![\w$])(\$(?:[A-Za-z_]\w*)?\$)[\s\S]*?\1"
+    r"|(?<![" + IDENT + r"])(\$(?:[A-Za-z_\x80-\U0010FFFF][\w\x80-\U0010FFFF]*)?\$)[\s\S]*?\1"
     r"|--[^\n]*"
     r"|/\*"
+    r"|\\\\"
+    r"|\\[^\n\\]*"
 )
 COMMENT_MARK = re.compile(r"/\*|\*/")
-DELETE_FROM = re.compile(r"(?<![\w$])DELETE\s+FROM(?![\w$])[^;\\]*", re.I)
-WHERE = re.compile(r"(?<![\w$])WHERE(?![\w$])", re.I)
+DELETE_FROM = re.compile(r"(?<![" + IDENT + r"])DELETE\s+FROM(?![" + IDENT + r"])[^;]*", re.I)
+WHERE = re.compile(r"(?<![" + IDENT + r"])WHERE(?![" + IDENT + r"])", re.I)
 
 
 def block_end(piece, start):
@@ -34,7 +37,7 @@ def lexed(piece):
             out.append(" ")
             i = i if end is None else end
         else:
-            out.append(" " if m[0][:1] == "-" else '""' if m[0][:1] == '"' else "''")
+            out.append(" " if m[0][:1] == "-" else ";" if m[0][:1] == "\\" else '""' if m[0][:1] == '"' else "''")
     return "".join(out) + piece[i:]
 
 
