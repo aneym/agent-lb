@@ -11,6 +11,7 @@ import approval_record
 import data_delete
 import shell_places
 import shell_words
+import sql_statements
 
 FLOOR = "floor: destructive data with no approval on record"
 PROVIDERS = {
@@ -40,7 +41,6 @@ DESTRUCTIVE_SQL = "(DROP[[:space:]]+(DATABASE|TABLE)|TRUNCATE[[:space:]]+(TABLE[
 REF_COMMENT = re.compile(r"#\s*alex-approval:\s*(\S+)\s*")
 PSQL_VALUED = set("cdfFhLoPpRTUv")
 INCLUDE_DEPTH = 16
-DELETE_FROM = re.compile(r"\bDELETE\s+FROM\b[^;]*", re.I)
 INCLUDE = re.compile(r"\\(include_relative|include|ir|i)\s+('[^']*'|\"[^\"]*\"|\S+)")
 
 
@@ -421,7 +421,7 @@ def sql_reader(cwds, start, unread):
 
     def load(place, depth, stdin):
         here = [os.path.dirname(place)] + (sorted(c for c in cwds if c) if stdin else [])
-        key = (os.path.realpath(place), tuple(map(os.path.realpath, here)))
+        key = (os.path.realpath(place), tuple(map(os.path.realpath, here)), frozenset(cwds))
         if key in seen:
             return ""
         text = file_text(place)
@@ -507,7 +507,7 @@ def sql_text(cmd, cwd):
     for line, body in bodies:
         if any(os.path.basename(word) == "psql" for words in commands(line) for word in words):
             found.append(inline(body))
-    return re.sub(r"\s+", " ", "\n".join(found).replace("\x00", "")), unread
+    return "\n".join(found).replace("\x00", ""), unread
 
 
 def main():
@@ -531,8 +531,8 @@ def main():
             refuse("could not parse a kept-floor command")
         sys.stderr.write("WARNING: destructive-data guard could not parse executable argv; allowing command.\n")
         allow()
-    match = grep(DESTRUCTIVE_SQL, sql)
-    if match == 1 and any(not re.search(r"\bWHERE\b", m[0], re.I) for m in DELETE_FROM.finditer(sql)):
+    match = grep(DESTRUCTIVE_SQL, re.sub(r"\s+", " ", sql + "\n" + sql_statements.code(sql)))
+    if match == 1 and sql_statements.deletes_all(sql):
         match = 0
     if match not in (0, 1):
         refuse("could not match the command (grep exit %d: missing or failed)" % match)

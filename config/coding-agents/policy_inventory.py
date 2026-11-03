@@ -99,6 +99,7 @@ MANAGED_HOOKS = (
     "data_delete.py",
     "shell_places.py",
     "shell_words.py",
+    "sql_statements.py",
     "shell_vocabulary.py",
     "git_lock_recovery.py",
     "dangerous-cmd-guard.py",
