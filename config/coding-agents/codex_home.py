@@ -19,7 +19,7 @@ MANAGED_COMMANDS: dict[str, tuple[str, int, str | None]] = {
     WALK_GUARD_COMMAND: ("PreToolUse", 10, "Bash"),
     BRANCH_GUARD_COMMAND: ("PreToolUse", 10, "Bash"),
     HOOKS_OFF_COMMAND: ("PreToolUse", 10, "apply_patch"),
-    MEMORY_COMMAND: ("SessionStart", 15, None),
+    MEMORY_COMMAND: ("SessionStart", 10, "startup|resume|clear|compact"),
 }
 
 
