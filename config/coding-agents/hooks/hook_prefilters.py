@@ -74,27 +74,6 @@ def pf_railway_custody(payload):
     return not isinstance(command, str) or "railway" in command
 
 
-def pf_no_chrome(payload):
-    if not isinstance(payload, dict):
-        return True
-    tool_input = payload.get("tool_input")
-    if tool_input is None:
-        return False
-    if not isinstance(tool_input, dict):
-        return True
-    command = tool_input.get("command")
-    if command is None:
-        return False
-    if not isinstance(command, str) or "\x00" in command:
-        return True
-    try:
-        from no_chrome_classify import classify  # type: ignore[missing-import]
-
-        return classify(command) not in ("none", "pc")
-    except Exception:
-        return True
-
-
 _WIDE_TOOL = re.compile(r"(^|[;&|(`\s])(grep\s+([^;&|]*\s)?-[a-zA-Z]*[rR]|rg\s|find\s|fd\s)", re.M)
 _WIDE_PATH = re.compile(
     r"\s(/|~|~/|\$HOME/?|\"\$HOME\"/?|/(?:Users)/[^/ \t\n\r\f\v]+/?|/(?:Volumes)/[^/ \t\n\r\f\v]+/?|"
@@ -316,7 +295,6 @@ SCRIPT_PREFILTERS = {
         pf_link_cli,
     ),
     "dangerous-command-guard.sh": ((), pf_dangerous),
-    "no-chrome-guard.sh": ((), pf_no_chrome),
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
     "kill-scope-guard.py": ((), pf_kill_scope),
     "route.sh": ("36bbdd44a69543ff7fe2865985443a2a09ab2f540d6bf09df25ec6c978e1d629", pf_jev_alert),
@@ -330,7 +308,6 @@ SCRIPT_NEEDS = {
     "railway-vars-guard.sh": (("cat",), ("python3",)),
     "link-cli-guard.sh": (("jq",), ("grep",)),
     "dangerous-command-guard.sh": (("jq",), ("grep",), ("python3",)),
-    "no-chrome-guard.sh": (("/opt/homebrew/bin/jq", "jq"), ("/usr/bin/python3",)),
 }
 
 COMMAND_PREFILTERS = {

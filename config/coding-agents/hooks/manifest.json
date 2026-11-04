@@ -2,16 +2,6 @@
   "owner": "agent-lb",
   "hooks": [
     {
-      "event": "PreToolUse",
-      "matcher": "Bash",
-      "hook": {
-        "type": "command",
-        "command": "\"$HOME/.claude/hooks/no-chrome-guard.sh\"",
-        "timeout": 10
-      },
-      "needs_source": true
-    },
-    {
       "event": "SessionStart",
       "matcher": null,
       "hook": {

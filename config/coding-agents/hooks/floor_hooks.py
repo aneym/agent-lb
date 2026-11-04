@@ -18,8 +18,6 @@ FLOOR_HOOKS = {
     "agent-lb-bootout-guard.sh": "his accounts: the account store is never booted out",
     "dangerous-command-guard.sh": "destructive data: dangerous shell commands blocked",
     "dangerous-cmd-guard.py": "destructive data: forced recursive rm of protected roots",
-    "no-chrome-guard.sh": "his accounts: no automation of his Chrome logins",
-    "no_chrome_guard.py": "his accounts: the no-chrome guard's checker",
     "host-credential-guard.py": "secrets: host credential files never read",
     "gh-write-guard.py": "git: no gh writes",
     "kill-scope-guard.py": "destructive: kills limited to the agent's own scope",
