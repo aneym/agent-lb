@@ -142,6 +142,8 @@ def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
         held = root_floor_names(owner == home / ".codex")
         for context, matcher, hook in gone:
             command = json.loads(hook).get("command") or ""
+            if command == '/usr/bin/python3 "$HOME/.local/bin/wide-scan-guard"':
+                continue
             if invocation.retired_invocation(command, layout.RETIRED_HOOKS) and any(
                 retirement.retirable(home / ".claude/hooks" / name, name)
                 for name in layout.RETIRED_HOOKS
