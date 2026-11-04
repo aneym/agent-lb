@@ -62,6 +62,11 @@
         "environmentId": "befef143-e101-4db9-9343-430093675ddf",
         "ssh_host": "forge",
         "mac": false
+      },
+      "ax102": {
+        "environmentId": "f5752975-c3c0-44f1-ace1-77f87e9125c5",
+        "ssh_host": "ax102",
+        "mac": false
       }
     },
     "seat_vendors": {
