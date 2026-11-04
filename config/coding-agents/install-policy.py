@@ -106,6 +106,7 @@ def main() -> int:
         print(f"autoCompactWindow={window}")
         return 0
 
+    disk_settings = json.loads(json.dumps(settings))
     if sys.platform == "darwin":
         for groups in settings.get("hooks", {}).values():
             for group in groups:
@@ -113,7 +114,6 @@ def main() -> int:
                     if hook.get("command") == "rtk hook claude" and Path("/opt/homebrew/bin/rtk").is_file():
                         hook["command"] = "/opt/homebrew/bin/rtk hook claude"
 
-    disk_settings = settings
     registry_path = args.home / DISPATCH_REGISTRY
     folded_now = is_folded(settings)
     old_registry = read_registry(args.home, folded_rev(settings)) if folded_now else None
