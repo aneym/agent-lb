@@ -9,6 +9,7 @@ def normalize_tool_history(body: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(messages, list):
         return body
     pending: set[str] = set()
+    generated: list[str] = []
     normalized: list[Any] = []
     changed = False
     for message_index, message in enumerate(messages):
@@ -17,10 +18,12 @@ def normalize_tool_history(body: dict[str, Any]) -> dict[str, Any]:
             normalized.append(message)
             if isinstance(message, dict) and message.get("role") == "assistant":
                 pending.clear()
+                generated.clear()
             continue
         role = message.get("role")
         if role == "assistant":
             pending.clear()
+            generated.clear()
         blocks: list[Any] = []
         for block_index, block in enumerate(content):
             if not isinstance(block, dict):
@@ -32,11 +35,16 @@ def normalize_tool_history(body: dict[str, Any]) -> dict[str, Any]:
                 if not _valid_id(call_id):
                     digest = sha256(f"{message_index}:{block_index}".encode()).hexdigest()[:24]
                     call_id = f"tool_lb_{digest}"
+                    generated.append(call_id)
                     block = {**block, "id": call_id}
                     changed = True
                 pending.add(call_id)
             elif kind == "tool_result":
                 call_id = block.get("tool_use_id")
+                if role == "user" and not _valid_id(call_id) and generated:
+                    call_id = generated.pop(0)
+                    block = {**block, "tool_use_id": call_id}
+                    changed = True
                 if role == "user" and _valid_id(call_id) and call_id in pending:
                     pending.remove(call_id)
                 else:
