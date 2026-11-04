@@ -2,10 +2,10 @@
 IFS= read -r -d '' GUARD <<'PY'
 import json
 import os
+import posixpath
 import re
 import shlex
 import sys
-
 sys.path.insert(0, sys.argv.pop(1))
 import approval_record
 import data_delete
@@ -15,6 +15,79 @@ import psql_files
 import shell_places
 import shell_words
 import sql_statements
+ROOTS = {'~', '/Applications', '/lib', '/root', '*', '/System', '/etc', '${HOME}', '/Library', '/sbin', '/Volumes', '/home', '$HOME', '${HOME}/*', '/bin', '/*', '/Users', '.', '/usr', '..', '$HOME/*', '/var', '~/*', '/opt', '/'}
+
+def protected(target):
+    candidates = [target]
+    if target == "$HOME" or target.startswith("$HOME/"):
+        candidates.append(os.path.expanduser("~") + target[5:])
+    elif target == "~" or target.startswith("~/"):
+        candidates.append(os.path.expanduser("~") + target[1:])
+    for candidate in candidates:
+        candidate = posixpath.normpath(re.sub(r"/+", "/", candidate))
+        if candidate.endswith("/*"):
+            candidate = candidate[:-2] or "/"
+        if (
+            candidate in ROOTS
+            or re.fullmatch(r"/(?:home|Users|Volumes)/[^/]+", candidate) is not None
+            or re.fullmatch(r"~[^/]+", candidate) is not None
+        ):
+            return True
+    return False
+def unsafe_invocation(args):
+    recursive = force = False
+    options = True
+    targets = []
+    for arg in args:
+        if options and arg == "--":
+            options = False
+        elif options and arg.startswith("--"):
+            recursive |= len(arg) >= len("--r") and "--recursive".startswith(arg)
+            force |= len(arg) >= len("--f") and "--force".startswith(arg)
+        elif options and arg.startswith("-"):
+            recursive |= any(flag in arg[1:] for flag in "rR")
+            force |= "f" in arg[1:]
+        else:
+            targets.append(arg)
+    return recursive and force and any(protected(target) for target in targets)
+def dangerous(command):
+    try:
+        return parse_dangerous(command)
+    except Exception:
+        return (
+            re.search(
+                r"(?<!\w)(?:\S*/)?rm\s+"
+                r"(?=[^;\n]*-[A-Za-z]*[rR])(?=[^;\n]*-[A-Za-z]*f)"
+                r"(?:-[A-Za-z]+\s+)+"
+                r"(?:/(?:\*|(?:home|Users|Volumes)(?:/[^/\s;]+)?|root|etc|usr|var|opt|"
+                r"bin|sbin|lib|System|Library|Applications)?/?|~[^/\s;]*(?:/\*)?|"
+                r"\$HOME(?:/\*|/\.)?|\$\{HOME\}(?:/\*)?|\.\.?|\*)"
+                r'(?=\s|[;\'"`]|$)',
+                command,
+            )
+            is not None
+        )
+def parse_dangerous(command):
+    if re.search(r"\bDROP\s+(DATABASE|TABLE)", command, re.I):
+        return True
+    command = re.sub(r"\$\{(HOME|USER)[^}]*\}", r"$\1", command)
+    command = re.sub(
+        r"(?:(?<!\S)\d+)?(?:&>>|&>|<<<|<<|>>|[<>]&|>\||[<>])"
+        r'[ \t]*(?:"[^"\n]*"|\'[^\'\n]*\'|\\[^\n]|[^\s;&|<>()\x60\'"\\])+',
+        "",
+        command,
+    )
+    flattened = re.sub(r"[;&|(){}\x60\n]", " ; ", command)
+    tokens = flattened.replace("'", " ").replace('"', " ").split()
+    for i, token in enumerate(tokens):
+        token = token.lstrip("\\")
+        if token == "rm" or token.endswith("/rm"):
+            end = i + 1
+            while end < len(tokens) and tokens[end] != ";":
+                end += 1
+            if unsafe_invocation(tokens[i + 1 : end]):
+                return True
+    return False
 
 FLOOR = "floor: destructive data with no approval on record"
 PROVIDERS = {
@@ -40,16 +113,12 @@ RAILWAY_WORD = re.compile(r"\brailway\b")
 UNPARSED_FLOOR = "DROP|TRUNCATE|launchctl[[:space:]]+disable"
 DESTRUCTIVE_SQL = "(DROP[[:space:]]+(DATABASE|TABLE)|TRUNCATE[[:space:]]+(TABLE[[:space:]]+)?[^[:space:];])"
 REF_COMMENT = re.compile(r"#\s*alex-approval:\s*(\S+)\s*")
-
-
 def on_path(name):
     for folder in os.environ.get("PATH", os.defpath).split(os.pathsep):
         candidate = os.path.join(folder or ".", name)
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return True
     return False
-
-
 def grep(pattern, text):
     read_end, write_end = os.pipe()
     try:
@@ -77,22 +146,16 @@ def grep(pattern, text):
     finally:
         os.close(write_end)
     return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
-
-
 def refuse(why):
     sys.stderr.write(
         "BLOCKED: dangerous-command-guard %s, so this call is refused (the guard fails closed). "
         "Check jq and grep on PATH.\n" % why
     )
     sys.exit(2)
-
-
 def allow():
     if os.environ.get("HOOK_FLOOR_RECEIPT"):
         sys.stdout.write("floor-ok dangerous-command-guard.sh\n")
     sys.exit(0)
-
-
 def jq_raw(value):
     if value is None or value is False:
         return None
@@ -101,8 +164,6 @@ def jq_raw(value):
     if isinstance(value, (dict, list)):
         return json.dumps(value, indent=2, ensure_ascii=False)
     return json.dumps(value)
-
-
 def field(document, *path):
     for key in path:
         if document is None:
@@ -111,8 +172,6 @@ def field(document, *path):
             raise TypeError("cannot index %s" % type(document).__name__)
         document = document.get(key)
     return jq_raw(document)
-
-
 def documents(text):
     decoder = json.JSONDecoder()
     index, found = 0, []
@@ -123,8 +182,6 @@ def documents(text):
             return found
         value, index = decoder.raw_decode(text, index)
         found.append(value)
-
-
 def read_hook_input():
     try:
         raw = sys.stdin.buffer.read().decode("utf-8", "replace")
@@ -144,8 +201,6 @@ def read_hook_input():
     command = "\n".join(text for text in commands if text is not None)
     cwd = "\n".join(text for text in cwds if text is not None)
     return command.replace("\x00", "").rstrip("\n"), cwd.replace("\x00", "").rstrip("\n")
-
-
 def approved(cmd):
     quote = None
     comment = None
@@ -171,22 +226,16 @@ def approved(cmd):
             break
     m = REF_COMMENT.fullmatch(comment or "")
     return bool(m) and checked(m[1], "destructive")
-
-
 def checked(ref, action, line=None):
     reason = approval_record.refusal(ref, action, line)
     if reason:
         sys.stderr.write("approval record refused: " + reason + "\n")
     return not reason
-
-
 def provider_approved(text):
     match = PROVIDER_APPROVAL.search(text)
     if not match or RAILWAY_WORD.search(text):
         return False
     return not approval_record.refusal(match[1], "provider", text[: match.start()].strip())
-
-
 def rails_target(words, text, cwd):
     if len(words) < 2 or words[1] not in ("ssh", "run", "shell"):
         return False
@@ -196,8 +245,6 @@ def rails_target(words, text, cwd):
         if word in ("-s", "--service"):
             return i + 1 < len(words) and words[i + 1] in RAILS
     return "agent-rails" in re.sub(r"\S*\.agent-rails/approvals\S*", "", cwd + " " + text)
-
-
 def without_heredocs(source):
     clean = []
     delimiters = []
@@ -209,8 +256,6 @@ def without_heredocs(source):
         clean.append(line)
         delimiters.extend(m[1] or m[2] or m[3] for m in HEREDOC_OPEN.finditer(line))
     return "".join(clean)
-
-
 def substitutions(source):
     quote = None
     i = 0
@@ -244,8 +289,6 @@ def substitutions(source):
             yield source[i + 1 : end]
             i = end
         i += 1
-
-
 def segments(source):
     lexer = shlex.shlex(source, posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
@@ -261,8 +304,6 @@ def segments(source):
             words.append(word)
     if words:
         yield words
-
-
 def strip_prefixes(words, exported, local):
     while words and (ASSIGNMENT.match(words[0]) or words[0] in ("env", "command", "exec")):
         word = words.pop(0)
@@ -284,8 +325,6 @@ def strip_prefixes(words, exported, local):
             key, value = word.split("=", 1)
             ref = VARIABLE_REF.fullmatch(value)
             local[key] = exported.get(ref[1], "") if ref else value
-
-
 def provider_verdict(words, local, text, cwd, depth):
     name = os.path.basename(words[0])
     if name in ("bash", "sh", "zsh"):
@@ -318,8 +357,6 @@ def provider_verdict(words, local, text, cwd, depth):
         if not any(local.get(key) for key in keys):
             return "kept floor: Alex's own %s login. Use a factory-provisioned %s (ask ub_vaxptt)" % (label, keys[0])
     return ""
-
-
 def inspect(source, inherited, text, cwd, depth=0):
     if depth > 12:
         raise ValueError("shell nesting limit")
@@ -350,8 +387,6 @@ def inspect(source, inherited, text, cwd, depth=0):
         if result:
             return result
     return ""
-
-
 def provider_block(text, cwd):
     if provider_approved(text):
         return ""
@@ -361,8 +396,6 @@ def provider_block(text, cwd):
     except ValueError:
         sys.stderr.write("WARNING: provider guard could not parse executable argv; allowing command.\n")
         return ""
-
-
 def sql_text(cmd, cwd):
     found, bodies, unread, feeds, writes, loaded, inherit = [], [], [], [], [], set(), False
     start = cwd if cwd and os.path.isdir(cwd) else os.getcwd()
@@ -413,10 +446,11 @@ def sql_text(cmd, cwd):
         unread.append("%s: its stdin is fed through %s" % (psql_argv.FEEDS, " ".join(dict.fromkeys(feeds))))
     unread += ["%s (written in the same command)" % word for word in psql_argv.touches(writes, cwds, loaded)]
     return [piece.replace("\x00", "") for piece in found], unread
-
-
 def main():
     cmd, cwd = read_hook_input()
+    if dangerous(cmd):
+        sys.stderr.write("BLOCKED: Dangerous command requires explicit user approval.\n")
+        sys.exit(2)
     if not cmd:
         allow()
     try:
@@ -454,7 +488,6 @@ def main():
         )
         sys.exit(2)
     allow()
-
 
 main()
 PY

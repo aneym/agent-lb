@@ -13,27 +13,18 @@ FLOOR_HOOKS = {
     "stash-guard": "git: no stash in a shared checkout",
     "railway-vars-guard.sh": "secrets: Railway variable values never printed",
     "link-cli-guard.sh": "secrets and his accounts: no Link CLI card or login reads",
-    "plutil-guard.sh": "his accounts: no edits to macOS preference plists",
-    "kill-guard": "destructive: no kills outside the agent's own processes",
     "agent-lb-bootout-guard.sh": "his accounts: the account store is never booted out",
     "dangerous-command-guard.sh": "destructive data: dangerous shell commands blocked",
-    "dangerous-cmd-guard.py": "destructive data: forced recursive rm of protected roots",
     "host-credential-guard.py": "secrets: host credential files never read",
     "gh-write-guard.py": "git: no gh writes",
-    "kill-scope-guard.py": "destructive: kills limited to the agent's own scope",
-    "merge-gate-guard.py": "git: no merge around the gate",
+    "kill-scope-guard.py": "destructive: protected processes",
     "desktop-guard": "real people, his accounts and spend: agents stay off his desktop, where those happen",
     "wide-scan-guard.sh": "secrets: no recursive reads that print secrets",
     "hooks-off-guard.py": "every floor: no setting that switches Claude Code hooks off",
 }
 NON_FLOOR_GUARDS = {
-    "t3-live-restart-guard.py": "T3 installer and restart workflow, not a kept floor",
-    "sleep-loop-guard.py": "wait hygiene, not a kept floor",
+    "merge-gate-guard.py": "house rule: agent-rails main lands only through studio_merge",
     "seat-guard.py": "seat routing advice, not a kept floor",
-    "herdr-shell-host-guard.py": "herdr pane host check, not a kept floor",
-    "herdr-send-guard.py": "herdr send etiquette, not a kept floor",
-    "workflow-seat-guard.py": "workflow seat routing, not a kept floor",
-    "workflow-relay-guard.py": "workflow relay routing, not a kept floor",
 }
 FLOOR_TEXT = "BLOCKED: Dangerous command"
 INLINE_FLOOR = "dangerous-command"

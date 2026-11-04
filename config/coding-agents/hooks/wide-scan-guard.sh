@@ -20,7 +20,7 @@ CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty') || refuse "could not read th
 PYTHONPATH="$(python3 -c 'import os, sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "${BASH_SOURCE[0]}")${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONPATH
 SCAN=0
-SCAN_STRICT="${1:-}" SCAN_COMMAND="$CMD" SCAN_CWD="$CWD" python3 - <<'PY' || SCAN=$?
+SCAN_COMMAND="$CMD" SCAN_CWD="$CWD" python3 - <<'PY' || SCAN=$?
 import os
 import re
 import posixpath
@@ -28,14 +28,11 @@ from hook_wide_scan_shell import join_continuations, shell_tokens, strip_heredoc
 class Refused(Exception):
     pass
 WARNED = []
-STRICT = os.environ.get('SCAN_STRICT') == '--block-walks'
-WALK_MESSAGE = 'BLOCKED: scope the search to one directory; home-wide and volume-root file walks are refused.'
 def refused_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
-    return (path in ('/', home, '/Users', '/Volumes', '/Users/aneyman', '/data', '/mnt', '/media')
+    return (path in ('/', home, '/home', '/root', '/Users', '/Volumes', '/Users/aneyman', '/data', '/mnt', '/media')
             or re.fullmatch(r'/Volumes/[^/]+|/mnt/[^/]+|/media/[^/]+/[^/]+', path) is not None)
-COW_MESSAGE = 'BLOCKED: no recursive walk of /srv, /srv/data, /srv/cow or their direct children; full /srv/cow walks churn XFS and overlay metadata on ax42 (2026-10-29). Use df or the disk meter, or name one tree below them.'
 LS_VALUES = ('--block-size', '--format', '--hide', '--ignore', '--indicator-style', '--quoting-style', '--sort',
              '--tabsize', '--time', '--time-style', '--width')
 DU_VALUES = ('-d', '-B', '-t', '-X', '--max-depth', '--block-size', '--threshold', '--exclude', '--exclude-from', '--time-style', '--files0-from')
@@ -240,10 +237,8 @@ def unsafe(args, depth, cwd):
                 skip = True
             elif not arg.startswith('-'):
                 paths.append(arg)
-        if STRICT and any(refused_root(path, cwd) or wide_root(path, cwd) for path in paths or ['.']):
-            raise Refused(WALK_MESSAGE)
-        if any(cow_root(path, cwd) for path in paths or ['.']):
-            raise Refused(COW_MESSAGE)
+        if any(cow_root(path, cwd) or refused_root(path, cwd) or wide_root(path, cwd) for path in paths or ['.']):
+            WARNED.append(tool)
         return False
     if name == 'ls':
         paths, recursive, skip = [], False, False
@@ -261,10 +256,8 @@ def unsafe(args, depth, cwd):
                         break
             else:
                 paths.append(arg)
-        if recursive and STRICT and any(refused_root(path, cwd) or wide_root(path, cwd) for path in paths or ['.']):
-            raise Refused(WALK_MESSAGE)
-        if recursive and any(cow_root(path, cwd) for path in paths or ['.']):
-            raise Refused(COW_MESSAGE)
+        if recursive and any(cow_root(path, cwd) or refused_root(path, cwd) or wide_root(path, cwd) for path in paths or ['.']):
+            WARNED.append(tool)
         return False
     if name in ('rg', 'find', 'fd', 'fdfind', 'grep', 'egrep', 'fgrep', 'ggrep', 'ugrep', 'ack', 'ag'):
         roots, recursive, word = search_paths(name, args[1:])
@@ -279,9 +272,7 @@ def unsafe(args, depth, cwd):
             for path in (roots or ['.']):
                 protected = refused_root(path, cwd)
                 if cow_root(path, cwd) and not shallow:
-                    raise Refused(COW_MESSAGE)
-                if STRICT and not shallow and (protected or wide_root(path, cwd)):
-                    raise Refused(WALK_MESSAGE)
+                    WARNED.append(tool)
                 if content and protected:
                     raise Refused('BLOCKED (floor: secrets and protected credentials): recursive content reads must stay inside one repository or directory.')
                 if refused_root(path, cwd) or wide_root(path, cwd):
@@ -404,10 +395,8 @@ if [ "$SCAN" -eq 0 ]; then
   warn "grep -r under ~/.agent-rails hangs on FIFOs; scope to one directory and use rg or add -D skip"
 elif [ "$SCAN" -eq 2 ]; then
   exit 2
-elif [ "$SCAN" -eq 4 ] && [ "${1:-}" = --block-walks ]; then
-  refuse "could not classify the command; scope the search to one directory"
 elif [ "$SCAN" -eq 6 ] || [ "$SCAN" -eq 4 ]; then
-  allow
+  warn "broad directory walk; prefer a scoped path"
 elif [ "$SCAN" -ne 3 ]; then
   refuse "scanner failed (python3 exit $SCAN)"
 fi

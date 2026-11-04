@@ -331,6 +331,10 @@ def main() -> int:
     first_files = {args.home / ".claude" / DISPATCH_SCRIPT, legacy_path} | ({rev_path} if rev_path else set())
     latest_files = {registry_path, backup_path}
 
+    for target in managed_hooks(args.home, source):
+        if target.is_file() and not os.access(target, os.X_OK):
+            os.chmod(target, target.stat().st_mode | 0o111)
+
     guard_files = set(managed_hooks(args.home, source)) - {args.home / ".claude" / DISPATCH_SCRIPT}
 
     def write_order(item: tuple[Path, str | None]) -> int:

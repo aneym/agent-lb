@@ -26,7 +26,7 @@ def builtin_cases():
         dict(bash("rg -n foo src"), name="allow-rg-scoped", expect="allow"),
         dict(bash("find . -name '*.py'"), name="allow-find-scoped", expect="allow"),
         dict(bash("git commit -m 'format permission docs'"), name="allow-rm-substring", expect="allow"),
-        dict(bash("pkill -f kill-guard-test-marker"), name="allow-pkill (kill-guard is a PATH shim)", expect="allow"),
+        dict(bash("pkill -f kill-guard-test-marker"), name="allow-pkill-own-pattern", expect="allow"),
         dict(bash("DISPLAY_WAKE_SKIP=1 screencapture -x /tmp/x.png"), name="allow-display-skip", expect="allow"),
         dict(bash("screencapture -x out.png"), name="allow-display-wake-fires", expect="allow"),
         *parity_offload.cases(bash),

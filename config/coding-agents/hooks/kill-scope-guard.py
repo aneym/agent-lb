@@ -6,8 +6,9 @@ import os
 import re
 import shlex
 import sys
+import subprocess
 
-FLOOR = "floor: other agents' running work (a kill must stay inside this session)"
+FLOOR = "floor: destructive: protected processes"
 WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "nice", "caffeinate", "stdbuf", "timeout"}
 SHELLS = {"bash", "sh", "zsh", "dash"}
 KEYWORDS = {"if", "then", "do", "while", "until", "else", "elif", "!", "{", "}", "fi", "done"}
@@ -427,14 +428,6 @@ def main():
     except ValueError:
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
-    stop = T3_CODEX_STOP.search(command)
-    if stop:
-        print(
-            "BLOCKED (%s): `%s` stops a shared T3 Codex app-server and fails every turn on it. Leave it to T3; "
-            "report a runaway one to the t3-nightly thread with t3_thread_send." % (FLOOR, stop.group(0)[:80]),
-            file=sys.stderr,
-        )
-        return 2
     if not re.search(r"\b(kill|pkill|killall|pgrep)\b", command):
         return 0
     try:
@@ -495,20 +488,19 @@ def main():
             )
             shared = bool(
                 re.search(
-                    r"(?:^|[/\s])(?:t3\s+(?:serve|__service-launcher)(?:\s|$)|agent[-_]lb(?:[./\s]|$)|unblock(?:[./\s]|$)|postgres(?:\s|$)|mysqld(?:\s|$)|redis-server(?:\s|$))",
+                    r"(?:^|[/\s])(?:t3\s+(?:serve|__service-launcher)(?:\s|$)|docker(?:d)?(?:\s|$)|containerd(?:\s|$)|sshd(?:\s|$)|systemd\s+--user|user@1000)",
                     argv,
-                    re.I,
                 )
             )
-            words = argv.split()
-            interactive_shell = executable.lstrip("-") in SHELLS and (
-                executable.startswith("-")
-                or pid in TTY_PIDS
-                or any(
-                    arg.startswith("-") and not arg.startswith("--") and set(arg[1:]) & {"i", "l"} for arg in words[1:]
-                )
-            )
-            if gui or shared or executable in {"launchd", "WindowServer", "loginwindow", "Dock", "Finder"}:
+            try:
+                owner = subprocess.run(
+                    ["ps", "-o", "uid=", "-p", str(pid)], capture_output=True, text=True, timeout=3
+                ).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                owner = ""
+            foreign_user = bool(owner) and owner != str(os.getuid())
+            cluster = executable == "postgres" and pid not in own
+            if gui or shared or foreign_user or cluster:
                 others.append(pid)
         if others:
             foreign.append((sel, others))

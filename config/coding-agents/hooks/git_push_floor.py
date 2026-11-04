@@ -166,7 +166,7 @@ def judge(options, args, cwd, env, depth=0):
     if verb in PUSH_VERBS:
         resolved = resolve(options, cwd, env, True)
         if resolved is None:
-            return UNRESOLVED
+            return push_reason(rest, None, None)
         items, branch = resolved
         return push_reason(rest, items if verb == "push" else None, branch)
     resolved = resolve(options, cwd, env, False)

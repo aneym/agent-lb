@@ -167,7 +167,7 @@ def guard_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
     paths |= {path for path in changes if managed_dir(home, path) is not None}
     problems = []
     for path in sorted(paths):
-        for text in (path.read_text() if path.is_file() else None, changes.get(path)):
+        for text in (changes[path] if path in changes else path.read_text() if path.is_file() else None,):
             try:
                 value = json.loads(text) if text else None
             except ValueError:

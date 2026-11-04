@@ -8,6 +8,10 @@ from hook_retired_invocation import retired_invocation  # type: ignore[missing-i
 from policy_layout import POLICY_DIR, RETIRED_HOOKS  # type: ignore[missing-import]
 
 SHIPPED_SHA256 = {
+    "plutil-guard.sh": frozenset({"7877e73fc9c6dbdc1fbc8d9cd98d8445a6ebb2c68e24496551b40ee40d155b97"}),
+    "dangerous-cmd-guard.py": frozenset({"d5e2632f04977732912406e50695882255a57dbfc5e87749922d7e62f7a3377d"}),
+    "sleep-loop-guard.py": frozenset({"70855684fd1c08674aa9f9d356cca0f3fb1dcca9b806a0a76866b534f6d6c9f8"}),
+    "home-walk-block.py": frozenset({"6a8577e936dd86d0a555df7dca981dd112a78641d093372f3bd668e36a5bdef1"}),
     "claude-bash-hands-nudge.py": frozenset(
         {
             "90125c043fca6583aad5ea3f783b335587c66192843cbf0ec8bb6ed99d619a31",
@@ -128,6 +132,10 @@ def without_retired_hooks(value, names, refused, path):
 
 def retire_hook_registries(home: Path, changes: dict[Path, str | None], kept: dict[Path, str]) -> None:
     names = frozenset(RETIRED_HOOKS) - frozenset(kept.values())
+    for name in names:
+        for target in (home / ".claude/hooks" / name, home / POLICY_DIR / "hooks" / name):
+            if target.is_file() or target.is_symlink():
+                changes[target] = None
     folder = home / ".claude/hooks/dispatch"
     paths = set(folder.glob("registry*.json"))
     paths.update(path for path in changes if path.parent == folder and path.name.startswith("registry"))
