@@ -45,6 +45,7 @@ http://127.0.0.1:{$AGENT_LB_PROXY_PORT:2456} {
 		health_fails 2
 		lb_try_duration 15s
 		lb_try_interval 100ms
+		request_buffers 64MiB
 		flush_interval -1
 		header_up Host {upstream_hostport}
 		transport http {
