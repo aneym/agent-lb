@@ -105,6 +105,11 @@ def hooks_off_problems(home: Path, changes: dict[Path, str | None]) -> list[str]
 
 
 def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
+    import importlib
+
+    retirement = importlib.import_module("policy_registry_retirement")
+    invocation = importlib.import_module("hook_retired_invocation")
+    layout = importlib.import_module("policy_layout")
     problems, check = [], non_floor_check(home)
     registry, settings = home / REGISTRY_DIR / "registry.json", home / ".claude/settings.json"
     for path, content in changes.items():
@@ -136,6 +141,13 @@ def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
                 problems.append(f"{path}: floor entry at {context} matcher {matcher} keeps a fail-open wrapper: {hook}")
         held = root_floor_names(owner == home / ".codex")
         for context, matcher, hook in gone:
+            command = json.loads(hook).get("command") or ""
+            if invocation.retired_invocation(command, layout.RETIRED_HOOKS) and any(
+                retirement.retirable(home / ".claude/hooks" / name, name)
+                for name in layout.RETIRED_HOOKS
+                if name in command
+            ):
+                continue
             if held_by_root(json.loads(hook).get("command") or "", held):
                 continue
             problems.append(f"{path}: floor entry at {context} matcher {matcher} would change or go: {hook}")
