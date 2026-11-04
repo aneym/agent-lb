@@ -106,6 +106,13 @@ def main() -> int:
         print(f"autoCompactWindow={window}")
         return 0
 
+    if sys.platform == "darwin":
+        for groups in settings.get("hooks", {}).values():
+            for group in groups:
+                for hook in group.get("hooks", []):
+                    if hook.get("command") == "rtk hook claude" and Path("/opt/homebrew/bin/rtk").is_file():
+                        hook["command"] = "/opt/homebrew/bin/rtk hook claude"
+
     disk_settings = settings
     registry_path = args.home / DISPATCH_REGISTRY
     folded_now = is_folded(settings)
