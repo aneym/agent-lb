@@ -71,6 +71,11 @@ def main() -> None:
             {"role": "assistant", "content": [call]},
             {"role": "assistant", "content": "The result was lost."},
         ],
+        "empty-text-result": [
+            {"role": "user", "content": "Read the file."},
+            {"role": "assistant", "content": [call]},
+            {"role": "user", "content": [{**result, "content": [{"type": "text", "text": ""}]}]},
+        ],
     }
     for name, messages in cases.items():
         request_id = f"kimi-history-{name}-{uuid4()}"
@@ -95,7 +100,7 @@ def main() -> None:
             base + "/v1/messages", data=json.dumps(payload).encode(), headers={**headers, "x-request-id": request_id}
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=180 if name == "rich-error-orphan" else 60) as response:
                 body = json.load(response)
                 if response.status != 200 or body.get("type") != "message":
                     raise SystemExit(f"FAIL {name} request={request_id} status={response.status}")

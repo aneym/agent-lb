@@ -56,7 +56,14 @@ def normalize_tool_history(body: dict[str, Any]) -> dict[str, Any]:
                     block = {**block, "tool_use_id": call_id}
                 if role == "user" and _valid_id(call_id) and call_id in pending:
                     pending.remove(call_id)
-                    if not block.get("content"):
+                    result_content = block.get("content")
+                    if not result_content or (
+                        isinstance(result_content, list)
+                        and all(
+                            isinstance(part, dict) and part.get("type") == "text" and not part.get("text")
+                            for part in result_content
+                        )
+                    ):
                         block = {**block, "content": "(empty tool result)"}
                     results.append(block)
                 else:
