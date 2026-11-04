@@ -76,7 +76,7 @@ def main() -> None:
         request_id = f"kimi-history-{name}-{uuid4()}"
         payload = {
             "model": "k3.1-pro",
-            "max_tokens": 128,
+            "max_tokens": 4096 if name == "rich-error-orphan" else 128,
             "stream": False,
             "tools": [{"name": "read", "input_schema": {"type": "object", "properties": {}}}],
             "messages": [
