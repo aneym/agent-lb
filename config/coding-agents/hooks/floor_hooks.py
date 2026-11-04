@@ -39,6 +39,8 @@ FLOOR_MENTIONS = tuple(sorted(FLOOR_STEMS)) + (
     FLOOR_TEXT,
 )
 ACCEPTED_FORMS = {
+    "rtk hook claude": ("/opt/homebrew/bin/rtk hook claude",),
+    "/opt/homebrew/bin/rtk hook claude": ("rtk hook claude",),
     'bash "$HOME/.claude/hooks/railway-vars-guard.sh"': ('"$HOME/.claude/hooks/railway-vars-guard.sh"',),
     '"$HOME/.claude/hooks/railway-vars-guard.sh"': ('bash "$HOME/.claude/hooks/railway-vars-guard.sh"',),
 }
