@@ -5,6 +5,7 @@ from typing import Any
 
 from app.core.providers.kimi import KIMI_PROVIDER_NAME
 from app.core.providers.kimi_tool_changes import drop_tool_change_betas, flatten_tool_changes
+from app.core.providers.kimi_tool_history import normalize_tool_history
 from app.core.providers.openrouter import is_deepseek_model, map_deepseek_body
 
 
@@ -15,5 +16,5 @@ def prepare_provider_body(
         return map_deepseek_body(body)
     if provider_name == KIMI_PROVIDER_NAME:
         drop_tool_change_betas(headers)
-        return flatten_tool_changes(body)
+        return normalize_tool_history(flatten_tool_changes(body))
     return body
