@@ -23,6 +23,7 @@ FLOOR_HOOKS = {
     "hooks-off-guard.py": "every floor: no setting that switches Claude Code hooks off",
 }
 NON_FLOOR_GUARDS = {
+    "t3-live-restart-guard.py": "house rule: live T3 restarts use the nightly installer",
     "merge-gate-guard.py": "house rule: agent-rails main lands only through studio_merge",
     "seat-guard.py": "seat routing advice, not a kept floor",
 }

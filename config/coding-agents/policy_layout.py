@@ -86,6 +86,7 @@ RETIRED_AGENTS = ("astra", "implementer", "gpt-explorer-local")
 
 
 RETIRED_HOOKS = (
+    "wide-scan-guard",
     "plutil-guard.sh",
     "dangerous-cmd-guard.py",
     "sleep-loop-guard.py",

@@ -14,6 +14,13 @@ def retired_invocation(command: str, names: Iterable[str]) -> bool:
         return False
     if len(words) == 2 and words[0].rsplit("/", 1)[-1] in {"python3", "bash", "sh"}:
         return words[1].rsplit("/", 1)[-1] in set(names) and words[1].startswith(
-            ("$HOME/.claude/hooks/", "${HOME}/.claude/hooks/", "~/.claude/hooks/")
+            (
+                "$HOME/.claude/hooks/",
+                "${HOME}/.claude/hooks/",
+                "~/.claude/hooks/",
+                "$HOME/.local/bin/",
+                "${HOME}/.local/bin/",
+                "~/.local/bin/",
+            )
         )
     return bool(PLAIN.fullmatch(command)) and command.split(" ")[0].rsplit("/", 1)[-1] in set(names)
