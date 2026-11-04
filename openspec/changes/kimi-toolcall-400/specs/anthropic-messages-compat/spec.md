@@ -14,3 +14,18 @@ The Kimi provider boundary SHALL preserve valid tool use IDs and matching result
 #### Scenario: Valid parallel calls
 - **WHEN** assistant tool uses have distinct nonempty IDs and matching user results
 - **THEN** the provider preserves those IDs and results unchanged
+
+### Requirement: Kimi history normalization preserves result meaning and ordering
+The Kimi boundary SHALL place kept tool result blocks before ordinary content in user messages. It SHALL preserve orphan error status as an error text marker and render unsupported result parts as text. It SHALL pair repaired empty or duplicate call IDs with corresponding results in order, replace empty result content with a placeholder, and supply an error placeholder for missing historical results. Only a final assistant message with tool uses awaiting execution SHALL remain without results.
+
+#### Scenario: Orphan precedes a valid result
+- **WHEN** a user message contains an orphan result before a valid result
+- **THEN** the valid result precedes the converted orphan content upstream
+
+#### Scenario: Rich orphan error
+- **WHEN** an orphan error contains document, tool reference, or search result parts
+- **THEN** its text preserves the error marker and those parts
+
+#### Scenario: Missing historical result
+- **WHEN** an assistant tool use has no result before a later assistant message
+- **THEN** the upstream history includes an error result placeholder for that call
