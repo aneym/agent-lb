@@ -43,10 +43,8 @@ http://127.0.0.1:{$AGENT_LB_PROXY_PORT:2456} {
 		health_timeout 2s
 		health_status 200
 		health_fails 2
-		fail_duration 30s
-		lb_try_duration 10s
+		lb_try_duration 15s
 		lb_try_interval 100ms
-		max_fails 1
 		flush_interval -1
 		header_up Host {upstream_hostport}
 		transport http {

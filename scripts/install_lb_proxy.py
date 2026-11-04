@@ -6,6 +6,9 @@ import argparse
 import shlex
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -88,6 +91,32 @@ def retire_old_unit(unit_dir):
             print(f"{path} moved to {backup}")
 
 
+def hop_status(port):
+    url = f"http://127.0.0.1:{port}/v1/models"
+    last = None
+    for _ in range(10):
+        try:
+            with urllib.request.urlopen(url, timeout=10) as response:
+                return response.status
+        except urllib.error.HTTPError as error:
+            return error.code
+        except OSError as error:
+            last = error
+            time.sleep(1)
+    raise SystemExit(f"hop {url} unreachable: {last}")
+
+
+def require_hop_admitted(values):
+    status = hop_status(values["HOP_PORT"])
+    if status in (401, 403):
+        raise SystemExit(
+            f"hop to {values['PRIMARY']} answered {status}: the primary refuses this box, so a local edge restart "
+            "fails every request; add this box's tailnet address to the primary's "
+            "AGENT_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS and restart it"
+        )
+    print(f"hop to {values['PRIMARY']} answered {status}")
+
+
 def systemctl(*args, check=True):
     return subprocess.run(["systemctl", "--user", *args], check=check, capture_output=True, text=True)
 
@@ -131,6 +160,7 @@ def main():
     print(f"{UNIT} {state} with {caddyfile}")
     if state != "active":
         raise SystemExit(1)
+    require_hop_admitted(values)
 
 
 if __name__ == "__main__":
