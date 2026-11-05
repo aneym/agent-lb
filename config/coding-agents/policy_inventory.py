@@ -82,6 +82,7 @@ MANAGED_HOOKS = (
     "rm-dynamic-deny",
     "git_lock_delete.py",
     "data_delete.py",
+    "t3_runtime_builds.py",
     "shell_places.py",
     "shell_words.py",
     "sql_statements.py",

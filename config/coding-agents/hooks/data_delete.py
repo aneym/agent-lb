@@ -2,6 +2,9 @@ import functools
 import glob
 import os
 import re
+import shlex
+
+import t3_runtime_builds  # type: ignore[missing-import]
 
 DATA = re.compile(
     r"(?:^|/)(?:var/lib|pgdata|postgres(?:ql)?)(?:/|$)"
@@ -73,17 +76,20 @@ FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 FIND_SYNTAX = {"(", ")", "!", ",", "{}", "+", ";", "\\;"}
 ASSIGNMENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.S)
 REFUSAL = (
-    "this deletes a data path (a database, /var/lib, postgres, T3 state or an approval directory) or a target "
-    "it cannot resolve. Only a grandfathered data-delete record passes it until Rails spends a sealed approval "
-    "for one target."
+    "this deletes a data path (a database, /var/lib, postgres, T3 state, a live or kept T3 runtime build or an "
+    "approval directory) or a target it cannot resolve. Old T3 builds pass only as literal entries of "
+    "~/.t3/runtime/versions, .rollback-runtime or .launcher-rollback-<hex> that no process holds. Only a "
+    "grandfathered data-delete record passes it until Rails spends a sealed approval for one target."
 )
 VARIABLE_MARK = "$UNRESOLVED"
 RSYNC_DELETE = re.compile(r"--(?:del(?:ete[\w-]*)?|remove-(?:source|sent)-files)(?![\w-])")
-PROTECTED = (".t3/userdata", ".agent-rails/approvals", ".agent-rails/custody", ".open-factory/approvals")
+PROTECTED = (".t3/userdata", ".t3/runtime", ".agent-rails/approvals", ".agent-rails/custody", ".open-factory/approvals")
 VARIABLE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?::\?[^}]*)?\}|([A-Za-z_][A-Za-z0-9_]*))")
 
 
 def nested(name, args):
+    if name == "busybox":
+        return shlex.join(args) or None
     if name == "eval":
         return " ".join(args)
     if name == "alias":
@@ -170,11 +176,29 @@ def git_targets(args):
     return [base, *(os.path.join(base, spec) for spec in specs)]
 
 
+def moves(args):
+    found, into, skip = [], [], None
+    for arg in args:
+        if skip is not None:
+            (into if skip else []).append(arg)
+            skip = None
+        elif arg in {"-t", "--target-directory", "-S", "--suffix"}:
+            skip = arg in {"-t", "--target-directory"}
+        elif arg.startswith(("--target-directory=", "-t")):
+            into.append(arg.split("=", 1)[1] if "=" in arg else arg[2:])
+        elif not arg.startswith("-"):
+            found.append(arg)
+    return found, into
+
+
+def moved(args):
+    found, into = moves(args)
+    return found if into else found[:-1]
+
+
 def targets(name, args):
     if name in DELETERS:
         return operands(name, args)
-    if name == "busybox" and args:
-        return targets(os.path.basename(args[0]), args[1:])
     if name == "git":
         return git_targets(args)
     if name == "rsync":
@@ -200,17 +224,7 @@ def targets(name, args):
                 found.append(arg)
         return found if any(RSYNC_DELETE.search(option) for option in deleting) else None
     if name == "mv":
-        found, into, skip = [], [], None
-        for arg in args:
-            if skip is not None:
-                (into if skip else []).append(arg)
-                skip = None
-            elif arg in {"-t", "--target-directory", "-S", "--suffix"}:
-                skip = arg in {"-t", "--target-directory"}
-            elif arg.startswith(("--target-directory=", "-t")):
-                into.append(arg.split("=", 1)[1] if "=" in arg else arg[2:])
-            elif not arg.startswith("-"):
-                found.append(arg)
+        found, into = moves(args)
         return into or found[-1:]
     if name != "find":
         return None
@@ -242,11 +256,32 @@ def resolved(word, assignments, home):
     return None if value.startswith("~") else value
 
 
-def located(word, assignments, cwd):
+def joined(word, assignments, cwd):
     value = resolved(word, assignments, os.path.expanduser("~"))
     if value is None or (cwd is None and not value.startswith("/")):
         return None
-    return os.path.normpath(os.path.join(cwd or "/", value))
+    return os.path.join(cwd or "/", value)
+
+
+def located(word, assignments, cwd):
+    value = joined(word, assignments, cwd)
+    return None if value is None else os.path.normpath(value)
+
+
+def moves_build(word, assignments, cwd):
+    raw = joined(word, assignments, cwd)
+    return raw is None or t3_runtime_builds.refused(word, os.path.normpath(raw), raw)
+
+
+def find_moves(args):
+    runs = [" ".join(args[i + 1 :]).split() for i, arg in enumerate(args) if arg in FIND_EXEC]
+    if not any(os.path.basename(part) == "mv" for run in runs for part in run):
+        return []
+    i = 0
+    while i < len(args) and (args[i] in {"-H", "-L", "-P", "-D"} or args[i].startswith("-O")):
+        i += 2 if args[i] == "-D" else 1
+    starts = i < len(args) and not args[i].startswith(("-", "(", "!"))
+    return [arg for arg in args if not arg.startswith("-") and arg not in FIND_SYNTAX] + ([] if starts else ["."])
 
 
 def holds_data(path):
@@ -257,9 +292,13 @@ def holds_data(path):
 
 
 def touches(name, args, assignments, cwd):
+    if name == "find" and any(moves_build(word, assignments, cwd) for word in find_moves(args)):
+        return True
     found = targets(name, args)
     if found is None:
         return False
+    if name == "mv" and any(moves_build(word, assignments, cwd) for word in moved(args)):
+        return True
     for word in found:
         path = located(word, assignments, cwd)
         if path is None:
@@ -268,6 +307,8 @@ def touches(name, args, assignments, cwd):
         heads = ["/".join(parts[: i + 1]) for i in range(1, len(parts))]
         paths = [path, *(match for head in heads if glob.has_magic(head) for match in glob.glob(head))]
         if any(DATA.search(p) or DATA.search(os.path.realpath(p)) for p in paths):
+            return True
+        if t3_runtime_builds.refused(word, path, joined(word, assignments, cwd)):
             return True
         if name != "mv" and any(holds_data(p) for p in [path, os.path.realpath(path), *glob.glob(path)]):
             return True
