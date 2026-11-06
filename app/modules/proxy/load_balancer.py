@@ -73,6 +73,7 @@ from app.modules.proxy.anthropic_rate_limits import (
     kimi_monthly_selection_state,
 )
 from app.modules.proxy.usage_credit_snapshot import extract_credit_status
+from app.modules.proxy.model_account_filter import filter_accounts_for_model
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind, RuntimeState
@@ -884,8 +885,8 @@ class LoadBalancer:
                 accounts = [account for account in accounts if account.id in allowed_account_ids]
             pre_model_filter_accounts = accounts
             if model and _mapped_model_has_registry_entry(model):
-                accounts = _filter_accounts_for_model(pre_model_filter_accounts, model)
-                pool = _filter_accounts_for_model(pool, model)
+                accounts = filter_accounts_for_model(pre_model_filter_accounts, model)
+                pool = filter_accounts_for_model(pool, model)
             accounts = drop_excluded(accounts, pool, resolve_model_alias(model))
             if model and not accounts:
                 if not all_accounts:
@@ -2261,18 +2262,6 @@ def _usage_entry_is_recent_enough(recorded_at: datetime | None) -> bool:
 def _usage_refresh_interval_seconds() -> int:
     settings = config_settings.get_settings()
     return int(getattr(settings, "usage_refresh_interval_seconds", _DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS))
-
-
-def _filter_accounts_for_model(accounts: list[Account], model: str) -> list[Account]:
-    allowed_plans = get_model_registry().plan_types_for_model(model)
-    if allowed_plans is None:
-        return accounts
-    return [
-        account
-        for account in accounts
-        if normalize_provider_name(account.provider) != OPENAI_PROVIDER_NAME
-        or account_plan_matches_allowed(account.plan_type, allowed_plans)
-    ]
 
 
 def selectable_accounts(accounts: list[Account]) -> list[Account]:
