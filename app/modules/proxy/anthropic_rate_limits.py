@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping
 
@@ -8,6 +9,9 @@ import aiohttp
 from app.core.anthropic.quota_headers import exhausted_account_reset
 from app.core.anthropic.quota_headers import parse_reset_epoch as _parse_reset_epoch
 from app.core.balancer.types import UpstreamError
+from app.core.utils.time import naive_utc_to_epoch
+from app.db.models import Account, AccountStatus, AdditionalUsageHistory, UsageHistory
+from app.modules.proxy.repo_bundle import ProxyRepoFactory
 
 _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
 
@@ -77,3 +81,56 @@ def get_header(headers: Mapping[str, str], name: str) -> str | None:
         if key.lower() == lowered:
             return value
     return None
+
+
+KIMI_MONTHLY_LIMIT_REASON = "Kimi monthly usage limit for this billing cycle"
+
+
+async def kimi_monthly_rate_limit_error(
+    account: Account, error: UpstreamError, repo_factory: ProxyRepoFactory
+) -> UpstreamError:
+    if "monthly usage limit for this billing cycle" not in error.get("message", "").lower():
+        return error
+    error["monthly_quota"] = True
+    reset_at = None
+    try:
+        async with repo_factory() as repos:
+            monthly = await repos.usage.latest_entry_for_account(account.id, window="monthly")
+            if monthly is not None:
+                reset_at = monthly.reset_at
+    except Exception:
+        logging.getLogger(__name__).warning("Could not read Kimi monthly reset account_id=%s", account.id)
+    if (reset_at is None or reset_at <= time.time()) and account.subscription_current_period_end_at is not None:
+        reset_at = int(naive_utc_to_epoch(account.subscription_current_period_end_at))
+    if reset_at is not None and reset_at > time.time():
+        error["resets_at"] = reset_at
+        error["quota_reset_at"] = reset_at
+    return error
+
+
+def bounded_retry_at(reset_at: float | None, blocked_at: float) -> float:
+    if reset_at is None or int(reset_at) > int(blocked_at) + 3600:
+        return blocked_at + 60.0
+    return reset_at
+
+
+def kimi_monthly_selection_state(
+    account: Account,
+    monthly: UsageHistory | AdditionalUsageHistory | None,
+    runtime_reset: float | None,
+    cooldown: float | None,
+) -> tuple[AccountStatus, float | None, float | None]:
+    reset = float(account.reset_at) if account.reset_at else runtime_reset
+    if (
+        account.blocked_at is not None
+        and monthly is not None
+        and monthly.window == "monthly"
+        and monthly.recorded_at is not None
+        and naive_utc_to_epoch(monthly.recorded_at) > account.blocked_at
+        and monthly.used_percent is not None
+        and monthly.used_percent < 100.0
+    ):
+        return AccountStatus.ACTIVE, None, None
+    if reset is not None and reset <= time.time():
+        return AccountStatus.ACTIVE, None, None
+    return account.status, reset, cooldown

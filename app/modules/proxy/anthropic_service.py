@@ -71,6 +71,7 @@ from app.modules.proxy.anthropic_outbound_headers import build_anthropic_headers
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError, require_claude_code_client
 from app.modules.proxy.anthropic_rate_limits import (
     get_header,
+    kimi_monthly_rate_limit_error,
     rate_limit_error_from_response,
     reset_at_from_rate_limit_error,
 )
@@ -694,42 +695,20 @@ class AnthropicProxyService(AnthropicTransport):
                                 if resp.status == 429:
                                     error_message = await _read_error_message(resp)
                                     rate_limit_error = rate_limit_error_from_response(resp, error_message)
-                                    if provider_name == "kimi" and "monthly usage limit" in error_message.lower():
-                                        async with self._repo_factory() as repos:
-                                            monthly = await repos.usage.latest_entry_for_account(
-                                                account.id, window="monthly"
-                                            )
-                                            now = datetime.now(timezone.utc)
-                                            next_month = now.replace(
-                                                year=now.year + (now.month == 12),
-                                                month=now.month % 12 + 1,
-                                                day=1,
-                                                hour=0,
-                                                minute=0,
-                                                second=0,
-                                                microsecond=0,
-                                            )
-                                            reset_at = (
-                                                monthly.reset_at
-                                                if monthly and monthly.reset_at and monthly.reset_at > now.timestamp()
-                                                else int(next_month.timestamp())
-                                            )
-                                            rate_limit_error["resets_at"] = reset_at
-                                            rate_limit_error["quota_reset_at"] = reset_at
-                                            await repos.usage.add_entry(
-                                                account.id,
-                                                provider="kimi",
-                                                window="monthly",
-                                                used_percent=100.0,
-                                                reset_at=reset_at,
-                                                window_minutes=monthly.window_minutes if monthly else 43200,
-                                            )
-                                    await self._record_quota_cooldown(
-                                        account,
-                                        quota_key=quota_key,
-                                        error=rate_limit_error,
-                                    )
-                                    await self._load_balancer.mark_rate_limit(account, rate_limit_error)
+                                    if provider_name == "kimi":
+                                        rate_limit_error = await kimi_monthly_rate_limit_error(
+                                            account, rate_limit_error, self._repo_factory
+                                        )
+                                    if not rate_limit_error.get("monthly_quota"):
+                                        await self._record_quota_cooldown(
+                                            account,
+                                            quota_key=quota_key,
+                                            error=rate_limit_error,
+                                        )
+                                    try:
+                                        await self._load_balancer.mark_rate_limit(account, rate_limit_error)
+                                    except Exception:
+                                        logger.warning("Could not persist rate limit account_id=%s", account.id)
                                     await self._persist_request_log(
                                         account=account,
                                         provider_name=provider_name,

@@ -282,3 +282,14 @@ timeout in 15 minutes. Missing probes and exhausted candidates queue without
 a caller fallback; pins use the same gates. Passing hosts retain their ranking.
 ROUTE_MIN_AVAILABLE_MB and ROUTE_MAX_MEMORY_FULL_AVG60 allow temporary tuning.
 The read-only T3 event log supplies timeout timestamps, excluding prompt text.
+
+### 2026-11-06: Kimi monthly 429s follow the billing reset
+
+Ax42 edge logs 381285–381287 record HTTP 429, rate_limit_error and
+"monthly usage limit for this billing cycle"; quota headers were not retained.
+The stored reset 1795478400 is November 24 UTC. Use that or the verified
+subscription period end, never guess next month's first day. Unknown resets
+keep short retries. Persist a monthly block reason to bypass the 60-second
+selection clamp. Expiry or newer monthly quota availability releases it.
+Remove synthetic usage and redundant cooldown writes; isolate DB failures
+so account marking and request logging are still attempted.

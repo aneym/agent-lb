@@ -8,6 +8,7 @@ class UpstreamError(TypedDict, total=False):
     quota_reset_at: int
     resets_at: int | float
     resets_in_seconds: int | float
+    monthly_quota: bool
     capacity: bool
 
 

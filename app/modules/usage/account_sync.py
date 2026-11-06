@@ -16,6 +16,7 @@ from app.core.usage.models import UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager
+from app.modules.proxy.anthropic_rate_limits import KIMI_MONTHLY_LIMIT_REASON
 from app.modules.usage.refresh_ports import (
     AccountsRepositoryWithStatusComparePort,
     AdditionalUsageRepositoryPort,
@@ -154,6 +155,8 @@ class UsageAccountSync:
         monthly: UsageWindow | None = None,
     ) -> None:
         if not self._auth_manager:
+            return
+        if account.provider == "kimi" and account.deactivation_reason == KIMI_MONTHLY_LIMIT_REASON and monthly is None:
             return
         if account.status == AccountStatus.RATE_LIMITED:
             long_window = monthly or secondary

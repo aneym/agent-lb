@@ -67,6 +67,11 @@ from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.account_lease_policy import stale_ttl_seconds
 from app.modules.proxy.account_warmup import candidates
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
+from app.modules.proxy.anthropic_rate_limits import (
+    KIMI_MONTHLY_LIMIT_REASON,
+    bounded_retry_at,
+    kimi_monthly_selection_state,
+)
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind, RuntimeState
@@ -1502,6 +1507,8 @@ class LoadBalancer:
         async with await self._get_account_lock(account.id):
             state = self._state_for(account)
             handle_rate_limit(state, error)
+            if error.get("monthly_quota"):
+                state.deactivation_reason = KIMI_MONTHLY_LIMIT_REASON
             self._sync_runtime_state(account, state)
             async with self._repo_factory() as repos:
                 await self._persist_state(repos.accounts, account, state)
@@ -1993,14 +2000,23 @@ def _state_from_account(
     effective_blocked_at = float(account.blocked_at) if account.blocked_at is not None else runtime.blocked_at
     if ignore_zero_capacity_primary_runtime_reset and effective_blocked_at is not None:
         marker_reset = (float(account.reset_at) if account.reset_at else None) or runtime.reset_at
-        if _bounded_retry_at(marker_reset, effective_blocked_at) > time.time():
+        if bounded_retry_at(marker_reset, effective_blocked_at) > time.time():
             status_seed = account.status
             effective_runtime_reset = marker_reset
-    if status_seed in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED) and effective_blocked_at is not None:
-        effective_runtime_reset = _bounded_retry_at(effective_runtime_reset, effective_blocked_at)
+    kimi_monthly_block = account.provider == "kimi" and account.deactivation_reason == KIMI_MONTHLY_LIMIT_REASON
+    if (
+        not kimi_monthly_block
+        and status_seed in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED)
+        and effective_blocked_at is not None
+    ):
+        effective_runtime_reset = bounded_retry_at(effective_runtime_reset, effective_blocked_at)
     effective_cooldown_until = runtime.cooldown_until
-    if effective_cooldown_until is not None and effective_blocked_at is not None:
-        effective_cooldown_until = _bounded_retry_at(effective_cooldown_until, effective_blocked_at)
+    if not kimi_monthly_block and effective_cooldown_until is not None and effective_blocked_at is not None:
+        effective_cooldown_until = bounded_retry_at(effective_cooldown_until, effective_blocked_at)
+    if kimi_monthly_block:
+        status_seed, effective_runtime_reset, effective_cooldown_until = kimi_monthly_selection_state(
+            account, secondary_entry, runtime.reset_at, effective_cooldown_until
+        )
     status = status_seed
     reset_at = effective_runtime_reset
     used_percent = primary_used
@@ -2110,7 +2126,9 @@ def _state_from_account(
         last_error_at=runtime.last_error_at,
         last_selected_at=runtime.last_selected_at,
         error_count=runtime.error_count,
-        deactivation_reason=account.deactivation_reason,
+        deactivation_reason=(
+            None if kimi_monthly_block and status == AccountStatus.ACTIVE else account.deactivation_reason
+        ),
         plan_type=account.plan_type,
         capacity_credits=capacity_credits,
         health_tier=new_tier,
@@ -2121,12 +2139,6 @@ def _state_from_account(
         raw_used_percent=used_percent,
         raw_secondary_used_percent=secondary_used,
     )
-
-
-def _bounded_retry_at(reset_at: float | None, blocked_at: float) -> float:
-    if reset_at is None or int(reset_at) > int(blocked_at) + 3600:
-        return blocked_at + 60.0
-    return reset_at
 
 
 def background_recovery_state_from_account(
@@ -2149,6 +2161,8 @@ def background_recovery_state_from_account(
         secondary_entry=secondary_entry,
         runtime=runtime,
     )
+    if account.provider == "kimi" and account.deactivation_reason == KIMI_MONTHLY_LIMIT_REASON:
+        return state
     if account.status == AccountStatus.RATE_LIMITED:
         freshness_entry = _rate_limited_freshness_entry(
             account=account,
