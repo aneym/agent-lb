@@ -76,7 +76,7 @@ from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STAT
 from app.modules.proxy.anthropic_transport import AnthropicTransport
 from app.modules.proxy.claude_codex_bridge import estimate_claude_input_tokens
 from app.modules.proxy.claude_model_identity import with_route_model_identity
-from app.modules.proxy.compat_errors import STOP_STATUS, refresh_due, refuses_plan, rejects_key
+from app.modules.proxy.compat_errors import STOP_STATUS, pool_exhausted, refresh_due, refuses_plan, rejects_key
 from app.modules.proxy.error_rule_actions import (
     apply_error_rule,
     rule_client_message,
@@ -473,6 +473,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                     last_error_status = None
                     last_error_message = None
                     last_stall = None
+                    mirror_error = None
                 try:
                     wake_eligibility = await self._provider_quota_eligibility(
                         provider_name, quota_key, model=payload.model
@@ -1050,12 +1051,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                     )
                     raise AnthropicProxyError(503, message, code=code) from exc
                 except AnthropicProxyError as exc:
-                    if mirror_error is not None and exc.code in {
-                        _no_available_accounts_code(provider_name),
-                        "no_accounts",
-                        "no_accounts_available",
-                        "no_eligible_accounts",
-                    }:
+                    if mirror_error is not None and last_error_message is None and pool_exhausted(exc, provider_name):
                         await self._release_api_key_reservation(api_key_reservation)
                         raise mirror_error from exc
                     if exc.code == "upstream_request_timeout":
@@ -1076,7 +1072,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                         continue
                     raise
 
-                if mirror_error is not None:
+                if mirror_error is not None and last_error_message is None:
                     await self._release_api_key_reservation(api_key_reservation)
                     raise mirror_error
                 if last_stall is not None:

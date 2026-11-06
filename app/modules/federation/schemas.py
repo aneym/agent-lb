@@ -15,7 +15,7 @@ class FederationMirrorAccount(BaseModel):
     status: str
     plan_type: str
     chatgpt_account_id: str | None = None
-    access_token: str
+    access_token: str = Field(repr=False)
     expires_at_ms: int | None = None
 
 
@@ -132,9 +132,9 @@ class FederationStatusResponse(DashboardModel):
 
 
 class FederationAuthPayload(BaseModel):
-    access_token: str
-    refresh_token: str
-    id_token: str | None = None
+    access_token: str = Field(repr=False)
+    refresh_token: str = Field(repr=False)
+    id_token: str | None = Field(default=None, repr=False)
     expires_at_ms: int | None = None
     provider: str
     email: str

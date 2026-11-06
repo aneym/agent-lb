@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 import aiohttp
+from pydantic import BaseModel, ValidationError
 
-from app.core.runtime_logging import redact_log_value
 from app.modules.federation.exceptions import FederationPeerRequestError
 from app.modules.federation.schemas import (
     FederationAuthPayload,
@@ -19,6 +19,8 @@ from app.modules.federation.schemas import (
     FederationTransferStatusResponse,
     FederationUsageReportRequest,
 )
+
+_Model = TypeVar("_Model", bound=BaseModel)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +79,7 @@ class AiohttpFederationPeerClient:
         async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
             async with session.get(f"{peer_url}/api/federation/mirror", headers=_bearer_headers(token)) as response:
                 data = await _json_or_raise(response)
-        return FederationMirrorResponse.model_validate(data)
+        return _validated(FederationMirrorResponse, data)
 
     async def push_accounts(self, *, url: str, request: FederationPushRequest) -> FederationPushResponse:
 
@@ -87,7 +89,7 @@ class AiohttpFederationPeerClient:
                 json=request.model_dump(mode="json"),
             ) as response:
                 data = await _json_or_raise(response)
-        return FederationPushResponse.model_validate(data)
+        return _validated(FederationPushResponse, data)
 
     async def push_usage_report(self, *, peer_url: str, token: str, report: FederationUsageReportRequest) -> None:
         async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
@@ -108,7 +110,7 @@ class AiohttpFederationPeerClient:
                 headers=_bearer_headers(token),
             ) as response:
                 data = await _json_or_raise(response)
-        return FederationRequestLogsResponse.model_validate(data)
+        return _validated(FederationRequestLogsResponse, data)
 
     async def checkout(
         self, *, peer_url: str, token: str, account_id: str, taker_instance_id: str, nonce: str
@@ -120,7 +122,7 @@ class AiohttpFederationPeerClient:
                 headers=_bearer_headers(token),
             ) as response:
                 data = await _json_or_raise(response)
-        parsed = FederationCheckoutResponse.model_validate(data)
+        parsed = _validated(FederationCheckoutResponse, data)
         return CheckoutPeerResult(nonce=parsed.nonce, owner_instance_id=parsed.owner_instance_id, auth=parsed.auth)
 
     async def checkout_confirm(self, *, peer_url: str, token: str, nonce: str) -> None:
@@ -174,7 +176,7 @@ class AiohttpFederationPeerClient:
                 headers=_bearer_headers(token),
             ) as response:
                 data = await _json_or_raise(response)
-        parsed = FederationTransferStatusResponse.model_validate(data)
+        parsed = _validated(FederationTransferStatusResponse, data)
         return CheckinPeerResult(settled=parsed.state == "settled")
 
 
@@ -184,16 +186,22 @@ def _bearer_headers(token: str) -> dict[str, str]:
 
 async def _json_or_raise(response: aiohttp.ClientResponse) -> Any:
     raw = await response.read()
-    prefix = redact_log_value(raw[:200].decode("utf-8", errors="replace"))
+    shape = f"status={response.status} content_type={response.content_type!r} bytes={len(raw)}"
     if response.status >= 400:
-        raise FederationPeerRequestError(
-            f"Federation peer request failed status={response.status} body={prefix!r}",
-            status_code=response.status,
-        )
+        raise FederationPeerRequestError(f"Federation peer request failed {shape}", status_code=response.status)
     try:
         return await response.json()
     except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError):
         raise FederationPeerRequestError(
-            f"Federation peer returned non-JSON status={response.status} body={prefix!r}",
-            status_code=response.status,
+            f"Federation peer returned non-JSON {shape}", status_code=response.status
+        ) from None
+
+
+def _validated(model: type[_Model], data: Any) -> _Model:
+    try:
+        return model.model_validate(data)
+    except ValidationError as exc:
+        locations = [".".join(str(part) for part in error["loc"]) for error in exc.errors(include_input=False)[:5]]
+        raise FederationPeerRequestError(
+            f"Federation peer returned invalid {model.__name__} errors={exc.error_count()} at={locations}"
         ) from None

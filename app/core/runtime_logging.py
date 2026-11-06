@@ -19,6 +19,13 @@ from uvicorn.logging import AccessFormatter, DefaultFormatter
 from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
 
+_SECRET_KEY_NAME = r"(?:password|passwd|pwd|token|secret|api[_-]?key|authorization)"
+_QUOTED_SECRET_PATTERN = re.compile(
+    rf"(?i)(([\"'])[^\"']*{_SECRET_KEY_NAME}[^\"']*\2\s*[:=]\s*)([\"'])(?:\\.|(?!\3)[^\\])*\3?"
+)
+_TOKEN_SHAPE_PATTERN = re.compile(
+    r"sk-ant-[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+)
 _SENSITIVE_LOG_VALUE_PATTERNS = (
     re.compile(r"(?i)(password|passwd|pwd|token|secret|api[_-]?key)(\s*[=:]\s*)([^\s,&]+)"),
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"),
@@ -32,11 +39,16 @@ def redact_log_value(value: str | None) -> str | None:
     collapsed = _collapse_log_value(value)
     if collapsed is None:
         return None
-    redacted = collapsed
+    redacted = _QUOTED_SECRET_PATTERN.sub(_redact_quoted_secret, collapsed)
+    redacted = _TOKEN_SHAPE_PATTERN.sub(_LOG_REDACTION, redacted)
     redacted = _SENSITIVE_LOG_VALUE_PATTERNS[0].sub(_redact_keyed_secret, redacted)
     redacted = _SENSITIVE_LOG_VALUE_PATTERNS[1].sub(_redact_bearer_token, redacted)
     redacted = _SENSITIVE_LOG_VALUE_PATTERNS[2].sub(_redact_authorization_value, redacted)
     return _truncate_log_value(redacted)
+
+
+def _redact_quoted_secret(match: re.Match[str]) -> str:
+    return f"{match.group(1)}{match.group(3)}{_LOG_REDACTION}{match.group(3)}"
 
 
 def _redact_keyed_secret(match: re.Match[str]) -> str:

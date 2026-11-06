@@ -147,8 +147,6 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
         upstream_cost_usd: float | None = None,
     ) -> RequestLog:
         parts = await measured_parts()
-        if error_code == "mirror_token_unavailable":
-            account_id = None
         if status == "error":
             upstream_status_code, upstream_error_code = failure_fields(
                 upstream_status_code, upstream_error_code, error_code
