@@ -72,6 +72,7 @@ from app.modules.proxy.anthropic_rate_limits import (
     bounded_retry_at,
     kimi_monthly_selection_state,
 )
+from app.modules.proxy.usage_credit_snapshot import extract_credit_status
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind, RuntimeState
@@ -1938,7 +1939,7 @@ def _state_from_account(
         primary_window_minutes = None
     secondary_used = effective_secondary_entry.used_percent if effective_secondary_entry else None
     secondary_reset = effective_secondary_entry.reset_at if effective_secondary_entry else None
-    raw_credits_has, raw_credits_unlimited, raw_credits_balance = _extract_credit_status(
+    raw_credits_has, raw_credits_unlimited, raw_credits_balance = extract_credit_status(
         primary_entry,
         effective_secondary_entry,
         secondary_entry,
@@ -2244,26 +2245,6 @@ def _usage_entry_recorded_after_block(entry: _UsageWindowEntry | None, blocked_a
     if recorded_at.tzinfo is None:
         recorded_at = recorded_at.replace(tzinfo=timezone.utc)
     return recorded_at.timestamp() > blocked_at
-
-
-def _extract_credit_status(
-    *entries: _UsageWindowEntry | None,
-) -> tuple[bool | None, bool | None, float | None]:
-    credit_entries: list[UsageHistory] = [
-        entry
-        for entry in entries
-        if isinstance(entry, UsageHistory)
-        and not (entry.credits_has is None and entry.credits_unlimited is None and entry.credits_balance is None)
-    ]
-    if not credit_entries:
-        return None, None, None
-    entry = max(
-        credit_entries,
-        key=lambda item: item.recorded_at if item.recorded_at is not None else datetime.min,
-    )
-    if entry is not None:
-        return entry.credits_has, entry.credits_unlimited, entry.credits_balance
-    return None, None, None
 
 
 def _usage_entry_is_recent_enough(recorded_at: datetime | None) -> bool:
