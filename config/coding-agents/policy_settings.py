@@ -75,7 +75,7 @@ def snapshot_model(snapshot: dict[str, Any], model: str) -> str:
 def seat_template(text: str, name: str, snapshot: dict[str, Any]) -> str:
     seat = snapshot["seats"].get(name)
     if name in RELAY_SEATS:
-        model = snapshot_model(snapshot, snapshot["standards"]["relay"]["wrapper_model"])
+        model = snapshot_model(snapshot, snapshot["standards"]["relay"]["model"])
         effort = "low"
     elif not isinstance(seat, dict):
         return text
