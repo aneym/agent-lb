@@ -79,14 +79,17 @@ right away. This is a standing instruction from the repo owner.
   watchdog runs `check` every 5 min and flags drift older than 30 min. Pause with
   `touch ~/.agent-lb/follow.pause`. Merge to main and wait one tick; there is no manual
   deploy step.
-- **Box edges follow origin/main too (2026-11-02)**: each `agent-lb-edge` (ax42, forge) runs
+- **Box edges follow origin/main too (2026-11-02)**: each `agent-lb-edge` (ax42, forge, ax102) runs
   `deploy/systemd/agent-lb-edge-follow.{service,timer}` from `~/.config/systemd/user`, which runs
   the same `runtime_follow.py tick` against `~/agent-lb-edge` with state in
   `~/.agent-lb-edge/follow`. Bootstrap a stale edge once with the follower from a fresh
   `git archive origin/main` (same env, `tick --force`) before enabling the timer: an old
   runtime's own follower cannot import the current one. An edge without it drifts: on 2026-11-02 the ax42 edge still ran
   10-27 code without the Kimi tool_addition flatten and every Claude Code turn after its first
-  tool call got `400 Invalid request Error` from Kimi.
+  tool call got `400 Invalid request Error` from Kimi. Installing a new edge includes enabling
+  its follower timer: the ax102 edge, hand-installed 2026-11-03 without it, still ran 11-03 code
+  on 2026-11-06, so each Kimi monthly-limit 429 set a 60 s cooldown and callers retried upstream
+  every minute instead of getting the billing-cycle reset.
   A host that runs no agent-lb service (Studio since the 2026-10-27 primary move to ax42)
   installs it with `scripts/install-runtime-follow.sh --cli-only`: launchd label
   `com.agent-rails.agent-lb-follow`, `AGENT_LB_FOLLOW_CLI_ONLY=1`, every main change syncs
