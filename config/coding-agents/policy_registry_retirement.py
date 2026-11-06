@@ -8,6 +8,7 @@ from hook_retired_invocation import retired_invocation  # type: ignore[missing-i
 from policy_layout import POLICY_DIR, RETIRED_HOOKS  # type: ignore[missing-import]
 
 SHIPPED_SHA256 = {
+    "child-routing.py": frozenset({"e86013e66def20217a1577f1c195ad29321dd32618c0b3fd5775d9a8b600e1de"}),
     "plutil-guard.sh": frozenset({"7877e73fc9c6dbdc1fbc8d9cd98d8445a6ebb2c68e24496551b40ee40d155b97"}),
     "dangerous-cmd-guard.py": frozenset({"d5e2632f04977732912406e50695882255a57dbfc5e87749922d7e62f7a3377d"}),
     "sleep-loop-guard.py": frozenset({"70855684fd1c08674aa9f9d356cca0f3fb1dcca9b806a0a76866b534f6d6c9f8"}),

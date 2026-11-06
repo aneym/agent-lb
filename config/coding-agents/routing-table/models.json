@@ -162,16 +162,6 @@
     "gpt-5-*",
     "gpt-5"
   ],
-  "readmitted": {
-    "astra-consult": {
-      "alias": "astra-latest",
-      "patterns": [
-        "gpt-*-astra",
-        "gpt-*-astra-*",
-        "astra"
-      ]
-    }
-  },
   "off_default": [],
   "older_allowed": {}
 }

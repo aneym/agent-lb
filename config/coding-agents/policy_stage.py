@@ -12,7 +12,7 @@ from floor_invariant import refuse_floor_changes  # type: ignore[missing-import]
 from policy_layout import ROUTE_FILES  # type: ignore[missing-import]
 
 STAGED_DIRS = (Path(".agent-lb/bin"), Path(".agent-lb/managed/coding-agents"))
-VERIFY_SEAT = "codex-verifier"
+VERIFY_SEAT = "planner"
 EXECUTABLE_NAMES = ("verify-routing", "route", "seat", "claude-box-launch")
 
 

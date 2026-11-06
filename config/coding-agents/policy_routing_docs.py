@@ -28,6 +28,11 @@ def routing_changes(source: Path, home: Path, uninstall: bool) -> dict[Path, str
             desired = section.read_text()
             if read_text(target) != desired:
                 changes[target] = desired
+        names = {section.name for section in section_paths}
+        for docs in (home / ".claude/docs/models", home / POLICY_DIR / "routing"):
+            for stale in sorted(docs.glob("*.md")) if docs.is_dir() and not docs.is_symlink() else []:
+                if stale.name not in names and stale.is_file() and not stale.is_symlink():
+                    changes[stale] = None
         core = (source / CORE_SOURCE).read_text()
         desired_models = MODELS_MARKER + " from routing/core.md; generated, do not edit. -->\n\n" + core
         if models_text and not models_text.startswith(MODELS_MARKER):
@@ -43,7 +48,7 @@ def routing_changes(source: Path, home: Path, uninstall: bool) -> dict[Path, str
         if full_disk.startswith(MODELS_MARKER):
             changes[full_path] = None
         old_policy = home / POLICY_DIR / "ROUTING.md"
-        pointer = "# Routing reference\n\nRead `~/.claude/docs/models/README.md` and its named sections. This compatibility pointer contains no duplicate policy.\n"
+        pointer = "# Routing reference\n\nRead `~/.claude/rules/workflow.md`, then `~/.claude/docs/models/core.md`. This compatibility pointer contains no duplicate policy.\n"
         if not old_policy.exists() and not old_policy.is_symlink():
             changes[old_policy] = pointer
         elif old_policy.is_file() and not old_policy.is_symlink():

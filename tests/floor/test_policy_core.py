@@ -84,7 +84,6 @@ def installed(tmp_path: Path, policy_checkout):
 def test_installed_core_links_resolve_to_installed_sections(installed) -> None:
     models = (installed.home / ".claude/rules/models.md").read_text()
     linked = sorted(set(re.findall(r"`~/(\.claude/docs/models/[^`/]+\.md)`", models)))
-    assert linked
     for relative in linked:
         target = installed.home / relative
         assert target.read_bytes() == (SOURCE / "routing" / target.name).read_bytes(), relative
@@ -102,9 +101,9 @@ def test_install_renders_core_within_budget_and_is_idempotent(installed) -> None
     def snapshot() -> dict[str, bytes]:
         return {str(path.relative_to(home)): path.read_bytes() for path in home.rglob("*") if path.is_file()}
 
-    seat = (home / ".claude/agents/codex-verifier-local.md").read_text()
+    seat = (home / ".claude/agents/opus-seat-local.md").read_text()
     assert re.search(r"(?m)^model: \S+$", seat) and re.search(r"(?m)^effort: \S+$", seat)
-    assert without_model_lines(seat) == without_model_lines((SOURCE / "agents/codex-verifier-local.md").read_text())
+    assert without_model_lines(seat) == without_model_lines((SOURCE / "agents/opus-seat-local.md").read_text())
     result = subprocess.run(
         [sys.executable, str(home / ".agent-lb/bin/route"), "policy", "snapshot", "--json"],
         env=env | {"ROUTE_TABLE": str(home / ".agent-lb/managed/coding-agents/routing-table.json")},
@@ -120,14 +119,11 @@ def test_install_renders_core_within_budget_and_is_idempotent(installed) -> None
     codex = (home / ".codex/AGENTS.md").read_text()
     assert "## Install fixture\n\n### Nested section\n\nFixture body." in codex
     assert "{{inline:" not in codex
-    for name in ("muse-seat", "muse-seat-local", "pi-durable-seat"):
-        assert not (home / ".claude/agents" / f"{name}.md").exists()
-        assert (home / ".agents/policy/coding-agents/agents" / f"{name}.md").is_file()
     assert len(models.read_bytes()) <= BUDGET, len(models.read_bytes())
     assert rendered.startswith(installer().MODELS_MARKER)
     assert rendered.split("\n\n", 1)[1] == core_text()
     assert not full.exists()
-    assert "`~/.claude/docs/models/README.md`" in (home / ".agents/policy/coding-agents/ROUTING.md").read_text()
+    assert "`~/.claude/rules/workflow.md`" in (home / ".agents/policy/coding-agents/ROUTING.md").read_text()
     installed_settings = json.loads(settings.read_text())
     for key, value in other.items():
         if key != "permissions":

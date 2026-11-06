@@ -82,7 +82,39 @@ MANAGED_AGENTS = (
 ADOPTED_KEEP = tuple(Path(".claude/hooks") / name for name in ADOPTED_KEEP_NAMES)
 
 
-RETIRED_AGENTS = ("astra", "implementer", "gpt-explorer-local")
+RETIRED_AGENTS = (
+    "astra",
+    "implementer",
+    "gpt-explorer-local",
+    "sonnet-verifier",
+    "astra-consult",
+    "codex-sol",
+    "codex-sol-local",
+    "codex-test-runner",
+    "codex-test-runner-local",
+    "codex-verifier",
+    "codex-verifier-local",
+    "computer-use",
+    "computer-use-local",
+    "cursor-seat",
+    "devin-seat",
+    "gpt-explorer",
+    "gpt-implementer",
+    "gpt-implementer-local",
+    "grok-implementer",
+    "kimi-implementer",
+    "kimi-implementer-local",
+    "muse-seat",
+    "muse-seat-local",
+    "pi-durable-seat",
+    "sol-consult",
+    "sol-general",
+    "sonnet-implementer",
+    "sonnet-implementer-local",
+    "terra-implementer",
+    "verifier",
+    "verifier-local",
+)
 
 
 RETIRED_HOOKS = (
@@ -107,6 +139,7 @@ RETIRED_HOOKS = (
     "aside-regular-tabs.py",
     "workflow-readback.py",
     "lane-bulletin-hook",
+    "child-routing.py",
 )
 
 
@@ -259,11 +292,4 @@ DERIVED_PINS = (
 SCRIPT_WORD = re.compile(r'\s*(?:(?:/usr/bin/)?python3\s+)?("[^"]+"|[^\s"\'|;&<>]+)')
 
 
-RELAY_SEATS = frozenset(
-    """
-    codex-sol codex-sol-local codex-verifier codex-verifier-local
-    codex-test-runner codex-test-runner-local gpt-implementer grok-implementer
-    sonnet-implementer verifier verifier-local cursor-seat devin-seat
-    muse-seat muse-seat-local computer-use computer-use-local computer-use-terra-local host-relay pi-durable-seat
-    """.split()
-)
+RELAY_SEATS = frozenset(("computer-use-terra-local", "host-relay"))

@@ -11,7 +11,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 PARSER = argparse.ArgumentParser(description="Verify coding-agent routing policy")
@@ -114,24 +113,6 @@ plan_chain = [entry.get("model") for entry in classes.get("plan", {}).get("chain
 check(
     plan_chain == ["opus-latest"], f"plan uses only opus-latest, without a Sol fallback ({plan_chain})"
 )
-for name in ("implement", "mechanical"):
-    spec = classes.get(name, {})
-    unpaced_opus = [
-        entry for entry in spec.get("chain", []) if entry.get("model") == "opus-latest" and "min_tier" not in entry
-    ]
-    check(not unpaced_opus, f"{name} names a pace tier (min_tier) on every Opus rung, else uses cheaper seats")
-    audit = spec.get("audit", {})
-    by_vendor = audit.get("by_author_vendor", {})
-    check(
-        audit.get("required") is False
-        and audit.get("mode") == "on_request"
-        and by_vendor.get("anthropic", {}).get("model") == "sol-latest"
-        and all(
-            by_vendor.get(v, {}).get("model") == "sonnet-latest"
-            for v in ("openai", "cursor", "devin", "glm", "kimi")
-        ),
-        f"{name} names its on-request cross-vendor auditors (Sonnet / newest Sol); review is optional pre-launch",
-    )
 
 
 
@@ -302,12 +283,6 @@ for path, text in pinned_sources:
         if reason:
             stale.append(f"{path.name}: {match.group(1)} ({reason})")
 table_models = [entry.get("model", "") for spec in classes.values() for entry in spec.get("chain", [])]
-table_models += [
-    auditor.get("model", "")
-    for spec in classes.values()
-    for auditor in (spec.get("audit", {}).get("by_author_vendor", {}) or {}).values()
-]
-table_models += [classes.get("plan", {}).get("second_opinion", {}).get("model", "")]
 table_models += list(source_table.get("pools", {}))
 for model in table_models:
     reason = stale_reason(model)

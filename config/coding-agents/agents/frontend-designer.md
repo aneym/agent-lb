@@ -14,10 +14,7 @@ implementation.
 Rules:
 
 - You have no Edit/Write tools by design. Your output is a spec or a crit —
-  an implementer builds it: Sol (`delegate_task` to `codex`/`gpt-6.1-sol`
-  medium, or gpt-implementer on another box), Sonnet (high) when Codex is
-  out, and Opus for judgment-heavy slices (model picks:
-  `~/.claude/docs/models/README.md`). If you catch yourself
+  an Opus implementer builds it (`~/.claude/rules/workflow.md`). If you catch yourself
   describing code diffs line-by-line, zoom back out to intent.
 - Load the relevant design skills before opining: frontend-design for
   direction, impeccable for UX/polish audits, web-design-guidelines for
