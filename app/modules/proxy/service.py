@@ -81,7 +81,6 @@ from app.core.openai.requests import (
     ResponsesCompactRequest,
     ResponsesRequest,
 )
-from app.core.resilience.overload import is_local_overload_error_code
 from app.core.types import JsonValue
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.upstream_proxy.resolver import (
@@ -638,6 +637,7 @@ from app.modules.proxy.affinity import (
 from app.modules.proxy.affinity import (
     _sticky_key_for_responses_request as _sticky_key_for_responses_request,
 )
+from app.modules.proxy.compat_errors import is_account_neutral_error_code as _is_account_neutral_error_code
 from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
 )
@@ -1880,11 +1880,6 @@ class ProxyService(
             code,
             http_status=exc.status_code,
         )
-
-
-def _is_account_neutral_error_code(code: str | None) -> bool:
-
-    return is_local_overload_error_code(code) or code == "proxy_unavailable" or code == "bridge_first_event_timeout"
 
 
 def _is_local_account_cap_code(code: str | None) -> bool:

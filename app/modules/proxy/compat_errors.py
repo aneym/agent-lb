@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from app.core.anthropic.oauth import ANTHROPIC_PROVIDER_NAME
 from app.core.providers.kimi import KIMI_PROVIDER_NAME
+from app.core.resilience.overload import is_local_overload_error_code
 
 _KIMI_PLAN_REFUSAL_MARKERS = ("does not have access to", "plan supports only")
-STOP_STATUS = {"mirror_token_unavailable": 503, "permission_error": 403}
+STOP_STATUS = {"permission_error": 403}
 
 
 def refresh_due(provider_name: str, status: int, account_id: str, retried_account_ids: set[str]) -> bool:
@@ -30,3 +31,11 @@ def refuses_plan(provider_name: str, status: int, message: str) -> bool:
         and status == 403
         and any(marker in lowered for marker in _KIMI_PLAN_REFUSAL_MARKERS)
     )
+
+
+def is_account_neutral_error_code(code: str | None) -> bool:
+    return is_local_overload_error_code(code) or code in {
+        "proxy_unavailable",
+        "bridge_first_event_timeout",
+        "mirror_token_unavailable",
+    }

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import aiohttp
 
+from app.core.runtime_logging import redact_log_value
 from app.modules.federation.exceptions import FederationPeerRequestError
 from app.modules.federation.schemas import (
     FederationAuthPayload,
@@ -181,9 +183,17 @@ def _bearer_headers(token: str) -> dict[str, str]:
 
 
 async def _json_or_raise(response: aiohttp.ClientResponse) -> Any:
+    raw = await response.read()
+    prefix = redact_log_value(raw[:200].decode("utf-8", errors="replace"))
     if response.status >= 400:
         raise FederationPeerRequestError(
-            f"Federation peer request failed status={response.status}",
+            f"Federation peer request failed status={response.status} body={prefix!r}",
             status_code=response.status,
         )
-    return await response.json()
+    try:
+        return await response.json()
+    except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError):
+        raise FederationPeerRequestError(
+            f"Federation peer returned non-JSON status={response.status} body={prefix!r}",
+            status_code=response.status,
+        ) from None

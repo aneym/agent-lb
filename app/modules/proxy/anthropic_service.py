@@ -8,7 +8,6 @@ import re
 import time
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -31,7 +30,7 @@ from app.core.anthropic.quota_headers import capture_unified_headers
 from app.core.anthropic.quota_headers import parse_reset_epoch as _parse_reset_epoch
 from app.core.anthropic.quota_headers import parse_unified_utilization as _parse_unified_utilization
 from app.core.anthropic.quota_keys import model_quota_key
-from app.core.auth.refresh import RefreshError, classify_refresh_error
+from app.core.auth.refresh import classify_refresh_error
 from app.core.balancer.error_rules import match_error_rule
 from app.core.balancer.types import UpstreamError
 from app.core.clients import upstream_body
@@ -51,7 +50,6 @@ from app.core.utils.client_session import get_dispatch_id
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, AccountStatus, StickySessionKind
-from app.modules.accounts.auth_manager import AccountNotOwnedError, AuthManager, is_locally_owned
 from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
     OPENROUTER_CREDITS_QUOTA_KEY,
@@ -62,9 +60,7 @@ from app.modules.accounts.credits import (
 from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
-from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
-from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.account_warmup import WarmupBusy, admitted_http_session
 from app.modules.proxy.anthropic_cache_policy import upgrade_helper_cache as _upgrade_helper_cache
 from app.modules.proxy.anthropic_outbound_headers import build_anthropic_headers
@@ -88,6 +84,7 @@ from app.modules.proxy.error_rule_actions import (
     rule_error_message,
 )
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
+from app.modules.proxy.mirror_tokens import MirrorTokenRefresh
 from app.modules.proxy.openrouter_usage import chat_usage, collect_chat_usage
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 from app.modules.usage.additional_quota_keys import get_additional_quota_definition_for_model
@@ -99,7 +96,6 @@ _STREAM_CHUNK_SIZE = 8192
 _MAX_SELECTION_ATTEMPTS = 4
 _ANTHROPIC_COOLDOWN_WINDOW = "primary"
 _ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
-_MIRROR_TOKEN_UNAVAILABLE_COOLDOWN_SECONDS = 60
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 
 
@@ -390,7 +386,7 @@ def _upload_admission_error(exc: upload_admission.UploadAdmissionTimeout) -> tup
     return code, upload_admission.failure_message(exc)
 
 
-class AnthropicProxyService(AnthropicTransport):
+class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
     def __init__(self, repo_factory: ProxyRepoFactory) -> None:
         self._repo_factory = repo_factory
         self._load_balancer = LoadBalancer(repo_factory)
@@ -457,6 +453,7 @@ class AnthropicProxyService(AnthropicTransport):
         async def body() -> AsyncIterator[bytes]:
             usage: AnthropicUsage | None = None
             last_account: Account | None = None
+            mirror_error: AnthropicProxyError | None = None
             last_error_status: int | None = None
             last_error_message: str | None = None
             streamed_bytes = False
@@ -498,6 +495,9 @@ class AnthropicProxyService(AnthropicTransport):
                         try:
                             access_token = await self._fresh_access_token(account)
                         except AnthropicProxyError as exc:
+                            if exc.code == "mirror_token_unavailable":
+                                mirror_error = exc
+                                continue
                             if exc.status_code != 401 or not classify_refresh_error(exc.code):
                                 raise
                             await self._persist_request_log(
@@ -661,9 +661,8 @@ class AnthropicProxyService(AnthropicTransport):
                                     elif refuses_plan(provider_name, resp.status, error_message):
                                         error_code = "permission_error"
                                     elif error_code == "mirror_token_unavailable":
-                                        await self._load_balancer.cool_down(
-                                            account, _MIRROR_TOKEN_UNAVAILABLE_COOLDOWN_SECONDS
-                                        )
+                                        mirror_error = AnthropicProxyError(503, error_message, code=error_code)
+                                        continue
                                     else:
                                         await self._load_balancer.record_error(account)
                                     await self._persist_request_log(
@@ -1051,6 +1050,14 @@ class AnthropicProxyService(AnthropicTransport):
                     )
                     raise AnthropicProxyError(503, message, code=code) from exc
                 except AnthropicProxyError as exc:
+                    if mirror_error is not None and exc.code in {
+                        _no_available_accounts_code(provider_name),
+                        "no_accounts",
+                        "no_accounts_available",
+                        "no_eligible_accounts",
+                    }:
+                        await self._release_api_key_reservation(api_key_reservation)
+                        raise mirror_error from exc
                     if exc.code == "upstream_request_timeout":
                         raise
                     if last_stall is not None:
@@ -1069,6 +1076,9 @@ class AnthropicProxyService(AnthropicTransport):
                         continue
                     raise
 
+                if mirror_error is not None:
+                    await self._release_api_key_reservation(api_key_reservation)
+                    raise mirror_error
                 if last_stall is not None:
                     await self._release_api_key_reservation(api_key_reservation)
                     raise AnthropicProxyError(529, str(last_stall), code="overloaded_error")
@@ -1862,47 +1872,6 @@ class AnthropicProxyService(AnthropicTransport):
                 quota_key,
                 exc_info=True,
             )
-
-    async def _fresh_access_token(self, account: Account, *, rejected_access_token: str | None = None) -> str:
-        @asynccontextmanager
-        async def refresh_repo_factory():
-            async with self._repo_factory() as repos:
-                yield repos.accounts
-
-        try:
-            async with self._repo_factory() as repos:
-                latest = await repos.accounts.get_by_id(account.id)
-                if latest is None:
-                    raise AnthropicProxyError(503, "Selected Anthropic account no longer exists")
-                manager = AuthManager(repos.accounts, refresh_repo_factory=refresh_repo_factory)
-                force = (
-                    rejected_access_token is not None
-                    and self._encryptor.decrypt(latest.access_token_encrypted) == rejected_access_token
-                )
-                fresh = await manager.ensure_fresh(latest, force=force)
-                return self._encryptor.decrypt(fresh.access_token_encrypted)
-        except AccountNotOwnedError as exc:
-            if rejected_access_token is not None and get_settings().federation_peer_url:
-                try:
-                    await build_federation_mirror_scheduler().mirror_once()
-                    async with self._repo_factory() as repos:
-                        latest = await repos.accounts.reload_by_id(account.id)
-                        if latest is not None and not is_locally_owned(latest, get_settings()):
-                            updated = self._encryptor.decrypt(latest.access_token_encrypted)
-                            if updated != rejected_access_token:
-                                return updated
-                except Exception:
-                    logger.warning("Mirror pull after upstream 401 failed account_id=%s", account.id, exc_info=True)
-            raise AnthropicProxyError(
-                503, "Mirror access token unavailable after pull", code="mirror_token_unavailable"
-            ) from exc
-        except RefreshError as exc:
-            if exc.code == "exchange_uncertain":
-                raise AnthropicProxyError(503, exc.message, code=exc.code) from exc
-
-            if exc.is_permanent or classify_refresh_error(exc.code):
-                get_account_selection_cache().invalidate()
-            raise AnthropicProxyError(401, exc.message, code=exc.code) from exc
 
     async def _persist_request_log(
         self,

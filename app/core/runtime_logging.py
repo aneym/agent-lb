@@ -28,7 +28,7 @@ _LOG_REDACTION = "[REDACTED]"
 _MAX_LOG_VALUE_CHARS = 1000
 
 
-def _redact_log_value(value: str | None) -> str | None:
+def redact_log_value(value: str | None) -> str | None:
     collapsed = _collapse_log_value(value)
     if collapsed is None:
         return None
@@ -265,7 +265,7 @@ def log_error_response(
 ) -> None:
     level = logging.ERROR if status_code >= 500 else logging.WARNING
     request_id = get_request_id()
-    safe_message = _redact_log_value(message)
+    safe_message = redact_log_value(message)
     logger.log(
         level,
         "%s request_id=%s method=%s path=%s status=%s code=%s message=%s",
