@@ -25,7 +25,6 @@ from route_anthropic_models import (  # pyrefly: ignore [missing-import]
 from route_reserve_state import (  # pyrefly: ignore [missing-import]
     WORKFLOW_BRIEF_SEATS,
     WORKFLOW_EFFORT_BRIEF_SEATS,
-    WORKFLOW_OPUS_STAGES,
     chain_effort,
     finish_text,
     same_model,
@@ -316,30 +315,6 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
             brief += "\n\n" + finish
     out.update(effort=effort, opts=opts, brief=brief)
     return out
-
-
-def workflow_table(table):
-    for name, spec in table["classes"].items():
-        if name == "verify" or name in WORKFLOW_OPUS_STAGES or spec.get("driver"):
-            continue
-        entries = ladder_entries(table, name) or spec.get("chain", [])
-        sol = [dict(entry) for entry in entries if str(entry.get("model", "")).startswith("sol-latest")]
-        if not sol:
-            seat = "gpt-explorer" if name == "explore" else "sol-consult" if name == "plan" else "gpt-implementer"
-            sol = [
-                {
-                    "seat": seat,
-                    "model": "sol-latest",
-                    "pool": "openai-codex",
-                    "effort": "high" if name == "plan" else "medium",
-                }
-            ]
-        spec["chain"] = sol
-        if table.get("ladder"):
-            table["ladders"][table["ladder"]][name] = [
-                dict(entry, id=entry.get("id", "sol-default"), maker="openai") for entry in sol
-            ]
-    return table
 
 
 def workflow_opus_stage(table: dict[str, Any], stage: str) -> dict[str, Any]:

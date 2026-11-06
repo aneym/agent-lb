@@ -1,4 +1,5 @@
 AGENT_RAILS_GATE_DIR ?= /Volumes/StudioExt/repos/agent-rails/tools/gate
+FACTORY_LINT ?= $(firstword $(shell command -v factory-lint) $(wildcard $(HOME)/factory/lint/bin/factory-lint /Volumes/StudioExt/repos/open-factory/engine/lint/bin/factory-lint))
 PYTEST_ARGS := -v -ra -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true --timeout=180 --timeout-method=thread --durations=20
 POSTGRES_TEST_DATABASE_URL ?=
 CI_RUN_ID := $(shell date +%s)-$(shell echo $$$$)
@@ -30,7 +31,7 @@ frontend-build: frontend-install
 
 .PHONY: lint architecture-check
 lint:
-	$(AGENT_RAILS_GATE_DIR)/factory-lint check --changed
+	$(FACTORY_LINT) check --changed
 
 architecture-check:
 	$(PYTHON) scripts/check_proxy_architecture.py

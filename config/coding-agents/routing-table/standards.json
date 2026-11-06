@@ -109,12 +109,11 @@
     },
     "relay": {
       "seat": "host-relay",
-      "model": "sonnet-latest",
+      "model": "opus-latest",
       "effort": "low",
-      "wrapper_model": "sol-latest",
       "explore": true,
       "authority": "none",
-      "evidence": "wrappers carry no decision; Sol serves them, not Sonnet (E1, 2026-10-24)"
+      "evidence": "wrappers carry no decision; Opus serves everything (workflow.md, 2026-11-06)"
     },
     "decide": {
       "seat": "decider",

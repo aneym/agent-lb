@@ -13,7 +13,16 @@ if [ -f atoms.toml ]; then
     atoms validate --repo . --base origin/main
 fi
 
-test_guard="$gate/test-guard"
+test_guard=$(command -v test-guard || true)
+for candidate in "$HOME/factory/bin/test-guard" /Volumes/StudioExt/repos/open-factory/engine/bin/test-guard; do
+    if [ -z "$test_guard" ] && [ -x "$candidate" ]; then
+        test_guard=$candidate
+    fi
+done
+if [ -z "$test_guard" ]; then
+    printf '%s\n' 'check: test-guard not found' 'next: install open-factory (engine/bin/test-guard) or put test-guard on PATH' >&2
+    exit 1
+fi
 if [ "${1-}" = "--staged" ]; then
     "$test_guard" --staged
 else

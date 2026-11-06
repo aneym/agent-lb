@@ -1,12 +1,4 @@
 {
-  "quota_swap": {
-    "verify": {
-      "seat": "codex-verifier",
-      "model": "sol-latest",
-      "effort": "high",
-      "wrapper_model": null
-    }
-  },
   "standards": {
     "verdict": {
       "seat": "plan-reviewer",

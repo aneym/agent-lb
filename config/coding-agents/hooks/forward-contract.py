@@ -121,17 +121,6 @@ else:
     brief = sys.stdin.read()
     if not brief.strip():
         parser.error("empty contract brief")
-    if args.routing_json:
-        routing = json.loads(args.routing_json)
-        if routing.get("degraded_from"):
-            brief += (
-                "\n## Live routing degradation\nResolved routing: "
-                + args.routing_json
-                + "\nRun on the resolved Sol model. Include degraded_from="
-                + routing["degraded_from"]
-                + " in HANDOFF deviations."
-                + " The executing vendor is OpenAI, not Anthropic.\n"
-            )
     if seat_run:
         brief = box_contract.prepare(brief, command)
     directory = contracts_root() / k

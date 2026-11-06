@@ -118,22 +118,9 @@ def fallback(
         return None
     variants = [standard, api.dispatch_standard(table, class_name, ctx.author_vendor)]
     variants.extend((table["standards"][class_name].get("by_author_vendor") or {}).values())
-    override = (table.get("quota_swap") or {}).get(class_name)
-    if isinstance(override, dict):
-        variants.append({**standard, **override})
     for variant in variants:
         if not seat_block(api, ctx, variant, excluded):
             return standard_choice(variant, reason)
-    vendor = api.alias_vendor(table, standard.get("model"))
-    seat, model = (
-        ("gpt-implementer", "sol-latest") if vendor == "anthropic" else ("sonnet-implementer", "sonnet-latest")
-    )
-    if class_name not in ("implement", "mechanical"):
-        seat = "astra-consult" if vendor == "anthropic" else "opus-seat"
-        model = "astra-latest" if vendor == "anthropic" else "opus-latest"
-    variant = {**standard, "seat": seat, "model": model}
-    if seat in table.get("seats", {}) and not seat_block(api, ctx, variant, excluded):
-        return standard_choice(variant, reason)
     return None
 
 
@@ -219,8 +206,6 @@ def select(
         candidates = []
         for arm in (explore.get("arms") or {}).get(class_name) or []:
             if not isinstance(arm, dict) or seat_block(api, ctx, arm, excluded):
-                continue
-            if mode_state["mode"] == "codex-swap" and class_name in (table.get("quota_swap") or {}):
                 continue
             if api.arm_block(ctx, arm) or api.arm_cap_block(ctx, arm, today):
                 continue

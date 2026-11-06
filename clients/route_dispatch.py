@@ -43,7 +43,7 @@ from route_pace_state import (  # pyrefly: ignore [missing-import]
     record_explicit_model,
     state_age_seconds,
 )
-from route_quota import authority_fallback, quota_swap_state, swapped_standard  # pyrefly: ignore [missing-import]
+from route_quota import quota_swap_state  # pyrefly: ignore [missing-import]
 from route_reserve_state import (  # pyrefly: ignore [missing-import]
     EFFORTS,
     MENU_POOL_FIELDS,
@@ -207,11 +207,6 @@ def command_dispatch(args: argparse.Namespace, table: dict[str, Any] | None = No
             table, fetch_pools, api_request_logs, append_ledger if not args.dry_run else lambda _row: None
         )
     )
-    explicit = any(value is not None for value in (args.seat, args.model, args.effort))
-    if not explicit:
-        standard = authority_fallback(standard, mode_state) or standard
-    if not prior and not explicit:
-        standard = swapped_standard(table, class_name, standard, mode_state)
     ctx = DispatchContext(table, class_name, args.author_vendor)
     ctx.requested_class = requested_class
     choice, eligible, sticky = route_heal.select(

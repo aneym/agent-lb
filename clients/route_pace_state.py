@@ -7,10 +7,10 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from route_anthropic_models import http_get, ledger_now_iso, percent, request, retired_patterns, served_models  # pyrefly: ignore [missing-import]
+from route_anthropic_models import ledger_now_iso, percent, request, retired_patterns, served_models  # pyrefly: ignore [missing-import]
 from route_pace import pace_words, shadow_pace  # pyrefly: ignore [missing-import]
-from route_quota import degrade_alias, quota_swap_state, swapped_standard  # pyrefly: ignore [missing-import]
-from route_reserve_state import dispatch_standard, pool_for_model, reservation_capacity  # pyrefly: ignore [missing-import]
+from route_quota import quota_swap_state  # pyrefly: ignore [missing-import]
+from route_reserve_state import dispatch_standard, reservation_capacity  # pyrefly: ignore [missing-import]
 from route_resolve_one import resolve_alias  # pyrefly: ignore [missing-import]
 from route_seat import fetch_pools  # pyrefly: ignore [missing-import]
 from route_seat_states import api_request_logs  # pyrefly: ignore [missing-import]
@@ -91,12 +91,7 @@ def command_resolve(args: argparse.Namespace) -> int:
     unknown = []
     for name in args.aliases:
         if name in (table.get("standards") or {}):
-            standard = swapped_standard(
-                table,
-                name,
-                dispatch_standard(table, name, None),
-                quota_swap_state(table, fetch_pools, api_request_logs, append_ledger),
-            )
+            standard = dispatch_standard(table, name, None)
             model, reason = resolve_alias(table, standard["model"], served, standard["seat"])
             if model:
                 result = {
@@ -119,10 +114,6 @@ def command_resolve(args: argparse.Namespace) -> int:
             record_explicit_model(name, "route resolve")
         if model:
             result = {"alias": name, "model": model, "reason": reason}
-            if name in ("opus-latest", "sonnet-latest"):
-                degrade_alias(
-                    result, table, served, fetch_pools, pool_for_model, http_get, resolve_alias, append_ledger
-                )
             if name.startswith("muse-") or str(result["model"]).startswith("muse-"):
                 print(f"served model: {result['model']}", file=sys.stderr)
             print(json.dumps(result, sort_keys=True) if args.json else result["model"])

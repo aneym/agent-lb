@@ -32,7 +32,7 @@ from route_reserve_state import (  # pyrefly: ignore [missing-import]
     workflow_quota,
     workflow_stage_effort,
 )
-from route_resolve_one import decisions_path, workflow_opus_stage, workflow_seat, workflow_table  # pyrefly: ignore [missing-import]
+from route_resolve_one import decisions_path, workflow_opus_stage, workflow_seat  # pyrefly: ignore [missing-import]
 from route_seat_states import api_request_logs  # pyrefly: ignore [missing-import]
 from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     EXIT_DEGRADED,
@@ -88,7 +88,7 @@ def workflow_pick(table: dict[str, Any], class_name: str, author_vendor: str | N
 
 def command_workflow_args(args: argparse.Namespace) -> int:
     quota = workflow_quota()
-    table = workflow_table(load_table())
+    table = load_table()
     classes = table.get("classes") if isinstance(table.get("classes"), dict) else {}
     document: dict[str, Any] = {
         "generated_at": now_iso(),

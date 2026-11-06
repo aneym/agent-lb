@@ -216,7 +216,6 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes, kept):
                 for pattern in ("*.py", "*.sh")
                 for path in sorted((source / "hooks").glob(pattern))
             ]
-            policy_sources += [Path("bin/kimi-seat"), Path("bin/openrouter-seat")]
             policy_sources += [Path("hooks/local-seat-bin/desktop-guard-focus")]
             policy_sources += [Path(HOOK_MANIFEST), Path("hooks/floors.json")]
             for relative in policy_sources:
