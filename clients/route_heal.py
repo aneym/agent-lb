@@ -5,8 +5,6 @@ import random
 from collections.abc import Callable
 from typing import Any
 
-SOL_CLASSES = frozenset({"implement", "mechanical", "explore", "research"})
-
 
 def standard_choice(standard: dict, reason: str) -> dict:
     return {
@@ -24,21 +22,6 @@ def standard_choice(standard: dict, reason: str) -> dict:
 def seat_block(api: Any, ctx: Any, arm: dict, excluded: set[str]) -> str | None:
     if arm.get("seat") in excluded:
         return f"excluded seat {arm['seat']}"
-    if ctx.class_name in SOL_CLASSES:
-        model = arm.get("model") or arm.get("model_alias")
-        if api.alias_vendor(ctx.table, model) == "anthropic":
-            return "hands classes never use Claude"
-        pool_id = arm.get("pool") or api.pool_for_model(ctx.table, model)
-        pool = ctx.pools.get(pool_id, {})
-        headroom = pool.get("headroomPercent")
-        if (
-            (isinstance(headroom, (int, float)) and not isinstance(headroom, bool) and headroom <= 0)
-            or pool.get("eligibleAccounts") == 0
-            or pool.get("status") in ("exhausted", "empty")
-        ):
-            return "pool unavailable"
-        if arm.get("seat") == "grok-implementer" and ctx.grok_choice is None:
-            return "Grok constraints not met"
     spec = (ctx.table.get("seats") or {}).get(arm.get("seat")) or {}
     if any(row.get("paused") or row.get("disabled") or row.get("enabled") is False for row in (arm, spec)):
         return "paused or disabled"
@@ -114,8 +97,6 @@ def fallback(
                 "arm_id": arm.get("id") or f"spread:{arm['seat']}",
                 "pool": arm.get("pool"),
             }
-    if class_name in SOL_CLASSES:
-        return None
     variants = [standard, api.dispatch_standard(table, class_name, ctx.author_vendor)]
     variants.extend((table["standards"][class_name].get("by_author_vendor") or {}).values())
     for variant in variants:
@@ -248,12 +229,8 @@ def select(
                     },
                 },
             }
-            choice = (
-                standard_choice(standard, "Sol standard")
-                if (class_name in SOL_CLASSES and not seat_block(api, ctx, standard, excluded))
-                else api.dispatch_choice(
-                    filtered, class_name, rng, api.pools_by_id(pools_doc), standard, explore, shares, draw
-                )
+            choice = api.dispatch_choice(
+                filtered, class_name, rng, api.pools_by_id(pools_doc), standard, explore, shares, draw
             )
     if not explicit and not sticky:
         constrained, skipped = ctx.grok_choice, grok_skipped

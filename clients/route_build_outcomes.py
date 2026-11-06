@@ -5,14 +5,13 @@ import json
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from route_anthropic_models import http_get, ledger_now_iso  # pyrefly: ignore [missing-import]
 from route_class_candidates import outcome_events_path, outcomes_path  # pyrefly: ignore [missing-import]
 from route_dispatch import DecisionIndex, replay_sources, row_time  # pyrefly: ignore [missing-import]
-from route_pace_state import state_age_seconds  # pyrefly: ignore [missing-import]
 from route_reserve_state import (  # pyrefly: ignore [missing-import]
     LB_HEALTH_ATTEMPTS,
     LB_HEALTH_RETRY_SECONDS,
@@ -29,13 +28,9 @@ from route_reserve_state import (  # pyrefly: ignore [missing-import]
 from route_seat import fetch_pools  # pyrefly: ignore [missing-import]
 from route_seat_run_import import baseline_outcomes, baseline_path  # pyrefly: ignore [missing-import]
 from route_versioned_rules import (  # pyrefly: ignore [missing-import]
-    CLI_SEAT_HOLD_AFTER_FAILURES,
-    CLI_SEAT_HOLD_SECONDS,
     EXIT_DEGRADED,
     EXIT_OK,
     EXIT_UNROUTABLE,
-    SEAT_PROBE,
-    STATE_MAX_AGE_SECONDS,
     load_table,
     parse_ts,
 )
@@ -363,30 +358,6 @@ def probe_command(name: str, command: list[str], timeout: float) -> dict[str, An
     ok = completed.returncode == 0
     error = None if ok else f"exit {completed.returncode}"
     return probe(name, started, ok=ok, error=error)
-
-
-def apply_cli_seat_holds(seats: dict[str, Any], previous: dict[str, Any]) -> None:
-
-    age = state_age_seconds(previous)
-    fresh = age is not None and age <= STATE_MAX_AGE_SECONDS
-    prior_seats = previous.get("seats") if fresh and isinstance(previous.get("seats"), dict) else {}
-    now = datetime.now(timezone.utc)
-    for seat in SEAT_PROBE:
-        record = seats.get(seat)
-        if not isinstance(record, dict) or record["ok"]:
-            continue
-        prior = prior_seats.get(seat)
-        count = prior.get("failures") if isinstance(prior, dict) else None
-        failures = (count if isinstance(count, int) and not isinstance(count, bool) else 0) + 1
-        record["failures"] = failures
-        if failures < CLI_SEAT_HOLD_AFTER_FAILURES:
-            record["ok"] = True
-            record["note"] = (
-                f"probe failed ({record['error']}); {failures} consecutive failure(s), "
-                f"held only after {CLI_SEAT_HOLD_AFTER_FAILURES}"
-            )
-        else:
-            record["hold_until"] = (now + timedelta(seconds=CLI_SEAT_HOLD_SECONDS)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def learning_entry(class_name: str, action: str, arm_id: str, evidence: dict[str, Any], reason: str) -> dict[str, Any]:

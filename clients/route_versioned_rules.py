@@ -32,10 +32,6 @@ POOL_LOW_HEADROOM = 5.0
 
 DOCTOR_BUDGET_SECONDS = 55.0
 
-CURSOR_TIMEOUT_SECONDS = 10.0
-
-DEVIN_TIMEOUT_SECONDS = 15.0
-
 CODEX_TIMEOUT_SECONDS = 15.0
 
 READ_TIMEOUT_SECONDS = 5.0
@@ -47,12 +43,6 @@ SESSION_WINDOW_MINUTES = 30
 MESSAGE_HEAD_CHARS = 160
 
 STATE_MAX_AGE_SECONDS = 7200
-
-SEAT_PROBE = {"cursor-seat": "cursor-agent", "devin-seat": "devin", "muse-seat-local": "muse"}
-
-CLI_SEAT_HOLD_AFTER_FAILURES = 2
-
-CLI_SEAT_HOLD_SECONDS = 600
 
 ANALYTICS_SESSION_CAP = 20
 
@@ -124,18 +114,6 @@ def alert_path() -> Path:
 
 def ledger_path() -> Path:
     return env_path("ROUTE_LEDGER", Path.home() / ".claude" / "logs" / "dispatch.jsonl")
-
-
-def cursor_command() -> list[str]:
-    import shlex
-
-    return shlex.split(os.environ.get("ROUTE_CURSOR_CMD") or "cursor-agent status")
-
-
-def devin_command() -> list[str]:
-    import shlex
-
-    return shlex.split(os.environ.get("ROUTE_DEVIN_CMD") or "devin auth status")
 
 
 def codex_command() -> list[str]:

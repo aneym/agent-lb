@@ -14,7 +14,6 @@ from route_reserve_state import pool_for_model, utc_stamp  # pyrefly: ignore [mi
 from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     ANALYTICS_SESSION_CAP,
     MESSAGE_HEAD_CHARS,
-    SEAT_PROBE,
     SESSION_WINDOW_MINUTES,
     fail,
     ledger_path,
@@ -150,10 +149,6 @@ def probed_models(table: dict[str, Any]) -> list[str]:
 
 
 def backing_probe(table: dict[str, Any], seat: str, model: str, models: list[str]) -> str:
-    if seat in SEAT_PROBE:
-        return SEAT_PROBE[seat]
-    if model.startswith("cursor-"):
-        return "cursor-agent"
     alias = (table.get("aliases") or {}).get(model) if isinstance(table.get("aliases"), dict) else None
     if model.startswith("gpt-") or (isinstance(alias, dict) and alias.get("vendor") == "openai"):
         return "codex-companion"

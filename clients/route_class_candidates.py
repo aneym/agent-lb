@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from route_anthropic_models import LOW_BAND_MAX_ELIGIBLE, cursor_models, family_alias  # pyrefly: ignore [missing-import]
+from route_anthropic_models import LOW_BAND_MAX_ELIGIBLE, family_alias  # pyrefly: ignore [missing-import]
 from route_pace import TIERS, shadow_pace  # pyrefly: ignore [missing-import]
 from route_pace_state import lease_unavailable, reservation_request, seat_is_up  # pyrefly: ignore [missing-import]
 from route_reserve_state import apply_overrides, pool_for_model, pools_by_id, reserve_state, vendor_for  # pyrefly: ignore [missing-import]
@@ -127,51 +127,11 @@ def class_candidates(
                     audit_unavailable = f"its auditor's pool {audit_pool} is exhausted"
                 elif isinstance(audit_eligible, int) and not isinstance(audit_eligible, bool) and audit_eligible <= 1:
                     audit_unavailable = f"its auditor's pool {audit_pool} is critical: {audit_eligible} eligible"
-                alternate = None
                 if audit_unavailable:
-                    policy = table.get("policy")
-                    via = policy.get("auditor_via") if isinstance(policy, dict) else None
-                    alternate = via.get(audit_pool) if isinstance(via, dict) else None
-                    if isinstance(alternate, dict) and all(
-                        isinstance(alternate.get(key), str) and alternate[key] for key in ("pool", "vendor", "model")
-                    ):
-                        alternate_doc = pools.get(alternate["pool"], {})
-                        alternate_eligible = alternate_doc.get("eligibleAccounts")
-                        critical = (
-                            isinstance(alternate_eligible, int)
-                            and not isinstance(alternate_eligible, bool)
-                            and alternate_eligible <= 1
-                        )
-                        if (
-                            not alternate_doc
-                            or pool_exhausted(alternate_doc)
-                            or critical
-                            or lease_unavailable(
-                                table, {"seat": "cursor-seat", "pool": alternate["pool"]}, pools, leases
-                            )
-                            or not seat_is_up(seats, "cursor-seat")
-                            or alternate["model"] not in cursor_models()
-                        ):
-                            alternate = None
-                        else:
-                            audit_seat = "cursor-seat"
-                    else:
-                        alternate = None
-                    if alternate is None:
-                        return None, audit_unavailable
+                    return None, audit_unavailable
                 if audit_seat and not seat_is_up(seats, audit_seat):
                     return None, f"its auditor seat {audit_seat} is down per routing-state.json"
                 auditor = {**audit_entry, "alias": audit_entry["model"], "model": audit_model, "reason": audit_why}
-                if alternate is not None:
-                    auditor.update(
-                        {
-                            "seat": audit_seat,
-                            "via": alternate["vendor"],
-                            "pool": alternate["pool"],
-                            "model": alternate["model"],
-                            "reason": f"{audit_unavailable}; auditor via {alternate['vendor']} pool {alternate['pool']}",
-                        }
-                    )
             return auditor, None
 
         auditor, audit_gap = resolve_auditor()

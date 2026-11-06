@@ -23,8 +23,6 @@ from route_anthropic_models import (  # pyrefly: ignore [missing-import]
     version_key,
 )
 from route_reserve_state import (  # pyrefly: ignore [missing-import]
-    WORKFLOW_BRIEF_SEATS,
-    WORKFLOW_EFFORT_BRIEF_SEATS,
     chain_effort,
     finish_text,
     same_model,
@@ -220,13 +218,6 @@ def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | No
     model, why = resolve_alias(table, alias, models, entry.get("seat") or "")
     if model is None and why.startswith("pending: "):
         return alias, why
-    if model and family_alias(table, alias) not in table.get("aliases", {}):
-        vendor = {"cursor-seat": "cursor", "devin-seat": "devin", "muse-seat-local": "muse"}.get(entry["seat"])
-        listed = cursor_models() if vendor == "cursor" else (devin_models() if vendor == "devin" else [])
-        if not listed and vendor in ModelState.DEFERRED_DISCOVERY:
-            return model, model_list_pending(vendor)
-        if listed and model not in listed:
-            return None, f"{model} is not listed for {entry['seat']}"
     return model, why
 
 
@@ -293,14 +284,6 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
         raise ValueError(f"{seat} picked retired model {model}")
     opts = seat_opts(seat, model, alias, effort)
     brief = ""
-    if seat in WORKFLOW_BRIEF_SEATS:
-        brief = f"Seat model: {model or alias}\n"
-        if class_name == "verify":
-            brief += "Seat mode: ask\nReviewer instructions: read ~/.claude/agents/verifier.md and follow it.\n"
-        elif entry.get("read_only"):
-            brief += "Seat mode: ask\n"
-    elif seat in WORKFLOW_EFFORT_BRIEF_SEATS:
-        brief = f"Effort: {effort}\n" if effort else ""
     out = {key: entry.get(key) for key in ("rung", "seat", "model", "alias", "vendor", "pool") if entry.get(key)}
     if model:
         out["model"] = model

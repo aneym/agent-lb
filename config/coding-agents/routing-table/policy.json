@@ -66,13 +66,6 @@
         "synthesis"
       ]
     },
-    "auditor_via": {
-      "anthropic-general": {
-        "pool": "cursor-other",
-        "vendor": "cursor",
-        "model": "claude-sonnet-5-5-high"
-      }
-    },
     "pace": {
       "guarded_pools": [
         "anthropic-general",

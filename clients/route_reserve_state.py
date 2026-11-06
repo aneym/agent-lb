@@ -159,17 +159,7 @@ MENU_POOL_FIELDS = (
     "refills",
 )
 
-WORKFLOW_BRIDGE_SEATS = frozenset({"gpt-implementer", "grok-implementer", "gpt-explorer", "sol-consult"})
-
-WORKFLOW_BRIEF_SEATS = frozenset({"cursor-seat", "devin-seat", "muse-seat", "muse-seat-local"})
-
-WORKFLOW_EFFORT_BRIEF_SEATS = frozenset({"codex-sol"})
-
-WORKFLOW_FIXED_FORWARDERS = frozenset({"codex-verifier", "codex-test-runner", "computer-use"})
-
 WORKFLOW_AUTHOR_VENDORS = ("anthropic", "openai", "xai", "cursor", "cognition", "devin", "glm", "kimi")
-
-CCGPT_EFFORTS = ("low", "medium", "high", "xhigh")
 
 WORKFLOW_OPUS_STAGES = ("plan", "review", "judge", "synthesis", "orchestrator")
 
@@ -198,17 +188,10 @@ def finish_text() -> str:
 
 def seat_opts(seat: str, model: str | None, alias: str | None, effort: str | None) -> dict[str, Any]:
     opts: dict[str, Any] = {"agentType": seat}
-    if seat in WORKFLOW_BRIDGE_SEATS:
-        if alias:
-            base = next((alias[: -len(f"-{e}")] for e in CCGPT_EFFORTS if alias.endswith(f"-{e}")), alias)
-            opts["model"] = f"{base}-{effort}" if effort in CCGPT_EFFORTS else alias
-    elif seat in WORKFLOW_BRIEF_SEATS:
-        opts["effort"] = "low"
-    elif seat not in WORKFLOW_EFFORT_BRIEF_SEATS and seat not in WORKFLOW_FIXED_FORWARDERS:
-        if model:
-            opts["model"] = model
-        if effort:
-            opts["effort"] = effort
+    if model:
+        opts["model"] = model
+    if effort:
+        opts["effort"] = effort
     return opts
 
 
@@ -224,11 +207,11 @@ def workflow_quota():
         raise ValueError("invalid factory quota mode")
     return {
         "mode": mode,
-        "default_model": "sol-latest",
+        "default_model": "opus-latest",
         "opus_stages": list(WORKFLOW_OPUS_STAGES),
         "opus_effort": "medium",
         "excluded_work": ["status", "wake", "polling", "single-file"],
-        "maintenance_model": "sol-latest",
+        "maintenance_model": "opus-latest",
         "auto_tighten_used_percent": 70,
     }
 

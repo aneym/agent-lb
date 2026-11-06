@@ -6,8 +6,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from route_anthropic_models import http_get, ledger_now_iso, read_state  # pyrefly: ignore [missing-import]
-from route_build_outcomes import apply_cli_seat_holds, probe_command, probe_lb_health, probe_pools  # pyrefly: ignore [missing-import]
+from route_anthropic_models import http_get, ledger_now_iso  # pyrefly: ignore [missing-import]
+from route_build_outcomes import probe_command, probe_lb_health, probe_pools  # pyrefly: ignore [missing-import]
 from route_quota import print_equivalent_note, print_report_quota  # pyrefly: ignore [missing-import]
 from route_reserve_state import pools_by_id  # pyrefly: ignore [missing-import]
 from route_resolve_one import IMPLEMENT_EVENT, RowKey  # pyrefly: ignore [missing-import]
@@ -28,8 +28,6 @@ from route_seat_states import (  # pyrefly: ignore [missing-import]
 from route_storage import atomic_write  # pyrefly: ignore [missing-import]
 from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     CODEX_TIMEOUT_SECONDS,
-    CURSOR_TIMEOUT_SECONDS,
-    DEVIN_TIMEOUT_SECONDS,
     DOCTOR_BUDGET_SECONDS,
     EXIT_DEGRADED,
     EXIT_OK,
@@ -37,8 +35,6 @@ from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     SESSION_WINDOW_MINUTES,
     alert_path,
     codex_command,
-    cursor_command,
-    devin_command,
     ledger_path,
     load_table,
     now_iso,
@@ -127,8 +123,6 @@ def command_doctor(args: argparse.Namespace) -> int:
     probes: list[dict[str, Any]] = [probe_lb_health()]
     pools_probe, pools_document = probe_pools()
     probes.append(pools_probe)
-    probes.append(probe_command("cursor-agent", cursor_command(), CURSOR_TIMEOUT_SECONDS))
-    probes.append(probe_command("devin", devin_command(), DEVIN_TIMEOUT_SECONDS))
     probes.append(probe_command("codex-companion", codex_command(), CODEX_TIMEOUT_SECONDS))
 
     traffic = recent_model_traffic()
@@ -145,7 +139,6 @@ def command_doctor(args: argparse.Namespace) -> int:
 
     by_name = {probe["name"]: probe for probe in probes}
     seats = seat_states(table, by_name, models)
-    apply_cli_seat_holds(seats, read_state())
     state = {
         "ts": ledger_now_iso(),
         "seats": seats,
