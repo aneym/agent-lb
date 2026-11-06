@@ -27,7 +27,7 @@ from app.core.anthropic.models import (
     cache_creation_1h_tokens,
 )
 from app.core.anthropic.parsing import collect_usage_from_chunk as _collect_usage_from_chunk
-from app.core.anthropic.quota_headers import capture_unified_headers, exhausted_account_reset
+from app.core.anthropic.quota_headers import capture_unified_headers
 from app.core.anthropic.quota_headers import parse_reset_epoch as _parse_reset_epoch
 from app.core.anthropic.quota_headers import parse_unified_utilization as _parse_unified_utilization
 from app.core.anthropic.quota_keys import model_quota_key
@@ -69,6 +69,11 @@ from app.modules.proxy.account_warmup import WarmupBusy, admitted_http_session
 from app.modules.proxy.anthropic_cache_policy import upgrade_helper_cache as _upgrade_helper_cache
 from app.modules.proxy.anthropic_outbound_headers import build_anthropic_headers
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError, require_claude_code_client
+from app.modules.proxy.anthropic_rate_limits import (
+    get_header,
+    rate_limit_error_from_response,
+    reset_at_from_rate_limit_error,
+)
 from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, overloaded_backoff_jitter
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
 from app.modules.proxy.anthropic_transport import AnthropicTransport
@@ -93,7 +98,6 @@ _STREAM_CHUNK_SIZE = 8192
 _MAX_SELECTION_ATTEMPTS = 4
 _ANTHROPIC_COOLDOWN_WINDOW = "primary"
 _ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
-_ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
 _MIRROR_TOKEN_UNAVAILABLE_COOLDOWN_SECONDS = 60
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 
@@ -689,7 +693,37 @@ class AnthropicProxyService(AnthropicTransport):
                                     continue
                                 if resp.status == 429:
                                     error_message = await _read_error_message(resp)
-                                    rate_limit_error = _rate_limit_error_from_response(resp, error_message)
+                                    rate_limit_error = rate_limit_error_from_response(resp, error_message)
+                                    if provider_name == "kimi" and "monthly usage limit" in error_message.lower():
+                                        async with self._repo_factory() as repos:
+                                            monthly = await repos.usage.latest_entry_for_account(
+                                                account.id, window="monthly"
+                                            )
+                                            now = datetime.now(timezone.utc)
+                                            next_month = now.replace(
+                                                year=now.year + (now.month == 12),
+                                                month=now.month % 12 + 1,
+                                                day=1,
+                                                hour=0,
+                                                minute=0,
+                                                second=0,
+                                                microsecond=0,
+                                            )
+                                            reset_at = (
+                                                monthly.reset_at
+                                                if monthly and monthly.reset_at and monthly.reset_at > now.timestamp()
+                                                else int(next_month.timestamp())
+                                            )
+                                            rate_limit_error["resets_at"] = reset_at
+                                            rate_limit_error["quota_reset_at"] = reset_at
+                                            await repos.usage.add_entry(
+                                                account.id,
+                                                provider="kimi",
+                                                window="monthly",
+                                                used_percent=100.0,
+                                                reset_at=reset_at,
+                                                window_minutes=monthly.window_minutes if monthly else 43200,
+                                            )
                                     await self._record_quota_cooldown(
                                         account,
                                         quota_key=quota_key,
@@ -1806,7 +1840,7 @@ class AnthropicProxyService(AnthropicTransport):
         )
 
     async def _record_quota_cooldown(self, account: Account, *, quota_key: str, error: UpstreamError) -> None:
-        reset_at = _reset_at_from_rate_limit_error(error)
+        reset_at = reset_at_from_rate_limit_error(error)
         now = int(time.time())
         window_minutes = max(1, int((reset_at - now + 59) / 60)) if reset_at is not None else None
         try:
@@ -2596,11 +2630,11 @@ async def _release_upstream_response(resp: object) -> None:
 
 
 def _extra_usage_tripwire_header(headers: Mapping[str, str]) -> str | None:
-    overage_in_use = _get_header(headers, _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER)
+    overage_in_use = get_header(headers, _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER)
     if isinstance(overage_in_use, str) and overage_in_use.strip().lower() == "true":
         return _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER
     for name in _ANTHROPIC_UNIFIED_STATUS_HEADERS:
-        value = _get_header(headers, name)
+        value = get_header(headers, name)
         if value is None:
             continue
         normalized = value.strip().lower()
@@ -2613,20 +2647,20 @@ def _extra_usage_tripwire_error(headers: Mapping[str, str]) -> UpstreamError | N
     if not _unified_limit_exhausted(headers):
         return None
     error = UpstreamError(message="Anthropic unified limit exhausted; upstream is billing extra-usage credits")
-    reset_at = _parse_reset_epoch(_get_header(headers, "anthropic-ratelimit-unified-reset"))
+    reset_at = _parse_reset_epoch(get_header(headers, "anthropic-ratelimit-unified-reset"))
     if reset_at is None:
-        reset_at = _parse_reset_epoch(_get_header(headers, "anthropic-ratelimit-unified-5h-reset"))
+        reset_at = _parse_reset_epoch(get_header(headers, "anthropic-ratelimit-unified-5h-reset"))
     if reset_at is not None:
         error["resets_at"] = reset_at
     return error
 
 
 def _unified_limit_exhausted(headers: Mapping[str, str]) -> bool:
-    overage_in_use = _get_header(headers, _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER)
+    overage_in_use = get_header(headers, _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER)
     if isinstance(overage_in_use, str) and overage_in_use.strip().lower() == "true":
         return True
     for name in _ANTHROPIC_UNIFIED_STATUS_HEADERS:
-        value = _get_header(headers, name)
+        value = get_header(headers, name)
         if value is None:
             continue
         normalized = value.strip().lower()
@@ -2634,70 +2668,3 @@ def _unified_limit_exhausted(headers: Mapping[str, str]) -> bool:
         if normalized and normalized not in _ANTHROPIC_UNIFIED_ALLOWED_STATUSES:
             return True
     return False
-
-
-def _rate_limit_error_from_response(resp: aiohttp.ClientResponse, message: str) -> UpstreamError:
-    error = UpstreamError(message=message)
-    quota_reset = exhausted_account_reset(resp.headers)
-    if quota_reset is not None:
-        error["quota_reset_at"] = quota_reset
-    reset_at = quota_reset or _anthropic_rate_limit_reset_at(resp.headers)
-    if reset_at is not None:
-        error["resets_at"] = reset_at
-    retry_after = _retry_after_seconds(resp.headers)
-    if retry_after is not None:
-        error["resets_in_seconds"] = retry_after
-    return error
-
-
-def _reset_at_from_rate_limit_error(error: UpstreamError) -> int:
-    reset_at = error.get("resets_at")
-    if isinstance(reset_at, int | float):
-        return int(reset_at)
-    reset_in_seconds = error.get("resets_in_seconds")
-    if isinstance(reset_in_seconds, int | float):
-        return int(time.time() + max(0, reset_in_seconds))
-    return int(time.time() + _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS)
-
-
-def _anthropic_rate_limit_reset_at(headers: Mapping[str, str]) -> int | None:
-    reset_candidates = [
-        "anthropic-ratelimit-unified-reset",
-        "anthropic-ratelimit-unified-overage-reset",
-        "anthropic-ratelimit-requests-reset",
-        "anthropic-ratelimit-tokens-reset",
-        "anthropic-ratelimit-input-tokens-reset",
-        "anthropic-ratelimit-output-tokens-reset",
-        "anthropic-priority-input-tokens-reset",
-        "anthropic-priority-output-tokens-reset",
-        "anthropic-fast-input-tokens-reset",
-        "anthropic-fast-output-tokens-reset",
-    ]
-    epochs = [_parse_reset_epoch(_get_header(headers, name)) for name in reset_candidates]
-    future_epochs = [epoch for epoch in epochs if epoch is not None and epoch > int(time.time())]
-    if future_epochs:
-        return min(future_epochs)
-    past_epochs = [epoch for epoch in epochs if epoch is not None]
-    return max(past_epochs) if past_epochs else None
-
-
-def _retry_after_seconds(headers: Mapping[str, str]) -> int | None:
-    retry_after = _get_header(headers, "retry-after")
-    if retry_after is None:
-        return None
-    try:
-        return max(0, int(float(retry_after)))
-    except ValueError:
-        return None
-
-
-def _get_header(headers: Mapping[str, str], name: str) -> str | None:
-    if hasattr(headers, "get"):
-        value = headers.get(name)
-        if value is not None:
-            return value
-    lowered = name.lower()
-    for key, value in headers.items():
-        if key.lower() == lowered:
-            return value
-    return None
