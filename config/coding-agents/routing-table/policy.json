@@ -11,14 +11,14 @@
   "policy": {
     "concurrency": {
       "per_account": {
-        "devin": 1,
-        "cursor": 2,
-        "openai": 3,
-        "anthropic": 4,
-        "kimi": 2,
-        "glm": 2
+        "devin": 4,
+        "cursor": 16,
+        "openai": 64,
+        "anthropic": 64,
+        "kimi": 16,
+        "glm": 16
       },
-      "default": 2,
+      "default": 16,
       "ttl_s": 120,
       "heartbeat_s": 30,
       "note": "2026-10-06 (A4): live reservations per capacity key may not exceed eligible accounts x per_account. 2026-10-06 (a4d-6): a 120 s TTL renewed every 30 s is the backstop for a hold whose run could not be confirmed gone."
