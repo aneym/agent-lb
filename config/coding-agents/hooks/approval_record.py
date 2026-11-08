@@ -24,6 +24,7 @@ NAMED = {
     "browser": re.compile(r"\b(?:browsers?|chrome|tabs?)\b", re.I),
     "stash": re.compile(r"\bstash", re.I),
     "delete": re.compile(r"\b(?:delet\w*|remov\w*|rm|clean\w*)\b", re.I),
+    "desktop": re.compile(r"\b(?:open\w*|launch\w*|show\w*)\b", re.I),
 }
 NAME = re.compile(r"(?:owner|alex)-[A-Za-z0-9._-]+\.md")
 UUID = re.compile(r"(?<![0-9a-f-])(?:mcp:)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f-])")
