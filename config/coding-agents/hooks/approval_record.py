@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 import re
+import socket
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -83,21 +85,72 @@ def moment(value):
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
 
-def messages(ids):
+PEERS = ("ax102", "ax42")
+PEER_QUERY = """
+import json, os, sqlite3, sys
+from pathlib import Path
+store = Path(os.path.expanduser("~")) / ".t3/userdata/statev2.sqlite"
+keys = sys.argv[1:]
+rows = []
+if store.is_file() and keys:
+    with sqlite3.connect(store.as_uri() + "?mode=ro", uri=True, timeout=3) as conn:
+        rows = [r[0] for r in conn.execute(
+            "SELECT payload_json FROM orchestration_v2_projection_messages WHERE role='user' AND message_id IN ("
+            + ",".join("?" * len(keys)) + ")", keys)]
+print(json.dumps(rows))
+"""
+
+
+def local_rows(keys):
     store = Path(os.path.expanduser("~")) / ".t3/userdata/statev2.sqlite"
     if not store.is_file():
-        raise Refused("this host has no T3 store to check the evidence against")
-    keys = sorted(ids)
+        return []
     marks = ",".join("?" * len(keys))
     with sqlite3.connect(store.as_uri() + "?mode=ro", uri=True, timeout=3) as conn:
-        rows = conn.execute(
-            f"SELECT payload_json FROM orchestration_v2_projection_messages WHERE role='user' AND message_id IN ({marks})",
-            keys,
-        ).fetchall()
-    found = []
-    for (payload,) in rows:
+        return [
+            payload
+            for (payload,) in conn.execute(
+                f"SELECT payload_json FROM orchestration_v2_projection_messages WHERE role='user' AND message_id IN ({marks})",
+                keys,
+            )
+        ]
+
+
+def peer_rows(keys):
+    me = socket.gethostname().split(".")[0].lower()
+    peers = os.environ.get("APPROVAL_T3_PEERS", " ".join(PEERS)).split()
+    rows = []
+    for peer in peers:
+        if peer.lower() == me:
+            continue
+        try:
+            done = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", peer, "python3", "-", *keys],
+                input=PEER_QUERY,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            if done.returncode == 0:
+                rows += json.loads(done.stdout or "[]")
+        except (OSError, subprocess.SubprocessError, ValueError):
+            continue
+    return rows
+
+
+def messages(ids):
+    keys = sorted(ids)
+    rows = local_rows(keys)
+    if len(rows) < len(keys):
+        rows += peer_rows(keys)
+    found, seen = [], set()
+    for payload in rows:
         message = json.loads(payload)
+        if message.get("id") in seen:
+            continue
         if message.get("createdBy") == "user" and message.get("creationSource") in SENDERS:
+            seen.add(message.get("id"))
             found.append(message)
     return found
 
