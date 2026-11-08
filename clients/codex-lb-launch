@@ -21,7 +21,7 @@ import tomllib
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
-DEFAULT_RATE_MBPS = 40.0
+DEFAULT_RATE_MBPS = 0.0
 DEFAULT_BURST_SECONDS = 0.05
 IO_QUANTUM_BYTES = 16 * 1024
 MAX_HEADER_BYTES = 64 * 1024
