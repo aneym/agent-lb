@@ -21,6 +21,8 @@ DEFAULT_MODELS = frozenset(
         "claude-fable-5[1m]",
         "claude-fable-5-1",
         "claude-fable-5-1[1m]",
+        "claude-fable-5-2",
+        "claude-fable-5-2[1m]",
         "claude-mythos-5",
         "claude-planner",
         "claude-opus-4-6",

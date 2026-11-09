@@ -19,7 +19,7 @@ from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 
-_FABLE_PROBE_MODEL = "claude-fable-5-1"
+_FABLE_PROBE_MODEL = "claude-fable-5-2"
 
 
 ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"

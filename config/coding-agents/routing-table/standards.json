@@ -13,19 +13,19 @@
     },
     "plan": {
       "seat": "planner",
-      "model": "opus-latest",
-      "effort": "medium",
+      "model": "fable-latest",
+      "effort": "high",
       "explore": false,
       "authority": "architecture",
-      "evidence": "E19 Opus medium 9/20 = high 9/20, $0.78 vs $1.03 per accepted; Sol fallback removed, under reserve plans WAIT"
+      "evidence": "Talk, lead and planning seats run on Fable 5.2 high; all code and task runs on Opus 5.5 (Alex, 2026-11-09 ~20:22Z; record alex-fable-5-2-split-2026-11-09.md)"
     },
     "lane": {
       "seat": "lane-lead",
-      "model": "opus-latest",
-      "effort": "medium",
+      "model": "fable-latest",
+      "effort": "high",
       "explore": false,
       "authority": "architecture",
-      "evidence": "models.md 2026-10-14: top-level tabs, lane leads and workflow orchestrators run opus-latest medium"
+      "evidence": "Talk, lead and planning seats run on Fable 5.2 high; all code and task runs on Opus 5.5 (Alex, 2026-11-09 ~20:22Z; record alex-fable-5-2-split-2026-11-09.md)"
     },
     "review": {
       "seat": "plan-reviewer",

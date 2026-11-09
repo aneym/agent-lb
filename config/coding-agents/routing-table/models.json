@@ -130,7 +130,7 @@
     "fable-latest": {
       "vendor": "anthropic",
       "family": "fable",
-      "pinned": "claude-fable-5-1",
+      "pinned": "claude-fable-5-2",
       "harness": "fable",
       "fallback": "opus-latest"
     },
@@ -162,6 +162,29 @@
     "gpt-5-*",
     "gpt-5"
   ],
+  "readmitted": {
+    "fable-orchestrator": {
+      "alias": "fable-latest",
+      "patterns": [
+        "claude-fable-*",
+        "fable"
+      ]
+    },
+    "lane-lead": {
+      "alias": "fable-latest",
+      "patterns": [
+        "claude-fable-*",
+        "fable"
+      ]
+    },
+    "planner": {
+      "alias": "fable-latest",
+      "patterns": [
+        "claude-fable-*",
+        "fable"
+      ]
+    }
+  },
   "off_default": [],
   "older_allowed": {}
 }

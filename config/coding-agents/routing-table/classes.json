@@ -36,9 +36,9 @@
       "chain": [
         {
           "seat": "planner",
-          "model": "opus-latest",
+          "model": "fable-latest",
           "vendor": "anthropic",
-          "effort": "medium"
+          "effort": "high"
         }
       ]
     },

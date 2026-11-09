@@ -8,17 +8,21 @@
   "seats": {
     "planner": {
       "vendor": "anthropic",
-      "box": null
+      "box": null,
+      "model": "fable-latest",
+      "effort": "high"
     },
     "plan-reviewer": {
       "vendor": "anthropic",
-      "box": null
+      "box": null,
+      "model": "opus-latest",
+      "effort": "medium"
     },
     "fable-orchestrator": {
       "vendor": "anthropic",
       "box": null,
       "model": "fable-latest",
-      "effort": "medium"
+      "effort": "high"
     },
     "Explore": {
       "vendor": "anthropic",
@@ -30,7 +34,9 @@
       "vendor": "anthropic",
       "box": {
         "adapter": "claude-code"
-      }
+      },
+      "model": "opus-latest",
+      "effort": "high"
     },
     "opus-seat-full": {
       "vendor": "anthropic",

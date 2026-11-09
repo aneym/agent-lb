@@ -161,15 +161,16 @@ def _reset_count(raw: dict[str, Any] | None) -> int | None:
 
 
 def _fable_scoped_weekly_entry(limits: list[AnthropicLimitEntry] | None) -> AnthropicLimitEntry | None:
-    if not limits:
+    fable_entries = [entry for entry in limits or () if entry.kind == "weekly_scoped" and _is_fable_scope(entry)]
+    if not fable_entries:
         return None
-    for entry in limits:
-        if entry.kind != "weekly_scoped":
-            continue
-        display_name = entry.scope.model.display_name if entry.scope and entry.scope.model else None
-        if display_name is not None and display_name.strip().lower() == "fable":
-            return entry
-    return None
+    return max(fable_entries, key=lambda entry: entry.percent if entry.percent is not None else -1.0)
+
+
+def _is_fable_scope(entry: AnthropicLimitEntry) -> bool:
+    model = entry.scope.model if entry.scope else None
+    names = (model.display_name, model.id) if model else ()
+    return any(name is not None and name.strip().lower().startswith(("fable", "claude-fable")) for name in names)
 
 
 def _fable_scoped_weekly_window(entry: AnthropicLimitEntry | None) -> UsageWindow | None:

@@ -54,8 +54,6 @@ def unpinned(text: str) -> str:
 
 def readmitted(seat: str) -> tuple:
 
-    if seat == "fable-orchestrator":
-        return ("claude-fable-*", "fable-latest*")
     try:
         entry = (json.loads(read(SOURCE / "routing-table" / "models.json") or "{}").get("readmitted") or {}).get(seat)
     except (json.JSONDecodeError, AttributeError):
@@ -76,7 +74,7 @@ def frontmatter_model(text: str) -> str | None:
 
 
 settings = verify_installation(SOURCE_ONLY, HOME, SOURCE, CANONICAL, check, read, unpinned, frontmatter_model, forbidden, readmitted, MARKER_START, MARKER_END, MANAGED)
-for name in ("planner", "plan-reviewer", "frontend-designer"):
+for name in ("plan-reviewer", "frontend-designer"):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
     check(model == "opus", f"{name} runs on the newest Opus via `model: opus` (got {model})")
 
@@ -96,8 +94,12 @@ if not SOURCE_ONLY:
     strip = lambda table: {key: value for key, value in table.items() if key != "overrides"}  # noqa: E731
     check(bool(source_table) and strip(live_table) == strip(source_table), f"{table_path} matches the source table")
 classes = source_table.get("classes", {})
-chain_models = [entry.get("model", "") for spec in classes.values() for entry in spec.get("chain", [])]
-check(bool(chain_models) and not any(forbidden(m) for m in chain_models), "no routing-table class runs on Fable")
+chain_entries = [entry for spec in classes.values() for entry in spec.get("chain", [])]
+check(
+    bool(chain_entries)
+    and not any(forbidden(e.get("model", "")) and not readmitted(e.get("seat", "")) for e in chain_entries),
+    "no routing-table class runs on Fable outside a readmitted seat",
+)
 check(not any(forbidden(key) for key in source_table.get("pools", {})), "no routing-table pool maps a Fable model")
 
 if not SOURCE_ONLY:
@@ -111,7 +113,7 @@ if not SOURCE_ONLY:
     )
 plan_chain = [entry.get("model") for entry in classes.get("plan", {}).get("chain", [])]
 check(
-    plan_chain == ["opus-latest"], f"plan uses only opus-latest, without a Sol fallback ({plan_chain})"
+    plan_chain == ["fable-latest"], f"plan uses only fable-latest, without a Sol fallback ({plan_chain})"
 )
 
 
@@ -317,9 +319,9 @@ if not SOURCE_ONLY:
             except json.JSONDecodeError:
                 picked = {}
             model = picked.get("model") or ""
-            ok = bool(model) and not forbidden(model) and stale_reason(model) is None
+            ok = bool(model) and (not forbidden(model) or bool(readmitted(picked.get("seat") or ""))) and stale_reason(model) is None
             if task_class == "plan":
-                ok = ok and picked.get("alias") in ("opus-latest", "sol-latest")
+                ok = ok and picked.get("alias") == "fable-latest"
             check(ok, f"route pick {task_class} -> {picked.get('seat')}/{model or result.stderr.strip()}")
     else:
         check(False, f"route CLI exists at {route_bin}")

@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import MutableMapping
 from typing import Any
 
+from app.core.anthropic.oauth import ANTHROPIC_PROVIDER_NAME
+from app.core.providers.anthropic_strict_params import shape_strict_params
 from app.core.providers.kimi import KIMI_PROVIDER_NAME
 from app.core.providers.kimi_tool_changes import drop_tool_change_betas, flatten_tool_changes
 from app.core.providers.kimi_tool_history import normalize_tool_history
@@ -17,4 +19,6 @@ def prepare_provider_body(
     if provider_name == KIMI_PROVIDER_NAME:
         drop_tool_change_betas(headers)
         return normalize_tool_history(flatten_tool_changes(body))
+    if provider_name == ANTHROPIC_PROVIDER_NAME:
+        return shape_strict_params(model, body)
     return body

@@ -28,7 +28,7 @@
       },
       "fable-latest": {
         "providerInstanceId": "claudeAgent",
-        "model": "claude-fable-5-1",
+        "model": "claude-fable-5-2",
         "effort_option": "effort"
       },
       "haiku-latest": {

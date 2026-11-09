@@ -320,6 +320,7 @@ def policy_snapshot(table: dict[str, Any]) -> dict[str, Any]:
         "background_model": pinned_model(table, background) or background,
         "background_model_alias": background,
         "explore_enabled": bool((table.get("explore") or {}).get("enabled")),
+        "readmitted": sorted((table.get("readmitted") or {}) if isinstance(table.get("readmitted"), dict) else ()),
         "seats": dict(sorted(seats.items())),
     }
 
