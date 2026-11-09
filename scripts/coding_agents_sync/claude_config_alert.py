@@ -1,9 +1,11 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
 STATE = Path(".agent-lb/claude-config-alert.json")
 BLOCKING = ("dirty", "diverged", "off_main", "failed")
+ALERT_TO = "factory"
 
 
 def notify(home, outcome, kept):
@@ -34,8 +36,12 @@ def notify(home, outcome, kept):
         text=True,
         timeout=60,
         check=False,
+        env=dict(os.environ, ORCH_WATCH_ALERT_TO=os.environ.get("ORCH_WATCH_ALERT_TO") or ALERT_TO),
     )
     if sent.returncode:
-        return
+        reason = (sent.stderr or sent.stdout).strip().splitlines()
+        raise subprocess.SubprocessError(
+            f"orch-watch-alert exited {sent.returncode}: {(reason[-1] if reason else '')[:300]}"
+        )
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(signature))
