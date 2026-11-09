@@ -8,7 +8,7 @@ Every turn in a T3 thread ends through the a0 skill (`~/.agents/skills/a0/SKILL.
 
 Main checkouts stay on the default branch; other branches get a worktree (`git worktree add <repos>/<repo>-wt/<topic> -b <branch> origin/main`, or `delegate_task` with `isolation: "worktree"`). Never `git switch` a shared checkout. Landing: agent-rails via `scripts/studio_merge.py merge <branch>`; other repos fast-forward to origin/main.
 
-Never free a port with `lsof -t … | xargs kill`, `pkill -9 -f` or `killall -9` (it killed Tailscale on 2026-10-16). Use `port-free <port>` or `kill <pid>` for a pid you started.
+Never free a port with `lsof -t … | xargs kill`, `pkill -9 -f` or `killall -9` (it killed Tailscale on 2026-10-16). Use `port-free <port>` or `kill <pid>` for a pid you started. Signal only PIDs or process groups you started: never a parent PID, a PID found through ps or lsof, or a broad pkill; leave orphans to factory-worker-reap.service.
 
 Machines and browser: `~/.agents/shared/MACHINES.md`. CLIs: `~/.agents/shared/CLI-INDEX.md`. Tests: load `test-audit` before writing or changing one. Research Alex asks for: run `x-pass "<question>"` once.
 
