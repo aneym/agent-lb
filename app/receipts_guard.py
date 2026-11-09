@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 
 from app.core.thread_delivery import send
 from app.core.config.service_database import LOCAL_DATABASE_URL, primary_database_url
@@ -24,6 +25,15 @@ def receipt_count(url: str, minutes: int) -> int:
     return int(row[0]) if row else 0
 
 
+def read_count(url: str, minutes: int, attempts: int = 3, pause: float = 30.0) -> int:
+    for _ in range(attempts - 1):
+        try:
+            return receipt_count(url, minutes)
+        except Exception:
+            time.sleep(pause)
+    return receipt_count(url, minutes)
+
+
 def alert(target: str, sender: str, host: str, problem: str) -> int:
     text = (
         f"agent-lb receipts guard on {host}: {problem}. Token and efficiency audits read empty until this clears. "
@@ -39,13 +49,13 @@ def alert(target: str, sender: str, host: str, problem: str) -> int:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Post to a lane when agent-lb receipts stop arriving.")
     parser.add_argument("--minutes", type=int, default=60)
-    parser.add_argument("--to", default="rails")
+    parser.add_argument("--to", default="factory")
     parser.add_argument("--from", dest="sender", default="agentlb-receipts")
     args = parser.parse_args(argv)
     host = socket.gethostname().split(".")[0]
     url = os.environ.get("AGENT_LB_DATABASE_URL") or primary_database_url() or LOCAL_DATABASE_URL
     try:
-        count = receipt_count(url, args.minutes)
+        count = read_count(url, args.minutes)
     except Exception as exc:
         problem = f"cannot read the primary receipts database ({type(exc).__name__})"
     else:

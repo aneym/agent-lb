@@ -65,7 +65,7 @@ UNITS="$HOME/.config/systemd/user"
 mkdir -p "$UNITS"
 cat > "$UNITS/agent-lb-receipts-guard.service" <<UNIT
 [Unit]
-Description=agent-lb receipts guard: post to organizer when request_logs receipts stop for an hour
+Description=agent-lb receipts guard: post to Factory when request_logs receipts stop for an hour
 
 [Service]
 Type=oneshot
