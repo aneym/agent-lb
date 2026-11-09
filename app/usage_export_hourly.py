@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
+from app.usage_export_sql import rows
+
 SCHEMA = "agent-lb-usage-hourly/1"
 HOURS = 48
 SUMMARY_HOURS = 24
@@ -76,12 +78,6 @@ def _metrics(row: dict[str, Any]) -> dict[str, Any]:
     return {name: out[name] for name in METRICS}
 
 
-def _rows(cursor: Any, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-    cursor.execute(sql, params)
-    columns = [column.name for column in cursor.description]
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
-
-
 def _by_model(cursor: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -91,7 +87,7 @@ def _by_model(cursor: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
             "first_at": _iso(row["first_at"]),
             "last_at": _iso(row["last_at"]),
         }
-        for row in _rows(cursor, _BY_MODEL_SQL, params)
+        for row in rows(cursor, _BY_MODEL_SQL, params)
     ]
 
 
@@ -114,7 +110,7 @@ def build(cursor: Any, end: datetime, source: str, generated_at: str) -> dict[st
             "account": row["account"],
             **_metrics(row),
         }
-        for row in _rows(cursor, _BUCKETS_SQL, window)
+        for row in rows(cursor, _BUCKETS_SQL, window)
     ]
     by_model = _by_model(cursor, window)
     by_model_24h = _by_model(cursor, summary_window)

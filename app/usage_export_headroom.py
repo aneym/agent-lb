@@ -3,12 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app import usage_export_burn
+from app.usage_export_sql import rows
+
 SCHEMA = "agent-lb-headroom/1"
 FRESH_MINUTES = 30
 WEEKLY_HEADROOM_PERCENT = 95.0
 FABLE_QUOTA_KEY = "anthropic_fable_scoped_weekly"
-FABLE_MODEL = "claude-fable-5-2"
-FABLE_RATE_HOURS = (1, 6)
 _BLOCKED_STATUSES = {"reauth_required", "deactivated", "paused"}
 _BLOCKED_REASON = "anthropic_oauth_organization_blocked"
 
@@ -46,12 +47,6 @@ CROSS JOIN LATERAL (
 WHERE a.provider = 'anthropic'
 """
 
-_FABLE_COST_SQL = """
-SELECT coalesce(sum(cost_usd), 0) AS cost_usd, count(*) AS requests, count(*) FILTER (WHERE cost_usd IS NULL) AS rows_without_cost
-FROM request_logs
-WHERE deleted_at IS NULL AND model = %(model)s AND requested_at >= %(start)s AND requested_at < %(end)s
-"""
-
 
 def _iso(value: datetime | None) -> str | None:
     if value is None:
@@ -69,18 +64,22 @@ def _pct(value: float | None) -> float | None:
     return None if value is None else round(float(value), 2)
 
 
-def _rows(cursor: Any, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    cursor.execute(sql, params or {})
-    columns = [column.name for column in cursor.description]
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
-
-
-def _usable(account: dict[str, Any], five_hour: dict[str, Any] | None, weekly: dict[str, Any] | None) -> bool:
+def _eligible(account: dict[str, Any]) -> bool:
     if str(account["status"]).lower() in _BLOCKED_STATUSES:
         return False
     if (account["subscription_status"] or "").strip().lower() == "canceled":
         return False
-    if account["deactivation_reason"] == _BLOCKED_REASON:
+    return account["deactivation_reason"] != _BLOCKED_REASON
+
+
+def _points_left(account: dict[str, Any], weekly: dict[str, Any] | None) -> float:
+    if weekly is None or not _eligible(account):
+        return 0.0
+    return round(max(0.0, 100.0 - float(weekly["used_percent"])), 2)
+
+
+def _usable(account: dict[str, Any], five_hour: dict[str, Any] | None, weekly: dict[str, Any] | None) -> bool:
+    if not _eligible(account):
         return False
     if five_hour is None or weekly is None:
         return False
@@ -116,6 +115,7 @@ def _entry(
         "five_hour_used_pct": _pct(five_hour["used_percent"]) if five_hour else None,
         "five_hour_resets": _epoch(five_hour["reset_at"]) if five_hour else None,
         "limits_recorded_at": _iso(min(recorded)) if recorded else None,
+        "weekly_all_points_left": _points_left(account, weekly),
         "usable_now": _usable(account, five_hour, weekly),
         "note": _note(account, five_hour, weekly),
     }
@@ -135,27 +135,13 @@ def _summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _fable_burn(cursor: Any, now: datetime) -> dict[str, Any]:
-    burn: dict[str, Any] = {"model": FABLE_MODEL, "basis": "stored cost_usd of request_logs rows, every status"}
-    for hours in FABLE_RATE_HOURS:
-        params = {"model": FABLE_MODEL, "start": now - timedelta(hours=hours), "end": now}
-        row = _rows(cursor, _FABLE_COST_SQL, params)[0]
-        burn[f"last_{hours}h"] = {
-            "hours": hours,
-            "cost_usd": round(float(row["cost_usd"]), 4),
-            "usd_per_hour": round(float(row["cost_usd"]) / hours, 4),
-            "requests": int(row["requests"]),
-            "rows_without_cost": int(row["rows_without_cost"]),
-        }
-    return burn
-
-
 def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[str, Any]:
     since = now - timedelta(minutes=FRESH_MINUTES)
-    accounts = _rows(cursor, _ACCOUNTS_SQL)
-    windows = {(row["id"], row["window_name"]): row for row in _rows(cursor, _WINDOWS_SQL, {"since": since})}
-    fable = {row["id"]: row for row in _rows(cursor, _FABLE_SQL, {"since": since, "quota_key": FABLE_QUOTA_KEY})}
+    accounts = rows(cursor, _ACCOUNTS_SQL)
+    windows = {(row["id"], row["window_name"]): row for row in rows(cursor, _WINDOWS_SQL, {"since": since})}
+    fable = {row["id"]: row for row in rows(cursor, _FABLE_SQL, {"since": since, "quota_key": FABLE_QUOTA_KEY})}
     entries = [_entry(account, windows, fable.get(account["id"])) for account in accounts]
+    burn = usage_export_burn.apply(cursor, now, [account["id"] for account in accounts], entries)
     return {
         "schema": SCHEMA,
         "generated_at": generated_at,
@@ -170,7 +156,8 @@ def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[st
         },
         "usable_rule": "status not reauth_required, deactivated or paused; subscription not canceled; "
         f"both windows read in the last {FRESH_MINUTES} min; 5-hour and weekly_all under 100%",
-        "fable_usd_per_hour": _fable_burn(cursor, now),
+        "fable_usd_per_hour": usage_export_burn.fable_usd_per_hour(cursor, now),
+        **burn,
         "accounts_now": entries,
         "pool_summary": _summary(entries),
     }

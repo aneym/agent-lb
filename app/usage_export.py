@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app import usage_export_headroom, usage_export_hourly
+from app import usage_export_alert, usage_export_headroom, usage_export_hourly
 from app.core.config.service_database import LOCAL_DATABASE_URL, primary_database_url
 
 USAGE_FILE = "usage-48h.json"
@@ -98,6 +98,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Write agent-lb hourly usage and Anthropic headroom as JSON files.")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--push", help="rsync destination host:dir for the two files")
+    parser.add_argument("--alert-state", type=Path, help="state file for the low pool headroom alert to factory")
     args = parser.parse_args(argv)
     host = socket.gethostname().split(".")[0]
     url = os.environ.get("AGENT_LB_DATABASE_URL") or primary_database_url() or LOCAL_DATABASE_URL
@@ -107,6 +108,11 @@ def main(argv: list[str] | None = None) -> None:
         paths = [write_atomic(args.out, USAGE_FILE, usage), write_atomic(args.out, HEADROOM_FILE, headroom)]
         if args.push:
             push(paths, args.push)
+        alert = (
+            usage_export_alert.check(headroom, args.alert_state, usage["generated_at"])
+            if args.alert_state
+            else "alert: off"
+        )
     except Exception as exc:
         print(f"usage export: failed ({type(exc).__name__}: {str(exc)[:400]})", file=sys.stderr)
         raise SystemExit(1) from None
@@ -114,7 +120,7 @@ def main(argv: list[str] | None = None) -> None:
     print(
         f"usage export: generated_at {usage['generated_at']} buckets {len(usage['buckets'])} "
         f"accounts {len(headroom['accounts_now'])}; {sizes}; to {args.push or args.out}; "
-        f"wall {time.monotonic() - started:.2f} s cpu {_cpu_seconds():.2f} s",
+        f"{alert}; wall {time.monotonic() - started:.2f} s cpu {_cpu_seconds():.2f} s",
         flush=True,
     )
 

@@ -11,21 +11,23 @@ if [[ "$(hostname -s)" == "$TARGET_HOST" ]]; then
 else
   ARGS=(--out "$LOGS/usage-export" --push "$TARGET_HOST:$TARGET_DIR")
 fi
+ARGS+=(--alert-state "$LOGS/usage-export-alert.json")
+SEND_PATH="$HOME/.local/bin:$HOME/.agent-rails/factory-runtime/bin"
 
 if [[ "$(uname)" == Darwin ]]; then
   LABEL=com.agentlb.usage-export
   PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-  python3 - "$PLIST" "$RUNTIME" "$LOGS" "${ARGS[@]}" <<'PY'
+  python3 - "$PLIST" "$RUNTIME" "$LOGS" "$SEND_PATH" "${ARGS[@]}" <<'PY'
 import plistlib
 import sys
 from pathlib import Path
 
-path, runtime, logs, *args = sys.argv[1:]
+path, runtime, logs, send_path, *args = sys.argv[1:]
 plist = {
     "Label": "com.agentlb.usage-export",
     "ProgramArguments": [runtime + "/.venv/bin/python", "-m", "app.usage_export", *args],
     "WorkingDirectory": runtime,
-    "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"},
+    "EnvironmentVariables": {"PATH": send_path + ":/opt/homebrew/bin:/usr/bin:/bin"},
     "StartInterval": 900,
     "RunAtLoad": True,
     "Nice": 15,
@@ -50,7 +52,7 @@ Description=agent-lb usage export: hourly usage and Anthropic headroom JSON for 
 [Service]
 Type=oneshot
 WorkingDirectory=$RUNTIME
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=PATH=$SEND_PATH:/usr/local/bin:/usr/bin:/bin
 ExecStart=$RUNTIME/.venv/bin/python -m app.usage_export ${ARGS[*]}
 StandardOutput=append:$LOGS/usage-export.log
 StandardError=append:$LOGS/usage-export.log
