@@ -18,6 +18,7 @@ FLOOR_HOOKS = {
     "host-credential-guard.py": "secrets: host credential files never read",
     "gh-write-guard.py": "git: no gh writes",
     "kill-scope-guard.py": "destructive: protected processes",
+    "user-manager-guard.py": "destructive: protected processes",
     "desktop-guard": "real people, his accounts and spend: agents stay off his desktop, where those happen",
     "wide-scan-guard.sh": "secrets: no recursive reads that print secrets",
     "hooks-off-guard.py": "every floor: no setting that switches Claude Code hooks off",

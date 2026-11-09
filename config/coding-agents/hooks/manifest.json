@@ -56,6 +56,16 @@
       "matcher": "Bash",
       "hook": {
         "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/user-manager-guard.py\"",
+        "timeout": 10
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
         "command": "/usr/bin/python3 \"$HOME/.claude/hooks/stash-guard\"",
         "timeout": 10
       },

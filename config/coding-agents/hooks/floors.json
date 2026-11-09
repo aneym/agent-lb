@@ -7,6 +7,7 @@
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "rm-dynamic-deny", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "dangerous-command-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "kill-scope-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "user-manager-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "host-credential-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "Read", "file": "host-credential-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "railway-vars-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},

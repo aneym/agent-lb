@@ -64,6 +64,14 @@ def pf_kill_scope(payload):
     return not isinstance(command, str) or KILL_WORDS.search(command) is not None
 
 
+USER_MANAGER_WORDS = re.compile(r"\b(kill|pkill|killall|systemctl|loginctl)\b")
+
+
+def pf_user_manager(payload):
+    command = jq_field(payload, "command")
+    return command is None or USER_MANAGER_WORDS.search(command) is not None
+
+
 def pf_railway_custody(payload):
     if not isinstance(payload, dict):
         return True
@@ -297,10 +305,11 @@ SCRIPT_PREFILTERS = {
     "dangerous-command-guard.sh": ((), pf_dangerous),
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
     "kill-scope-guard.py": ((), pf_kill_scope),
+    "user-manager-guard.py": ((), pf_user_manager),
     "route.sh": ("36bbdd44a69543ff7fe2865985443a2a09ab2f540d6bf09df25ec6c978e1d629", pf_jev_alert),
 }
 
-PYTHON_PREFILTERED = ("kill-scope-guard.py",)
+PYTHON_PREFILTERED = ("kill-scope-guard.py", "user-manager-guard.py")
 
 SCRIPT_NEEDS = {
     "wide-scan-guard.sh": (("cat",), ("jq",), ("python3",)),

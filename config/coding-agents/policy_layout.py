@@ -286,6 +286,7 @@ DERIVED_PINS = (
     "link-cli-guard.sh",
     "dangerous-command-guard.sh",
     "kill-scope-guard.py",
+    "user-manager-guard.py",
 )
 
 
