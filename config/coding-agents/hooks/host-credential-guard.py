@@ -10,17 +10,47 @@ FLOOR = "Alex's credentials"
 RECEIPT = "floor-ok host-credential-guard.py"
 NAME = "host.credential"
 SAFE_HEADS = {"ls", "stat", "cd", "pushd"}
+GATE = os.path.join(".config", "agent-rails", "gate-credentials")
+GATE_SAFE = SAFE_HEADS | {"find", "sha256sum", "shasum", "chmod"}
+GLOB = set("*?[")
 SPLIT = {";", "&&", "||", "|", "&", "|&", ";;", "(", ")", "\n"}
 REDIRECT = {"<", ">", ">>", "<>", "<<<", ">|", "&>", "&>>"}
 CODE = set(" '\"()+,;%{}")
 
 
-def refuse(why):
+def refuse(why, gate=False):
+    if gate:
+        sys.stderr.write(
+            'BLOCKED: kept floor "secrets": host-credential-guard refuses %s. Gate credentials in ~/%s are read only by '
+            "lane-scope; ls, stat, find without -exec and sha256 prefixes are allowed.\n" % (why, GATE)
+        )
+        sys.exit(2)
     sys.stderr.write(
         'BLOCKED: kept floor "%s": host-credential-guard refuses %s. Reading or copying '
         "~/.agent-rails/rails-host/host.credential is never allowed; ls and stat of the directory are.\n" % (FLOOR, why)
     )
     sys.exit(2)
+
+
+def gated(full, home):
+    for root in {os.path.join(home, GATE), os.path.realpath(os.path.join(home, GATE))}:
+        if (
+            full == root
+            or full.startswith(root + os.sep)
+            or os.path.join(root, "").startswith(os.path.join(full, ""))
+            and full.startswith(os.path.join(home, ".config", "agent-rails"))
+        ):
+            return True
+        if GLOB & set(full) and any(
+            fnmatch.fnmatch(probe, full)
+            for probe in (
+                root,
+                os.path.join(root, "lanes", "x.credential"),
+                os.path.join(root, "orchs", "x.credential"),
+            )
+        ):
+            return True
+    return False
 
 
 def targets():
@@ -67,12 +97,24 @@ def check_bash(command, cwd):
     except ValueError:
         if any(path in expand(command, home) for path in paths):
             refuse("a shell command it cannot parse that names the credential")
+        if GATE in expand(command, home):
+            refuse("a shell command it cannot parse that names a gate credential", gate=True)
         return
     for words in parts:
         heads = [w for w in words if not (w.split("=", 1)[0].isidentifier() and "=" in w)]
         head = os.path.basename(heads[0]) if heads else ""
         values = [w.split("=", 1)[1] if w not in heads else w for w in words]
         hits = [i for i, w in enumerate(values) if touches(w, base, home, paths, folders)]
+        gate = [i for i, w in enumerate(values) if gated(os.path.normpath(os.path.join(base, expand(w, home))), home)]
+        if gate and (
+            head not in GATE_SAFE
+            or head == "find"
+            and any(w.startswith(("-exec", "-ok", "-fprint", "-fls")) for w in words)
+        ):
+            refuse("`%s` on a gate credential" % (head or "an assignment"), gate=True)
+        for i in gate:
+            if "$(" in words[i] or "`" in words[i] or (i and words[i - 1] in REDIRECT):
+                refuse("a substitution or redirect on a gate credential", gate=True)
         if hits and head not in SAFE_HEADS:
             refuse("`%s` on the host credential" % (head or "an assignment"))
         for i in hits:
@@ -89,6 +131,8 @@ def check_read(path):
     full = os.path.normpath(expand(path, home))
     if full in paths:
         refuse("a Read of the host credential")
+    if gated(full, home):
+        refuse("a Read of a gate credential", gate=True)
 
 
 def main():
