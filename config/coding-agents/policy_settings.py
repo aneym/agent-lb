@@ -78,7 +78,11 @@ def seat_template(text: str, name: str, snapshot: dict[str, Any]) -> str:
         model = snapshot_model(snapshot, snapshot["standards"]["relay"]["model"])
         effort = "low"
     elif not isinstance(seat, dict):
-        return text
+        pinned = re.search(r"(?m)^model:[ \t]*(\S+)", text.split("---", 2)[1])
+        if pinned and pinned.group(1) != "inherit":
+            return text
+        model = snapshot_model(snapshot, "opus-latest")
+        effort = (re.search(r"(?m)^effort:[ \t]*(\S+)", text.split("---", 2)[1]) or [None, "high"])[1]
     else:
         model = snapshot_model(snapshot, seat.get("resolved_model") or seat["model"])
         effort = seat["effort"]
