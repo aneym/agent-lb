@@ -3,18 +3,21 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app import usage_export_burn
+from app import usage_export_burn, usage_export_resets
 from app.usage_export_sql import rows
 
 SCHEMA = "agent-lb-headroom/1"
 FRESH_MINUTES = 30
+LOOKBACK_HOURS = 24
 WEEKLY_HEADROOM_PERCENT = 95.0
 FABLE_QUOTA_KEY = "anthropic_fable_scoped_weekly"
 _BLOCKED_STATUSES = {"reauth_required", "deactivated", "paused"}
+_WAITING_STATUSES = {"rate_limited", "quota_exceeded"}
 _BLOCKED_REASON = "anthropic_oauth_organization_blocked"
 
 _ACCOUNTS_SQL = """
-SELECT id, left(id, 8) AS account, plan_type, status::text AS status, subscription_status, deactivation_reason
+SELECT id, left(id, 8) AS account, status::text AS status, subscription_status, deactivation_reason,
+       reset_at, owner_instance, access_expires_at
 FROM accounts
 WHERE provider = 'anthropic'
 ORDER BY id
@@ -78,46 +81,88 @@ def _points_left(account: dict[str, Any], weekly: dict[str, Any] | None) -> floa
     return round(max(0.0, 100.0 - float(weekly["used_percent"])), 2)
 
 
-def _usable(account: dict[str, Any], five_hour: dict[str, Any] | None, weekly: dict[str, Any] | None) -> bool:
+def _token_expired(account: dict[str, Any], now: datetime) -> bool:
+    expires = account["access_expires_at"]
+    return expires is not None and expires <= now
+
+
+def _blocker(account: dict[str, Any], now: datetime) -> str | None:
+    status = str(account["status"]).lower()
     if not _eligible(account):
-        return False
-    if five_hour is None or weekly is None:
-        return False
-    return float(five_hour["used_percent"]) < 100.0 and float(weekly["used_percent"]) < 100.0
-
-
-def _note(account: dict[str, Any], five_hour: dict[str, Any] | None, weekly: dict[str, Any] | None) -> str | None:
-    if five_hour is None or weekly is None:
-        return f"no usage reading in the last {FRESH_MINUTES} min"
-    if str(account["status"]).lower() != "active":
-        return f"status {account['status']}"
+        return f"status {status}" if status in _BLOCKED_STATUSES else "subscription not usable"
+    if status == "exchange_uncertain" and _token_expired(account, now):
+        return "token exchange uncertain and the access token has expired"
+    if account["owner_instance"] and _token_expired(account, now):
+        return f"mirror of {account['owner_instance']} with an expired access token"
+    if status in _WAITING_STATUSES:
+        reset = account["reset_at"]
+        if reset is None or now.replace(tzinfo=timezone.utc).timestamp() < reset:
+            return f"status {status} until {_epoch(reset) or 'unknown'}"
     return None
 
 
+def _exhausted(five_hour: dict[str, Any] | None, weekly: dict[str, Any] | None) -> str | None:
+    primary = float(five_hour["used_percent"]) if five_hour else 0.0
+    secondary = float(weekly["used_percent"]) if weekly else primary
+    if primary >= 100.0:
+        return "5-hour window at 100%"
+    if secondary >= 100.0:
+        return "weekly all-models at 100%"
+    return None
+
+
+def _age_minutes(row: dict[str, Any], now: datetime) -> int:
+    return int((now - row["recorded_at"]).total_seconds() // 60)
+
+
+def _notes(
+    account: dict[str, Any],
+    five_hour: dict[str, Any] | None,
+    weekly: dict[str, Any] | None,
+    blocker: str | None,
+    exhausted: str | None,
+    now: datetime,
+) -> str | None:
+    notes = [text for text in (blocker, exhausted) if text]
+    if weekly is None:
+        notes.append(f"no weekly reading in the last {LOOKBACK_HOURS} h")
+    elif _age_minutes(weekly, now) > FRESH_MINUTES:
+        notes.append(f"weekly reading {_age_minutes(weekly, now)} min old")
+    if five_hour is None:
+        notes.append("five-hour reading absent: Anthropic reports no 5-hour window for this account (7d only)")
+    if account["owner_instance"]:
+        notes.append(f"owned and polled by {account['owner_instance']}; mirrored here")
+    return "; ".join(notes) or None
+
+
 def _entry(
-    account: dict[str, Any], windows: dict[tuple[str, str], dict[str, Any]], fable: dict[str, Any] | None
+    account: dict[str, Any],
+    windows: dict[tuple[str, str], dict[str, Any]],
+    fable: dict[str, Any] | None,
+    resets: dict[str, int | None],
+    now: datetime,
 ) -> dict[str, Any]:
     five_hour = windows.get((account["id"], "primary"))
     weekly = windows.get((account["id"], "secondary"))
     fable_used = _pct(fable["used_percent"]) if fable else None
     recorded = [row["recorded_at"] for row in (five_hour, weekly, fable) if row]
+    blocker = _blocker(account, now)
+    exhausted = _exhausted(five_hour, weekly)
     return {
         "account": account["account"],
-        "plan": account["plan_type"],
         "status": account["status"],
-        "rate_limit_tier": None,
         "weekly_all_used_pct": _pct(weekly["used_percent"]) if weekly else None,
         "weekly_all_resets": _epoch(weekly["reset_at"]) if weekly else None,
         "fable_weekly_used_pct": fable_used,
         "fable_weekly_headroom_pct": None if fable_used is None else round(100.0 - fable_used, 2),
         "fable_resets": _epoch(fable["reset_at"]) if fable else None,
-        "fable_resets_held": None,
+        "resets_held": resets.get(account["id"]),
         "five_hour_used_pct": _pct(five_hour["used_percent"]) if five_hour else None,
         "five_hour_resets": _epoch(five_hour["reset_at"]) if five_hour else None,
         "limits_recorded_at": _iso(min(recorded)) if recorded else None,
         "weekly_all_points_left": _points_left(account, weekly),
-        "usable_now": _usable(account, five_hour, weekly),
-        "note": _note(account, five_hour, weekly),
+        "usable_now": blocker is None and exhausted is None,
+        "note": _notes(account, five_hour, weekly, blocker, exhausted, now),
     }
 
 
@@ -136,11 +181,12 @@ def _summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[str, Any]:
-    since = now - timedelta(minutes=FRESH_MINUTES)
+    since = now - timedelta(hours=LOOKBACK_HOURS)
     accounts = rows(cursor, _ACCOUNTS_SQL)
+    resets, resets_error = usage_export_resets.held()
     windows = {(row["id"], row["window_name"]): row for row in rows(cursor, _WINDOWS_SQL, {"since": since})}
     fable = {row["id"]: row for row in rows(cursor, _FABLE_SQL, {"since": since, "quota_key": FABLE_QUOTA_KEY})}
-    entries = [_entry(account, windows, fable.get(account["id"])) for account in accounts]
+    entries = [_entry(account, windows, fable.get(account["id"]), resets, now) for account in accounts]
     burn = usage_export_burn.apply(cursor, now, [account["id"] for account in accounts], entries)
     return {
         "schema": SCHEMA,
@@ -148,14 +194,21 @@ def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[st
         "source": source,
         "window": {
             "kind": "latest reading per account",
-            "fresh_minutes": FRESH_MINUTES,
+            "lookback_hours": LOOKBACK_HOURS,
+            "stale_note_minutes": FRESH_MINUTES,
             "as_of_utc": _iso(now),
             "five_hour": "usage_history window primary (300 min)",
             "weekly_all": "usage_history window secondary (10080 min)",
             "fable_weekly": f"additional_usage_history quota_key {FABLE_QUOTA_KEY}",
         },
-        "usable_rule": "status not reauth_required, deactivated or paused; subscription not canceled; "
-        f"both windows read in the last {FRESH_MINUTES} min; 5-hour and weekly_all under 100%",
+        "usable_rule": "the router's own rule from stored state: status not reauth_required, deactivated or paused; "
+        "subscription not canceled or org-blocked; rate_limited or quota_exceeded only once accounts.reset_at has "
+        "passed; a mirrored or exchange-uncertain account needs an unexpired access token; latest 5-hour and weekly "
+        "readings under 100% (a missing 5-hour reading counts as 0%, a missing weekly reading falls back to the "
+        "5-hour one). In-memory error cooldowns are not stored and not shown.",
+        "resets_held_source": usage_export_resets.SOURCE
+        if resets_error is None
+        else f"unavailable this run ({resets_error})",
         "fable_usd_per_hour": usage_export_burn.fable_usd_per_hour(cursor, now),
         **burn,
         "accounts_now": entries,

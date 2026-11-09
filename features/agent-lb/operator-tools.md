@@ -4,7 +4,7 @@ product: agent-lb
 owner: weekend-finish
 status: live
 covers: ["cli:agent-lb", "cli:agent-lb-db", "cli:agent-lb-startup"]
-paths: ["app/cli.py", "app/audit_*.py", "app/latency_cli.py", "app/db/migrate.py", "app/startup_benchmark.py", "app/recard_cli.py", "app/core/recards.py", "app/core/link_spend.py", "app/core/claude_billing.py", "app/core/cdp_page.py", "scripts/install-recard-watch.sh", "app/usage_export.py", "app/usage_export_hourly.py", "app/usage_export_headroom.py", "app/usage_export_burn.py", "app/usage_export_alert.py", "app/usage_export_sql.py", "scripts/install-usage-export.sh", "docs/usage-export.md", "features/agent-lb/operator-tools.md"]
+paths: ["app/cli.py", "app/audit_*.py", "app/latency_cli.py", "app/db/migrate.py", "app/startup_benchmark.py", "app/recard_cli.py", "app/core/recards.py", "app/core/link_spend.py", "app/core/claude_billing.py", "app/core/cdp_page.py", "scripts/install-recard-watch.sh", "app/usage_export.py", "app/usage_export_hourly.py", "app/usage_export_headroom.py", "app/usage_export_burn.py", "app/usage_export_alert.py", "app/usage_export_sql.py", "app/usage_export_resets.py", "scripts/install-usage-export.sh", "docs/usage-export.md", "features/agent-lb/operator-tools.md"]
 proofs: []
 ---
 # Operator tools
