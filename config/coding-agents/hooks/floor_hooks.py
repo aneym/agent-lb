@@ -27,6 +27,7 @@ NON_FLOOR_GUARDS = {
     "t3-live-restart-guard.py": "house rule: live T3 restarts use the nightly installer",
     "merge-gate-guard.py": "house rule: agent-rails main lands only through studio_merge",
     "seat-guard.py": "seat routing advice, not a kept floor",
+    "upload-cap-guard.py": "house rule: bulk uploads off Studio are rate capped and run overnight",
 }
 FLOOR_TEXT = "BLOCKED: Dangerous command"
 INLINE_FLOOR = "dangerous-command"
