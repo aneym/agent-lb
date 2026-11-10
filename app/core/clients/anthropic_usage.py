@@ -130,7 +130,9 @@ async def fetch_anthropic_usage(
         raise UsageFetchError(0, f"Anthropic usage fetch failed: {exc}") from exc
 
 
-def _usage_payload_from_anthropic(payload: AnthropicOAuthUsagePayload) -> UsagePayload:
+def _usage_payload_from_anthropic(
+    payload: AnthropicOAuthUsagePayload, raw_limits: list[dict[str, Any]] | None
+) -> UsagePayload:
     return UsagePayload(
         plan_type="claude",
         reset_credits_available=_reset_count(payload.cedar_ember),
@@ -140,7 +142,14 @@ def _usage_payload_from_anthropic(payload: AnthropicOAuthUsagePayload) -> UsageP
         ),
         credits=_credits_from_extra_usage(payload.extra_usage),
         fable_scoped_weekly=_fable_scoped_weekly_window(_fable_scoped_weekly_entry(payload.limits)),
+        anthropic_limits=raw_limits,
     )
+
+
+def _raw_limits(value: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list):
+        return None
+    return [entry for entry in value if isinstance(entry, dict)]
 
 
 def _reset_count(raw: dict[str, Any] | None) -> int | None:
@@ -290,4 +299,4 @@ async def _usage_payload_or_raise(resp: aiohttp.ClientResponse, *, account_id: s
     except ValidationError as exc:
         logger.warning("Anthropic usage fetch invalid payload request_id=%s", get_request_id())
         raise UsageFetchError(502, "Invalid Anthropic usage payload") from exc
-    return _usage_payload_from_anthropic(payload)
+    return _usage_payload_from_anthropic(payload, _raw_limits(data.get("limits")))

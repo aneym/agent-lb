@@ -13,6 +13,7 @@ from app.core.utils.time import utcnow
 from app.db.models import Account
 from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
+from app.modules.usage.anthropic_limits_store import record_anthropic_limits
 from app.modules.usage.account_sync import UsageAccountSync
 from app.modules.usage.identity_mismatch import clear_identity_mismatch, record_identity_mismatch
 from app.modules.usage.rate_limit_backoff import mark_usage_refresh_auth_cooldown
@@ -195,6 +196,9 @@ class UsageAccountRefresh(UsageAccountSync):
                             )
             elif payload.additional_rate_limits is not None:
                 await self._additional_usage_repo.delete_for_account(account.id)
+
+        if account.provider == ANTHROPIC_PROVIDER_NAME and payload.anthropic_limits is not None:
+            await record_anthropic_limits(account.id, payload.anthropic_limits, refresh_started_at)
 
         scoped = payload.fable_scoped_weekly
         fable_scoped_written = False

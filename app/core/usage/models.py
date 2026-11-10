@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -54,6 +56,7 @@ class UsagePayload(BaseModel):
     additional_rate_limits: list[AdditionalRateLimitPayload] | None = None
 
     fable_scoped_weekly: UsageWindow | None = None
+    anthropic_limits: list[dict[str, Any]] | None = None
     reset_credits_available: int | None = None
 
     rate_limit_reset_credits: RateLimitResetCreditsSummary | None = None
