@@ -74,7 +74,7 @@ def frontmatter_model(text: str) -> str | None:
 
 
 settings = verify_installation(SOURCE_ONLY, HOME, SOURCE, CANONICAL, check, read, unpinned, frontmatter_model, forbidden, readmitted, MARKER_START, MARKER_END, MANAGED)
-for name, family in (("plan-reviewer", "opus"), ("frontend-designer", "fable")):
+for name, family in (("plan-reviewer", "fable"), ("frontend-designer", "opus")):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
     check(model == family, f"{name} runs on the newest {family.title()} via `model: {family}` (got {model})")
 
@@ -113,7 +113,7 @@ if not SOURCE_ONLY:
     )
 plan_chain = [entry.get("model") for entry in classes.get("plan", {}).get("chain", [])]
 check(
-    plan_chain == ["fable-latest"], f"plan uses only fable-latest, without a Sol fallback ({plan_chain})"
+    plan_chain == ["opus-latest"], f"plan uses only opus-latest, without a Sol fallback ({plan_chain})"
 )
 
 
@@ -324,7 +324,7 @@ if not SOURCE_ONLY:
             model = picked.get("model") or ""
             ok = bool(model) and (not forbidden(model) or bool(readmitted(picked.get("seat") or ""))) and stale_reason(model) is None
             if task_class == "plan":
-                ok = ok and picked.get("alias") == "fable-latest"
+                ok = ok and picked.get("alias") == "opus-latest"
             check(ok, f"route pick {task_class} -> {picked.get('seat')}/{model or result.stderr.strip()}")
     else:
         check(False, f"route CLI exists at {route_bin}")
