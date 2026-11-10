@@ -28,6 +28,7 @@ NON_FLOOR_GUARDS = {
     "merge-gate-guard.py": "house rule: agent-rails main lands only through studio_merge",
     "seat-guard.py": "seat routing advice, not a kept floor",
     "upload-cap-guard.py": "house rule: bulk uploads off Studio are rate capped and run overnight",
+    "stop-by-name-guard.py": "house rule: processes stop by the id recorded at start, never by name",
 }
 FLOOR_TEXT = "BLOCKED: Dangerous command"
 INLINE_FLOOR = "dangerous-command"
