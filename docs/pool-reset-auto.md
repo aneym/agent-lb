@@ -5,7 +5,7 @@
 ## Rule (`app/pool_reset_rule.py`)
 
 - When: the usable accounts' all-models points left sum to 8 or fewer, or under 30 minutes are left at the last hour's pace. Readings older than 15 minutes on a usable account stop it.
-- Cap: two in the week of Monday 2026-11-09 (weeks start Monday 00:00 America/New_York), one in each later week. Redemptions are counted from agent-lb's `reset_credit_attempts`, whoever made them. No second within 60 minutes of the last one, and none while the last one is unconfirmed.
+- Cap: two in the week of Monday 2026-11-09 (weeks start Monday 00:00 America/New_York), one in each later week (`app/core/claude_reset_week.py`). agent-lb's own Claude redeem path refuses past the cap for every caller, counted from `reset_credit_attempts`; the timer applies the same count first. No second within 60 minutes of the last one, and none while the last one is unconfirmed. The timer passes `overrideDailyLimit` only for the second of a two-reset week when the first is under 24 hours old.
 - What a reset gives back: on 502ebd48 (2026-11-10 03:17Z) a reset cleared the Fable weekly window (39% to 0%) and all-models fell 100% to 81%. The pick is the owned account where a reset frees the most all-models points: its Fable weekly use times its own all-models-per-Fable ratio over the last 24 h, capped at the ratio measured on 502ebd48. Accounts that free under 10 points, hold no banked reset, or belong to another agent-lb instance are skipped.
 
 ## Run

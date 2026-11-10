@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
-EASTERN = ZoneInfo("America/New_York")
-FIRST_WEEK = date(2026, 11, 9)
-FIRST_WEEK_CAP = 2
-WEEK_CAP = 1
+from app.core.claude_reset_week import week_cap, week_start
+
 POINTS_FLOOR = 8.0
 MINUTES_FLOOR = 30.0
 STALE_MINUTES = 15
@@ -25,16 +22,6 @@ class Redemption:
     account: str
     at: datetime
     confirmed: bool
-
-
-def week_start(now: datetime) -> datetime:
-    local = now.astimezone(EASTERN)
-    monday = (local - timedelta(days=local.weekday())).date()
-    return datetime(monday.year, monday.month, monday.day, tzinfo=EASTERN).astimezone(timezone.utc)
-
-
-def week_cap(start: datetime) -> int:
-    return FIRST_WEEK_CAP if start.astimezone(EASTERN).date() == FIRST_WEEK else WEEK_CAP
 
 
 def _parse(value: str | None) -> datetime | None:

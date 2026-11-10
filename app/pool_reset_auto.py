@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from app import pool_reset_call, pool_reset_readings
-from app.pool_reset_rule import Redemption, banked_total, decide, minutes_left, pace, week_start
+from app.core.claude_reset_week import week_start
+from app.pool_reset_rule import Redemption, banked_total, decide, minutes_left, pace
 
 DEFAULT_STATE = Path.home() / ".agent-rails" / "factory" / "pool-reset-auto"
 CONFIRM_WAIT_SECONDS = 210
@@ -138,7 +139,7 @@ def _redeem(
     args: argparse.Namespace,
     now: datetime,
 ) -> str:
-    override = any(record.at > now - timedelta(days=1) for record in records)
+    override = decision["override_daily_limit"]
     failures = []
     for entry in decision["candidates"][:2]:
         account = entry["account"]
@@ -202,6 +203,8 @@ def _run(args: argparse.Namespace) -> tuple[str, dict[str, Any], str]:
         else:
             records = pool_reset_readings.redemptions(cursor, week_start(now))
         decision = decide(readings, now=now, owned=set(ids), redemptions=records, held=held)
+        recent = any(record.at > now - timedelta(days=1) for record in records)
+        decision["override_daily_limit"] = recent and 1 <= decision["week_used"] < decision["week_cap"]
         outcome = "no action"
         pending = state / "pending.json"
         if mode == "live" and pending.exists() and not held:

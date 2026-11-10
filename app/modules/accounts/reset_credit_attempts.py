@@ -55,6 +55,15 @@ class ResetCreditAttemptsRepository:
         )
         return result.scalar_one_or_none() is not None
 
+    async def anthropic_applied_count_since(self, since: datetime) -> int:
+        result = await self._session.execute(
+            select(func.count())
+            .select_from(ResetCreditAttempt)
+            .join(Account, Account.id == ResetCreditAttempt.account_id)
+            .where(Account.provider == "anthropic", ResetCreditAttempt.applied_at >= since)
+        )
+        return int(result.scalar_one() or 0)
+
     async def create(self, account_id: str, credit_id: str | None, trigger: str) -> ResetCreditAttempt | None:
         now = utcnow()
         row = ResetCreditAttempt(
