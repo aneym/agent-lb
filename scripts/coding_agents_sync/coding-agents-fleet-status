@@ -16,7 +16,7 @@ NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 SSH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]*$")
 STAMP = "%Y-%m-%dT%H:%M:%SZ"
 HOSTS = Path(__file__).resolve().parent / "fleet-hosts.json"
-ALERT_TO = "rails"
+ALERT_TO = "factory"
 BAD = {"unreachable", "missing", "failed", "stale", "behind"}
 PROBE = """import json,os,time
 from pathlib import Path
