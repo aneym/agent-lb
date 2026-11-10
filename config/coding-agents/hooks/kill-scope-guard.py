@@ -5,8 +5,8 @@ import json
 import os
 import re
 import shlex
-import sys
 import subprocess
+import sys
 
 FLOOR = "floor: destructive: protected processes"
 WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "nice", "caffeinate", "stdbuf", "timeout"}
@@ -509,9 +509,10 @@ def main():
     sel, others = foreign[0]
     sample = "; ".join("%s %s" % (p, table[p][1][:60]) for p in others[:3] if isinstance(p, int))
     print(
-        "BLOCKED (%s): `%s %s` would signal %s process(es) outside this session (%s). Kill only your own: find "
-        "them with `pgrep -fl <pattern>`, check each is yours, then `kill <pid>`; or `pkill -P $$` for this "
-        "shell's children." % (FLOOR, sel["tool"], sel["pattern"] or "", len(others), sample or others[0]),
+        "BLOCKED (%s): `%s %s` would signal %s process(es) outside this session (%s). Stop only the PID you "
+        "recorded when you started it (`echo $!` or a pidfile), with `kill <pid>`; free a port with "
+        "`port-free <port>`; leave orphans to the reapers."
+        % (FLOOR, sel["tool"], sel["pattern"] or "", len(others), sample or others[0]),
         file=sys.stderr,
     )
     return 2
