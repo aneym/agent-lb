@@ -69,7 +69,7 @@
     },
     "explore": {
       "seat": "Explore",
-      "model": "haiku-latest",
+      "model": "sonnet-latest",
       "effort": "medium",
       "explore": false,
       "authority": "none",
