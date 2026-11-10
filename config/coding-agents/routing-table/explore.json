@@ -35,14 +35,14 @@
           "pool": "anthropic-general"
         }
       ],
-      "digest": [
+      "count": [
         {
-          "id": "haiku-digest",
-          "seat": "digest",
-          "model": "haiku-latest",
+          "id": "sol-count",
+          "seat": "sol-count",
+          "model": "sol-latest",
           "effort": "medium",
-          "share": 0.2,
-          "pool": "anthropic-general"
+          "share": 1.0,
+          "pool": "openai-codex"
         }
       ],
       "relay": [

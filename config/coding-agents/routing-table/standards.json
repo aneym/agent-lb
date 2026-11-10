@@ -131,6 +131,14 @@
       "authority": "none",
       "evidence": "digests and summaries carry no decision authority"
     },
+    "count": {
+      "seat": "sol-count",
+      "model": "sol-latest",
+      "effort": "medium",
+      "explore": true,
+      "authority": "none",
+      "evidence": "Sol matched every mechanical figure on 5 of 5 read-and-count jobs; read-only, no decision authority (rules/workflow.md Grunt work, 2026-11-10)"
+    },
     "judge": {
       "seat": "general-purpose",
       "model": "opus-latest",

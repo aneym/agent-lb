@@ -121,6 +121,9 @@
           "low",
           "medium"
         ],
+        "count": [
+          "medium"
+        ],
         "research": [
           "medium",
           "high"

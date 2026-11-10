@@ -8,7 +8,12 @@
     "probe": "mechanical",
     "test-run": "mechanical",
     "investigation": "explore",
-    "exploration": "explore"
+    "exploration": "explore",
+    "digest": "count",
+    "triage": "count",
+    "gather": "count",
+    "tally": "count",
+    "read-sweep": "count"
   },
   "mission_critical": [
     "plan",
@@ -54,6 +59,22 @@
     },
     "explore": {
       "chain": [
+        {
+          "seat": "Explore",
+          "model": "sonnet-latest",
+          "vendor": "anthropic",
+          "effort": "medium"
+        }
+      ]
+    },
+    "count": {
+      "chain": [
+        {
+          "seat": "sol-count",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "medium"
+        },
         {
           "seat": "Explore",
           "model": "sonnet-latest",
