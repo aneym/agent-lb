@@ -67,7 +67,7 @@ ANTHROPIC_COMPAT_PROFILES: tuple[AnthropicCompatProfile, ...] = (
         quota_cooldown_code="anthropic_quota_cooldown",
         other_provider_routing_message="OpenAI accounts are not eligible for Claude routing.",
         upstream_settings_attr="anthropic_upstream_base_url",
-        default_probe_model="claude-haiku-4-5",
+        default_probe_model="claude-haiku-5-5",
     ),
     AnthropicCompatProfile(
         provider_name="glm",
