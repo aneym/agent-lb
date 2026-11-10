@@ -163,6 +163,13 @@
     "gpt-5"
   ],
   "readmitted": {
+    "frontend-designer": {
+      "alias": "fable-latest",
+      "patterns": [
+        "claude-fable-*",
+        "fable"
+      ]
+    },
     "fable-orchestrator": {
       "alias": "fable-latest",
       "patterns": [

@@ -49,8 +49,8 @@
     "frontend-designer": {
       "vendor": "anthropic",
       "box": null,
-      "model": "opus-latest",
-      "effort": "medium"
+      "model": "fable-latest",
+      "effort": "high"
     },
     "effort-xhigh": {
       "vendor": "anthropic",

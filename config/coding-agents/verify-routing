@@ -74,9 +74,9 @@ def frontmatter_model(text: str) -> str | None:
 
 
 settings = verify_installation(SOURCE_ONLY, HOME, SOURCE, CANONICAL, check, read, unpinned, frontmatter_model, forbidden, readmitted, MARKER_START, MARKER_END, MANAGED)
-for name in ("plan-reviewer", "frontend-designer"):
+for name, family in (("plan-reviewer", "opus"), ("frontend-designer", "fable")):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
-    check(model == "opus", f"{name} runs on the newest Opus via `model: opus` (got {model})")
+    check(model == family, f"{name} runs on the newest {family.title()} via `model: {family}` (got {model})")
 
 
 try:
@@ -279,8 +279,11 @@ else:
     pinned_sources += [(HOME / ".codex" / "AGENTS.md", read(HOME / ".codex" / "AGENTS.md"))]
 pinned_sources += [(path, read(path)) for path in routing_sections]
 stale = []
+prose_sources = set(routing_sections)
 for path, text in pinned_sources:
     for match in MODEL_PIN.finditer(text):
+        if path in prose_sources and "-" not in match.group(1):
+            continue
         reason = stale_reason(match.group(1).rstrip(".,;:)"), readmitted(path.stem))
         if reason:
             stale.append(f"{path.name}: {match.group(1)} ({reason})")

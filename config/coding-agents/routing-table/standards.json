@@ -37,11 +37,11 @@
     },
     "design": {
       "seat": "frontend-designer",
-      "model": "opus-latest",
-      "effort": "medium",
+      "model": "fable-latest",
+      "effort": "high",
       "explore": false,
       "authority": "architecture",
-      "evidence": "Alex 2026-10-14 ~21:00 ET: opus must ALWAYS be the architect and design"
+      "evidence": "Alex 2026-11-10 ~03:08Z: generally fable architecture and designer, opus implementer (alex-fable-for-hard-things-2026-11-09)"
     },
     "audit": {
       "seat": "plan-reviewer",
