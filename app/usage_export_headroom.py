@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app import usage_export_burn, usage_export_resets
+from app import usage_export_burn, usage_export_points, usage_export_resets
 from app.usage_export_sql import rows
 
-SCHEMA = "agent-lb-headroom/1"
+SCHEMA = "agent-lb-headroom/2"
 FRESH_MINUTES = 30
 LOOKBACK_HOURS = 24
 WEEKLY_HEADROOM_PERCENT = 95.0
@@ -187,7 +187,9 @@ def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[st
     windows = {(row["id"], row["window_name"]): row for row in rows(cursor, _WINDOWS_SQL, {"since": since})}
     fable = {row["id"]: row for row in rows(cursor, _FABLE_SQL, {"since": since, "quota_key": FABLE_QUOTA_KEY})}
     entries = [_entry(account, windows, fable.get(account["id"]), resets, now) for account in accounts]
-    burn = usage_export_burn.apply(cursor, now, [account["id"] for account in accounts], entries)
+    ids = [account["id"] for account in accounts]
+    burn = usage_export_burn.apply(cursor, now, ids, entries)
+    points = usage_export_points.apply(cursor, now, ids, entries)
     return {
         "schema": SCHEMA,
         "generated_at": generated_at,
@@ -211,6 +213,7 @@ def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[st
         else f"unavailable this run ({resets_error})",
         "fable_usd_per_hour": usage_export_burn.fable_usd_per_hour(cursor, now),
         **burn,
+        **points,
         "accounts_now": entries,
         "pool_summary": _summary(entries),
     }
