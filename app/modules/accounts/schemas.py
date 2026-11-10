@@ -152,6 +152,7 @@ class AccountSummary(DashboardModel):
     credits_spent: float | None = None
     credits: AccountCreditsWindow | None = None
     reset_credits_available: int | None = None
+    reset_clears: list[str] | None = None
     subscription: AccountSubscriptionLedger | None = None
     deactivation_reason: str | None = None
     auth: AccountAuthStatus | None = None

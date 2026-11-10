@@ -61,7 +61,15 @@ class AccountsService(AccountsLifecycle):
             available_count = sum(
                 grant.resets_left for grant, credit in zip(inventory.grants, credits) if credit.status == "available"
             )
-            reset_credit_cache.record_count(account_id, available_count)
+            held_clears = sorted(
+                {
+                    window
+                    for grant, credit in zip(inventory.grants, credits)
+                    if credit.status == "available"
+                    for window in grant.clears
+                }
+            )
+            reset_credit_cache.record_count(account_id, available_count, held_clears)
             redeemable_now = inventory.usable_grant(now) is not None
             return AccountResetCreditsResponse(
                 account_id=account_id,

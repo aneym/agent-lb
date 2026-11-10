@@ -302,6 +302,11 @@ def _account_to_summary(
             if normalize_provider_name(account.provider) in (OPENAI_PROVIDER_NAME, ANTHROPIC_PROVIDER_NAME)
             else None
         ),
+        reset_clears=(
+            reset_credit_cache.get_clears(account.id)
+            if normalize_provider_name(account.provider) == ANTHROPIC_PROVIDER_NAME
+            else None
+        ),
         subscription=_account_subscription_ledger(account),
         request_usage=request_usage,
         additional_quotas=additional_quotas or [],

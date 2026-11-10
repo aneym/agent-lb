@@ -149,6 +149,7 @@ def _entry(
     windows: dict[tuple[str, str], dict[str, Any]],
     fable: dict[str, Any] | None,
     resets: dict[str, int | None],
+    clears: dict[str, list[str] | None],
     now: datetime,
 ) -> dict[str, Any]:
     five_hour = windows.get((account["id"], "primary"))
@@ -168,6 +169,7 @@ def _entry(
         "fable_weekly_headroom_pct": None if fable_used is None else round(100.0 - fable_used, 2),
         "fable_resets": _epoch(fable["reset_at"]) if fable else None,
         "resets_held": resets.get(account["id"]),
+        "reset_clears": clears.get(account["id"]),
         "five_hour_used_pct": _pct(five_hour["used_percent"]) if five_hour else None,
         "five_hour_resets": _epoch(five_hour["reset_at"]) if five_hour else None,
         "limits_recorded_at": _iso(min(recorded)) if recorded else None,
@@ -196,10 +198,10 @@ def _summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
 def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[str, Any]:
     since = now - timedelta(hours=LOOKBACK_HOURS)
     accounts = rows(cursor, _ACCOUNTS_SQL)
-    resets, resets_error = usage_export_resets.held()
+    resets, clears, resets_error = usage_export_resets.held()
     windows = {(row["id"], row["window_name"]): row for row in rows(cursor, _WINDOWS_SQL, {"since": since})}
     fable = {row["id"]: row for row in rows(cursor, _FABLE_SQL, {"since": since, "quota_key": FABLE_QUOTA_KEY})}
-    entries = [_entry(account, windows, fable.get(account["id"]), resets, now) for account in accounts]
+    entries = [_entry(account, windows, fable.get(account["id"]), resets, clears, now) for account in accounts]
     ids = [account["id"] for account in accounts]
     burn = usage_export_burn.apply(cursor, now, ids, entries)
     points = usage_export_points.apply(cursor, now, ids, entries)
@@ -223,6 +225,9 @@ def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[st
         "readings under 100% (a missing 5-hour reading counts as 0%, a missing weekly reading falls back to the "
         "5-hour one). In-memory error cooldowns are not stored and not shown.",
         "resets_held_source": usage_export_resets.SOURCE
+        if resets_error is None
+        else f"unavailable this run ({resets_error})",
+        "reset_clears_source": usage_export_resets.CLEARS_SOURCE
         if resets_error is None
         else f"unavailable this run ({resets_error})",
         "fable_usd_per_hour": usage_export_burn.fable_usd_per_hour(cursor, now),

@@ -145,7 +145,7 @@ class UsageAccountRefresh(UsageAccountSync):
             if payload.reset_credits_available is None:
                 reset_credit_cache.clear(account.id)
             else:
-                reset_credit_cache.record_count(account.id, payload.reset_credits_available)
+                reset_credit_cache.record_count(account.id, payload.reset_credits_available, payload.reset_clears)
         elif account.provider == OPENAI_PROVIDER_NAME:
             reset_summary = payload.rate_limit_reset_credits
             if reset_summary is not None and reset_summary.available_count is not None:

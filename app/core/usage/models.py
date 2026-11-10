@@ -58,5 +58,6 @@ class UsagePayload(BaseModel):
     fable_scoped_weekly: UsageWindow | None = None
     anthropic_limits: list[dict[str, Any]] | None = None
     reset_credits_available: int | None = None
+    reset_clears: list[str] | None = None
 
     rate_limit_reset_credits: RateLimitResetCreditsSummary | None = None

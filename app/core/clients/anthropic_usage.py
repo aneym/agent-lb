@@ -11,7 +11,7 @@ import aiohttp
 from aiohttp_retry import ExponentialRetry
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from app.core.clients.anthropic_resets import ResetStatus, _utc
+from app.core.clients.anthropic_resets import ResetGrant, ResetStatus, _utc
 from app.core.clients.http import lease_retry_client
 from app.core.clients.rate_limit_resets import ResetCreditsError
 from app.core.clients.usage import (
@@ -136,6 +136,7 @@ def _usage_payload_from_anthropic(
     return UsagePayload(
         plan_type="claude",
         reset_credits_available=_reset_count(payload.cedar_ember),
+        reset_clears=_reset_clears(payload.cedar_ember),
         rate_limit=RateLimitPayload(
             primary_window=_usage_window(payload.five_hour, limit_window_seconds=_FIVE_HOUR_SECONDS),
             secondary_window=_usage_window(payload.seven_day, limit_window_seconds=_SEVEN_DAY_SECONDS),
@@ -152,21 +153,31 @@ def _raw_limits(value: Any) -> list[dict[str, Any]] | None:
     return [entry for entry in value if isinstance(entry, dict)]
 
 
-def _reset_count(raw: dict[str, Any] | None) -> int | None:
+def _held_grants(raw: dict[str, Any] | None) -> list[ResetGrant] | None:
     if raw is None:
         return None
     try:
         status = ResetStatus.model_validate(raw)
         now = datetime.now(timezone.utc)
-        return sum(
-            grant.resets_left
+        return [
+            grant
             for grant in status.grants
             if grant.resets_left > 0
             and (grant.ends_at is None or _utc(grant.ends_at) > now)
             and (grant.starts_at is None or _utc(grant.starts_at) <= now)
-        )
+        ]
     except (ValidationError, ResetCreditsError):
         return None
+
+
+def _reset_count(raw: dict[str, Any] | None) -> int | None:
+    held = _held_grants(raw)
+    return None if held is None else sum(grant.resets_left for grant in held)
+
+
+def _reset_clears(raw: dict[str, Any] | None) -> list[str] | None:
+    held = _held_grants(raw)
+    return None if held is None else sorted({window for grant in held for window in grant.clears})
 
 
 def _fable_scoped_weekly_entry(limits: list[AnthropicLimitEntry] | None) -> AnthropicLimitEntry | None:
