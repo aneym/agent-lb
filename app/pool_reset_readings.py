@@ -21,7 +21,7 @@ _ATTEMPTS_SQL = """
 SELECT left(r.account_id, 8) AS account, r.state,
        COALESCE(r.applied_at, r.created_at) AT TIME ZONE current_setting('TimeZone') AS at_utc
 FROM reset_credit_attempts r
-JOIN accounts a ON a.id = r.account_id AND a.provider = 'anthropic'
+JOIN accounts a ON a.id = r.account_id AND a.provider = 'anthropic' AND a.owner_instance IS NULL
 WHERE (r.applied_at IS NOT NULL OR r.state = 'pending')
   AND COALESCE(r.applied_at, r.created_at) >= %(since)s::timestamptz - interval '1 day'
 """

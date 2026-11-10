@@ -50,7 +50,11 @@ class ResetCreditAttemptsRepository:
         result = await self._session.execute(
             select(ResetCreditAttempt.id)
             .join(Account, Account.id == ResetCreditAttempt.account_id)
-            .where(Account.provider == "anthropic", ResetCreditAttempt.applied_at >= since)
+            .where(
+                Account.provider == "anthropic",
+                Account.owner_instance.is_(None),
+                ResetCreditAttempt.applied_at >= since,
+            )
             .limit(1)
         )
         return result.scalar_one_or_none() is not None
