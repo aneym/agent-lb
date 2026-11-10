@@ -12,7 +12,7 @@ from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.auth_manager import is_locally_owned
 from app.modules.accounts.lifecycle import AccountsLifecycle
 from app.modules.accounts.reset_credit_attempts import ResetCreditAttemptsRepository
-from app.modules.accounts.reset_credit_recovery import refresh_standard_capacity
+from app.modules.accounts.reset_credit_recovery import capacity_recorded_since, refresh_standard_capacity
 from app.modules.accounts.schemas import (
     AccountResetCredit,
     AccountResetCreditConsumeResponse,
@@ -293,6 +293,8 @@ class AccountsService(AccountsLifecycle):
         if self._usage_repo and self._usage_updater:
             recovered = await refresh_standard_capacity(account, self._usage_updater, self._usage_repo)
             get_account_selection_cache().invalidate()
+            if recovered is not True and attempt.applied_at is not None:
+                recovered = await capacity_recorded_since(account_id, self._usage_repo, attempt.applied_at)
             if recovered is True:
                 await attempts.settle(attempt, result_code)
         primary_after, secondary_after = await self._latest_usage_percents(account_id)

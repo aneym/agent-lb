@@ -4,13 +4,13 @@ product: agent-lb
 owner: weekend-finish
 status: live
 covers: ["cli:agent-lb", "cli:agent-lb-db", "cli:agent-lb-startup"]
-paths: ["app/cli.py", "app/audit_*.py", "app/latency_cli.py", "app/db/migrate.py", "app/startup_benchmark.py", "app/recard_cli.py", "app/core/recards.py", "app/core/link_spend.py", "app/core/claude_billing.py", "app/core/cdp_page.py", "scripts/install-recard-watch.sh", "app/usage_export.py", "app/usage_export_hourly.py", "app/usage_export_headroom.py", "app/usage_export_burn.py", "app/usage_export_points.py", "app/usage_export_alert.py", "app/usage_export_sql.py", "app/usage_export_resets.py", "scripts/install-usage-export.sh", "docs/usage-export.md", "features/agent-lb/operator-tools.md"]
+paths: ["app/cli.py", "app/audit_*.py", "app/latency_cli.py", "app/db/migrate.py", "app/startup_benchmark.py", "app/recard_cli.py", "app/core/recards.py", "app/core/link_spend.py", "app/core/claude_billing.py", "app/core/cdp_page.py", "scripts/install-recard-watch.sh", "app/usage_export.py", "app/usage_export_hourly.py", "app/usage_export_headroom.py", "app/usage_export_burn.py", "app/usage_export_points.py", "app/usage_export_alert.py", "app/usage_export_sql.py", "app/usage_export_resets.py", "scripts/install-usage-export.sh", "docs/usage-export.md", "app/pool_reset_rule.py", "app/pool_reset_readings.py", "app/pool_reset_call.py", "app/pool_reset_auto.py", "scripts/install-pool-reset-auto.sh", "docs/pool-reset-auto.md", "features/agent-lb/operator-tools.md"]
 proofs: []
 ---
 # Operator tools
 
 ## Sub-features
-The installed agent-lb commands provide service operations, database migration, startup measurement, read-only audits, and recard: before a single-use subscription renews, `agent-lb recard run` (launchd, every 15 minutes) asks the operator to approve a Link card and then puts it on the claude.ai billing page.
+The installed agent-lb commands provide service operations, database migration, startup measurement, read-only audits, and recard: before a single-use subscription renews, `agent-lb recard run` (launchd, every 15 minutes) asks the operator to approve a Link card and then puts it on the claude.ai billing page. `python -m app.pool_reset_auto` (systemd timer on the primary, every 5 minutes) redeems a banked Claude reset when the pool is about to run dry; see `docs/pool-reset-auto.md`.
 
 ## How to get to it
 Install the project with uv and run `agent-lb --help`.

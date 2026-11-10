@@ -34,8 +34,8 @@ BASIS = (
     f"reading at or before the window start (at most {EDGE_SLACK_MINUTES} min before it) to the latest reading (at most "
     f"{EDGE_SLACK_MINUTES} min old), with no gap over {MAX_GAP_MINUTES} min between readings; otherwise the figure is "
     "null and points_coverage says why. A weekly reset inside the span (reset time moving forward over 1 h, or a drop "
-    f"over {RESET_DROP_POINTS:g} points) splits it: use before the reset plus use after it, both positive. Readings "
-    "are whole percents, so a figure is good to about 1 point."
+    f"over {RESET_DROP_POINTS:g} points, which a redeemed reset also causes) splits it: use before the reset plus use "
+    "from the first reading after it, both positive, so the drop itself never counts as use. Readings are whole percents, so a figure is good to about 1 point."
 )
 
 
@@ -76,7 +76,7 @@ def _measure(readings: list[dict[str, Any]], start: datetime, now: datetime) -> 
             }
         if _is_reset(previous, current):
             moved += max(0.0, float(previous["used_percent"]) - segment_start)
-            segment_start = 0.0
+            segment_start = float(current["used_percent"])
             resets += 1
     moved += max(0.0, float(span[-1]["used_percent"]) - segment_start)
     coverage = {"from": _iso(span[0]["recorded_at"]), "to": _iso(latest), "readings": len(span), "resets": resets}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.core import usage as usage_core
 from app.core.usage.quota import apply_usage_quota
 from app.core.utils.time import to_utc_naive, utcnow
@@ -51,3 +53,16 @@ async def refresh_standard_capacity(
         credits_balance=credits.credits_balance,
     )
     return status == AccountStatus.ACTIVE
+
+
+async def capacity_recorded_since(account_id: str, usage_repo: UsageRepository, since: datetime) -> bool:
+    cutoff = to_utc_naive(since)
+    readings = [
+        await usage_repo.latest_entry_for_account(account_id, window=window) for window in ("primary", "secondary")
+    ]
+    secondary = readings[1]
+    if secondary is None or to_utc_naive(secondary.recorded_at) <= cutoff:
+        return False
+    return all(
+        row.used_percent < 100.0 for row in readings if row is not None and to_utc_naive(row.recorded_at) > cutoff
+    )
