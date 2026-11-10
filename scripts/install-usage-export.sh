@@ -11,7 +11,10 @@ if [[ "$(hostname -s)" == "$TARGET_HOST" ]]; then
 else
   ARGS=(--out "$LOGS/usage-export" --push "$TARGET_HOST:$TARGET_DIR")
 fi
-ARGS+=(--alert-state "$LOGS/usage-export-alert.json")
+ARGS+=(--alert-state "$LOGS/usage-export-alert.json" --asked-by "$LOGS/asked-by")
+for SOURCE in ${AGENT_LB_ASKED_BY_SOURCES:-ax102:.agent-rails/asked-by studio:.agent-rails/asked-by}; do
+  ARGS+=(--asked-by-pull "$SOURCE")
+done
 SEND_PATH="$HOME/.local/bin:$HOME/.agent-rails/factory-runtime/bin"
 
 if [[ "$(uname)" == Darwin ]]; then

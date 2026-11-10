@@ -23,7 +23,7 @@ METRICS = (
     "rows_without_cost",
 )
 
-_SUMS = """
+SUMS = """
     count(*) AS requests,
     count(*) FILTER (WHERE status = 'success') AS ok_requests,
     count(*) FILTER (WHERE status <> 'success') AS failed_requests,
@@ -38,21 +38,21 @@ _SUMS = """
     count(*) FILTER (WHERE cost_usd IS NULL) AS rows_without_cost
 """
 
-_WINDOW = "deleted_at IS NULL AND requested_at >= %(start)s AND requested_at < %(end)s"
+WINDOW = "deleted_at IS NULL AND requested_at >= %(start)s AND requested_at < %(end)s"
 
 _BUCKETS_SQL = f"""
 SELECT date_trunc('hour', requested_at) AS hour, provider, model, client_session_id,
-       left(account_id, 8) AS account, {_SUMS}
+       left(account_id, 8) AS account, {SUMS}
 FROM request_logs
-WHERE {_WINDOW}
+WHERE {WINDOW}
 GROUP BY 1, 2, 3, 4, 5
 ORDER BY 1, 2, 3, 5, 4
 """
 
 _BY_MODEL_SQL = f"""
-SELECT provider, model, {_SUMS}, min(requested_at) AS first_at, max(requested_at) AS last_at
+SELECT provider, model, {SUMS}, min(requested_at) AS first_at, max(requested_at) AS last_at
 FROM request_logs
-WHERE {_WINDOW}
+WHERE {WINDOW}
 GROUP BY 1, 2
 ORDER BY cost_usd DESC, requests DESC
 """
@@ -68,11 +68,11 @@ NOTES = [
 ]
 
 
-def _iso(value: datetime) -> str:
+def iso(value: datetime) -> str:
     return value.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _metrics(row: dict[str, Any]) -> dict[str, Any]:
+def metrics(row: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {name: int(row[name]) for name in METRICS if name != "cost_usd"}
     out["cost_usd"] = round(float(row["cost_usd"]), 6)
     return {name: out[name] for name in METRICS}
@@ -83,9 +83,9 @@ def _by_model(cursor: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
         {
             "provider": row["provider"],
             "model": row["model"],
-            **_metrics(row),
-            "first_at": _iso(row["first_at"]),
-            "last_at": _iso(row["last_at"]),
+            **metrics(row),
+            "first_at": iso(row["first_at"]),
+            "last_at": iso(row["last_at"]),
         }
         for row in rows(cursor, _BY_MODEL_SQL, params)
     ]
@@ -108,7 +108,7 @@ def build(cursor: Any, end: datetime, source: str, generated_at: str) -> dict[st
             "model": row["model"],
             "client_session_id": row["client_session_id"],
             "account": row["account"],
-            **_metrics(row),
+            **metrics(row),
         }
         for row in rows(cursor, _BUCKETS_SQL, window)
     ]
@@ -119,8 +119,8 @@ def build(cursor: Any, end: datetime, source: str, generated_at: str) -> dict[st
         "source": source,
         "window": {
             "hours": HOURS,
-            "start_utc": _iso(start),
-            "end_utc": _iso(end),
+            "start_utc": iso(start),
+            "end_utc": iso(end),
             "bucket": "hour",
             "clock": "DB now() at time zone utc",
         },

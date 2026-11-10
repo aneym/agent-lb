@@ -13,7 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app import usage_export_alert, usage_export_headroom, usage_export_hourly
+from app import (
+    usage_export_alert,
+    usage_export_asked_by,
+    usage_export_asked_by_records,
+    usage_export_headroom,
+    usage_export_hourly,
+)
 from app.core.config.service_database import LOCAL_DATABASE_URL, primary_database_url
 
 USAGE_FILE = "usage-48h.json"
@@ -28,7 +34,9 @@ def _source(host: str, what: str) -> str:
     return f"agent-lb primary ({host}) Postgres agent_lb {what}; read-only snapshot by app.usage_export"
 
 
-def collect(url: str, host: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def collect(
+    url: str, host: str, asked_by: Path | None, pulled: list[dict[str, Any]]
+) -> tuple[dict[str, Any], dict[str, Any]]:
     import psycopg
 
     with psycopg.connect(
@@ -47,6 +55,8 @@ def collect(url: str, host: str) -> tuple[dict[str, Any], dict[str, Any]]:
             usage = usage_export_hourly.build(
                 cursor, now, _source(host, "request_logs, deleted_at null, every status"), generated_at
             )
+            turns, records = usage_export_asked_by_records.load(asked_by, now)
+            usage["asked_by"] = usage_export_asked_by.build(cursor, now, turns, {**records, "pulled": pulled})
             headroom = usage_export_headroom.build(
                 cursor, now, _source(host, "accounts, usage_history, additional_usage_history"), generated_at
             )
@@ -99,12 +109,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--push", help="rsync destination host:dir for the two files")
     parser.add_argument("--alert-state", type=Path, help="state file for the low pool headroom alert to factory")
+    parser.add_argument("--asked-by", type=Path, help="directory of per-turn asker records (*.jsonl, read recursively)")
+    parser.add_argument(
+        "--asked-by-pull", action="append", default=[], help="host:dir of asker records to rsync into --asked-by/<host>"
+    )
     args = parser.parse_args(argv)
     host = socket.gethostname().split(".")[0]
     url = os.environ.get("AGENT_LB_DATABASE_URL") or primary_database_url() or LOCAL_DATABASE_URL
     started = time.monotonic()
     try:
-        usage, headroom = collect(url, host)
+        pulled = usage_export_asked_by_records.pull(args.asked_by_pull, args.asked_by) if args.asked_by else []
+        usage, headroom = collect(url, host, args.asked_by, pulled)
         paths = [write_atomic(args.out, USAGE_FILE, usage), write_atomic(args.out, HEADROOM_FILE, headroom)]
         if args.push:
             push(paths, args.push)
@@ -119,7 +134,7 @@ def main(argv: list[str] | None = None) -> None:
     sizes = ", ".join(f"{path.name} {path.stat().st_size} B" for path in paths)
     print(
         f"usage export: generated_at {usage['generated_at']} buckets {len(usage['buckets'])} "
-        f"accounts {len(headroom['accounts_now'])}; {sizes}; to {args.push or args.out}; "
+        f"accounts {len(headroom['accounts_now'])} asked_by turns {usage['asked_by']['records']['turns']}; {sizes}; to {args.push or args.out}; "
         f"{alert}; wall {time.monotonic() - started:.2f} s cpu {_cpu_seconds():.2f} s",
         flush=True,
     )
