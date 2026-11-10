@@ -11,7 +11,6 @@ unmapped:
   - {"path":"app/modules/accounts/service.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/accounts/identity_repository.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/accounts/summary_state.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
-  - {"path":"app/modules/accounts/claude_reset_policy.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/accounts/reset_credit_cache.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/accounts/read_cache.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/accounts/reset_credit_scheduler.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}

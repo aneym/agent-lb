@@ -11,7 +11,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
 RAILS_OFFICE = "mcp:launch:424b86369f27d72d8ecb4d500172a6daee78c383779ab39ad7bbc6eca94b2158"
 FACTORY = "mcp:launch:de51e2e9fd174821ec3f65574d06655ad9e11470aa377a41d2cf9e13229ca869"
-THREADS = (RAILS_OFFICE, FACTORY)
+THREADS = ((RAILS_OFFICE, "note"), (FACTORY, "queue"))
 
 
 class CallError(Exception):
@@ -65,8 +65,8 @@ def consume(account_id: str, override_daily_limit: bool) -> dict[str, Any]:
 
 def send(host: str | None, key: str, text: str) -> list[str]:
     results = []
-    for thread in THREADS:
-        command = ["t3", "thread", "send", "--mode", "queue", "--request-id", f"{key}-{thread[-8:]}", thread, "-"]
+    for thread, mode in THREADS:
+        command = ["t3", "thread", "send", "--mode", mode, "--request-id", f"{key}-{thread[-8:]}", thread, "-"]
         if host:
             remote = "PATH=$HOME/.local/bin:$PATH " + " ".join(command)
             command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, remote]

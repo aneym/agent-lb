@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 EASTERN = ZoneInfo("America/New_York")
 FIRST_WEEK = date(2026, 11, 9)
-FIRST_WEEK_CAP = 2
+FIRST_WEEK_CAP = 6
 WEEK_CAP = 1
 
 
@@ -17,3 +17,7 @@ def week_start(now: datetime) -> datetime:
 
 def week_cap(start: datetime) -> int:
     return FIRST_WEEK_CAP if start.astimezone(EASTERN).date() == FIRST_WEEK else WEEK_CAP
+
+
+def requires_full(start: datetime) -> bool:
+    return start.astimezone(EASTERN).date() != FIRST_WEEK

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.core.claude_reset_week import week_cap, week_start
+from app.core.claude_reset_week import requires_full, week_cap, week_start
 
 POINTS_FLOOR = 8.0
 MINUTES_FLOOR = 30.0
@@ -15,6 +15,7 @@ MEASURED_RATIO = round(19 / 39, 4)
 MEASURED_RATIO_SOURCE = "502ebd48 reset 2026-11-10T03:17Z: Fable 39% to 0%, all-models 100% to 81%"
 RATIO_MIN_FABLE_POINTS = 5.0
 SERVING_STATUSES = {"active", "rate_limited", "quota_exceeded"}
+FULL_PERCENT = 95.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,8 +73,12 @@ def _ratio(account: dict[str, Any]) -> tuple[float, str]:
     return MEASURED_RATIO, f"{source}, above the {measured} ({MEASURED_RATIO:g}), which caps it"
 
 
+def _full(account: dict[str, Any]) -> bool:
+    return any((account.get(key) or 0.0) >= FULL_PERCENT for key in ("weekly_all_used_pct", "fable_weekly_used_pct"))
+
+
 def candidates(
-    headroom: dict[str, Any], owned: set[str], teammate_yes: set[str], now: datetime
+    headroom: dict[str, Any], owned: set[str], teammate_yes: set[str], now: datetime, *, full_only: bool = False
 ) -> tuple[list[dict[str, Any]], list[str]]:
     ranked: list[dict[str, Any]] = []
     skipped: list[str] = []
@@ -106,6 +111,8 @@ def candidates(
         if name not in owned:
             yes = "a yes is on file, but" if name in teammate_yes else "no yes on file, and"
             skipped.append(f"{name}: teammate-owned, frees ~{freed:g}; {yes} only its owner's agent-lb can redeem it")
+        elif full_only and not _full(account):
+            skipped.append(f"{name}: under {FULL_PERCENT:g}% used, and this week a reset needs a full account")
         elif freed < MIN_FREED_POINTS:
             skipped.append(f"{name}: frees ~{freed:g} points, under {MIN_FREED_POINTS:g}")
         elif age is None or age > STALE_MINUTES:
@@ -133,7 +140,7 @@ def decide(
     minutes = minutes_left(points, per_hour)
     stale = [a["account"] for a in headroom["accounts_now"] if a["usable_now"] and _stale(a, now)]
     generated_age = _age_minutes(headroom.get("generated_at"), now)
-    ranked, skipped = candidates(headroom, owned, teammate_yes or set(), now)
+    ranked, skipped = candidates(headroom, owned, teammate_yes or set(), now, full_only=requires_full(start))
     triggers = []
     if points <= POINTS_FLOOR:
         triggers.append(f"usable points {points:g} <= {POINTS_FLOOR:g}")
@@ -146,7 +153,7 @@ def decide(
     elif unconfirmed:
         action, reason = "confirm", f"redemption on {unconfirmed[0].account} not yet confirmed"
     elif len(this_week) >= cap:
-        action, reason = "capped", f"{len(this_week)} of {cap} this week already used"
+        action, reason = "capped", f"{len(this_week)} this week, the most allowed ({cap})"
     elif latest is not None and now - latest.at < timedelta(minutes=GAP_MINUTES):
         action, reason = "spacing", f"last redemption {int((now - latest.at).total_seconds() // 60)} min ago"
     elif generated_age is None or generated_age > STALE_MINUTES or stale:
@@ -154,7 +161,10 @@ def decide(
     elif not triggers:
         action, reason = "wait", "pool not about to run dry"
     elif not ranked:
-        action, reason = "no_candidate", "no owned account with a banked reset frees enough"
+        action, reason = (
+            "no_candidate",
+            f"nothing worth spending: no owned account frees {MIN_FREED_POINTS:g} points or more",
+        )
     else:
         action, reason = "redeem", "; ".join(triggers)
     return {

@@ -73,6 +73,7 @@ def _pool_after(cursor: Any) -> dict[str, Any]:
         "points_per_hour_last_1h": per_hour,
         "lasts": _lasts(points, per_hour),
         "banked_total": banked_total(readings),
+        "banked_own": sum(int(a["resets_held"] or 0) for a in readings["accounts_now"] if a.get("owner") == "primary"),
         "banked_by_account": {a["account"]: a["resets_held"] for a in readings["accounts_now"]},
     }
 
@@ -88,17 +89,55 @@ def _finish(cursor: Any, state: Path, receipt: dict[str, Any], args: argparse.Na
         week_cap_left=receipt["week_cap"] - receipt["reset_number"],
     )
     moment = datetime.fromisoformat(receipt["at"])
+    freed = _freed(receipt)
     line = (
-        f"{PREFIX} {moment.strftime('%H:%M')}Z UTC: reset {receipt['reset_number']} of {receipt['week_cap']} "
-        f"this week redeemed on account {receipt['account']} (confirmed by agent-lb's readings). The pool now has "
-        f"{pool['points_left']:g} points left, {pool['lasts']} at the last hour's pace; {pool['banked_total']} resets "
-        "still banked across the pool."
+        f"{PREFIX} {moment.strftime('%H:%M')}Z UTC: reset {receipt['reset_number']} this week redeemed on account "
+        f"{receipt['account']}, freeing about {freed:g} all-models points (confirmed by agent-lb's readings). The pool "
+        f"now has {pool['points_left']:g} points left, {pool['lasts']} at the last hour's pace; {pool['banked_own']} "
+        "resets still banked on our own accounts."
     )
+    receipt["freed_points"] = freed
     receipt["line"] = line
     receipt["sent"] = pool_reset_call.send(args.send_host, f"pool-reset-{receipt['account']}-{_stamp(moment)}", line)
     _write(state / "receipts" / f"{_stamp(moment).replace(':', '')}-{receipt['account']}.json", receipt)
     (state / "pending.json").unlink(missing_ok=True)
     return receipt
+
+
+def _freed(receipt: dict[str, Any]) -> float:
+    before = (receipt.get("before") or {}).get("weekly_all", {}).get("before")
+    after = (receipt.get("after") or {}).get("weekly_all", {}).get("after")
+    if before and after:
+        return round(max(0.0, before["used_pct"] - after["used_pct"]), 1)
+    return float(receipt["pick"]["freed_points_estimate"])
+
+
+def _notice(state: Path, decision: dict[str, Any], args: argparse.Namespace, now: datetime) -> str:
+    kinds = {"no_candidate": "nothing", "capped": "guard"}
+    if not decision["triggers"]:
+        for kind in kinds.values():
+            (state / f"notice-{kind}.json").unlink(missing_ok=True)
+        return "no action"
+    kind = kinds.get(decision["action"])
+    if kind is None:
+        return "no action"
+    marker = state / f"notice-{kind}.json"
+    if marker.exists():
+        return f"{kind} notice already sent"
+    lasts = _lasts(decision["points_left"], decision["points_per_hour_last_1h"])
+    what = (
+        "nothing worth spending: no account of ours frees 10 points or more, so no reset was redeemed"
+        if kind == "nothing"
+        else f"{decision['week_used']} resets redeemed this week, the most the timer allows as a guard, so it "
+        "stopped; a person must decide on more"
+    )
+    line = (
+        f"{PREFIX} {now.strftime('%H:%M')}Z UTC: the pool is about to run dry and {what}. The pool has "
+        f"{decision['points_left']:g} points left, {lasts} at the last hour's pace."
+    )
+    sent = pool_reset_call.send(args.send_host, f"pool-reset-{kind}-{_stamp(now)}", line)
+    _write(marker, {"at": _stamp(now), "line": line, "sent": sent})
+    return f"{kind} notice sent"
 
 
 def _confirm(cursor: Any, state: Path, receipt: dict[str, Any], args: argparse.Namespace, wait: float) -> str:
@@ -117,7 +156,7 @@ def _fail(state: Path, decision: dict[str, Any], failures: list[str], args: argp
     reason = "; ".join(failures)
     (state / "hold").write_text(f"stopped {_stamp(now)} after a failed redemption: {reason}\n")
     line = (
-        f"{PREFIX} {now.strftime('%H:%M')}Z UTC: reset {decision['week_used'] + 1} of {decision['week_cap']} this week "
+        f"{PREFIX} {now.strftime('%H:%M')}Z UTC: reset {decision['week_used'] + 1} this week "
         f"failed ({reason}); nothing was redeemed and the timer is on hold until its hold file is removed. The pool has "
         f"{decision['points_left']:g} points left, {_lasts(decision['points_left'], decision['points_per_hour_last_1h'])} "
         f"at the last hour's pace; {decision['banked_total']} resets still banked across the pool."
@@ -212,6 +251,8 @@ def _run(args: argparse.Namespace) -> tuple[str, dict[str, Any], str]:
             outcome = _confirm(cursor, state, json.loads(pending.read_text()), args, 0)
         elif mode == "live" and decision["action"] == "redeem":
             outcome = _redeem(cursor, state, decision, ids, records, args, now)
+        elif mode == "live" and not held:
+            outcome = _notice(state, decision, args, now)
     return mode, decision, outcome
 
 
