@@ -71,7 +71,7 @@ def _points_moved(readings: list[float]) -> float:
             continue
         if previous is not None and value < previous - RESET_DROP_POINTS:
             moved += max(0.0, previous - start)
-            start = 0.0
+            start = value
         previous = value
     if start is not None and previous is not None:
         moved += max(0.0, previous - start)
