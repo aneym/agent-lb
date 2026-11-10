@@ -4,9 +4,11 @@ import fcntl
 from pathlib import Path
 from typing import IO
 
+from app.core.config.settings import get_settings
+
 
 def usage_refresh_lock_path() -> Path:
-    return Path.home() / ".agent-lb" / "usage-refresh.lock"
+    return get_settings().data_dir / "usage-refresh.lock"
 
 
 def try_usage_refresh_process_lock(path: Path | None = None) -> IO[str] | None:
