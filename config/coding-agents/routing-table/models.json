@@ -163,20 +163,6 @@
     "gpt-5"
   ],
   "readmitted": {
-    "frontend-designer": {
-      "alias": "fable-latest",
-      "patterns": [
-        "claude-fable-*",
-        "fable"
-      ]
-    },
-    "fable-orchestrator": {
-      "alias": "fable-latest",
-      "patterns": [
-        "claude-fable-*",
-        "fable"
-      ]
-    },
     "lane-lead": {
       "alias": "fable-latest",
       "patterns": [
@@ -184,7 +170,7 @@
         "fable"
       ]
     },
-    "planner": {
+    "plan-reviewer": {
       "alias": "fable-latest",
       "patterns": [
         "claude-fable-*",

@@ -15,13 +15,13 @@
     "plan-reviewer": {
       "vendor": "anthropic",
       "box": null,
-      "model": "opus-latest",
-      "effort": "medium"
+      "model": "fable-latest",
+      "effort": "high"
     },
     "fable-orchestrator": {
       "vendor": "anthropic",
       "box": null,
-      "model": "fable-latest",
+      "model": "opus-latest",
       "effort": "high"
     },
     "Explore": {

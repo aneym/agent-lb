@@ -29,11 +29,11 @@
     },
     "review": {
       "seat": "plan-reviewer",
-      "model": "opus-latest",
-      "effort": "medium",
+      "model": "fable-latest",
+      "effort": "high",
       "explore": false,
       "authority": "verdict",
-      "evidence": "E19 Opus medium 9/20 = high 9/20; verdict authority stays on Opus"
+      "evidence": "Fable 5.2 high reviews architecture and scoping docs before Alex sees them, its only job, never a merge or deploy gate (Alex, 2026-11-10 ~16:14Z: \"have architecture and scoping docs get a fable reviwe before presenting them to me\"; record alex-all-agents-opus-fable-doc-review-2026-11-10.md)"
     },
     "design": {
       "seat": "frontend-designer",
