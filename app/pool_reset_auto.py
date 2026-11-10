@@ -64,8 +64,32 @@ def _lasts(points: float | None, per_hour: float | None) -> str:
     return f"about {minutes:.0f} minutes"
 
 
+def _fill_held(readings: dict[str, Any], ids: dict[str, str], state: Path | None, *, fetch: bool) -> None:
+    path = None if state is None else state / "held.json"
+    known = json.loads(path.read_text()) if path is not None and path.exists() else {}
+    for account in readings["accounts_now"]:
+        name = account["account"]
+        if name not in ids:
+            continue
+        if account.get("resets_held") is None and fetch:
+            try:
+                available = pool_reset_call.preview(ids[name])["available"]
+            except pool_reset_call.CallError:
+                available = None
+            if isinstance(available, int):
+                account["resets_held"] = available
+        if account.get("resets_held") is not None:
+            known[name] = {"count": account["resets_held"], "at": readings.get("generated_at")}
+        elif name in known:
+            account["resets_held"] = known[name]["count"]
+            account["resets_held_from"] = f"last count read {known[name]['at']}"
+    if path is not None:
+        _write(path, known)
+
+
 def _pool_after(cursor: Any) -> dict[str, Any]:
     readings = pool_reset_readings.headroom(cursor)
+    _fill_held(readings, pool_reset_readings.owned(cursor), None, fetch=True)
     points = readings["points_pace"]["points_left"]
     per_hour = pace(readings)
     return {
@@ -115,7 +139,7 @@ def _freed(receipt: dict[str, Any]) -> float:
 def _notice(state: Path, decision: dict[str, Any], args: argparse.Namespace, now: datetime) -> str:
     kinds = {"no_candidate": "nothing", "capped": "guard"}
     if not decision["triggers"]:
-        for kind in kinds.values():
+        for kind in (*kinds.values(), "retry"):
             (state / f"notice-{kind}.json").unlink(missing_ok=True)
         return "no action"
     kind = kinds.get(decision["action"])
@@ -169,6 +193,22 @@ def _fail(state: Path, decision: dict[str, Any], failures: list[str], args: argp
     return f"failed: {reason}"
 
 
+def _retry(state: Path, decision: dict[str, Any], failures: list[str], args: argparse.Namespace, now: datetime) -> str:
+    reason = "; ".join(failures)
+    marker = state / "notice-retry.json"
+    if marker.exists():
+        return f"not redeemed, nothing consumed, tries again next tick: {reason}"
+    line = (
+        f"{PREFIX} {now.strftime('%H:%M')}Z UTC: the pool is about to run dry but reset "
+        f"{decision['week_used'] + 1} this week was not redeemed yet ({reason}); nothing was consumed and the timer "
+        f"tries again every 5 minutes. The pool has {decision['points_left']:g} points left, "
+        f"{_lasts(decision['points_left'], decision['points_per_hour_last_1h'])} at the last hour's pace."
+    )
+    sent = pool_reset_call.send(args.send_host, f"pool-reset-retry-{_stamp(now)}", line)
+    _write(marker, {"at": _stamp(now), "line": line, "sent": sent})
+    return f"not redeemed, nothing consumed, retry notice sent: {reason}"
+
+
 def _redeem(
     cursor: Any,
     state: Path,
@@ -180,17 +220,23 @@ def _redeem(
 ) -> str:
     override = decision["override_daily_limit"]
     failures = []
+    consumed = False
     for entry in decision["candidates"][:2]:
         account = entry["account"]
         try:
             seen = pool_reset_call.preview(ids[account])
-            if not seen["redeemable_now"]:
-                failures.append(f"{account} not redeemable ({seen['ineligible_reason']})")
-                continue
-            at = datetime.now(timezone.utc)
+        except pool_reset_call.CallError as exc:
+            failures.append(f"{account} preview failed ({exc})")
+            continue
+        if not seen["redeemable_now"]:
+            failures.append(f"{account} not redeemable ({seen['ineligible_reason']})")
+            continue
+        consumed = True
+        at = datetime.now(timezone.utc)
+        try:
             result = pool_reset_call.consume(ids[account], override)
         except pool_reset_call.CallError as exc:
-            failures.append(f"{account} call failed ({exc})")
+            failures.append(f"{account} consume failed ({exc})")
             continue
         if result.get("status") != "redeemed":
             failures.append(f"{account} not redeemed ({result.get('code')})")
@@ -212,6 +258,8 @@ def _redeem(
         }
         _write(state / "pending.json", receipt)
         return _confirm(cursor, state, receipt, args, CONFIRM_WAIT_SECONDS)
+    if not consumed:
+        return _retry(state, decision, failures, args, now)
     return _fail(state, decision, failures, args, now)
 
 
@@ -234,6 +282,7 @@ def _run(args: argparse.Namespace) -> tuple[str, dict[str, Any], str]:
             mode = "copy"
         else:
             readings = pool_reset_readings.headroom(cursor)
+            _fill_held(readings, ids, state, fetch=False)
             now = pool_reset_readings.db_now(cursor).replace(tzinfo=timezone.utc)
             mode = "live" if args.live else "dry"
         if args.redemptions:
@@ -243,6 +292,9 @@ def _run(args: argparse.Namespace) -> tuple[str, dict[str, Any], str]:
             records = pool_reset_readings.redemptions(cursor, week_start(now))
         yes = {path.name for path in (state / "teammate-yes").glob("*") if path.is_file()}
         decision = decide(readings, now=now, owned=set(ids), redemptions=records, held=held, teammate_yes=yes)
+        if mode != "copy" and decision["action"] == "no_candidate":
+            _fill_held(readings, ids, state, fetch=True)
+            decision = decide(readings, now=now, owned=set(ids), redemptions=records, held=held, teammate_yes=yes)
         recent = any(record.at > now - timedelta(days=1) for record in records)
         decision["override_daily_limit"] = recent and 1 <= decision["week_used"] < decision["week_cap"]
         outcome = "no action"

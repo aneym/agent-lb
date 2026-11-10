@@ -46,8 +46,9 @@ def pace(headroom: dict[str, Any]) -> float | None:
     return None if value is None else float(value)
 
 
-def usable_points(headroom: dict[str, Any]) -> float:
-    return round(sum(float(a["weekly_all_points_left"]) for a in headroom["accounts_now"] if a["usable_now"]), 2)
+def usable_points(headroom: dict[str, Any], leave_out: frozenset[str] = frozenset()) -> float:
+    counted = [a for a in headroom["accounts_now"] if a["usable_now"] and a["account"] not in leave_out]
+    return round(sum(float(a["weekly_all_points_left"]) for a in counted), 2)
 
 
 def banked_total(headroom: dict[str, Any]) -> int:
@@ -135,10 +136,12 @@ def decide(
     start = week_start(now)
     cap = week_cap(start)
     this_week = [r for r in redemptions if r.at >= start]
-    points = usable_points(headroom)
+    stale_all = [a["account"] for a in headroom["accounts_now"] if a["usable_now"] and _stale(a, now)]
+    stale = [name for name in stale_all if name in owned]
+    left_out = frozenset(name for name in stale_all if name not in owned)
+    points = usable_points(headroom, left_out)
     per_hour = pace(headroom)
     minutes = minutes_left(points, per_hour)
-    stale = [a["account"] for a in headroom["accounts_now"] if a["usable_now"] and _stale(a, now)]
     generated_age = _age_minutes(headroom.get("generated_at"), now)
     ranked, skipped = candidates(headroom, owned, teammate_yes or set(), now, full_only=requires_full(start))
     triggers = []
@@ -146,7 +149,7 @@ def decide(
         triggers.append(f"usable points {points:g} <= {POINTS_FLOOR:g}")
     if minutes is not None and minutes < MINUTES_FLOOR:
         triggers.append(f"{minutes:g} min left at the last hour's pace < {MINUTES_FLOOR:g}")
-    if not any(a["usable_now"] for a in headroom["accounts_now"]):
+    if not any(a["usable_now"] and a["account"] not in left_out for a in headroom["accounts_now"]):
         triggers.append("no usable account")
     latest = max(this_week, key=lambda r: r.at, default=None)
     unconfirmed = [r for r in this_week if not r.confirmed]
@@ -185,6 +188,7 @@ def decide(
         "minutes_left_at_last_hour_pace": minutes,
         "triggers": triggers,
         "stale_usable_accounts": stale,
+        "stale_teammate_points_left_out": sorted(left_out),
         "would_take": ranked[0]["account"] if ranked else None,
         "candidates": ranked,
         "skipped": skipped,
