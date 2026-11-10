@@ -6,8 +6,8 @@ from typing import Any
 
 from app.core.claude_reset_week import requires_full, week_cap, week_start
 
-POINTS_FLOOR = 8.0
-MINUTES_FLOOR = 30.0
+POINTS_FLOOR = 28.0
+MINUTES_FLOOR = 45.0
 STALE_MINUTES = 15
 GAP_MINUTES = 60
 MIN_FREED_POINTS = 10.0
@@ -146,6 +146,8 @@ def decide(
         triggers.append(f"usable points {points:g} <= {POINTS_FLOOR:g}")
     if minutes is not None and minutes < MINUTES_FLOOR:
         triggers.append(f"{minutes:g} min left at the last hour's pace < {MINUTES_FLOOR:g}")
+    if not any(a["usable_now"] for a in headroom["accounts_now"]):
+        triggers.append("no usable account")
     latest = max(this_week, key=lambda r: r.at, default=None)
     unconfirmed = [r for r in this_week if not r.confirmed]
     if held:
