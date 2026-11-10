@@ -1,5 +1,5 @@
 {
-  "background_model": "sonnet-latest",
+  "background_model": "haiku-latest",
   "autocompact_window": {
     "tab": 300000,
     "lane": 180000,
@@ -27,7 +27,7 @@
     "Explore": {
       "vendor": "anthropic",
       "box": null,
-      "model": "sonnet-latest",
+      "model": "haiku-latest",
       "effort": "medium"
     },
     "opus-seat": {

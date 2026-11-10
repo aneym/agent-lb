@@ -3,7 +3,7 @@ name: Explore
 description: Fast read-only codebase exploration agent.
 tools: [Read, Grep, Glob, Bash]
 disallowedTools: [Write, Edit]
-model: sonnet
+model: haiku
 effort: medium
 ---
 

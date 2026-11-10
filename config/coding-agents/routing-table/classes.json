@@ -56,7 +56,7 @@
       "chain": [
         {
           "seat": "Explore",
-          "model": "sonnet-latest",
+          "model": "haiku-latest",
           "vendor": "anthropic",
           "effort": "medium"
         }
