@@ -12,13 +12,21 @@ BRANCH_GUARD_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/branch-guard.py"'
 HOOKS_OFF_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/hooks-off-guard.py"'
 WALK_GUARD_COMMAND = '/bin/bash "$HOME/.claude/hooks/wide-scan-guard.sh" --block-walks'
 MEMORY_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/codex-memory-brief.py"'
+STOP_BY_NAME_COMMAND = (
+    'G="$HOME/.claude/hooks/stop-by-name-guard.py"; if [ -r "$G" ]; then exec /usr/bin/python3 "$G"; fi; '
+    "if grep -Eq '(^|[^A-Za-z0-9_-])(pkill|killall5?)([^A-Za-z0-9_-]|$)|fuser.* -[A-Za-z]*k|(pgrep|pidof|lsof).*kill|kill.*(pgrep|pidof|lsof)'; "
+    'then echo "BLOCKED: stop by name. $G is missing because claude-config has not synced to this host yet, so a command '
+    "naming pkill, killall, fuser -k, or kill next to a pgrep, pidof or lsof lookup is refused until it does. Stop only "
+    'the PID you recorded when you started it, with kill <pid>; free a port with port-free <port>." >&2; exit 2; fi'
+)
 FLOOR_COMMANDS = (BRANCH_GUARD_COMMAND, HOOKS_OFF_COMMAND, WALK_GUARD_COMMAND)
-TRUSTED_COMMANDS = (*FLOOR_COMMANDS, MEMORY_COMMAND)
+TRUSTED_COMMANDS = (*FLOOR_COMMANDS, STOP_BY_NAME_COMMAND, MEMORY_COMMAND)
 MANAGED_COMMANDS: dict[str, tuple[str, int, str | None]] = {
     OFFLOAD_COMMAND: ("PreToolUse", 20, "Bash"),
     WALK_GUARD_COMMAND: ("PreToolUse", 10, "Bash"),
     BRANCH_GUARD_COMMAND: ("PreToolUse", 10, "Bash"),
     HOOKS_OFF_COMMAND: ("PreToolUse", 10, "apply_patch"),
+    STOP_BY_NAME_COMMAND: ("PreToolUse", 10, "Bash"),
     MEMORY_COMMAND: ("SessionStart", 10, "startup|resume|clear|compact"),
 }
 
