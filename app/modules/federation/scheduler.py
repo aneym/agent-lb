@@ -19,6 +19,7 @@ from app.db.session import get_background_session
 from app.modules.federation.peer_client import AiohttpFederationPeerClient, FederationPeerClient
 from app.modules.federation.repository import FederationRepository
 from app.modules.federation.schemas import CALLER_MACHINE_MAX_LENGTH, CALLER_MACHINE_SOURCE_MAX_LENGTH, CALLER_SEAT_MAX_LENGTH, CALLER_USER_MAX_LENGTH, CALLER_USER_SOURCE_MAX_LENGTH, ROOM_MAX_LENGTH, FederationRequestLogRow, FederationRequestLogsRequest, FederationUsageReportRequest  # noqa: I001  # fmt: skip
+from app.modules.federation.sticky_pin_sync import SEED_MARKER_NAME, StickyPinSync
 from app.modules.proxy.account_cache import get_account_selection_cache
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class FederationMirrorScheduler:
     peer_client: FederationPeerClient = field(default_factory=AiohttpFederationPeerClient)
     encryptor: TokenEncryptor = field(default_factory=TokenEncryptor)
     sleep: Callable[[float], Awaitable[None]] = field(default_factory=lambda: asyncio.sleep)
+    sticky_pin_sync: StickyPinSync | None = None
     _task: asyncio.Task[None] | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     consecutive_failures: int = 0
@@ -62,9 +64,13 @@ class FederationMirrorScheduler:
         if self._task and not self._task.done():
             return
         self._stop.clear()
+        if self.sticky_pin_sync is not None:
+            await self.sticky_pin_sync.start()
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
+        if self.sticky_pin_sync is not None:
+            await self.sticky_pin_sync.stop()
         if not self._task:
             return
         self._stop.set()
@@ -232,6 +238,7 @@ def _request_log_row(log: RequestLog) -> FederationRequestLogRow:
         output_tokens=log.output_tokens,
         cached_input_tokens=log.cached_input_tokens,
         cache_creation_tokens=log.cache_creation_tokens,
+        cache_creation_tier=log.cache_creation_tier,
         cache_read_tokens=log.cache_read_tokens,
         reasoning_tokens=log.reasoning_tokens,
         cost_usd=log.cost_usd,
@@ -293,14 +300,24 @@ async def _default_federation_repo_factory() -> AsyncIterator[FederationReposito
 
 def build_federation_mirror_scheduler() -> FederationMirrorScheduler:
     settings = get_settings()
+    peer_url = settings.federation_peer_url
+    token = settings.effective_federation_mirror_token
     return FederationMirrorScheduler(
         interval_seconds=settings.federation_mirror_interval_seconds,
-        enabled=bool(settings.federation_peer_url and settings.effective_federation_mirror_token),
-        peer_url=settings.federation_peer_url,
-        federation_token=settings.effective_federation_mirror_token,
+        enabled=bool(peer_url and token),
+        peer_url=peer_url,
+        federation_token=token,
         local_instance_id=settings.local_instance_id,
         usage_window_days=settings.federation_usage_window_days,
         forward_request_logs=settings.federation_forward_request_logs,
         request_log_cursor_path=settings.data_dir / _REQUEST_LOG_CURSOR_NAME,
         repo_factory=_default_federation_repo_factory,
+        sticky_pin_sync=StickyPinSync(
+            peer_url=peer_url,
+            token=token,
+            local_instance_id=settings.local_instance_id,
+            seed_marker=settings.data_dir / SEED_MARKER_NAME,
+        )
+        if peer_url and token
+        else None,
     )

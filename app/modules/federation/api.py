@@ -18,6 +18,7 @@ from app.modules.federation.exceptions import (
 )
 from app.modules.federation.push_auth import PushSource, require_federation_push_source
 from app.modules.federation.push_receiver import FederationPushReceiver
+from app.core.utils.time import utcnow
 from app.modules.federation.scheduler import FederationMirrorScheduler
 from app.modules.federation.schemas import (
     FederationAbortRequest,
@@ -44,6 +45,12 @@ from app.modules.federation.schemas import (
     FederationUsageReportRequest,
     FederationUsageReportResponse,
 )
+from app.modules.federation.sticky_pin_schemas import (
+    STICKY_PIN_BATCH_LIMIT,
+    StickyPinExchangeRequest,
+    StickyPinExchangeResponse,
+)
+from app.modules.federation.sticky_pin_store import StickyPinStore
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -119,6 +126,26 @@ async def post_request_logs(
     context: FederationContext = Depends(get_federation_context),
 ) -> FederationRequestLogsResponse:
     return await context.service.accept_request_logs(request.instance_id, request.rows)
+
+
+@router.post(
+    "/sticky-pins",
+    response_model=StickyPinExchangeResponse,
+    dependencies=[Depends(require_federation_mirror_auth)],
+)
+async def post_sticky_pins(
+    request: StickyPinExchangeRequest,
+    context: FederationContext = Depends(get_federation_context),
+) -> StickyPinExchangeResponse:
+    server_now = utcnow()
+    store = StickyPinStore(context.session)
+    accepted = await store.apply(request.pins, seed=request.seed)
+    if request.since is None:
+        return StickyPinExchangeResponse(accepted=accepted, pins=[], more=False, server_now=server_now)
+    pins = await store.list_pins(since=request.since, after_key=request.after_key, limit=STICKY_PIN_BATCH_LIMIT)
+    return StickyPinExchangeResponse(
+        accepted=accepted, pins=pins, more=len(pins) == STICKY_PIN_BATCH_LIMIT, server_now=server_now
+    )
 
 
 @dashboard_router.get("/status", response_model=FederationStatusResponse)

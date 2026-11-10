@@ -196,6 +196,7 @@ class FederationUsageRepository:
                     output_tokens=row.output_tokens,
                     cached_input_tokens=row.cached_input_tokens,
                     cache_creation_tokens=row.cache_creation_tokens,
+                    cache_creation_tier=row.cache_creation_tier,
                     cache_read_tokens=row.cache_read_tokens,
                     reasoning_tokens=row.reasoning_tokens,
                     cost_usd=row.cost_usd,

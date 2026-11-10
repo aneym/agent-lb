@@ -18,20 +18,7 @@ def upgrade_helper_cache(
 ) -> str | None:
 
     if provider_name == "kimi":
-        controls = []
-        pending = [body]
-        while pending:
-            value = pending.pop()
-            if isinstance(value, dict):
-                control = value.get("cache_control")
-                if isinstance(control, dict) and control.get("type") == "ephemeral":
-                    ttl = control.get("ttl", "5m")
-                    controls.append(ttl if ttl in ("5m", "1h") else "mx")
-                pending.extend(v for k, v in value.items() if k != "cache_control")
-            elif isinstance(value, list):
-                pending.extend(value)
-        tiers = set(controls)
-        return next(iter(tiers)) if len(tiers) == 1 else "mx" if tiers else None
+        return requested_cache_tier(body)
 
     agent_id = next((value for key, value in inbound_headers.items() if key.lower() == "x-claude-code-agent-id"), "")
     if (
@@ -40,7 +27,7 @@ def upgrade_helper_cache(
         or not isinstance(agent_id, str)
         or not agent_id.strip()
     ):
-        return None
+        return requested_cache_tier(body) if provider_name == ANTHROPIC_PROVIDER_NAME else None
     blocks: list[Any] = [body]
     for key in ("system", "tools"):
         if isinstance(body.get(key), list):
@@ -55,7 +42,7 @@ def upgrade_helper_cache(
         control = block["cache_control"]
         if not isinstance(control, dict) or control.get("type") != "ephemeral":
             logger.warning("Helper cache breakpoint is invalid; leaving request unchanged")
-            return None
+            return requested_cache_tier(body)
     for block in blocks:
         if isinstance(block, dict) and isinstance(block.get("cache_control"), dict):
             block["cache_control"]["ttl"] = "1h"
@@ -63,4 +50,21 @@ def upgrade_helper_cache(
     if upgraded:
         merge_anthropic_beta_header(headers, ["extended-cache-ttl-2025-04-11"])
         return "1h"
-    return None
+    return requested_cache_tier(body)
+
+
+def requested_cache_tier(body: dict[str, Any]) -> str | None:
+    controls = []
+    pending: list[Any] = [body]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            control = value.get("cache_control")
+            if isinstance(control, dict) and control.get("type") == "ephemeral":
+                ttl = control.get("ttl", "5m")
+                controls.append(ttl if ttl in ("5m", "1h") else "mx")
+            pending.extend(v for k, v in value.items() if k != "cache_control")
+        elif isinstance(value, list):
+            pending.extend(value)
+    tiers = set(controls)
+    return next(iter(tiers)) if len(tiers) == 1 else "mx" if tiers else None

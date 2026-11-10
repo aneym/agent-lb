@@ -3,7 +3,7 @@ id: federation
 product: agent-lb
 owner: weekend-finish
 status: live
-covers: ["route:/api/federation/checkin", "route:/api/federation/checkin/execute", "route:/api/federation/checkout", "route:/api/federation/checkout/confirm", "route:/api/federation/checkout/execute", "route:/api/federation/mirror", "route:/api/federation/push", "route:/api/federation/request-logs", "route:/api/federation/status", "route:/api/federation/usage-report"]
+covers: ["route:/api/federation/checkin", "route:/api/federation/checkin/execute", "route:/api/federation/checkout", "route:/api/federation/checkout/confirm", "route:/api/federation/checkout/execute", "route:/api/federation/mirror", "route:/api/federation/push", "route:/api/federation/request-logs", "route:/api/federation/status", "route:/api/federation/sticky-pins", "route:/api/federation/usage-report"]
 paths: ["features/agent-lb/federation.md"]
 proofs: []
 unmapped:
@@ -21,6 +21,8 @@ Run agent-lb and call its HTTP routes.
 
 ## Driving it
 Use an HTTP client with the required credentials for the route.
+
+Edges trade thread-to-account pins with the primary through `/api/federation/sticky-pins`; see `docs/sticky-pins-across-routers.md`.
 
 ## Gotchas
 The inventory derives literal routes from source decorators. Router prefixes are represented by endpoint templates in this file.

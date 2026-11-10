@@ -252,6 +252,7 @@ class FederationRequestLogRow(BaseModel):
     output_tokens: int | None = None
     cached_input_tokens: int | None = None
     cache_creation_tokens: int | None = None
+    cache_creation_tier: str | None = Field(default=None, max_length=2)
     cache_read_tokens: int | None = None
     reasoning_tokens: int | None = None
     cost_usd: float | None = None

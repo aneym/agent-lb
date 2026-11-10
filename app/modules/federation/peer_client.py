@@ -19,6 +19,7 @@ from app.modules.federation.schemas import (
     FederationTransferStatusResponse,
     FederationUsageReportRequest,
 )
+from app.modules.federation.sticky_pin_schemas import StickyPinExchangeRequest, StickyPinExchangeResponse
 
 _Model = TypeVar("_Model", bound=BaseModel)
 
@@ -45,6 +46,10 @@ class FederationPeerClient(Protocol):
     async def push_request_logs(
         self, *, peer_url: str, token: str, body: FederationRequestLogsRequest
     ) -> FederationRequestLogsResponse: ...
+
+    async def exchange_sticky_pins(
+        self, *, peer_url: str, token: str, body: StickyPinExchangeRequest
+    ) -> StickyPinExchangeResponse: ...
 
     async def checkout(
         self, *, peer_url: str, token: str, account_id: str, taker_instance_id: str, nonce: str
@@ -111,6 +116,18 @@ class AiohttpFederationPeerClient:
             ) as response:
                 data = await _json_or_raise(response)
         return _validated(FederationRequestLogsResponse, data)
+
+    async def exchange_sticky_pins(
+        self, *, peer_url: str, token: str, body: StickyPinExchangeRequest
+    ) -> StickyPinExchangeResponse:
+        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
+            async with session.post(
+                f"{peer_url}/api/federation/sticky-pins",
+                json=body.model_dump(mode="json"),
+                headers=_bearer_headers(token),
+            ) as response:
+                data = await _json_or_raise(response)
+        return _validated(StickyPinExchangeResponse, data)
 
     async def checkout(
         self, *, peer_url: str, token: str, account_id: str, taker_instance_id: str, nonce: str
