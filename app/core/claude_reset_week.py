@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 EASTERN = ZoneInfo("America/New_York")
 FIRST_WEEK = date(2026, 11, 9)
-FIRST_WEEK_CAP = 2
+FIRST_WEEK_CAP = 6
 WEEK_CAP = 1
 FULL_PERCENT = 95.0
 
