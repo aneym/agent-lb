@@ -36,7 +36,7 @@
       "chain": [
         {
           "seat": "planner",
-          "model": "fable-latest",
+          "model": "opus-latest",
           "vendor": "anthropic",
           "effort": "high"
         }
