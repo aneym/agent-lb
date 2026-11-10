@@ -15,7 +15,7 @@ Rules (`app/modules/federation/sticky_pin_store.py`):
 - Times cross the wire in UTC. The primary's Postgres session runs in Europe/Berlin, so the store converts on read and write.
 - A pin to an account the receiver does not have is skipped.
 - On an edge's first exchange (no `federation-sticky-pin-seed.json` in its data dir) it sends every pin with `seed`, and the primary takes the edge's account for each key. Edge pins describe where box threads live now; older primary pins come from earlier hops.
-- The edge exchanges once before it starts serving (5 s cap) and once while shutting down (3 s cap), so a pin bound just before a deploy reaches the primary and one bound by the primary during the deploy is on the edge when it comes back. A restart looks back 6 h.
+- The edge exchanges once before it starts serving (5 s cap) and once while shutting down (3 s cap), so a pin bound just before a deploy reaches the primary and one bound by the primary during the deploy is on the edge when it comes back. Both cursors live in `federation-sticky-pin-seed.json`, so a restart trades only what changed while it was down (never more than 6 h).
 - Only `codex_session` and `sticky_thread` pins sync; `prompt_cache` pins are age-limited and stay local.
 
 The give-up rules are unchanged: the router that serves a request runs `_select_with_stickiness` on the shared pin, so an ineligible, rate-limited, exhausted or briefly unselectable account still moves the thread, and that rebind reaches the other side on the next exchange.

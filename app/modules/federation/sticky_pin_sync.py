@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from app.core.utils.time import utcnow
+from app.core.utils.time import to_utc_naive, utcnow
 from app.db.session import get_background_session
 from app.modules.federation.peer_client import AiohttpFederationPeerClient, FederationPeerClient
 from app.modules.federation.sticky_pin_schemas import (
@@ -47,6 +47,7 @@ class StickyPinSync:
     async def start(self) -> None:
         if self._task and not self._task.done():
             return
+        self._load_cursors()
         await self._bounded_exchange(_START_TIMEOUT_SECONDS)
         self._task = asyncio.create_task(self._run_loop())
 
@@ -94,15 +95,42 @@ class StickyPinSync:
             received, server_now = await self._pull_peer(started)
             self.sent_through = started
             self.received_through = server_now
-            if seeding:
-                self.seed_marker.write_text(json.dumps({"seeded_at": started.isoformat(), "pins": sent}))
+            self._save_cursors()
             if sent or received:
                 logger.info(
                     "Federation sticky pins exchanged sent=%s applied_from_peer=%s seed=%s", sent, received, seeding
                 )
 
+    def _load_cursors(self) -> None:
+        try:
+            saved = json.loads(self.seed_marker.read_text())
+        except (OSError, ValueError):
+            return
+        if not isinstance(saved, dict):
+            return
+        for name in ("sent_through", "received_through"):
+            value = saved.get(name)
+            if isinstance(value, str):
+                with contextlib.suppress(ValueError):
+                    setattr(self, name, datetime.fromisoformat(value))
+
+    def _save_cursors(self) -> None:
+        assert self.sent_through is not None and self.received_through is not None
+        self.seed_marker.write_text(
+            json.dumps(
+                {
+                    "sent_through": self.sent_through.isoformat(),
+                    "received_through": to_utc_naive(self.received_through).isoformat(),
+                }
+            )
+        )
+
+    def _since(self, cursor: datetime | None, started: datetime) -> datetime:
+        floor = started - _RESTART_LOOKBACK
+        return max(floor, to_utc_naive(cursor) if cursor is not None else floor) - _OVERLAP
+
     async def _push_local(self, started: datetime, *, seeding: bool) -> int:
-        since = None if seeding else (self.sent_through or started - _RESTART_LOOKBACK) - _OVERLAP
+        since = None if seeding else self._since(self.sent_through, started)
         after_key: str | None = None
         sent = 0
         while True:
@@ -119,7 +147,7 @@ class StickyPinSync:
             after_key = pins[-1].key
 
     async def _pull_peer(self, started: datetime) -> tuple[int, datetime]:
-        since = (self.received_through or started - _RESTART_LOOKBACK) - _OVERLAP
+        since = self._since(self.received_through, started)
         after_key: str | None = None
         applied = 0
         server_now: datetime | None = None
