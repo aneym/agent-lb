@@ -25,7 +25,8 @@ def rpc(proc: subprocess.Popen[str], request_id: int, method: str, params: dict[
 
 
 def trust_floor_hooks(home: Path, timeout: float = 90) -> str:
-    codex, hooks_file = shutil.which("codex"), home / ".codex" / "hooks.json"
+    codex = shutil.which("codex") or shutil.which("codex", path=str(home / ".local/bin"))
+    hooks_file = home / ".codex" / "hooks.json"
     if not codex or not hooks_file.is_file():
         return "skipped: no codex or no hooks.json"
     env = dict(os.environ, CODEX_HOME=str(home / ".codex"))
