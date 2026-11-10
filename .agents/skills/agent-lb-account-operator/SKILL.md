@@ -154,7 +154,8 @@ preserve unrelated sessions unless the user requested their closure.
 A subscription paid with a Link temporary card (`payment: single-use`) needs a new
 card each cycle. Account health flags it 7 days out (`renewal_payment`). The
 `com.aneyman.agent-lb-recard` launchd job (`scripts/install-recard-watch.sh`, Studio)
-runs `agent-lb recard run` every 15 minutes: 2 days before renewal it checks the
+runs `agent-lb recard run` every 15 minutes: once the renewal date arrives (the plan
+has run out, never ahead of time) and for 7 days after, it checks the
 account's browser profile is signed in to claude.ai, creates a Link card request
 for the ledger amount (Link prompts the operator's app; the approval URL is also
 sent to its owning thread with t3_thread_send), and once approved puts the card on the billing page,

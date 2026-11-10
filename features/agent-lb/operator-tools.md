@@ -10,7 +10,7 @@ proofs: []
 # Operator tools
 
 ## Sub-features
-The installed agent-lb commands provide service operations, database migration, startup measurement, read-only audits, and recard: before a single-use subscription renews, `agent-lb recard run` (launchd, every 15 minutes) asks the operator to approve a Link card and then puts it on the claude.ai billing page. `python -m app.pool_reset_auto` (systemd timer on the primary, every 5 minutes) redeems a banked Claude reset when the pool is about to run dry; see `docs/pool-reset-auto.md`.
+The installed agent-lb commands provide service operations, database migration, startup measurement, read-only audits, and recard: once a single-use subscription runs out on its renewal date, `agent-lb recard run` (launchd, every 15 minutes) asks the operator to approve a Link card and then puts it on the claude.ai billing page. `python -m app.pool_reset_auto` (systemd timer on the primary, every 5 minutes) redeems a banked Claude reset when the pool is about to run dry; see `docs/pool-reset-auto.md`.
 
 ## How to get to it
 Install the project with uv and run `agent-lb --help`.

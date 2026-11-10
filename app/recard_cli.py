@@ -29,7 +29,9 @@ class RecardError(Exception):
 
 
 def add_parser(subparsers) -> None:
-    recard = subparsers.add_parser("recard", help="Put a fresh Link card on a single-use subscription before renewal.")
+    recard = subparsers.add_parser(
+        "recard", help="Put a fresh Link card on a single-use subscription once it runs out."
+    )
     commands = recard.add_subparsers(dest="recard_command", required=True)
     start = commands.add_parser("start", help="Create the Link request; Link asks the operator to approve it.")
     start.add_argument("email")
@@ -37,8 +39,7 @@ def add_parser(subparsers) -> None:
     finish = commands.add_parser("finish", help="Once approved, put the card on the claude.ai billing page.")
     finish.add_argument("email")
     finish.add_argument("--no-save", action="store_true")
-    tick = commands.add_parser("run", help="Start due recards and finish approved ones.")
-    tick.add_argument("--lead-days", type=int, default=2)
+    tick = commands.add_parser("run", help="Start recards for plans that ran out and finish approved ones.")
     tick.add_argument("--dry-run", action="store_true")
     status = commands.add_parser("status")
     status.add_argument("--json", action="store_true")
@@ -141,7 +142,7 @@ def _next_month(day: str) -> str:
     return date(year, month, min(current.day, calendar.monthrange(year, month)[1])).isoformat()
 
 
-def tick(lead_days: int, dry_run: bool) -> None:
+def tick(dry_run: bool) -> None:
     today = date.today()
     recards = load_recards()
     for email, subscription in sorted(load_subscriptions().items()):
@@ -158,7 +159,7 @@ def tick(lead_days: int, dry_run: bool) -> None:
             continue
         if same_cycle and row.get("status") in CLOSED:
             continue
-        action = "finish" if same_cycle and row.get("status") in OPEN else "start" if -7 <= days <= lead_days else None
+        action = "finish" if same_cycle and row.get("status") in OPEN else "start" if -7 <= days <= 0 else None
         if action is None:
             continue
         if dry_run:
@@ -196,7 +197,7 @@ def run(args) -> None:
                 print(f"{row['email']}\t{row['renewsOn']}\t{row.get('status', '-')}\t{row.get('detail') or ''}")
             return
         if args.recard_command == "run":
-            tick(args.lead_days, args.dry_run)
+            tick(args.dry_run)
             return
         email = args.email.strip().lower()
         row = start(email, args.amount) if args.recard_command == "start" else finish(email, save=not args.no_save)
