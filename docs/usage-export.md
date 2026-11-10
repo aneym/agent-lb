@@ -20,6 +20,16 @@ What counts is share of weekly quota, not dollars, so `headroom.json` also gives
 - Top level `points_pace`: the same four names for the pool, each the sum of the account figures that are not null, over the same Anthropic accounts `pool_hours_left_basis.points_left` covers. `accounts` and `accounts_counted` say how many went into each sum, `accounts_without_coverage` lists the ones left out (so with an account missing, the pool figure is a floor on the pace). Also `points_left` (equal to `pool_hours_left_basis.points_left`), `weekly_all_points_per_hour_last_1h` and `weekly_all_points_per_hour_24h`. `by_owner_last_24h` splits the 24-hour all-models and Fable points by `owner`: `primary` for accounts this agent-lb owns, `teammate-owned` for accounts a teammate's agent-lb pushes here (each account entry carries `owner` and `owner_instance`; `pool_summary.teammate_owned` lists them). A redeemed reset's drop is never counted as use: after a reset the span counts from the first reading after it.
 - `pool_hours_left_points_last_hour_rate` and `pool_hours_left_points_24h_rate`: `points_left` over all-models points per hour, last hour or 24-hour average; null when no points moved. They sit beside the dollar-based `pool_hours_left_last_hour_rate` and `pool_hours_left_24h_rate`, which stay for their readers; the low headroom alert still reads the dollar one.
 
+## Fable for hard things
+
+`headroom.json` carries `fable_for_hard_things`: `allowed`, a one-sentence `reason` and its `inputs`. It is the rule in `~/.claude/rules/workflow.md` (Build and run) for whether a lead may give a hard piece to a Fable child, and `allowed` is true only when all three legs hold:
+
+1. Cover: `points_left` plus `points_turning_48h` is at least 48 hours at the 24-hour points pace (`points_pace.weekly_all_points_per_hour_24h`). Points that turn are, for each account whose weekly all-models reset falls inside the next 48 hours, its `weekly_all_points_used` now (the used percent, 0 for an account that counts no points left). A null pace fails this leg. Dollar fields are never read.
+2. `pool_summary.fable_bucket_used_pct_max` is under 70.
+3. Pacing is off: `on` in the `pool-pacing/1` flag at `ax102:/home/jobs/.agent-rails/factory/pool-pacing/flag.json`. The job reads it over ssh each run from the primary, and from the file itself when it runs on ax102; `--pacing-flag` takes another path or `host:path`. A missing, unreadable or malformed flag counts as on, and the reason says so.
+
+The reason names every leg that fails. To judge a copy: `python -m app.usage_export_fable_gate --headroom <headroom.json> --flag <flag.json>`.
+
 ## Not in the file
 
 - Plan and rate-limit tier: agent-lb stores `plan_type` as `claude` for every Anthropic account and does not store the tier, so neither is exported.

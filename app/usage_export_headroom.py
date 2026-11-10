@@ -81,6 +81,12 @@ def _points_left(account: dict[str, Any], weekly: dict[str, Any] | None) -> floa
     return round(max(0.0, 100.0 - float(weekly["used_percent"])), 2)
 
 
+def _points_used(account: dict[str, Any], weekly: dict[str, Any] | None) -> float:
+    if weekly is None or not _eligible(account):
+        return 0.0
+    return round(min(100.0, max(0.0, float(weekly["used_percent"]))), 2)
+
+
 def _token_expired(account: dict[str, Any], now: datetime) -> bool:
     expires = account["access_expires_at"]
     return expires is not None and expires <= now
@@ -166,6 +172,7 @@ def _entry(
         "five_hour_resets": _epoch(five_hour["reset_at"]) if five_hour else None,
         "limits_recorded_at": _iso(min(recorded)) if recorded else None,
         "weekly_all_points_left": _points_left(account, weekly),
+        "weekly_all_points_used": _points_used(account, weekly),
         "usable_now": blocker is None and exhausted is None,
         "note": _notes(account, five_hour, weekly, blocker, exhausted, now),
     }
