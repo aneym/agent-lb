@@ -19,6 +19,7 @@ from route_anthropic_models import (  # pyrefly: ignore [missing-import]
     readmitted_patterns,
     resolve_claude_family,
     retired_patterns,
+    seat_readmitted_patterns,
     served_models,
     version_key,
 )
@@ -81,6 +82,9 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str], seat: str |
         if owners and seat is not None and seat not in owners:
             return None, f"{name} is readmitted for {', '.join(owners)} only"
         exempt = readmitted_patterns(table, name)
+        retired = tuple(pattern for pattern in retired if pattern not in exempt)
+    else:
+        exempt = seat_readmitted_patterns(table, seat)
         retired = tuple(pattern for pattern in retired if pattern not in exempt)
 
     blocked = blocked_patterns(table)
@@ -280,7 +284,9 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
     if pinned_alias == "opus-latest":
         model, _ = resolve_alias(table, pinned_alias, [], seat)
         alias = pinned_alias
-    if model and is_retired(model, retired_patterns(table)):
+    if model and is_retired(
+        model, tuple(p for p in retired_patterns(table) if p not in seat_readmitted_patterns(table, seat))
+    ):
         raise ValueError(f"{seat} picked retired model {model}")
     opts = seat_opts(seat, model, alias, effort)
     brief = ""

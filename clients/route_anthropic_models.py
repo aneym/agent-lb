@@ -127,6 +127,15 @@ def readmitted_patterns(table: dict[str, Any], alias: str) -> tuple[str, ...]:
     return tuple(found)
 
 
+def seat_readmitted_patterns(table: dict[str, Any], seat: str | None) -> tuple[str, ...]:
+
+    readmitted = table.get("readmitted") if isinstance(table.get("readmitted"), dict) else {}
+    entry = readmitted.get(seat) if seat else None
+    if not isinstance(entry, dict):
+        return ()
+    return tuple(item for item in entry.get("patterns") or () if isinstance(item, str))
+
+
 def is_retired(model: str, patterns: tuple[str, ...]) -> bool:
     bare = model.lower().split("[", 1)[0]
     return any(fnmatch.fnmatchcase(bare, pattern) for pattern in patterns)
