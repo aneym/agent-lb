@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from app.core.claude_reset_week import week_cap, week_start
+from app.core.claude_reset_week import FULL_PERCENT, week_cap, week_start
 from app.core.clients import anthropic_resets, rate_limit_resets
 from app.core.config.settings import get_settings
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
@@ -257,6 +257,11 @@ class AccountsService(AccountsLifecycle):
             if used >= week_cap(start):
                 raise AccountResetCreditsUnavailableError(
                     f"Weekly Claude reset cap reached: {used} of {week_cap(start)} this week"
+                )
+            if secondary_before is None or secondary_before < FULL_PERCENT:
+                shown = "unread" if secondary_before is None else f"{secondary_before:g}%"
+                raise AccountResetCreditsUnavailableError(
+                    f"A Claude reset needs the account's week at {FULL_PERCENT:g}% used or more; it is {shown}"
                 )
             inventory = await anthropic_resets.fetch_status(access_token=token)
             grant = inventory.usable_grant(datetime.now(timezone.utc), credit_id)

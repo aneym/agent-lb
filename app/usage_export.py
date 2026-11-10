@@ -17,7 +17,6 @@ from app import (
     usage_export_alert,
     usage_export_asked_by,
     usage_export_asked_by_records,
-    usage_export_fable_gate,
     usage_export_headroom,
     usage_export_hourly,
 )
@@ -114,11 +113,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--asked-by-pull", action="append", default=[], help="host:dir of asker records to rsync into --asked-by/<host>"
     )
-    parser.add_argument(
-        "--pacing-flag",
-        default=usage_export_fable_gate.default_flag(),
-        help="pool pacing flag.json, a path or host:path read over ssh",
-    )
     args = parser.parse_args(argv)
     host = socket.gethostname().split(".")[0]
     url = os.environ.get("AGENT_LB_DATABASE_URL") or primary_database_url() or LOCAL_DATABASE_URL
@@ -126,8 +120,6 @@ def main(argv: list[str] | None = None) -> None:
     try:
         pulled = usage_export_asked_by_records.pull(args.asked_by_pull, args.asked_by) if args.asked_by else []
         usage, headroom = collect(url, host, args.asked_by, pulled)
-        gate = usage_export_fable_gate.judge(headroom, usage_export_fable_gate.read_flag(args.pacing_flag))
-        headroom[usage_export_fable_gate.FIELD] = gate
         paths = [write_atomic(args.out, USAGE_FILE, usage), write_atomic(args.out, HEADROOM_FILE, headroom)]
         if args.push:
             push(paths, args.push)
@@ -143,7 +135,7 @@ def main(argv: list[str] | None = None) -> None:
     print(
         f"usage export: generated_at {usage['generated_at']} buckets {len(usage['buckets'])} "
         f"accounts {len(headroom['accounts_now'])} asked_by turns {usage['asked_by']['records']['turns']}; {sizes}; to {args.push or args.out}; "
-        f"{usage_export_fable_gate.FIELD} {gate['allowed']}; {alert}; wall {time.monotonic() - started:.2f} s cpu {_cpu_seconds():.2f} s",
+        f"{alert}; wall {time.monotonic() - started:.2f} s cpu {_cpu_seconds():.2f} s",
         flush=True,
     )
 

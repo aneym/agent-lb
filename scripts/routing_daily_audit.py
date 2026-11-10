@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-import sys
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -16,7 +16,6 @@ from routing_audit_outcomes import load_outcomes, overlay_outcomes, proposals, r
 from routing_audit_reports import daily_report, write_daily_report, write_outputs  # type: ignore[missing-import]
 from routing_audit_sources import dispatch, fold_acceptance, prs, stand_ins, store  # type: ignore[missing-import]
 from routing_audit_values import command, date, document, job  # type: ignore[missing-import]
-
 
 from app.core.thread_delivery import thread_id
 
@@ -158,7 +157,7 @@ def main():
     if args.post:
         before = len(errors)
         command(
-            ["t3", "thread", "send", thread_id("rails"), line, "--mode", "queue"],
+            ["t3", "thread", "send", thread_id("factory"), line, "--mode", "queue"],
             errors,
             "t3 thread send",
         )

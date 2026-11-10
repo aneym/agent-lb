@@ -43,20 +43,26 @@ def _send(message: str) -> None:
         raise RuntimeError(f"orch-watch-alert exited {result.returncode}: {(reason[-1] if reason else '')[:300]}")
 
 
+def _ours(headroom: dict[str, Any]) -> dict[str, Any]:
+    return (headroom.get("points_by_owner") or {}).get("ours") or {}
+
+
 def _message(headroom: dict[str, Any]) -> str:
-    basis = headroom["pool_hours_left_basis"]
+    ours = _ours(headroom)
     return (
-        f"agent-lb pool headroom low: {headroom['pool_hours_left_last_hour_rate']} h of weekly all-models room left "
-        f"at the last hour's rate (${basis['cost_usd_last_60m']}/h; {headroom['pool_hours_left_24h_rate']} h at the "
-        f"24 h average), {basis['points_left']} points on {basis['accounts_with_room']} accounts; next weekly reset "
-        f"{headroom['next_weekly_reset']} in {headroom['next_weekly_reset_hours']} h. Source: headroom.json."
+        f"agent-lb: our own accounts are low: {ours['hours_left_last_hour_rate']} h of weekly all-models room left "
+        f"at the last hour's pace ({ours['points_per_hour_last_1h']} points an hour; {ours['hours_left_24h_rate']} h at "
+        f"the 24 h average), {ours['points_left']} points on {ours['accounts_with_room']} of our accounts; next weekly "
+        f"reset on ours {ours['next_weekly_reset']} in {ours['next_weekly_reset_hours']} h. Teammate-owned accounts are "
+        "not counted. Source: headroom.json points_by_owner.ours."
     )
 
 
 def check(headroom: dict[str, Any], state_path: Path, generated_at: str) -> str:
     state = _load(state_path)
-    hours = headroom.get("pool_hours_left_last_hour_rate")
-    reset_hours = headroom.get("next_weekly_reset_hours")
+    ours = _ours(headroom)
+    hours = ours.get("hours_left_last_hour_rate")
+    reset_hours = ours.get("next_weekly_reset_hours")
     if hours is None:
         return "alert: no figure"
     if not state.get("armed", True):

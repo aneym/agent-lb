@@ -9,9 +9,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from app import pool_reset_call, pool_reset_readings
+from app import pool_reset_call, pool_reset_lanes, pool_reset_readings
 from app.core.claude_reset_week import week_start
-from app.pool_reset_rule import Redemption, banked_total, decide, minutes_left, pace
+from app.pool_reset_rule import Redemption, banked_total, decide, minutes_left, pace, points_left
 
 DEFAULT_STATE = Path.home() / ".agent-rails" / "factory" / "pool-reset-auto"
 CONFIRM_WAIT_SECONDS = 210
@@ -89,9 +89,10 @@ def _fill_held(readings: dict[str, Any], ids: dict[str, str], state: Path | None
 
 def _pool_after(cursor: Any) -> dict[str, Any]:
     readings = pool_reset_readings.headroom(cursor)
-    _fill_held(readings, pool_reset_readings.owned(cursor), None, fetch=True)
-    points = readings["points_pace"]["points_left"]
-    per_hour = pace(readings)
+    ids = pool_reset_readings.owned(cursor)
+    _fill_held(readings, ids, None, fetch=True)
+    points = points_left(readings, set(ids))
+    per_hour = pace(readings, set(ids))
     return {
         "points_left": points,
         "points_per_hour_last_1h": per_hour,
@@ -116,8 +117,8 @@ def _finish(cursor: Any, state: Path, receipt: dict[str, Any], args: argparse.Na
     freed = _freed(receipt)
     line = (
         f"{PREFIX} {moment.strftime('%H:%M')}Z UTC: reset {receipt['reset_number']} this week redeemed on account "
-        f"{receipt['account']}, freeing about {freed:g} all-models points (confirmed by agent-lb's readings). The pool "
-        f"now has {pool['points_left']:g} points left, {pool['lasts']} at the last hour's pace; {pool['banked_own']} "
+        f"{receipt['account']}, freeing about {freed:g} all-models points (confirmed by agent-lb's readings). Our own "
+        f"accounts now have {pool['points_left']:g} points left, {pool['lasts']} at the last hour's pace; {pool['banked_own']} "
         "resets still banked on our own accounts."
     )
     receipt["freed_points"] = freed
@@ -156,7 +157,7 @@ def _notice(state: Path, decision: dict[str, Any], args: argparse.Namespace, now
         "stopped; a person must decide on more"
     )
     line = (
-        f"{PREFIX} {now.strftime('%H:%M')}Z UTC: the pool is about to run dry and {what}. The pool has "
+        f"{PREFIX} {now.strftime('%H:%M')}Z UTC: our own accounts are about to run dry and {what}. They have "
         f"{decision['points_left']:g} points left, {lasts} at the last hour's pace."
     )
     sent = pool_reset_call.send(args.send_host, f"pool-reset-{kind}-{_stamp(now)}", line)
@@ -181,7 +182,7 @@ def _fail(state: Path, decision: dict[str, Any], failures: list[str], args: argp
     (state / "hold").write_text(f"stopped {_stamp(now)} after a failed redemption: {reason}\n")
     line = (
         f"{PREFIX} {now.strftime('%H:%M')}Z UTC: reset {decision['week_used'] + 1} this week "
-        f"failed ({reason}); nothing was redeemed and the timer is on hold until its hold file is removed. The pool has "
+        f"failed ({reason}); nothing was redeemed and the timer is on hold until its hold file is removed. Our own accounts have "
         f"{decision['points_left']:g} points left, {_lasts(decision['points_left'], decision['points_per_hour_last_1h'])} "
         f"at the last hour's pace; {decision['banked_total']} resets still banked across the pool."
     )
@@ -199,9 +200,9 @@ def _retry(state: Path, decision: dict[str, Any], failures: list[str], args: arg
     if marker.exists():
         return f"not redeemed, nothing consumed, tries again next tick: {reason}"
     line = (
-        f"{PREFIX} {now.strftime('%H:%M')}Z UTC: the pool is about to run dry but reset "
+        f"{PREFIX} {now.strftime('%H:%M')}Z UTC: our own accounts are about to run dry but reset "
         f"{decision['week_used'] + 1} this week was not redeemed yet ({reason}); nothing was consumed and the timer "
-        f"tries again every 5 minutes. The pool has {decision['points_left']:g} points left, "
+        f"tries again every 5 minutes. Our own accounts have {decision['points_left']:g} points left, "
         f"{_lasts(decision['points_left'], decision['points_per_hour_last_1h'])} at the last hour's pace."
     )
     sent = pool_reset_call.send(args.send_host, f"pool-reset-retry-{_stamp(now)}", line)
@@ -291,10 +292,15 @@ def _run(args: argparse.Namespace) -> tuple[str, dict[str, Any], str]:
         else:
             records = pool_reset_readings.redemptions(cursor, week_start(now))
         yes = {path.name for path in (state / "teammate-yes").glob("*") if path.is_file()}
-        decision = decide(readings, now=now, owned=set(ids), redemptions=records, held=held, teammate_yes=yes)
+        lanes = pool_reset_lanes.read(args.lane_order)
+        decision = decide(
+            readings, now=now, owned=set(ids), redemptions=records, held=held, lanes=lanes, teammate_yes=yes
+        )
         if mode != "copy" and decision["action"] == "no_candidate":
             _fill_held(readings, ids, state, fetch=True)
-            decision = decide(readings, now=now, owned=set(ids), redemptions=records, held=held, teammate_yes=yes)
+            decision = decide(
+                readings, now=now, owned=set(ids), redemptions=records, held=held, lanes=lanes, teammate_yes=yes
+            )
         recent = any(record.at > now - timedelta(days=1) for record in records)
         decision["override_daily_limit"] = recent and 1 <= decision["week_used"] < decision["week_cap"]
         outcome = "no action"
@@ -317,6 +323,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--now", help="ISO time to decide at, with --readings")
     parser.add_argument("--send-host", help="ssh host whose t3 sends the lines")
     parser.add_argument("--push", help="host:dir that mirrors the state folder and may hold a hold file")
+    parser.add_argument(
+        "--lane-order",
+        default=pool_reset_lanes.default_source(),
+        help="the Rails back office's ordered lane list, a path or host:path read over ssh",
+    )
     args = parser.parse_args(argv)
     started = time.monotonic()
     try:

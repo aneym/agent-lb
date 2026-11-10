@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app import usage_export_burn, usage_export_points, usage_export_resets
+from app import usage_export_burn, usage_export_owners, usage_export_points, usage_export_resets
 from app.usage_export_sql import rows
 
 SCHEMA = "agent-lb-headroom/2"
@@ -203,6 +203,7 @@ def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[st
     ids = [account["id"] for account in accounts]
     burn = usage_export_burn.apply(cursor, now, ids, entries)
     points = usage_export_points.apply(cursor, now, ids, entries)
+    owners = usage_export_owners.apply(entries, now)
     return {
         "schema": SCHEMA,
         "generated_at": generated_at,
@@ -227,6 +228,7 @@ def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[st
         "fable_usd_per_hour": usage_export_burn.fable_usd_per_hour(cursor, now),
         **burn,
         **points,
+        **owners,
         "accounts_now": entries,
         "pool_summary": _summary(entries),
     }
