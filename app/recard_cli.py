@@ -48,7 +48,7 @@ def _notify(message: str) -> None:
     print(message)
     if not os.getenv("AGENT_LB_RECARD_QUIET"):
         try:
-            send("rails", message)
+            send("factory", message)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             pass
 
