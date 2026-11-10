@@ -202,7 +202,8 @@ def _run(args: argparse.Namespace) -> tuple[str, dict[str, Any], str]:
             mode = "copy"
         else:
             records = pool_reset_readings.redemptions(cursor, week_start(now))
-        decision = decide(readings, now=now, owned=set(ids), redemptions=records, held=held)
+        yes = {path.name for path in (state / "teammate-yes").glob("*") if path.is_file()}
+        decision = decide(readings, now=now, owned=set(ids), redemptions=records, held=held, teammate_yes=yes)
         recent = any(record.at > now - timedelta(days=1) for record in records)
         decision["override_daily_limit"] = recent and 1 <= decision["week_used"] < decision["week_cap"]
         outcome = "no action"

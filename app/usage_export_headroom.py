@@ -93,7 +93,7 @@ def _blocker(account: dict[str, Any], now: datetime) -> str | None:
     if status == "exchange_uncertain" and _token_expired(account, now):
         return "token exchange uncertain and the access token has expired"
     if account["owner_instance"] and _token_expired(account, now):
-        return f"mirror of {account['owner_instance']} with an expired access token"
+        return f"teammate-owned (instance {account['owner_instance']}) with an expired access token"
     if status in _WAITING_STATUSES:
         reset = account["reset_at"]
         if reset is None or now.replace(tzinfo=timezone.utc).timestamp() < reset:
@@ -131,7 +131,10 @@ def _notes(
     if five_hour is None:
         notes.append("five-hour reading absent: Anthropic reports no 5-hour window for this account (7d only)")
     if account["owner_instance"]:
-        notes.append(f"owned and polled by {account['owner_instance']}; mirrored here")
+        notes.append(
+            f"teammate-owned: its agent-lb instance {account['owner_instance']} keeps the sign-in and pushes the access "
+            "token here; only that owner can refresh it or redeem its resets"
+        )
     return "; ".join(notes) or None
 
 
@@ -150,6 +153,8 @@ def _entry(
     exhausted = _exhausted(five_hour, weekly)
     return {
         "account": account["account"],
+        "owner": "teammate-owned" if account["owner_instance"] else "primary",
+        "owner_instance": account["owner_instance"],
         "status": account["status"],
         "weekly_all_used_pct": _pct(weekly["used_percent"]) if weekly else None,
         "weekly_all_resets": _epoch(weekly["reset_at"]) if weekly else None,
@@ -177,6 +182,7 @@ def _summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
             entry["account"] for entry in read if entry["weekly_all_used_pct"] < WEEKLY_HEADROOM_PERCENT
         ],
         "usable_now": [entry["account"] for entry in entries if entry["usable_now"]],
+        "teammate_owned": [entry["account"] for entry in entries if entry["owner"] == "teammate-owned"],
     }
 
 

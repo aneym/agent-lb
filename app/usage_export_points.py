@@ -116,6 +116,15 @@ def apply(cursor: Any, now: datetime, ids: list[str], entries: list[dict[str, An
                 pool[field] += points
         entry["points_coverage"] = coverage
     points_left = round(sum(entry["weekly_all_points_left"] for entry in entries), 2)
+    by_owner: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        group = by_owner.setdefault(
+            entry.get("owner", "primary"),
+            {"accounts": [], "weekly_all_points_last_24h": 0.0, "fable_points_last_24h": 0.0},
+        )
+        group["accounts"].append(entry["account"])
+        for field in ("weekly_all_points_last_24h", "fable_points_last_24h"):
+            group[field] = round(group[field] + (entry[field] or 0.0), 2)
     pace = {
         **{field: round(total, 2) for field, total in pool.items()},
         "accounts": len(entries),
@@ -124,6 +133,7 @@ def apply(cursor: Any, now: datetime, ids: list[str], entries: list[dict[str, An
         "points_left": points_left,
         "weekly_all_points_per_hour_last_1h": pool["weekly_all_points_last_1h"],
         "weekly_all_points_per_hour_24h": round(pool["weekly_all_points_last_24h"] / 24, 4),
+        "by_owner_last_24h": by_owner,
         "pool_rule": "each pool figure is the sum of the account figures that are not null, over the same Anthropic "
         "accounts as pool_hours_left_basis.points_left; accounts_without_coverage lists the ones left out",
         "basis": BASIS,

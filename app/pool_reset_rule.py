@@ -72,7 +72,9 @@ def _ratio(account: dict[str, Any]) -> tuple[float, str]:
     return MEASURED_RATIO, f"{source}, above the {measured} ({MEASURED_RATIO:g}), which caps it"
 
 
-def candidates(headroom: dict[str, Any], owned: set[str], now: datetime) -> tuple[list[dict[str, Any]], list[str]]:
+def candidates(
+    headroom: dict[str, Any], owned: set[str], teammate_yes: set[str], now: datetime
+) -> tuple[list[dict[str, Any]], list[str]]:
     ranked: list[dict[str, Any]] = []
     skipped: list[str] = []
     for account in headroom["accounts_now"]:
@@ -102,7 +104,8 @@ def candidates(headroom: dict[str, Any], owned: set[str], now: datetime) -> tupl
             "reading_age_min": None if age is None else round(age, 1),
         }
         if name not in owned:
-            skipped.append(f"{name}: not owned by this agent-lb, frees ~{freed:g}")
+            yes = "a yes is on file, but" if name in teammate_yes else "no yes on file, and"
+            skipped.append(f"{name}: teammate-owned, frees ~{freed:g}; {yes} only its owner's agent-lb can redeem it")
         elif freed < MIN_FREED_POINTS:
             skipped.append(f"{name}: frees ~{freed:g} points, under {MIN_FREED_POINTS:g}")
         elif age is None or age > STALE_MINUTES:
@@ -120,6 +123,7 @@ def decide(
     owned: set[str],
     redemptions: list[Redemption],
     held: bool,
+    teammate_yes: set[str] | None = None,
 ) -> dict[str, Any]:
     start = week_start(now)
     cap = week_cap(start)
@@ -129,7 +133,7 @@ def decide(
     minutes = minutes_left(points, per_hour)
     stale = [a["account"] for a in headroom["accounts_now"] if a["usable_now"] and _stale(a, now)]
     generated_age = _age_minutes(headroom.get("generated_at"), now)
-    ranked, skipped = candidates(headroom, owned, now)
+    ranked, skipped = candidates(headroom, owned, teammate_yes or set(), now)
     triggers = []
     if points <= POINTS_FLOOR:
         triggers.append(f"usable points {points:g} <= {POINTS_FLOOR:g}")
