@@ -1,0 +1,3 @@
+- [x] Usage-only drains recover to healthy without a probe streak.
+- [x] Anthropic selection prefers the earliest weekly reset.
+- [ ] Deploy through the followers and confirm on the live router.

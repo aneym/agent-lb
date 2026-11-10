@@ -293,3 +293,7 @@ keep short retries. Persist a monthly block reason to bypass the 60-second
 selection clamp. Expiry or newer monthly quota availability releases it.
 Remove synthetic usage and redundant cooldown writes; isolate DB failures
 so account marking and request logging are still attempted.
+
+### 2026-11-10: Claude routing spends the soonest-ending week first
+
+See `openspec/changes/anthropic-soonest-weekly-reset`.

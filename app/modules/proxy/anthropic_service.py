@@ -36,7 +36,6 @@ from app.core.balancer.types import UpstreamError
 from app.core.clients import upstream_body
 from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
-from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
 from app.core.eval_guard import strip_eval_web_tools
 from app.core.identity import RequestIdentity, attach_member, get_request_identity
@@ -1371,8 +1370,6 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                 code=_quota_cooldown_code(provider_name),
                 retry_at=eligibility.next_reset_at,
             )
-        settings = await get_settings_cache().get()
-
         app_settings = get_settings()
 
         hold_until_exhausted = app_settings.anthropic_sticky_hold_until_exhausted
@@ -1388,8 +1385,8 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             and not hold_until_exhausted,
             sticky_key=sticky_key,
             sticky_kind=StickySessionKind.CODEX_SESSION if sticky_key else None,
-            prefer_earlier_reset_accounts=settings.prefer_earlier_reset_accounts,
-            prefer_earlier_reset_window="primary",
+            prefer_earlier_reset_accounts=True,
+            prefer_earlier_reset_window="secondary",
             routing_strategy="usage_weighted",
             budget_threshold_pct=100.0 if hold_until_exhausted else 95.0,
             headroom_reallocate=app_settings.anthropic_sticky_headroom_reallocation_enabled

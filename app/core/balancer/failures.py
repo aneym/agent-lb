@@ -210,6 +210,9 @@ def evaluate_health_tier(
     if current_tier == HEALTH_TIER_HEALTHY:
         return HEALTH_TIER_DRAINING if should_drain else HEALTH_TIER_HEALTHY
 
+    if not should_drain and state.error_count == 0:
+        return HEALTH_TIER_HEALTHY
+
     if current_tier == HEALTH_TIER_DRAINING:
         if should_drain:
             return HEALTH_TIER_DRAINING
