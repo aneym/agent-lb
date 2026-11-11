@@ -92,7 +92,7 @@ def _token_expired(account: dict[str, Any], now: datetime) -> bool:
     return expires is not None and expires <= now
 
 
-def _blocker(account: dict[str, Any], now: datetime) -> str | None:
+def blocker(account: dict[str, Any], now: datetime) -> str | None:
     status = str(account["status"]).lower()
     if not _eligible(account):
         return f"status {status}" if status in _BLOCKED_STATUSES else "subscription not usable"
@@ -107,7 +107,7 @@ def _blocker(account: dict[str, Any], now: datetime) -> str | None:
     return None
 
 
-def _exhausted(five_hour: dict[str, Any] | None, weekly: dict[str, Any] | None) -> str | None:
+def exhausted(five_hour: dict[str, Any] | None, weekly: dict[str, Any] | None) -> str | None:
     primary = float(five_hour["used_percent"]) if five_hour else 0.0
     secondary = float(weekly["used_percent"]) if weekly else primary
     if primary >= 100.0:
@@ -156,8 +156,8 @@ def _entry(
     weekly = windows.get((account["id"], "secondary"))
     fable_used = _pct(fable["used_percent"]) if fable else None
     recorded = [row["recorded_at"] for row in (five_hour, weekly, fable) if row]
-    blocker = _blocker(account, now)
-    exhausted = _exhausted(five_hour, weekly)
+    blocked = blocker(account, now)
+    spent = exhausted(five_hour, weekly)
     return {
         "account": account["account"],
         "owner": "teammate-owned" if account["owner_instance"] else "primary",
@@ -175,8 +175,8 @@ def _entry(
         "limits_recorded_at": _iso(min(recorded)) if recorded else None,
         "weekly_all_points_left": _points_left(account, weekly),
         "weekly_all_points_used": _points_used(account, weekly),
-        "usable_now": blocker is None and exhausted is None,
-        "note": _notes(account, five_hour, weekly, blocker, exhausted, now),
+        "usable_now": blocked is None and spent is None,
+        "note": _notes(account, five_hour, weekly, blocked, spent, now),
     }
 
 

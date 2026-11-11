@@ -85,6 +85,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     from app.recard_cli import add_parser as add_recard_parser
 
     add_recard_parser(subparsers)
+    from app.solo_cli import add_parser as add_solo_parser
+
+    add_solo_parser(subparsers)
 
     status = subparsers.add_parser(
         "status",
@@ -251,6 +254,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         (run_profiles if args.command == "profiles" else run_reauth)(args)
         return
 
+    if args.command == "solo":
+        from app.solo_cli import run as run_solo
+
+        run_solo(args)
+        return
     if args.command == "retention":
         from app.retention_cli import run as run_retention
 
