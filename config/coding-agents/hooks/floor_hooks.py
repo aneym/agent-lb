@@ -30,6 +30,7 @@ NON_FLOOR_GUARDS = {
     "upload-cap-guard.py": "house rule: bulk uploads off Studio are rate capped and run overnight",
     "stop-by-name-guard.py": "house rule: processes stop by the id recorded at start, never by name",
     "rails-path-guard.py": "house rule: agents in an agent home take the Rails path for a connected service",
+    "land-open-guard.py": "house rule: a turn does not end while the rails-one land it started still runs",
 }
 FLOOR_TEXT = "BLOCKED: Dangerous command"
 INLINE_FLOOR = "dangerous-command"
