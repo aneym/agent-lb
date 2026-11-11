@@ -140,13 +140,17 @@
     }
   },
   "retired": [
-    "claude-fable-*",
-    "fable",
+    "claude-fable-5",
+    "claude-fable-5-1*",
     "claude-planner",
     "claude-opus-5",
+    "claude-opus-4",
     "claude-opus-4-*",
     "claude-sonnet-5",
+    "claude-sonnet-4",
     "claude-sonnet-4-*",
+    "claude-haiku-4",
+    "claude-haiku-4-*",
     "gpt-*-astra",
     "gpt-*-astra-*",
     "astra",
@@ -162,22 +166,6 @@
     "gpt-5-*",
     "gpt-5"
   ],
-  "readmitted": {
-    "lane-lead": {
-      "alias": "fable-latest",
-      "patterns": [
-        "claude-fable-*",
-        "fable"
-      ]
-    },
-    "plan-reviewer": {
-      "alias": "fable-latest",
-      "patterns": [
-        "claude-fable-*",
-        "fable"
-      ]
-    }
-  },
   "off_default": [],
   "older_allowed": {}
 }

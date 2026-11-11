@@ -54,7 +54,7 @@ def class_candidates(
         alias = entry.get("model")
         if not isinstance(seat, str) or not isinstance(alias, str):
             continue
-        model, why = resolve_alias(table, alias, served.get() if family_alias(table, alias) in aliases else [], seat)
+        model, why = resolve_alias(table, alias, served.get() if family_alias(table, alias) in aliases else [])
         if model is None:
             skip(seat, alias, why)
             continue
@@ -110,9 +110,7 @@ def class_candidates(
                     return None, f"no auditor declared for author vendor {vendor}"
                 audit_alias = audit_entry["model"]
                 audit_models = served.get() if family_alias(table, audit_alias) in aliases else []
-                audit_model, audit_why = resolve_alias(
-                    table, audit_alias, audit_models, str(audit_entry.get("seat") or "")
-                )
+                audit_model, audit_why = resolve_alias(table, audit_alias, audit_models)
                 if audit_model is None:
                     return None, f"its auditor {audit_entry['model']} is unavailable: {audit_why}"
                 audit_pool = pool_for_model(table, audit_entry["model"])

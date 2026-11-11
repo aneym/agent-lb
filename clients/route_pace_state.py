@@ -92,7 +92,7 @@ def command_resolve(args: argparse.Namespace) -> int:
     for name in args.aliases:
         if name in (table.get("standards") or {}):
             standard = dispatch_standard(table, name, None)
-            model, reason = resolve_alias(table, standard["model"], served, standard["seat"])
+            model, reason = resolve_alias(table, standard["model"], served)
             if model:
                 result = {
                     "alias": name,

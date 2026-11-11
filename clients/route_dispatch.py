@@ -219,7 +219,7 @@ def command_dispatch(args: argparse.Namespace, table: dict[str, Any] | None = No
     model = None
     if model_alias:
         needs_list = alias_vendor(table, model_alias) == "openai"
-        model, _ = resolve_alias(table, model_alias, served.get() if needs_list else [], seat)
+        model, _ = resolve_alias(table, model_alias, served.get() if needs_list else [])
         unaliased = family_alias(table, model_alias) not in (table.get("aliases") or {})
         if model is None and choice["arm"] == "explicit" and unaliased:
             if not is_retired(model_alias, blocked_patterns(table)):
@@ -228,7 +228,7 @@ def command_dispatch(args: argparse.Namespace, table: dict[str, Any] | None = No
     wrapper_alias = standard.get("wrapper_model")
     if wrapper_alias and wrapper_alias == standard.get("model"):
         wrapper_alias = model_alias
-    wrapper_model = resolve_alias(table, wrapper_alias, [], None)[0] if wrapper_alias else None
+    wrapper_model = resolve_alias(table, wrapper_alias, [])[0] if wrapper_alias else None
     effort = choice["effort"]
     row = {
         "v": 1,
@@ -320,7 +320,6 @@ def policy_snapshot(table: dict[str, Any]) -> dict[str, Any]:
         "background_model": pinned_model(table, background) or background,
         "background_model_alias": background,
         "explore_enabled": bool((table.get("explore") or {}).get("enabled")),
-        "readmitted": sorted((table.get("readmitted") or {}) if isinstance(table.get("readmitted"), dict) else ()),
         "seats": dict(sorted(seats.items())),
     }
 

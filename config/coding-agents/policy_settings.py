@@ -86,8 +86,6 @@ def seat_template(text: str, name: str, snapshot: dict[str, Any]) -> str:
     else:
         model = snapshot_model(snapshot, seat.get("resolved_model") or seat["model"])
         effort = seat["effort"]
-    if "fable" in model.lower() and name not in snapshot.get("readmitted", ()):
-        raise SystemExit(f"error: Fable is forbidden for {name}")
     if SOL_ID.fullmatch(model):
         model = f"{model}-{effort}"
     parts = text.split("---", 2)

@@ -1,4 +1,3 @@
-import fnmatch
 import json
 import re
 
@@ -11,9 +10,6 @@ def verify_installation(
     check,
     read,
     unpinned,
-    frontmatter_model,
-    forbidden,
-    readmitted,
     MARKER_START,
     MARKER_END,
     MANAGED,
@@ -70,9 +66,4 @@ def verify_installation(
             )
             owner = HOME / ".agent-lb" / "managed" / "coding-agents" / name
             check(read(owner) == f"agent-lb:{name}:v1\n", f"{owner} records installer ownership")
-
-        for path in sorted((HOME / ".claude" / "agents").glob("*.md")):
-            model = frontmatter_model(read(path)) or ""
-            allowed = any(fnmatch.fnmatchcase(model.lower(), pattern) for pattern in readmitted(path.stem))
-            check(not forbidden(model) or allowed, f"{path.name} does not pin a Fable model ({model or 'unset'})")
     return settings

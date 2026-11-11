@@ -91,8 +91,6 @@ MODELS_CACHE_MAX_AGE_SECONDS = 86400
 
 LOW_BAND_MAX_ELIGIBLE = 2
 
-DEFAULT_RETIRED = ("claude-fable-*", "fable", "claude-planner", "gpt-*-astra", "gpt-*-astra-*", "gpt-5.6*", "gpt-5.5*")
-
 
 def models_cache_path() -> Path:
     return env_path("ROUTE_MODELS_CACHE", Path.home() / ".cache" / "agent-lb" / "route-models.json")
@@ -102,7 +100,7 @@ def retired_patterns(table: dict[str, Any]) -> tuple[str, ...]:
     configured = table.get("retired")
     if isinstance(configured, list) and all(isinstance(item, str) for item in configured):
         return tuple(configured)
-    return DEFAULT_RETIRED
+    return ()
 
 
 DEFAULT_BLOCKED = ("claude-planner", "gpt-5.4*", "gpt-5-*", "gpt-5")
@@ -114,26 +112,6 @@ def blocked_patterns(table: dict[str, Any]) -> tuple[str, ...]:
     if isinstance(configured, list) and all(isinstance(item, str) for item in configured):
         return tuple(configured)
     return DEFAULT_BLOCKED
-
-
-def readmitted_patterns(table: dict[str, Any], alias: str) -> tuple[str, ...]:
-
-    readmitted = table.get("readmitted") if isinstance(table.get("readmitted"), dict) else {}
-    found: list[str] = []
-    for entry in readmitted.values():
-        if not isinstance(entry, dict) or entry.get("alias") != alias:
-            continue
-        found.extend(item for item in entry.get("patterns") or () if isinstance(item, str))
-    return tuple(found)
-
-
-def seat_readmitted_patterns(table: dict[str, Any], seat: str | None) -> tuple[str, ...]:
-
-    readmitted = table.get("readmitted") if isinstance(table.get("readmitted"), dict) else {}
-    entry = readmitted.get(seat) if seat else None
-    if not isinstance(entry, dict):
-        return ()
-    return tuple(item for item in entry.get("patterns") or () if isinstance(item, str))
 
 
 def is_retired(model: str, patterns: tuple[str, ...]) -> bool:

@@ -16,10 +16,8 @@ from route_anthropic_models import (  # pyrefly: ignore [missing-import]
     family_alias,
     is_retired,
     model_list_pending,
-    readmitted_patterns,
     resolve_claude_family,
     retired_patterns,
-    seat_readmitted_patterns,
     served_models,
     version_key,
 )
@@ -33,12 +31,10 @@ from route_seat_states import pinned_model  # pyrefly: ignore [missing-import]
 from route_versioned_rules import ModelState, env_path, pool_ids, setup_error  # pyrefly: ignore [missing-import]
 
 
-def resolve_alias(
-    table: dict[str, Any], name: str, served: list[str], seat: str | None = None
-) -> tuple[str | None, str]:
+def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[str | None, str]:
 
     name = family_alias(table, name)
-    model, reason = resolve_one(table, name, served, seat)
+    model, reason = resolve_one(table, name, served)
     if route_cache.MODEL_CACHE_HITS and (
         not model
         or "pinned" in reason
@@ -50,20 +46,14 @@ def resolve_alias(
         ModelState.ANTHROPIC_MODELS = None
         try:
             served[:] = served_models()[0]
-            model, reason = resolve_one(table, name, served, seat)
+            model, reason = resolve_one(table, name, served)
         finally:
             route_cache.FORCE_MODELS = False
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
     fallback = (aliases.get(name) or {}).get("fallback") if isinstance(aliases.get(name), dict) else None
-    if (
-        model
-        or not isinstance(fallback, str)
-        or fallback == name
-        or reason.startswith(f"{name} is readmitted for")
-        or reason.startswith("pending: ")
-    ):
+    if model or not isinstance(fallback, str) or fallback == name or reason.startswith("pending: "):
         return model, reason
-    model, why = resolve_one(table, fallback, served, seat)
+    model, why = resolve_one(table, fallback, served)
     return model, f"{reason}; fallback {fallback}: {why}"
 
 
@@ -71,22 +61,11 @@ def muse_full_id(name: str) -> bool:
     return re.fullmatch(r"muse-.+-full-\d+(?:\.\d+)*", name) is not None
 
 
-def resolve_one(table: dict[str, Any], name: str, served: list[str], seat: str | None = None) -> tuple[str | None, str]:
+def resolve_one(table: dict[str, Any], name: str, served: list[str]) -> tuple[str | None, str]:
 
     retired = retired_patterns(table)
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
     spec = aliases.get(name)
-    if isinstance(spec, dict):
-        readmitted = table.get("readmitted") if isinstance(table.get("readmitted"), dict) else {}
-        owners = [key for key, entry in readmitted.items() if isinstance(entry, dict) and entry.get("alias") == name]
-        if owners and seat is not None and seat not in owners:
-            return None, f"{name} is readmitted for {', '.join(owners)} only"
-        exempt = readmitted_patterns(table, name)
-        retired = tuple(pattern for pattern in retired if pattern not in exempt)
-    else:
-        exempt = seat_readmitted_patterns(table, seat)
-        retired = tuple(pattern for pattern in retired if pattern not in exempt)
-
     blocked = blocked_patterns(table)
     retired = (*retired, *(pattern for pattern in blocked if pattern not in retired))
     if not isinstance(spec, dict):
@@ -219,7 +198,7 @@ def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | No
 
     alias = entry["model"]
     models = served.get() if family_alias(table, alias) in table.get("aliases", {}) else []
-    model, why = resolve_alias(table, alias, models, entry.get("seat") or "")
+    model, why = resolve_alias(table, alias, models)
     if model is None and why.startswith("pending: "):
         return alias, why
     return model, why
@@ -282,11 +261,9 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
     seat_spec = (table.get("seats") or {}).get(seat)
     pinned_alias = seat_spec.get("model") if isinstance(seat_spec, dict) else None
     if pinned_alias == "opus-latest":
-        model, _ = resolve_alias(table, pinned_alias, [], seat)
+        model, _ = resolve_alias(table, pinned_alias, [])
         alias = pinned_alias
-    if model and is_retired(
-        model, tuple(p for p in retired_patterns(table) if p not in seat_readmitted_patterns(table, seat))
-    ):
+    if model and is_retired(model, retired_patterns(table)):
         raise ValueError(f"{seat} picked retired model {model}")
     opts = seat_opts(seat, model, alias, effort)
     brief = ""
@@ -309,7 +286,7 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
 def workflow_opus_stage(table: dict[str, Any], stage: str) -> dict[str, Any]:
     standard = (table.get("standards") or {}).get(stage)
     seat = standard.get("seat") if isinstance(standard, dict) and standard.get("seat") else "general-purpose"
-    model, _ = resolve_alias(table, "opus-latest", [], seat)
+    model, _ = resolve_alias(table, "opus-latest", [])
     entry = {
         "seat": seat,
         "model": model or pinned_model(table, "opus-latest"),

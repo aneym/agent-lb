@@ -21,7 +21,6 @@ SOURCE = Path(__file__).resolve().parent
 CANONICAL = HOME / ".agents" / "policy" / "coding-agents"
 MARKER_START = "<!-- agent-lb:coding-agent-routing:start -->"
 MARKER_END = "<!-- agent-lb:coding-agent-routing:end -->"
-FORBIDDEN = ("fable", "claude-planner", "astra")
 
 MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 GPT_ID = re.compile(r"^gpt-(\d+(?:\.\d+)*)-([a-z]+)$")
@@ -44,23 +43,8 @@ def read(path: Path) -> str:
     return path.read_text() if path.is_file() else ""
 
 
-def forbidden(model: str) -> bool:
-    return any(marker in model.lower() for marker in FORBIDDEN)
-
-
 def unpinned(text: str) -> str:
     return re.sub(r"(?m)^(model|effort):.*\n?", "", text)
-
-
-def readmitted(seat: str) -> tuple:
-
-    try:
-        entry = (json.loads(read(SOURCE / "routing-table" / "models.json") or "{}").get("readmitted") or {}).get(seat)
-    except (json.JSONDecodeError, AttributeError):
-        return ()
-    if not isinstance(entry, dict):
-        return ()
-    return (*(entry.get("patterns") or ()), *((entry["alias"] + "*",) if entry.get("alias") else ()))
 
 
 def frontmatter_model(text: str) -> str | None:
@@ -73,7 +57,7 @@ def frontmatter_model(text: str) -> str | None:
 
 
 
-settings = verify_installation(SOURCE_ONLY, HOME, SOURCE, CANONICAL, check, read, unpinned, frontmatter_model, forbidden, readmitted, MARKER_START, MARKER_END, MANAGED)
+settings = verify_installation(SOURCE_ONLY, HOME, SOURCE, CANONICAL, check, read, unpinned, MARKER_START, MARKER_END, MANAGED)
 for name, family in (("plan-reviewer", "fable"), ("frontend-designer", "opus")):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
     check(model == family, f"{name} runs on the newest {family.title()} via `model: {family}` (got {model})")
@@ -95,12 +79,7 @@ if not SOURCE_ONLY:
     check(bool(source_table) and strip(live_table) == strip(source_table), f"{table_path} matches the source table")
 classes = source_table.get("classes", {})
 chain_entries = [entry for spec in classes.values() for entry in spec.get("chain", [])]
-check(
-    bool(chain_entries)
-    and not any(forbidden(e.get("model", "")) and not readmitted(e.get("seat", "")) for e in chain_entries),
-    "no routing-table class runs on Fable outside a readmitted seat",
-)
-check(not any(forbidden(key) for key in source_table.get("pools", {})), "no routing-table pool maps a Fable model")
+check(bool(chain_entries), "the routing table declares class chains")
 
 if not SOURCE_ONLY:
     chain_seats = sorted({entry.get("seat", "") for spec in classes.values() for entry in spec.get("chain", [])}
@@ -247,17 +226,16 @@ if not SOURCE_ONLY:
             check(False, f"served GPT alias pricing check unavailable: {exc}")
 
 
-def stale_reason(model, exempt=()):
+def stale_reason(model):
     bare = model.strip("`'\"").lower().split("[", 1)[0]
-
-    if any(fnmatch.fnmatchcase(bare, pattern) or fnmatch.fnmatchcase(pattern, bare)
-           for pattern in retired if pattern not in exempt):
+    spec = aliases.get(bare) if isinstance(aliases.get(bare), dict) else {}
+    if any(retired_id(value) for value in (bare, spec.get("pinned"), spec.get("family")) if isinstance(value, str)):
         return "retired"
     if ("*" in bare or "?" in bare) and bare.startswith(("gpt-", "claude-")):
 
 
         return "wildcard version pin; use a family alias"
-    if bare in aliases or bare in ("opus", "sonnet", "haiku", "inherit") or "*" in bare:
+    if bare in aliases or bare in ("opus", "sonnet", "haiku", "fable", "inherit") or "*" in bare:
         return None
     match = GPT_ID.match(bare)
     if match and match.group(2) in newest_by_family and newest_by_family[match.group(2)] != bare:
@@ -284,7 +262,7 @@ for path, text in pinned_sources:
     for match in MODEL_PIN.finditer(text):
         if path in prose_sources and "-" not in match.group(1):
             continue
-        reason = stale_reason(match.group(1).rstrip(".,;:)"), readmitted(path.stem))
+        reason = stale_reason(match.group(1).rstrip(".,;:)"))
         if reason:
             stale.append(f"{path.name}: {match.group(1)} ({reason})")
 table_models = [entry.get("model", "") for spec in classes.values() for entry in spec.get("chain", [])]
@@ -322,7 +300,7 @@ if not SOURCE_ONLY:
             except json.JSONDecodeError:
                 picked = {}
             model = picked.get("model") or ""
-            ok = bool(model) and (not forbidden(model) or bool(readmitted(picked.get("seat") or ""))) and stale_reason(model, readmitted(picked.get("seat") or "")) is None
+            ok = bool(model) and stale_reason(model) is None
             if task_class == "plan":
                 ok = ok and picked.get("alias") == "opus-latest"
             check(ok, f"route pick {task_class} -> {picked.get('seat')}/{model or result.stderr.strip()}")

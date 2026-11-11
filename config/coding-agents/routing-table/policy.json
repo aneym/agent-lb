@@ -97,7 +97,7 @@
       "drivers": [
         "opus-latest"
       ],
-      "retired": "see top-level `retired`: Fable, the whole Astra family, the gpt-5.6 generation and older",
+      "retired": "see top-level `retired`: Fable before 5.2, Opus and Sonnet 5 and the 4 generation, Haiku 4, the whole Astra family, the gpt-5.6 generation and older",
       "implementation": "Opus writes everything (workflow.md, 2026-11-06)."
     },
     "review": {

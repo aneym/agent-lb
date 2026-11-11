@@ -79,7 +79,7 @@ def command_seat(args: argparse.Namespace) -> int:
             setup_error("unknown_rules", f"seat {name} has no model in seats map", args.json)
     served = ServedModels().get() if family_alias(table, model_alias) in table.get("aliases", {}) else []
     model, reason = (
-        rung_model(table, entry, ServedModels()) if rung else resolve_alias(table, model_alias, served, name)  # pyrefly: ignore [unbound-name]
+        rung_model(table, entry, ServedModels()) if rung else resolve_alias(table, model_alias, served)  # pyrefly: ignore [unbound-name]
     )
     if model is None:
         setup_error("unresolved_model", f"alias {model_alias}: {reason}", args.json)

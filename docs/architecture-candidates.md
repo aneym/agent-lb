@@ -16,12 +16,12 @@ Deletion test: imagine deleting the module. If its complexity reappears across m
 
 ## 1. Routing policy reader
 
-Files: `config/coding-agents/routing-table.json`, `app/core/routing_table.py`, `clients/route` (`resolve_alias`, `readmitted_patterns`, `resolve_claude_family`), `clients/seat` (`resolve_model`), `clients/claude-lb-launch`, `clients/muse-lb-launch`, `app/modules/proxy/meta_service.py`, `app/modules/proxy/request_policy.py`, `app/core/usage/pricing.py`, `app/core/anthropic/pricing.py`.
+Files: `config/coding-agents/routing-table.json`, `app/core/routing_table.py`, `clients/route` (`resolve_alias`, `retired_patterns`, `resolve_claude_family`), `clients/seat` (`resolve_model`), `clients/claude-lb-launch`, `clients/muse-lb-launch`, `app/modules/proxy/meta_service.py`, `app/modules/proxy/request_policy.py`, `app/core/usage/pricing.py`, `app/core/anthropic/pricing.py`.
 
-Problem: the readers find the table themselves (`ROUTE_TABLE`, then the managed copy, then a repo or `~/.agents` fallback, in orders that differ), and seven functions resolve an alias. A rule change to retired or readmitted models has to land in each one.
+Problem: the readers find the table themselves (`ROUTE_TABLE`, then the managed copy, then a repo or `~/.agents` fallback, in orders that differ), and seven functions resolve an alias. A rule change to retired models has to land in each one.
 
 Interface: one stdlib-only module `clients/routing_policy.py` that both `app` and the client scripts import:
-`load(path=None) -> Policy`; `Policy.resolve(alias) -> Resolved(model, vendor, effort, retired, readmitted)`; `Policy.aliases() -> Mapping[str, str]`; `Policy.source -> Path`. `app/core/routing_table.py` becomes the import of it.
+`load(path=None) -> Policy`; `Policy.resolve(alias) -> Resolved(model, vendor, effort, retired)`; `Policy.aliases() -> Mapping[str, str]`; `Policy.source -> Path`. `app/core/routing_table.py` becomes the import of it.
 
 Deletion test today: deleting `app/core/routing_table.py` moves about 20 lines into two callers, so it is shallow. Deleting the proposed module would scatter path lookup and alias rules back into the callers, so it is deep.
 
