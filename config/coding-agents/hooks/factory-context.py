@@ -13,7 +13,7 @@ STALE_SECONDS = 6 * 3600
 BOUNDARY_SCAN = 32 * 1024 * 1024
 AGENT_HOMES = Path("~/.agent-rails/agents").expanduser()
 CHECKPOINTS = Path("~/.claude/hooks/state/compact-checkpoints").expanduser()
-ORCH_LINE = "You are an orch. Load ~/.claude/skills/orch/SKILL.md and run memory.brief before acting."
+ORCH_LINE = "You are an orch (~/.claude/rules/orch.md). Run memory.brief before acting, answer Alex in seconds, and hand any work past a quick lookup to Opus 5.5 high delegate_task children."
 
 
 def read_object(path: Path) -> dict:
