@@ -17,7 +17,7 @@
       "effort": "high",
       "explore": false,
       "authority": "architecture",
-      "evidence": "Every agent seat runs Opus 5.5 high; Fable 5.2 reviews architecture and scoping docs and architects difficult things (2026-11-11) (Alex, 2026-11-10 ~16:14Z: \"yeah lets just have all agents on opus\"; record alex-all-agents-opus-fable-doc-review-2026-11-10.md)"
+      "evidence": "Every agent seat runs Opus 5.5 high; Fable 5.2 reviews architecture and scoping docs, architects difficult things (2026-11-11) and runs any pass or task Alex asks Fable for (record alex-fable-on-request-2026-11-11.md) (Alex, 2026-11-10 ~16:14Z: \"yeah lets just have all agents on opus\"; record alex-all-agents-opus-fable-doc-review-2026-11-10.md)"
     },
     "lane": {
       "seat": "lane-lead",
@@ -25,7 +25,7 @@
       "effort": "high",
       "explore": false,
       "authority": "architecture",
-      "evidence": "Every agent seat runs Opus 5.5 high; Fable 5.2 reviews architecture and scoping docs and architects difficult things (2026-11-11) (Alex, 2026-11-10 ~16:14Z: \"yeah lets just have all agents on opus\"; record alex-all-agents-opus-fable-doc-review-2026-11-10.md)"
+      "evidence": "Every agent seat runs Opus 5.5 high; Fable 5.2 reviews architecture and scoping docs, architects difficult things (2026-11-11) and runs any pass or task Alex asks Fable for (record alex-fable-on-request-2026-11-11.md) (Alex, 2026-11-10 ~16:14Z: \"yeah lets just have all agents on opus\"; record alex-all-agents-opus-fable-doc-review-2026-11-10.md)"
     },
     "review": {
       "seat": "plan-reviewer",
@@ -41,7 +41,7 @@
       "effort": "high",
       "explore": false,
       "authority": "architecture",
-      "evidence": "Every agent seat runs Opus 5.5 high; Fable 5.2 reviews architecture and scoping docs and architects difficult things (2026-11-11) (Alex, 2026-11-10 ~16:14Z: \"yeah lets just have all agents on opus\"; record alex-all-agents-opus-fable-doc-review-2026-11-10.md)"
+      "evidence": "Every agent seat runs Opus 5.5 high; Fable 5.2 reviews architecture and scoping docs, architects difficult things (2026-11-11) and runs any pass or task Alex asks Fable for (record alex-fable-on-request-2026-11-11.md) (Alex, 2026-11-10 ~16:14Z: \"yeah lets just have all agents on opus\"; record alex-all-agents-opus-fable-doc-review-2026-11-10.md)"
     },
     "audit": {
       "seat": "plan-reviewer",
