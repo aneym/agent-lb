@@ -132,12 +132,12 @@
       "evidence": "digests and summaries carry no decision authority"
     },
     "count": {
-      "seat": "sol-count",
-      "model": "sol-latest",
+      "seat": "Explore",
+      "model": "sonnet-latest",
       "effort": "medium",
       "explore": true,
       "authority": "none",
-      "evidence": "Sol matched every mechanical figure on 5 of 5 read-and-count jobs; read-only, no decision authority (rules/workflow.md Grunt work, 2026-11-10)"
+      "evidence": "Back on its Claude seat (Explore, Sonnet 5.5 medium) after the 2026-11-12 helper sample found a Sol count wrong (261 vs 263 migrations); r1-usage decides when Sol returns (~/.agent-rails/factory/receipts/sol-count-loss-2026-11-12.md)"
     },
     "judge": {
       "seat": "general-purpose",

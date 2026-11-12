@@ -35,16 +35,7 @@
           "pool": "anthropic-general"
         }
       ],
-      "count": [
-        {
-          "id": "sol-count",
-          "seat": "sol-count",
-          "model": "sol-latest",
-          "effort": "medium",
-          "share": 1.0,
-          "pool": "openai-codex"
-        }
-      ],
+      "count": [],
       "relay": [
         {
           "id": "haiku-relay",

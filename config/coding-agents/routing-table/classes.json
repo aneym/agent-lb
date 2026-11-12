@@ -70,12 +70,6 @@
     "count": {
       "chain": [
         {
-          "seat": "sol-count",
-          "model": "sol-latest",
-          "vendor": "openai",
-          "effort": "medium"
-        },
-        {
           "seat": "Explore",
           "model": "sonnet-latest",
           "vendor": "anthropic",
