@@ -63,6 +63,10 @@ class CdpPage:
         self.session = self.call("Target.attachToTarget", {"targetId": self.target_id, "flatten": True})["sessionId"]
         self._auto_attach(self.session)
 
+    def navigate(self, url: str) -> None:
+        self.frame_sessions.clear()
+        self.call("Page.navigate", {"url": url}, session=self.session)
+
     def _auto_attach(self, session: str) -> None:
         self.call(
             "Target.setAutoAttach",
