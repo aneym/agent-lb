@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from claude_config_hooks import STATE as CLAUDE_CONFIG_STATE  # type: ignore[missing-import]
 from codex_home import MEMORY_COMMAND, OFFLOAD_COMMAND  # type: ignore[missing-import]
 from floor_hooks import FLOOR_STEMS, NON_FLOOR_GUARDS, non_floor, stem, unwrapped  # type: ignore[missing-import]
 from policy_layout import SETTINGS_HOOKS  # type: ignore[missing-import]
@@ -58,18 +59,35 @@ def claude_config(home: Path) -> tuple[Path, str] | None:
     return None
 
 
-def shipped_manifest(home: Path) -> tuple[list[dict[str, Any]], dict[str, bytes]]:
+def committed_manifest(home: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
     found = claude_config(home)
     if found is None:
-        return [], {}
+        return {}, {}
     top, sha = found
     try:
         manifest = json.loads(committed(top, sha, "hooks.json").get("hooks.json") or b"")
     except ValueError:
+        return {}, {}
+    return (manifest if isinstance(manifest, dict) else {}), committed(top, sha, "hooks")
+
+
+def shipped_manifest(home: Path) -> tuple[list[dict[str, Any]], dict[str, bytes]]:
+    manifest, blobs = committed_manifest(home)
+    if not manifest:
         return [], {}
-    entries = manifest.get("hooks") if isinstance(manifest, dict) else None
-    entries = [entry for entry in entries or [] if isinstance(entry, dict)]
-    return entries, committed(top, sha, "hooks")
+    entries = [entry for entry in manifest.get("hooks") or [] if isinstance(entry, dict)]
+    return entries, blobs
+
+
+def retired_owned(home: Path) -> frozenset[str]:
+    manifest, _ = committed_manifest(home)
+    try:
+        state = json.loads((home / CLAUDE_CONFIG_STATE).read_text())
+    except (OSError, ValueError):
+        return frozenset()
+    owned = state.get("owned") if isinstance(state, dict) else None
+    retired = manifest.get("retired_commands") or []
+    return frozenset(command for command in retired if isinstance(command, str) and command in (owned or []))
 
 
 def shipped_files(home: Path) -> Iterator[tuple[str, bytes, list[Path]]]:

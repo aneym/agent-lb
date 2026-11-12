@@ -7,8 +7,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from floor_allowlist import floor_unwrap, non_floor_check  # type: ignore[missing-import]
-from floor_hooks import FAIL_OPEN_MARKS, accepted_forms, hooks_off, unclassified_guards  # type: ignore[missing-import]
+from floor_allowlist import floor_unwrap, non_floor_check, retired_owned  # type: ignore[missing-import]
+from floor_hooks import FAIL_OPEN_MARKS, accepted_forms, hooks_off, mentioned_floors, unclassified_guards  # type: ignore[missing-import]
 from policy_root_hooks import held_by_root, root_floor_names  # type: ignore[missing-import]
 
 HOOK_DOCUMENTS = {
@@ -110,7 +110,7 @@ def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
     retirement = importlib.import_module("policy_registry_retirement")
     invocation = importlib.import_module("hook_retired_invocation")
     layout = importlib.import_module("policy_layout")
-    problems, check = [], non_floor_check(home)
+    problems, check, retired = [], non_floor_check(home), retired_owned(home)
     registry, settings = home / REGISTRY_DIR / "registry.json", home / ".claude/settings.json"
     for path, content in changes.items():
         owner = managed_dir(home, path)
@@ -155,6 +155,8 @@ def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
             ):
                 continue
             if held_by_root(json.loads(hook).get("command") or "", held):
+                continue
+            if command in retired and not mentioned_floors(command):
                 continue
             problems.append(f"{path}: floor entry at {context} matcher {matcher} would change or go: {hook}")
         for context, matcher, hook in (Counter(after) - Counter(before)).elements():
