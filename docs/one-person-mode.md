@@ -5,7 +5,8 @@ One-person mode runs agent-lb on a person's own computer over that person's own 
 ## Start it
 
 ```sh
-agent-lb solo import-claude                      # reads ~/.claude/.credentials.json and ~/.claude.json
+agent-lb solo sign-in                            # fresh Claude sign-in; reads nothing of Claude Code's
+agent-lb solo import-claude                      # or: reads ~/.claude/.credentials.json and ~/.claude.json
 agent-lb solo serve --port 2456                  # 127.0.0.1 only
 ```
 
@@ -14,6 +15,17 @@ agent-lb solo serve --port 2456                  # 127.0.0.1 only
 - Clients point at `http://127.0.0.1:2456` exactly as they would at the shared service.
 
 What the mode sets before the app loads (`app/solo_env.py`): the data dir, a SQLite database, the encryption key, state, throttle and archive paths inside it; every federation token and peer URL blank; federation push files pointed at a path that does not exist; metrics and tracing off; the bridge ring and advertise URL dropped. After the app is built (`app/solo_routes.py`) only the proxy routes, `/v1/models` and `/health/live` and `/health/ready` remain. Dashboard, settings, accounts, OAuth, federation, Muse, docs and OpenAPI routes answer 404.
+
+## Claude sign-in
+
+`agent-lb solo sign-in [--data-dir DIR]` signs in to a Claude account with the same OAuth flow Claude Code and the shared service's dashboard use, and stores the account in the solo data dir. It reads no Claude Code file and no keychain item, so it works the same on macOS, Linux, Windows and a cloud computer.
+
+1. It prints one stdout line, `sign-in address: <url>`, and on stderr asks for the code.
+2. The person opens the address, signs in with the account to add, and Claude shows a code (`<code>#<state>`).
+3. The person, or the program that started the command, writes that code as one line on stdin. The bare code, `code#state` and the full callback address are all accepted; a state from another sign-in is refused.
+4. agent-lb exchanges the code and stores the account as a dashboard sign-in would. The last stdout line is `added Claude plan <account> (<plan>, <status>) for <email>; access expires <time>`, or `updated ...` when the account was already stored, so signing in to the same account twice shows as `updated`. No token is printed.
+
+Exit 0 on success. A refusal prints `sign-in refused: <reason>` on stderr and exits 1.
 
 ## Claude sign-in import
 

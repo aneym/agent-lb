@@ -22,6 +22,10 @@ def add_parser(subparsers) -> None:
     source.add_argument("--file", type=Path, help="Credential file (default: ~/.claude/.credentials.json).")
     source.add_argument("--stdin", action="store_true", help="Read a pasted or exported credential from stdin.")
     signin.add_argument("--profile", type=Path, help="Claude Code profile with oauthAccount (default: ~/.claude.json).")
+    fresh = commands.add_parser(
+        "sign-in", help="Sign in to a Claude account here and store it; reads no Claude Code file or keychain."
+    )
+    fresh.add_argument("--data-dir")
     headroom = commands.add_parser("headroom", help="Print the headroom summary this instance posts.")
     headroom.add_argument("--data-dir")
     headroom.add_argument("--post", action="store_true", help="Also post it once to AGENT_LB_SOLO_HEADROOM_URL.")
@@ -34,6 +38,8 @@ def run(args: argparse.Namespace) -> None:
         _serve(args.port)
     elif args.solo_command == "import-claude":
         _import_claude(args)
+    elif args.solo_command == "sign-in":
+        _sign_in()
     else:
         _headroom(args.post)
 
@@ -73,10 +79,29 @@ def _import_claude(args: argparse.Namespace) -> None:
         sign_in = claude_signin.parse(raw, claude_signin.read_profile(profile_path))
     except claude_signin.ClaudeSignInError as exc:
         raise SystemExit(f"import refused: {exc}") from None
-    plan = asyncio.run(store(sign_in))
+    _report(asyncio.run(store(sign_in)), f"from {origin}")
+
+
+def _sign_in() -> None:
+    from app import solo_claude_signin
+    from app.claude_signin import ClaudeSignInError
+    from app.claude_signin_import import store
+
+    pending = solo_claude_signin.start()
+    print(f"sign-in address: {pending.url}", flush=True)
+    print("Paste the code Claude shows after you sign in, then press Enter:", file=sys.stderr, flush=True)
+    pasted = sys.stdin.readline()
+    try:
+        sign_in = asyncio.run(solo_claude_signin.finish(pending, pasted))
+    except ClaudeSignInError as exc:
+        raise SystemExit(f"sign-in refused: {exc}") from None
+    _report(asyncio.run(store(sign_in)), f"for {sign_in.tokens.email or 'an unnamed account'}")
+
+
+def _report(plan, origin: str) -> None:
     verb = "added" if plan.created else "updated"
     expiry = plan.access_expires_at.isoformat() + "Z" if plan.access_expires_at else "unknown"
-    print(f"{verb} Claude plan {plan.account} ({plan.plan_type}, {plan.status}) from {origin}; access expires {expiry}")
+    print(f"{verb} Claude plan {plan.account} ({plan.plan_type}, {plan.status}) {origin}; access expires {expiry}")
 
 
 def _headroom(post: bool) -> None:

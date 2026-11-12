@@ -10,6 +10,7 @@ from app.core.anthropic.oauth import ANTHROPIC_PROVIDER_NAME
 @dataclass(frozen=True)
 class ImportedPlan:
     account: str
+    email: str | None
     plan_type: str
     status: str
     access_expires_at: datetime | None
@@ -34,6 +35,7 @@ async def store(sign_in: ClaudeSignIn) -> ImportedPlan:
             status = saved.status.value if hasattr(saved.status, "value") else str(saved.status)
             return ImportedPlan(
                 account=saved.id[:8],
+                email=saved.email,
                 plan_type=saved.plan_type,
                 status=status,
                 access_expires_at=saved.access_expires_at,
