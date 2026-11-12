@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -16,6 +17,10 @@ from app.pool_reset_rule import Redemption, banked_total, decide, minutes_left, 
 DEFAULT_STATE = Path.home() / ".agent-rails" / "factory" / "pool-reset-auto"
 CONFIRM_WAIT_SECONDS = 210
 CONFIRM_POLL_SECONDS = 15
+BACKOFF_SECONDS = 180
+CONSUME_SECONDS = 60
+RUN_SECONDS = 390
+LIMITED = re.compile(r"HTTP 429\b|\(429\b")
 PREFIX = "[Factory → Rails]"
 
 
@@ -210,6 +215,45 @@ def _retry(state: Path, decision: dict[str, Any], failures: list[str], args: arg
     return f"not redeemed, nothing consumed, retry notice sent: {reason}"
 
 
+class Unspent(Exception):
+    pass
+
+
+def _limited(exc: pool_reset_call.CallError) -> bool:
+    return LIMITED.search(str(exc)) is not None
+
+
+def _backoff(deadline: float, waits: list[str], reason: str) -> bool:
+    if waits or time.monotonic() + BACKOFF_SECONDS + CONSUME_SECONDS > deadline:
+        return False
+    waits.append(f"{reason}, waited {BACKOFF_SECONDS}s")
+    time.sleep(BACKOFF_SECONDS)
+    return True
+
+
+def _preview(account_id: str, account: str, deadline: float, waits: list[str]) -> dict[str, Any]:
+    try:
+        return pool_reset_call.preview(account_id)
+    except pool_reset_call.CallError as exc:
+        if _limited(exc) and _backoff(deadline, waits, f"{account} preview answered 429"):
+            return pool_reset_call.preview(account_id)
+        raise
+
+
+def _consume(
+    cursor: Any, account_id: str, account: str, override: bool, deadline: float, waits: list[str]
+) -> tuple[datetime, dict[str, Any]]:
+    while True:
+        at = datetime.now(timezone.utc)
+        try:
+            return at, pool_reset_call.consume(account_id, override)
+        except pool_reset_call.CallError as exc:
+            if not _limited(exc) or pool_reset_readings.attempted(cursor, account_id, at):
+                raise
+            if not _backoff(deadline, waits, f"{account} consume answered 429 before any attempt"):
+                raise Unspent(str(exc)) from exc
+
+
 def _redeem(
     cursor: Any,
     state: Path,
@@ -218,28 +262,33 @@ def _redeem(
     records: list[Redemption],
     args: argparse.Namespace,
     now: datetime,
+    deadline: float,
 ) -> str:
     override = decision["override_daily_limit"]
-    failures = []
+    failures: list[str] = []
+    waits: list[str] = []
     consumed = False
     for entry in decision["candidates"][:2]:
         account = entry["account"]
         try:
-            seen = pool_reset_call.preview(ids[account])
+            seen = _preview(ids[account], account, deadline, waits)
         except pool_reset_call.CallError as exc:
             failures.append(f"{account} preview failed ({exc})")
             continue
         if not seen["redeemable_now"]:
             failures.append(f"{account} not redeemable ({seen['ineligible_reason']})")
             continue
-        consumed = True
-        at = datetime.now(timezone.utc)
         try:
-            result = pool_reset_call.consume(ids[account], override)
+            at, result = _consume(cursor, ids[account], account, override, deadline, waits)
+        except Unspent as exc:
+            failures.append(f"{account} consume answered 429 before any attempt, nothing consumed ({exc})")
+            continue
         except pool_reset_call.CallError as exc:
+            consumed = True
             failures.append(f"{account} consume failed ({exc})")
             continue
         if result.get("status") != "redeemed":
+            consumed = True
             failures.append(f"{account} not redeemed ({result.get('code')})")
             continue
         receipt = {
@@ -255,10 +304,12 @@ def _redeem(
             "override_daily_limit": override,
             "reset_number": decision["week_used"] + 1,
             "week_cap": decision["week_cap"],
+            "waits": waits,
             "confirmed": False,
         }
         _write(state / "pending.json", receipt)
-        return _confirm(cursor, state, receipt, args, CONFIRM_WAIT_SECONDS)
+        return _confirm(cursor, state, receipt, args, max(0.0, min(CONFIRM_WAIT_SECONDS, deadline - time.monotonic())))
+    failures += waits
     if not consumed:
         return _retry(state, decision, failures, args, now)
     return _fail(state, decision, failures, args, now)
@@ -272,6 +323,7 @@ def _load_redemptions(path: Path) -> list[Redemption]:
 
 
 def _run(args: argparse.Namespace) -> tuple[str, dict[str, Any], str]:
+    deadline = time.monotonic() + RUN_SECONDS
     state: Path = args.state
     state.mkdir(parents=True, exist_ok=True)
     held = _held(state, args.push)
@@ -308,7 +360,7 @@ def _run(args: argparse.Namespace) -> tuple[str, dict[str, Any], str]:
         if mode == "live" and pending.exists() and not held:
             outcome = _confirm(cursor, state, json.loads(pending.read_text()), args, 0)
         elif mode == "live" and decision["action"] == "redeem":
-            outcome = _redeem(cursor, state, decision, ids, records, args, now)
+            outcome = _redeem(cursor, state, decision, ids, records, args, now, deadline)
         elif mode == "live" and not held:
             outcome = _notice(state, decision, args, now)
     return mode, decision, outcome

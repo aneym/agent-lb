@@ -26,6 +26,11 @@ WHERE (r.applied_at IS NOT NULL OR r.state = 'pending')
   AND COALESCE(r.applied_at, r.created_at) >= %(since)s::timestamptz - interval '1 day'
 """
 
+_ATTEMPTED_SQL = """
+SELECT count(*) AS attempts FROM reset_credit_attempts
+WHERE account_id = %(id)s AND created_at >= %(at)s::timestamptz - interval '1 minute'
+"""
+
 _WEEKLY_SQL = """
 SELECT used_percent, recorded_at FROM usage_history
 WHERE account_id LIKE %(prefix)s AND "window" = 'secondary' AND {span}
@@ -71,6 +76,10 @@ def headroom(cursor: Any) -> dict[str, Any]:
 def owned(cursor: Any) -> dict[str, str]:
     local = os.environ.get("AGENT_LB_LOCAL_INSTANCE_ID", "")
     return {row["account"]: row["id"] for row in rows(cursor, _OWNED_SQL, {"local": local})}
+
+
+def attempted(cursor: Any, account_id: str, at: datetime) -> bool:
+    return rows(cursor, _ATTEMPTED_SQL, {"id": account_id, "at": at})[0]["attempts"] > 0
 
 
 def around(cursor: Any, account: str, at: datetime) -> dict[str, Any]:

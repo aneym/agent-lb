@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Literal
 from urllib.parse import urljoin
@@ -13,6 +15,8 @@ from app.core.clients.http import lease_http_session
 from app.core.clients.rate_limit_resets import ResetCreditsError
 from app.core.config.settings import get_settings
 from app.core.types import JsonObject
+
+logger = logging.getLogger(__name__)
 
 
 class ResetGrant(BaseModel):
@@ -136,10 +140,28 @@ async def _request(method: str, path: str, access_token: str, *, body: JsonObjec
                 timeout=aiohttp.ClientTimeout(total=25, sock_connect=10),
             ) as response:
                 if response.status >= 400:
-                    raise ResetCreditsError(response.status, f"Claude reset request failed ({response.status})")
+                    limits = _limit_headers(response.headers)
+                    logger.warning(
+                        "Claude reset %s %s answered %s; limit headers %s",
+                        method,
+                        path.split("?", 1)[0],
+                        response.status,
+                        limits or "none",
+                    )
+                    retry_after = limits.get("retry-after")
+                    shown = f", retry-after {retry_after}" if retry_after else ""
+                    raise ResetCreditsError(response.status, f"Claude reset request failed ({response.status}{shown})")
                 data = await response.json(content_type=None)
                 if not isinstance(data, dict):
                     raise ResetCreditsError(502, "Malformed Claude reset response")
                 return data
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
         raise ResetCreditsError(502, "Claude reset request failed; redemption outcome may be unknown") from exc
+
+
+def _limit_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    return {
+        name.lower(): value
+        for name, value in headers.items()
+        if name.lower() == "retry-after" or "ratelimit" in name.lower()
+    }
