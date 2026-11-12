@@ -154,16 +154,21 @@ preserve unrelated sessions unless the user requested their closure.
 A subscription paid with a Link temporary card (`payment: single-use`) needs a new
 card each cycle. Account health flags it 7 days out (`renewal_payment`). The
 `com.aneyman.agent-lb-recard` launchd job (`scripts/install-recard-watch.sh`, Studio)
-runs `agent-lb recard run` every 15 minutes: once the renewal date arrives (the plan
-has run out, never ahead of time) and for 7 days after, it checks the
-account's browser profile is signed in to claude.ai, creates a Link card request
-for the ledger amount (Link prompts the operator's app; the approval URL is also
-sent to its owning thread with t3_thread_send), and once approved puts the card on the billing page,
-records the last 4 digits in the ledger note and rolls `renewsOn` forward after the
-renewal date passes. By hand: `agent-lb recard start EMAIL`, then
-`agent-lb recard finish EMAIL` after approval; `agent-lb recard status` shows
-each cycle. A signed-out or unreachable profile (for example one that lives on
-Book) is posted once as stuck; sign in there and the next run continues.
+runs `agent-lb recard run` every 15 minutes. Once the renewal date arrives (the plan
+has run out, never ahead of time) and for 7 days after, `recard start` does three
+things in the same few seconds: creates one Link card request for the ledger amount
+(sign-in never gates it), opens the account's billing window on the main display and
+reports whether it is signed in, and files an owner ask from Factory in Rails with the
+approval link (Needs you) plus one queued line to the Rails chat. Each delivery is
+checked and recorded in `recards.json` (`notice`). It then starts `recard watch`, which
+polls the request every 4 seconds and puts the card on the billing page within seconds
+of approval, withdraws the ask and reports. The 15-minute run restarts a watcher that
+died. A day before each single-use renewal the run checks, read-only, that the profile
+is signed in and sends Factory a note if not; Alex is never asked ahead of time.
+Sign-in checks reuse an open claude.ai tab and close only tabs they opened.
+By hand: `agent-lb recard start EMAIL [--dry-run]` (the dry run opens the window and
+prints the ask it would file; it creates no Link request), `agent-lb recard window EMAIL`,
+`agent-lb recard signin EMAIL`, `agent-lb recard finish EMAIL`, `agent-lb recard status`.
 
 ## Subscription Ledger Mapping
 

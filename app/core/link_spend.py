@@ -28,7 +28,7 @@ def _link(*args: str) -> object:
     return payload[0] if isinstance(payload, list) and payload else payload
 
 
-def create_card_request(email: str, plan: str, amount_usd: float, renews_on: str) -> dict:
+def create_card_request(email: str, plan: str, amount_usd: float, renews_on: str) -> str:
     cents = round(amount_usd * 100)
     context = (
         f"Card for the {plan} renewal of {email} on {renews_on}, routed through Agent LB. "
@@ -60,8 +60,15 @@ def create_card_request(email: str, plan: str, amount_usd: float, renews_on: str
     )
     if not isinstance(payload, dict) or not payload.get("id"):
         raise LinkError("link-cli returned no spend request")
-    _link("spend-request", "request-approval", payload["id"], "--filter-output", "id")
-    return {"id": payload["id"], **request_state(payload["id"])}
+    return str(payload["id"])
+
+
+def approval_url(request_id: str) -> str:
+    return f"https://app.link.com/activity/approve/{request_id}"
+
+
+def request_approval(request_id: str) -> None:
+    _link("spend-request", "request-approval", request_id, "--filter-output", "id")
 
 
 def request_state(request_id: str) -> dict:
@@ -71,7 +78,7 @@ def request_state(request_id: str) -> dict:
     status = payload.get("status") if isinstance(payload, dict) else payload
     if not isinstance(status, str) or not status:
         raise LinkError("link-cli returned no status")
-    return {"status": status, "approvalUrl": f"https://app.link.com/activity/approve/{request_id}"}
+    return {"status": status, "approvalUrl": approval_url(request_id)}
 
 
 def load_card(request_id: str, directory: Path) -> dict:

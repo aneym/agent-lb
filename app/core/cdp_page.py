@@ -12,18 +12,54 @@ class CdpError(Exception):
     pass
 
 
+def _devtools(port: int, path: str) -> Any:
+    try:
+        with build_opener(ProxyHandler({})).open(f"http://127.0.0.1:{port}{path}", timeout=3) as response:
+            return json.load(response)
+    except (OSError, ValueError):
+        raise CdpError(f"no Chrome DevTools endpoint on port {port}") from None
+
+
+def cdp_up(port: int) -> bool:
+    try:
+        return isinstance(_devtools(port, "/json/version"), dict)
+    except CdpError:
+        return False
+
+
+def page_targets(port: int) -> list[dict]:
+    targets = _devtools(port, "/json/list")
+    return [target for target in targets if isinstance(target, dict) and target.get("type") == "page"]
+
+
 class CdpPage:
-    def __init__(self, port: int, url: str, *, timeout: float = 20) -> None:
+    def __init__(
+        self,
+        port: int,
+        url: str | None = None,
+        *,
+        timeout: float = 20,
+        target_id: str | None = None,
+        background: bool = False,
+        new_window: bool = False,
+    ) -> None:
         try:
-            with build_opener(ProxyHandler({})).open(f"http://127.0.0.1:{port}/json/version", timeout=3) as response:
-                endpoint = json.load(response)["webSocketDebuggerUrl"]
-        except (OSError, ValueError, KeyError):
+            endpoint = _devtools(port, "/json/version")["webSocketDebuggerUrl"]
+        except (KeyError, TypeError):
             raise CdpError(f"no Chrome DevTools endpoint on port {port}") from None
         self._socket = connect(endpoint, max_size=None, open_timeout=timeout)
         self._timeout = timeout
         self._next_id = 0
         self.frame_sessions: list[str] = []
-        self.target_id = self.call("Target.createTarget", {"url": url})["targetId"]
+        self.owned = target_id is None
+        if target_id is None:
+            params: dict[str, Any] = {"url": url or "about:blank"}
+            if background:
+                params["background"] = True
+            if new_window:
+                params["newWindow"] = True
+            target_id = self.call("Target.createTarget", params)["targetId"]
+        self.target_id = target_id
         self.session = self.call("Target.attachToTarget", {"targetId": self.target_id, "flatten": True})["sessionId"]
         self._auto_attach(self.session)
 
@@ -86,9 +122,13 @@ class CdpPage:
             time.sleep(0.5)
         return None
 
+    def detach(self) -> None:
+        self._socket.close()
+
     def close(self) -> None:
         try:
-            self.call("Target.closeTarget", {"targetId": self.target_id})
+            if self.owned:
+                self.call("Target.closeTarget", {"targetId": self.target_id})
         except CdpError:
             pass
         finally:

@@ -3,14 +3,16 @@ from __future__ import annotations
 import json
 import time
 
-from app.core.cdp_page import CdpError, CdpPage
+from app.core.cdp_page import CdpError, CdpPage, page_targets
 
 BILLING_URL = "https://claude.ai/settings/billing"
 
-_SIGNED_IN = """(async () => {
+SIGNED_IN = """(async () => {
   try { const r = await fetch('/api/account'); if (!r.ok) return null; return (await r.json()).email_address || null; }
   catch (e) { return null; }
 })()"""
+
+SIGNED_IN_OR_LOGIN = "location.pathname.startsWith('/login') ? '-' : " + SIGNED_IN
 
 _OPEN_PAYMENT_FORM = """(() => {
   const label = e => (e.innerText || e.getAttribute('aria-label') || '').trim();
@@ -60,11 +62,17 @@ class BillingError(Exception):
     pass
 
 
+def claude_tab(port: int) -> dict | None:
+    return next((tab for tab in page_targets(port) if str(tab.get("url", "")).startswith("https://claude.ai/")), None)
+
+
 def signed_in_email(port: int) -> str | None:
-    page = CdpPage(port, BILLING_URL)
+    tab = claude_tab(port)
+    page = CdpPage(port, target_id=tab["id"]) if tab else CdpPage(port, BILLING_URL, background=True)
     try:
         page.wait_for("document.readyState === 'complete'", seconds=20)
-        return page.wait_for(_SIGNED_IN, seconds=10)
+        signed = page.wait_for(SIGNED_IN_OR_LOGIN, seconds=10)
+        return signed if signed and signed != "-" else None
     finally:
         page.close()
 
@@ -81,7 +89,7 @@ def put_card(port: int, email: str, card: dict, *, save: bool = True) -> str:
     page = CdpPage(port, BILLING_URL)
     try:
         page.wait_for("document.readyState === 'complete'", seconds=20)
-        if page.wait_for(_SIGNED_IN, seconds=10) != email:
+        if page.wait_for(SIGNED_IN, seconds=10) != email:
             raise BillingError(f"browser profile is not signed in to claude.ai as {email}")
         if not page.wait_for(_OPEN_PAYMENT_FORM, seconds=15):
             raise BillingError("no payment method button on the billing page")
