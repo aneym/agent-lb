@@ -3,7 +3,6 @@ MANAGED_SEATS = (
     "planner",
     "plan-reviewer",
     "Explore",
-    "sol-count",
     "opus-seat",
     "opus-seat-full",
     "fable-orchestrator",

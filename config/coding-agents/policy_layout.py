@@ -84,6 +84,7 @@ ADOPTED_KEEP = tuple(Path(".claude/hooks") / name for name in ADOPTED_KEEP_NAMES
 
 RETIRED_AGENTS = (
     "astra",
+    "sol-count",
     "implementer",
     "gpt-explorer-local",
     "sonnet-verifier",

@@ -30,12 +30,6 @@
       "model": "sonnet-latest",
       "effort": "medium"
     },
-    "sol-count": {
-      "vendor": "openai",
-      "box": null,
-      "model": "sol-latest",
-      "effort": "medium"
-    },
     "opus-seat": {
       "vendor": "anthropic",
       "box": {
