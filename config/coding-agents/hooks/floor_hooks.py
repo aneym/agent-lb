@@ -32,6 +32,7 @@ NON_FLOOR_GUARDS = {
     "rails-path-guard.py": "house rule: agents in an agent home take the Rails path for a connected service",
     "land-open-guard.py": "house rule: a turn does not end while the rails-one land it started still runs",
     "wrangler-d1-guard.py": "house rule: ad-hoc SQL on the live rails-one D1 goes through rails-one-sql, not raw wrangler d1 execute --remote",
+    "t3-db-guard.py": "house rule: no direct reads of a live T3 state database (statev2.sqlite); use the t3 CLI or T3 MCP",
 }
 FLOOR_TEXT = "BLOCKED: Dangerous command"
 INLINE_FLOOR = "dangerous-command"
