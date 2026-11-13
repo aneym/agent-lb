@@ -105,6 +105,8 @@ class SettingsFields(BaseSettings):
     auth_guardian_failure_backoff_max_seconds: float = Field(default=3600.0, ge=0)
 
     anthropic_helper_cache_1h_enabled: bool = True
+    anthropic_session_cache_1h_enabled: bool = True
+    anthropic_one_shot_cache_5m_enabled: bool = True
     anthropic_fable_routing_enabled: bool = True
     anthropic_fable_weekly_max_used_percent: float = Field(default=50.0, ge=0, le=100)
 

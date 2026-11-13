@@ -61,7 +61,7 @@ from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_warmup import WarmupBusy, admitted_http_session
-from app.modules.proxy.anthropic_cache_policy import upgrade_helper_cache as _upgrade_helper_cache
+from app.modules.proxy.anthropic_cache_policy import apply_cache_tier as _apply_cache_tier
 from app.modules.proxy.anthropic_outbound_headers import build_anthropic_headers
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError, require_claude_code_client
 from app.modules.proxy.anthropic_rate_limits import (
@@ -535,9 +535,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                         quota_observed_at: datetime | None = None
                         unified_5h_utilization: float | None = None
                         unified_7d_utilization: float | None = None
-                        cache_creation_tier = _upgrade_helper_cache(
-                            body_payload, headers, inbound_headers, provider_name
-                        )
+                        cache_creation_tier = _apply_cache_tier(body_payload, headers, inbound_headers, provider_name)
 
                         if openai_body is None:
                             body_payload, _ = strip_eval_web_tools(body_payload, "anthropic")

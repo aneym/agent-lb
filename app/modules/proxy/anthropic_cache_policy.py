@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Mapping
 
 from app.core.config.settings import get_settings
@@ -9,48 +10,71 @@ from app.modules.proxy.anthropic_outbound_headers import merge_anthropic_beta_he
 
 logger = logging.getLogger(__name__)
 
+ONE_SHOT_ENTRYPOINTS = frozenset({"sdk-cli"})
 
-def upgrade_helper_cache(
+_ENTRYPOINT = re.compile(r"^claude-cli/\S+ \(external, ([\w.-]+)")
+
+
+def apply_cache_tier(
     body: dict[str, Any],
     headers: dict[str, str],
     inbound_headers: Mapping[str, str],
     provider_name: str,
 ) -> str | None:
-
     if provider_name == "kimi":
         return requested_cache_tier(body)
+    if provider_name != ANTHROPIC_PROVIDER_NAME:
+        return None
+    target = _target_tier(inbound_headers)
+    if target is None:
+        return requested_cache_tier(body)
+    controls = _cache_controls(body)
+    if not controls:
+        return requested_cache_tier(body)
+    if any(control.get("type") != "ephemeral" for control in controls):
+        logger.warning("Cache breakpoint is not ephemeral; leaving request tier unchanged")
+        return requested_cache_tier(body)
+    for control in controls:
+        control["ttl"] = target
+    if target == "1h":
+        merge_anthropic_beta_header(headers, ["extended-cache-ttl-2025-04-11"])
+    return target
 
+
+def client_entrypoint(inbound_headers: Mapping[str, str]) -> str | None:
+    user_agent = next((value for key, value in inbound_headers.items() if key.lower() == "user-agent"), "")
+    match = _ENTRYPOINT.match(user_agent) if isinstance(user_agent, str) else None
+    return match.group(1) if match else None
+
+
+def _target_tier(inbound_headers: Mapping[str, str]) -> str | None:
+    settings = get_settings()
+    if settings.anthropic_one_shot_cache_5m_enabled and client_entrypoint(inbound_headers) in ONE_SHOT_ENTRYPOINTS:
+        return "5m"
+    if settings.anthropic_session_cache_1h_enabled:
+        return "1h"
     agent_id = next((value for key, value in inbound_headers.items() if key.lower() == "x-claude-code-agent-id"), "")
-    if (
-        provider_name != ANTHROPIC_PROVIDER_NAME
-        or not get_settings().anthropic_helper_cache_1h_enabled
-        or not isinstance(agent_id, str)
-        or not agent_id.strip()
-    ):
-        return requested_cache_tier(body) if provider_name == ANTHROPIC_PROVIDER_NAME else None
+    if settings.anthropic_helper_cache_1h_enabled and isinstance(agent_id, str) and agent_id.strip():
+        return "1h"
+    return None
+
+
+def _cache_controls(body: dict[str, Any]) -> list[dict[str, Any]]:
     blocks: list[Any] = [body]
     for key in ("system", "tools"):
         if isinstance(body.get(key), list):
             blocks.extend(body[key])
-    for message in body.get("messages", []):
-        if isinstance(message, dict) and isinstance(message.get("content"), list):
-            blocks.extend(message["content"])
-    upgraded = 0
-    for block in blocks:
-        if not isinstance(block, dict) or "cache_control" not in block:
-            continue
-        control = block["cache_control"]
-        if not isinstance(control, dict) or control.get("type") != "ephemeral":
-            logger.warning("Helper cache breakpoint is invalid; leaving request unchanged")
-            return requested_cache_tier(body)
-    for block in blocks:
-        if isinstance(block, dict) and isinstance(block.get("cache_control"), dict):
-            block["cache_control"]["ttl"] = "1h"
-            upgraded += 1
-    if upgraded:
-        merge_anthropic_beta_header(headers, ["extended-cache-ttl-2025-04-11"])
-        return "1h"
-    return requested_cache_tier(body)
+    pending: list[Any] = [message for message in body.get("messages", []) if isinstance(message, dict)]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict) and isinstance(item.get("content"), list):
+            blocks.extend(item["content"])
+            pending.extend(item["content"])
+    return [
+        block["cache_control"]
+        for block in blocks
+        if isinstance(block, dict) and isinstance(block.get("cache_control"), dict)
+    ]
 
 
 def requested_cache_tier(body: dict[str, Any]) -> str | None:
