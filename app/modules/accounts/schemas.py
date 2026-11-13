@@ -348,6 +348,10 @@ class AccountResetCredit(DashboardModel):
     expires_at: str | None = None
     title: str | None = None
     description: str | None = None
+    clears: list[str] | None = None
+    remaining_count: int | None = None
+    redeemable_now: bool | None = None
+    ineligible_reason: str | None = None
 
 
 class AccountResetCreditsResponse(DashboardModel):
@@ -368,8 +372,14 @@ class AccountResetCreditConsumeRequest(DashboardModel):
         description="Explicit manual Claude override of the local rolling 24-hour reset limit.",
     )
 
+    override_weekly_limit: bool = Field(
+        default=False,
+        description="Explicit manual Claude override of the local weekly reset cap; automatic allowance is unchanged.",
+    )
+
 
 class AccountResetCreditConsumeResponse(DashboardModel):
+    cleared_windows: list[str] = Field(default_factory=list)
     status: str
     account_id: str
     code: str

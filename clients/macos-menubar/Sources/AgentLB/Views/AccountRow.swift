@@ -10,7 +10,6 @@ struct AccountRow: View {
   @State private var actionFailed = false
   @State private var isHovered = false
   @State private var refreshPhase = RefreshPhase.idle
-  @State private var resetPhase = RefreshPhase.idle
 
   private enum RefreshPhase: Equatable {
     case idle, inFlight, success, failure
@@ -62,6 +61,7 @@ struct AccountRow: View {
     }
     .contextMenu { menuItems }
     .help(account.deactivationReason ?? "")
+
   }
 
   private var isDimmed: Bool {
@@ -125,16 +125,15 @@ struct AccountRow: View {
   private var resetCreditsChip: some View {
     if supportsBankedResetCredits {
       if let count = account.resetCreditsAvailable {
-        if account.canRedeemResetCredit {
+        if account.isRoutable && (account.resetCreditsAvailable ?? 0) > 0 {
           Button {
-            runRedeemResetCredit()
+            manageResets()
           } label: {
             resetCreditsChipLabel(count: count)
           }
           .buttonStyle(.plain)
-          .disabled(resetPhase != .idle)
-          .help("Spend one banked credit to reset this account's rate limits now")
-          .accessibilityLabel("Reset rate limits now")
+          .help("Manage account and Fable reset credits; review scope and eligibility")
+          .accessibilityLabel("Manage resets")
         } else {
           resetCreditsChipLabel(count: count)
             .help("Banked rate-limit reset credits")
@@ -157,10 +156,7 @@ struct AccountRow: View {
   private func resetCreditsChipLabel(count: Int) -> some View {
     let redeemable = account.canRedeemResetCredit
     return HStack(spacing: 3) {
-      if resetPhase == .inFlight {
-        ProgressView().controlSize(.mini)
-      }
-      Text(resetPhase == .failure ? "⟲ !" : "⟲ \(count)")
+      Text("⟲ \(count)")
     }
     .font(.system(size: 9, weight: redeemable ? .semibold : .medium))
     .foregroundStyle(count == 0 ? AnyShapeStyle(.tertiary) : AnyShapeStyle(redeemable ? .primary : .secondary))
@@ -172,15 +168,8 @@ struct AccountRow: View {
     .contentShape(.capsule)
   }
 
-  private func runRedeemResetCredit() {
-    guard resetPhase == .idle else { return }
-    resetPhase = .inFlight
-    Task {
-      let succeeded = await appState.redeemResetCredit(accountId: account.accountId)
-      resetPhase = succeeded ? .success : .failure
-      try? await Task.sleep(for: .seconds(2))
-      resetPhase = .idle
-    }
+  private func manageResets() {
+    ResetCreditsWindow.show(account: account, appState: appState)
   }
 
   @ViewBuilder
@@ -335,10 +324,11 @@ struct AccountRow: View {
     case .unsubscribed, .reconnecting:
       EmptyView()
     }
-    if account.canRedeemResetCredit {
-      Button("Reset Rate Limits (\(account.resetCreditsAvailable ?? 0) banked)") {
-        runRedeemResetCredit()
+    if account.isRoutable && (account.resetCreditsAvailable ?? 0) > 0 {
+      Button("Manage Resets (\(account.resetCreditsAvailable ?? 0) banked)…") {
+        manageResets()
       }
+
     }
     Button("Copy Account ID") {
       NSPasteboard.general.clearContents()

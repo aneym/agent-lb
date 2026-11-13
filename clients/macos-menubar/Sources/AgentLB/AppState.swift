@@ -239,7 +239,7 @@ final class AppState {
     }
   }
 
-  private func fetchAccounts() async {
+  func fetchAccounts() async {
     do {
       accounts = try await client.accounts().accounts
       Self.updateSectionError(.accounts, error: nil, in: &sectionErrors)
@@ -374,23 +374,16 @@ final class AppState {
 
 
 
-  @discardableResult
-  func redeemResetCredit(accountId: String) async -> Bool {
+
+
+
+  func redeemResetCredit(accountId: String, creditId: String, overrideLimits: Bool) async throws -> AccountResetCreditConsumeResponse {
     guard resetCreditAccountsInFlight.insert(accountId).inserted else {
-      return false
+      throw APIError.httpStatus(409, body: "A reset is already running for this account. Wait for reconciliation.")
     }
     defer { resetCreditAccountsInFlight.remove(accountId) }
-    let verdict: Bool
-    do {
-      verdict = try await client.redeemResetCredit(accountId).didReset
-    } catch {
-      return false
-    }
-    await fetchAccounts()
-    return verdict
+    return try await client.redeemResetCredit(accountId, creditId: creditId, overrideLimits: overrideLimits)
   }
-
-
 
   func startService() async {
     startupError = nil

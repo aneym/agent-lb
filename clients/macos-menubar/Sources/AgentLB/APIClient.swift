@@ -187,15 +187,22 @@ struct APIClient: @unchecked Sendable {
 
 
 
-  func redeemResetCredit(_ id: String) async throws -> AccountResetCreditConsumeResponse {
-    try await postDecoding("/api/accounts/\(id)/rate-limit-reset-credits/consume")
+  func resetCredits(_ id: String) async throws -> ResetCreditInventory {
+    try await get("/api/accounts/\(id)/rate-limit-reset-credits")
+  }
+
+  func redeemResetCredit(_ id: String, creditId: String, overrideLimits: Bool) async throws -> AccountResetCreditConsumeResponse {
+    let body = try JSONSerialization.data(withJSONObject: [
+      "creditId": creditId, "overrideDailyLimit": overrideLimits, "overrideWeeklyLimit": overrideLimits
+    ])
+    return try await postDecoding("/api/accounts/\(id)/rate-limit-reset-credits/consume", body: body)
   }
 
 
 
   private func get<T: Decodable>(_ path: String) async throws -> T {
     let (data, response) = try await fetch(path: path)
-    try assertOK(response, endpoint: path)
+    try assertDashboardOK(response, data: data)
     do {
       return try Self.makeDecoder().decode(T.self, from: data)
     } catch let e as DecodingError {
@@ -213,12 +220,17 @@ struct APIClient: @unchecked Sendable {
 
 
 
-  private func postDecoding<T: Decodable>(_ path: String) async throws -> T {
+  private func postDecoding<T: Decodable>(_ path: String, body: Data? = nil) async throws -> T {
     let url = URL(string: path, relativeTo: base) ?? base.appendingPathComponent(path)
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
+    request.httpBody = body
+    if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
     let (data, response) = try await executeRequest(request, on: probeSession)
-    try assertOK(response, endpoint: path)
+    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+      let message = (try? JSONDecoder().decode(DashboardErrorEnvelope.self, from: data))?.error?.message
+      throw APIError.httpStatus(http.statusCode, body: message)
+    }
     do {
       return try Self.makeDecoder().decode(T.self, from: data)
     } catch let e as DecodingError {
@@ -254,6 +266,20 @@ struct APIClient: @unchecked Sendable {
     guard let http = response as? HTTPURLResponse else { return }
     guard (200..<300).contains(http.statusCode) else {
       throw APIError.httpStatus(http.statusCode, body: nil)
+    }
+  }
+}
+
+private struct DashboardErrorEnvelope: Decodable {
+  struct Detail: Decodable { let message: String? }
+  let error: Detail?
+}
+
+extension APIClient {
+  private func assertDashboardOK(_ response: URLResponse, data: Data) throws {
+    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+      let message = (try? JSONDecoder().decode(DashboardErrorEnvelope.self, from: data))?.error?.message
+      throw APIError.httpStatus(http.statusCode, body: message)
     }
   }
 }

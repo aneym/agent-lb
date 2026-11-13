@@ -18,6 +18,9 @@ struct AgentLBApp: App {
     _appState = State(initialValue: state)
     Self.scheduleWindowDiagnostics(state)
     StatusItemWatch.schedule()
+    if CommandLine.arguments.contains("--reset-credits") {
+      Task { @MainActor in ResetCreditsWindow.show(appState: state) }
+    }
   }
 
 
@@ -95,5 +98,11 @@ struct AgentLBApp: App {
       Image(nsImage: appState.statusIcon)
     }
     .menuBarExtraStyle(.window)
+    .commands {
+      CommandMenu("Agent LB") {
+        Button("Manage Resets…") { ResetCreditsWindow.show(appState: appState) }
+          .keyboardShortcut("r", modifiers: [.command, .shift])
+      }
+    }
   }
 }

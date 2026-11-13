@@ -6,6 +6,8 @@ from app.core import usage as usage_core
 from app.core.usage.quota import apply_usage_quota
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
+from app.modules.accounts.repository import AccountsRepository
+from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.usage.repository import UsageRepository
 from app.modules.usage.updater import UsageUpdater
 
@@ -66,3 +68,25 @@ async def capacity_recorded_since(account_id: str, usage_repo: UsageRepository, 
     return all(
         row.used_percent < 100.0 for row in readings if row is not None and to_utc_naive(row.recorded_at) > cutoff
     )
+
+
+async def clear_recovered_reset_cooldown(account_id: str, repo: AccountsRepository) -> None:
+    current = await repo.reload_by_id(account_id)
+    if current is None or current.status not in (
+        AccountStatus.ACTIVE,
+        AccountStatus.RATE_LIMITED,
+        AccountStatus.QUOTA_EXCEEDED,
+    ):
+        return
+    await repo.update_status_if_current(
+        account_id,
+        AccountStatus.ACTIVE,
+        None,
+        None,
+        blocked_at=None,
+        expected_status=current.status,
+        expected_deactivation_reason=current.deactivation_reason,
+        expected_reset_at=current.reset_at,
+        expected_blocked_at=current.blocked_at,
+    )
+    get_account_selection_cache().invalidate()

@@ -13,7 +13,11 @@ from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.auth_manager import is_locally_owned
 from app.modules.accounts.lifecycle import AccountsLifecycle
 from app.modules.accounts.reset_credit_attempts import ResetCreditAttemptsRepository
-from app.modules.accounts.reset_credit_recovery import capacity_recorded_since, refresh_standard_capacity
+from app.modules.accounts.reset_credit_recovery import (
+    capacity_recorded_since,
+    clear_recovered_reset_cooldown,
+    refresh_standard_capacity,
+)
 from app.modules.accounts.schemas import (
     AccountResetCredit,
     AccountResetCreditConsumeResponse,
@@ -48,6 +52,7 @@ class AccountsService(AccountsLifecycle):
                     status="available"
                     if (
                         grant.resets_left > 0
+                        and not grant.paused
                         and (grant.ends_at is None or anthropic_resets._utc(grant.ends_at) > now)
                         and (grant.starts_at is None or anthropic_resets._utc(grant.starts_at) <= now)
                     )
@@ -55,6 +60,10 @@ class AccountsService(AccountsLifecycle):
                     granted_at=grant.starts_at.isoformat() if grant.starts_at else "",
                     expires_at=grant.ends_at.isoformat() if grant.ends_at else None,
                     title=grant.label,
+                    clears=grant.clears,
+                    remaining_count=grant.resets_left,
+                    redeemable_now=inventory.usable_grant(now, grant.id) is not None,
+                    ineligible_reason=inventory.redemption_blocker(now, grant.id),
                 )
                 for grant in inventory.grants
             ]
@@ -99,6 +108,7 @@ class AccountsService(AccountsLifecycle):
         *,
         trigger: str = "manual",
         override_daily_limit: bool = False,
+        override_weekly_limit: bool = False,
     ) -> AccountResetCreditConsumeResponse | None:
 
         account = await self._repo.get_by_id(account_id)
@@ -106,14 +116,20 @@ class AccountsService(AccountsLifecycle):
             return None
         if not is_locally_owned(account, get_settings()):
             raise AccountResetCreditsUnavailableError("Account is not locally owned and cannot use reset credits")
-        if override_daily_limit and trigger != "manual":
-            raise AccountResetCreditsUnavailableError("Only manual redemption may override the Claude daily limit")
-        if override_daily_limit and normalize_provider_name(account.provider) != ANTHROPIC_PROVIDER_NAME:
-            raise AccountResetCreditsUnavailableError("Daily-limit override is available only for Claude resets")
+        if (override_daily_limit or override_weekly_limit) and trigger != "manual":
+            raise AccountResetCreditsUnavailableError("Only manual redemption may override Claude reset limits")
+        if (override_daily_limit or override_weekly_limit) and normalize_provider_name(
+            account.provider
+        ) != ANTHROPIC_PROVIDER_NAME:
+            raise AccountResetCreditsUnavailableError("Reset-limit overrides are available only for Claude resets")
         credit_account = await self._reset_credit_account(account)
         if normalize_provider_name(credit_account.provider) == ANTHROPIC_PROVIDER_NAME:
             return await self._redeem_anthropic_reset(
-                credit_account, credit_id, trigger=trigger, override_daily_limit=override_daily_limit
+                credit_account,
+                credit_id,
+                trigger=trigger,
+                override_daily_limit=override_daily_limit,
+                override_weekly_limit=override_weekly_limit,
             )
 
         primary_before, secondary_before = await self._latest_usage_percents(account_id)
@@ -240,6 +256,7 @@ class AccountsService(AccountsLifecycle):
         *,
         trigger: str,
         override_daily_limit: bool,
+        override_weekly_limit: bool,
     ) -> AccountResetCreditConsumeResponse:
         if not is_locally_owned(account, get_settings()):
             raise AccountResetCreditsUnavailableError("Account is not locally owned and cannot use reset credits")
@@ -247,6 +264,7 @@ class AccountsService(AccountsLifecycle):
         token = self._encryptor.decrypt(account.access_token_encrypted)
         attempts = self._reset_attempts or ResetCreditAttemptsRepository(self._repo.session)
         primary_before, secondary_before = await self._latest_usage_percents(account_id)
+        cleared_windows: list[str] = []
         attempt = await attempts.active()
         if attempt is not None:
             if attempt.account_id != account_id or (credit_id is not None and credit_id != attempt.credit_id):
@@ -262,7 +280,7 @@ class AccountsService(AccountsLifecycle):
         else:
             start = week_start(datetime.now(timezone.utc))
             used = await attempts.anthropic_applied_count_since(to_utc_naive(start))
-            if used >= week_cap(start):
+            if not override_weekly_limit and used >= week_cap(start):
                 raise AccountResetCreditsUnavailableError(
                     f"Weekly Claude reset cap reached: {used} of {week_cap(start)} this week"
                 )
@@ -285,7 +303,7 @@ class AccountsService(AccountsLifecycle):
                     secondary_used_percent_after=secondary_before,
                 )
 
-            attempt_trigger = "manual_override" if override_daily_limit else trigger
+            attempt_trigger = "manual_override" if (override_daily_limit or override_weekly_limit) else trigger
             attempt = await attempts.create(account_id, grant.id, attempt_trigger)
             if attempt is None:
                 raise AccountResetCreditsUnavailableError("Another reset attempt is already running")
@@ -294,6 +312,7 @@ class AccountsService(AccountsLifecycle):
                 raise AccountResetCreditsUnavailableError("One Claude reset was already used in the last 24 hours")
             result = await anthropic_resets.redeem(access_token=token, grant_id=grant.id, request_id=attempt.id)
             result_code = result.result
+            cleared_windows = result.cleared
             windows_reset = len(result.cleared)
             if result.result == "reset":
                 await attempts.applied(attempt, result_code, windows_reset)
@@ -313,6 +332,8 @@ class AccountsService(AccountsLifecycle):
         if self._usage_repo and self._usage_updater:
             recovered = await refresh_standard_capacity(account, self._usage_updater, self._usage_repo)
             get_account_selection_cache().invalidate()
+            if recovered is True:
+                await clear_recovered_reset_cooldown(account_id, self._repo)
             if recovered is not True and attempt.applied_at is not None:
                 recovered = await capacity_recorded_since(account_id, self._usage_repo, attempt.applied_at)
             if recovered is True:
@@ -320,6 +341,7 @@ class AccountsService(AccountsLifecycle):
         primary_after, secondary_after = await self._latest_usage_percents(account_id)
         return AccountResetCreditConsumeResponse(
             status="redeemed",
+            cleared_windows=cleared_windows,
             account_id=account_id,
             code=result_code,
             windows_reset=windows_reset,

@@ -148,6 +148,11 @@ struct AccountResetCreditConsumeResponse: Decodable, Sendable, Equatable {
   let accountId: String
   let code: String
   let windowsReset: Int
+  let clearedWindows: [String]?
+  let primaryUsedPercentBefore: Double?
+  let primaryUsedPercentAfter: Double?
+  let secondaryUsedPercentBefore: Double?
+  let secondaryUsedPercentAfter: Double?
 
   var didReset: Bool { status == "redeemed" }
 }

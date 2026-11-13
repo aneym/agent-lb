@@ -530,6 +530,7 @@ private struct HeaderView: View {
 
   private var overflowMenu: some View {
     Menu {
+      Button("Manage Resets…") { ResetCreditsWindow.show(appState: appState) }
       Toggle("Hide Sensitive Info", isOn: $privacyMode)
       launchAtLoginItem
       if !appState.isRemote {

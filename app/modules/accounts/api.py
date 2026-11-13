@@ -314,11 +314,15 @@ async def consume_account_reset_credit(
     body: AccountResetCreditConsumeRequest | None = None,
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountResetCreditConsumeResponse:
-    credit_id = body.credit_id if body is not None else None
-    override_daily_limit = body.override_daily_limit if body is not None else False
+    credit_id = body.credit_id if body else None
+    override_daily_limit = bool(body and body.override_daily_limit)
+    override_weekly_limit = bool(body and body.override_weekly_limit)
     try:
         result = await context.service.redeem_rate_limit_reset_credit(
-            account_id, credit_id=credit_id, override_daily_limit=override_daily_limit
+            account_id,
+            credit_id=credit_id,
+            override_daily_limit=override_daily_limit,
+            override_weekly_limit=override_weekly_limit,
         )
     except AccountResetCreditsUnavailableError as exc:
         raise DashboardConflictError(str(exc), code="account_reset_credits_unavailable") from exc
@@ -341,8 +345,10 @@ async def consume_account_reset_credit(
             "account_id": account_id,
             "credit_id": credit_id,
             "override_daily_limit": override_daily_limit,
+            "override_weekly_limit": override_weekly_limit,
             "code": result.code,
             "windows_reset": result.windows_reset,
+            "cleared_windows": result.cleared_windows,
         },
     )
     return result
