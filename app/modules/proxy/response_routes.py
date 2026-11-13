@@ -33,6 +33,7 @@ from app.modules.proxy.request_policy import (
     openai_client_payload_error,
     openai_validation_error,
 )
+from app.modules.proxy.payload_rejections import rejected_payload_error
 from app.modules.proxy.response_errors import logged_error_json_response
 from app.modules.proxy.response_requests import collect_responses, stream_responses, strip_internal_bridge_headers
 from app.modules.team.gate import check_member_gate
@@ -85,11 +86,10 @@ async def responses(
             payload,
             openai_compat=openai_compat_payload,
         )
-    except ClientPayloadError as exc:
-        error = openai_client_payload_error(exc)
-        return logged_error_json_response(request, 400, error)
-    except ValidationError as exc:
-        error = openai_validation_error(exc)
+    except (ClientPayloadError, ValidationError) as exc:
+        error = rejected_payload_error(
+            exc, surface="http", payload=payload, useragent=request.headers.get("user-agent")
+        )
         return logged_error_json_response(request, 400, error)
 
     return await stream_responses(

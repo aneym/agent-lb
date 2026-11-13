@@ -396,12 +396,11 @@ from app.modules.proxy.http_bridge_forwarding import (
     OwnerForwardRelayFailure as OwnerForwardRelayFailure,
 )
 from app.modules.proxy.load_balancer import AccountLease
+from app.modules.proxy.payload_rejections import rejected_payload_error
 from app.modules.proxy.request_policy import (
     apply_api_key_enforcement,
     normalize_responses_request_payload,
-    openai_client_payload_error,
     openai_invalid_payload_error,
-    openai_validation_error,
     validate_model_access,
 )
 from app.modules.proxy.tool_call_dedupe import (
@@ -690,20 +689,13 @@ class _WebSocketMixin:
                                         _serialize_websocket_error_event(_app_error_to_websocket_event(exc))
                                     )
                                 continue
-                            except ClientPayloadError as exc:
+                            except (ClientPayloadError, ValidationError) as exc:
+                                rejection = rejected_payload_error(
+                                    exc, surface="websocket", payload=payload, useragent=useragent
+                                )
                                 async with client_send_lock:
                                     await websocket.send_text(
-                                        _serialize_websocket_error_event(
-                                            _wrapped_websocket_error_event(400, openai_client_payload_error(exc))
-                                        )
-                                    )
-                                continue
-                            except ValidationError as exc:
-                                async with client_send_lock:
-                                    await websocket.send_text(
-                                        _serialize_websocket_error_event(
-                                            _wrapped_websocket_error_event(400, openai_validation_error(exc))
-                                        )
+                                        _serialize_websocket_error_event(_wrapped_websocket_error_event(400, rejection))
                                     )
                                 continue
 
