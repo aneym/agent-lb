@@ -29,7 +29,7 @@ class V1ResponsesRequest(BaseModel):
     stream: bool | None = None
     include: list[str] = Field(default_factory=list)
     service_tier: str | None = None
-    conversation: str | None = None
+    conversation: str | dict[str, JsonValue] | None = None
     previous_response_id: str | None = None
     truncation: str | None = None
     prompt_cache_key: str | None = None
