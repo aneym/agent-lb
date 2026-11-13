@@ -59,6 +59,7 @@ from app.modules.accounts.credits import (
 from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
+from app.modules.proxy import limit_backoff
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_warmup import WarmupBusy, admitted_http_session
 from app.modules.proxy.anthropic_cache_policy import apply_cache_tier as _apply_cache_tier
@@ -490,6 +491,8 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                                 quota_key=quota_key,
                             )
                             selected_account_ids.add(account.id)
+                        if not limit_backoff.claim(account.id):
+                            continue
                         last_account = account
                         last_stall = None
                         try:
@@ -1726,15 +1729,13 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             )
 
         for account_id in model_scope_account_ids:
-            request_cooldown = request_quota_cooldowns.get(account_id)
-            if (
-                request_cooldown is not None
-                and _anthropic_cooldown_is_active(request_cooldown[0], request_cooldown[1], now=now)
-                and request_cooldown[2] + 60 > now
-            ):
+            held = limit_backoff.hold_until(
+                account_id, request_quota_cooldowns.get(account_id), now, primary_headroom_recorded_at.get(account_id)
+            )
+            if held is not None:
                 blocked_count += 1
                 request_quota_blocked_account_ids.add(account_id)
-                blocked_reset_by_account_id[account_id] = min(int(request_cooldown[1]), request_cooldown[2] + 60)
+                blocked_reset_by_account_id[account_id] = held
                 continue
 
             if extra_usage_gate and not route_paid_extra and account_id in secondary_exhaustion:
@@ -2431,12 +2432,7 @@ def _hash_for_key(value: str) -> str:
 
 
 def _anthropic_cooldown_is_active(used_percent: float, reset_at: int | None, *, now: int) -> bool:
-    if float(used_percent) < 100.0:
-        return False
-
-    if reset_at is None:
-        return False
-    return int(reset_at) > now
+    return float(used_percent) >= 100.0 and reset_at is not None and int(reset_at) > now
 
 
 def _frame_end_to_end_headers(headers: Mapping[str, str]) -> dict[str, str]:

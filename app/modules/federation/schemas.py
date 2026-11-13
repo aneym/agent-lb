@@ -234,6 +234,8 @@ class FederationRequestLogRow(BaseModel):
     caller_seat: str | None = Field(default=None, max_length=CALLER_SEAT_MAX_LENGTH)
     room: str | None = Field(default=None, max_length=ROOM_MAX_LENGTH)
     job_id: str | None = Field(default=None, max_length=160)
+    lane: str | None = Field(default=None, max_length=128)
+    thread_id: str | None = Field(default=None, max_length=256)
     unified_5h_utilization: float | None = None
     unified_7d_utilization: float | None = None
     request_id: str

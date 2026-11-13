@@ -11,6 +11,7 @@ from app.core.anthropic.quota_headers import parse_reset_epoch as _parse_reset_e
 from app.core.balancer.types import UpstreamError
 from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, UsageHistory
+from app.modules.proxy import limit_backoff
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 
 _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
@@ -109,6 +110,8 @@ async def kimi_monthly_rate_limit_error(
 
 
 def bounded_retry_at(reset_at: float | None, blocked_at: float) -> float:
+    if reset_at is not None and limit_backoff.enabled():
+        return reset_at
     if reset_at is None or int(reset_at) > int(blocked_at) + 3600:
         return blocked_at + 60.0
     return reset_at

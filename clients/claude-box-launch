@@ -116,10 +116,19 @@ else
 fi
 
 lb_seat=${AGENT_LB_SEAT-}
+[[ -z $lb_seat && -n ${RAILS_RUN_ID-} ]] && lb_seat=rails-runner
 headers="x-claude-session-id: $sid"
 if [[ -n $lb_seat && $lb_seat != *$'\r'* && $lb_seat != *$'\n'* ]]; then
   headers+=$'\n'"x-agent-lb-seat: $lb_seat"
 fi
+stamp() {
+  [[ -n $2 && $2 != *[[:space:]]* ]] || return 0
+  case $'\n'"${ANTHROPIC_CUSTOM_HEADERS-}" in *$'\n'"$1:"*) return 0 ;; esac
+  headers+=$'\n'"$1: $2"
+}
+stamp x-agent-lb-thread "${T3_THREAD_ID-}"
+stamp x-agent-lb-lane "${AGENT_RAILS_LANE-}"
+[[ -n ${RAILS_RUN_ID-} ]] && stamp x-agent-lb-job "rails-run:$RAILS_RUN_ID"
 while IFS= read -r line; do
   line=${line%$'\r'}
   name=$(printf '%s' "${line%%:*}" | tr '[:upper:]' '[:lower:]')

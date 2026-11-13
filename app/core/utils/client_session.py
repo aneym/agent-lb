@@ -148,6 +148,9 @@ _JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:/-]{0,159}\Z")
 _JOB_PATH = re.compile(rb"/jobs/(seat-[A-Za-z0-9][A-Za-z0-9._-]{0,158})")
 _BODY_SCAN_LIMIT = 2_000_000
 _LANE: ContextVar[str | None] = ContextVar("lane", default=None)
+_THREAD_HEADER = b"x-agent-lb-thread"
+_THREAD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:/%=+-]{0,255}\Z")
+_THREAD: ContextVar[str | None] = ContextVar("thread_id", default=None)
 _JOB: ContextVar[str | None] = ContextVar("job", default=None)
 _SESSION_ATTRIBUTION: OrderedDict[str, tuple[str | None, str | None]] = OrderedDict()
 _SESSION_ATTRIBUTION_LIMIT = 4096
@@ -159,6 +162,10 @@ def get_lane() -> str | None:
 
 def get_job_id() -> str | None:
     return _JOB.get()
+
+
+def get_thread_id() -> str | None:
+    return _THREAD.get()
 
 
 class JobBodyScan:
@@ -201,8 +208,9 @@ def remember_job(job: str | None) -> None:
         _SESSION_ATTRIBUTION.popitem(last=False)
 
 
-def set_attribution_from_scope(scope: Scope) -> tuple[Token[str | None], Token[str | None]]:
+def set_attribution_from_scope(scope: Scope) -> tuple[Token[str | None], Token[str | None], Token[str | None]]:
     headers = dict(scope.get("headers") or ())
+    thread = _THREAD.set(_header_value(headers, _THREAD_HEADER, _THREAD_RE))
     lane = _header_value(headers, _LANE_HEADER, _LANE_RE)
     job = _header_value(headers, _JOB_HEADER, _JOB_RE)
     session = get_client_session_id()
@@ -214,12 +222,13 @@ def set_attribution_from_scope(scope: Scope) -> tuple[Token[str | None], Token[s
                 _SESSION_ATTRIBUTION.popitem(last=False)
         else:
             lane, job = _SESSION_ATTRIBUTION.get(session, (None, None))
-    return _LANE.set(lane), _JOB.set(job)
+    return _LANE.set(lane), _JOB.set(job), thread
 
 
-def reset_attribution(tokens: tuple[Token[str | None], Token[str | None]]) -> None:
+def reset_attribution(tokens: tuple[Token[str | None], Token[str | None], Token[str | None]]) -> None:
     _LANE.reset(tokens[0])
     _JOB.reset(tokens[1])
+    _THREAD.reset(tokens[2])
 
 
 def _header_value(headers: dict[bytes, bytes], name: bytes, pattern: re.Pattern[str]) -> str | None:

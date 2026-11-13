@@ -18,6 +18,7 @@ from app.core.utils.client_session import get_caller_seat, get_client_session_id
 from app.core.utils.sse import inject_sse_keepalives
 from app.dependencies import AnthropicProxyContext, ProxyContext, get_anthropic_proxy_context, get_proxy_context
 from app.modules.api_keys.service_data import ApiKeyData
+from app.modules.proxy import start_gate
 from app.modules.proxy.anthropic_errors import (
     anthropic_error_response,
     anthropic_proxy_error_response,
@@ -122,6 +123,9 @@ async def v1_messages(
     refusal = untagged_headless_opus_refusal(request, payload.model)
     if refusal is not None:
         return refusal
+    held = await start_gate.held_start(request.headers, payload)
+    if held is not None:
+        return anthropic_proxy_error_response(held)
     try:
         request_usage_budget = (
             estimate_anthropic_request_usage(payload, raw_body=await request.body()) if api_key is not None else None

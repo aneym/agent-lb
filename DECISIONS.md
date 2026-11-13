@@ -267,3 +267,7 @@ See `openspec/changes/anthropic-soonest-weekly-reset`.
 
 
 2026-11-13: [Explicit manual Claude reset-cap override](docs/decisions/manual-claude-reset-override.md).
+
+## 2026-11-13: Honor named limit resets, probe once, hold background starts
+
+A limit answer that names a reset now holds the account until that reset plus up to 30 s of per-account jitter, then lets one probe through; the 60 s retry cap made every bound session retry a spent account about once a minute (959 upstream 429s on 2026-11-13). New child and routine sessions get a 429 with the pool's next 5-hour reset when total 5-hour room is under one account; chats and offices are not held. Flags: `anthropic_limit_backoff_enabled`, `anthropic_start_gate_enabled`.

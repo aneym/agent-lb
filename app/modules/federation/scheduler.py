@@ -220,6 +220,8 @@ def _request_log_row(log: RequestLog) -> FederationRequestLogRow:
         caller_seat=_clip(log.caller_seat, CALLER_SEAT_MAX_LENGTH),
         room=_clip(log.room, ROOM_MAX_LENGTH),
         job_id=_clip(getattr(log, "job_id", None), 160),
+        lane=_clip(log.lane, 128),
+        thread_id=_clip(log.thread_id, 256),
         unified_5h_utilization=log.unified_5h_utilization,
         unified_7d_utilization=log.unified_7d_utilization,
         request_id=log.request_id,

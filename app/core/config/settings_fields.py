@@ -136,6 +136,12 @@ class SettingsFields(BaseSettings):
 
     anthropic_pool_exhausted_wait_enabled: bool = False
     anthropic_pool_exhausted_wait_max_seconds: float = Field(default=21600.0, gt=0)
+    anthropic_limit_backoff_enabled: bool = True
+    anthropic_limit_probe_jitter_seconds: float = Field(default=30.0, ge=0)
+    anthropic_limit_probe_timeout_seconds: float = Field(default=120.0, gt=0)
+    anthropic_start_gate_enabled: bool = True
+    anthropic_start_gate_min_room: float = Field(default=1.0, ge=0)
+    anthropic_start_gate_background_seats: str = "rails-runner"
     account_pulse_enabled: bool = True
     account_pulse_interval_seconds: int = Field(default=21600, gt=0)
     account_pulse_recovery_interval_seconds: int = Field(default=900, gt=0)

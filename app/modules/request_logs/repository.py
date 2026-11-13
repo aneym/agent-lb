@@ -25,6 +25,7 @@ from app.core.utils.client_session import (  # noqa: I001  # fmt: skip
     get_job_id,
     get_lane,
     get_room,
+    get_thread_id,
 )
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
@@ -183,6 +184,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
                 factory_job=factory.job,
                 room=get_room(),
                 lane=get_lane(),
+                thread_id=get_thread_id(),
                 job_id=get_job_id(),
                 dispatch_id=get_dispatch_id(),
                 unified_5h_utilization=unified_5h_utilization,
