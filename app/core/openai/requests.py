@@ -71,7 +71,7 @@ class ResponsesReasoning(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     effort: str | None = None
-    summary: JsonValue | None = None
+    summary: str | None = None
 
 
 class ResponsesTextFormat(BaseModel):
@@ -94,8 +94,8 @@ class ResponsesRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     model: str = Field(min_length=1)
-    instructions: str | list[JsonValue] | None = None
-    input: JsonValue = Field(default_factory=list)
+    instructions: str | None = None
+    input: JsonValue
     tools: list[JsonValue] = Field(default_factory=list)
     tool_choice: str | JsonObject | None = None
     parallel_tool_calls: bool | None = None
@@ -104,7 +104,7 @@ class ResponsesRequest(BaseModel):
     stream: bool | None = None
     include: list[str] = Field(default_factory=list)
     service_tier: str | None = None
-    conversation: str | JsonObject | None = None
+    conversation: str | None = None
     previous_response_id: str | None = None
     truncation: JsonValue | None = None
     prompt_cache_key: str | None = None
@@ -113,8 +113,6 @@ class ResponsesRequest(BaseModel):
     @field_validator("input")
     @classmethod
     def _validate_input_type(cls, value: JsonValue) -> JsonValue:
-        if value is None:
-            return []
         if isinstance(value, str):
             normalized = _normalize_input_text(value)
             return _sanitize_input_items(normalized)
@@ -169,8 +167,8 @@ class ResponsesCompactRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     model: str = Field(min_length=1)
-    instructions: str | list[JsonValue] | None = None
-    input: JsonValue = Field(default_factory=list)
+    instructions: str | None = None
+    input: JsonValue
     reasoning: ResponsesReasoning | None = None
     store: bool = False
     service_tier: str | None = None
@@ -179,8 +177,6 @@ class ResponsesCompactRequest(BaseModel):
     @field_validator("input")
     @classmethod
     def _validate_input_type(cls, value: JsonValue) -> JsonValue:
-        if value is None:
-            return []
         if isinstance(value, str):
             normalized = _normalize_input_text(value)
             return _sanitize_input_items(normalized)
