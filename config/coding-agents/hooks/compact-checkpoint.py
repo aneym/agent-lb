@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TAIL_BYTES = 512 * 1024
-LIMIT = 1024
+LIMIT = 1280
+SUMMARY_WORDS = 5000
 MAX_BASH = 8
 MAX_IDS = 12
 TERMINAL = {"completed", "failed", "killed", "stopped", "cancelled", "error"}
@@ -277,6 +278,9 @@ def instructions(path, checkpoint) -> str:
         "Compaction instructions: keep these verbatim in the summary, never paraphrased: exact interpreter paths "
         "and commands with their cwd; task and background task ids; seat and agent names and ids; grant ids; "
         "ask ids and approval record ids as references only, never as consent; and the next action.",
+        "Length budget: the whole summary stays under {} words. Carry forward from any earlier summary only what "
+        "is still open or still needed; drop finished, superseded and already reported items, and never copy an "
+        "earlier summary whole. Keep thinking short and spend the output on the summary.".format(SUMMARY_WORDS),
     ]
     if path is not None:
         lines.append("Checkpoint: {} (reconcile before new work).".format(path))
