@@ -1993,15 +1993,14 @@ def _state_from_account(
         if account.status == AccountStatus.RATE_LIMITED:
             status_seed = AccountStatus.ACTIVE
     ignore_primary_status_reset = primary_quota_bypassed and account.status == AccountStatus.RATE_LIMITED
-    db_reset_at = (
-        None
-        if ignore_zero_capacity_primary_runtime_reset or ignore_primary_status_reset
-        else (float(account.reset_at) if account.reset_at else None)
-    )
-    effective_runtime_reset = db_reset_at or runtime.reset_at
+    effective_runtime_reset = None
+    if account.status != AccountStatus.ACTIVE:
+        effective_runtime_reset = (
+            None if ignore_zero_capacity_primary_runtime_reset or ignore_primary_status_reset else account.reset_at
+        ) or runtime.reset_at
     effective_blocked_at = float(account.blocked_at) if account.blocked_at is not None else runtime.blocked_at
     if ignore_zero_capacity_primary_runtime_reset and effective_blocked_at is not None:
-        marker_reset = (float(account.reset_at) if account.reset_at else None) or runtime.reset_at
+        marker_reset = account.reset_at or runtime.reset_at
         if bounded_retry_at(marker_reset, effective_blocked_at) > time.time():
             status_seed = account.status
             effective_runtime_reset = marker_reset

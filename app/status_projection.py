@@ -119,8 +119,6 @@ def _account_usability(status: str, subscription: str | None, account: dict[str,
         return "blocked", [f"account status is {status}"]
     if not _subscription_usable(subscription):
         return "blocked", ["subscription is canceled"]
-    if _future(_optional_text(account.get("rateLimitResetAt"))):
-        return "blocked", ["account rate limit is cooling down"]
     usage = account.get("usage") if isinstance(account.get("usage"), dict) else None
     if usage is None:
         return "unknown", ["account usage telemetry is missing"]
