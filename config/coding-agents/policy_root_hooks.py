@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from policy_advisory_fold import fold, install  # type: ignore[missing-import]
+
 HELPER = Path("/usr/local/sbin/agent-floors")
 CLAUDE_MANAGED = Path(
     "/Library/Application Support/ClaudeCode/managed-settings.json"
@@ -91,7 +93,10 @@ def desired(path: Path, changes: dict[Path, str | None]) -> dict[str, Any]:
 def hand_off(source: Path, home: Path, changes: dict[Path, str | None]) -> str:
     settings_path, codex_path = home / ".claude" / "settings.json", home / ".codex" / "hooks.json"
     settings, codex = desired(settings_path, changes), desired(codex_path, changes)
-    payload = {"claude": settings.get("hooks") or {}, "codex": codex.get("hooks") or {}}
+    claude, registry, rev = fold(settings.get("hooks") or {}, floor_word(source))
+    if registry is not None and rev is not None:
+        install(source, home, registry, rev)
+    payload = {"claude": claude, "codex": codex.get("hooks") or {}}
     done = subprocess.run(
         ["/usr/bin/sudo", "-n", str(HELPER), "sync"],
         input=json.dumps(payload),

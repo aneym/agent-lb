@@ -81,6 +81,7 @@ MANAGED_HOOKS = (
     "hook_current_settings.py",
     "seat-guard.py",
     "hook-dispatch-parity.py",
+    "advisory-fold.py",
 )
 
 

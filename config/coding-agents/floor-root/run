@@ -1,8 +1,5 @@
-import json
 import os
 import pwd
-import shlex
-import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -51,10 +48,16 @@ def floor(name, args):
         sys.stderr.write(f"BLOCKED: floor hook {name!r} is not installed, so this call is refused.\n")
         return 2
     if name.endswith(".sh"):
-        argv = ["/bin/bash", path, *args]
-    else:
-        argv = [sys.executable, "-E", "-s", path, *args]
-    os.execve(argv[0], argv, floor_env())
+        os.execve("/bin/bash", ["/bin/bash", path, *args], floor_env())
+    env = floor_env()
+    os.environ.clear()
+    os.environ.update(env)
+    sys.argv[:] = [path, *args]
+    sys.path.insert(0, HOOKS)
+    import runpy
+
+    runpy.run_path(path, run_name="__main__")
+    return 0
 
 
 def unique(pairs):
@@ -89,6 +92,8 @@ def kept(data):
 
 
 def missing_script(command):
+    import shlex
+
     try:
         words = shlex.split(command)
     except ValueError:
@@ -112,6 +117,9 @@ def missing_script(command):
 
 
 def advisory(command):
+    import json
+    import subprocess
+
     if missing_script(command) is not None:
         return 0
     result = subprocess.run(["/bin/sh", "-c", command], stdout=subprocess.PIPE)
