@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.eval_guard import is_eval_request, strip_eval_web_tools
 from app.core.openai.request_input import (
@@ -72,19 +72,6 @@ class ResponsesReasoning(BaseModel):
 
     effort: str | None = None
     summary: str | None = None
-
-    @field_validator("effort", mode="before")
-    @classmethod
-    def _numeric_effort_as_text(cls, value: object) -> object:
-        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-            return str(value)
-        return value
-
-    @field_serializer("effort")
-    def _numeric_effort_on_wire(self, value: str | None) -> str | int | None:
-        if value is not None and value.isascii() and value.isdigit():
-            return int(value)
-        return value
 
 
 class ResponsesTextFormat(BaseModel):
