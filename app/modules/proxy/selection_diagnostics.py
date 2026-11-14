@@ -5,11 +5,12 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from app.core.balancer.failures import SELECTOR_RETRY_HINT_MAX_SECONDS
 from app.core.errors import OpenAIErrorEnvelope
 
 if TYPE_CHECKING:
     from app.modules.proxy.load_balancer import AccountSelection
+
+SELECTOR_RETRY_HINT_MAX_SECONDS = 300
 
 
 def selection_error_extras(

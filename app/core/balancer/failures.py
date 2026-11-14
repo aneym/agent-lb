@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Literal
 
 from app.core.balancer.state import (
@@ -75,12 +76,11 @@ def handle_rate_limit(state: AccountState, error: UpstreamError) -> None:
 
 
 QUOTA_EXCEEDED_COOLDOWN_SECONDS = 120.0
-SELECTOR_RETRY_HINT_MAX_SECONDS = 300
 
 
-def _format_retry_hint(wait_seconds: float) -> str:
-    capped = min(max(0.0, wait_seconds), float(SELECTOR_RETRY_HINT_MAX_SECONDS))
-    return f"Rate limit exceeded. Try again in {capped:.0f}s"
+def _format_retry_hint(retry_at: float, current: float) -> str:
+    reset = datetime.fromtimestamp(retry_at, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f"Rate limit exceeded until {reset} (in {max(0.0, retry_at - current):.0f}s)"
 
 
 def handle_quota_exceeded(state: AccountState, error: UpstreamError) -> None:

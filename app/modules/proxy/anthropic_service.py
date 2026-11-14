@@ -59,7 +59,7 @@ from app.modules.accounts.credits import (
 from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
-from app.modules.proxy import limit_backoff
+from app.modules.proxy import limit_backoff, quota_cooldown_store, selection_refusal
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_warmup import WarmupBusy, admitted_http_session
 from app.modules.proxy.anthropic_cache_policy import apply_cache_tier as _apply_cache_tier
@@ -69,7 +69,6 @@ from app.modules.proxy.anthropic_rate_limits import (
     get_header,
     kimi_monthly_rate_limit_error,
     rate_limit_error_from_response,
-    reset_at_from_rate_limit_error,
 )
 from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, overloaded_backoff_jitter
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
@@ -94,8 +93,6 @@ logger = logging.getLogger(__name__)
 
 _STREAM_CHUNK_SIZE = 8192
 _MAX_SELECTION_ATTEMPTS = 4
-_ANTHROPIC_COOLDOWN_WINDOW = "primary"
-_ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 
 
@@ -433,6 +430,18 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
         )
         first_account: Account | None
         initial_wait_error: AnthropicProxyError | None = None
+        refuse = selection_refusal.recorder(
+            self._persist_request_log,
+            provider_name=provider_name,
+            request_id=request_id,
+            model=payload.model,
+            reasoning_effort=reasoning_effort,
+            started_at=started_at,
+            api_key=api_key,
+            session_id=session_id,
+            useragent=useragent,
+            useragent_group=useragent_group,
+        )
         try:
             first_account = await self._select_account(
                 payload.model,
@@ -443,6 +452,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             )
         except AnthropicProxyError as exc:
             if not wait_enabled or exc.retry_at is None:
+                await refuse(exc)
                 raise
 
             first_account = None
@@ -700,8 +710,9 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                                             account, rate_limit_error, self._repo_factory
                                         )
                                     if not rate_limit_error.get("monthly_quota"):
-                                        await self._record_quota_cooldown(
-                                            account,
+                                        await quota_cooldown_store.record(
+                                            self._repo_factory,
+                                            account.id,
                                             quota_key=quota_key,
                                             error=rate_limit_error,
                                         )
@@ -808,8 +819,9 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                                         header_name,
                                         tripwire_error.get("resets_at"),
                                     )
-                                    await self._record_quota_cooldown(
-                                        account,
+                                    await quota_cooldown_store.record(
+                                        self._repo_factory,
+                                        account.id,
                                         quota_key=_ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
                                         error=tripwire_error,
                                     )
@@ -844,8 +856,9 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                                         _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
                                         request_id,
                                     )
-                                    await self._record_quota_cooldown(
-                                        account,
+                                    await quota_cooldown_store.record(
+                                        self._repo_factory,
+                                        account.id,
                                         quota_key=_ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
                                         error=tripwire_error,
                                     )
@@ -953,7 +966,9 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
 
                                 await self._load_balancer.record_success(account)
                                 if tripwire_error is None:
-                                    await self._clear_quota_cooldown(account, quota_key=quota_key)
+                                    await quota_cooldown_store.clear(
+                                        self._repo_factory, account.id, quota_key=quota_key
+                                    )
                                 await self._persist_request_log(
                                     account=account,
                                     provider_name=provider_name,
@@ -1109,7 +1124,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                 raise exhausted_error
 
         return AnthropicProxyStream(
-            body=self._release_on_early_disconnect(body(), api_key_reservation),
+            body=self._release_on_early_disconnect(selection_refusal.watch(body(), refuse), api_key_reservation),
             media_type=media_type,
         )
 
@@ -1336,7 +1351,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                     account.provider == provider_name for account in await repos.accounts.list_accounts()
                 )
             if has_accounts:
-                raise AnthropicProxyError(
+                raise selection_refusal.SelectionRefusal(
                     429, "No selectable Anthropic account", code=_no_available_accounts_code(provider_name)
                 )
         if not eligibility.account_ids and eligibility.blocked_count == 0 and provider_name in {"glm", "kimi"}:
@@ -1348,7 +1363,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                     for account in await repos.accounts.list_accounts()
                 )
             if has_no_balance:
-                raise AnthropicProxyError(
+                raise selection_refusal.SelectionRefusal(
                     503,
                     f"No balance for {_provider_label(provider_name)}; restore balance and reactivate the account.",
                     code="balance_exhausted",
@@ -1359,7 +1374,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                 if eligibility.next_reset_at is not None
                 else ""
             )
-            raise AnthropicProxyError(
+            raise selection_refusal.SelectionRefusal(
                 429,
                 (
                     f"All {_provider_label(provider_name)} accounts are cooling down "
@@ -1416,7 +1431,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                     if excluded.cooldown_until is not None and excluded.cooldown_until.timestamp() > time.time()
                 ),
             )
-            raise AnthropicProxyError(
+            raise selection_refusal.SelectionRefusal(
                 503,
                 message,
                 code=selection.error_code or _no_available_accounts_code(provider_name),
@@ -1478,7 +1493,9 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
         status_summary = ", ".join(f"{status}={count}" for status, count in sorted(status_counts.items()))
         noun = "account" if account_count == 1 else "accounts"
         reset_suffix = (
-            f" Limits reset at {datetime.fromtimestamp(retry_at).isoformat()}." if retry_at is not None else ""
+            f" Limits reset at {datetime.fromtimestamp(retry_at, tz=timezone.utc).isoformat()}."
+            if retry_at is not None
+            else ""
         )
         quota_detail = _anthropic_selection_quota_detail(
             quota_key=quota_key,
@@ -1550,20 +1567,14 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             ]
 
             account_ids = [account.id for account in selectable_accounts(provider_accounts)]
-            request_quota_latest = await repos.additional_usage.latest_by_account(
-                quota_key,
-                _ANTHROPIC_COOLDOWN_WINDOW,
-                account_ids=account_ids,
+            request_quota_cooldowns = await quota_cooldown_store.latest(
+                repos.additional_usage, quota_key, account_ids, seat_wide=extra_usage_gate
             )
-            request_quota_cooldowns = {
-                account_id: (float(entry.used_percent), entry.reset_at, naive_utc_to_epoch(entry.recorded_at))
-                for account_id, entry in request_quota_latest.items()
-            }
             extra_usage_tripwire_cooldowns: dict[str, tuple[float, int | None, int]] = {}
             if extra_usage_gate:
                 extra_usage_tripwire_latest = await repos.additional_usage.latest_by_account(
                     _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
-                    _ANTHROPIC_COOLDOWN_WINDOW,
+                    quota_cooldown_store.COOLDOWN_WINDOW,
                     account_ids=account_ids,
                 )
                 extra_usage_tripwire_cooldowns = {
@@ -1819,51 +1830,6 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             paid_fallback_account_ids=paid_fallback_account_ids,
             burn_first_account_ids=burn_first_account_ids,
         )
-
-    async def _record_quota_cooldown(self, account: Account, *, quota_key: str, error: UpstreamError) -> None:
-        reset_at = reset_at_from_rate_limit_error(error)
-        now = int(time.time())
-        window_minutes = max(1, int((reset_at - now + 59) / 60)) if reset_at is not None else None
-        try:
-            async with self._repo_factory() as repos:
-                await repos.additional_usage.add_entry(
-                    account.id,
-                    limit_name=quota_key,
-                    metered_feature=_ANTHROPIC_COOLDOWN_FEATURE,
-                    quota_key=quota_key,
-                    window=_ANTHROPIC_COOLDOWN_WINDOW,
-                    used_percent=100.0,
-                    reset_at=reset_at,
-                    window_minutes=window_minutes,
-                )
-        except Exception:
-            logger.warning(
-                "Failed to persist Anthropic quota cooldown account_id=%s quota_key=%s",
-                account.id,
-                quota_key,
-                exc_info=True,
-            )
-
-    async def _clear_quota_cooldown(self, account: Account, *, quota_key: str) -> None:
-        try:
-            async with self._repo_factory() as repos:
-                await repos.additional_usage.add_entry(
-                    account.id,
-                    limit_name=quota_key,
-                    metered_feature=_ANTHROPIC_COOLDOWN_FEATURE,
-                    quota_key=quota_key,
-                    window=_ANTHROPIC_COOLDOWN_WINDOW,
-                    used_percent=0.0,
-                    reset_at=None,
-                    window_minutes=None,
-                )
-        except Exception:
-            logger.warning(
-                "Failed to clear Anthropic quota cooldown account_id=%s quota_key=%s",
-                account.id,
-                quota_key,
-                exc_info=True,
-            )
 
     async def _persist_request_log(
         self,

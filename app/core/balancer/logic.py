@@ -217,8 +217,9 @@ def select_account(
             if quota_exceeded:
                 reset_candidates = [s.reset_at for s in quota_exceeded if s.reset_at]
                 if reset_candidates:
-                    wait_seconds = max(0, min(reset_candidates) - int(current))
-                    return _selection_failure(_format_retry_hint(wait_seconds), all_states, current=current)
+                    return _selection_failure(
+                        _format_retry_hint(min(reset_candidates), current), all_states, current=current
+                    )
             cooldowns = [
                 deadline
                 for s in all_states
@@ -226,8 +227,7 @@ def select_account(
                 if deadline and deadline > current
             ]
             if cooldowns:
-                wait_seconds = max(0.0, min(cooldowns) - current)
-                return _selection_failure(_format_retry_hint(wait_seconds), all_states, current=current)
+                return _selection_failure(_format_retry_hint(min(cooldowns), current), all_states, current=current)
             if in_error_backoff:
                 count = len(in_error_backoff)
                 noun = "account" if count == 1 else "accounts"
