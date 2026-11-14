@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.config.settings import get_settings
-from app.core.utils.client_session import get_caller_seat, get_client_session_id, get_thread_id
+from app.core.utils.client_session import CHILD_THREAD_PREFIX, get_caller_seat, get_client_session_id, get_thread_id
 from app.db.models import AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts.repository import AccountsRepository
@@ -18,7 +18,6 @@ from app.modules.usage.repository import UsageRepository
 
 logger = logging.getLogger(__name__)
 
-CHILD_THREAD_PREFIX = "thread:delegated-task:"
 _ROOM_TTL_SECONDS = 15.0
 _SEEN_LIMIT = 8192
 _FALLBACK_WAIT_SECONDS = 300

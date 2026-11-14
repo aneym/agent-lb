@@ -129,6 +129,12 @@ stamp() {
 stamp x-agent-lb-thread "${T3_THREAD_ID-}"
 stamp x-agent-lb-lane "${AGENT_RAILS_LANE-}"
 [[ -n ${RAILS_RUN_ID-} ]] && stamp x-agent-lb-job "rails-run:$RAILS_RUN_ID"
+agent_home=${AGENT_LB_AGENT-}
+if [[ -z $agent_home && $PWD == "$HOME/.agent-rails/agents/"?* ]]; then
+  agent_home=${PWD#"$HOME/.agent-rails/agents/"}
+  agent_home=${agent_home%%/*}
+fi
+stamp x-agent-lb-agent "$agent_home"
 while IFS= read -r line; do
   line=${line%$'\r'}
   name=$(printf '%s' "${line%%:*}" | tr '[:upper:]' '[:lower:]')

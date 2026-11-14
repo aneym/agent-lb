@@ -6,11 +6,14 @@ from typing import Any, Mapping
 
 from app.core.config.settings import get_settings
 from app.core.providers import ANTHROPIC_PROVIDER_NAME
+from app.core.utils.client_session import CHILD_THREAD_PREFIX, get_caller_seat, get_thread_id
 from app.modules.proxy.anthropic_outbound_headers import merge_anthropic_beta_header
 
 logger = logging.getLogger(__name__)
 
 ONE_SHOT_ENTRYPOINTS = frozenset({"sdk-cli"})
+SHORT_GAP_SEATS = frozenset({"rails-runner"})
+SHORT_GAP_OPUS_AGENTS = frozenset({"recruiter"})
 
 _ENTRYPOINT = re.compile(r"^claude-cli/\S+ \(external, ([\w.-]+)")
 
@@ -25,7 +28,7 @@ def apply_cache_tier(
         return requested_cache_tier(body)
     if provider_name != ANTHROPIC_PROVIDER_NAME:
         return None
-    target = _target_tier(inbound_headers)
+    target = _target_tier(inbound_headers, str(body.get("model") or ""))
     if target is None:
         return requested_cache_tier(body)
     controls = _cache_controls(body)
@@ -47,9 +50,20 @@ def client_entrypoint(inbound_headers: Mapping[str, str]) -> str | None:
     return match.group(1) if match else None
 
 
-def _target_tier(inbound_headers: Mapping[str, str]) -> str | None:
+def _short_gap(inbound_headers: Mapping[str, str], model: str) -> bool:
+    if model.startswith("claude-fable-") and (get_thread_id() or "").startswith(CHILD_THREAD_PREFIX):
+        return True
+    agent = next((value for key, value in inbound_headers.items() if key.lower() == "x-agent-lb-agent"), "")
+    if model.startswith("claude-opus-") and isinstance(agent, str) and agent.strip().lower() in SHORT_GAP_OPUS_AGENTS:
+        return True
+    return (get_caller_seat() or "") in SHORT_GAP_SEATS
+
+
+def _target_tier(inbound_headers: Mapping[str, str], model: str) -> str | None:
     settings = get_settings()
     if settings.anthropic_one_shot_cache_5m_enabled and client_entrypoint(inbound_headers) in ONE_SHOT_ENTRYPOINTS:
+        return "5m"
+    if settings.anthropic_short_gap_cache_5m_enabled and _short_gap(inbound_headers, model):
         return "5m"
     if settings.anthropic_session_cache_1h_enabled:
         return "1h"

@@ -5,6 +5,7 @@ The r1-quota-climb audit of 48 hours of agent-lb rows (2026-11-11 19:42Z to 2026
 - Claude Code sessions that are not one-shot runs write every breakpoint at the one-hour tier, whatever tier the client asked for (`anthropic_session_cache_1h_enabled`).
 - One-shot runs (`sdk-cli` entrypoint) write every breakpoint at the five-minute tier (`anthropic_one_shot_cache_5m_enabled`).
 - Every breakpoint in a request gets the same tier, including breakpoints inside nested tool-result content, so tier order stays valid.
+- Fable delegated children, Opus Recruiter sessions and `rails-runner` routine runs write the five-minute tier (`anthropic_short_gap_cache_5m_enabled`); `claude-box-launch` stamps `x-agent-lb-agent` with the agent home it runs in.
 - With both flags off, the existing helper rule (`anthropic_helper_cache_1h_enabled`) applies unchanged.
 
 ## Capabilities

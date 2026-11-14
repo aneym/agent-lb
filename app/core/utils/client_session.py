@@ -149,6 +149,7 @@ _JOB_PATH = re.compile(rb"/jobs/(seat-[A-Za-z0-9][A-Za-z0-9._-]{0,158})")
 _BODY_SCAN_LIMIT = 2_000_000
 _LANE: ContextVar[str | None] = ContextVar("lane", default=None)
 _THREAD_HEADER = b"x-agent-lb-thread"
+CHILD_THREAD_PREFIX = "thread:delegated-task:"
 _THREAD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:/%=+-]{0,255}\Z")
 _THREAD: ContextVar[str | None] = ContextVar("thread_id", default=None)
 _JOB: ContextVar[str | None] = ContextVar("job", default=None)
