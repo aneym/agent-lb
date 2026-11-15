@@ -225,9 +225,9 @@ def approved(cmd):
                     comment = cmd[i:end]
             break
     m = REF_COMMENT.fullmatch(comment or "")
-    return bool(m) and checked(m[1], "destructive")
-def checked(ref, action, line=None):
-    reason = approval_record.refusal(ref, action, line)
+    return bool(m) and checked(m[1], "destructive", cmd[:i])
+def checked(ref, action, cmd):
+    reason = approval_record.refusal(ref, action, command=cmd)
     if reason:
         sys.stderr.write("approval record refused: " + reason + "\n")
     return not reason

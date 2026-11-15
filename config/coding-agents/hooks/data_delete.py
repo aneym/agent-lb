@@ -79,7 +79,8 @@ REFUSAL = (
     "this deletes a data path (a database, /var/lib, postgres, T3 state, a live or kept T3 runtime build or an "
     "approval directory) or a target it cannot resolve. Old T3 builds pass only as literal entries of "
     "~/.t3/runtime/versions, .rollback-runtime or .launcher-rollback-<hex> that no process holds. Only a "
-    "grandfathered data-delete record passes it until Rails spends a sealed approval for one target."
+    "grandfathered data-delete record, or one whose Ask line names an owner ask the person answered yes, passes "
+    "it, spent once for one target."
 )
 VARIABLE_MARK = "$UNRESOLVED"
 RSYNC_DELETE = re.compile(r"--(?:del(?:ete[\w-]*)?|remove-(?:source|sent)-files)(?![\w-])")

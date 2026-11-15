@@ -62,7 +62,7 @@ def approved(cmd, action="delete"):
     m = re.fullmatch(r"#\s*(?:owner|alex)-approval:\s*(\S+)\s*", comment)
     if not m:
         return False
-    reason = approval_record.refusal(m.group(1), action)
+    reason = approval_record.refusal(m.group(1), action, command=cmd[: cmd.rfind(comment)])
     if reason:
         sys.stderr.write("approval record refused: " + reason + "\n")
     return not reason

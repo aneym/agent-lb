@@ -22,6 +22,7 @@ ADOPTED_KEEP_NAMES = (
 
 MANAGED_HOOKS = (
     "approval_record.py",
+    "approval_ask.py",
     "approval_grandfathered.txt",
     "idle-agents.py",
     "branch-guard.py",

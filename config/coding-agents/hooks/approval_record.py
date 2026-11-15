@@ -11,6 +11,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import approval_ask  # type: ignore[missing-import]
+
 HERE = Path(__file__).resolve().parent
 GRANDFATHERED = HERE / "approval_grandfathered.txt"
 ROOTS = (".agent-rails/approvals", ".open-factory/approvals", ".agent-rails/lanes/orchestrator-refs")
@@ -240,7 +242,7 @@ def quoted(text, action):
     return result
 
 
-def verdict(ref, action=None, line=None):
+def verdict(ref, action=None, line=None, command=None):
     path = resolve(ref)
     if path is None:
         return {"ok": False, "reason": "the record is not an owner- or alex- file in an approvals directory"}
@@ -253,11 +255,15 @@ def verdict(ref, action=None, line=None):
         return {"ok": False, "reason": "the record does not hold this exact command line"}
     if grandfathered(path, body, action):
         return {"ok": True, "basis": "grandfathered"}
+    if action in HELD and approval_ask.carries(text):
+        if action not in covers(text):
+            return {"ok": False, "reason": f"its Covers line does not name {action!r}"}
+        return approval_ask.spend(path, body, text, action, line if command is None else command)
     if action in HELD:
         return {
             "ok": False,
-            "reason": f"the {action} floor takes only a grandfathered record until Rails spends a sealed approval "
-            "for one target",
+            "reason": f"the {action} floor takes only a grandfathered record or one whose Ask line names an owner "
+            "ask the person answered yes, spent once for one target",
         }
     try:
         return {"ok": True, **quoted(text, action)}
@@ -267,8 +273,8 @@ def verdict(ref, action=None, line=None):
         return {"ok": False, "reason": f"the evidence could not be checked: {exc}"}
 
 
-def refusal(ref, action=None, line=None):
-    result = verdict(ref, action, line)
+def refusal(ref, action=None, line=None, command=None):
+    result = verdict(ref, action, line, command)
     return "" if result["ok"] else result["reason"]
 
 
@@ -277,8 +283,9 @@ def main(argv):
     parser.add_argument("record")
     parser.add_argument("--action")
     parser.add_argument("--line")
+    parser.add_argument("--command")
     args = parser.parse_args(argv)
-    result = verdict(args.record, args.action, args.line)
+    result = verdict(args.record, args.action, args.line, args.command)
     print(json.dumps(result))
     return 0 if result["ok"] else 1
 
