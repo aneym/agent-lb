@@ -4,9 +4,14 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+RuntimeDirectory=agent-lb-tailnet-ingress
+RuntimeDirectoryMode=0700
+Environment=AGENT_LB_ADMIN_SOCKET=%t/agent-lb-tailnet-ingress/admin.sock
 EnvironmentFile=%h/.config/agent-lb/tailnet-ingress.env
 ExecStart=%h/.local/bin/caddy run --config %h/.config/agent-lb/tailnet-ingress/Caddyfile --adapter caddyfile
+ExecReload=%h/.local/bin/caddy reload --config %h/.config/agent-lb/tailnet-ingress/Caddyfile --adapter caddyfile --address unix/%t/agent-lb-tailnet-ingress/admin.sock --force
+TimeoutStopSec=11min
 Restart=always
 RestartSec=5
 

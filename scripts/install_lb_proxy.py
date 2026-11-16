@@ -142,7 +142,7 @@ def main():
             "/usr/bin/env",
             "bash",
             "-c",
-            f"set -a; . {shlex.quote(str(env))}; exec {shlex.quote(str(home / '.local/bin/caddy'))} validate --config {shlex.quote(str(caddyfile))} --adapter caddyfile",
+            f"set -a; . {shlex.quote(str(env))}; AGENT_LB_ADMIN_SOCKET=/run/agent-lb-proxy/admin.sock exec {shlex.quote(str(home / '.local/bin/caddy'))} validate --config {shlex.quote(str(caddyfile))} --adapter caddyfile",
         ],
         capture_output=True,
         text=True,
@@ -155,7 +155,23 @@ def main():
     retire_old_unit(unit_dir)
     systemctl("daemon-reload")
     systemctl("enable", UNIT)
-    systemctl("restart" if changed or unit_changed or dropped else "start", UNIT)
+    running = systemctl("is-active", UNIT, check=False).stdout.strip() == "active"
+    if unit_changed or not running:
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/caddy_handoff.py"),
+                "--unit",
+                UNIT,
+                "--config",
+                str(caddyfile),
+                "--env-file",
+                str(env),
+            ],
+            check=True,
+        )
+    elif changed or dropped:
+        systemctl("reload", UNIT)
     state = systemctl("is-active", UNIT, check=False).stdout.strip()
     print(f"{UNIT} {state} with {caddyfile}")
     if state != "active":

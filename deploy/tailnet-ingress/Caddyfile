@@ -1,13 +1,15 @@
 {
-	admin off
+	admin unix/{$AGENT_LB_ADMIN_SOCKET}
+	persist_config off
 	auto_https off
-	grace_period 10s
+	grace_period 10m
 }
 
 http://:{$AGENT_LB_TAILNET_PORT:2455} {
 	bind {$AGENT_LB_TAILNET_IP}
 	reverse_proxy 127.0.0.1:{$AGENT_LB_FRONT_PORT:2455} {
 		flush_interval -1
+		stream_close_delay 10m
 		transport http {
 			read_timeout 20m
 			write_timeout 20m

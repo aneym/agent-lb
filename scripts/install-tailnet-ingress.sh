@@ -9,6 +9,7 @@ ENV_FILE="$CONFIG/tailnet-ingress.env"
 CADDYFILE="$CONFIG/tailnet-ingress/Caddyfile"
 UNIT_FILE="$HOME/.config/systemd/user/$UNIT"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+CHANGED=()
 
 [[ "$(uname -s)" == Linux ]] || { echo "install-tailnet-ingress: Linux boxes only" >&2; exit 2; }
 [[ -x "$CADDY" ]] || { echo "install-tailnet-ingress: caddy missing at $CADDY" >&2; exit 2; }
@@ -21,10 +22,14 @@ fi
 put() {
   local src="$1" dest="$2"
   mkdir -p "$(dirname "$dest")"
-  if [[ -e "$dest" ]] && ! cmp -s "$src" "$dest"; then
+  if [[ -e "$dest" ]] && cmp -s "$src" "$dest"; then
+    return
+  fi
+  if [[ -e "$dest" ]]; then
     cp -p "$dest" "$dest.bak-$STAMP"
   fi
   cp "$src" "$dest"
+  CHANGED+=("$dest")
 }
 
 TMP="$(mktemp)"
@@ -33,11 +38,14 @@ printf 'AGENT_LB_TAILNET_IP=%s\nAGENT_LB_TAILNET_PORT=2455\nAGENT_LB_FRONT_PORT=
 put "$TMP" "$ENV_FILE"
 put "$ROOT/deploy/tailnet-ingress/Caddyfile" "$CADDYFILE"
 put "$ROOT/deploy/systemd/$UNIT" "$UNIT_FILE"
-"$CADDY" validate --envfile "$ENV_FILE" --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1
+AGENT_LB_ADMIN_SOCKET="$XDG_RUNTIME_DIR/agent-lb-tailnet-ingress/admin.sock" "$CADDY" validate --envfile "$ENV_FILE" --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1
 systemctl --user daemon-reload
 systemctl --user enable "$UNIT" >/dev/null
-systemctl --user restart "$UNIT"
-sleep 2
+if [[ " ${CHANGED[*]} " == *" $UNIT_FILE "* ]] || ! systemctl --user is-active --quiet "$UNIT"; then
+  python3 "$ROOT/scripts/caddy_handoff.py" --unit "$UNIT" --config "$CADDYFILE" --env-file "$ENV_FILE"
+elif (( ${#CHANGED[@]} )); then
+  systemctl --user reload "$UNIT"
+fi
 systemctl --user is-active --quiet "$UNIT"
 curl -fsS -o /dev/null -m 5 "http://$IP:2455/health"
 echo "$UNIT active on $IP:2455 -> 127.0.0.1:2455"

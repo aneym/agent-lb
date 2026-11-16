@@ -1,7 +1,8 @@
 {
-	admin off
+	admin unix/{$AGENT_LB_ADMIN_SOCKET}
+	persist_config off
 	default_bind 127.0.0.1
-	grace_period 10s
+	grace_period 10m
 }
 
 http://127.0.0.1:{$AGENT_LB_HOP_PORT:2457} {
@@ -10,6 +11,7 @@ http://127.0.0.1:{$AGENT_LB_HOP_PORT:2457} {
 	}
 	reverse_proxy {$AGENT_LB_PRIMARY} {
 		flush_interval -1
+		stream_close_delay 10m
 		header_up Host {upstream_hostport}
 		transport http {
 			read_timeout 20m
@@ -31,10 +33,12 @@ http://127.0.0.1:{$AGENT_LB_PROXY_PORT:2456} {
 	}
 	reverse_proxy @pool_state http://127.0.0.1:{$AGENT_LB_HOP_PORT:2457} {
 		flush_interval -1
+		stream_close_delay 10m
 	}
 	@reservations path /api/pools/reservations /api/pools/reservations/*
 	reverse_proxy @reservations http://127.0.0.1:{$AGENT_LB_HOP_PORT:2457} {
 		flush_interval -1
+		stream_close_delay 10m
 	}
 	reverse_proxy {$AGENT_LB_OUTER_UPSTREAMS} {
 		lb_policy first
@@ -47,6 +51,7 @@ http://127.0.0.1:{$AGENT_LB_PROXY_PORT:2456} {
 		lb_try_interval 100ms
 		request_buffers 64MiB
 		flush_interval -1
+		stream_close_delay 10m
 		header_up Host {upstream_hostport}
 		transport http {
 			read_timeout 20m

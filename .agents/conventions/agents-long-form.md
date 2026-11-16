@@ -80,6 +80,7 @@ right away. This is a standing instruction from the repo owner.
   `touch ~/.agent-lb/follow.pause`. Merge to main and wait one tick; there is no manual
   deploy step.
 - **Tailnet ingress to the primary (2026-11-16)**: boxes reach the ax42 primary at `http://ax42.tailf266ac.ts.net:2455` without crossing Studio. `scripts/install-tailnet-ingress.sh` on ax42 runs `agent-lb-tailnet-ingress` (Caddy, `deploy/tailnet-ingress/Caddyfile`) bound only to its tailnet address; it sets `X-Forwarded-For` from the real peer, so the primary admits callers by address exactly as through tailscale serve.
+- **Caddy cutovers (2026-11-16)**: `agent-lb-proxy` and `agent-lb-tailnet-ingress` run Caddy with its admin API on a private unix socket under `$XDG_RUNTIME_DIR`, never TCP. Change their Caddyfile or env, then `systemctl --user reload <unit>`: the config swaps in place, nothing is refused and open streams finish (`grace_period` and `stream_close_delay` 10m, above the longest model stream in the request logs). A unit-file change or Caddy upgrade goes through `scripts/caddy_handoff.py`, which the installers call: a bridge Caddy shares the ports (SO_REUSEPORT) while the old process drains, so a restart refuses nothing either.
 - **Box edges follow origin/main too (2026-11-02)**: each `agent-lb-edge` (ax42, forge, ax102) runs
   `deploy/systemd/agent-lb-edge-follow.{service,timer}` from `~/.config/systemd/user`, which runs
   the same `runtime_follow.py tick` against `~/agent-lb-edge` with state in
