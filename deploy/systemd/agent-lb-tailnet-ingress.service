@@ -1,0 +1,14 @@
+[Unit]
+Description=agent-lb tailnet ingress: the primary front on this box's tailnet address only, forwarding the caller's address like tailscale serve
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/agent-lb/tailnet-ingress.env
+ExecStart=%h/.local/bin/caddy run --config %h/.config/agent-lb/tailnet-ingress/Caddyfile --adapter caddyfile
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -79,6 +79,7 @@ right away. This is a standing instruction from the repo owner.
   watchdog runs `check` every 5 min and flags drift older than 30 min. Pause with
   `touch ~/.agent-lb/follow.pause`. Merge to main and wait one tick; there is no manual
   deploy step.
+- **Tailnet ingress to the primary (2026-11-16)**: boxes reach the ax42 primary at `http://ax42.tailf266ac.ts.net:2455` without crossing Studio. `scripts/install-tailnet-ingress.sh` on ax42 runs `agent-lb-tailnet-ingress` (Caddy, `deploy/tailnet-ingress/Caddyfile`) bound only to its tailnet address; it sets `X-Forwarded-For` from the real peer, so the primary admits callers by address exactly as through tailscale serve.
 - **Box edges follow origin/main too (2026-11-02)**: each `agent-lb-edge` (ax42, forge, ax102) runs
   `deploy/systemd/agent-lb-edge-follow.{service,timer}` from `~/.config/systemd/user`, which runs
   the same `runtime_follow.py tick` against `~/agent-lb-edge` with state in

@@ -1,0 +1,17 @@
+{
+	admin off
+	auto_https off
+	grace_period 20m
+}
+
+http://:{$AGENT_LB_TAILNET_PORT:2455} {
+	bind {$AGENT_LB_TAILNET_IP}
+	reverse_proxy 127.0.0.1:{$AGENT_LB_FRONT_PORT:2455} {
+		flush_interval -1
+		transport http {
+			read_timeout 20m
+			write_timeout 20m
+			keepalive 10m
+		}
+	}
+}
