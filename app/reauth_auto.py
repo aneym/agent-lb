@@ -86,6 +86,7 @@ def _consent(page: CdpPage, profile: BrowserProfile, hold: str | None) -> Outcom
 
 def _drive(base: str, profile: BrowserProfile, account_id: str, flow: dict, hold: str | None) -> Outcome:
     page = CdpPage(profile.cdp_port, flow["authorizationUrl"])
+    page.call("Emulation.setFocusEmulationEnabled", {"enabled": True}, session=page.session)
     page.call("Page.bringToFront", session=page.session)
     clicks: list[str] = []
     handled: set[str] = set()
