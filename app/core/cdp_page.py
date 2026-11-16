@@ -5,6 +5,7 @@ import time
 from typing import Any
 from urllib.request import ProxyHandler, build_opener
 
+from websockets.exceptions import ConnectionClosed, WebSocketException
 from websockets.sync.client import connect
 
 
@@ -137,3 +138,16 @@ class CdpPage:
             pass
         finally:
             self._socket.close()
+
+
+def close_browser(port: int, timeout: float = 5) -> bool:
+    try:
+        endpoint = _devtools(port, "/json/version")["webSocketDebuggerUrl"]
+        with connect(endpoint, max_size=None, open_timeout=timeout) as socket:
+            socket.send(json.dumps({"id": 1, "method": "Browser.close"}))
+            socket.recv(timeout=timeout)
+        return True
+    except ConnectionClosed:
+        return True
+    except (CdpError, KeyError, TypeError, OSError, TimeoutError, WebSocketException):
+        return False

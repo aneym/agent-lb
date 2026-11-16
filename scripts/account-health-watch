@@ -5,7 +5,9 @@ import argparse
 import fcntl
 import json
 import os
+import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -30,10 +32,32 @@ def snapshot():
     current = {}
     for account in payload["accounts"]:
         for problem in account["problems"]:
+            if account["provider"] == "openai" and problem["code"] == "reauth_required":
+                continue
             key = json.dumps([account["accountId"], problem["code"]])
             message = f"{account['email']} ({account['provider']}) {problem['code']}: {problem['message']}"
             current[key] = " ".join(message.split())[:799]
     return current
+
+
+def local_host(host):
+    names = {socket.gethostname().split(".")[0].lower(), os.environ.get("FACTORY_HOST", "").lower()}
+    return not host or host.lower() in names
+
+
+def send(thread_id, host, text):
+    if local_host(host):
+        t3 = shutil.which("t3")
+        command = [t3, "thread", "send", thread_id, "-", "--mode", "queue"] if t3 else None
+    else:
+        remote = f"t3 thread send {shlex.quote(thread_id)} - --mode queue"
+        command = ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, remote]
+    if command is None:
+        return False
+    try:
+        return subprocess.run(command, input=text, text=True, timeout=60).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def inspect(state_path, dry_run):
@@ -44,26 +68,18 @@ def inspect(state_path, dry_run):
         print(message)
     if dry_run:
         return
-    record = json.loads((Path.home() / ".agent-rails/agents/rails/agent.json").read_text())
-    target = record["t3"]["thread_id"]
-    t3 = shutil.which("t3")
     saved = dict(current)
-    with state_path.with_suffix(".log").open("a") as log:
-        for key, message in fresh.items():
-            posted = False
-            if t3:
-                try:
-                    result = subprocess.run(
-                        [t3, "thread", "send", target, message, "--mode", "queue"],
-                        timeout=30,
-                    )
-                    posted = result.returncode == 0
-                except (OSError, subprocess.TimeoutExpired):
-                    posted = False
-            if not posted:
+    if fresh:
+        record = json.loads((Path.home() / ".agent-rails/agents/rails/agent.json").read_text())["t3"]
+        text = "agent-lb account health:\n" + "\n".join(f"- {message}" for message in fresh.values())
+        posted = send(record["thread_id"], record.get("host"), text)
+        if not posted:
+            for key in fresh:
                 saved.pop(key)
-            log.write(f"{datetime.now(timezone.utc).isoformat()} {'posted' if posted else 'retry'} {message}\n")
-            log.flush()
+        with state_path.with_suffix(".log").open("a") as log:
+            stamp = datetime.now(timezone.utc).isoformat()
+            for message in fresh.values():
+                log.write(f"{stamp} {'posted' if posted else 'retry'} {message}\n")
     fd, temporary = tempfile.mkstemp(dir=state_path.parent, prefix=".account-health-")
     try:
         with os.fdopen(fd, "w") as stream:
