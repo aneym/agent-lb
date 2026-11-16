@@ -60,10 +60,11 @@ _SAVE = f"""(() => {{
 _ERRORS = rf"""(() => {{
   const form = {_FORM};
   if (!form) return null;
-  const alert = form.querySelector('[role=alert]');
-  if (alert && alert.innerText.trim()) return alert.innerText.trim().slice(0, 200);
+  const standing = t => /payment method is charged|charge is declined, one of your other saved payment methods/i.test(t);
+  const alert = [...form.querySelectorAll('[role=alert]')].map(e => e.innerText.trim()).find(t => t && !standing(t));
+  if (alert) return alert.slice(0, 200);
   const line = form.innerText.split('\n').find(
-    l => !/payment method is charged/i.test(l) && /declin|insufficient|invalid|incorrect|could not|failed|try a different|went wrong/i.test(l)
+    l => !standing(l) && /declin|insufficient|invalid|incorrect|could not|failed|try a different|went wrong/i.test(l)
   );
   return line ? line.trim().slice(0, 200) : null;
 }})()"""

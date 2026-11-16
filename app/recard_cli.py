@@ -7,7 +7,7 @@ from app.core.cdp_page import CdpError
 from app.core.claude_billing import BillingError
 from app.core.link_spend import LinkError
 from app.core.recards import load_recards
-from app.core.subscriptions import load_subscriptions
+from app.core.subscriptions import LedgerUnavailable, load_subscriptions
 from app.recard_flow import RecardError, finish, start, tick, watch
 from app.recard_signin import signed_in_ahead
 from app.recard_window import open_billing_window
@@ -35,7 +35,9 @@ def add_parser(subparsers) -> None:
     window_parser.add_argument("email")
     signin_parser = commands.add_parser("signin", help="Read-only: is the account's profile signed in to claude.ai?")
     signin_parser.add_argument("email")
-    tick_parser = commands.add_parser("run", help="Start recards for plans that ran out and watch open ones.")
+    tick_parser = commands.add_parser(
+        "run", help="Start recards for plans renewing within the lead days and watch open ones."
+    )
     tick_parser.add_argument("--dry-run", action="store_true")
     status = commands.add_parser("status")
     status.add_argument("--json", action="store_true")
@@ -82,6 +84,6 @@ def run(args) -> None:
             row = finish(email, save=not args.no_save)
         keys = ("status", "approvalUrl", "last4", "validUntil", "detail", "notice", "window")
         print(json.dumps({key: row.get(key) for key in keys}))
-    except (RecardError, LinkError, BillingError, CdpError) as exc:
+    except (RecardError, LinkError, BillingError, CdpError, LedgerUnavailable) as exc:
         print(f"recard: {exc}", file=sys.stderr)
         raise SystemExit(1) from None

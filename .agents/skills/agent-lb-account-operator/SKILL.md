@@ -154,8 +154,9 @@ preserve unrelated sessions unless the user requested their closure.
 A subscription paid with a Link temporary card (`payment: single-use`) needs a new
 card each cycle. Account health flags it 7 days out (`renewal_payment`). The
 `com.aneyman.agent-lb-recard` launchd job (`scripts/install-recard-watch.sh`, Studio)
-runs `agent-lb recard run` every 15 minutes. Once the renewal date arrives (the plan
-has run out, never ahead of time) and for 7 days after, `recard start` does three
+runs `agent-lb recard run` every 15 minutes against the server's ledger (Studio's
+`state/ledger.json` names the ssh host and path; install with `AGENT_LB_LEDGER_SSH=ax42`).
+From 3 days before renewal (`AGENT_LB_RECARD_LEAD_DAYS`) to 7 after, `recard start` does three
 things in the same few seconds: creates one Link card request for the ledger amount
 (sign-in never gates it), opens the account's billing window on the main display and
 reports whether it is signed in, and files an owner ask from Factory in Rails with the
@@ -163,7 +164,7 @@ approval link (Needs you) plus one queued line to the Rails chat. Each delivery 
 checked and recorded in `recards.json` (`notice`). It then starts `recard watch`, which
 polls the request every 4 seconds and puts the card on the billing page within seconds
 of approval, withdraws the ask and reports. The 15-minute run restarts a watcher that
-died. A day before each single-use renewal the run checks, read-only, that the profile
+died. A day before each recard starts the run checks, read-only, that the profile
 is signed in and sends Factory a note if not; Alex is never asked ahead of time.
 Sign-in checks reuse an open claude.ai tab and close only tabs they opened.
 By hand: `agent-lb recard start EMAIL [--dry-run]` (the dry run opens the window and

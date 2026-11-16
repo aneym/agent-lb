@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sys
 
-from app.core.subscriptions import Subscription, load_subscriptions, save_subscriptions
+from app.core.subscriptions import LedgerUnavailable, Subscription, load_subscriptions, save_subscriptions
 
 
 def add_parser(subparsers) -> None:
@@ -23,7 +23,11 @@ def add_parser(subparsers) -> None:
 
 
 def run(args) -> None:
-    subscriptions = load_subscriptions()
+    try:
+        subscriptions = load_subscriptions()
+    except LedgerUnavailable as exc:
+        print(f"subscriptions: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
     if args.subscriptions_command == "list":
         rows = [{"email": email, **sub.as_row()} for email, sub in sorted(subscriptions.items())]
         if args.json:
@@ -57,6 +61,9 @@ def run(args) -> None:
     except ValueError as exc:
         print(f"subscriptions: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
+    except LedgerUnavailable as exc:
+        print(f"subscriptions: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
     except OSError as exc:
         print(f"subscriptions: {type(exc).__name__}", file=sys.stderr)
         raise SystemExit(1) from None
