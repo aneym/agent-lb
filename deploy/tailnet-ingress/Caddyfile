@@ -1,7 +1,7 @@
 {
 	admin off
 	auto_https off
-	grace_period 20m
+	grace_period 10s
 }
 
 http://:{$AGENT_LB_TAILNET_PORT:2455} {
