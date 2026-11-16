@@ -21,6 +21,18 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+REFUSED_PREFIXES = ("25600cac", "86fe250c", "bfb49472")
+
+
+def auto_reauth_enrolled():
+    path = Path.home() / ".agent-lb/state/auto-reauth-enrolled.json"
+    try:
+        accounts = json.loads(path.read_text()).get("accounts")
+    except (OSError, ValueError, AttributeError):
+        return set()
+    return set(accounts) if isinstance(accounts, dict) else set()
+
+
 def snapshot():
     base = os.environ.get("BASE_URL", "http://127.0.0.1:2455").rstrip("/")
     headers = {"Accept": "application/json"}
@@ -30,9 +42,12 @@ def snapshot():
     with opener.open(Request(base + "/api/accounts", headers=headers), timeout=15) as response:
         payload = json.load(response)
     current = {}
+    enrolled = auto_reauth_enrolled()
     for account in payload["accounts"]:
+        if account["provider"] == "openai" or account["accountId"].startswith(REFUSED_PREFIXES):
+            continue
         for problem in account["problems"]:
-            if account["provider"] == "openai" and problem["code"] == "reauth_required":
+            if problem["code"] == "reauth_required" and account["accountId"] in enrolled:
                 continue
             key = json.dumps([account["accountId"], problem["code"]])
             message = f"{account['email']} ({account['provider']}) {problem['code']}: {problem['message']}"

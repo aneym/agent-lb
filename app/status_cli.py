@@ -186,7 +186,7 @@ def get_status_json(url: str, timeout: float) -> Any:
         headers["Cookie"] = cookie
     request = Request(url, headers=headers, method="GET")
     try:
-        opener = build_opener(ProxyHandler({}), _NoRedirect())
+        opener = build_opener(ProxyHandler({}), NoRedirect())
         with opener.open(request, timeout=timeout) as response:  # noqa: S310 -- URL is explicit local/operator input.
             if response.status < 200 or response.status >= 300:
                 raise StatusObservationError(f"service returned HTTP {response.status}")
@@ -200,7 +200,7 @@ def get_status_json(url: str, timeout: float) -> Any:
         raise StatusObservationError("service is unavailable or did not respond") from exc
 
 
-class _NoRedirect(HTTPRedirectHandler):
+class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *_args: Any, **_kwargs: Any) -> Request | None:
         return None
 

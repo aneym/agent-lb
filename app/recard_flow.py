@@ -21,6 +21,7 @@ from app.core.link_spend import (
     request_approval,
     request_state,
 )
+from app.core.profile_lock import profile_held
 from app.core.recards import load_recards, save_recard
 from app.core.subscriptions import LedgerUnavailable, Subscription, load_subscriptions, save_subscriptions
 from app.recard_notice import ASKER, CHAT, approval_ask, ask_for_approval, card_on, chat_line, tell_factory
@@ -93,6 +94,13 @@ def _dry_start(email: str, subscription: Subscription, total: float) -> dict:
 
 
 def start(email: str, amount: float | None = None, *, dry_run: bool = False) -> dict:
+    with profile_held(email) as free:
+        if not free:
+            raise RecardError("the browser profile is busy with a reauth run; the next tick retries")
+        return _start(email, amount, dry_run=dry_run)
+
+
+def _start(email: str, amount: float | None, *, dry_run: bool) -> dict:
     subscription = _subscription(email)
     total = amount if amount is not None else subscription.amount_usd
     if not total:
@@ -153,13 +161,16 @@ def finish(email: str, *, save: bool = True) -> dict:
         if state["status"] != "approved":
             return save_recard(email, status=state["status"])
         save_recard(email, status="approved", approvedSeenAt=row.get("approvedSeenAt") or _now())
-        port = _signed_in_port(email)
-        with tempfile.TemporaryDirectory(prefix="agent-lb-recard-") as directory:
-            os.chmod(directory, 0o700)
-            card = load_card(row["requestId"], Path(directory))
-            last4 = put_card(port, email, card, save=save)
-            valid_until = str(card.get("valid_until") or "") or None
-            del card
+        with profile_held(email) as profile_free:
+            if not profile_free:
+                return row
+            port = _signed_in_port(email)
+            with tempfile.TemporaryDirectory(prefix="agent-lb-recard-") as directory:
+                os.chmod(directory, 0o700)
+                card = load_card(row["requestId"], Path(directory))
+                last4 = put_card(port, email, card, save=save)
+                valid_until = str(card.get("valid_until") or "") or None
+                del card
         if not save:
             return save_recard(email, detail="card form filled, not saved")
         row = save_recard(email, status="done", last4=last4, validUntil=valid_until, detail=None, cardOnAt=_now())

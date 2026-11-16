@@ -8,7 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import ProxyHandler, Request, build_opener
 
-from app.status_cli import DEFAULT_BASE_URL, StatusObservationError, _NoRedirect, _validated_base_url
+from app.status_cli import DEFAULT_BASE_URL, NoRedirect, StatusObservationError, _validated_base_url
 
 
 class ResetCliError(Exception):
@@ -122,7 +122,7 @@ def _request(base_url: str, path: str, timeout: float, *, body: dict[str, Any] |
         data = json.dumps(body).encode("utf-8")
     request = Request(base_url + path, data=data, headers=headers, method="POST" if body is not None else "GET")
     try:
-        opener = build_opener(ProxyHandler({}), _NoRedirect())
+        opener = build_opener(ProxyHandler({}), NoRedirect())
         with opener.open(request, timeout=timeout) as response:  # noqa: S310 -- explicit local/operator URL.
             if not 200 <= response.status < 300:
                 raise ResetCliError(f"service returned HTTP {response.status}")

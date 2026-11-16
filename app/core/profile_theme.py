@@ -32,12 +32,17 @@ def pick_color(current: str | None, used: Iterable[str | None]) -> str:
     return min(PALETTE, key=lambda color: (taken.count(color), list(PALETTE).index(color)))
 
 
-def theme_color(user_data: Path) -> str | None:
+def profile_name(user_data: Path) -> str | None:
     try:
         name = json.loads((user_data / "Local State").read_text())["profile"]["info_cache"]["Default"]["name"]
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    color = name.split(" · ", 1)[0] if isinstance(name, str) else None
+    return name if isinstance(name, str) else None
+
+
+def theme_color(user_data: Path) -> str | None:
+    name = profile_name(user_data)
+    color = name.split(" · ", 1)[0] if name else None
     return color if color in PALETTE else None
 
 

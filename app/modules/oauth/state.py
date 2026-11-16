@@ -31,6 +31,7 @@ class OAuthState:
     warmup_hours: float | None = None
     warmup_capacity_percent: float | None = None
     warmup_max_concurrent: int | None = None
+    expected_account_id: str | None = None
     callback_server: "OAuthCallbackServer | None" = None
     poll_task: asyncio.Task[None] | None = None
 

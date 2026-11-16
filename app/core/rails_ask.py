@@ -51,3 +51,11 @@ def reachable(agent: str) -> dict:
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return {"reachable": False}
     return {"reachable": result.returncode == 0 and isinstance(payload, dict), "as": (payload or {}).get("agent_name")}
+
+
+def ask_open(agent: str, ask_id: str) -> bool:
+    payload = call(agent, "inbox", {"ask_id": ask_id})
+    ask = payload.get("ask")
+    if "error" in payload or not isinstance(ask, dict):
+        return True
+    return not (ask.get("answer") or ask.get("dropped_at") or ask.get("state") in ("done", "withdrawn", "dropped"))

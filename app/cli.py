@@ -82,6 +82,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     from app.subscriptions_cli import add_parser as add_subscriptions_parser
 
     add_subscriptions_parser(subparsers)
+    from app.reauth_auto_cli import add_parser as add_reauth_auto_parser
+
+    add_reauth_auto_parser(subparsers)
     from app.recard_cli import add_parser as add_recard_parser
 
     add_recard_parser(subparsers)
@@ -248,6 +251,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_subscriptions(args)
         return
 
+    if args.command == "reauth-auto" or (args.command == "reauth" and args.auto):
+        from app.reauth_auto_cli import run as run_auto
+        from app.reauth_auto_cli import run_reauth_auto
+
+        (run_auto if args.command == "reauth-auto" else run_reauth_auto)(args)
+        return
     if args.command in {"profiles", "reauth"}:
         from app.profiles_cli import run_profiles, run_reauth
 

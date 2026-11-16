@@ -11,6 +11,7 @@ class OauthStartRequest(DashboardModel):
     warmup_hours: float | None = Field(default=None, gt=0, le=168)
     warmup_capacity_percent: float | None = Field(default=None, gt=0, le=100)
     warmup_max_concurrent: int | None = Field(default=None, ge=1, le=32)
+    expected_account_id: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class OauthStartResponse(DashboardModel):
@@ -23,6 +24,7 @@ class OauthStartResponse(DashboardModel):
     device_auth_id: str | None = None
     interval_seconds: int | None = None
     expires_in_seconds: int | None = None
+    expected_account_id: str | None = None
 
 
 class OauthStatusResponse(DashboardModel):

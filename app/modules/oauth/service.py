@@ -27,6 +27,7 @@ from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteErr
 from app.db.session import get_background_session
 from app.modules.accounts.identity_repository import AccountIdentityConflictError
 from app.modules.accounts.repository import AccountsRepository
+from app.modules.oauth.account_bind import save_signed_in_account
 from app.modules.oauth.callbacks import (
     _ACCOUNT_IDENTITY_CONFLICT_MESSAGE,
     OAuthCallbackHandlers,
@@ -129,6 +130,7 @@ class OauthService(OAuthCallbackHandlers):
                 warmup_hours=request.warmup_hours,
                 warmup_capacity_percent=request.warmup_capacity_percent,
                 warmup_max_concurrent=request.warmup_max_concurrent,
+                expected_account_id=request.expected_account_id,
             )
         except OSError:
             if provider.name != OPENAI_PROVIDER_NAME:
@@ -180,6 +182,7 @@ class OauthService(OAuthCallbackHandlers):
         warmup_hours: float | None = None,
         warmup_capacity_percent: float | None = None,
         warmup_max_concurrent: int | None = None,
+        expected_account_id: str | None = None,
     ) -> OauthStartResponse:
         flow_id = secrets.token_urlsafe(12)
         code_verifier, code_challenge = generate_pkce_pair()
@@ -221,6 +224,7 @@ class OauthService(OAuthCallbackHandlers):
                     warmup_hours=warmup_hours,
                     warmup_capacity_percent=warmup_capacity_percent,
                     warmup_max_concurrent=warmup_max_concurrent,
+                    expected_account_id=expected_account_id,
                 )
             )
 
@@ -239,6 +243,7 @@ class OauthService(OAuthCallbackHandlers):
             method="browser",
             authorization_url=authorization_url,
             callback_url=oauth_config.redirect_uri,
+            expected_account_id=expected_account_id,
         )
 
     async def _ensure_callback_server(self, flow_id: str) -> None:
@@ -392,24 +397,12 @@ class OauthService(OAuthCallbackHandlers):
         async with self._store.lock:
             flow = self._store.get_flow_locked(flow_id)
         account = account_from_tokens(tokens, provider_name, self._encryptor, flow=flow)
-        raw_account_id = account.chatgpt_account_id
-        workspace_id = account.workspace_id
+        expected_id = flow.expected_account_id if flow is not None else None
         if self._repo_factory:
             async with self._repo_factory() as repo:
-                if raw_account_id and workspace_id is None:
-                    await repo.upsert(account, merge_by_email=False, merge_by_chatgpt_identity=True)
-                else:
-                    await repo.upsert_account_slot(account, preserve_unknown_workspace_duplicates=False)
+                await save_signed_in_account(repo, account, expected_id)
         else:
-            if raw_account_id and workspace_id is None:
-                await self._accounts_repo.upsert(
-                    account,
-                    merge_by_email=False,
-                    merge_by_chatgpt_identity=True,
-                )
-            else:
-                await self._accounts_repo.upsert_account_slot(account, preserve_unknown_workspace_duplicates=False)
-
+            await save_signed_in_account(self._accounts_repo, account, expected_id)
         await self._invalidate_account_routing_caches()
 
     async def _invalidate_account_routing_caches(self) -> None:

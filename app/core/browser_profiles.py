@@ -9,6 +9,7 @@ from pathlib import Path
 
 CHROME_ROOT = Path.home() / "Library/Application Support/agent-lb-chrome"
 CDP_PORT_BASE = 9333
+LOGINS = ("google", "email")
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class BrowserProfile:
     cdp_port: int
     color: str | None = None
     label: str | None = None
+    login: str | None = None
 
 
 def registry_path() -> Path:
@@ -47,11 +49,12 @@ def load_profiles() -> dict[str, BrowserProfile]:
                 or port in ports
                 or not isinstance(row.get("color", ""), str)
                 or not isinstance(row.get("label", ""), str)
+                or row.get("login", "google") not in LOGINS
             ):
                 return {}
             ports.add(port)
             profiles[email] = BrowserProfile(
-                email, row["dir"], tuple(row["providers"]), port, row.get("color"), row.get("label")
+                email, row["dir"], tuple(row["providers"]), port, row.get("color"), row.get("label"), row.get("login")
             )
         return profiles
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
@@ -70,6 +73,7 @@ def save_profiles(profiles: dict[str, BrowserProfile]) -> None:
                 "cdpPort": profile.cdp_port,
                 **({"color": profile.color} if profile.color else {}),
                 **({"label": profile.label} if profile.label else {}),
+                **({"login": profile.login} if profile.login else {}),
             }
             for email, profile in profiles.items()
         },
@@ -93,9 +97,14 @@ def add_profile(
     providers: Sequence[str],
     label: str | None = None,
     color: str | None = None,
+    login: str | None = None,
 ) -> BrowserProfile:
     email = email.strip().lower()
-    if not email or any(provider not in {"anthropic", "openai"} for provider in providers):
+    if (
+        not email
+        or any(provider not in {"anthropic", "openai"} for provider in providers)
+        or login not in (None, *LOGINS)
+    ):
         raise ValueError("email and supported providers are required")
     profiles = load_profiles()
     previous = profiles.get(email)
@@ -111,7 +120,8 @@ def add_profile(
     merged = tuple(dict.fromkeys((previous.providers if previous else ()) + tuple(providers)))
     color = color or (previous.color if previous else None)
     label = label or (previous.label if previous else None) or email
-    profile = BrowserProfile(email, directory, merged, port, color, label)
+    login = login or (previous.login if previous else None)
+    profile = BrowserProfile(email, directory, merged, port, color, label, login)
     profiles[email] = profile
     save_profiles(profiles)
     return profile
