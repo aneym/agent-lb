@@ -22,6 +22,7 @@ FLOOR_HOOKS = {
     "desktop-guard": "real people, his accounts and spend: agents stay off his desktop, where those happen",
     "wide-scan-guard.sh": "secrets: no recursive reads that print secrets",
     "hooks-off-guard.py": "every floor: no setting that switches Claude Code hooks off",
+    "outbound-send-guard.py": "real people: no direct Messages, Mail, SMS or mail-API send without a Rails hold receipt for that exact text",
 }
 NON_FLOOR_GUARDS = {
     "t3-live-restart-guard.py": "house rule: live T3 restarts use the nightly installer",

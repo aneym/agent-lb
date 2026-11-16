@@ -254,6 +254,26 @@
         "timeout": 32
       },
       "needs_source": false
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/outbound-send-guard.py\"",
+        "timeout": 15
+      },
+      "needs_source": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "mcp__.*",
+      "hook": {
+        "type": "command",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/outbound-send-guard.py\"",
+        "timeout": 15
+      },
+      "needs_source": true
     }
   ]
 }
