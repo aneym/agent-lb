@@ -244,10 +244,22 @@ struct APIClient: @unchecked Sendable {
     return try await executeRequest(request, on: requestSession ?? session)
   }
 
+  private static let callerKey: String? = {
+    let path = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".agent-rails/custody/agent-secret/agent-lb-key-menubar").path
+    guard let raw = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+    let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    return value.hasPrefix("sk-clb-") ? value : nil
+  }()
+
   private func executeRequest(
     _ request: URLRequest,
     on session: URLSession
   ) async throws -> (Data, URLResponse) {
+    var request = request
+    if let key = Self.callerKey, request.value(forHTTPHeaderField: "Authorization") == nil {
+      request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+    }
     do {
       return try await session.data(for: request)
     } catch let urlError as URLError {

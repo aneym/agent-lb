@@ -33,9 +33,18 @@ def auto_reauth_enrolled():
     return set(accounts) if isinstance(accounts, dict) else set()
 
 
+def key_headers():
+    path = Path.home() / ".agent-rails/custody/agent-secret/agent-lb-key-account-health"
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return {}
+    return {"Authorization": "Bearer " + value} if value.startswith("sk-clb-") else {}
+
+
 def snapshot():
     base = os.environ.get("BASE_URL", "http://127.0.0.1:2455").rstrip("/")
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", **key_headers()}
     if cookie := os.environ.get("AGENT_LB_STATUS_COOKIE"):
         headers["Cookie"] = cookie
     opener = build_opener(ProxyHandler({}), NoRedirect())
