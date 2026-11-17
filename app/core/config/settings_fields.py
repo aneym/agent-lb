@@ -260,6 +260,8 @@ class SettingsFields(BaseSettings):
     )
     firewall_ip_cache_ttl_seconds: int = Field(default=30, gt=0)
     dashboard_auth_mode: DashboardAuthMode = DashboardAuthMode.STANDARD
+    dashboard_api_key_required: bool = False
+    dashboard_keyless_client_cidrs: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     def upstream_websocket_proxy_env(self) -> Mapping[str, str | None]:
         return _configured_outbound_proxy_env()

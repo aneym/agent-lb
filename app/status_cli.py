@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from app.lb_caller_key import caller_key_headers
+
 from app.status_projection import _model_observation, _optional_text, _project_account, _provider_summaries, _text
 
 SCHEMA_VERSION = 1
@@ -180,7 +182,7 @@ def _validated_base_url(value: str) -> str:
 
 
 def get_status_json(url: str, timeout: float) -> Any:
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", **caller_key_headers("agent-lb-key-status-cli")}
 
     if cookie := os.getenv("AGENT_LB_STATUS_COOKIE"):
         headers["Cookie"] = cookie

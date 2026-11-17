@@ -257,6 +257,18 @@ def is_unauthenticated_client_allowed(request: HTTPConnection) -> bool:
     return any(client_ip in ip_network(cidr, strict=False) for cidr in configured_cidrs)
 
 
+def is_dashboard_keyless_client(request: HTTPConnection) -> bool:
+    client_host = resolve_request_client_host(request)
+    if client_host is None:
+        return False
+    try:
+        client_ip = ip_address(client_host)
+    except ValueError:
+        return False
+    configured_cidrs = get_settings().dashboard_keyless_client_cidrs
+    return any(client_ip in ip_network(cidr, strict=False) for cidr in configured_cidrs)
+
+
 def is_trusted_client(request: HTTPConnection) -> bool:
 
     return is_local_request(request) or is_unauthenticated_client_allowed(request)

@@ -8,6 +8,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import ProxyHandler, Request, build_opener
 
+from app.lb_caller_key import caller_key_headers
+
 from app.status_cli import DEFAULT_BASE_URL, NoRedirect, StatusObservationError, _validated_base_url
 
 
@@ -113,7 +115,7 @@ def _confirm(account: dict[str, Any]) -> bool:
 
 
 def _request(base_url: str, path: str, timeout: float, *, body: dict[str, Any] | None = None) -> Any:
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", **caller_key_headers("agent-lb-key-reset-cli")}
     if cookie := os.getenv("AGENT_LB_STATUS_COOKIE"):
         headers["Cookie"] = cookie
     data = None

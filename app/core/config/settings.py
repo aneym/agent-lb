@@ -229,6 +229,15 @@ class Settings(SettingsFields):
             invalid_label="proxy unauthenticated client CIDR",
         )
 
+    @field_validator("dashboard_keyless_client_cidrs", mode="before")
+    @classmethod
+    def _normalize_dashboard_keyless_client_cidrs(cls, value: StringListInput) -> list[str]:
+        return _normalize_cidr_list(
+            value,
+            field_name="dashboard_keyless_client_cidrs",
+            invalid_label="dashboard keyless client CIDR",
+        )
+
     @field_validator("dashboard_auth_proxy_header", mode="before")
     @classmethod
     def _normalize_dashboard_auth_proxy_header(cls, value: object) -> str:

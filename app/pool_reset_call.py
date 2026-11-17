@@ -8,6 +8,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import ProxyHandler, Request, build_opener
 
+from app.lb_caller_key import caller_key_headers
+
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
 RAILS_OFFICE = "mcp:launch:424b86369f27d72d8ecb4d500172a6daee78c383779ab39ad7bbc6eca94b2158"
 FACTORY = "mcp:launch:de51e2e9fd174821ec3f65574d06655ad9e11470aa377a41d2cf9e13229ca869"
@@ -23,7 +25,7 @@ def _base() -> str:
 
 
 def _request(path: str, timeout: float, body: dict[str, Any] | None = None) -> dict[str, Any]:
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", **caller_key_headers("agent-lb-key-pool-reset")}
     data = None
     if body is not None:
         headers["Content-Type"] = "application/json"

@@ -180,11 +180,21 @@ def collect(connection, since):
     return threads, sessions, newest
 
 
+def key_headers():
+    path = os.path.expanduser("~/.agent-rails/custody/agent-secret/agent-lb-key-t3-collector")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = handle.read().strip()
+    except OSError:
+        return {}
+    return {"Authorization": "Bearer " + value} if value.startswith("sk-clb-") else {}
+
+
 def post(base_url, body):
     request = Request(
         base_url.rstrip("/") + "/api/t3/threads/sync",
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers={"Content-Type": "application/json", "Accept": "application/json", **key_headers()},
         method="POST",
     )
     with urlopen(request, timeout=60) as response:

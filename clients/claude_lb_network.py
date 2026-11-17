@@ -101,9 +101,19 @@ def bypass_anthropic_proxy() -> None:
         os.environ[name] = ",".join(exclusions)
 
 
+def lb_key_headers(path: str) -> dict[str, str]:
+    if not path.startswith("/api/"):
+        return {}
+    try:
+        value = (Path.home() / ".agent-rails/custody/agent-secret/agent-lb-key-claude-launch").read_text().strip()
+    except OSError:
+        return {}
+    return {"authorization": f"Bearer {value}"} if value.startswith("sk-clb-") else {}
+
+
 def lb_json(path: str, *, timeout: float = 2.5, base_url: str | None = None) -> dict:
     request = urllib.request.Request(
-        f"{base_url or LaunchConfig.base_url}{path}", headers={"accept": "application/json"}
+        f"{base_url or LaunchConfig.base_url}{path}", headers={"accept": "application/json", **lb_key_headers(path)}
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         body = response.read().decode("utf-8")

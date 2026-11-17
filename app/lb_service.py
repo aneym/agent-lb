@@ -9,6 +9,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
+from app.lb_caller_key import caller_key_headers
+
 from app.status_cli import NoRedirect
 
 SERVICE_TIMEOUT = 30
@@ -24,7 +26,11 @@ class ServiceUnavailable(ServiceError):
 
 
 def request(base: str, path: str, *, body: dict | None = None, method: str | None = None, cdp: bool = False) -> Any:
-    headers = {"Accept": "application/json"}
+    headers = (
+        {"Accept": "application/json"}
+        if cdp
+        else {"Accept": "application/json", **caller_key_headers("agent-lb-key-reauth")}
+    )
     if not cdp and (cookie := os.getenv("AGENT_LB_STATUS_COOKIE")):
         headers["Cookie"] = cookie
     if body is not None:

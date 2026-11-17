@@ -22,6 +22,7 @@ from app.core.exceptions import (
     ProxyUpstreamError,
 )
 from app.core.request_locality import (
+    is_dashboard_keyless_client,
     is_local_request,
     is_unauthenticated_client_allowed,
     is_untrusted_loopback_host_request,
@@ -170,6 +171,12 @@ async def validate_dashboard_session(request: Request) -> None:
             code="team_mode_untrusted_client",
         )
 
+    if get_settings().dashboard_api_key_required:
+        if await _dashboard_operator_key(request) is not None:
+            return
+        if not is_dashboard_keyless_client(request) and not _password_session_applies(settings):
+            raise DashboardAuthError("An agent-lb key is required for this route", code="api_key_required")
+
     request_auth = get_dashboard_request_auth(request)
     if request_auth is not None:
         return
@@ -200,6 +207,25 @@ async def validate_dashboard_session(request: Request) -> None:
         raise DashboardAuthError("Authentication is required")
     if settings.totp_required_on_login and not state.totp_verified:
         raise DashboardAuthError("TOTP verification is required for dashboard access", code="totp_required")
+
+
+async def _dashboard_operator_key(request: Request) -> ApiKeyData | None:
+    authorization = select_member_key_authorization(
+        request.headers.get("authorization"), request.headers.get("x-api-key")
+    )
+    token = _extract_bearer_token(authorization)
+    if not token:
+        return None
+    key = await _validate_api_key_token(token)
+    if key.member_id is not None:
+        raise DashboardForbiddenError("Member keys cannot read operator routes", code="member_key_forbidden")
+    return key
+
+
+def _password_session_applies(settings: object) -> bool:
+    return get_dashboard_request_auth_mode() == DashboardAuthMode.STANDARD and bool(
+        getattr(settings, "password_hash", None)
+    )
 
 
 def get_dashboard_request_auth_mode() -> DashboardAuthMode:

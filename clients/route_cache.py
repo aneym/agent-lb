@@ -65,12 +65,22 @@ def _live_request(
     return result
 
 
+def _key_headers(path: str) -> dict[str, str]:
+    if not path.startswith("/api/"):
+        return {}
+    try:
+        value = (Path.home() / ".agent-rails/custody/agent-secret/agent-lb-key-route").read_text().strip()
+    except OSError:
+        return {}
+    return {"authorization": f"Bearer {value}"} if value.startswith("sk-clb-") else {}
+
+
 def _live_attempt(method: str, path: str, *, payload: dict[str, Any] | None, timeout: float, url: str) -> HttpResult:
     import http.client
     import urllib.error
     import urllib.request
 
-    headers = {"accept": "application/json"}
+    headers = {"accept": "application/json", **_key_headers(path)}
     data = None
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")

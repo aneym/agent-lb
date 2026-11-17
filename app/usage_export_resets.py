@@ -5,6 +5,8 @@ import os
 from typing import Any
 from urllib.request import ProxyHandler, Request, build_opener
 
+from app.lb_caller_key import caller_key_headers
+
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
 SOURCE = "resetCreditsAvailable from the local agent-lb /api/accounts (the count behind agent-lb resets)"
 CLEARS_SOURCE = (
@@ -24,7 +26,11 @@ def held(timeout: float = 20.0) -> tuple[dict[str, int | None], dict[str, list[s
     opener = build_opener(ProxyHandler({}))
     try:
         with opener.open(
-            Request(base + "/api/accounts", headers={"Accept": "application/json"}), timeout=timeout
+            Request(
+                base + "/api/accounts",
+                headers={"Accept": "application/json", **caller_key_headers("agent-lb-key-usage-export")},
+            ),
+            timeout=timeout,
         ) as resp:
             payload: Any = json.loads(resp.read())
     except (OSError, ValueError) as exc:
