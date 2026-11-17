@@ -284,16 +284,6 @@
         "timeout": 5
       },
       "needs_source": true
-    },
-    {
-      "event": "PostToolUse",
-      "matcher": "mcp__.*",
-      "hook": {
-        "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claim-code-redact.py\"",
-        "timeout": 5
-      },
-      "needs_source": true
     }
   ]
 }
