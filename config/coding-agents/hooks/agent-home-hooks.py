@@ -7,6 +7,8 @@ import sys
 import threading
 from pathlib import Path
 
+from headless_run import settled  # type: ignore[missing-import]
+
 EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "PreCompact", "SessionEnd")
 BUDGET = {"SessionStart": 28, "SessionEnd": 28}
 DEFAULT_BUDGET = 8
@@ -153,7 +155,7 @@ def merged(event, texts):
     if messages:
         top["systemMessage"] = "\n".join(messages)
     if specific:
-        top["hookSpecificOutput"] = {"hookEventName": event, **specific}
+        top["hookSpecificOutput"] = {"hookEventName": event, **settled(specific)}
     return top
 
 

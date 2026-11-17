@@ -90,6 +90,8 @@ MANAGED_HOOKS = (
     "seat-guard.py",
     "hook-dispatch-parity.py",
     "advisory-fold.py",
+    "headless_run.py",
+    "headless-approval-deny.py",
 )
 
 
