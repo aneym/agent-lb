@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import approval_record
 import data_delete
+import own_worktree
 import shell_places
 import shell_words
 from shell_vocabulary import COMPOUND, DATA_READERS, OPS, WRAPPERS
@@ -373,7 +374,12 @@ def deletes_data(segment, assignments, cwd, defined, aliases):
     return False
 
 
-def offending(segment, assignments=None):
+def ours(place, word):
+    top, cwds = place or (None, {None})
+    return bool(top) and None not in cwds and all(own_worktree.holds(top, cwd, word) for cwd in cwds)
+
+
+def offending(segment, assignments=None, place=None):
     assignments = assignments or {}
 
     words = [w for w in segment if not w[2]]
@@ -411,7 +417,7 @@ def offending(segment, assignments=None):
         home_root = re.fullmatch(r"\$(?:HOME|\{HOME(?::\?[^}]*)?\})(?:/|/\*)?", w[1])
         literal_root = "$" not in w[0] and "`" not in w[0] and protected_root(w[0])
         repo_root = "$" not in w[0] and "`" not in w[0] and (Path(w[0]) / ".git").exists()
-        if recursive and (home_root or literal_root or repo_root):
+        if recursive and (home_root or literal_root or repo_root) and not (not home_root and ours(place, w[0])):
             return "a protected root path (%s)" % w[3]
     for w in words[k + 1 :]:
         if w[0].startswith("-"):
@@ -436,6 +442,8 @@ def offending(segment, assignments=None):
                 and not any(char in w[1] for char in "$`*?[")
                 and stale_worktree_lock(value)
             ):
+                continue
+            if value == w[0] and ours(place, value):
                 continue
             return "a protected root path (%s)" % w[3]
         if "$" in value or "`" in value:
@@ -474,6 +482,7 @@ def main():
     state = ({data.get("cwd") or os.getcwd()}, set())
     defined = data_delete.defined(cmd)
     aliases = {**data_delete.shell_aliases(), **data_delete.found_aliases(cmd)}
+    top = own_worktree.root(data.get("cwd") or os.getcwd())
     every, links = parsed(cmd)
     lines = cmd.rstrip().rsplit("\n", 1)
     first = len(segments(lines[0])) if len(lines) == 2 else 0
@@ -488,7 +497,7 @@ def main():
             sys.stderr.write(FLOOR + "rm-dynamic-deny: " + data_delete.REFUSAL + "\n")
             return 2
         state = shell_places.places(command_name(seg), [w[0] for w in seg if not w[2]], fixed, state, links[i])
-        why = offending(seg, assignments)
+        why = offending(seg, assignments, (top, state[0]))
         if why and not (i >= first and approved(cmd)):
             sys.stderr.write(refusal(why) + "\n")
             return 2

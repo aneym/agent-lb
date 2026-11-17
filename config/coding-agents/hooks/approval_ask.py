@@ -15,6 +15,7 @@ SHAPE = re.compile(r"\s*`?([0-9a-f]{12})\s+target\s+([a-z0-9][a-z0-9-]*):([^\s`]
 PEERS = ("ax102", "ax42")
 MACHINES = ("ax102", "ax42", "studio", "forge", "pc-wsl", "book", "macbook", "macbook-ts")
 LIFE = timedelta(days=7)
+COVERS = timedelta(hours=24)
 SKEW = timedelta(minutes=5)
 BUDGET = 6.0
 SPENT = ".agent-rails/approvals-spent"
@@ -45,11 +46,14 @@ def named(word, text):
 def parsed(text):
     lines = ASK.findall(text)
     if len(lines) != 1:
-        raise Refused("it needs exactly one line Ask: <ask id> target <host>:<name>")
+        raise Refused("it needs exactly one line Ask: <ask id> target <host>:<name>[,<name>...]")
     shape = SHAPE.fullmatch(lines[0])
     if not shape:
-        raise Refused("its Ask line is not Ask: <12-hex ask id> target <host>:<name>")
-    return shape[1], shape[2], shape[3]
+        raise Refused("its Ask line is not Ask: <12-hex ask id> target <host>:<name>[,<name>...]")
+    names = [name for name in shape[3].split(",") if name]
+    if not names:
+        raise Refused("its Ask line names no target")
+    return shape[1], shape[2], names
 
 
 def words(command):
@@ -59,21 +63,23 @@ def words(command):
         return command.split()
 
 
-def scoped(host, name, command):
+def scoped(host, names, command):
     if host != here():
         raise Refused(f"its target is on {host}, not on {here()}")
     if command is None or not command.strip():
         raise Refused("there is no command to match against its target")
-    if not named(name, command):
-        raise Refused(f"the command does not name its target {name} as a word")
+    if not any(named(name, command) for name in names):
+        raise Refused(f"the command does not name any of its targets {', '.join(names)} as a word")
     if named("ssh", command) or any(named(machine, command) for machine in MACHINES if machine != here()):
         raise Refused("the command reaches another host")
-    if "/" in name:
-        root = os.path.expanduser(name).rstrip("/")
+    roots = [os.path.expanduser(name).rstrip("/") for name in names if "/" in name]
+    if roots:
         for word in words(command):
             path = os.path.expanduser(word.split("=", 1)[-1])
-            if path.startswith("/") and path.rstrip("/") != root and not path.startswith(root + "/"):
-                raise Refused(f"the command names the path {word[:60]} outside its target {name}")
+            if path.startswith("/") and not any(
+                path.rstrip("/") == root or path.startswith(root + "/") for root in roots
+            ):
+                raise Refused(f"the command names the path {word[:60]} outside its targets {', '.join(names)}")
 
 
 def run(argv, deadline):
@@ -124,20 +130,23 @@ def answered(ask, host, now):
         raise Refused(f"the question the person answered does not name {host}")
 
 
-def held(entry, ask_id, target, digest):
+def held(entry, ask_id, target, digest, now):
     if entry.get("target") != target:
         raise Refused(f"ask {ask_id} was already spent for {entry.get('target')}")
     if entry.get("record_sha256") != digest:
         raise Refused(f"ask {ask_id} was spent by the record with sha256 {entry.get('record_sha256')}; restore it")
+    ends = moment(entry.get("written") or entry.get("at")) + COVERS
+    if now > ends:
+        raise Refused(f"the record covered its paths for 24 h from when it was written, until {ends.isoformat()}")
 
 
-def spent(ask_id, target, digest, entry):
+def spent(ask_id, target, digest, entry, now):
     local = Path(os.path.expanduser("~")) / SPENT / f"{ask_id}.json"
     local.parent.mkdir(parents=True, exist_ok=True)
     try:
         fd = os.open(local, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
-        held(json.loads(local.read_text()), ask_id, target, digest)
+        held(json.loads(local.read_text()), ask_id, target, digest, now)
         return
     with os.fdopen(fd, "w") as out:
         json.dump(entry, out)
@@ -146,13 +155,20 @@ def spent(ask_id, target, digest, entry):
 
 def spend(path, body, text, action, command):
     try:
-        ask_id, host, name = parsed(text)
-        scoped(host, name, command)
+        ask_id, host, names = parsed(text)
+        scoped(host, names, command)
         now = datetime.now(timezone.utc)
         answered(fetched(ask_id), host, now)
-        target, digest = f"{host}:{name}", hashlib.sha256(body).hexdigest()
+        target, digest = f"{host}:{','.join(names)}", hashlib.sha256(body).hexdigest()
+        written = min(now, datetime.fromtimestamp(os.stat(path).st_mtime, timezone.utc))
         entry = {"ask": ask_id, "record": path, "record_sha256": digest, "target": target, "action": action}
-        spent(ask_id, target, digest, {**entry, "host": here(), "at": now.isoformat()})
+        spent(
+            ask_id,
+            target,
+            digest,
+            {**entry, "host": here(), "at": now.isoformat(), "written": written.isoformat()},
+            now,
+        )
     except Refused as exc:
         return {"ok": False, "reason": str(exc)}
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:

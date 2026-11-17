@@ -65,6 +65,8 @@ MANAGED_HOOKS = (
     "data_delete.py",
     "t3_runtime_builds.py",
     "shell_places.py",
+    "own_worktree.py",
+    "provider_cli.py",
     "shell_words.py",
     "sql_statements.py",
     "psql_files.py",

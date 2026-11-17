@@ -22,6 +22,7 @@ LEGACY = {
     ".open-factory/approvals": set(),
 }
 HELD = {"destructive", "provider", "data-delete"}
+DELETES = {"delete", "data-delete", "destructive"}
 NAMED = {
     "browser": re.compile(r"\b(?:browsers?|chrome|tabs?)\b", re.I),
     "stash": re.compile(r"\bstash", re.I),
@@ -255,15 +256,15 @@ def verdict(ref, action=None, line=None, command=None):
         return {"ok": False, "reason": "the record does not hold this exact command line"}
     if grandfathered(path, body, action):
         return {"ok": True, "basis": "grandfathered"}
-    if action in HELD and approval_ask.carries(text):
-        if action not in covers(text):
+    if action is not None and approval_ask.carries(text):
+        if not ({action} | (DELETES if action in DELETES else set())) & covers(text):
             return {"ok": False, "reason": f"its Covers line does not name {action!r}"}
         return approval_ask.spend(path, body, text, action, line if command is None else command)
     if action in HELD:
         return {
             "ok": False,
             "reason": f"the {action} floor takes only a grandfathered record or one whose Ask line names an owner "
-            "ask the person answered yes, spent once for one target",
+            "ask the person answered yes, covering the paths it lists for 24 h from when it was written",
         }
     try:
         return {"ok": True, **quoted(text, action)}
