@@ -77,6 +77,14 @@ def _listed(last4: str) -> str:
     )
 
 
+def _default(last4: str) -> str:
+    pattern = json.dumps("•••• " + last4 + r"\s*Default")
+    return (
+        f"(() => {{ const settings = {_SETTINGS}; if (!settings || /Loading/.test(settings.innerText)) return false;"
+        f" return new RegExp({pattern}).test(settings.innerText); }})()"
+    )
+
+
 class BillingError(Exception):
     pass
 
@@ -120,6 +128,8 @@ def put_card(port: int, email: str, card: dict, *, save: bool = True) -> str:
         page.wait_for("document.readyState === 'complete'", seconds=20)
         if page.wait_for(SIGNED_IN, seconds=10) != email:
             raise BillingError(f"browser profile is not signed in to claude.ai as {email}")
+        if save and page.wait_for(_default(last4), seconds=10):
+            return last4
         if not page.wait_for(_OPEN_PAYMENT_FORM, seconds=30):
             raise BillingError("no Add payment method button in the billing settings")
         if not page.wait_for(_FORM_OPEN, seconds=15):
@@ -155,7 +165,7 @@ def put_card(port: int, email: str, card: dict, *, save: bool = True) -> str:
         page.evaluate(_MAKE_DEFAULT)
         if not page.wait_for(_SAVE, seconds=10):
             raise BillingError(page.evaluate(_ERRORS) or "the Add button never enabled")
-        confirmed = page.wait_for(f"!{_FORM_OPEN} && {_listed(last4)} > {int(before)}", seconds=60)
+        confirmed = page.wait_for(f"{_listed(last4)} > {int(before)}", seconds=60)
         if not confirmed:
             raise BillingError(page.evaluate(_ERRORS) or "billing settings never listed the new card")
         return last4
