@@ -4,6 +4,8 @@ import math
 from datetime import UTC, datetime
 from typing import Any
 
+_ORG_BLOCKED = "anthropic_oauth_organization_blocked"
+
 
 def _project_account(account: dict[str, Any]) -> dict[str, Any]:
     usage = account.get("usage") if isinstance(account.get("usage"), dict) else {}
@@ -26,7 +28,7 @@ def _project_account(account: dict[str, Any]) -> dict[str, Any]:
         "warmup_status": _optional_text(account.get("warmupStatus")),
         "subscription": {
             "status": subscription_status,
-            "usable": None if subscription_status is None else _subscription_usable(subscription_status),
+            "usable": None if subscription_status is None else _subscription_usable(subscription_status, account),
         },
         "usable": usable,
         "usability_reasons": usability_reasons,
@@ -117,8 +119,8 @@ def _account_usability(status: str, subscription: str | None, account: dict[str,
         return "blocked", ["no balance"]
     if status != "active":
         return "blocked", [f"account status is {status}"]
-    if not _subscription_usable(subscription):
-        return "blocked", ["subscription is canceled"]
+    if not _subscription_usable(subscription, account):
+        return "blocked", [_subscription_blocker(subscription)]
     usage = account.get("usage") if isinstance(account.get("usage"), dict) else None
     if usage is None:
         return "unknown", ["account usage telemetry is missing"]
@@ -233,8 +235,14 @@ def _quota_exhausted(quota: dict[str, Any]) -> bool:
     return quota["primary"]["remaining_percent"] == 0 and _future(quota["primary"]["reset_at"])
 
 
-def _subscription_usable(status: str | None) -> bool:
-    return (status or "").strip().casefold() != "canceled"
+def _subscription_usable(status: str | None, account: dict[str, Any]) -> bool:
+    return (status or "").strip().casefold() != "canceled" and account.get("deactivationReason") != _ORG_BLOCKED
+
+
+def _subscription_blocker(status: str | None) -> str:
+    if (status or "").strip().casefold() == "canceled":
+        return "subscription is canceled"
+    return "subscription is not usable: the provider refuses OAuth for this organization"
 
 
 def _model_provider(model: str) -> str | None:
