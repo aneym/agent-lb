@@ -1,8 +1,6 @@
 import hashlib
 import json
 
-from headless_run import settled  # type: ignore[missing-import]
-
 _RANK = {"allow": 1, "ask": 2, "deny": 3}
 
 
@@ -99,7 +97,7 @@ def merge_objects(event, objects, plain):
     if contexts:
         specific["additionalContext"] = "\n".join(contexts)
     if specific:
-        merged["hookSpecificOutput"] = dict([("hookEventName", event)] + list(settled(specific).items()))
+        merged["hookSpecificOutput"] = dict([("hookEventName", event)] + list(specific.items()))
     if stop_reasons:
         merged["stopReason"] = "\n".join(stop_reasons)
     if system:

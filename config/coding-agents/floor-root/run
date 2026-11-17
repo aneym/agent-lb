@@ -25,7 +25,6 @@ DROP = {
 GIT_PINS = {"core.fsmonitor": "false", "core.hooksPath": "/dev/null"}
 TOP = {"continue", "stopReason", "suppressOutput", "systemMessage", "decision", "reason", "hookSpecificOutput"}
 SPECIFIC = {"hookEventName", "additionalContext", "permissionDecision", "permissionDecisionReason"}
-REFUSAL = {"behavior", "message"}
 
 
 def floor_env():
@@ -73,10 +72,6 @@ def unique(pairs):
 def kept(data):
     if not isinstance(data, dict):
         return None
-    if HOOKS not in sys.path:
-        sys.path.insert(0, HOOKS)
-    from headless_run import settled
-
     out = {}
     for key, value in data.items():
         if key not in TOP:
@@ -91,11 +86,7 @@ def kept(data):
             specific = {k: v for k, v in value.items() if k in SPECIFIC}
             if specific.get("permissionDecision") not in (None, "deny", "ask"):
                 specific.pop("permissionDecision")
-            refusal = value.get("decision")
-            if value.get("hookEventName") == "PermissionRequest" and isinstance(refusal, dict):
-                if refusal.get("behavior") == "deny":
-                    specific["decision"] = {k: v for k, v in refusal.items() if k in REFUSAL}
-            value = settled(specific)
+            value = specific
         out[key] = value
     return out
 

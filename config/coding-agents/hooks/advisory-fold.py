@@ -12,8 +12,6 @@ import tempfile
 import time
 import traceback
 
-from headless_run import settled  # type: ignore[missing-import]
-
 HERE = os.path.dirname(os.path.realpath(__file__))
 REGISTRY = os.path.join(HERE, "advisory-fold")
 EVENTS = ("PreToolUse", "PostToolUse")
@@ -250,8 +248,6 @@ def merged(event, base, others):
         out["hookSpecificOutput"] = specific
     if messages:
         out["systemMessage"] = "\n".join(messages)
-    if isinstance(out.get("hookSpecificOutput"), dict):
-        out["hookSpecificOutput"] = settled(out["hookSpecificOutput"])
     return out
 
 

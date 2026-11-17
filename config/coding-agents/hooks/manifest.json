@@ -274,16 +274,6 @@
         "timeout": 15
       },
       "needs_source": true
-    },
-    {
-      "event": "PermissionRequest",
-      "matcher": null,
-      "hook": {
-        "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/headless-approval-deny.py\"",
-        "timeout": 10
-      },
-      "needs_source": false
     }
   ]
 }
