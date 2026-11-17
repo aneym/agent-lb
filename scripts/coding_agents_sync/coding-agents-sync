@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from claude_config_pull import pull_claude_config  # type: ignore[missing-import]
 from export_prune import prune_exports  # type: ignore[missing-import]
+from policy_python import missing_detail, policy_python  # type: ignore[missing-import]
 from routing_table_digest import table_digest  # type: ignore[missing-import]
 from sync_records import (  # type: ignore[missing-import]
     applied_commit,
@@ -200,9 +201,12 @@ def sync(home, clone, origin, wait, install_timeout):
             if output(git(eg + ["rev-parse", "HEAD"], "export_failed")) != candidate:
                 git(eg + ["checkout", "--detach", candidate], "export_failed", 120)
             policy = export / "config/coding-agents"
+            python = policy_python()
+            if python is None:
+                raise Failure("python_too_old", missing_detail())
             if previous == candidate:
                 preview = run(
-                    [sys.executable, str(policy / "install-policy.py"), "--home", str(home), "--print"], install_timeout
+                    [python, str(policy / "install-policy.py"), "--home", str(home), "--print"], install_timeout
                 )
                 if (
                     preview.returncode == 0
@@ -213,7 +217,7 @@ def sync(home, clone, origin, wait, install_timeout):
                     return payload("unchanged", candidate, previous, warnings=warnings)
             try:
                 verification = run(
-                    [sys.executable, str(policy / "verify-routing"), "--source-only"],
+                    [python, str(policy / "verify-routing"), "--source-only"],
                     120,
                     dict(os.environ, AGENT_LB_USER_HOME=str(home)),
                 )
@@ -237,7 +241,7 @@ def sync(home, clone, origin, wait, install_timeout):
                 raise Failure("install_failed", "marker: %s" % exc)
             try:
                 proc = subprocess.Popen(
-                    [sys.executable, str(policy / "install-policy.py"), "--home", str(home)],
+                    [python, str(policy / "install-policy.py"), "--home", str(home)],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     start_new_session=True,
