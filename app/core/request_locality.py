@@ -25,6 +25,8 @@ _CONTAINER_BRIDGE_HOSTS = {
 }
 _CONTAINER_BRIDGE_SUFFIXES = (".orb.internal", ".orb.local")
 _HOST_GATE_EXEMPT_PREFIXES = ("/v1", "/backend-api", "/muse", "/muse-api", "/health")
+INGRESS_PROOF_HEADER = b"x-agent-lb-ingress-proof"
+INGRESS_PROOF_SCOPE_KEY = "agent_lb_ingress_proof"
 _FORWARDED_CLIENT_IP_HEADERS = {
     "x-forwarded-for",
     "forwarded",
@@ -258,15 +260,21 @@ def is_unauthenticated_client_allowed(request: HTTPConnection) -> bool:
 
 
 def is_dashboard_keyless_client(request: HTTPConnection) -> bool:
-    client_host = resolve_request_client_host(request)
-    if client_host is None:
+    candidates = [request.client.host if request.client else None]
+    if request.scope.get(INGRESS_PROOF_SCOPE_KEY) is True:
+        candidates.append(resolve_request_client_host(request))
+    networks = [ip_network(cidr, strict=False) for cidr in get_settings().dashboard_keyless_client_cidrs]
+    return any(_address_in(candidate, networks) for candidate in candidates)
+
+
+def _address_in(host: str | None, networks: list[IPv4Network | IPv6Network]) -> bool:
+    if host is None:
         return False
     try:
-        client_ip = ip_address(client_host)
+        address = ip_address(host)
     except ValueError:
         return False
-    configured_cidrs = get_settings().dashboard_keyless_client_cidrs
-    return any(client_ip in ip_network(cidr, strict=False) for cidr in configured_cidrs)
+    return any(address in network for network in networks)
 
 
 def is_trusted_client(request: HTTPConnection) -> bool:

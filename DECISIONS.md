@@ -275,3 +275,7 @@ A limit answer that names a reset now holds the account until that reset plus up
 ## 2026-11-17: Operator routes need a key
 
 Loopback no longer reads accounts, pools, usage or keys without one: shared agents get their own unix users on ax102, and anything on loopback could list the pool. `dashboard_api_key_required` turns the check on; `dashboard_keyless_client_cidrs` keeps the browser dashboard open to the operator's own devices. Each local caller has its own key in agent-secret.
+
+## 2026-11-17: Keyless dashboard needs the real peer
+
+A forwarded address counts for the keyless list only with the ingress proof file, so no ax42 process can claim the operator's devices over loopback.

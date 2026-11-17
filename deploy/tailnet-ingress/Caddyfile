@@ -8,6 +8,22 @@
 http://:{$AGENT_LB_TAILNET_PORT:2455} {
 	bind {$AGENT_LB_TAILNET_IP}
 	reverse_proxy 127.0.0.1:{$AGENT_LB_FRONT_PORT:2455} {
+		header_up X-Agent-Lb-Ingress-Proof {file.{$AGENT_LB_INGRESS_PROOF_FILE}}
+		flush_interval -1
+		stream_close_delay 10m
+		transport http {
+			read_timeout 20m
+			write_timeout 20m
+			keepalive 10m
+		}
+	}
+}
+
+http:// {
+	bind unix/{$AGENT_LB_STUDIO_SOCKET}|0600
+	reverse_proxy 127.0.0.1:{$AGENT_LB_FRONT_PORT:2455} {
+		header_up X-Forwarded-For {http.request.header.X-Forwarded-For}
+		header_up X-Agent-Lb-Ingress-Proof {file.{$AGENT_LB_INGRESS_PROOF_FILE}}
 		flush_interval -1
 		stream_close_delay 10m
 		transport http {

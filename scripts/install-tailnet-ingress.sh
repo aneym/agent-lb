@@ -32,9 +32,15 @@ put() {
   CHANGED+=("$dest")
 }
 
+PROOF="$CONFIG/ingress-proof"
+if [[ ! -s "$PROOF" ]]; then
+  (umask 077 && mkdir -p "$CONFIG" && head -c 48 /dev/urandom | base64 | tr -d '\n=+/' > "$PROOF")
+fi
+chmod 600 "$PROOF"
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
-printf 'AGENT_LB_TAILNET_IP=%s\nAGENT_LB_TAILNET_PORT=2455\nAGENT_LB_FRONT_PORT=2455\n' "$IP" > "$TMP"
+printf 'AGENT_LB_TAILNET_IP=%s\nAGENT_LB_TAILNET_PORT=2455\nAGENT_LB_FRONT_PORT=2455\nAGENT_LB_INGRESS_PROOF_FILE=%s\nAGENT_LB_STUDIO_SOCKET=%s\n' \
+  "$IP" "$PROOF" "$XDG_RUNTIME_DIR/agent-lb-tailnet-ingress/studio.sock" > "$TMP"
 put "$TMP" "$ENV_FILE"
 put "$ROOT/deploy/tailnet-ingress/Caddyfile" "$CADDYFILE"
 put "$ROOT/deploy/systemd/$UNIT" "$UNIT_FILE"
