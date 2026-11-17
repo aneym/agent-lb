@@ -18,7 +18,6 @@ EVENTS = ("PreToolUse", "PostToolUse")
 SHA = re.compile(r"[0-9a-f]{12}")
 SIMPLE = re.compile(r"[A-Za-z0-9_|]+")
 DEFAULT_TIMEOUT = 60
-UPDATES = ("updatedInput", "updatedMCPToolOutput")
 INPROC = re.compile(
     r'(?P<interp>/usr/bin/python3|python3) "\$HOME/\.claude/hooks/(?P<name>[A-Za-z0-9_.-]+\.py)"(?P<args>(?: [A-Za-z0-9_-]+)*)'
 )
@@ -242,19 +241,10 @@ def merged(event, base, others):
             contexts.append(specific["additionalContext"])
         if isinstance(data.get("systemMessage"), str):
             messages.append(data["systemMessage"])
-    updates = {}
-    for data in [base] + others:
-        specific = data.get("hookSpecificOutput")
-        for key in UPDATES:
-            if isinstance(specific, dict) and key in specific and key not in updates:
-                updates[key] = specific[key]
-    if contexts or updates:
+    if contexts:
         specific = out.get("hookSpecificOutput") if isinstance(out.get("hookSpecificOutput"), dict) else {}
         specific.setdefault("hookEventName", event)
-        if contexts:
-            specific["additionalContext"] = "\n".join(contexts)
-        for key, value in updates.items():
-            specific.setdefault(key, value)
+        specific["additionalContext"] = "\n".join(contexts)
         out["hookSpecificOutput"] = specific
     if messages:
         out["systemMessage"] = "\n".join(messages)
