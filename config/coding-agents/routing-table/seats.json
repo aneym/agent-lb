@@ -27,7 +27,7 @@
     "Explore": {
       "vendor": "anthropic",
       "box": null,
-      "model": "sonnet-latest",
+      "model": "opus-latest",
       "effort": "medium"
     },
     "opus-seat": {

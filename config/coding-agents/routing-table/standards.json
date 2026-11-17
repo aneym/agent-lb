@@ -69,11 +69,11 @@
     },
     "explore": {
       "seat": "Explore",
-      "model": "sonnet-latest",
+      "model": "opus-latest",
       "effort": "medium",
       "explore": false,
       "authority": "none",
-      "evidence": "Explore stays the read-only explorer (rules/workflow.md cut, 2026-11-06)"
+      "evidence": "Explore stays the read-only explorer (rules/workflow.md cut, 2026-11-06); on Opus 5.5 medium since the 2026-11-17 helper sample (~/.agent-rails/factory/receipts/explore-sonnet-loss-2026-11-17.md)"
     },
     "research": {
       "seat": "opus-seat",
@@ -133,11 +133,11 @@
     },
     "count": {
       "seat": "Explore",
-      "model": "sonnet-latest",
+      "model": "opus-latest",
       "effort": "medium",
       "explore": true,
       "authority": "none",
-      "evidence": "Back on its Claude seat (Explore, Sonnet 5.5 medium) after the 2026-11-12 helper sample found a Sol count wrong (261 vs 263 migrations); r1-usage decides when Sol returns (~/.agent-rails/factory/receipts/sol-count-loss-2026-11-12.md)"
+      "evidence": "Back on its Claude seat after the 2026-11-12 helper sample found a Sol count wrong (~/.agent-rails/factory/receipts/sol-count-loss-2026-11-12.md); that seat moved from Sonnet 5.5 to Opus 5.5 medium after the 2026-11-17 sample found Sonnet Explore thin and wrong (~/.agent-rails/factory/receipts/explore-sonnet-loss-2026-11-17.md)"
     },
     "judge": {
       "seat": "general-purpose",

@@ -61,7 +61,7 @@
       "chain": [
         {
           "seat": "Explore",
-          "model": "sonnet-latest",
+          "model": "opus-latest",
           "vendor": "anthropic",
           "effort": "medium"
         }
@@ -71,7 +71,7 @@
       "chain": [
         {
           "seat": "Explore",
-          "model": "sonnet-latest",
+          "model": "opus-latest",
           "vendor": "anthropic",
           "effort": "medium"
         }
