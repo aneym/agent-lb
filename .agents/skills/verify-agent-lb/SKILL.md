@@ -46,7 +46,8 @@ Before enabling actual drives, the proof host must provide a fresh instance,
 fixture-only database, synthetic request logs, a disposable provider identity,
 an enforced spend cap, outbound containment, and cleanup for all allocated
 state. No such backend is supplied by this slice. Prod verification, if later
-needed, requires `agent-test-account --lane weekend-finish`; this does not
+needed, takes a rails-one test account (`test/run_account.py take --lane
+weekend-finish` from a rails-one checkout); this does not
 provision OpenAI or Anthropic identities or authorize operator credentials.
 
 ## Drive

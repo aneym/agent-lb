@@ -47,7 +47,6 @@ for ((i=0; i<${#args[@]}; i++)); do
     prompt_file=${args[i]#--prompt-file=}
   fi
 done
-account_args=()
 if [[ $review == 1 ]]; then
   for arg in "$@"; do
     case "$arg" in
@@ -58,8 +57,6 @@ if [[ $review == 1 ]]; then
     echo 'codex-local: review requires an explicit non-empty --prompt-file brief' >&2
     exit 2
   fi
-  account_args=(--require-owner)
-  python3 "$(dirname "$0")/codex-local-account.py" --prompt-file "$prompt_file" --require-owner --validate-only
   args+=(--fresh --json)
   set -- "${args[@]}"
 fi
@@ -150,10 +147,6 @@ if [[ -n $prompt_file ]]; then
     fi
   done
   set -- "${args[@]}"
-  account_env=$(python3 "$(dirname "$0")/codex-local-account.py" --prompt-file "$prompt_file" --shell-env ${account_args[@]+"${account_args[@]}"})
-  if [[ -n $account_env ]]; then
-    eval "$account_env"
-  fi
 fi
 
 focus_dir=$(mktemp -d "${TMPDIR:-/tmp}/codex-local-focus.XXXXXX")
