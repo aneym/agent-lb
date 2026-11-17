@@ -141,6 +141,8 @@ RETIRED_HOOKS = (
     "workflow-readback.py",
     "lane-bulletin-hook",
     "child-routing.py",
+    "headless-approval-deny.py",
+    "headless_run.py",
 )
 
 

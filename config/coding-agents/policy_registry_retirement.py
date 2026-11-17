@@ -8,6 +8,8 @@ from hook_retired_invocation import retired_invocation  # type: ignore[missing-i
 from policy_layout import POLICY_DIR, RETIRED_HOOKS  # type: ignore[missing-import]
 
 SHIPPED_SHA256 = {
+    "headless-approval-deny.py": frozenset({"c087bfb1ef25c8cd4e70ae098d3b820e858db5265c1328734ba1fdef32852ed5"}),
+    "headless_run.py": frozenset({"e653c7aef8573195119ec49e713f8135358ad44a8f6fb8a5949c51e8b7e4b457"}),
     "child-routing.py": frozenset({"e86013e66def20217a1577f1c195ad29321dd32618c0b3fd5775d9a8b600e1de"}),
     "plutil-guard.sh": frozenset({"7877e73fc9c6dbdc1fbc8d9cd98d8445a6ebb2c68e24496551b40ee40d155b97"}),
     "dangerous-cmd-guard.py": frozenset({"d5e2632f04977732912406e50695882255a57dbfc5e87749922d7e62f7a3377d"}),
