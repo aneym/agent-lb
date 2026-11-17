@@ -6,6 +6,7 @@ from app.core.audit.service import AuditService
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.config.settings_cache import get_settings_cache
 from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
+from app.core.request_locality import resolve_request_client_host
 from app.dependencies import TeamContext, get_team_context
 from app.modules.api_keys.api import _to_response as _api_key_to_response
 from app.modules.api_keys.schemas import ApiKeyCreateResponse
@@ -158,7 +159,7 @@ async def create_team_member(
         raise DashboardBadRequestError(str(exc), code="invalid_team_member_payload") from exc
     AuditService.log_async(
         "team_member_created",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"member_id": member.id},
     )
     return _to_member_response(member)
@@ -206,7 +207,7 @@ async def update_team_member(
         raise DashboardBadRequestError(str(exc), code="invalid_team_member_payload") from exc
     AuditService.log_async(
         "team_member_updated",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"member_id": member.id, "changed_fields": sorted(fields)},
     )
     return _to_member_response(member)
@@ -224,7 +225,7 @@ async def delete_team_member(
         raise DashboardNotFoundError(str(exc)) from exc
     AuditService.log_async(
         "team_member_deleted",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"member_id": member_id},
     )
     return Response(status_code=204)
@@ -261,7 +262,7 @@ async def create_team_member_key(
     await bump_api_key_cache_namespace()
     AuditService.log_async(
         "team_member_key_created",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={
             "member_id": member.id,
             "key_id": created.id,

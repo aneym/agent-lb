@@ -24,7 +24,7 @@ from app.core.exceptions import (
     DashboardConflictError,
     DashboardRateLimitError,
 )
-from app.core.request_locality import is_local_request
+from app.core.request_locality import is_local_request, resolve_request_client_host
 from app.dependencies import DashboardAuthContext, get_dashboard_auth_context
 from app.modules.dashboard_auth.schemas import (
     DashboardAuthSessionResponse,
@@ -174,9 +174,7 @@ async def login_password(
         ) from exc
 
     try:
-        await context.service.verify_password(
-            payload.password, actor_ip=request.client.host if request.client else None
-        )
+        await context.service.verify_password(payload.password, actor_ip=resolve_request_client_host(request))
     except InvalidCredentialsError as exc:
         raise DashboardAuthError(str(exc), code="invalid_credentials") from exc
     except PasswordNotConfiguredError as exc:
@@ -286,7 +284,7 @@ async def confirm_totp_setup(
             session_id=session_id,
             secret=payload.secret,
             code=payload.code,
-            actor_ip=request.client.host if request.client else None,
+            actor_ip=resolve_request_client_host(request),
         )
     except PasswordSessionRequiredError as exc:
         raise DashboardAuthError(str(exc)) from exc
@@ -330,7 +328,7 @@ async def verify_totp(
             session_id=current_session_id,
             code=payload.code,
             ttl_seconds=session_ttl_seconds,
-            actor_ip=request.client.host if request.client else None,
+            actor_ip=resolve_request_client_host(request),
         )
     except PasswordSessionRequiredError as exc:
         raise DashboardAuthError(str(exc)) from exc
@@ -376,7 +374,7 @@ async def disable_totp(
         await context.service.disable_totp(
             session_id=session_id,
             code=payload.code,
-            actor_ip=request.client.host if request.client else None,
+            actor_ip=resolve_request_client_host(request),
         )
     except PasswordSessionRequiredError as exc:
         raise DashboardAuthError(str(exc)) from exc

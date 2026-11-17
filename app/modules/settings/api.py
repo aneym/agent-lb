@@ -10,6 +10,7 @@ from app.core.audit.service import AuditService
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.config.settings_cache import get_settings_cache
 from app.core.exceptions import DashboardBadRequestError
+from app.core.request_locality import resolve_request_client_host
 from app.dependencies import SettingsContext, get_settings_context
 from app.modules.accounts.service_caches import invalidate_additional_quotas_cache
 from app.modules.settings.schemas import (
@@ -353,7 +354,7 @@ async def update_settings(
         invalidate_additional_quotas_cache()
     AuditService.log_async(
         "settings_changed",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"changed_fields": changed_fields},
     )
     return _dashboard_settings_response(updated)

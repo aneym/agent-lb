@@ -60,6 +60,7 @@ def _serve(port: int) -> None:
         ws_ping_timeout=None,
         ws_per_message_deflate=False,
         log_config=None,
+        proxy_headers=False,
     )
 
 

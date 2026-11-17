@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from app.core.audit.service import AuditService
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.exceptions import DashboardBadRequestError
+from app.core.request_locality import resolve_request_client_host
 from app.dependencies import QuotaPlannerContext, get_quota_planner_context
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.proxy.account_cache import get_account_selection_cache
@@ -183,7 +184,7 @@ async def update_quota_planner_settings(
     get_account_selection_cache().invalidate()
     AuditService.log_async(
         "quota_planner_settings_changed",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"mode": saved.mode},
     )
     return _settings_response(saved)

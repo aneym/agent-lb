@@ -326,6 +326,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         ws_ping_timeout=None,
         ws_per_message_deflate=False,
         log_config=None,
+        proxy_headers=False,
     )
 
 

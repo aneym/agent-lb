@@ -10,6 +10,7 @@ from app.core.auth.refresh import RefreshError
 from app.core.clients.rate_limit_resets import ResetCreditsError
 from app.core.config.settings import get_settings
 from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
+from app.core.request_locality import resolve_request_client_host
 from app.dependencies import AccountsContext, get_accounts_context
 from app.modules.accounts.auth_manager import AccountNotOwnedError
 from app.modules.accounts.errors import AccountNotProbableError, AccountStateTransitionError, InvalidAuthJsonError
@@ -95,7 +96,7 @@ async def export_account(
     response.headers["Expires"] = "0"
     AuditService.log_async(
         "account_exported",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"account_id": result.account_id},
     )
     return result
@@ -116,7 +117,7 @@ async def export_account_auth(
     response.headers["Expires"] = "0"
     AuditService.log_async(
         "account_auth_exported",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"account_id": account_id},
     )
     return result
@@ -137,7 +138,7 @@ async def export_account_opencode_auth(
     response.headers["Expires"] = "0"
     AuditService.log_async(
         "account_auth_exported",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"account_id": account_id},
     )
     return result
@@ -154,7 +155,7 @@ async def import_account(
         response = await context.service.import_account(raw)
         AuditService.log_async(
             "account_created",
-            actor_ip=request.client.host if request.client else None,
+            actor_ip=resolve_request_client_host(request),
             details={"account_id": response.account_id},
         )
         return response
@@ -178,7 +179,7 @@ async def import_api_key_account(
         raise DashboardConflictError(str(exc), code="duplicate_identity_conflict") from exc
     AuditService.log_async(
         "account_created",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"account_id": response.account_id, "provider": payload.provider},
     )
     return response
@@ -236,7 +237,7 @@ async def update_account(
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     AuditService.log_async(
         "account_updated",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={
             "account_id": account_id,
             "changed_fields": changed_fields,
@@ -273,7 +274,7 @@ async def probe_account(
             await service._load_balancer.record_success(account)
     AuditService.log_async(
         "account_probed",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={
             "account_id": result.account_id,
             "probe_status_code": result.probe_status_code,
@@ -340,7 +341,7 @@ async def consume_account_reset_credit(
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     AuditService.log_async(
         "account_reset_credit_redeemed",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={
             "account_id": account_id,
             "credit_id": credit_id,
@@ -429,7 +430,7 @@ async def check_account_subscription(
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     AuditService.log_async(
         "account_subscription_checked",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={
             "account_id": result.account_id,
             "working": result.working,
@@ -451,7 +452,7 @@ async def update_account_subscription(
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     AuditService.log_async(
         "account_subscription_ledger_updated",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"account_id": account_id, "subscription_status": subscription.status},
     )
     return AccountSubscriptionUpdateResponse(account_id=account_id, subscription=subscription)
@@ -469,7 +470,7 @@ async def delete_account(
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     AuditService.log_async(
         "account_deleted",
-        actor_ip=request.client.host if request.client else None,
+        actor_ip=resolve_request_client_host(request),
         details={"account_id": account_id, "delete_history": delete_history},
     )
     return AccountDeleteResponse(status="deleted")
