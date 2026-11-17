@@ -28,8 +28,12 @@ def call(agent: str, tool: str, arguments: dict, timeout: int = 45) -> dict:
     return payload
 
 
-def ask_owner(agent: str, question: str, options: list[str]) -> dict:
-    payload = call(agent, "ask", {"to": "owner", "question": question, "options": options})
+def owner_arguments(question: str, options: list[str], floor: str) -> dict:
+    return {"to": "owner", "floor": floor, "question": question, "options": options}
+
+
+def ask_owner(agent: str, question: str, options: list[str], *, floor: str) -> dict:
+    payload = call(agent, "ask", owner_arguments(question, options, floor))
     if "error" in payload:
         return {"landed": False, "detail": payload["error"]}
     ask = payload.get("ask") if isinstance(payload.get("ask"), dict) else payload

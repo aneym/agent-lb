@@ -51,7 +51,7 @@ def file_ask(entry: dict, email: str, account_id: str, kind: str, profile: Brows
         entry["askId"] = "dry-run"
         entry["askKind"] = kind
         return "would file ask: " + text.splitlines()[0] + f" ({WHY.get(kind, kind)})"
-    landed = rails_ask.ask_owner(ASKER, text, options)
+    landed = rails_ask.ask_owner(ASKER, text, options, floor="login")
     if not landed.get("landed"):
         return f"ask not filed: {landed.get('detail')}"
     entry["askId"] = landed["askId"]

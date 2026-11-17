@@ -9,6 +9,7 @@ from app.core.thread_delivery import send
 
 ASKER = os.getenv("AGENT_LB_RECARD_ASKER", "factory")
 CHAT = os.getenv("AGENT_LB_RECARD_CHAT", "rails")
+FLOOR = "spend"
 
 
 def quiet() -> bool:
@@ -39,7 +40,7 @@ def approval_ask(
     day = date.fromisoformat(renews_on).strftime("%b %-d")
     lines = [
         f"Approve the ${total:.2f} Link card for the {plan} renewal of {email} ({day})",
-        f"Approve it here: {url}",
+        url,
         "The card goes on the claude.ai billing page by itself within seconds of your approval.",
     ]
     if not signed_in:
@@ -62,7 +63,7 @@ def ask_for_approval(email: str, plan: str, total: float, renews_on: str, url: s
         notice["ask"] = notice["chat"] = {"landed": False, "detail": "quiet"}
         return notice
     question, options = approval_ask(email, plan, total, renews_on, url, signed_in)
-    notice["ask"] = rails_ask.ask_owner(ASKER, question, options)
+    notice["ask"] = rails_ask.ask_owner(ASKER, question, options, floor=FLOOR)
     notice["chat"] = _deliver(CHAT, chat_line(email, plan, total, url, signed_in), "queue")
     return notice
 

@@ -24,7 +24,7 @@ from app.core.link_spend import (
 from app.core.profile_lock import profile_held
 from app.core.recards import load_recards, save_recard
 from app.core.subscriptions import LedgerUnavailable, Subscription, load_subscriptions, save_subscriptions
-from app.recard_notice import ASKER, CHAT, approval_ask, ask_for_approval, card_on, chat_line, tell_factory
+from app.recard_notice import ASKER, CHAT, FLOOR, approval_ask, ask_for_approval, card_on, chat_line, tell_factory
 from app.recard_signin import signed_in_ahead
 from app.recard_watch import held, spawn
 from app.recard_window import open_billing_window
@@ -86,7 +86,7 @@ def _dry_start(email: str, subscription: Subscription, total: float) -> dict:
         "ownerAsk": {
             "from": ASKER,
             "command": rails_ask.rails_command(ASKER, "ask"),
-            "arguments": {"to": "owner", "question": question, "options": options},
+            "arguments": rails_ask.owner_arguments(question, options, FLOOR),
             **rails_ask.reachable(ASKER),
         },
         "chatLine": {"to": CHAT, "mode": "queue", "text": chat_line(email, subscription.plan, total, url, signed)},
