@@ -35,6 +35,7 @@ NON_FLOOR_GUARDS = {
     "wrangler-d1-guard.py": "house rule: ad-hoc SQL on the live rails-one D1 goes through rails-one-sql, not raw wrangler d1 execute --remote",
     "t3-db-guard.py": "house rule: no direct reads of a live T3 state database (statev2.sqlite); use the t3 CLI or T3 MCP",
     "clerk-secret-guard.py": "house rule: product agent homes never read the prod Clerk secret, agent-secret's custody store or the test token script",
+    "personal-token-guard.py": "house rule: no agent session names or reads Alex's or Nate's personal Vercel tokens without Alex's yes",
 }
 FLOOR_TEXT = "BLOCKED: Dangerous command"
 INLINE_FLOOR = "dangerous-command"
