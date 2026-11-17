@@ -71,8 +71,14 @@ from app.modules.proxy.anthropic_rate_limits import (
     rate_limit_error_from_response,
 )
 from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, overloaded_backoff_jitter
+from app.modules.proxy.anthropic_thread_anchor import ThreadAnchor
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
 from app.modules.proxy.anthropic_transport import AnthropicTransport
+from app.modules.proxy.anthropic_upstream_error_body import (
+    error_type_for_status,
+    read_error_details,
+    read_error_message,
+)
 from app.modules.proxy.claude_codex_bridge import estimate_claude_input_tokens
 from app.modules.proxy.claude_model_identity import with_route_model_identity
 from app.modules.proxy.compat_errors import STOP_STATUS, pool_exhausted, refresh_due, refuses_plan, rejects_key
@@ -366,14 +372,6 @@ class _AnthropicQuotaEligibility:
     burn_first_account_ids: frozenset[str] = frozenset()
 
 
-@dataclass(frozen=True, slots=True)
-class _AnthropicErrorDetails:
-    message: str
-    error_type: str | None = None
-
-    details: Any | None = None
-
-
 def _upload_admission_error(exc: upload_admission.UploadAdmissionTimeout) -> tuple[str, str]:
     code = (
         "upload_admission_rejected"
@@ -422,6 +420,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             provider_name=provider_name,
             quota_key=affinity_quota_key,
         )
+        anchor = ThreadAnchor(payload, self._repo_factory, enabled=provider_name == ANTHROPIC_PROVIDER_NAME)
         upload_class = upload_admission.upload_class(inbound_headers)
         wait_enabled = (
             bool(payload.stream)
@@ -443,7 +442,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             useragent_group=useragent_group,
         )
         try:
-            first_account = await self._select_account(
+            first_account = await anchor.pinned() or await self._select_account(
                 payload.model,
                 provider_name=provider_name,
                 exclude_account_ids=selected_account_ids,
@@ -493,7 +492,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                             account = account_override
                             account_override = None
                         else:
-                            account = await self._select_account(
+                            account = anchor.no_failover() or await self._select_account(
                                 payload.model,
                                 provider_name=provider_name,
                                 exclude_account_ids=selected_account_ids,
@@ -503,7 +502,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                             selected_account_ids.add(account.id)
                         if not limit_backoff.claim(account.id):
                             continue
-                        last_account = account
+                        last_account = anchor.serving(account)
                         last_stall = None
                         try:
                             access_token = await self._fresh_access_token(account)
@@ -638,7 +637,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                                         last_error_message = rule_client_message(rule, _provider_label(provider_name))
                                         continue
                                 if resp.status in {401, 403}:
-                                    error_message = await _read_error_message(resp)
+                                    error_message = await read_error_message(resp)
                                     error_code = f"upstream_{resp.status}"
                                     if refresh_due(provider_name, resp.status, account.id, auth_retried_account_ids):
                                         auth_retried_account_ids.add(account.id)
@@ -703,7 +702,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                                     last_error_message = error_message
                                     continue
                                 if resp.status == 429:
-                                    error_message = await _read_error_message(resp)
+                                    error_message = await read_error_message(resp)
                                     rate_limit_error = rate_limit_error_from_response(resp, error_message)
                                     if provider_name == "kimi":
                                         rate_limit_error = await kimi_monthly_rate_limit_error(
@@ -743,7 +742,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                                     last_error_message = error_message
                                     continue
                                 if resp.status in TRANSIENT_UPSTREAM_STATUSES:
-                                    error_message = await _read_error_message(resp)
+                                    error_message = await read_error_message(resp)
                                     await self._load_balancer.record_error(account)
                                     await self._persist_request_log(
                                         account=account,
@@ -772,7 +771,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                                         break
                                     continue
                                 if resp.status >= 400:
-                                    error_details = await _read_error_details(resp)
+                                    error_details = await read_error_details(resp)
 
                                     if resp.status != 404:
                                         await self._load_balancer.record_error(account)
@@ -798,7 +797,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                                     raise AnthropicProxyError(
                                         resp.status,
                                         error_details.message,
-                                        code=error_details.error_type or _anthropic_error_type_for_status(resp.status),
+                                        code=error_details.error_type or error_type_for_status(resp.status),
                                         details=error_details.details,
                                     )
 
@@ -1124,7 +1123,9 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                 raise exhausted_error
 
         return AnthropicProxyStream(
-            body=self._release_on_early_disconnect(selection_refusal.watch(body(), refuse), api_key_reservation),
+            body=self._release_on_early_disconnect(
+                selection_refusal.watch(anchor.watch(body()), refuse), api_key_reservation
+            ),
             media_type=media_type,
         )
 
@@ -2433,55 +2434,6 @@ def _usage_from_json_body(raw: bytes) -> AnthropicUsage | None:
         return AnthropicUsage.model_validate(usage_data)
     except ValidationError:
         return None
-
-
-async def _read_error_message(resp: aiohttp.ClientResponse) -> str:
-    return (await _read_error_details(resp)).message
-
-
-async def _read_error_details(resp: aiohttp.ClientResponse) -> _AnthropicErrorDetails:
-    raw = await resp.read()
-    if not raw:
-        return _AnthropicErrorDetails(f"Anthropic upstream returned HTTP {resp.status}")
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return _AnthropicErrorDetails(raw.decode("utf-8", errors="replace"))
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict):
-            message = error.get("message")
-            error_type = error.get("type")
-            if isinstance(message, str):
-                return _AnthropicErrorDetails(
-                    message,
-                    error_type if isinstance(error_type, str) else None,
-                    error.get("details"),
-                )
-        if isinstance(payload.get("message"), str):
-            error_type = payload.get("type")
-            return _AnthropicErrorDetails(
-                payload["message"],
-                error_type if isinstance(error_type, str) else None,
-                payload.get("details"),
-            )
-    return _AnthropicErrorDetails(f"Anthropic upstream returned HTTP {resp.status}")
-
-
-def _anthropic_error_type_for_status(status_code: int) -> str:
-    if status_code == 429:
-        return "rate_limit_error"
-    if status_code == 529:
-        return "overloaded_error"
-    if status_code == 504:
-        return "timeout_error"
-    if status_code >= 500:
-        return "api_error"
-    if status_code in {401, 403}:
-        return "authentication_error"
-    if status_code == 404:
-        return "not_found_error"
-    return "invalid_request_error"
 
 
 def _pool_wait_should_hold(
