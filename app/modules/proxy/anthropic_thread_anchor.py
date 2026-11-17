@@ -60,6 +60,8 @@ class ThreadAnchor:
             return None
         async with self._repo_factory() as repos:
             account = await repos.accounts.get_by_id(account_id)
+            if account is not None:
+                repos.accounts.session.expunge(account)
         servable = account is not None and account.status not in _UNSERVABLE
         logger.info(
             "anthropic_thread_anchor previous=%s state=%s account=%s servable=%s",
@@ -117,7 +119,8 @@ class ThreadAnchor:
             return entry[0], "inflight_waited"
         async with self._repo_factory() as repos:
             row = await repos.sticky_sessions.get_entry(_KEY_PREFIX + message_id, kind=StickySessionKind.CODEX_SESSION)
-        return (row.account_id, "stored") if row is not None else (None, "unknown")
+            account_id = row.account_id if row is not None else None
+        return (account_id, "stored") if account_id is not None else (None, "unknown")
 
     async def _remember(self, message_id: str, account_id: str) -> None:
         try:
