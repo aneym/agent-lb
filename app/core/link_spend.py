@@ -25,6 +25,10 @@ def _link(*args: str) -> object:
         raise LinkError(f"link-cli exited {result.returncode} without JSON") from None
     if isinstance(payload, dict) and payload.get("code"):
         raise LinkError(f"link-cli {payload['code']}: {str(payload.get('message', ''))[:200]}")
+    if isinstance(payload, dict) and "cta" in payload:
+        payload = {key: value for key, value in payload.items() if key != "cta"}
+        if payload and all(key.isdigit() for key in payload):
+            payload = [payload[key] for key in sorted(payload, key=int)]
     return payload[0] if isinstance(payload, list) and payload else payload
 
 
