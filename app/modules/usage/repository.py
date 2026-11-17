@@ -4,7 +4,7 @@ from collections.abc import Collection
 from datetime import datetime
 
 from anyio import to_thread
-from sqlalchemy import Integer, and_, delete, func, insert, literal, select, true
+from sqlalchemy import Integer, String, and_, column, delete, func, insert, literal, select, true, values
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.settings import get_settings
@@ -247,7 +247,10 @@ class UsageRepository(UsageHistoryTrends):
                 since,
             )
 
-        ranked = (
+        requested = values(column("account_id", String), name="requested_accounts").data(
+            [(account_id,) for account_id in dict.fromkeys(account_ids)]
+        )
+        latest = (
             select(
                 UsageHistory.id,
                 UsageHistory.account_id,
@@ -255,31 +258,28 @@ class UsageRepository(UsageHistoryTrends):
                 UsageHistory.recorded_at,
                 UsageHistory.reset_at,
                 UsageHistory.window_minutes,
-                func.row_number()
-                .over(
-                    partition_by=UsageHistory.account_id,
-                    order_by=(UsageHistory.recorded_at.desc(), UsageHistory.id.desc()),
-                )
-                .label("rn"),
             )
             .where(
-                UsageHistory.account_id.in_(account_ids),
+                UsageHistory.account_id == requested.c.account_id,
                 _window_clause(window),
                 UsageHistory.recorded_at >= since,
             )
-            .subquery("ranked_history")
+            .order_by(UsageHistory.recorded_at.desc(), UsageHistory.id.desc())
+            .limit(BULK_HISTORY_MAX_ROWS_PER_ACCOUNT)
+            .lateral("latest_history")
         )
         stmt = (
             select(
-                ranked.c.id,
-                ranked.c.account_id,
-                ranked.c.used_percent,
-                ranked.c.recorded_at,
-                ranked.c.reset_at,
-                ranked.c.window_minutes,
+                latest.c.id,
+                latest.c.account_id,
+                latest.c.used_percent,
+                latest.c.recorded_at,
+                latest.c.reset_at,
+                latest.c.window_minutes,
             )
-            .where(ranked.c.rn <= BULK_HISTORY_MAX_ROWS_PER_ACCOUNT)
-            .order_by(ranked.c.account_id, ranked.c.recorded_at.asc())
+            .select_from(requested)
+            .join(latest, true())
+            .order_by(latest.c.account_id, latest.c.recorded_at.asc())
         )
         result = await self._session.execute(stmt)
         grouped: dict[str, list[UsageHistorySnapshot]] = {}
