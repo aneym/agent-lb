@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
+from app.core.claim_code_mask import mask_tool_result
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
@@ -173,7 +174,7 @@ def _sanitize_input_items(input_items: list[JsonValue]) -> list[JsonValue]:
         sanitized_item = _sanitize_interleaved_reasoning_input_item(item)
         if sanitized_item is None:
             continue
-        sanitized_input.append(_normalize_role_input_item(sanitized_item))
+        sanitized_input.append(mask_tool_result(_normalize_role_input_item(sanitized_item)))
     return sanitized_input
 
 
