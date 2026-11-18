@@ -21,6 +21,7 @@ from claude_config_hooks import claude_config_files  # type: ignore[missing-impo
 from client_bundle import install_client_bundle, stale_client_bundle  # type: ignore[missing-import]
 from codex_home import codex_changes  # type: ignore[missing-import]
 from codex_hook_trust import trust_floor_hooks  # type: ignore[missing-import]
+from codex_scrub_timer import ensure_scrub_timer  # type: ignore[missing-import]
 from dispatch_parity import run_parity  # type: ignore[missing-import]
 from floor_allowlist import non_floor_check, unwrap_floors  # type: ignore[missing-import]
 from floor_invariant import refuse_floor_changes  # type: ignore[missing-import]
@@ -321,6 +322,7 @@ def main() -> int:
         print(hand_off(source, args.home, changes))
     if not args.uninstall:
         print("local MCP: " + json.dumps(ensure_harness_mcp(args.home, subprocess.run), sort_keys=True))
+    print("codex rollout scrub: " + ensure_scrub_timer(args.home, not args.uninstall))
     if not changes:
         for reason, path in preserved_agents:
             print(f"preserved {reason} {path}")

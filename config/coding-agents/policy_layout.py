@@ -182,6 +182,8 @@ POLICY_FILES = (
     "codex_home.py",
     "codex_catalog.py",
     "codex_tool_scope.py",
+    "codex_rollout_scrub.py",
+    "codex_scrub_timer.py",
     "codex_hook_trust.py",
     "harness_mcp.py",
     "policy_inventory.py",
