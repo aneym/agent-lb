@@ -18,6 +18,7 @@ from typing import Any
 
 import hookd_install  # type: ignore[missing-import]
 from claude_config_hooks import claude_config_files  # type: ignore[missing-import]
+from client_bundle import install_client_bundle, stale_client_bundle  # type: ignore[missing-import]
 from codex_home import codex_changes  # type: ignore[missing-import]
 from codex_hook_trust import trust_floor_hooks  # type: ignore[missing-import]
 from dispatch_parity import run_parity  # type: ignore[missing-import]
@@ -304,12 +305,15 @@ def main() -> int:
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
     )
+    bundle = None if args.uninstall else stale_client_bundle(source, args.home)
     if args.preview:
         for path in changes:
             print(f"would {action} {path}")
         for reason, path in preserved_agents:
             print(f"would preserve {reason} {path}")
-        if not changes:
+        if bundle:
+            print(f"would install client bundle {bundle}")
+        elif not changes:
             print("managed routing configuration already converged")
         return 0
     if not args.uninstall and root_floors():
@@ -319,7 +323,7 @@ def main() -> int:
     if not changes:
         for reason, path in preserved_agents:
             print(f"preserved {reason} {path}")
-        print("managed routing configuration already converged")
+        print(install_client_bundle(source, args.home) if bundle else "managed routing configuration already converged")
         print("codex floor hooks: " + ("skipped" if args.uninstall else trust_floor_hooks(args.home)))
         return 0
 
@@ -365,6 +369,8 @@ def main() -> int:
     hookd_install.ensure_daemon(args.home, any(path.parent == args.home / ".claude/hooks" for path in changes))
     for reason, path in preserved_agents:
         print(f"preserved {reason} {path}")
+    if bundle:
+        print(install_client_bundle(source, args.home))
     print("codex floor hooks: " + ("skipped" if args.uninstall else trust_floor_hooks(args.home)))
     return 0
 

@@ -24,8 +24,9 @@ case "${1:-}" in
   --print) MODE="print" ;;
   --uninstall) MODE="uninstall" ;;
   --clients-only) MODE="clients-only" ;;
+  --bundle-status) MODE="bundle-status" ;;
   "") ;;
-  *) echo "usage: $0 [--print | --uninstall | --clients-only]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--print | --uninstall | --clients-only | --bundle-status]" >&2; exit 2 ;;
 esac
 
 
@@ -85,7 +86,7 @@ def digest(root):
 
 version = digest(source)
 destination = runtime / "versions" / version
-if sys.argv[3] != "print":
+if sys.argv[3] not in ("print", "bundle-status"):
     if destination.exists():
         if destination.is_symlink() or digest(destination) != version:
             sys.exit(f"error: installed client bundle differs from its version: {destination}")
@@ -152,6 +153,18 @@ remove_retired_artifacts() {
   fi
   "$CLAUDE_BIN" mcp remove --scope user ccdex-worker >/dev/null 2>&1 || true
 }
+
+if [[ "$MODE" == "bundle-status" ]]; then
+  bundle="$(prepare_bundle)"
+  if [[ ! -L "$CURRENT" ]]; then
+    echo "unmanaged $bundle"
+  elif [[ "$(readlink "$CURRENT")" == "$bundle" ]]; then
+    echo "current $bundle"
+  else
+    echo "stale $bundle"
+  fi
+  exit 0
+fi
 
 if [[ "$MODE" == "print" ]]; then
   bundle="$(prepare_bundle)"
