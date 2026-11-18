@@ -10,6 +10,7 @@ CATALOG = Path(".codex/model-catalog.json")
 PROVIDER = "agent-lb"
 SETTING = re.compile(r"^\s*model_catalog_json\s*=")
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+RESERVED_TOOLS = {"literature_search_query"}
 
 
 def served_catalog(config_text: str) -> str | None:
@@ -32,6 +33,9 @@ def served_catalog(config_text: str) -> str | None:
         return None
     for model in models:
         model["tool_mode"] = None
+        tools = model.get("experimental_supported_tools")
+        if isinstance(tools, list):
+            model["experimental_supported_tools"] = [tool for tool in tools if tool not in RESERVED_TOOLS]
     return json.dumps(data, indent=2, sort_keys=True) + "\n"
 
 
