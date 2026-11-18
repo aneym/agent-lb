@@ -27,6 +27,9 @@ STOP_BY_NAME_COMMAND = (
     "naming pkill, killall, fuser -k, or kill next to a pgrep, pidof or lsof lookup is refused until it does. Stop only "
     'the PID you recorded when you started it, with kill <pid>; free a port with port-free <port>." >&2; exit 2; fi'
 )
+BRIDGE_RESTART_COMMAND = (
+    'G="$HOME/.claude/hooks/bridge-restart-guard.py"; if [ -r "$G" ]; then exec /usr/bin/python3 "$G" codex; fi; exit 0'
+)
 PY_FLOOR_HOOKS = (
     "gh-write-guard.py",
     "stash-guard",
@@ -49,7 +52,7 @@ FLOOR_COMMANDS = (
     CLAIM_WRAP_COMMAND,
     CLAIM_OUTPUT_COMMAND,
 )
-TRUSTED_COMMANDS = (*FLOOR_COMMANDS, STOP_BY_NAME_COMMAND, MEMORY_COMMAND)
+TRUSTED_COMMANDS = (*FLOOR_COMMANDS, STOP_BY_NAME_COMMAND, BRIDGE_RESTART_COMMAND, MEMORY_COMMAND)
 MANAGED_HOOKS: tuple[tuple[str, str, int, str | None], ...] = (
     (OFFLOAD_COMMAND, "PreToolUse", 20, "Bash"),
     (WALK_GUARD_COMMAND, "PreToolUse", 10, "Bash"),
@@ -61,6 +64,7 @@ MANAGED_HOOKS: tuple[tuple[str, str, int, str | None], ...] = (
     *((command, "PreToolUse", 10, "Bash") for command in BASH_FLOOR_COMMANDS),
     *(((BOOTOUT_GUARD_COMMAND, "PreToolUse", 5, "Bash"),) if sys.platform == "darwin" else ()),
     (STOP_BY_NAME_COMMAND, "PreToolUse", 10, "Bash"),
+    (BRIDGE_RESTART_COMMAND, "PreToolUse", 10, "Bash"),
     (CLAIM_WRAP_COMMAND, "PreToolUse", 5, "Bash"),
     (CLAIM_OUTPUT_COMMAND, "PostToolUse", 5, "mcp__.*"),
     (MEMORY_COMMAND, "SessionStart", 10, "startup|resume|clear|compact"),
