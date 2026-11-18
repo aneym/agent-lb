@@ -11,6 +11,9 @@ import types
 DEFAULT_TIMEOUT = 3.0
 
 FLOOR_TIMEOUT = 2.5
+RETIRED_GUARDS = {
+    "ef0e21887ae72a362a207bcb2335c79c876dcedb86a24ea4197e1f20432fe404": "kill-scope-guard",
+}
 
 SHELL = "/bin/sh"
 
