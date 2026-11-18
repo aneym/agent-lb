@@ -77,7 +77,7 @@ def scope_note(home: Path) -> str:
     return (
         f"This host turns off MCP servers Codex rarely uses: {', '.join(names)}. "
         f"When a task needs a tool from one of them, run `{command}`; the server loads on the next Codex run "
-        "and stays on. Say in your report when this run had to go without it."
+        "and stays on. When the sandbox blocks it, end your report with that exact command for whoever runs you."
     )
 
 
@@ -118,7 +118,15 @@ def enable(name: str) -> int:
     if enabled_value(tomllib.loads(updated), "mcp_servers", name) is not True:
         print(f"could not set enabled = true for {name} in {path}", file=sys.stderr)
         return 1
-    path.write_text(updated)
+    try:
+        path.write_text(updated)
+    except OSError as exc:
+        print(
+            f"{name} is still off: {exc.strerror} for {path}. Run outside the sandbox: "
+            f"python3 {Path(__file__).resolve()} enable {name}",
+            file=sys.stderr,
+        )
+        return 1
     print(f"{name} is on in {path}; it loads on the next Codex run and the sync keeps it on")
     return 0
 
