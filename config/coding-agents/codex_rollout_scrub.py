@@ -21,6 +21,9 @@ STATE = Path(".local/state/codex-rollout-scrub")
 HISTORY_TABLES = ("thread_items", "thread_realtime_items")
 PENDING_SECONDS = 600
 WRITE_FLAGS = os.O_WRONLY | os.O_RDWR
+ADHOC_ROOTS = (".agent-rails", "orch-lab-hosts", "tmp")
+ADHOC_DEPTH = 4
+ADHOC_PRUNE = {"node_modules", ".git", "worktrees", "sessions", "archived_sessions"}
 
 
 def load_matcher() -> ModuleType:
@@ -53,6 +56,30 @@ def codex_homes(home: Path) -> list[Path]:
     jobs = sorted(home.glob(".agent-rails/jobs/codex-homes/*"))
     found = [*named, home / ".codex", *sorted(home.glob(".codex-*")), *jobs]
     return list(dict.fromkeys(p.resolve() for p in found if (p / "sessions").is_dir()))
+
+
+def holds_rollouts(sessions: Path) -> bool:
+    if sessions.is_symlink() or not sessions.is_dir():
+        return False
+    return any(next(sessions.glob(pattern), None) for pattern in ("rollout-*.jsonl", "*/*/*/rollout-*.jsonl"))
+
+
+def adhoc_homes(home: Path, known: list[Path]) -> list[Path]:
+    found = []
+    for root in ADHOC_ROOTS:
+        top = home / root
+        if not top.is_dir():
+            continue
+        base = len(top.parts)
+        for dirpath, dirnames, _ in os.walk(top):
+            here = Path(dirpath)
+            if "sessions" in dirnames and holds_rollouts(here / "sessions"):
+                found.append(here.resolve())
+                dirnames.clear()
+                continue
+            keep = len(here.parts) - base < ADHOC_DEPTH
+            dirnames[:] = [name for name in dirnames if keep and name not in ADHOC_PRUNE]
+    return [path for path in dict.fromkeys(found) if path not in known]
 
 
 def rollouts(codex: Path) -> list[Path]:
@@ -297,7 +324,9 @@ def scrub_history(codex: Path, state: dict, full: bool, fresh: set[str]) -> tupl
 def main() -> int:
     parser = argparse.ArgumentParser(description="Mask claim codes in Codex rollouts and thread history; counts only.")
     parser.add_argument("--home", type=Path, default=Path.home())
-    parser.add_argument("--full", action="store_true", help="rescan every rollout and history row")
+    parser.add_argument(
+        "--full", action="store_true", help="rescan every rollout and history row, ad hoc Codex homes included"
+    )
     parser.add_argument("--quiet", action="store_true", help="print only when something was masked")
     args = parser.parse_args()
     state_dir = args.home / STATE
@@ -309,7 +338,13 @@ def main() -> int:
             return 0
         state_path = state_dir / "state.json"
         state = json.loads(state_path.read_text()) if state_path.is_file() else {}
-        for codex in codex_homes(args.home):
+        homes = codex_homes(args.home)
+        if args.full:
+            adhoc = adhoc_homes(args.home, homes)
+            homes += adhoc
+            if not args.quiet:
+                print(f"ad hoc Codex homes: {len(adhoc)}")
+        for codex in homes:
             files, codes, threads = scrub_rollouts(codex, state, args.full)
             rows, row_codes = scrub_history(codex, state, args.full, threads)
             if not args.quiet or codes or row_codes:
