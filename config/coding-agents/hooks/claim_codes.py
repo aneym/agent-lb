@@ -1,5 +1,6 @@
 import json
 import re
+import sys
 
 CODE = re.compile(r"rac_[A-Za-z0-9_-]{16,}")
 MASK = "rac_***"
@@ -27,7 +28,23 @@ def output_fields(payload):
     if response is None or not holds(response):
         return None
     clean = scrub(response)
+    mcp = str(payload.get("tool_name") or "").startswith("mcp__")
+    if "turn_id" in payload:
+        return {"updatedMCPToolOutput": clean} if mcp else None
     fields = {"updatedToolOutput": clean}
-    if str(payload.get("tool_name") or "").startswith("mcp__"):
+    if mcp:
         fields["updatedMCPToolOutput"] = clean
     return fields
+
+
+def post(payload):
+    fields = output_fields(payload)
+    if fields:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", **fields}}))
+
+
+if __name__ == "__main__":
+    try:
+        post(json.load(sys.stdin))
+    except ValueError:
+        pass

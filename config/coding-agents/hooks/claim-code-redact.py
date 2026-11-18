@@ -2,7 +2,7 @@ import json
 import re
 import sys
 
-from claim_codes import FILTER, output_fields  # type: ignore[missing-import]
+from claim_codes import FILTER, post  # type: ignore[missing-import]
 
 SOURCES = re.compile(r"rac_|agent_create|claim|one\.rails\.so|/mcp\b", re.I)
 DETACHED = re.compile(r"(?<![&>|])&(?![&>])|\b(nohup|setsid|disown|exec)\b")
@@ -24,12 +24,17 @@ def wrapped_monitor(command):
     return f"set -o pipefail; {{ {command}\n}} 2> >({FILTER} >&2) | {FILTER}"
 
 
-def wrap(data):
+def wrap(data, every):
     tool_input = data.get("tool_input") or {}
     command = tool_input.get("command")
-    if not isinstance(command, str) or not SOURCES.search(command) or DETACHED.search(command):
+    if not isinstance(command, str):
         return
-    rewrite = wrapped_monitor if data.get("tool_name") == "Monitor" else wrapped_bash
+    if data.get("tool_name") == "Monitor":
+        rewrite = wrapped_monitor
+    elif DETACHED.search(command) or not (every or tool_input.get("run_in_background") or SOURCES.search(command)):
+        return
+    else:
+        rewrite = wrapped_bash
     emit("PreToolUse", updatedInput={**tool_input, "command": rewrite(command)})
 
 
@@ -42,11 +47,9 @@ def main():
         return 0
     event = data.get("hook_event_name")
     if event == "PreToolUse" and data.get("tool_name") in ("Bash", "Monitor"):
-        wrap(data)
+        wrap(data, "codex" in sys.argv[1:])
     elif event == "PostToolUse":
-        fields = output_fields(data)
-        if fields:
-            emit("PostToolUse", **fields)
+        post(data)
     return 0
 
 
