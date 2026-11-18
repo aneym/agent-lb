@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
 from codex_catalog import catalog_changes  # type: ignore[missing-import]
@@ -24,26 +25,46 @@ STOP_BY_NAME_COMMAND = (
     "naming pkill, killall, fuser -k, or kill next to a pgrep, pidof or lsof lookup is refused until it does. Stop only "
     'the PID you recorded when you started it, with kill <pid>; free a port with port-free <port>." >&2; exit 2; fi'
 )
+PY_FLOOR_HOOKS = (
+    "gh-write-guard.py",
+    "stash-guard",
+    "rm-dynamic-deny",
+    "kill-scope-guard.py",
+    "user-manager-guard.py",
+    "host-credential-guard.py",
+)
+SH_FLOOR_HOOKS = ("dangerous-command-guard.sh", "railway-vars-guard.sh", "link-cli-guard.sh")
+BASH_FLOOR_COMMANDS = tuple(f'/usr/bin/python3 "$HOME/.claude/hooks/{name}"' for name in PY_FLOOR_HOOKS) + tuple(
+    f'/bin/bash "$HOME/.claude/hooks/{name}"' for name in SH_FLOOR_HOOKS
+)
+BOOTOUT_GUARD_COMMAND = '/bin/bash "$HOME/.claude/hooks/agent-lb-bootout-guard.sh"'
 FLOOR_COMMANDS = (
     BRANCH_GUARD_COMMAND,
     HOOKS_OFF_COMMAND,
     WALK_GUARD_COMMAND,
     OUTBOUND_COMMAND,
+    *BASH_FLOOR_COMMANDS,
+    BOOTOUT_GUARD_COMMAND,
     CLAIM_WRAP_COMMAND,
     CLAIM_OUTPUT_COMMAND,
 )
 TRUSTED_COMMANDS = (*FLOOR_COMMANDS, STOP_BY_NAME_COMMAND, MEMORY_COMMAND)
-MANAGED_COMMANDS: dict[str, tuple[str, int, str | None]] = {
-    OFFLOAD_COMMAND: ("PreToolUse", 20, "Bash"),
-    WALK_GUARD_COMMAND: ("PreToolUse", 10, "Bash"),
-    BRANCH_GUARD_COMMAND: ("PreToolUse", 10, "Bash"),
-    OUTBOUND_COMMAND: ("PreToolUse", 15, "Bash"),
-    HOOKS_OFF_COMMAND: ("PreToolUse", 10, "apply_patch"),
-    STOP_BY_NAME_COMMAND: ("PreToolUse", 10, "Bash"),
-    CLAIM_WRAP_COMMAND: ("PreToolUse", 5, "Bash"),
-    CLAIM_OUTPUT_COMMAND: ("PostToolUse", 5, "mcp__.*"),
-    MEMORY_COMMAND: ("SessionStart", 10, "startup|resume|clear|compact"),
-}
+MANAGED_HOOKS: tuple[tuple[str, str, int, str | None], ...] = (
+    (OFFLOAD_COMMAND, "PreToolUse", 20, "Bash"),
+    (WALK_GUARD_COMMAND, "PreToolUse", 10, "Bash"),
+    (BRANCH_GUARD_COMMAND, "PreToolUse", 10, "Bash"),
+    (OUTBOUND_COMMAND, "PreToolUse", 15, "Bash"),
+    (OUTBOUND_COMMAND, "PreToolUse", 15, "mcp__.*"),
+    (HOOKS_OFF_COMMAND, "PreToolUse", 10, "apply_patch"),
+    (HOOKS_OFF_COMMAND, "PreToolUse", 10, "Bash"),
+    *((command, "PreToolUse", 10, "Bash") for command in BASH_FLOOR_COMMANDS),
+    *(((BOOTOUT_GUARD_COMMAND, "PreToolUse", 5, "Bash"),) if sys.platform == "darwin" else ()),
+    (STOP_BY_NAME_COMMAND, "PreToolUse", 10, "Bash"),
+    (CLAIM_WRAP_COMMAND, "PreToolUse", 5, "Bash"),
+    (CLAIM_OUTPUT_COMMAND, "PostToolUse", 5, "mcp__.*"),
+    (MEMORY_COMMAND, "SessionStart", 10, "startup|resume|clear|compact"),
+)
+MANAGED_COMMANDS = frozenset((*TRUSTED_COMMANDS, OFFLOAD_COMMAND))
 
 
 def reconcile_codex_config(text: str, model: str) -> str:
@@ -82,7 +103,7 @@ def reconcile_codex_hooks(text: str, install: bool) -> str:
     data = json.loads(text) if text.strip() else {}
     if not isinstance(data, dict) or not isinstance(data.setdefault("hooks", {}), dict):
         raise ValueError("hooks.json is not an object with a hooks object")
-    for event in dict.fromkeys(event for event, _timeout, _matcher in MANAGED_COMMANDS.values()):
+    for event in dict.fromkeys(event for _command, event, _timeout, _matcher in MANAGED_HOOKS):
         kept: list[dict[str, object]] = []
         for group in data["hooks"].get(event, []):
             hooks = [
@@ -90,7 +111,7 @@ def reconcile_codex_hooks(text: str, install: bool) -> str:
             ]
             if hooks or not group.get("hooks"):
                 kept.append(dict(group, hooks=hooks))
-        for command, (wanted, timeout, matcher) in MANAGED_COMMANDS.items():
+        for command, wanted, timeout, matcher in MANAGED_HOOKS:
             if install and wanted == event:
                 entry: dict[str, object] = {"type": "command", "command": command, "timeout": timeout}
                 kept.append({"hooks": [entry]} if matcher is None else {"matcher": matcher, "hooks": [entry]})
