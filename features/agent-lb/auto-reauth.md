@@ -10,7 +10,7 @@ proofs: []
 # Auto-reauth
 
 ## Sub-features
-`agent-lb reauth-auto run` reauths enrolled Anthropic accounts in their own Chrome profiles with three allowed clicks, pages through one Factory owner ask per account when a person is needed, and visits each profile weekly to catch lapsed sessions early.
+`agent-lb reauth-auto run` reauths enrolled Anthropic accounts in their own Chrome profiles with three allowed clicks, pages through one Factory owner ask per account (at most daily, never again for a cause the owner cleared) when a person is needed, and visits each profile weekly to catch lapsed sessions early.
 
 ## How to get to it
 `agent-lb reauth-auto --help`; enroll with `agent-lb reauth-auto enroll <account id>`; install the job with `scripts/install-reauth-auto.sh`.

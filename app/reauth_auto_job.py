@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.core.browser_profiles import profile_for, registry_path
 from app.lb_service import ServiceError, request, retrying
-from app.reauth_ask import answered, file_ask, note_error, withdraw_ask
+from app.reauth_ask import changed, closure, file_ask, note_error, withdraw_ask
 from app.reauth_auto import reauth_account
 from app.reauth_enroll import load_enrolled, refusal
 from app.reauth_keepalive import due, visit
@@ -72,15 +72,20 @@ class Job:
             return "stuck in the last 24 h; waiting for the ask"
         return None
 
+    def _closure(self, account_id: str, email: str, entry: dict) -> None:
+        closed = None if self.dry_run else closure(entry)
+        if closed == "answered":
+            entry.pop("stuckAt", None)
+            entry["tries"] = []
+            self.log(account_id, email, "ask_answered", "retrying now")
+        elif closed == "cleared":
+            self.log(account_id, email, "ask_cleared", "no new ask until the account changes")
+
     def _reauth(self, account: dict, profile) -> None:
         account_id, email = account["accountId"], profile.email
         entry = self.state.setdefault(account_id, {})
         now = time.time()
         forced = account_id in self.now_ids
-        if not self.dry_run and answered(entry):
-            entry.pop("stuckAt", None)
-            entry["tries"] = []
-            self.log(account_id, email, "ask_answered", "retrying now")
         hold = None if forced else self._may_try(entry, now)
         if hold:
             self.log(account_id, email, "backoff", hold, quiet_repeat=True)
@@ -93,6 +98,7 @@ class Job:
         self.log(account_id, email, outcome.result, f"{outcome.detail}; {bound}{clicks}".strip("; "))
         if outcome.result == "active":
             entry.pop("stuckAt", None)
+            changed(entry, lapsed=False)
             if note := withdraw_ask(entry, dry_run=self.dry_run):
                 self.log(account_id, email, "ask", note)
         elif outcome.result.startswith("stuck:") or outcome.result == "bind_not_live":
@@ -103,6 +109,7 @@ class Job:
                     email,
                     "ask",
                     file_ask(entry, email, account_id, outcome.result, profile, dry_run=self.dry_run),
+                    quiet_repeat=True,
                 )
         elif outcome.result == "error":
             self.log(
@@ -121,14 +128,17 @@ class Job:
         if result != "skipped":
             entry["keepaliveAt"] = time.time()
         self.log(account_id, profile.email, f"keepalive:{result}", detail)
-        if result == "ok" and str(entry.get("askKind", "")).startswith("lapsed:"):
-            self.log(account_id, profile.email, "ask", withdraw_ask(entry, dry_run=False) or "")
+        if result == "ok":
+            changed(entry, lapsed=True)
+            if str(entry.get("askKind", "")).startswith("lapsed:"):
+                self.log(account_id, profile.email, "ask", withdraw_ask(entry, dry_run=False) or "")
         elif result.startswith("lapsed:"):
             self.log(
                 account_id,
                 profile.email,
                 "ask",
                 file_ask(entry, profile.email, account_id, result, profile, dry_run=False),
+                quiet_repeat=True,
             )
 
     def _account(self, account: dict, enrolled: dict) -> None:
@@ -136,6 +146,9 @@ class Job:
         needs = account.get("status") == "reauth_required" or account_id in self.now_ids
         reason = refusal(account)
         if account_id not in enrolled or reason:
+            entry = self.state.get(account_id) or {}
+            if entry.get("askId"):
+                self.log(account_id, email, "ask", withdraw_ask(entry, dry_run=self.dry_run) or "")
             if needs:
                 self.log(account_id, email, "skipped", reason or "not enrolled", quiet_repeat=True)
             return
@@ -144,11 +157,14 @@ class Job:
             self.log(account_id, email, "no_profile", "enrolled but no browser profile on this host", quiet_repeat=True)
             return
         entry = self.state.setdefault(account_id, {})
+        self._closure(account_id, email, entry)
         if needs:
             self._reauth(account, profile)
-        elif entry.get("askId") and not str(entry.get("askKind", "")).startswith("lapsed:"):
-            entry.pop("stuckAt", None)
-            self.log(account_id, email, "active", withdraw_ask(entry, dry_run=self.dry_run) or "")
+        else:
+            changed(entry, lapsed=False)
+            if entry.get("askId") and not str(entry.get("askKind", "")).startswith("lapsed:"):
+                entry.pop("stuckAt", None)
+                self.log(account_id, email, "active", withdraw_ask(entry, dry_run=self.dry_run) or "")
         if self.keepalive:
             self._keepalive(account, profile)
 

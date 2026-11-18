@@ -27,10 +27,12 @@ REFUSED_PREFIXES = ("25600cac", "86fe250c", "bfb49472")
 def auto_reauth_enrolled():
     path = Path.home() / ".agent-lb/state/auto-reauth-enrolled.json"
     try:
-        accounts = json.loads(path.read_text()).get("accounts")
-    except (OSError, ValueError, AttributeError):
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
         return set()
-    return set(accounts) if isinstance(accounts, dict) else set()
+    if not isinstance(data, dict):
+        return set()
+    return {key for name in ("accounts", "dropped") if isinstance(data.get(name), dict) for key in data[name]}
 
 
 def key_headers():

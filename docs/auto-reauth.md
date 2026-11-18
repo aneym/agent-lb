@@ -4,6 +4,7 @@ When an enrolled Anthropic account goes `reauth_required`, `agent-lb reauth-auto
 
 ## Who it acts on
 - Only accounts enrolled by account id: `agent-lb reauth-auto enroll <id or prefix>`, `unenroll`, `list`. The list is `~/.agent-lb/state/auto-reauth-enrolled.json`.
+- `agent-lb reauth-auto drop <id or prefix> --why "<reason>"` takes an account the owner does not need out of renewal: the next tick withdraws its open ask, and `account-health-watch` stays quiet about its `reauth_required`. `enroll` brings it back.
 - Never an account with `ownerInstance` set, never an openai account, and never the three account-id prefixes refused in `app/reauth_enroll.py`. Those log `skipped`.
 - An enrolled account with no browser profile on the host logs `no_profile` and pages nobody.
 
@@ -17,7 +18,8 @@ When an enrolled Anthropic account goes `reauth_required`, `agent-lb reauth-auto
 
 ## Backoff and pages
 - One run at a time (`auto-reauth.lock`), accounts in turn. At most one try per account every 6 hours and 3 a day; after a stuck result, none for 24 hours unless the ask is answered.
-- A stuck or `bind_not_live` result on a `reauth_required` account files one owner ask from Factory (`rails_ask.ask_owner`). It is never filed again while open and is withdrawn when the account turns active. Option 2 points at the account's dashboard page with `?signin=1`, which starts a fresh flow with the paste box (flows live 15 minutes, so the ask holds none).
+- A stuck or `bind_not_live` result on a `reauth_required` account files one owner ask from Factory (`rails_ask.ask_owner`). Each tick reads the ask from Rails. While it is open nothing new is filed, and Rails' own duplicate refusal hands back the open one. It is withdrawn when the account turns active.
+- One ask per account per day at most. Once the owner answers or clears it, that cause raises no new ask until the account changes: a renewal that works (or a keep-alive that comes back clean, for `lapsed:` causes) resets it, and a different stuck cause may ask again after a day. Picking an option retries at once; clearing or "not needed" keeps the 24-hour backoff. Option 2 points at the account's dashboard page with `?signin=1`, which starts a fresh flow with the paste box (flows live 15 minutes, so the ask holds none).
 - Success is a log line. `error` goes to Factory's thread at most once a day.
 - `run --dry-run` clicks nothing, files nothing and keeps its own state file, so a second dry tick shows the dedupe. `run --now <id>` tries an enrolled account whatever its status.
 - `account-health-watch` stops posting `reauth_required` for enrolled accounts and posts nothing for openai accounts or the refused prefixes.

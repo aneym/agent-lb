@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from datetime import date
 
 from app.core import rails_ask
@@ -10,6 +11,7 @@ from app.core.profile_theme import profile_name
 from app.core.thread_delivery import send
 
 ASKER = "factory"
+ASK_GAP_S = 24 * 3600
 DASHBOARD = os.getenv("AGENT_LB_DASHBOARD_URL", "https://studio.tailf266ac.ts.net:2455").rstrip("/")
 
 WHY = {
@@ -43,9 +45,20 @@ def question(email: str, account_id: str, kind: str, profile: BrowserProfile) ->
     return "\n".join(lines), ["Signed in on Studio", "Pasted the code in the dashboard"]
 
 
-def file_ask(entry: dict, email: str, account_id: str, kind: str, profile: BrowserProfile, *, dry_run: bool) -> str:
+def ask_hold(entry: dict, kind: str, now: float) -> str | None:
     if entry.get("askId"):
         return f"ask already open ({entry['askId']})"
+    if kind in entry.get("closedCauses", []):
+        return "the owner cleared this ask; no new one until the account changes"
+    if now - float(entry.get("askedAt") or 0) < ASK_GAP_S:
+        return "asked in the last day"
+    return None
+
+
+def file_ask(entry: dict, email: str, account_id: str, kind: str, profile: BrowserProfile, *, dry_run: bool) -> str:
+    now = time.time()
+    if hold := ask_hold(entry, kind, now):
+        return hold
     text, options = question(email, account_id, kind, profile)
     if dry_run:
         entry["askId"] = "dry-run"
@@ -56,16 +69,32 @@ def file_ask(entry: dict, email: str, account_id: str, kind: str, profile: Brows
         return f"ask not filed: {landed.get('detail')}"
     entry["askId"] = landed["askId"]
     entry["askKind"] = kind
-    return f"filed ask {landed['askId']}"
+    entry["askedAt"] = now
+    return f"{'kept open' if landed.get('repeat') else 'filed'} ask {landed['askId']}"
 
 
-def answered(entry: dict) -> bool:
+def closure(entry: dict) -> str | None:
     ask_id = entry.get("askId")
-    if not ask_id or ask_id == "dry-run" or rails_ask.ask_open(ASKER, ask_id):
-        return False
+    if not ask_id or ask_id == "dry-run":
+        return None
+    ask = rails_ask.ask_state(ASKER, ask_id)
+    if ask is None or rails_ask.is_open(ask):
+        return None
     entry.pop("askId", None)
-    entry.pop("askKind", None)
-    return True
+    kind = entry.pop("askKind", None)
+    causes = entry.setdefault("closedCauses", [])
+    if kind and kind not in causes:
+        causes.append(kind)
+    answer = ask.get("answer") if isinstance(ask.get("answer"), dict) else {}
+    return "answered" if answer.get("choice") and not answer.get("not_needed") else "cleared"
+
+
+def changed(entry: dict, *, lapsed: bool) -> None:
+    causes = [cause for cause in entry.get("closedCauses", []) if cause.startswith("lapsed:") != lapsed]
+    if causes:
+        entry["closedCauses"] = causes
+    else:
+        entry.pop("closedCauses", None)
 
 
 def withdraw_ask(entry: dict, *, dry_run: bool) -> str | None:
