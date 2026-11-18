@@ -20,7 +20,6 @@ FLOOR_HOOKS = {
     "user-manager-guard.py": "destructive: protected processes",
     "desktop-guard": "real people, his accounts and spend: agents stay off his desktop, where those happen",
     "wide-scan-guard.sh": "secrets: no recursive reads that print secrets",
-    "hooks-off-guard.py": "every floor: no setting that switches Claude Code hooks off",
     "outbound-send-guard.py": "real people: no direct Messages, Mail, SMS or mail-API send without a Rails hold receipt for that exact text",
     "claim-code-redact.py": "secrets: Rails one-use claim codes (rac_) never show in tool output",
     "claim_codes.py": "secrets: the claim code pattern and mask shared by claim-code-redact and the floor runner",

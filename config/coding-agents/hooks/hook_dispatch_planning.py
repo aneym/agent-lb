@@ -13,6 +13,7 @@ DEFAULT_TIMEOUT = 3.0
 FLOOR_TIMEOUT = 2.5
 RETIRED_GUARDS = {
     "ef0e21887ae72a362a207bcb2335c79c876dcedb86a24ea4197e1f20432fe404": "kill-scope-guard",
+    "55e8d7aab21929401ee2b7cd55381fa72b7a49f2b13d582fd1d73db9489fa502": "hooks-off-guard",
 }
 
 SHELL = "/bin/sh"

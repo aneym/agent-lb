@@ -166,16 +166,6 @@
       "needs_source": false
     },
     {
-      "event": "PreToolUse",
-      "matcher": "Bash|Edit|Write|MultiEdit",
-      "hook": {
-        "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/hooks-off-guard.py\"",
-        "timeout": 10
-      },
-      "needs_source": true
-    },
-    {
       "event": "SessionStart",
       "matcher": null,
       "hook": {

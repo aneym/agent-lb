@@ -9,7 +9,7 @@ OFFLOAD_COMMAND = (
     '[ -x "$P" ] || P=python3; if [ -r "$H" ]; then exec "$P" "$H"; fi'
 )
 BRANCH_GUARD_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/branch-guard.py"'
-HOOKS_OFF_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/hooks-off-guard.py"'
+RETIRED_COMMANDS = ('/usr/bin/python3 "$HOME/.claude/hooks/hooks-off-guard.py"',)
 WALK_GUARD_COMMAND = '/bin/bash "$HOME/.claude/hooks/wide-scan-guard.sh" --block-walks'
 OUTBOUND_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/outbound-send-guard.py"'
 MEMORY_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/codex-memory-brief.py"'
@@ -24,7 +24,6 @@ STOP_BY_NAME_COMMAND = (
 )
 FLOOR_COMMANDS = (
     BRANCH_GUARD_COMMAND,
-    HOOKS_OFF_COMMAND,
     WALK_GUARD_COMMAND,
     OUTBOUND_COMMAND,
     CLAIM_WRAP_COMMAND,
@@ -36,7 +35,6 @@ MANAGED_COMMANDS: dict[str, tuple[str, int, str | None]] = {
     WALK_GUARD_COMMAND: ("PreToolUse", 10, "Bash"),
     BRANCH_GUARD_COMMAND: ("PreToolUse", 10, "Bash"),
     OUTBOUND_COMMAND: ("PreToolUse", 15, "Bash"),
-    HOOKS_OFF_COMMAND: ("PreToolUse", 10, "apply_patch"),
     STOP_BY_NAME_COMMAND: ("PreToolUse", 10, "Bash"),
     CLAIM_WRAP_COMMAND: ("PreToolUse", 5, "Bash"),
     CLAIM_OUTPUT_COMMAND: ("PostToolUse", 5, "mcp__.*"),
@@ -84,7 +82,9 @@ def reconcile_codex_hooks(text: str, install: bool) -> str:
         kept: list[dict[str, object]] = []
         for group in data["hooks"].get(event, []):
             hooks = [
-                h for h in group.get("hooks", []) if not isinstance(h, dict) or h.get("command") not in MANAGED_COMMANDS
+                h
+                for h in group.get("hooks", [])
+                if not isinstance(h, dict) or h.get("command") not in (*MANAGED_COMMANDS, *RETIRED_COMMANDS)
             ]
             if hooks or not group.get("hooks"):
                 kept.append(dict(group, hooks=hooks))

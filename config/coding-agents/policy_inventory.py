@@ -26,7 +26,6 @@ MANAGED_HOOKS = (
     "approval_grandfathered.txt",
     "branch-guard.py",
     "git_push_floor.py",
-    "hooks-off-guard.py",
     "outbound-send-guard.py",
     "claim-code-redact.py",
     "claim_codes.py",

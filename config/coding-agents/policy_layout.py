@@ -271,6 +271,7 @@ DISPATCH_DROPPED = {
     "9185b387b7e583755f8534b4f1ef3cb3dbc08e860ba4270684920bd9bfd39e7e": "repeat-read-warn",
     "ce0d9c515ec1f3a44ac8e76013bfaf95e982e96616003d99bb508b585fed441b": "stash-guard from the engine",
     "ef0e21887ae72a362a207bcb2335c79c876dcedb86a24ea4197e1f20432fe404": "kill-scope-guard",
+    "55e8d7aab21929401ee2b7cd55381fa72b7a49f2b13d582fd1d73db9489fa502": "hooks-off-guard",
 }
 
 
