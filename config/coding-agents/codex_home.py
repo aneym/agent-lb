@@ -13,6 +13,7 @@ OFFLOAD_COMMAND = (
     '[ -x "$P" ] || P=python3; if [ -r "$H" ]; then exec "$P" "$H"; fi'
 )
 BRANCH_GUARD_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/branch-guard.py"'
+RETIRED_COMMANDS = ('/usr/bin/python3 "$HOME/.claude/hooks/kill-scope-guard.py"',)
 HOOKS_OFF_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/hooks-off-guard.py"'
 WALK_GUARD_COMMAND = '/bin/bash "$HOME/.claude/hooks/wide-scan-guard.sh" --block-walks'
 OUTBOUND_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/outbound-send-guard.py"'
@@ -30,7 +31,6 @@ PY_FLOOR_HOOKS = (
     "gh-write-guard.py",
     "stash-guard",
     "rm-dynamic-deny",
-    "kill-scope-guard.py",
     "user-manager-guard.py",
     "host-credential-guard.py",
 )
@@ -108,7 +108,9 @@ def reconcile_codex_hooks(text: str, install: bool) -> str:
         kept: list[dict[str, object]] = []
         for group in data["hooks"].get(event, []):
             hooks = [
-                h for h in group.get("hooks", []) if not isinstance(h, dict) or h.get("command") not in MANAGED_COMMANDS
+                h
+                for h in group.get("hooks", [])
+                if not isinstance(h, dict) or h.get("command") not in (*MANAGED_COMMANDS, *RETIRED_COMMANDS)
             ]
             if hooks or not group.get("hooks"):
                 kept.append(dict(group, hooks=hooks))
