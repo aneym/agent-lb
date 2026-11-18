@@ -310,7 +310,7 @@
       "matcher": "Bash|BashOutput|TaskOutput|Read|Grep|Monitor|Agent|Task|WebFetch|WebSearch",
       "hook": {
         "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claim-code-redact.py\"",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/claim-code-redact.py\" output",
         "timeout": 5
       },
       "needs_source": true
