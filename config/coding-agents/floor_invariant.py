@@ -78,9 +78,18 @@ def placed(entry: tuple[str, str, str]) -> tuple[str, str, str]:
 
 def overlaps(first: str, second: str) -> bool:
     names = [json.loads(matcher) for matcher in (first, second)]
-    if any(not isinstance(name, str) or name in ("", "*") or not NAME_LIST.fullmatch(name) for name in names):
+    if any(not isinstance(name, str) or name in ("", "*") for name in names):
         return True
-    return bool(set(names[0].split("|")) & set(names[1].split("|")))
+    tools = [name for name in names if NAME_LIST.fullmatch(name)]
+    patterns = [name for name in names if not NAME_LIST.fullmatch(name)]
+    if not patterns:
+        return bool(set(names[0].split("|")) & set(names[1].split("|")))
+    if not tools:
+        return True
+    try:
+        return any(re.search(patterns[0], tool) for tool in tools[0].split("|"))
+    except re.error:
+        return True
 
 
 def planned_text(path: Path, changes: dict[Path, str | None]) -> str | None:
