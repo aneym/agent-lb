@@ -15,3 +15,5 @@ On macOS pkill and killall treat every word after the first name as another name
 Machines and browser: `~/.agents/shared/MACHINES.md`. CLIs: `~/.agents/shared/CLI-INDEX.md`. Tests: load `test-audit` before writing or changing one. Research Alex asks for: run `x-pass "<question>"` once.
 
 Delegation: delegate bounded work to cheaper workers, answer simple asks directly. `~/.agent-lb/bin/route resolve <alias>` gives the model id; set `reasoning_effort` and `fork_turns: "none"`. Luna for mechanical, Terra for bounded implementation, Sol for hard diagnosis. Details: `~/.claude/docs/codex-delegation.md`.
+
+{{codex tool scope}}

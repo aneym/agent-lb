@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from codex_tool_scope import scope_note  # type: ignore[missing-import]
 from policy_layout import CODEX_END, CODEX_START, END, ROUTING_HEADINGS, START  # type: ignore[missing-import]
 
 
@@ -52,6 +53,7 @@ def install_adapter(text: str, template: str, path: Path) -> str:
 
 
 def render_codex_body(body: str, home: Path) -> str:
+    body = body.replace("{{codex tool scope}}", scope_note(home))
     placeholder = "{{inline: claude-config rules/floors.md}}"
     if placeholder not in body:
         return body
