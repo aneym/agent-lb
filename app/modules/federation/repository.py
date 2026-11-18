@@ -202,7 +202,10 @@ class FederationRepository(FederationTransferRepository, FederationUsageReposito
         local_instance_id: str,
         encryptor: TokenEncryptor,
         expires_at_ms: int | None = None,
+        subscription_status: str | None = None,
+        deactivation_reason: str | None = None,
     ) -> bool:
+        subscription = {} if subscription_status is None else {"subscription_status": subscription_status}
 
         existing = await self._session.get(Account, account_id)
         if existing is not None:
@@ -229,9 +232,10 @@ class FederationRepository(FederationTransferRepository, FederationUsageReposito
                     access_token_encrypted=encryptor.encrypt(access_token),
                     refresh_token_encrypted=encryptor.encrypt(""),
                     owner_instance=owner_instance_id,
-                    deactivation_reason=None,
+                    deactivation_reason=deactivation_reason,
                     last_refresh=utcnow(),
                     access_expires_at=_expiry_from_ms(expires_at_ms),
+                    **subscription,
                 )
                 .returning(Account.id)
             )
@@ -254,6 +258,8 @@ class FederationRepository(FederationTransferRepository, FederationUsageReposito
                     last_refresh=utcnow(),
                     access_expires_at=_expiry_from_ms(expires_at_ms),
                     owner_instance=owner_instance_id,
+                    deactivation_reason=deactivation_reason,
+                    **subscription,
                 )
             )
         await self._session.commit()

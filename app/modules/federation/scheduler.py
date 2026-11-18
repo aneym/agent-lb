@@ -127,6 +127,8 @@ class FederationMirrorScheduler:
                         chatgpt_account_id=account.chatgpt_account_id,
                         access_token=account.access_token,
                         expires_at_ms=getattr(account, "expires_at_ms", None),
+                        subscription_status=account.subscription_status,
+                        deactivation_reason=account.deactivation_reason,
                         owner_instance_id=response.instance_id,
                         local_instance_id=self.local_instance_id,
                         encryptor=self.encryptor,

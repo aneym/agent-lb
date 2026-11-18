@@ -17,6 +17,8 @@ class FederationMirrorAccount(BaseModel):
     chatgpt_account_id: str | None = None
     access_token: str = Field(repr=False)
     expires_at_ms: int | None = None
+    subscription_status: str | None = None
+    deactivation_reason: str | None = None
 
 
 class FederationMirrorResponse(BaseModel):

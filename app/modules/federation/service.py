@@ -122,6 +122,8 @@ class FederationService:
                     chatgpt_account_id=account.chatgpt_account_id,
                     access_token=access_token,
                     expires_at_ms=_account_expiry_ms(account, access_token),
+                    subscription_status=account.subscription_status,
+                    deactivation_reason=account.deactivation_reason,
                 )
             )
         return FederationMirrorResponse(instance_id=local_id, accounts=mirror_accounts)

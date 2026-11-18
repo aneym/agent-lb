@@ -8,6 +8,7 @@ from app.core.config.settings import get_settings
 from app.core.subscriptions import subscription_for
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.schemas import AccountProblem
+from app.modules.accounts.subscription_status import is_subscription_usable
 
 
 def _utc(value: datetime) -> datetime:
@@ -63,6 +64,13 @@ def account_problems(
             AccountProblem(
                 code="reauth_required",
                 message=f"Reauthentication required: {account.deactivation_reason or 'no reason recorded'}. Run: {command}.",
+            )
+        )
+    if account.status not in {AccountStatus.PAUSED, AccountStatus.DEACTIVATED} and not is_subscription_usable(account):
+        problems.append(
+            AccountProblem(
+                code="subscription_refused",
+                message=f"Provider refuses this subscription, so routing skips the account and its usage is no longer observed: {account.subscription_notes or account.deactivation_reason or 'no detail recorded'} Relogin won't help; resubscribe at the provider's billing page, then the account pulse or POST /api/accounts/{account.id}/subscription/check restores it.",
             )
         )
     if account.status == AccountStatus.DEACTIVATED and account.deactivation_reason == ACCOUNT_ON_HOLD_REASON:
