@@ -14,8 +14,8 @@ def emit(event, **fields):
 
 def wrapped_bash(command):
     return (
-        f'set -o pipefail; __cc_cwd=$(mktemp); {{ {command}\n__cc_rc=$?; pwd -P > "$__cc_cwd"; exit $__cc_rc; }} 2>&1 | {FILTER}; '
-        '__cc_rc=$?; __cc_dir=$(cat "$__cc_cwd" 2>/dev/null); command -p rm -f "$__cc_cwd"; '
+        f"set -o pipefail; {{ __cc_dir=$({{ {{ {{ {command}\n}} 3>&- 4>&-; __cc_rc=$?; pwd -P >&3; exit $__cc_rc; }} "
+        f"2>&1 | {FILTER} >&4; }} 3>&1); __cc_rc=$?; }} 4>&1; "
         '[ -n "$__cc_dir" ] && cd "$__cc_dir"; (exit $__cc_rc)'
     )
 
