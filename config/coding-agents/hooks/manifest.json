@@ -147,7 +147,7 @@
       "matcher": null,
       "hook": {
         "type": "command",
-        "command": "/usr/bin/python3 \"$HOME/.agents/policy/coding-agents/hooks/focus-steal-check.py\" subagent-stop",
+        "command": "/usr/bin/python3 \"$HOME/.claude/hooks/focus-steal-check.py\" subagent-stop",
         "timeout": 15,
         "statusMessage": "Focus steal check"
       },

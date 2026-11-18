@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from floor_hooks import accepted_forms  # type: ignore[missing-import]
+from policy_foreign_targets import foreign_target  # type: ignore[missing-import]
 from policy_hook_groups import drop_hooks, settled_matcher  # type: ignore[missing-import]
 from policy_inventory import MANAGED_HOOKS  # type: ignore[missing-import]
 from policy_layout import SETTINGS_HOOKS  # type: ignore[missing-import]
@@ -116,12 +117,13 @@ def claude_config_files(home: Path) -> dict[Path, str | None]:
         return {}
     manifest = json.loads((root / "hooks.json").read_text())
     desired = desired_hooks(home, root, manifest)
-    hooks_dir, changes = home / ".claude/hooks", {}
+    hooks_dir, changes, foreign = home / ".claude/hooks", {}, foreign_target(home)
     for entry in desired.values():
         for name in entry.get("files", []):
             source, target = root / name, hooks_dir / Path(name).name
             if (
                 target.name in MANAGED_HOOKS
+                or foreign(target)
                 or not source.is_file()
                 or os.path.realpath(source) == os.path.realpath(target)
             ):

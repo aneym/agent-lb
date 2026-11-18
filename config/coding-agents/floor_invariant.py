@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -157,6 +158,9 @@ def floor_problems(home: Path, changes: dict[Path, str | None]) -> list[str]:
             if held_by_root(json.loads(hook).get("command") or "", held):
                 continue
             if command in retired and not mentioned_floors(command):
+                continue
+            dropped = hashlib.sha256(command.encode()).hexdigest() in layout.DISPATCH_DROPPED
+            if dropped and not mentioned_floors(command):
                 continue
             problems.append(f"{path}: floor entry at {context} matcher {matcher} would change or go: {hook}")
         for context, matcher, hook in (Counter(after) - Counter(before)).elements():

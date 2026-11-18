@@ -10,7 +10,7 @@ from pathlib import Path
 
 started = time.monotonic()
 review = os.environ.get("CODEX_LOCAL_REVIEW_CONTRACT")
-focus_check = os.path.join(os.path.dirname(os.path.abspath(__file__)), "focus-steal-check.py")
+focus_check = os.path.expanduser("~/.claude/hooks/focus-steal-check.py")
 focus_since = subprocess.run([sys.executable, focus_check, "now"], capture_output=True, text=True).stdout.strip()
 child = subprocess.Popen(sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 selector = selectors.DefaultSelector()

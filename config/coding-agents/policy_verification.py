@@ -10,5 +10,4 @@ MANAGED = (
     ("host-relay", ".claude/agents/host-relay.md", "agents/host-relay.md"),
     ("opus-seat-local", ".claude/agents/opus-seat-local.md", "agents/opus-seat-local.md"),
     ("computer-use-terra-local", ".claude/agents/computer-use-terra-local.md", "agents/computer-use-terra-local.md"),
-    ("subagent-closeout", ".claude/hooks/subagent-closeout.py", "hooks/subagent-closeout.py"),
 )

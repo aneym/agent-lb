@@ -24,7 +24,6 @@ MANAGED_HOOKS = (
     "approval_record.py",
     "approval_ask.py",
     "approval_grandfathered.txt",
-    "idle-agents.py",
     "branch-guard.py",
     "git_push_floor.py",
     "hooks-off-guard.py",
@@ -47,12 +46,7 @@ MANAGED_HOOKS = (
     "parity_processes.py",
     "parity_replay.py",
     "parity_offload.py",
-    "subagent-closeout.py",
-    "transcript_navigation.py",
-    "factory-context.py",
-    "agent-home-hooks.py",
     "codex-memory-brief.py",
-    "compact-checkpoint.py",
     "wide-scan-guard.sh",
     "hook_wide_scan_shell.py",
     "agent-lb-bootout-guard.sh",
@@ -79,7 +73,6 @@ MANAGED_HOOKS = (
     "host-credential-guard.py",
     "gh-write-guard.py",
     "merge-gate-guard.py",
-    "main-checkout-write-warn.py",
     "hook-dispatch.py",
     "hookd.py",
     "hook-client.c",
@@ -92,6 +85,16 @@ MANAGED_HOOKS = (
     "seat-guard.py",
     "hook-dispatch-parity.py",
     "advisory-fold.py",
+)
+CLAUDE_CONFIG_HOOKS = (
+    "agent-home-hooks.py",
+    "compact-checkpoint.py",
+    "factory-context.py",
+    "focus-steal-check.py",
+    "idle-agents.py",
+    "main-checkout-write-warn.py",
+    "subagent-closeout.py",
+    "transcript_navigation.py",
 )
 
 

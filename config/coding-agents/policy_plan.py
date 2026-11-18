@@ -8,7 +8,8 @@ from policy_documents import read_text  # type: ignore[missing-import]
 from policy_files import desired_routing_table  # type: ignore[missing-import]
 from policy_hook_groups import installed_manifest  # type: ignore[missing-import]
 from policy_layout import ADOPTED_KEEP, DISPATCH_SCRIPT, HOOK_MANIFEST, MANAGED_AGENTS, MANAGED_DIR, POLICY_DIR, POLICY_FILES, POLICY_SNAPSHOT, RETIRED_AGENTS, ROUTE_FILES, ROUTING_TABLE, ROUTING_TABLE_OWNER  # type: ignore[missing-import]  # noqa: I001  # fmt: skip
-from policy_inventory import MANAGED_SEATS  # type: ignore[missing-import]
+from policy_foreign_targets import foreign_target  # type: ignore[missing-import]
+from policy_inventory import CLAUDE_CONFIG_HOOKS, MANAGED_SEATS  # type: ignore[missing-import]
 from policy_settings import seat_template  # type: ignore[missing-import]
 
 SHADOWED_AGENTS = Path(".agent-lb/shadowed-agents")
@@ -93,6 +94,7 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes, kept):
     preserved_agents: list[tuple[str, Path]] = []
     replace_policy_link = False
     policy_link_target = ""
+    foreign = foreign_target(args.home)
     for relative_path, owner_relative_path, owner_marker, template_relative_path in MANAGED_AGENTS:
         agent_path = args.home / relative_path
         owner_path = args.home / owner_relative_path
@@ -105,6 +107,11 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes, kept):
             agent_template = seat_template(agent_template, template_relative_path.stem, snapshot)
         agent_text = read_text(agent_path)
         agent_owned = read_text(owner_path) == owner_marker
+        if foreign(agent_path):
+            print(f"foreign target left alone: {agent_path}")
+            if agent_owned:
+                changes[owner_path] = None
+            continue
         if args.uninstall:
             if agent_owned and relative_path in ADOPTED_KEEP:
                 changes[owner_path] = None
@@ -129,6 +136,16 @@ def plan_managed_files(args, source, snapshot, keep_fold, changes, kept):
                 changes[agent_path] = agent_template
             if not agent_owned:
                 changes[owner_path] = owner_marker
+
+    policy_root = args.home / POLICY_DIR
+    copied_policy = policy_root.is_dir() and not policy_root.is_symlink() and policy_root.resolve() != source
+    for name in CLAUDE_CONFIG_HOOKS:
+        marker = args.home / MANAGED_DIR / Path(name).stem
+        if read_text(marker) == f"agent-lb:{marker.name}:v1\n":
+            changes[marker] = None
+        stale_copy = policy_root / "hooks" / name
+        if copied_policy and stale_copy.is_file() and not stale_copy.is_symlink():
+            changes[stale_copy] = None
 
     if args.uninstall:
         for relative in (POLICY_SNAPSHOT, POLICY_HOOKS_RECORD):
