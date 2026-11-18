@@ -50,7 +50,7 @@ For `/v1/responses`, `/backend-api/codex/responses`, and compact Responses traff
 
 ### Requirement: Local overload reasons are stable and distinguishable
 
-Local Responses overload failures MUST expose stable low-cardinality reason fields in logs and metrics so operators can distinguish `bridge_queue_full`, `response_create_gate_timeout`, `hard_affinity_saturated`, `previous_response_owner_unavailable`, `global_admission_timeout`, `capacity_exhausted_active_sessions`, `account_response_create_cap`, and `account_stream_cap`. These local reasons MUST NOT be reported as upstream rate limits.
+Local Responses overload failures MUST expose stable low-cardinality reason fields in logs and metrics so operators can distinguish `bridge_queue_full`, `response_create_gate_timeout`, `hard_affinity_saturated`, `previous_response_owner_unavailable`, `capacity_exhausted_active_sessions`, `account_response_create_cap`, and `account_stream_cap`. These local reasons MUST NOT be reported as upstream rate limits.
 Account-local lease metrics MUST expose low-cardinality acquired, released, stale-reclaimed, active, and cap-rejection signals by lease kind so operators can see response-create and stream pressure even when the matching account-local cap is disabled.
 When the Prometheus endpoint is enabled, the metrics server MUST bind to loopback by default unless an operator configures a different metrics host.
 

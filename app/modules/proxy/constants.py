@@ -129,13 +129,6 @@ CODEX_CONTROL_RESPONSE_HEADERS = frozenset(
 )
 
 
-UNTAGGED_HEADLESS_OPUS_MESSAGE = (
-    "agent-lb: untagged headless Opus refused (claude-week rule (a), p6 2026-10-01). "
-    "Set the seat: ANTHROPIC_CUSTOM_HEADERS='x-agent-lb-seat: <seat>' or launch through "
-    "claude-lb-launch / run-workflow, which tag it."
-)
-
-
 FILES_CREATE_LIMIT_MODEL: Final = "files-create"
 
 

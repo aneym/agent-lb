@@ -131,8 +131,6 @@ class SettingsFields(BaseSettings):
 
     openai_route_to_credits: bool = False
 
-    refuse_untagged_headless_opus: bool = False
-
     anthropic_entrypoint_label: str = "agent-lb"
 
     anthropic_pool_exhausted_wait_enabled: bool = False

@@ -4,8 +4,6 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from app.core.clients.proxy import ProxyResponseError
-from app.core.resilience.overload import local_overload_error
 from app.core.utils.request_id import get_request_id
 
 logger = logging.getLogger(__name__)
@@ -83,18 +81,14 @@ class WorkAdmissionController:
         try:
             await asyncio.wait_for(gate.semaphore.acquire(), timeout=gate.wait_timeout_seconds)
         except asyncio.TimeoutError:
-            available = gate.semaphore._value  # noqa: SLF001
-            message = f"agent-lb is temporarily overloaded during {stage}"
             logger.warning(
-                "proxy_admission_rejected request_id=%s stage=%s status=429 available=%s "
-                "wait_timeout_seconds=%.1f message=%s",
+                "proxy_admission_overflow request_id=%s stage=%s available=%s wait_timeout_seconds=%.1f",
                 get_request_id(),
                 stage,
-                available,
+                gate.semaphore._value,  # noqa: SLF001
                 gate.wait_timeout_seconds,
-                message,
             )
-            raise ProxyResponseError(429, local_overload_error(message, code="global_admission_timeout"))
+            return AdmissionLease(None, stage=stage, request_id=get_request_id())
         return AdmissionLease(gate.semaphore, stage=stage, request_id=get_request_id())
 
 

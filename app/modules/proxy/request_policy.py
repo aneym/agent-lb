@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from app.core.errors import OpenAIErrorEnvelope, openai_error
 from app.core.exceptions import ProxyModelNotAllowed
+from app.core.middleware.model_rewrite import note_model_rewrite
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.model_registry import ModelRegistry, get_model_registry
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesReasoning, ResponsesRequest
@@ -90,13 +91,14 @@ def apply_api_key_enforcement(
         return
 
     if api_key.enforced_model and payload.model != api_key.enforced_model:
-        logger.info(
+        logger.warning(
             "api_key_model_enforced request_id=%s key_id=%s requested_model=%s enforced_model=%s",
             get_request_id(),
             api_key.id,
             payload.model,
             api_key.enforced_model,
         )
+        note_model_rewrite(payload.model, api_key.enforced_model)
         payload.model = api_key.enforced_model
         normalize_upstream_model_alias(payload)
 

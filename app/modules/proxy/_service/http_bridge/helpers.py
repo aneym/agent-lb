@@ -239,7 +239,7 @@ def _is_previous_response_not_found_error(*args: Any, **kwargs: Any) -> Any:
 def _http_bridge_startup_wait_timeout_error(
     stage: str,
     *,
-    code: str = "global_admission_timeout",
+    code: str,
 ) -> ProxyResponseError:
     message = f"agent-lb is temporarily overloaded during {stage}"
     return ProxyResponseError(429, local_overload_error(message, code=code))

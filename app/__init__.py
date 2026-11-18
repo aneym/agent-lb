@@ -1,10 +1,1 @@
 __version__ = "1.20.0-beta.3"
-__all__ = ["app", "__version__"]
-
-
-def __getattr__(name: str):
-    if name == "app":
-        from app.main import app as fastapi_app
-
-        return fastapi_app
-    raise AttributeError(name)

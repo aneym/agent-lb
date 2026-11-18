@@ -40,7 +40,7 @@ from app.modules.proxy.claude_codex_bridge import (
     responses_to_claude_events,
     split_startup_error,
 )
-from app.modules.proxy.constants import UNTAGGED_HEADLESS_OPUS_MESSAGE, logger
+from app.modules.proxy.constants import logger
 from app.modules.proxy.model_families import default_ccgpt_model, resolve_ccgpt_model
 from app.modules.proxy.request_admission import enforce_request_limits
 from app.modules.proxy.request_policy import validate_model_access
@@ -54,21 +54,17 @@ anthropic_routes_v1_router = APIRouter(prefix="/v1")
 anthropic_routes_frame_db_router = APIRouter(prefix="")
 
 
-def untagged_headless_opus_refusal(request: Request, model: str | None) -> Response | None:
+def warn_untagged_headless_opus(request: Request, model: str | None) -> None:
     if not re.match(r"^claude-opus(?:-|$)", model or "", re.IGNORECASE):
-        return None
+        return
     if not is_headless_claude_user_agent(request.headers.get("user-agent")):
-        return None
+        return
     if get_caller_seat() is not None:
-        return None
+        return
     if (request.headers.get("x-agent-lb-priority") or "").strip().lower() == "high":
-        return None
+        return
     session = (get_client_session_id() or "-")[:80]
-    if not get_settings().refuse_untagged_headless_opus:
-        logger.info("untagged_headless_opus_would_refuse model=%s session=%s", model, session)
-        return None
-    logger.info("untagged_headless_opus_refused model=%s session=%s", model, session)
-    return anthropic_error_response(403, "permission_error", UNTAGGED_HEADLESS_OPUS_MESSAGE)
+    logger.warning("untagged_headless_opus model=%s session=%s", model, session)
 
 
 @anthropic_routes_v1_router.post(
@@ -104,9 +100,7 @@ async def v1_messages(
     resolved_request = await context.service.resolve_message_request(payload)
     payload = resolved_request.payload
     validate_model_access(api_key, payload.model)
-    refusal = untagged_headless_opus_refusal(request, payload.model)
-    if refusal is not None:
-        return refusal
+    warn_untagged_headless_opus(request, payload.model)
     held = await start_gate.held_start(request.headers, payload)
     if held is not None:
         return anthropic_proxy_error_response(held)

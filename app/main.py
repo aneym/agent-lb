@@ -4,7 +4,6 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from importlib import import_module
-from typing import Any, cast
 
 from fastapi import FastAPI
 
@@ -19,29 +18,14 @@ from app.core.config.settings_cache import get_settings_cache
 from app.core.forensics import register_stack_dump_signal
 from app.core.handlers import add_exception_handlers
 from app.core.identity_nodes import IdentityNodeCache
-from app.core.metrics.middleware import MetricsMiddleware
 from app.core.metrics.prometheus import mark_process_dead
-from app.core.middleware import (
-    add_api_firewall_middleware,
-    add_app_version_middleware,
-    add_backend_api_codex_v1_alias_middleware,
-    add_dashboard_auth_proxy_middleware,
-    add_request_decompression_middleware,
-    add_request_id_middleware,
-)
-from app.core.middleware.arrival_timing import add_arrival_timing_middleware
-from app.core.middleware.client_session import ClientSessionMiddleware
-from app.core.middleware.identity import IdentityMiddleware
-from app.core.middleware.inflight import InFlightMiddleware
-from app.core.model_aliases import Aliases
 from app.core.openai.model_refresh_scheduler import build_model_refresh_scheduler
-from app.core.resilience.backpressure import BackpressureMiddleware
-from app.core.resilience.bulkhead import BulkheadMiddleware, get_bulkhead
 from app.core.resilience.event_loop_lag_monitor import build_event_loop_lag_monitor
 from app.core.resilience.memory_monitor import configure as configure_memory_monitor
 from app.core.usage.refresh_scheduler import build_usage_refresh_scheduler
 from app.db.session import SessionLocal, close_db, init_background_db, init_db
 from app.metrics_startup import start_metrics_server
+from app.middleware_stack import add_middleware_stack
 from app.modules.account_schedule import api as account_schedule_api
 from app.modules.account_schedule.scheduler import build_account_resume_scheduler
 from app.modules.accounts import api as accounts_api
@@ -86,10 +70,10 @@ from app.modules.settings import api as settings_api
 from app.modules.sticky_sessions import api as sticky_sessions_api
 from app.modules.sticky_sessions.cleanup_scheduler import build_sticky_session_cleanup_scheduler
 from app.modules.t3_threads import api as t3_threads_api
-from app.modules.verifier_receipts import api as verifier_receipts_api
 from app.modules.team import api as team_api
 from app.modules.usage import api as usage_api
 from app.modules.usage.additional_quota_keys import reload_additional_quota_registry
+from app.modules.verifier_receipts import api as verifier_receipts_api
 from app.muse_routes import register_muse_routes
 from app.runtime_diagnostics import log_runtime_diagnostic_fingerprint
 from app.static_routes import configure_static_routes
@@ -357,38 +341,7 @@ def create_app() -> FastAPI:
 
 
 def configure_app(app: FastAPI, settings) -> None:
-    app.add_middleware(cast(Any, InFlightMiddleware))
-    app.add_middleware(cast(Any, ClientSessionMiddleware))
-    app.add_middleware(cast(Any, IdentityMiddleware))
-    add_dashboard_auth_proxy_middleware(app)
-    app.add_middleware(Aliases)
-    add_request_decompression_middleware(app)
-    add_request_id_middleware(app)
-    add_api_firewall_middleware(app)
-    app.add_middleware(cast(Any, MetricsMiddleware), enabled=settings.metrics_enabled)
-    if settings.backpressure_max_concurrent_requests > 0:
-        app.add_middleware(
-            cast(Any, BackpressureMiddleware),
-            max_concurrent=settings.backpressure_max_concurrent_requests,
-        )
-    proxy_http_limit = settings.bulkhead_proxy_http_limit
-    proxy_websocket_limit = settings.bulkhead_proxy_websocket_limit
-    proxy_compact_limit = settings.bulkhead_proxy_compact_limit
-    assert proxy_http_limit is not None
-    assert proxy_websocket_limit is not None
-    assert proxy_compact_limit is not None
-    app.add_middleware(
-        cast(Any, BulkheadMiddleware),
-        bulkhead=get_bulkhead(
-            proxy_http_limit=proxy_http_limit,
-            proxy_websocket_limit=proxy_websocket_limit,
-            proxy_compact_limit=proxy_compact_limit,
-            dashboard_limit=settings.bulkhead_dashboard_limit,
-        ),
-    )
-    add_backend_api_codex_v1_alias_middleware(app)
-    add_app_version_middleware(app)
-    add_arrival_timing_middleware(app)
+    add_middleware_stack(app, settings)
     add_exception_handlers(app)
 
     for router in (
