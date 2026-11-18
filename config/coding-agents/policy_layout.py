@@ -180,6 +180,7 @@ POLICY_FILES = (
     *(path.name for path in sorted(Path(__file__).resolve().parent.glob("policy_*.py"))),
     "dispatch_parity.py",
     "codex_home.py",
+    "codex_catalog.py",
     "codex_hook_trust.py",
     "harness_mcp.py",
     "policy_inventory.py",

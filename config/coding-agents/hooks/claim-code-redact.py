@@ -35,7 +35,8 @@ def wrap(data, every):
         return
     else:
         rewrite = wrapped_bash
-    emit("PreToolUse", updatedInput={**tool_input, "command": rewrite(command)})
+    decision = {"permissionDecision": "allow"} if every else {}
+    emit("PreToolUse", **decision, updatedInput={**tool_input, "command": rewrite(command)})
 
 
 def main():

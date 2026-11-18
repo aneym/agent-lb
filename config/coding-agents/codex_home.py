@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+from codex_catalog import catalog_changes  # type: ignore[missing-import]
+
 OFFLOAD_COMMAND = (
     'H="$HOME/.local/bin/box-offload-hook"; P="$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14"; '
     '[ -x "$P" ] || P=python3; if [ -r "$H" ]; then exec "$P" "$H"; fi'
@@ -100,9 +102,13 @@ def reconcile_codex_hooks(text: str, install: bool) -> str:
 
 def codex_changes(home: Path, model: str | None) -> dict[Path, str]:
     changes = {}
-    config = home_file(home, "config.toml") if model else None
-    if config and model and reconcile_codex_config(config[1], model) != config[1]:
-        changes[config[0]] = reconcile_codex_config(config[1], model)
+    config = home_file(home, "config.toml")
+    if config:
+        text = reconcile_codex_config(config[1], model) if model else config[1]
+        text, catalog = catalog_changes(home, text, model is not None)
+        changes.update(catalog)
+        if text != config[1]:
+            changes[config[0]] = text
     hooks = home_file(home, "hooks.json")
     if hooks is None and model:
         hooks = (home / ".codex" / "hooks.json", "")

@@ -81,8 +81,6 @@ def to_codex_model_entry(model: UpstreamModel, *, visibility: str | None = None)
     for key, value in raw.items():
         if key not in skip_keys and isinstance(value, (bool, int, float, str, type(None), list, Mapping)):
             extra[key] = value
-    if "tool_mode" in extra:
-        extra["tool_mode"] = None
 
     effective_cw = effective_context_window(model)
     if effective_cw != model.context_window and "max_context_window" in extra:
