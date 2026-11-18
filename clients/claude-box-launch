@@ -203,6 +203,14 @@ for candidate in "${CLAUDE_CODE_SHELL_PREFIX:-}" "$HOME/.local/bin/agent-scan-sh
   [[ -n $candidate && -f $candidate && -x $candidate ]] && { shell_prefix=$candidate; break; }
 done
 [[ -n $shell_prefix ]] || { printf '%s\n' 'claude-box-launch: no executable agent-scan-shell; install claude-config bin' >&2; exit 2; }
+if [[ -z ${CLAUDE_CODE_MCP_STARTUP_WAIT_MS:-} ]]; then
+  for a in "$@"; do
+    if [[ $a == -p || $a == --print ]]; then
+      env_args+=(CLAUDE_CODE_MCP_STARTUP_WAIT_MS=30000)
+      break
+    fi
+  done
+fi
 exec env "${env_args[@]}" \
   ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-5-5" \
   ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-5-5" \
