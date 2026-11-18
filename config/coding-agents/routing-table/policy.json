@@ -119,10 +119,12 @@
         ],
         "explore": [
           "low",
-          "medium"
+          "medium",
+          "high"
         ],
         "count": [
-          "medium"
+          "medium",
+          "high"
         ],
         "research": [
           "medium",

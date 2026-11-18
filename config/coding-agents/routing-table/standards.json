@@ -70,10 +70,10 @@
     "explore": {
       "seat": "Explore",
       "model": "opus-latest",
-      "effort": "medium",
+      "effort": "high",
       "explore": false,
       "authority": "none",
-      "evidence": "Explore stays the read-only explorer (rules/workflow.md cut, 2026-11-06); on Opus 5.5 medium since the 2026-11-17 helper sample (~/.agent-rails/factory/receipts/explore-sonnet-loss-2026-11-17.md)"
+      "evidence": "Explore stays the read-only explorer (rules/workflow.md cut, 2026-11-06); on Opus 5.5 since the 2026-11-17 helper sample (~/.agent-rails/factory/receipts/explore-sonnet-loss-2026-11-17.md); at high effort since the 2026-11-18 sample found Opus medium Explore thin (~/.agent-rails/factory/receipts/explore-opus-high-2026-11-18.md)"
     },
     "research": {
       "seat": "opus-seat",
@@ -134,10 +134,10 @@
     "count": {
       "seat": "Explore",
       "model": "opus-latest",
-      "effort": "medium",
+      "effort": "high",
       "explore": true,
       "authority": "none",
-      "evidence": "Back on its Claude seat after the 2026-11-12 helper sample found a Sol count wrong (~/.agent-rails/factory/receipts/sol-count-loss-2026-11-12.md); that seat moved from Sonnet 5.5 to Opus 5.5 medium after the 2026-11-17 sample found Sonnet Explore thin and wrong (~/.agent-rails/factory/receipts/explore-sonnet-loss-2026-11-17.md)"
+      "evidence": "Back on its Claude seat after the 2026-11-12 helper sample found a Sol count wrong (~/.agent-rails/factory/receipts/sol-count-loss-2026-11-12.md); that seat moved from Sonnet 5.5 to Opus 5.5 after the 2026-11-17 sample found Sonnet Explore thin and wrong (~/.agent-rails/factory/receipts/explore-sonnet-loss-2026-11-17.md), and to high effort after the 2026-11-18 sample found Opus medium Explore thin (~/.agent-rails/factory/receipts/explore-opus-high-2026-11-18.md)"
     },
     "judge": {
       "seat": "general-purpose",

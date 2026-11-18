@@ -63,7 +63,7 @@
           "seat": "Explore",
           "model": "opus-latest",
           "vendor": "anthropic",
-          "effort": "medium"
+          "effort": "high"
         }
       ]
     },
@@ -73,7 +73,7 @@
           "seat": "Explore",
           "model": "opus-latest",
           "vendor": "anthropic",
-          "effort": "medium"
+          "effort": "high"
         }
       ]
     },

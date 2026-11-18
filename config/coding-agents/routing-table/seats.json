@@ -28,7 +28,7 @@
       "vendor": "anthropic",
       "box": null,
       "model": "opus-latest",
-      "effort": "medium"
+      "effort": "high"
     },
     "opus-seat": {
       "vendor": "anthropic",
