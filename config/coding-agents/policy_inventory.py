@@ -30,6 +30,7 @@ MANAGED_HOOKS = (
     "hooks-off-guard.py",
     "outbound-send-guard.py",
     "claim-code-redact.py",
+    "claim_codes.py",
     "outbound_sends.py",
     "outbound_shell.py",
     "outbound_receipt.py",

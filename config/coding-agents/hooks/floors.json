@@ -18,6 +18,7 @@
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "outbound-send-guard.py", "args": [], "timeout": 15, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "mcp__.*", "file": "outbound-send-guard.py", "args": [], "timeout": 15, "os": ["linux", "darwin"]},
     {"harness": "claude", "event": "PreToolUse", "matcher": "Bash", "file": "claim-code-redact.py", "args": [], "timeout": 5, "os": ["linux", "darwin"]},
+    {"harness": "claude", "event": "PreToolUse", "matcher": "Monitor", "file": "claim-code-redact.py", "args": [], "timeout": 5, "os": ["linux", "darwin"]},
     {"harness": "codex", "event": "PreToolUse", "matcher": "Bash", "file": "branch-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "codex", "event": "PreToolUse", "matcher": "apply_patch", "file": "hooks-off-guard.py", "args": [], "timeout": 10, "os": ["linux", "darwin"]},
     {"harness": "codex", "event": "PreToolUse", "matcher": "Bash", "file": "wide-scan-guard.sh", "args": [], "timeout": 10, "os": ["linux", "darwin"]},

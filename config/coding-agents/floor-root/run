@@ -116,25 +116,53 @@ def missing_script(command):
     return None
 
 
+def redaction(raw):
+    import json
+
+    try:
+        payload = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        return None
+    sys.path.insert(0, HOOKS)
+    from claim_codes import output_fields
+
+    return output_fields(payload)
+
+
 def advisory(command):
     import json
     import subprocess
 
-    if missing_script(command) is not None:
+    raw = sys.stdin.buffer.read()
+    fields = redaction(raw)
+    data, text, code, err = None, "", 0, b""
+    if missing_script(command) is None:
+        result = subprocess.run(["/bin/sh", "-c", command], input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        text = result.stdout.decode("utf-8", "replace")
+        code, err = (result.returncode if result.returncode >= 0 else 1), result.stderr
+        head = text.lstrip().lstrip("\ufeff").lstrip()
+        if head[:1] in ("{", "["):
+            try:
+                data = kept(json.loads(head, object_pairs_hook=unique))
+            except ValueError:
+                data = None
+            text = ""
+    if fields:
+        data = data or {}
+        specific = data.get("hookSpecificOutput") if isinstance(data.get("hookSpecificOutput"), dict) else {}
+        specific["hookEventName"] = "PostToolUse"
+        specific.update(fields)
+        data["hookSpecificOutput"] = specific
+        if code == 2:
+            data.update(decision="block", reason=err.decode("utf-8", "replace").strip() or "hook blocked")
+        sys.stdout.write(json.dumps(data))
         return 0
-    result = subprocess.run(["/bin/sh", "-c", command], stdout=subprocess.PIPE)
-    text = result.stdout.decode("utf-8", "replace")
-    head = text.lstrip().lstrip("﻿").lstrip()
-    if head[:1] in ("{", "["):
-        try:
-            data = kept(json.loads(head, object_pairs_hook=unique))
-        except ValueError:
-            data = None
-        if data:
-            sys.stdout.write(json.dumps(data))
+    sys.stderr.buffer.write(err)
+    if data:
+        sys.stdout.write(json.dumps(data))
     else:
         sys.stdout.write(text)
-    return result.returncode if result.returncode >= 0 else 1
+    return code
 
 
 def main(argv):

@@ -24,6 +24,7 @@ FLOOR_HOOKS = {
     "hooks-off-guard.py": "every floor: no setting that switches Claude Code hooks off",
     "outbound-send-guard.py": "real people: no direct Messages, Mail, SMS or mail-API send without a Rails hold receipt for that exact text",
     "claim-code-redact.py": "secrets: Rails one-use claim codes (rac_) never show in tool output",
+    "claim_codes.py": "secrets: the claim code pattern and mask shared by claim-code-redact and the floor runner",
 }
 NON_FLOOR_GUARDS = {
     "t3-live-restart-guard.py": "house rule: live T3 restarts use the nightly installer",
