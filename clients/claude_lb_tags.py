@@ -1,15 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import re
-import subprocess
-import threading
 from collections.abc import Mapping
 from pathlib import Path
-
-from claude_lb_common import headless_invocation  # pyrefly: ignore[missing-import]
 
 
 def dispatch_document(value: str) -> dict:
@@ -33,7 +27,6 @@ def tag_headers(environ: Mapping[str, str]) -> dict[str, str]:
     tags = {
         header: environ[name]
         for name, header in (
-            ("AGENT_LB_INTENT", "x-agent-lb-intent"),
             ("AGENT_LB_LANE", "x-agent-lb-lane"),
             ("AGENT_LB_SEAT", "x-agent-lb-seat"),
             ("FACTORY_PROJECT", "x-factory-project"),
@@ -56,120 +49,5 @@ def tag_headers(environ: Mapping[str, str]) -> dict[str, str]:
     return tags
 
 
-def resolve_lane_tags(argv: list[str]) -> str:
-
-    if os.environ.get("AGENT_LB_INTENT"):
-        return "explicit intent"
-    if headless_invocation(argv) or any(arg.startswith("--print=") for arg in argv):
-        return "print mode"
-    if os.environ.get("CLAUDECODE"):
-        return "child process"
-    tab = os.environ.get("HERDR_TAB_ID")
-    if not tab:
-        return "no herdr tab"
-    if (
-        re.fullmatch(r"[A-Za-z0-9._:/-]{1,128}", tab) is None
-        or re.fullmatch(r"[A-Za-z0-9_-]+:[A-Za-z0-9_-]+", tab) is None
-    ):
-        return "invalid herdr tab"
-
-    result: list[tuple[str, str, str]] = []
-
-    def read_tags() -> None:
-        try:
-            home = Path.home()
-            managed = home / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
-            fallback = home / ".agents" / "policy" / "coding-agents" / "routing-table"
-            configured = (os.environ.get("ROUTE_TABLE") or "").strip()
-            registry = home / ".agent-rails" / "workflows" / "kinds" / f"{tab.replace(':', '_')}.json"
-            table = Path(configured).expanduser() if configured else managed if managed.is_file() else fallback
-            rollout = (
-                json.loads((table / "policy.json" if table.is_dir() else table).read_text())
-                .get("policy", {})
-                .get("stand_in_rollout", {})
-            )
-            stage = rollout.get("stage", "off")
-            if stage not in {"canary", "half", "all"}:
-                result.append(("", "", "rollout off"))
-                return
-            try:
-                kind = json.loads(registry.read_text())
-            except FileNotFoundError:
-                kind = {}
-            review_lane = (
-                any(
-                    re.search(r"(?<![A-Za-z])(?:review|verif|audit)", str(value), re.IGNORECASE)
-                    for value in (kind.get("lane", ""), kind.get("title", ""))
-                )
-                or str(kind.get("kind", "")).lower() == "review"
-            )
-            lane = kind.get("lane") or tab
-            if not isinstance(lane, str) or re.fullmatch(r"[A-Za-z0-9._:/-]{1,128}", lane) is None:
-                lane = tab
-            registry_kind = kind.get("kind")
-            tabs, lanes = rollout.get("tabs", []), rollout.get("lanes", [])
-            if not isinstance(tabs, list) or not isinstance(lanes, list) or not isinstance(lane, str):
-                raise ValueError("invalid rollout or registry")
-            if review_lane:
-                result.append(("", "", "review lane"))
-            elif registry_kind in {"ephemeral", "background"}:
-                result.append(("", "", "excluded registry kind"))
-            elif (
-                stage == "all"
-                or tab in tabs
-                or kind.get("lane") in lanes
-                or (stage == "half" and int(hashlib.sha256(tab.encode()).hexdigest(), 16) % 2 == 0)
-            ):
-                result.append(("orchestrator" if registry_kind == "orchestrator" else "lane-tab", lane, stage))
-            else:
-                result.append(("", "", "outside canary"))
-        except Exception:
-            result.append(("", "", "policy or registry unreadable"))
-
-    reader = threading.Thread(target=read_tags, daemon=True)
-    reader.start()
-    reader.join(0.045)
-    if reader.is_alive() or not result:
-        return "policy lookup timed out"
-    intent, lane, reason = result[0]
-    if intent:
-        label = ""
-        try:
-            lookup = subprocess.run(
-                ["herdr", "tab", "get", tab],
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            if lookup.returncode == 0:
-                label = json.loads(lookup.stdout)["result"]["tab"]["label"]
-        except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
-            pass
-        if re.search(r"(?<![A-Za-z])(?:review|verif|audit)", str(label), re.IGNORECASE):
-            return "review lane"
-    previous = {name: os.environ.get(name) for name in ("AGENT_LB_INTENT", "AGENT_LB_LANE")}
-    try:
-        if intent:
-            os.environ["AGENT_LB_INTENT"] = intent
-            if not previous["AGENT_LB_LANE"]:
-                os.environ["AGENT_LB_LANE"] = lane
-    except Exception:
-        for name, value in previous.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
-        return "tag assignment failed"
-    return reason
-
-
 def safe_tag(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._:/-]", "?", value)[:128]
-
-
-def stand_in_banner() -> str:
-    intent = os.environ.get("AGENT_LB_INTENT")
-    if not intent:
-        return "stand-in: off"
-    lane = os.environ.get("AGENT_LB_LANE")
-    return f"stand-in: {safe_tag(intent)}" + (f" ({safe_tag(lane)})" if lane else " (lane: none)")

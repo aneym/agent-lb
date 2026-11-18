@@ -13,7 +13,6 @@ from app.modules.pools.pace_service import build_pace
 from app.modules.pools.plan import build_plan, load_plan_inputs
 from app.modules.pools.schemas import PoolsResponse
 from app.modules.pools.service import PoolsService
-from app.modules.proxy.stand_in import snapshot
 from app.modules.request_logs.repository import RequestLogsRepository
 
 router = APIRouter(
@@ -65,11 +64,6 @@ async def account_plan(context: AccountsContext = Depends(get_accounts_context))
 async def list_seat_accounts() -> SeatAccountsResponse:
 
     return read_seat_accounts()
-
-
-@router.get("/stand-ins")
-async def list_stand_ins() -> dict:
-    return snapshot()
 
 
 @router.post("/reservations")

@@ -39,7 +39,7 @@ from claude_lb_process import (  # pyrefly: ignore[missing-import]
 )
 from claude_lb_proxy import run_lb_proxy, start_lb_proxy  # pyrefly: ignore[missing-import]
 from claude_lb_quota import anthropic_quota_key, requested_effort, requested_model  # pyrefly: ignore[missing-import]
-from claude_lb_tags import resolve_lane_tags, safe_tag, tag_headers  # pyrefly: ignore[missing-import]
+from claude_lb_tags import safe_tag, tag_headers  # pyrefly: ignore[missing-import]
 
 
 def check_working_directory() -> None:
@@ -106,7 +106,6 @@ def main() -> None:
 
     if not headless_invocation(argv):
         os.environ.setdefault("CLAUDE_CODE_NO_FLICKER", "1")
-    tag_reason = resolve_lane_tags(argv)
     resolved_tags = tag_headers(os.environ)
     custom_tags = {name: value for name, value in resolved_tags.items() if "\r" not in value and "\n" not in value}
     if custom_tags:
@@ -183,14 +182,12 @@ def main() -> None:
     if not routed:
         bypass_anthropic_proxy()
 
-    os.environ.pop("AGENT_LB_INTENT", None)
     os.environ.pop("AGENT_LB_LANE", None)
     command = build_command(argv)
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":
         print(" ".join(command))
         print(
-            f"agent-lb tags: intent={safe_tag(resolved_tags.get('x-agent-lb-intent', 'none'))} "
-            f"lane={safe_tag(resolved_tags.get('x-agent-lb-lane', 'none'))} reason={tag_reason}",
+            f"agent-lb tags: lane={safe_tag(resolved_tags.get('x-agent-lb-lane', 'none'))}",
             file=sys.stderr,
         )
         return

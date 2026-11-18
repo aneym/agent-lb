@@ -12,7 +12,7 @@ from route_pace import TIERS, shadow_pace  # pyrefly: ignore [missing-import]
 from route_pace_state import lease_unavailable, reservation_request, seat_is_up  # pyrefly: ignore [missing-import]
 from route_reserve_state import apply_overrides, pool_for_model, pools_by_id, reserve_state, vendor_for  # pyrefly: ignore [missing-import]
 from route_resolve_one import ServedModels, decisions_path, resolve_alias, workflow_seat  # pyrefly: ignore [missing-import]
-from route_seat import fetch_pools, fetch_stand_ins, print_stand_in  # pyrefly: ignore [missing-import]
+from route_seat import fetch_pools  # pyrefly: ignore [missing-import]
 from route_seat_states import pinned_model  # pyrefly: ignore [missing-import]
 from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     EXIT_OK,
@@ -197,8 +197,6 @@ def command_reservations(args: argparse.Namespace) -> int:
 
 
 def print_pick(result: dict[str, Any], *, as_json: bool) -> None:
-    fields = ("session_id", "lane", "intended", "running", "since", "expected_return")
-    result["standing_in"] = [{key: record.get(key) for key in fields} for record in fetch_stand_ins()["active"]]
     if as_json:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
@@ -222,8 +220,6 @@ def print_pick(result: dict[str, Any], *, as_json: bool) -> None:
         shown = auditor.get("model") or f"unresolved {auditor.get('alias')}: {auditor.get('reason')}"
         via = f" via {auditor['via']}" if auditor.get("via") else ""
         print(f"audit     {auditor.get('seat')}/{shown}{via} audits this seat's closeout before acceptance")
-    for record in result["standing_in"]:
-        print_stand_in(record)
 
 
 def workflow_relay_seat(table: dict[str, Any]) -> dict[str, Any]:

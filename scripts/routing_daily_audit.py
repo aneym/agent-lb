@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from routing_audit_metrics import summarize, timestamp_rows  # type: ignore[missing-import]
 from routing_audit_outcomes import load_outcomes, overlay_outcomes, proposals, resolve_rungs, summarize_outcomes  # type: ignore[missing-import]
 from routing_audit_reports import daily_report, write_daily_report, write_outputs  # type: ignore[missing-import]
-from routing_audit_sources import dispatch, fold_acceptance, prs, stand_ins, store  # type: ignore[missing-import]
+from routing_audit_sources import dispatch, fold_acceptance, prs, store  # type: ignore[missing-import]
 from routing_audit_values import command, date, document, job  # type: ignore[missing-import]
 
 from app.core.thread_delivery import thread_id
@@ -111,8 +111,6 @@ def main():
         if outcomes_source == "outcomes"
         else proposals(week, ladder)
     )
-    swaps = stand_ins(home / ".agent-lb/agent-lb.out.log", since, until, errors)
-    errors.append("stand-in events: current server does not emit swap/return log lines; counts unverified")
     observed = sum(r["acceptance_observed"] for r in rows)
     total_runs = sum(r["runs"] for r in rows)
     notes = [
@@ -127,7 +125,7 @@ def main():
         notes.append("Monday: recalibrate Cursor-models percent against the Cursor dashboard (retests 5 and 6).")
     line = (
         f"routing audit {until:%Y-%m-%d}: {sum(r['finished'] for r in rows)}/{sum(r['runs'] for r in rows)} "
-        f"finished; swaps {swaps['swaps']}/{swaps['swap_backs']}; cursor-models "
+        f"finished; cursor-models "
         f"{percent if percent is not None else 'unverified'}%; {'; '.join(proposal)}; "
         f"unverified sources {len(errors)}"
     )
@@ -137,7 +135,6 @@ def main():
         rows=rows,
         rolling_7d=week,
         proposals=proposal,
-        stand_ins=swaps,
         cursor_models_percent=percent,
         notes=notes,
         errors=errors,

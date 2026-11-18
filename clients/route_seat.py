@@ -309,43 +309,6 @@ def fetch_pools(
     return None, f"/api/pools unavailable ({reason}); /api/accounts unavailable ({accounts.error})"
 
 
-def fetch_stand_ins(timeout: float = 2.0) -> dict:
-
-    empty = {"active": [], "recent": []}
-    try:
-        response = http_get("/api/pools/stand-ins", timeout=timeout)
-        body = response.body
-        if not response.json_ok or not isinstance(body, dict):
-            return empty
-        if any(
-            not isinstance(body.get(key), list) or any(not isinstance(row, dict) for row in body[key])
-            for key in ("active", "recent")
-        ):
-            return empty
-        return body
-    except Exception:
-        return empty
-
-
-def print_stand_in(record: dict[str, Any]) -> None:
-    print(
-        f"standing in: {record.get('lane') or record.get('session_id')} "
-        f"on {record.get('running')} for {record.get('intended')} since {record.get('since')}, "
-        f"back ~{record.get('expected_return') or 'unknown'}"
-    )
-
-
-def command_stand_ins(args: argparse.Namespace) -> int:
-    document = fetch_stand_ins()
-    if args.json:
-        print(json.dumps(document, indent=2, sort_keys=True))
-    else:
-        for record in document["active"]:
-            print_stand_in(record)
-        print(f"recent: {len(document['recent'])} returned")
-    return EXIT_OK
-
-
 def pace_number(value: Any) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
         return float(value)

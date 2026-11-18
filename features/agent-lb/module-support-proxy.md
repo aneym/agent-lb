@@ -23,7 +23,6 @@ unmapped:
   - {"path":"app/modules/proxy/work_admission.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/proxy/affinity.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/proxy/__init__.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
-  - {"path":"app/modules/proxy/stand_in.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/proxy/image_usage.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/proxy/types.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/proxy/tool_call_dedupe.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}

@@ -123,7 +123,7 @@ def attempt(
     author_vendor: str | None = None,
 ) -> tuple[str, int, float, str]:
     started = time.monotonic()
-    env = dict(os.environ, AGENT_LB_INTENT=task_class)
+    env = dict(os.environ)
     stderr_path = out.with_suffix(".stderr")
     try:
         with out.open("wb") as handle, stderr_path.open("wb") as errors:

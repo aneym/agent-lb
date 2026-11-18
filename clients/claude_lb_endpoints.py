@@ -31,7 +31,6 @@ from claude_lb_quota import (  # pyrefly: ignore[missing-import]
     short_account_name,
     wait_max_seconds,
 )
-from claude_lb_tags import stand_in_banner  # pyrefly: ignore[missing-import]
 
 
 def print_lb_banner(argv: list[str], session_id: str) -> bool:
@@ -82,7 +81,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     if claim is DEFERRED_CLAIM:
         print(
             f"cc: {c('Claude LB', '1;36')} · {model_label}/{quota_label} · LB busy, sticky account "
-            f"selected on first message {c(endpoint_note, '2')} · {stand_in_banner()}",
+            f"selected on first message {c(endpoint_note, '2')}",
             file=sys.stderr,
         )
         return True
@@ -96,7 +95,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
         print(
             f"cc: {c('Claude LB', '1;36')} → {c(account_label, '1')} · {model_label}/{quota_label} · "
             f"proxy-claimed session route {c('· OAuth/Max · sticky+failover', '2')} "
-            f"{c(endpoint_note, '2')} · {stand_in_banner()}",
+            f"{c(endpoint_note, '2')}",
             file=sys.stderr,
         )
         return True
@@ -112,7 +111,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
         print(
             f"cc: {c('Claude LB', '1;36')} → {c(account_label, '1')} · {model_label}/{quota_label} · "
             f"proxy-claimed session route {c('· OAuth/Max · sticky+failover', '2')} "
-            f"{c(endpoint_note, '2')} · {stand_in_banner()}",
+            f"{c(endpoint_note, '2')}",
             file=sys.stderr,
         )
         return True
@@ -130,7 +129,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     _, _, _, _, _, reason = account_pressure(selected, quota_key)
     print(
         f"cc: {c('Claude LB', '1;36')} → {c(short_account_name(selected), '1')} · {model_label} · "
-        f"{reason} {c('· OAuth/Max · sticky+failover', '2')} {c(endpoint_note, '2')} · {stand_in_banner()}",
+        f"{reason} {c('· OAuth/Max · sticky+failover', '2')} {c(endpoint_note, '2')}",
         file=sys.stderr,
     )
     return True
@@ -164,7 +163,7 @@ def prepare_interactive_endpoint() -> bool:
         note = " · LB busy, routing anyway" if state == "busy" else ""
         print(
             f"cc: {c('Claude LB', '1;36')} · sticky account selected on first message "
-            f"{c(f'via {endpoint}{suffix}{note}', '2')} · {stand_in_banner()}",
+            f"{c(f'via {endpoint}{suffix}{note}', '2')}",
             file=sys.stderr,
         )
         return True
@@ -190,7 +189,7 @@ def prepare_ccgpt_endpoint() -> bool:
         print(
             f"ccgpt: {c('Claude Code + Codex', '1;36')} · {CCGPT_MODEL}/{requested_effort(sys.argv[1:])} · "
             f"{'bypass perms' if not has_permission_option(sys.argv[1:]) else 'custom perms'} · "
-            f"requested priority {c(f'via {endpoint}{suffix}', '2')} · {stand_in_banner()}",
+            f"requested priority {c(f'via {endpoint}{suffix}', '2')}",
             file=sys.stderr,
         )
         return True

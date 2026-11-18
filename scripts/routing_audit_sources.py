@@ -303,19 +303,3 @@ def fold_acceptance(home, runs, errors):
 
         walk(payload)
     return len(matched)
-
-
-def stand_ins(path, since, until, errors):
-    swaps = backs = 0
-    try:
-        with path.open() as source:
-            for line in source:
-                stamp = date(line[:23].replace(",", "."))
-                if not stamp or not since <= stamp < until:
-                    continue
-                lower = line.lower()
-                swaps += "standing in" in lower or "stand-in swap:" in lower
-                backs += "swap-back" in lower or "stand-in return:" in lower
-    except OSError as exc:
-        errors.append(f"stand-in log: {type(exc).__name__}")
-    return {"swaps": swaps, "swap_backs": backs}

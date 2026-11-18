@@ -20,7 +20,7 @@ from route_pace_state import (  # pyrefly: ignore [missing-import]
 )
 from route_reserve_state import apply_overrides, pools_by_id, quota_mode, reserve_state, rung_pool, same_model  # pyrefly: ignore [missing-import]
 from route_resolve_one import ServedModels, ladder_entries, rung_model  # pyrefly: ignore [missing-import]
-from route_seat import fetch_pools, fetch_stand_ins, print_stand_in  # pyrefly: ignore [missing-import]
+from route_seat import fetch_pools  # pyrefly: ignore [missing-import]
 from route_versioned_rules import (  # pyrefly: ignore [missing-import]
     EXIT_OK,
     EXIT_UNROUTABLE,
@@ -273,8 +273,6 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
         **chosen,
         **walk,
     }
-    fields = ("session_id", "lane", "intended", "running", "since", "expected_return")
-    result["standing_in"] = [{key: record.get(key) for key in fields} for record in fetch_stand_ins()["active"]]
     if error:
         result["reason"] += f"; pool status unknown ({error})"  # pyrefly: ignore [unsupported-operation]
     record_caller_choice(args, result)
@@ -292,8 +290,6 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
         auditor = result.get("audit")
         if auditor and auditor.get("via"):
             print(f"audit     {auditor['seat']}/{auditor['model']} via {auditor['via']}")
-        for record in result["standing_in"]:
-            print_stand_in(record)
         print(f"→ {result['model']} ({result['pool']})")
     return EXIT_OK
 

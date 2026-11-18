@@ -14,7 +14,7 @@ of doctor
 ```
 
 Keep the checkout in place: installation creates symlinks. Add `~/.local/bin` to PATH if needed.
-Doctor checks agent-lb, routing, launchers and stand-ins (an undeployed stand-ins endpoint is fine).
+Doctor checks agent-lb, routing and launchers.
 `open-factory` is the long form of `of`; both accept the same commands.
 
 ## Run a job

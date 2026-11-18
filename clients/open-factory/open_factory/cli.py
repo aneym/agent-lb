@@ -152,19 +152,6 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         checks.append((name, bool(path), path or "not found"))
     code, _ = http_json(f"{AGENT_LB_URL}/health")
     checks.append(("agent-lb", code == 200, f"{AGENT_LB_URL}/health -> {code or 'down'}"))
-    code, standins = http_json(f"{AGENT_LB_URL}/api/pools/stand-ins")
-    active = standins.get("stand_ins", standins.get("standIns", [])) if isinstance(standins, dict) else standins
-    checks.append(
-        (
-            "stand-ins",
-            code in {200, 404},
-            "not deployed"
-            if code == 404
-            else f"{len(active) if isinstance(active, (list, dict)) else 0} active"
-            if code == 200
-            else f"HTTP {code or 'down'}",
-        )
-    )
     code, menu, err = run_route("menu", "--json")
     if isinstance(menu, dict):
         runnable = sorted({seat["id"] for entry in menu["classes"].values() for seat in entry.get("seats", [])})

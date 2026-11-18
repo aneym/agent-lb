@@ -36,13 +36,6 @@
         "fix"
       ]
     },
-    "stand_in_rollout": {
-      "stage": "canary",
-      "tabs": [
-        "w5H:tC8"
-      ],
-      "lanes": []
-    },
     "reserve": {
       "pool": "anthropic-general",
       "min_eligible": 2,
