@@ -33,6 +33,7 @@ def served_catalog(config_text: str) -> str | None:
         return None
     for model in models:
         model["tool_mode"] = None
+        model["supports_search_tool"] = False
         tools = model.get("experimental_supported_tools")
         if isinstance(tools, list):
             model["experimental_supported_tools"] = [tool for tool in tools if tool not in RESERVED_TOOLS]
