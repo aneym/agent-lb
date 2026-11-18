@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from codex_catalog import catalog_changes  # type: ignore[missing-import]
+from codex_tool_scope import tool_scope_changes  # type: ignore[missing-import]
 
 OFFLOAD_COMMAND = (
     'H="$HOME/.local/bin/box-offload-hook"; P="$HOME/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14"; '
@@ -127,6 +128,7 @@ def codex_changes(home: Path, model: str | None) -> dict[Path, str]:
     if config:
         text = reconcile_codex_config(config[1], model) if model else config[1]
         text, catalog = catalog_changes(home, text, model is not None)
+        text = tool_scope_changes(text, model is not None)
         changes.update(catalog)
         if text != config[1]:
             changes[config[0]] = text

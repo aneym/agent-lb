@@ -181,6 +181,7 @@ POLICY_FILES = (
     "dispatch_parity.py",
     "codex_home.py",
     "codex_catalog.py",
+    "codex_tool_scope.py",
     "codex_hook_trust.py",
     "harness_mcp.py",
     "policy_inventory.py",
