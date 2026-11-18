@@ -26,6 +26,7 @@ try:
         DEFAULT_TIMEOUT,
         FLOOR_EXEC,
         FLOOR_TIMEOUT,
+        RETIRED_GUARDS,
         REV_SHA,
         REWRITERS,
         SHAPE,
@@ -159,6 +160,9 @@ def plan_hook(hook, inproc_names, script_pins=None, floor_timeout=FLOOR_TIMEOUT)
     command = plan.command
     if hook.get("type", "command") != "command" or not command:
         plan.reason = "not a command hook"
+        return plan
+    if hashlib.sha256(command.encode("utf-8")).hexdigest() in RETIRED_GUARDS:
+        plan.kind, plan.reason = "absent", "retired guard"
         return plan
     if plan.floor:
         plan.exec_argv = floor_exec(command, plan.floor)

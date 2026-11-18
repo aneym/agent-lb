@@ -270,6 +270,7 @@ DISPATCH_DROPPED = {
     "9c43931d5c38efeb33b7c8f9bf6768c7303698de9f7f50cbbb97add87f22d81b": "focus-steal-check from the policy dir",
     "9185b387b7e583755f8534b4f1ef3cb3dbc08e860ba4270684920bd9bfd39e7e": "repeat-read-warn",
     "ce0d9c515ec1f3a44ac8e76013bfaf95e982e96616003d99bb508b585fed441b": "stash-guard from the engine",
+    "ef0e21887ae72a362a207bcb2335c79c876dcedb86a24ea4197e1f20432fe404": "kill-scope-guard",
 }
 
 
@@ -289,7 +290,6 @@ DERIVED_PINS = (
     "railway-vars-guard.sh",
     "link-cli-guard.sh",
     "dangerous-command-guard.sh",
-    "kill-scope-guard.py",
     "user-manager-guard.py",
 )
 
