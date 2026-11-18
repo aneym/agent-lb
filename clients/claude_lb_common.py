@@ -48,17 +48,9 @@ def arg_value(argv: list[str], *names: str) -> str | None:
     return None
 
 
-MODE_FILE = Path.home() / ".config/agent-lb/top-level-mode"
-
-
-TOP_LEVEL_MODE = MODE_FILE.read_text().strip() if MODE_FILE.exists() else "claude"
-
-
 REQUESTED_MODEL = arg_value(sys.argv[1:], "--model", "-m") or os.environ.get("ANTHROPIC_MODEL", "")
-CCGPT_MODE = (
-    os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
-    or os.environ.get("CLAUDE_LB_CODEX_MODE") != "0"
-    and (TOP_LEVEL_MODE == "sol" or REQUESTED_MODEL.startswith("gpt-"))
+CCGPT_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1" or (
+    os.environ.get("CLAUDE_LB_CODEX_MODE") != "0" and REQUESTED_MODEL.startswith("gpt-")
 )
 
 
