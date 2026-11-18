@@ -12,12 +12,14 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import ModuleType
 
 MATCHER_PATH = Path(__file__).resolve().parent / "hooks/claim_codes.py"
 STATE = Path(".local/state/codex-rollout-scrub")
 HISTORY_TABLES = ("thread_items", "thread_realtime_items")
+PENDING_SECONDS = 600
 WRITE_FLAGS = os.O_WRONLY | os.O_RDWR
 
 
@@ -204,7 +206,7 @@ def scrub_rollout(path: Path, start: int, live: bool) -> tuple[int, int, int]:
         return start, 0, before.st_ino
 
 
-def scrub_rollouts(codex: Path, state: dict, full: bool) -> tuple[int, int]:
+def scrub_rollouts(codex: Path, state: dict, full: bool) -> tuple[int, int, set[str]]:
     todo = []
     for path in rollouts(codex):
         info = path.stat()
@@ -215,12 +217,15 @@ def scrub_rollouts(codex: Path, state: dict, full: bool) -> tuple[int, int]:
         todo.append((path, start))
     held = writers([path for path, _ in todo])
     files = codes = 0
+    threads = set()
     for path, start in todo:
         done, masked, inode = scrub_rollout(path, start, str(path) in held)
         state[str(path)] = [inode, done]
         files += masked > 0
         codes += masked
-    return files, codes
+        if masked:
+            threads.add(path.stem[-36:])
+    return files, codes, threads
 
 
 def history_signature(db: Path) -> list[int]:
@@ -232,23 +237,39 @@ def history_signature(db: Path) -> list[int]:
     ]
 
 
-def scrub_history(codex: Path, state: dict, full: bool) -> tuple[int, int]:
+def history_rows(con: sqlite3.Connection, table: str, entry: dict, threads: list[str], full: bool) -> dict:
+    query = f"select rowid, item_json from {table} where instr(item_json, 'rac_') > 0"
+    if full or "rowids" not in entry:
+        return dict(con.execute(query))
+    found = dict(con.execute(query + " and rowid > ?", (entry["rowids"].get(table, 0),)))
+    for thread in threads:
+        found.update(con.execute(query + " and thread_id = ?", (thread,)))
+    return found
+
+
+def scrub_history(codex: Path, state: dict, full: bool, fresh: set[str]) -> tuple[int, int]:
     rows = codes = 0
+    now = time.time()
     for db in sorted(codex.glob("thread_history_*.sqlite")):
         key = f"history:{db}"
-        if not full and state.get(key) == history_signature(db):
+        saved = state.get(key)
+        entry: dict = saved if isinstance(saved, dict) else {}
+        pending = {t: until for t, until in entry.get("threads", {}).items() if until > now}
+        pending.update(dict.fromkeys(fresh, now + PENDING_SECONDS))
+        if not full and entry.get("signature") == history_signature(db) and not fresh:
+            entry["threads"] = pending
             continue
         con = sqlite3.connect(str(db), timeout=30)
         try:
             con.execute("pragma secure_delete=on")
             tables = {row[0] for row in con.execute("select name from sqlite_master where type='table'")}
+            present = [table for table in HISTORY_TABLES if table in tables]
+            tops = {
+                table: con.execute(f"select coalesce(max(rowid), 0) from {table}").fetchone()[0] for table in present
+            }
             updates = []
-            for table in HISTORY_TABLES:
-                if table not in tables:
-                    continue
-                for rowid, text in con.execute(
-                    f"select rowid, item_json from {table} where instr(item_json, 'rac_') > 0"
-                ):
+            for table in present:
+                for rowid, text in history_rows(con, table, entry, sorted(pending), full).items():
                     masked, count = mask_text(text)
                     if count:
                         updates.append((table, masked, rowid))
@@ -269,7 +290,7 @@ def scrub_history(codex: Path, state: dict, full: bool) -> tuple[int, int]:
             continue
         finally:
             con.close()
-        state[key] = history_signature(db)
+        state[key] = {"signature": history_signature(db), "rowids": tops, "threads": pending}
     return rows, codes
 
 
@@ -289,8 +310,8 @@ def main() -> int:
         state_path = state_dir / "state.json"
         state = json.loads(state_path.read_text()) if state_path.is_file() else {}
         for codex in codex_homes(args.home):
-            files, codes = scrub_rollouts(codex, state, args.full)
-            rows, row_codes = scrub_history(codex, state, args.full)
+            files, codes, threads = scrub_rollouts(codex, state, args.full)
+            rows, row_codes = scrub_history(codex, state, args.full, threads)
             if not args.quiet or codes or row_codes:
                 print(
                     f"{codex}: rollouts {files} files {codes} codes masked; history {rows} rows {row_codes} codes masked"
