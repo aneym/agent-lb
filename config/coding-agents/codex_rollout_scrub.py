@@ -48,7 +48,8 @@ def mask_text(text: str) -> tuple[str, int]:
 
 def codex_homes(home: Path) -> list[Path]:
     named = [Path(os.environ["CODEX_HOME"])] if os.environ.get("CODEX_HOME") else []
-    found = [*named, home / ".codex", *sorted(home.glob(".codex-*"))]
+    jobs = sorted(home.glob(".agent-rails/jobs/codex-homes/*"))
+    found = [*named, home / ".codex", *sorted(home.glob(".codex-*")), *jobs]
     return list(dict.fromkeys(p.resolve() for p in found if (p / "sessions").is_dir()))
 
 
