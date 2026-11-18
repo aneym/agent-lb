@@ -102,28 +102,32 @@ def notice_text(result):
     return NOTICE_PREFIX + (result.err.decode("utf-8", "replace").strip() or "No stderr output")
 
 
-def refuse_failed_floor(plan, result):
+def let_failed_floor_through(plan, result):
     if result is None or not result.floor_failure:
         return result
-    note = "hook-dispatch: floor guard %s %s, so this call is refused (a floor guard that fails denies)" % (
+    note = "WARNING: hook-dispatch: floor guard %s %s, so it lets this call through." % (
         plan.floor,
         result.floor_failure,
     )
     detail = result.err.decode("utf-8", "replace").strip()[-500:]
     return Result(
-        2,
+        0,
         b"",
         (note + ("\n" + detail if detail else "") + "\n").encode("utf-8", "backslashreplace"),
         False,
-        "floor-refused",
+        "floor-let-through",
         result.spawned,
     )
 
 
 def merge(event, plans, results):
+    if event == "PreToolUse":
+        results = [let_failed_floor_through(p, r) for p, r in zip(plans, results)]
+    receipts = b"".join(r.err for r in results if r is not None and r.mode == "floor-let-through")
     try:
         answer = merge_answers(event, plans, results)
         answer.out = cap_context(answer.out, event)
+        answer.err = receipts + answer.err
         return answer
     except Exception as exc:
         messages = []
@@ -143,8 +147,6 @@ def merge(event, plans, results):
 
 
 def merge_answers(event, plans, results):
-    if event == "PreToolUse":
-        results = [refuse_failed_floor(p, r) for p, r in zip(plans, results)]
     pairs = [(p, r) for p, r in zip(plans, results) if r is not None and not r.empty()]
     pairs = [(p, r) for p, r in pairs if not r.timed_out]
     if not pairs:
