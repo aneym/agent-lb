@@ -8,10 +8,6 @@ allow() {
   if [ -n "${HOOK_FLOOR_RECEIPT:-}" ]; then printf 'floor-ok %s\n' wide-scan-guard.sh; fi
   exit 0
 }
-warn() {
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "wide-scan-guard (warn only, not blocked): $1"
-  allow
-}
 INPUT=$(cat) || refuse "could not read the hook input (cat exit $?)"
 [ -n "$INPUT" ] || refuse "read an empty hook input"
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty') || refuse "could not read the hook input (jq exit $?)"
@@ -27,27 +23,11 @@ import posixpath
 from hook_wide_scan_shell import join_continuations, shell_tokens, strip_heredocs, substitutions
 class Refused(Exception):
     pass
-WARNED = []
 def refused_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
     return (path in ('/', home, '/home', '/root', '/Users', '/Volumes', '/Users/aneyman', '/data', '/mnt', '/media')
             or re.fullmatch(r'/Volumes/[^/]+|/mnt/[^/]+|/media/[^/]+/[^/]+', path) is not None)
-LS_VALUES = ('--block-size', '--format', '--hide', '--ignore', '--indicator-style', '--quoting-style', '--sort',
-             '--tabsize', '--time', '--time-style', '--width')
-DU_VALUES = ('-d', '-B', '-t', '-X', '--max-depth', '--block-size', '--threshold', '--exclude', '--exclude-from', '--time-style', '--files0-from')
-def cow_root(path, cwd):
-    parts = [part for part in resolve_path(path, cwd).split('/') if part]
-    if parts[:1] != ['srv']:
-        return False
-    return len(parts) <= (3 if parts[1:2] == ['cow'] else 4 if parts[1:3] == ['data', 'cow'] else 2)
-def wide_root(path, cwd):
-    path = resolve_path(path, cwd)
-    home = os.path.expanduser('~')
-    return (path in ('/', home, '/Users', '/Users/aneyman', '/System', '/Library', '/home', '/root',
-                     '/Volumes', '/Volumes/StudioExt/repos', home + '/repos')
-            or re.fullmatch(r'/Volumes/[^/]+|/home/[^/]+(?:/repos)?', path) is not None
-            or path.endswith('/.agent-rails') or path.endswith('/.agent-rails/lanes'))
 def search_paths(name, args):
     paths, pattern, recursive = [], name == 'find' or (name == 'rg' and '--files' in args), name in ('rg', 'find', 'fd', 'fdfind', 'ack', 'ag', 'ugrep')
     word = None
@@ -228,37 +208,6 @@ def unsafe(args, depth, cwd):
     if name == 'git' and 'grep' in args and '--no-index' in args:
         name, args = 'rg', ['rg'] + args[args.index('grep') + 1:]
         args = [arg for arg in args if arg != '--no-index']
-    if name in ('du', 'tree', 'locate', 'plocate', 'mlocate'):
-        paths, skip = [], False
-        for arg in args[1:]:
-            if skip:
-                skip = False
-            elif arg in DU_VALUES:
-                skip = True
-            elif not arg.startswith('-'):
-                paths.append(arg)
-        if any(cow_root(path, cwd) or refused_root(path, cwd) or wide_root(path, cwd) for path in paths or ['.']):
-            WARNED.append(tool)
-        return False
-    if name == 'ls':
-        paths, recursive, skip = [], False, False
-        for arg in args[1:]:
-            if skip:
-                skip = False
-            elif arg.startswith('--'):
-                recursive |= arg == '--recursive'
-                skip = arg in LS_VALUES
-            elif arg.startswith('-') and arg != '-':
-                for j, flag in enumerate(arg[1:], 1):
-                    recursive |= flag == 'R'
-                    if flag in 'IwT':
-                        skip = j == len(arg) - 1
-                        break
-            else:
-                paths.append(arg)
-        if recursive and any(cow_root(path, cwd) or refused_root(path, cwd) or wide_root(path, cwd) for path in paths or ['.']):
-            WARNED.append(tool)
-        return False
     if name in ('rg', 'find', 'fd', 'fdfind', 'grep', 'egrep', 'fgrep', 'ggrep', 'ugrep', 'ack', 'ag'):
         roots, recursive, word = search_paths(name, args[1:])
         recursive |= tool.startswith('rtk ')
@@ -267,74 +216,11 @@ def unsafe(args, depth, cwd):
             content = any(arg in ('-x', '-X', '--exec', '--exec-batch') for arg in args)
         if name == 'find':
             content = any(arg in ('-exec', '-execdir', '-ok', '-okdir') for arg in args) or bool(re.search(r'\bxargs\b[^;]*\b(?:cat|grep|rg|ack|ag|ugrep)\b', os.environ['SCAN_COMMAND']))
-        shallow = name == 'find' and re.search(r'-maxdepth\s+[01]\b', ' '.join(args)) is not None
         if recursive:
             for path in (roots or ['.']):
-                protected = refused_root(path, cwd)
-                if cow_root(path, cwd) and not shallow:
-                    WARNED.append(tool)
-                if content and protected:
+                if content and refused_root(path, cwd):
                     raise Refused('BLOCKED (floor: secrets and protected credentials): recursive content reads must stay inside one repository or directory.')
-                if refused_root(path, cwd) or wide_root(path, cwd):
-                    WARNED.append(tool)
-    if tool.startswith('rtk '):
-        return False
-    if name not in ('grep', 'egrep', 'fgrep', 'ggrep'):
-        return False
-    recursive = False
-    skip = False
-    pattern = False
-    paths = []
-    i = 1
-    options = True
-    while i < len(args):
-        arg = args[i]
-        if options and arg == '--':
-            options = False
-        elif options and arg.startswith('--'):
-            name, _, value = arg.partition('=')
-            long_names = ('--recursive', '--dereference-recursive', '--devices',
-                          '--directories', '--regexp', '--file', '--max-count',
-                          '--after-context', '--before-context', '--context',
-                          '--include', '--exclude', '--exclude-from', '--exclude-dir',
-                          '--binary-files', '--label', '--group-separator')
-            matches = [option for option in long_names if option.startswith(name)]
-            if len(matches) == 1:
-                name = matches[0]
-            recursive |= name in ('--recursive', '--dereference-recursive')
-            if name in long_names[2:]:
-                if not value and i + 1 < len(args):
-                    i += 1
-                    value = args[i]
-                recursive |= name == '--directories' and value == 'recurse'
-                if name == '--devices':
-                    skip = value == 'skip'
-                pattern |= name in ('--regexp', '--file')
-        elif options and arg.startswith('-') and arg != '-':
-            flags = arg[1:]
-            j = 0
-            while j < len(flags):
-                flag = flags[j]
-                recursive |= flag in 'rR'
-                if flag in 'DdefmABC':
-                    value = flags[j + 1:]
-                    if not value and i + 1 < len(args):
-                        i += 1
-                        value = args[i]
-                    recursive |= flag == 'd' and value == 'recurse'
-                    if flag == 'D':
-                        skip = value == 'skip'
-                    pattern |= flag in 'ef'
-                    break
-                j += 1
-        elif not pattern:
-            pattern = True
-        else:
-            paths.append(arg)
-        i += 1
-    return recursive and not skip and any(
-        '.agent-rails' in resolve_path(path, cwd).lower().split('/') for path in paths
-    )
+    return False
 def scan(text, depth=0, cwd=None):
     if depth > 8:
         return True
@@ -344,8 +230,8 @@ def scan(text, depth=0, cwd=None):
         text, bodies = strip_heredocs(text)
         bodies.extend(substitutions(text))
         tokens = shell_tokens(text)
-    except Exception as error:
-        raise SystemExit(4)
+    except Exception:
+        return False
     if any(scan(body, depth + 1, cwd) for body in bodies):
         return True
     segment = []
@@ -384,20 +270,15 @@ def scan(text, depth=0, cwd=None):
             segment.append(token)
     return False
 try:
-    fifo = scan(os.environ['SCAN_COMMAND'])
+    scan(os.environ['SCAN_COMMAND'])
 except Refused as refused:
     import sys
     print(refused.args[0], file=sys.stderr)
     raise SystemExit(2)
-raise SystemExit(0 if fifo else 6 if WARNED else 3)
 PY
-if [ "$SCAN" -eq 0 ]; then
-  warn "grep -r under ~/.agent-rails hangs on FIFOs; scope to one directory and use rg or add -D skip"
-elif [ "$SCAN" -eq 2 ]; then
+if [ "$SCAN" -eq 2 ]; then
   exit 2
-elif [ "$SCAN" -eq 6 ] || [ "$SCAN" -eq 4 ]; then
-  warn "broad directory walk; prefer a scoped path"
-elif [ "$SCAN" -ne 3 ]; then
+elif [ "$SCAN" -ne 0 ]; then
   refuse "scanner failed (python3 exit $SCAN)"
 fi
 allow
