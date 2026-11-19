@@ -77,10 +77,14 @@ FIND_SYNTAX = {"(", ")", "!", ",", "{}", "+", ";", "\\;"}
 ASSIGNMENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.S)
 REFUSAL = (
     "this deletes a data path (a database, /var/lib, postgres, T3 state, a live or kept T3 runtime build or an "
-    "approval directory) or a target it cannot resolve. Old T3 builds pass only as literal entries of "
-    "~/.t3/runtime/versions, .rollback-runtime or .launcher-rollback-<hex> that no process holds. Only a "
-    "grandfathered data-delete record, or one whose Ask line names an owner ask the person answered yes, passes "
-    "it, for the paths it lists, for 24 h from when it was written."
+    "approval directory) or a target it cannot resolve; allowed: rm a literal path, a variable set earlier in this "
+    "same command, or scratch under /tmp; a data path passes only with a data-delete record (grandfathered, or whose "
+    "Ask line names an owner ask the person answered yes) for the paths it lists, for 24 h; old T3 builds pass as "
+    "literal entries of ~/.t3/runtime/versions, .rollback-runtime or .launcher-rollback-<hex> that no process holds."
+)
+TEMP_ROOTS = ("/tmp/", "/private/tmp/", "/var/tmp/")
+RUNTIME = re.compile(
+    r"\.t3/runtime|\.rollback-runtime|\.launcher-rollback|(?:^|/)versions(?:/|$)|\.local/bin/t3(?:/|$)"
 )
 VARIABLE_MARK = "$UNRESOLVED"
 RSYNC_DELETE = re.compile(r"--(?:del(?:ete[\w-]*)?|remove-(?:source|sent)-files)(?![\w-])")
@@ -271,7 +275,18 @@ def located(word, assignments, cwd):
 
 def moves_build(word, assignments, cwd):
     raw = joined(word, assignments, cwd)
-    return raw is None or t3_runtime_builds.refused(word, os.path.normpath(raw), raw)
+    if raw is None:
+        return bool(RUNTIME.search(word))
+    return t3_runtime_builds.refused(word, os.path.normpath(raw), raw)
+
+
+def opaque(name, word):
+    if DATA.search(word):
+        return True
+    if name == "mv":
+        return False
+    temp = {*TEMP_ROOTS, (os.environ.get("TMPDIR") or "/tmp").rstrip("/") + "/"}
+    return ".." in word or not word.startswith(tuple(root for root in temp if root != "/"))
 
 
 def find_moves(args):
@@ -303,7 +318,9 @@ def touches(name, args, assignments, cwd):
     for word in found:
         path = located(word, assignments, cwd)
         if path is None:
-            return True
+            if opaque(name, word):
+                return True
+            continue
         parts = path.split("/")
         heads = ["/".join(parts[: i + 1]) for i in range(1, len(parts))]
         paths = [path, *(match for head in heads if glob.has_magic(head) for match in glob.glob(head))]

@@ -420,7 +420,7 @@ def offending(segment, assignments=None, place=None):
         if recursive and (home_root or literal_root or repo_root) and not (not home_root and ours(place, w[0])):
             return "a protected root path (%s)" % w[3]
     for w in words[k + 1 :]:
-        if w[0].startswith("-"):
+        if w[0].startswith("-") or not data_delete.opaque("rm", w[0]):
             continue
         value = w[0]
         for v in re.finditer(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?::\?[^}]*)?\}|([A-Za-z_][A-Za-z0-9_]*))", value):
