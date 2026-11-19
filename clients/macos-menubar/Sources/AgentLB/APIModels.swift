@@ -491,6 +491,7 @@ struct PoolEntry: Decodable, Equatable, Sendable {
   var observedTokens: Int? = nil
   var windows: [PoolWindow]? = nil
   var quotaSource: String? = nil
+  var unavailableReason: String? = nil
   var pace: PoolPace? = nil
 }
 

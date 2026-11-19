@@ -50,7 +50,7 @@ enum PoolMenu {
 
   private static func canonicalID(_ pool: PoolEntry) -> String? {
     switch pool.id {
-    case "anthropic-general", "openai-codex", "cursor-models", "cursor-other", "grok", "devin", "muse":
+    case "anthropic-general", "openai-codex", "cursor-models", "cursor-other", "grok", "devin", "muse", "gemini":
       return pool.id
     default:
       switch pool.provider {
@@ -58,6 +58,7 @@ enum PoolMenu {
       case "openai": return "openai-codex"
       case "devin": return "devin"
       case "muse": return "muse"
+      case "gemini": return "gemini"
       default: return nil
       }
     }
@@ -94,7 +95,10 @@ enum PoolMenu {
     }
     let help = [
       name(for: id),
+      seat(for: id),
       out ? "out" : percent.map { "\(percentText($0)) left" },
+      quotaNote(pool, id: id, remaining: remaining),
+      observedText(pool, id: id),
       "\(usable) of \(total) accounts usable",
       detail,
     ].compactMap { $0 }.joined(separator: " · ")
@@ -120,8 +124,28 @@ enum PoolMenu {
     case "cursor-other": "Cursor other"
     case "grok": "Grok"
     case "muse": "Muse"
+    case "gemini": "Gemini"
     default: "Devin"
     }
+  }
+
+  private static func seat(for id: String) -> String? {
+    id == "gemini" ? "gemini-4-neon · T3 on ax102" : nil
+  }
+
+  private static func quotaNote(_ pool: PoolEntry, id: String, remaining: Double?) -> String? {
+    guard id == "gemini", remaining == nil, pool.quotaSource == "unavailable" else { return nil }
+    switch pool.unavailableReason {
+    case "credential_unavailable": return "usage login unavailable"
+    case "vendor_error": return "usage reading stale"
+    default: return "quota not reported by Google"
+    }
+  }
+
+  private static func observedText(_ pool: PoolEntry, id: String) -> String? {
+    guard id == "gemini", let runs = pool.observedRuns else { return nil }
+    let tokens = pool.observedTokens.map { " · \(Format.compactLarge($0)) tokens" } ?? ""
+    return "\(runs) \(runs == 1 ? "request" : "requests")\(tokens) in 24 h"
   }
 
   private static func remainingPercent(_ pool: PoolEntry) -> Double? {
