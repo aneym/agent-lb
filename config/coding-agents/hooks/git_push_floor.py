@@ -1,3 +1,4 @@
+import functools
 import os
 import re
 import shlex
@@ -57,6 +58,7 @@ CONFIG_KEYS = (
 PUSH_DEFAULTS = {"nothing", "current", "upstream", "tracking", "simple", "matching"}
 FALSE = {"false", "no", "off", "0"}
 ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=.*", re.S)
+ALIAS_NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
 
 
 def split_globals(args):
@@ -85,6 +87,14 @@ def git(options, cwd, env, *args):
     except (OSError, subprocess.SubprocessError):
         return None
     return result
+
+
+@functools.cache
+def git_commands():
+    listed = git([], None, None, "--list-cmds=builtins,main")
+    if listed is None or listed.returncode:
+        return frozenset()
+    return frozenset(listed.stdout.split()) - PUSH_VERBS - {"receive-pack"}
 
 
 def resolve(options, cwd, env, need_repo):
@@ -169,6 +179,8 @@ def judge(options, args, cwd, env, depth=0):
             return push_reason(rest, None, None)
         items, branch = resolved
         return push_reason(rest, items if verb == "push" else None, branch)
+    if verb in git_commands() or not ALIAS_NAME.fullmatch(verb):
+        return None
     resolved = resolve(options, cwd, env, False)
     if resolved is None:
         return UNRESOLVED
