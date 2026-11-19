@@ -29,6 +29,8 @@ class PoolWindow(DashboardModel):
     resets_at: datetime | None = None
     measured_accounts: int = 0
     source: str
+    observed_requests: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    observed_tokens: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class PoolSummary(DashboardModel):
