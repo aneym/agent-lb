@@ -1,9 +1,9 @@
-import { seatUsageReason } from "@/features/dashboard/pool-rows";
+import { observedCountsText, seatUsageReason } from "@/features/dashboard/pool-rows";
 import { useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAccounts } from "@/features/accounts/hooks/use-accounts";
 import type { AccountSummarySchema } from "@/features/accounts/schemas";
-import { type Pool, type SeatAccount, type SeatQuotaWindow } from "../../api";
+import { type Pool, type PoolWindow, type SeatAccount, type SeatQuotaWindow } from "../../api";
 import { accountLabel, compact, money } from "../../format";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 
@@ -25,6 +25,7 @@ const poolName: Record<string, string> = {
   "cursor-other": "Cursor · other models",
   devin: "Devin",
   muse: "Muse",
+  gemini: "Gemini",
 };
 const poolModels: Record<string, string> = {
   "anthropic-general": "opus-latest · sonnet-latest",
@@ -34,6 +35,7 @@ const poolModels: Record<string, string> = {
   "cursor-other": "Cursor seat",
   devin: "Devin seat",
   muse: "Muse seat",
+  gemini: "gemini-4-neon · T3 on ax102",
 };
 export const SEAT_VENDORS = ["cursor", "devin", "muse"];
 const ET = "America/New_York";
@@ -67,6 +69,15 @@ function sourceNote(
   if ((source === "vendor_observed" || stale) && observedAt)
     return `as of ${etWhen(observedAt, now)}`;
   return null;
+}
+function windowOut(pool: Pool, w: PoolWindow, poolWide: boolean) {
+  if (w.remainingPercent != null && w.remainingPercent <= 0) return true;
+  if (!poolWide || pool.status !== "exhausted") return false;
+  return (
+    w.observedRequests == null ||
+    !pool.unavailableReason ||
+    pool.unavailableReason === "not_reported"
+  );
 }
 function isSeatPool(pool: Pool) {
   return (
@@ -117,11 +128,12 @@ function seatPoolMeters(pool: Pool, now: number) {
             key={w.id}
             remaining={w.remainingPercent}
             resetAt={w.resetsAt}
-            out={
-              pool.status === "exhausted" || (w.remainingPercent != null && w.remainingPercent <= 0)
-            }
+            out={windowOut(pool, w, true)}
             unit={unitFor(w.kind)}
-            empty={unavailableText(vendor, pool.unavailableReason)}
+            empty={
+              observedCountsText(vendor, w, pool.unavailableReason, true) ??
+              unavailableText(vendor, pool.unavailableReason)
+            }
             detail={[
               long.length > 1 ? w.label : null,
               w.resetsAt ? `resets ${etWhen(w.resetsAt, now)}` : null,
@@ -141,9 +153,10 @@ function seatPoolMeters(pool: Pool, now: number) {
     session: session ? (
       <LimitMeter
         remaining={session.remainingPercent}
-        out={session.remainingPercent != null && session.remainingPercent <= 0}
+        out={windowOut(pool, session, session.observedRequests != null)}
         resetAt={session.resetsAt}
         unit="5h"
+        empty={observedCountsText(vendor, session, pool.unavailableReason, false) ?? undefined}
         detail={sourceNote(session.source, null, false, now) ?? undefined}
       />
     ) : null,
@@ -316,7 +329,9 @@ export function ProxyAccountRow({
           sub={
             a.warmupUntil && new Date(a.warmupUntil).getTime() > now
               ? `warming up until ${new Date(a.warmupUntil).toLocaleString()}`
-              : a.status === "active" && sessions ? `holding ${sessions} sessions` : undefined
+              : a.status === "active" && sessions
+                ? `holding ${sessions} sessions`
+                : undefined
           }
         />
       }

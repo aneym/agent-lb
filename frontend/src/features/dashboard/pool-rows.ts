@@ -1,3 +1,5 @@
+import { compact } from "@/lb/format";
+
 export type PoolRefill = {
   at: string;
   accounts: number;
@@ -13,6 +15,8 @@ export type DashboardPoolWindow = {
   resetsAt: string | null;
   measuredAccounts?: number;
   source?: string | null;
+  observedRequests?: number | null;
+  observedTokens?: number | null;
 };
 
 export type DashboardPool = {
@@ -49,7 +53,15 @@ export type PoolRow = {
   subline: string | null;
 };
 
-const ORDER = ["anthropic-general", "openai-codex", "cursor-models", "cursor-other", "devin", "muse"];
+const ORDER = [
+  "anthropic-general",
+  "openai-codex",
+  "cursor-models",
+  "cursor-other",
+  "devin",
+  "muse",
+  "gemini",
+];
 
 const NAMES: Record<string, string> = {
   "anthropic-general": "Claude",
@@ -58,6 +70,7 @@ const NAMES: Record<string, string> = {
   "cursor-other": "Cursor other",
   devin: "Devin",
   muse: "Muse",
+  gemini: "Gemini",
 };
 
 const SEAT_KINDS = ["cli_seat", "cli_seat_budget"];
@@ -82,14 +95,17 @@ function poolName(id: string): string {
 function tightestWindow(pool: DashboardPool): DashboardPoolWindow | null {
   const measured = (pool.windows ?? []).filter((w) => w.remainingPercent != null);
   if (!measured.length) return null;
-  return measured.reduce((low, w) => ((w.remainingPercent as number) < (low.remainingPercent as number) ? w : low));
+  return measured.reduce((low, w) =>
+    (w.remainingPercent as number) < (low.remainingPercent as number) ? w : low,
+  );
 }
 
 function remainingPercent(pool: DashboardPool): number | null {
   const window = tightestWindow(pool);
   if (window) return window.remainingPercent;
   if (pool.windows && pool.quotaSource === "unavailable") return null;
-  if (pool.provider === "cursor" && pool.percentUsed != null) return Math.max(0, 100 - pool.percentUsed);
+  if (pool.provider === "cursor" && pool.percentUsed != null)
+    return Math.max(0, 100 - pool.percentUsed);
   return pool.weeklyRemainingPercent ?? pool.aggregateRemainingPercent ?? null;
 }
 
@@ -115,11 +131,15 @@ function ticks(pool: DashboardPool): number[] {
   const start = end - days * 86_400_000;
   const span = end - start;
   if (span <= 0) return [];
-  return pool.refills.map((refill) => Math.min(1, Math.max(0, (Date.parse(refill.at) - start) / span)));
+  return pool.refills.map((refill) =>
+    Math.min(1, Math.max(0, (Date.parse(refill.at) - start) / span)),
+  );
 }
 
 function monthDay(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone }).format(new Date(iso));
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone }).format(
+    new Date(iso),
+  );
 }
 
 function clock(iso: string, timeZone: string): string {
@@ -131,7 +151,12 @@ function clock(iso: string, timeZone: string): string {
 }
 
 function sameDay(a: string, b: Date, timeZone: string): boolean {
-  const fmt = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "2-digit", day: "2-digit", timeZone });
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  });
   return fmt.format(new Date(a)) === fmt.format(b);
 }
 
@@ -160,6 +185,25 @@ export function seatUsageReason(provider: string, reason?: string | null): strin
   return reasons[reason ?? "not_reported"] ?? `not reported by ${name}`;
 }
 
+const CAP_REPORTER: Record<string, string> = { gemini: "Google" };
+
+export function observedCountsText(
+  provider: string,
+  window: DashboardPoolWindow,
+  reason: string | null | undefined,
+  weekly: boolean,
+): string | null {
+  if (
+    window.remainingPercent != null ||
+    window.observedRequests == null ||
+    reason !== "not_reported"
+  )
+    return null;
+  const counts = `${compact(window.observedRequests)} requests · ${compact(window.observedTokens ?? 0)} tokens`;
+  if (!weekly) return `5 hours: ${counts}`;
+  return `No cap reported by ${CAP_REPORTER[provider] ?? vendorName(provider)} · 7 days: ${counts}`;
+}
+
 function windowSubline(pool: DashboardPool, out: boolean, timeZone: string): string | null {
   if (pool.windows && !tightestWindow(pool) && pool.quotaSource === "unavailable") {
     return seatUsageReason(pool.provider, pool.unavailableReason);
@@ -168,7 +212,8 @@ function windowSubline(pool: DashboardPool, out: boolean, timeZone: string): str
   if (!window) return null;
   const reset = window.resetsAt;
   const word = KIND_WORD[window.kind] ?? window.kind;
-  if (window.source === "estimate") return reset ? `estimate · resets ${monthDay(reset, timeZone)}` : "estimate";
+  if (window.source === "estimate")
+    return reset ? `estimate · resets ${monthDay(reset, timeZone)}` : "estimate";
   if (out) return reset ? `resets ${monthDay(reset, timeZone)}` : null;
   if (!reset) return word;
   return window.kind === "session" || window.kind === "daily"

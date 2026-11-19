@@ -13,7 +13,15 @@ import { ProviderMark } from "../../kit/provider-mark";
 import "./add-account.css";
 
 type Provider =
-  "anthropic" | "openai" | "cursor" | "devin" | "kimi" | "glm" | "openrouter" | "gemini" | "ollama";
+  | "anthropic"
+  | "openai"
+  | "cursor"
+  | "devin"
+  | "kimi"
+  | "glm"
+  | "openrouter"
+  | "gemini"
+  | "ollama";
 type Tile = { id: Provider; label: string; detail: string; disabled?: boolean };
 const groups: { name: string; tiles: Tile[] }[] = [
   {
@@ -36,7 +44,12 @@ const groups: { name: string; tiles: Tile[] }[] = [
       { id: "kimi", label: "Kimi", detail: "Paste a key" },
       { id: "glm", label: "GLM · Z.ai", detail: "Paste a key" },
       { id: "openrouter", label: "OpenRouter", detail: "Paste a key" },
-      { id: "gemini", label: "Gemini", detail: "Not available yet", disabled: true },
+      {
+        id: "gemini",
+        label: "Gemini",
+        detail: "Runs in T3; quota shown under Providers",
+        disabled: true,
+      },
     ],
   },
   {
@@ -80,7 +93,6 @@ export function AddAccountPage() {
       await accounts.probeMutation.mutateAsync({ accountId: id });
       await accounts.accountsQuery.refetch();
     } catch {
-
     } finally {
       setReading(false);
     }
@@ -182,7 +194,9 @@ export function AddAccountPage() {
                 <span className="sn">✓</span>
                 <b>{isKeyProvider(selected) ? "Key saved" : "Signed in"}</b>
                 <div className="sb">
-                  <span className={hideEmails ? "muted privacy-blur" : "muted"}>{added?.email || "Account connected"}</span>
+                  <span className={hideEmails ? "muted privacy-blur" : "muted"}>
+                    {added?.email || "Account connected"}
+                  </span>
                 </div>
               </div>
               <div className="step now">

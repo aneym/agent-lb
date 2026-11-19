@@ -15,6 +15,8 @@ export const PoolWindowSchema = z.object({
   resetsAt: z.string().nullable(),
   measuredAccounts: z.number(),
   source: z.string().nullable(),
+  observedRequests: maybeNumber,
+  observedTokens: maybeNumber,
 });
 export type PoolWindow = z.infer<typeof PoolWindowSchema>;
 export const PoolPaceSchema = z.object({
