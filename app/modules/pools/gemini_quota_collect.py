@@ -167,7 +167,7 @@ def collect(out: Path, *, pushing: bool, now: datetime | None = None) -> dict[st
     current = now or datetime.now(timezone.utc)
     agy_dir = Path(os.environ.get("AGENT_LB_GEMINI_AGY_DIR", "~/.gemini/antigravity-cli")).expanduser()
     meter_path = Path(os.environ.get("AGENT_LB_GEMINI_METER", "~/.agent-lb/seats/gemini-meter.json")).expanduser()
-    enabled = os.environ.get("AGENT_LB_GEMINI_VENDOR", "on") == "on"
+    enabled = os.environ.get("AGENT_LB_GEMINI_VENDOR", "off") == "on"
     previous = load_reading(out) or {}
     meter = _meter(agy_dir, meter_path, current)
     old_vendor = previous.get("vendor") if isinstance(previous.get("vendor"), dict) else {}

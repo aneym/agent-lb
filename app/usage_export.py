@@ -18,6 +18,7 @@ from app import (
     usage_export_asked_by,
     usage_export_asked_by_records,
     usage_export_codex,
+    usage_export_gemini,
     usage_export_headroom,
     usage_export_hourly,
 )
@@ -26,6 +27,7 @@ from app.core.config.service_database import LOCAL_DATABASE_URL, primary_databas
 USAGE_FILE = "usage-48h.json"
 HEADROOM_FILE = "headroom.json"
 CODEX_FILE = "codex.json"
+GEMINI_FILE = "gemini.json"
 
 
 def _plain_url(url: str) -> str:
@@ -109,10 +111,10 @@ def _cpu_seconds() -> float:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Write agent-lb hourly usage, Anthropic headroom and Codex limits as JSON files."
+        description="Write agent-lb hourly usage, Anthropic headroom, Codex and Gemini limits as JSON files."
     )
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--push", help="rsync destination host:dir for the three files")
+    parser.add_argument("--push", help="rsync destination host:dir for the four files")
     parser.add_argument("--alert-state", type=Path, help="state file for the low pool headroom alert to factory")
     parser.add_argument("--asked-by", type=Path, help="directory of per-turn asker records (*.jsonl, read recursively)")
     parser.add_argument(
@@ -129,6 +131,7 @@ def main(argv: list[str] | None = None) -> None:
             write_atomic(args.out, USAGE_FILE, usage),
             write_atomic(args.out, HEADROOM_FILE, headroom),
             write_atomic(args.out, CODEX_FILE, codex),
+            write_atomic(args.out, GEMINI_FILE, usage_export_gemini.build(usage["generated_at"], host)),
         ]
         if args.push:
             push(paths, args.push)
