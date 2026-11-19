@@ -64,6 +64,29 @@ def first_checkout(cwd):
         return None
 
 
+PLACES = re.compile(r"(?:^|[\s;&|(])(?:cd|pushd|-C)\s+('[^']*'|\"[^\"]*\"|[^\s;&|()]+)")
+BRANCH_VERBS = re.compile(r"\bgit\b[^;&|\n]*?\s(?:switch|checkout)\b")
+
+
+def shared_named(text, cwd):
+    places = [(match.start(), match.group(1).strip("'\"")) for match in PLACES.finditer(text)]
+    for verb in BRANCH_VERBS.finditer(text):
+        current = Path(cwd or "/")
+        dynamic = False
+        for start, place in places:
+            if start >= verb.end():
+                break
+            dynamic = any(char in place for char in "$`")
+            if dynamic:
+                if "repos" in place:
+                    return True
+                continue
+            current = current / Path(place).expanduser()
+        if not dynamic and first_checkout(str(current)) is True:
+            return True
+    return False
+
+
 def removable_worktree(where, force=False):
     if not force:
         return True
@@ -370,6 +393,8 @@ def main():
             found = fallback_commands(strip_heredocs(text), cwd)
         for action, where in found:
             state = first_checkout(where) if where else None
+            if state is None and action in {"switch", "checkout"}:
+                state = shared_named(text, cwd)
             if state is not False:
                 reason = (
                     action.removeprefix("push denied: ")
