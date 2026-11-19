@@ -42,11 +42,11 @@ WINDOW = "deleted_at IS NULL AND requested_at >= %(start)s AND requested_at < %(
 
 _BUCKETS_SQL = f"""
 SELECT date_trunc('hour', requested_at) AS hour, provider, model, client_session_id,
-       left(account_id, 8) AS account, {SUMS}
+       left(account_id, 8) AS account, caller_machine, caller_seat, {SUMS}
 FROM request_logs
 WHERE {WINDOW}
-GROUP BY 1, 2, 3, 4, 5
-ORDER BY 1, 2, 3, 5, 4
+GROUP BY 1, 2, 3, 4, 5, 6, 7
+ORDER BY 1, 2, 3, 5, 4, 6, 7
 """
 
 _BY_MODEL_SQL = f"""
@@ -63,6 +63,7 @@ NOTES = [
     "5m vs 1h split from cache_creation_tier (null counted as 5m).",
     "ok_requests counts status success; failed_requests counts every other status.",
     "account is the first 8 characters of the agent-lb account id; client_session_id is the client's own session id.",
+    "caller_machine and caller_seat are the sending machine and seat agent-lb recorded on the request; null when unknown.",
     "hour is the UTC hour the request started; the first and last buckets are partial.",
     "by_model_24h and totals_24h cover exactly the last 24 hours up to window.end_utc; by_model and totals cover the 48 hours.",
 ]
@@ -108,6 +109,8 @@ def build(cursor: Any, end: datetime, source: str, generated_at: str) -> dict[st
             "model": row["model"],
             "client_session_id": row["client_session_id"],
             "account": row["account"],
+            "caller_machine": row["caller_machine"],
+            "caller_seat": row["caller_seat"],
             **metrics(row),
         }
         for row in rows(cursor, _BUCKETS_SQL, window)
@@ -126,7 +129,16 @@ def build(cursor: Any, end: datetime, source: str, generated_at: str) -> dict[st
         },
         "generated_at": generated_at,
         "notes": NOTES,
-        "bucket_keys": ["hour", "provider", "model", "client_session_id", "account", *METRICS],
+        "bucket_keys": [
+            "hour",
+            "provider",
+            "model",
+            "client_session_id",
+            "account",
+            "caller_machine",
+            "caller_seat",
+            *METRICS,
+        ],
         "totals": _totals(by_model),
         "by_model": by_model,
         "totals_24h": _totals(by_model_24h),
