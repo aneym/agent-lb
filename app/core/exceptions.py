@@ -20,6 +20,10 @@ class ProxyAuthError(AppError):
     code = "invalid_api_key"
     error_type = "authentication_error"
 
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"x-should-retry": "false"}
+
 
 class ProxyModelNotAllowed(AppError):
     status_code = 403
@@ -43,6 +47,10 @@ class TeamMemberSuspendedError(AppError):
     status_code = 403
     code = "team_member_suspended"
     error_type = "team_member_suspended"
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"x-should-retry": "false"}
 
 
 class TeamModelNotAllowedError(AppError):

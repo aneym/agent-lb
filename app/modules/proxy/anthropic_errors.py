@@ -56,6 +56,7 @@ def anthropic_error_response(
     retry_at: int | None = None,
     details: Any | None = None,
     code: str | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     error: dict[str, Any] = {
         "type": error_type,
@@ -72,7 +73,7 @@ def anthropic_error_response(
             "type": "error",
             "error": error,
         },
-        headers=retry_headers(retry_at),
+        headers={**(retry_headers(retry_at) or {}), **(headers or {})} or None,
     )
 
 

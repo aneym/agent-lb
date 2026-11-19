@@ -119,7 +119,7 @@ async def v1_messages(
     except ProxyModelNotAllowed as exc:
         return anthropic_error_response(403, "permission_error", str(exc), code=exc.code)
     except ProxyAuthError as exc:
-        return anthropic_error_response(401, "authentication_error", str(exc))
+        return anthropic_error_response(401, "authentication_error", str(exc), headers=exc.headers)
 
     try:
         stream = await context.service.stream_messages(
@@ -285,7 +285,7 @@ async def ccgpt_messages_response(
     except ProxyRateLimitError as exc:
         return anthropic_error_response(429, "rate_limit_error", str(exc))
     except ProxyAuthError as exc:
-        return anthropic_error_response(401, "authentication_error", str(exc))
+        return anthropic_error_response(401, "authentication_error", str(exc), headers=exc.headers)
 
     if not isinstance(upstream, StreamingResponse):
         body = getattr(upstream, "body", b"")

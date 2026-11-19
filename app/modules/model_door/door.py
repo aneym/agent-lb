@@ -42,7 +42,7 @@ def _error(status: int, kind: str, message: str) -> JSONResponse:
     return JSONResponse(
         {"type": "error", "error": {"type": kind, "message": message}},
         status_code=status,
-        headers={"cache-control": "no-store"},
+        headers={"cache-control": "no-store", **({"x-should-retry": "false"} if status == 401 else {})},
     )
 
 

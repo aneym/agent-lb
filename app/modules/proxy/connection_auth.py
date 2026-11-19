@@ -54,6 +54,7 @@ async def validate_proxy_websocket_request(
         return None, JSONResponse(
             status_code=exc.status_code,
             content=openai_error(exc.code, exc.message, error_type=exc.error_type),
+            headers=exc.headers,
         )
     return api_key, None
 
@@ -76,6 +77,7 @@ async def validate_internal_bridge_api_key(
         return None, JSONResponse(
             status_code=exc.status_code,
             content=openai_error(exc.code, exc.message, error_type=exc.error_type),
+            headers=exc.headers,
         )
     return api_key, None
 

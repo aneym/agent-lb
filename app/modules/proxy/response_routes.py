@@ -133,7 +133,7 @@ async def responses_websocket(
             JSONResponse(
                 status_code=exc.status_code,
                 content=openai_error(exc.code, exc.message, error_type=exc.error_type),
-                headers=exc.headers if isinstance(exc, TeamMemberOverCapError) else None,
+                headers=exc.headers,
             )
         )
         return
@@ -270,7 +270,7 @@ async def v1_responses_websocket(
             JSONResponse(
                 status_code=exc.status_code,
                 content=openai_error(exc.code, exc.message, error_type=exc.error_type),
-                headers=exc.headers if isinstance(exc, TeamMemberOverCapError) else None,
+                headers=exc.headers,
             )
         )
         return

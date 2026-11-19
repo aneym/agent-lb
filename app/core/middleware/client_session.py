@@ -73,7 +73,9 @@ class ClientSessionMiddleware:
                         await send({"type": "websocket.close", "code": 1008})
                     else:
                         await JSONResponse(
-                            {"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status_code
+                            {"error": {"code": exc.code, "message": exc.message}},
+                            status_code=exc.status_code,
+                            headers=exc.headers if isinstance(exc, ProxyAuthError) else None,
                         )(scope, receive, send)
                     return
             await self.app(scope, receive, send)
