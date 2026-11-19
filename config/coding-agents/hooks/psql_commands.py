@@ -59,7 +59,7 @@ def operators(token):
     return [token]
 
 
-def commands(text, bodies, feeds):
+def commands(text, bodies, feeds, ends=None):
     lines = text.splitlines(keepends=True)
     clean, state, i = [], "", 0
     while i < len(lines):
@@ -78,7 +78,7 @@ def commands(text, bodies, feeds):
             masked = masked.replace("%sL%d\x06" % (DOC, j), DOC + str(len(bodies)))
             bodies.append(("".join(body), bool(m[2]) or "\\" in m[3]))
             if SHELL_LINE.match(line):
-                yield from commands("".join(body), bodies, feeds)
+                yield from commands("".join(body), bodies, feeds, ends)
         clean.append(masked)
     lexer = shlex.shlex("".join(clean), posix=True, punctuation_chars=";|&<>()")
     lexer.whitespace = " \t\r"
@@ -89,15 +89,21 @@ def commands(text, bodies, feeds):
         if token[:1] == "<" or token == ">(" or "|" in token.replace("||", "").replace(">|", ""):
             feeds.append(token)
         if token in ("<(", ">("):
+            if ends is not None:
+                ends.append(token)
             yield segment + [token]
             segment = []
         elif token and set(token) <= set(";|&()"):
             if segment:
+                if ends is not None:
+                    ends.append(token)
                 yield segment
                 segment = []
         else:
             segment.append(token)
     if segment:
+        if ends is not None:
+            ends.append("")
         yield segment
 
 
