@@ -37,7 +37,7 @@
     "sol-latest": {
       "vendor": "openai",
       "family": "sol",
-      "pinned": "gpt-6.1-sol"
+      "pinned": "gpt-6.2-sol"
     },
     "sol-latest-low": {
       "vendor": "openai",
@@ -151,9 +151,8 @@
     "claude-sonnet-4-*",
     "claude-haiku-4",
     "claude-haiku-4-*",
-    "gpt-*-astra",
-    "gpt-*-astra-*",
-    "astra",
+    "gpt-6-astra",
+    "gpt-6-astra-*",
     "gpt-5.6*",
     "gpt-5.5*",
     "gpt-5.4*",

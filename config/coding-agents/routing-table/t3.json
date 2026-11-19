@@ -3,12 +3,12 @@
     "providers": {
       "sol-latest": {
         "providerInstanceId": "codex",
-        "model": "gpt-6.1-sol",
+        "model": "gpt-6.2-sol",
         "effort_option": "reasoningEffort"
       },
       "astra-latest": {
         "providerInstanceId": "codex",
-        "model": "gpt-6-astra",
+        "model": "gpt-6.2-astra",
         "effort_option": "reasoningEffort"
       },
       "terra-latest": {
@@ -40,6 +40,11 @@
         "providerInstanceId": "claudeAgent",
         "model": "k3.1-pro",
         "effort_option": "effort"
+      },
+      "neon-latest": {
+        "providerInstanceId": "gemini",
+        "model": "gemini-4-neon",
+        "effort_option": "thought_level"
       }
     },
     "environments": {

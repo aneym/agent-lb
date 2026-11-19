@@ -79,6 +79,18 @@ def _normalize_usage(usage: UsageTokens | ResponseUsage | None) -> UsageTokens |
 
 
 DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
+    "gpt-6.2-astra": ModelPrice(
+        input_per_1m=8.0,
+        cached_input_per_1m=0.40,
+        output_per_1m=40.0,
+        priority_input_per_1m=16.0,
+        priority_cached_input_per_1m=0.80,
+        priority_output_per_1m=80.0,
+        long_context_threshold_tokens=272_000,
+        long_context_input_per_1m=16.0,
+        long_context_cached_input_per_1m=0.80,
+        long_context_output_per_1m=60.0,
+    ),
     "gpt-6-astra": ModelPrice(
         input_per_1m=10.0,
         cached_input_per_1m=1.0,
@@ -340,6 +352,7 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
 }
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
+    "gpt-6.2-astra*": "gpt-6.2-astra",
     "gpt-6-astra*": "gpt-6-astra",
     **{
         f"{model}-{suffix}": model
