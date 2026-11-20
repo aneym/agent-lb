@@ -30,11 +30,14 @@ class CodeAssistError(Exception):
 
 async def read_error_body(content: aiohttp.StreamReader) -> bytes:
     raw = b""
-    while len(raw) < ERROR_BODY_LIMIT:
-        data = await content.read(ERROR_BODY_LIMIT - len(raw))
-        if not data:
-            break
-        raw += data
+    try:
+        while len(raw) < ERROR_BODY_LIMIT:
+            data = await content.read(ERROR_BODY_LIMIT - len(raw))
+            if not data:
+                break
+            raw += data
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return raw
     return raw
 
 

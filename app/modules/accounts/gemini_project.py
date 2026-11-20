@@ -11,12 +11,10 @@ from app.modules.proxy.account_cache import get_account_selection_cache
 
 UNCONFIRMED_REJECTION_STATUS = 503
 GEMINI_TERMS_DISABLED_CODE = "gemini_terms_disabled"
-TERMS_DISABLED_PROBE_STATUS = 403
+GEMINI_TERMS_DISABLED_REASON = permanent_failure_reason(GEMINI_TERMS_DISABLED_CODE)
 
 
 async def probe_gemini_account(account: Account, access_token: str) -> int:
-    if account.deactivation_reason == permanent_failure_reason(GEMINI_TERMS_DISABLED_CODE):
-        return TERMS_DISABLED_PROBE_STATUS
     try:
         project_id = await resolve_code_assist_project(access_token)
     except CodeAssistError as exc:

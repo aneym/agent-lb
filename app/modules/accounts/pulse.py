@@ -24,6 +24,7 @@ from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.modules.accounts import probes
 from app.modules.accounts.auth_manager import is_locally_owned
+from app.modules.accounts.gemini_project import GEMINI_TERMS_DISABLED_REASON
 from app.modules.accounts.pulse_backend import (
     AnthropicQuotaCooldown,
     _AccountsRepositoryLike,
@@ -219,6 +220,8 @@ class AccountPulseScheduler:
                 return account.id not in self._failures
             if account.deactivation_reason == ACCOUNT_ON_HOLD_REASON:
                 return not self._in_backoff(account.id, min_delay_seconds=_ON_HOLD_MIN_RETRY_SECONDS)
+            if account.deactivation_reason == GEMINI_TERMS_DISABLED_REASON:
+                return False
         if not recovery_only:
             return not self._in_backoff(account.id)
         if not _is_recovery_pending(account):
