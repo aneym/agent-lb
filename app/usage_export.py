@@ -94,7 +94,7 @@ def push(paths: list[Path], destination: str) -> None:
         "--mkpath",
         "--timeout=60",
         "-e",
-        "ssh -o BatchMode=yes -o ConnectTimeout=15",
+        usage_export_asked_by_records.SSH_TRANSPORT,
         *[str(path) for path in paths],
         destination.rstrip("/") + "/",
     ]

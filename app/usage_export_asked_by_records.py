@@ -14,6 +14,9 @@ OWNER = "owner"
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}\Z")
 _SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+SSH_TRANSPORT = (
+    "ssh -o BatchMode=yes -o ConnectTimeout=60 -o ControlMaster=auto -o ControlPath=~/.ssh/cm-%C -o ControlPersist=10m"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,12 +81,12 @@ def pull(sources: list[str], directory: Path) -> list[dict[str, Any]]:
             "--include=*.jsonl",
             "--exclude=*",
             "-e",
-            "ssh -o BatchMode=yes -o ConnectTimeout=10",
+            SSH_TRANSPORT,
             f"{host}:{remote.rstrip('/')}/",
             f"{target}/",
         ]
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=90)
+            result = subprocess.run(command, capture_output=True, text=True, timeout=150)
         except subprocess.TimeoutExpired:
             pulled.append({"source": source, "error": "rsync timed out; kept the last copy"})
             continue
