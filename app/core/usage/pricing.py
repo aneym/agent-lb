@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from typing import Iterable, Mapping
+from typing import Mapping
 
 from app.core.openai.models import ResponseUsage
 
@@ -349,6 +349,11 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
         cached_input_per_1m=2.0,
         output_per_1m=30.0,
     ),
+    "gemini-4-neon": ModelPrice(
+        input_per_1m=3.0,
+        cached_input_per_1m=0.15,
+        output_per_1m=15.0,
+    ),
 }
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
@@ -387,6 +392,7 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
     "gpt-image-1.5*": "gpt-image-1.5",
     "gpt-image-1-mini*": "gpt-image-1-mini",
     "gpt-image-1*": "gpt-image-1",
+    "gemini-4-neon*": "gemini-4-neon",
 }
 
 

@@ -238,6 +238,7 @@ class SettingsFields(BaseSettings):
 
     model_aliases: dict[str, str] = Field(default_factory=dict)
     excluded_model_patterns: list[str] = Field(default_factory=list)
+    gemini_upstream: Literal["code_assist", "fake"] = "code_assist"
 
     model_registry_enabled: bool = True
     model_registry_refresh_interval_seconds: int = Field(default=300, gt=0)

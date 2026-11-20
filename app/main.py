@@ -48,6 +48,7 @@ from app.modules.oauth import api as oauth_api
 from app.modules.pools import api as pools_api
 from app.modules.pools.seat_quota_scheduler import build_seat_quota_scheduler
 from app.modules.proxy import api as proxy_api
+from app.modules.proxy.gemini_routes import router as gemini_router
 from app.modules.proxy.models_api import router as models
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.proxy.ring_membership import (
@@ -359,6 +360,7 @@ def configure_app(app: FastAPI, settings) -> None:
         app.include_router(router)
     app.include_router(models)
     register_muse_routes(app)
+    app.include_router(gemini_router)
     for dashboard_router in (
         audit_api.router,
         accounts_api.router,

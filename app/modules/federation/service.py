@@ -18,7 +18,7 @@ from app.modules.federation.exceptions import (  # noqa: I001  # fmt: skip
     FederationNotFoundError,
 )
 from app.modules.federation.peer_client import AiohttpFederationPeerClient, FederationPeerClient
-from app.modules.federation.repository import FederationRepository
+from app.modules.federation.repository import LOCAL_ONLY_PROVIDERS, FederationRepository
 from app.modules.federation.schemas import (  # noqa: I001  # fmt: skip
     FederationAuthPayload,
     FederationCheckinExecuteResponse,
@@ -136,7 +136,7 @@ class FederationService:
         local_id = self._settings.local_instance_id
 
         account = await self._repo.reload_account(account_id)
-        if account is None:
+        if account is None or account.provider in LOCAL_ONLY_PROVIDERS:
             raise FederationNotFoundError(account_id)
         if warmup_active(account) or await self._repo.has_exchange_intent(account_id):
             raise FederationConflictError(account_id, current_owner=account.owner_instance)

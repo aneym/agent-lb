@@ -12,6 +12,9 @@ from app.db.models import Account, AccountStatus
 from app.modules.federation.repository_transfers import FederationTransferRepository
 from app.modules.federation.repository_usage import FederationUsageRepository
 from app.modules.federation.schemas import FederationAuthPayload
+from app.modules.proxy.gemini_models import GEMINI_PROVIDER
+
+LOCAL_ONLY_PROVIDERS = frozenset({GEMINI_PROVIDER})
 
 
 class FederationRepository(FederationTransferRepository, FederationUsageRepository):
@@ -29,14 +32,18 @@ class FederationRepository(FederationTransferRepository, FederationUsageReposito
         return int(owned or 0), int(mirrored or 0)
 
     async def list_locally_owned_accounts(self, local_instance_id: str) -> list[Account]:
-        stmt = select(Account).where(or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id))
+        stmt = (
+            select(Account)
+            .where(or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id))
+            .where(Account.provider.notin_(LOCAL_ONLY_PROVIDERS))
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
     async def list_mirrorable_accounts(self, local_instance_id: str, *, include_foreign: bool) -> list[Account]:
         if not include_foreign:
             return await self.list_locally_owned_accounts(local_instance_id)
-        result = await self._session.execute(select(Account))
+        result = await self._session.execute(select(Account).where(Account.provider.notin_(LOCAL_ONLY_PROVIDERS)))
         return list(result.scalars().all())
 
     async def release_for_checkout(
