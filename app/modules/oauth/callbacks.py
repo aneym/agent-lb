@@ -32,7 +32,10 @@ class OAuthCallbackHandlers:
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(callback_url)
-        if not parsed.scheme and "#" in callback_url:
+        bare_code = not parsed.scheme and not any(mark in callback_url for mark in "#?=&")
+        if bare_code:
+            params = {"code": [callback_url]}
+        elif not parsed.scheme and "#" in callback_url:
             code, state = callback_url.split("#", 1)
             params = {"code": [code], "state": [state]}
         else:
@@ -45,6 +48,9 @@ class OAuthCallbackHandlers:
         state = params.get("state", [None])[0]
 
         async with self._store.lock:
+            if bare_code and flow_id is not None:
+                pasted_flow = self._store.get_flow_locked(flow_id)
+                state = pasted_flow.state_token if pasted_flow is not None else None
             flow = self._store.get_flow_by_state_token_locked(state)
             verifier = flow.code_verifier if flow is not None else None
             target_flow_id = flow.flow_id if flow is not None else flow_id

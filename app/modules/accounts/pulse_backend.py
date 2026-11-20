@@ -9,6 +9,7 @@ from typing import Protocol, cast
 
 from app.core.providers import (
     ANTHROPIC_COMPAT_PROFILES,
+    GEMINI_PROVIDER_NAME,
     normalize_provider_name,
 )
 from app.core.utils.time import naive_utc_to_epoch, utcnow
@@ -16,8 +17,8 @@ from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts import probes
 from app.modules.accounts.auth_manager import AuthManager
+from app.modules.accounts.gemini_project import probe_gemini_account
 from app.modules.accounts.repository import AccountsRepository
-from app.modules.proxy.gemini_models import GEMINI_PROVIDER
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 
 _FABLE_PROBE_MODEL = "claude-fable-5-2"
@@ -84,6 +85,8 @@ async def _default_probe_sender(account: Account, access_token: str) -> tuple[in
     provider = normalize_provider_name(account.provider)
     compat_profiles = {profile.provider_name: profile for profile in ANTHROPIC_COMPAT_PROFILES}
     compat_profile = compat_profiles.get(provider)
+    if provider == GEMINI_PROVIDER_NAME:
+        return await probe_gemini_account(account, access_token), None
     if compat_profile is not None:
         base_url = str(getattr(settings, compat_profile.upstream_settings_attr))
         return await probes.send_messages_probe(
@@ -91,8 +94,6 @@ async def _default_probe_sender(account: Account, access_token: str) -> tuple[in
             base_url=base_url,
             model=compat_profile.default_probe_model,
         )
-    if provider == GEMINI_PROVIDER:
-        return 0, "Gemini accounts have no pulse probe."
     return await probes.send_openai_probe_with_error_code(
         access_token=access_token,
         chatgpt_account_id=account.chatgpt_account_id,

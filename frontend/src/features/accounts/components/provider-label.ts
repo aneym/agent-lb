@@ -3,6 +3,7 @@ import type { AccountProvider } from "@/features/accounts/schemas";
 const PROVIDER_LABELS: Record<AccountProvider, string> = {
   openai: "Codex",
   anthropic: "Claude",
+  gemini: "Gemini",
   glm: "GLM",
   kimi: "Kimi",
   openrouter: "OpenRouter",

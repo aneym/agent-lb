@@ -30,13 +30,20 @@ class ProviderOAuthConfig:
 
 
 class Provider(Protocol):
-    name: str
-    requires_id_token: bool
-    model_registry: object
-    pricing: object
-    sse_parser: object
-    request_normalizer: object
-    access_token_refresh_interval_seconds: int | None
+    @property
+    def name(self) -> str: ...
+    @property
+    def requires_id_token(self) -> bool: ...
+    @property
+    def model_registry(self) -> object: ...
+    @property
+    def pricing(self) -> object: ...
+    @property
+    def sse_parser(self) -> object: ...
+    @property
+    def request_normalizer(self) -> object: ...
+    @property
+    def access_token_refresh_interval_seconds(self) -> int | None: ...
 
     def oauth_config(self) -> ProviderOAuthConfig: ...
 

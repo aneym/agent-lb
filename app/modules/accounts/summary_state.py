@@ -290,7 +290,11 @@ def _build_auth_status(account: Account, encryptor: TokenEncryptor) -> AccountAu
     refresh_token = _decrypt_token(encryptor, account.refresh_token_encrypted)
     id_token = _decrypt_token(encryptor, account.id_token_encrypted)
 
-    access_expires = _token_expiry(access_token)
+    access_expires = (
+        account.access_expires_at.replace(tzinfo=timezone.utc)
+        if account.access_expires_at is not None
+        else _token_expiry(access_token)
+    )
     refresh_state = "stored" if refresh_token else "missing"
     id_state = "unknown"
     if id_token:

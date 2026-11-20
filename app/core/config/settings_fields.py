@@ -86,6 +86,18 @@ class SettingsFields(BaseSettings):
         "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
     )
     anthropic_oauth_redirect_uri: str = "https://platform.claude.com/oauth/code/callback"
+    gemini_oauth_authorize_url: str = "https://accounts.google.com/o/oauth2/v2/auth"
+    gemini_oauth_token_url: str = "https://oauth2.googleapis.com/token"
+    gemini_oauth_redirect_uri: str = "https://antigravity.google/oauth-callback"
+    gemini_oauth_scope: str = (
+        "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile "
+        "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/cclog "
+        "https://www.googleapis.com/auth/experimentsandconfigs https://www.googleapis.com/auth/aicode"
+    )
+    gemini_oauth_client_id_secret_name: str = "agent-lb-gemini-oauth-client-id"
+    gemini_oauth_client_secret_name: str = "agent-lb-gemini-oauth-client-secret"
+    gemini_code_assist_base_url: str = "https://cloudcode-pa.googleapis.com"
+    gemini_oauth_userinfo_url: str = "https://openidconnect.googleapis.com/v1/userinfo"
     anthropic_version: str = "2023-06-01"
     glm_anthropic_upstream_base_url: str = "https://api.z.ai/api/anthropic"
     kimi_anthropic_upstream_base_url: str = "https://api.kimi.com/coding"

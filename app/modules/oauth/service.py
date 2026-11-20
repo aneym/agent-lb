@@ -8,7 +8,6 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Callable
 
-from app.core.anthropic.oauth import build_anthropic_authorization_url, exchange_anthropic_authorization_code
 from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.cache.invalidation import NAMESPACE_API_KEY, get_cache_invalidation_poller
 from app.core.clients.oauth import (
@@ -22,7 +21,7 @@ from app.core.clients.oauth import (
 )
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
-from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, ProviderLookupError, get_provider
+from app.core.providers import OPENAI_PROVIDER_NAME, ProviderLookupError, get_provider
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.db.session import get_background_session
 from app.modules.accounts.identity_repository import AccountIdentityConflictError
@@ -35,6 +34,7 @@ from app.modules.oauth.callbacks import (
 from app.modules.oauth.callbacks import (
     _error_html as _error_html,
 )
+from app.modules.oauth.provider_flows import PROVIDER_OAUTH_FLOWS
 from app.modules.oauth.schemas import (
     OauthCompleteRequest,
     OauthCompleteResponse,
@@ -187,18 +187,11 @@ class OauthService(OAuthCallbackHandlers):
         flow_id = secrets.token_urlsafe(12)
         code_verifier, code_challenge = generate_pkce_pair()
         provider = get_provider(provider_name)
-        state_token = secrets.token_urlsafe(32 if provider.name == ANTHROPIC_PROVIDER_NAME else 16)
+        flow = PROVIDER_OAUTH_FLOWS.get(provider.name)
+        state_token = secrets.token_urlsafe(flow.state_token_bytes if flow is not None else 16)
         oauth_config = provider.oauth_config()
-        if provider.name == ANTHROPIC_PROVIDER_NAME:
-            authorization_url = build_anthropic_authorization_url(
-                state=state_token,
-                code_challenge=code_challenge,
-                authorize_url=oauth_config.authorize_url,
-                client_id=oauth_config.client_id,
-                redirect_uri=oauth_config.redirect_uri,
-                scope=oauth_config.scope,
-                extra_params=oauth_config.authorization_extra_params,
-            )
+        if flow is not None:
+            authorization_url = flow.authorization_url(oauth_config, state=state_token, code_challenge=code_challenge)
         else:
             authorization_url = build_authorization_url(
                 state=state_token,
@@ -371,15 +364,9 @@ class OauthService(OAuthCallbackHandlers):
     ) -> OAuthTokens:
         provider = get_provider(provider_name)
         oauth_config = provider.oauth_config()
-        if provider.name == ANTHROPIC_PROVIDER_NAME:
-            return await exchange_anthropic_authorization_code(
-                code=code,
-                code_verifier=code_verifier,
-                state=state,
-                redirect_uri=oauth_config.redirect_uri,
-                token_url=oauth_config.token_url,
-                client_id=oauth_config.client_id,
-            )
+        flow = PROVIDER_OAUTH_FLOWS.get(provider.name)
+        if flow is not None:
+            return await flow.exchange_code(oauth_config, code=code, code_verifier=code_verifier, state=state)
         route = await _oauth_route()
         return await exchange_authorization_code(
             code=code,

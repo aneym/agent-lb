@@ -29,6 +29,7 @@ const groups: { name: string; tiles: Tile[] }[] = [
     tiles: [
       { id: "anthropic", label: "Claude", detail: "Sign in · Pro or Max" },
       { id: "openai", label: "ChatGPT · Codex", detail: "Sign in · Plus or Pro" },
+      { id: "gemini", label: "Gemini · Antigravity", detail: "Sign in · Google AI Pro or Ultra" },
     ],
   },
   {
@@ -44,12 +45,6 @@ const groups: { name: string; tiles: Tile[] }[] = [
       { id: "kimi", label: "Kimi", detail: "Paste a key" },
       { id: "glm", label: "GLM · Z.ai", detail: "Paste a key" },
       { id: "openrouter", label: "OpenRouter", detail: "Paste a key" },
-      {
-        id: "gemini",
-        label: "Gemini",
-        detail: "Runs in T3; quota shown under Providers",
-        disabled: true,
-      },
     ],
   },
   {
@@ -341,7 +336,7 @@ export function AddAccountPage() {
         key={selected}
         open={oauthOpen}
         state={oauth.state}
-        initialProvider={selected === "anthropic" ? "anthropic" : "openai"}
+        initialProvider={selected === "anthropic" || selected === "gemini" ? selected : "openai"}
         onOpenChange={setOauthOpen}
         onStart={async (method, provider) => {
           await oauth.start(method, provider);

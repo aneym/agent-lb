@@ -1,10 +1,11 @@
 import { z } from "zod";
 
-export type AccountProvider = "openai" | "anthropic" | "glm" | "kimi" | "openrouter";
+export type AccountProvider = "openai" | "anthropic" | "gemini" | "glm" | "kimi" | "openrouter";
 
 export const AccountProviderSchema = z.enum([
   "openai",
   "anthropic",
+  "gemini",
   "glm",
   "kimi",
   "openrouter",

@@ -57,7 +57,9 @@ const groupOf = (a: AccountSummary) =>
     ? "Claude"
     : a.provider === "openai"
       ? "ChatGPT · Codex"
-      : a.provider?.toUpperCase() || "Other";
+      : a.provider === "gemini"
+        ? "Gemini"
+        : a.provider?.toUpperCase() || "Other";
 const usageLink = (id: string) => `/usage?account=${encodeURIComponent(id)}`;
 
 function LastSevenDays({ accountId }: { accountId: string }) {
@@ -255,7 +257,7 @@ export function AccountPage() {
       />
     );
   const name = accountLabel(account, hideEmails);
-  const isOAuth = account.provider === "anthropic" || account.provider === "openai";
+  const isOAuth = account.provider === "anthropic" || account.provider === "openai" || account.provider === "gemini";
   const signIn = () =>
     isOAuth ? setOauthOpen(true) : navigate(`/providers/add?provider=${account.provider || "glm"}`);
   const exportSignIn = async () => {
@@ -471,7 +473,7 @@ export function AccountPage() {
           key={account.provider}
           open={oauthOpen}
           state={oauth.state}
-          initialProvider={account.provider === "anthropic" ? "anthropic" : "openai"}
+          initialProvider={account.provider === "anthropic" || account.provider === "gemini" ? account.provider : "openai"}
           onOpenChange={(open) => {
             setOauthOpen(open);
             if (!open && params.has("signin")) {

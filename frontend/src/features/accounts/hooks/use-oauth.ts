@@ -28,7 +28,7 @@ const INITIAL_OAUTH_STATE: OAuthState = OAuthStateSchema.parse({
 });
 
 function isExpectedAuthorizationUrl(provider: AccountProvider, authorizationUrl: string | null): boolean {
-  if (provider === "openai" || !authorizationUrl) {
+  if (provider !== "anthropic" || !authorizationUrl) {
     return true;
   }
   try {

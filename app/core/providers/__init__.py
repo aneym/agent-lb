@@ -8,6 +8,7 @@ from app.core.providers.anthropic_compat import (
     get_anthropic_compat_profile,
     provider_name_for_anthropic_model,
 )
+from app.core.providers.gemini import GEMINI_PROVIDER_NAME, GeminiProvider
 from app.core.providers.glm import GLM_DEFAULT_PLAN, GLM_PROVIDER_NAME, GlmProvider
 from app.core.providers.kimi import KIMI_DEFAULT_PLAN, KIMI_PROVIDER_NAME, KimiProvider
 from app.core.providers.openai import OPENAI_PROVIDER_NAME, OpenAIProvider
@@ -17,6 +18,7 @@ from app.core.providers.types import AccountMetadata, Provider, ProviderOAuthCon
 __all__ = [
     "ANTHROPIC_COMPAT_PROFILES",
     "ANTHROPIC_PROVIDER_NAME",
+    "GEMINI_PROVIDER_NAME",
     "GLM_DEFAULT_PLAN",
     "GLM_PROVIDER_NAME",
     "KIMI_DEFAULT_PLAN",
@@ -26,6 +28,7 @@ __all__ = [
     "AnthropicCompatImportDefaults",
     "AnthropicCompatProfile",
     "AnthropicProvider",
+    "GeminiProvider",
     "GlmProvider",
     "KimiProvider",
     "OpenAIProvider",

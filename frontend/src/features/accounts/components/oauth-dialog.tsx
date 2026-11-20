@@ -28,29 +28,11 @@ import { cn } from "@/lib/utils";
 import type { AccountProvider, OAuthState } from "@/features/accounts/schemas";
 import { ProviderBadge } from "@/features/accounts/components/provider-badge";
 import { providerLabel } from "@/features/accounts/components/provider-label";
+import { OAUTH_PROVIDER_OPTIONS } from "@/features/accounts/components/oauth-provider-options";
 import { formatCountdown } from "@/utils/formatters";
 import { copyToClipboard } from "@/utils/clipboard";
 
 type Stage = "intro" | "browser" | "device" | "success" | "error";
-const PROVIDER_OPTIONS: Array<{
-  provider: AccountProvider;
-  title: string;
-  detail: string;
-  deviceEnabled: boolean;
-}> = [
-  {
-    provider: "openai",
-    title: "OpenAI",
-    detail: "ChatGPT / Codex OAuth",
-    deviceEnabled: true,
-  },
-  {
-    provider: "anthropic",
-    title: "Anthropic",
-    detail: "Claude Code OAuth",
-    deviceEnabled: false,
-  },
-];
 
 function getStage(state: OAuthState): Stage {
   if (state.status === "success") return "success";
@@ -222,7 +204,7 @@ export function OauthDialog({
   const completedRef = useRef(false);
   const browserRefreshInProgress =
     stage === "browser" && state.status === "starting";
-  const deviceMethodDisabled = selectedProvider === "anthropic";
+  const deviceMethodDisabled = selectedProvider !== "openai";
 
   useEffect(() => {
     if (stage === "success" && !completedRef.current) {
@@ -238,7 +220,7 @@ export function OauthDialog({
     onOpenChange(next);
     if (!next) {
       onReset();
-      setSelectedProvider("openai");
+      setSelectedProvider(initialProvider);
       setSelectedMethod("browser");
     }
   };
@@ -281,7 +263,7 @@ export function OauthDialog({
                 Provider
               </p>
               <div className="grid grid-cols-2 gap-2">
-                {PROVIDER_OPTIONS.map((option) => (
+                {OAUTH_PROVIDER_OPTIONS.map((option) => (
                   <button
                     key={option.provider}
                     type="button"

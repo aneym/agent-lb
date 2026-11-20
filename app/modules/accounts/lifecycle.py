@@ -8,6 +8,7 @@ from app.core.config.settings import get_settings
 from app.core.providers import (
     ANTHROPIC_COMPAT_PROFILES,
     ANTHROPIC_PROVIDER_NAME,
+    GEMINI_PROVIDER_NAME,
     OPENAI_PROVIDER_NAME,
     normalize_provider_name,
 )
@@ -15,6 +16,7 @@ from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import AccountStatus
 from app.modules.accounts import probes
 from app.modules.accounts.errors import AccountNotProbableError, AccountStateTransitionError
+from app.modules.accounts.gemini_project import probe_gemini_account
 from app.modules.accounts.schemas import (
     AccountProbeResponse,
     AccountSubscriptionCheckResponse,
@@ -252,7 +254,9 @@ class AccountsLifecycle(AccountsTransfer):
         if provider == ANTHROPIC_PROVIDER_NAME and self._usage_updater:
             await self._usage_updater.force_refresh(probe_account)
             await self._repo.release()
-        if compat_profile is not None:
+        if provider == GEMINI_PROVIDER_NAME:
+            probe_status = await probe_gemini_account(probe_account, access_token)
+        elif compat_profile is not None:
             base_url = compat_profile.upstream_base_url
             if base_url is None:
                 assert compat_profile.upstream_settings_attr is not None
