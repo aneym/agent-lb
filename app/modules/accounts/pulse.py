@@ -220,8 +220,6 @@ class AccountPulseScheduler:
                 return account.id not in self._failures
             if account.deactivation_reason == ACCOUNT_ON_HOLD_REASON:
                 return not self._in_backoff(account.id, min_delay_seconds=_ON_HOLD_MIN_RETRY_SECONDS)
-            if account.deactivation_reason == GEMINI_TERMS_DISABLED_REASON:
-                return False
         if not recovery_only:
             return not self._in_backoff(account.id)
         if not _is_recovery_pending(account):
@@ -234,6 +232,8 @@ class AccountPulseScheduler:
             async with self.repo_factory() as repo:
                 account = await repo.get_by_id(account_id)
                 if account is None or account.status == AccountStatus.PAUSED:
+                    return
+                if account.deactivation_reason == GEMINI_TERMS_DISABLED_REASON:
                     return
                 from app.core.config.settings import get_settings
 
