@@ -67,18 +67,23 @@ def _model_candidates(model: str) -> tuple[str, ...]:
     return tuple(ordered)
 
 
+def _is_openai_model(candidate: str, openai_models: set[str]) -> bool:
+    return candidate in openai_models or candidate in _OPENAI_EXACT or candidate.startswith(_OPENAI_PREFIXES)
+
+
 def resolve_provider_for_model(model: str | None) -> str | None:
     if not model:
         return None
     candidates = _model_candidates(model)
     if not candidates:
         return None
+    openai_models = {slug.strip().lower() for slug in get_model_registry().get_models_with_fallback()}
     for candidate in candidates:
         if is_deepseek_model(candidate):
             return OPENROUTER_PROVIDER_NAME
         definition = get_additional_quota_definition_for_model(candidate)
         if definition is not None and definition.quota_key == _OPENROUTER_CREDITS_QUOTA_KEY:
-            return OPENROUTER_PROVIDER_NAME
+            return None if _is_openai_model(candidate, openai_models) else OPENROUTER_PROVIDER_NAME
     for candidate in candidates:
         for profile in ANTHROPIC_COMPAT_PROFILES:
             if profile.model_prefixes and candidate.startswith(profile.model_prefixes):
@@ -88,9 +93,8 @@ def resolve_provider_for_model(model: str | None) -> str | None:
     for candidate in candidates:
         if candidate == GEMINI_PROVIDER_NAME or candidate.startswith(f"{GEMINI_PROVIDER_NAME}-"):
             return GEMINI_PROVIDER_NAME
-    openai_models = {slug.strip().lower() for slug in get_model_registry().get_models_with_fallback()}
     for candidate in candidates:
-        if candidate in openai_models or candidate in _OPENAI_EXACT or candidate.startswith(_OPENAI_PREFIXES):
+        if _is_openai_model(candidate, openai_models):
             return OPENAI_PROVIDER_NAME
     for candidate in candidates:
         if (
@@ -115,22 +119,32 @@ def _validate_share_value(value: object, label: str) -> float:
     return numeric
 
 
-def normalize_pool_share_percent_by_provider(
+def validate_pool_share_percent_by_provider(
     raw: Mapping[str, float | None] | None,
-) -> dict[str, float] | None:
+) -> dict[str, float | None] | None:
     if raw is None:
         return None
-    normalized: dict[str, float] = {}
+    validated: dict[str, float | None] = {}
     for key, value in raw.items():
         provider = key.strip().lower() if isinstance(key, str) else ""
         if not provider or not _PROVIDER_KEY_PATTERN.match(provider):
             raise ValueError(f"Invalid provider key for pool_share_percent_by_provider: {key!r}")
-        if value is None:
-            continue
-        normalized[provider] = _validate_share_value(value, f"pool_share_percent_by_provider[{provider}]")
-    if not normalized:
-        return None
-    return {provider: normalized[provider] for provider in sorted(normalized)}
+        validated[provider] = (
+            None if value is None else _validate_share_value(value, f"pool_share_percent_by_provider[{provider}]")
+        )
+    return validated
+
+
+def _set_shares(entries: Mapping[str, float | None]) -> dict[str, float] | None:
+    kept = {provider: value for provider, value in sorted(entries.items()) if value is not None}
+    return kept or None
+
+
+def normalize_pool_share_percent_by_provider(
+    raw: Mapping[str, float | None] | None,
+) -> dict[str, float] | None:
+    validated = validate_pool_share_percent_by_provider(raw)
+    return None if validated is None else _set_shares(validated)
 
 
 def member_pool_share_percent_by_provider(member: TeamMember) -> dict[str, float] | None:
@@ -225,6 +239,8 @@ def apply_pool_share_update(member: TeamMember, update: PoolShareUpdate) -> None
     if update.percent_set:
         member.pool_share_percent = update.percent
     if update.percent_by_provider_set:
-        member.pool_share_percent_by_provider = normalize_pool_share_percent_by_provider(update.percent_by_provider)
+        changes = validate_pool_share_percent_by_provider(update.percent_by_provider)
+        current = member_pool_share_percent_by_provider(member) or {}
+        member.pool_share_percent_by_provider = None if changes is None else _set_shares({**current, **changes})
     if update.account_ids_set:
         member.pool_share_account_ids = sorted(set(update.account_ids or [])) or None

@@ -391,6 +391,7 @@ async def build_codex_models_response(api_key: ApiKeyData | None) -> Response:
         api_key,
         request_model=None,
         request_service_tier=None,
+        provider="openai",
     )
 
     allowed_models = allowed_models_for_api_key(api_key)

@@ -5,7 +5,7 @@ from datetime import date, datetime
 from pydantic import Field, field_validator
 
 from app.modules.shared.schemas import DashboardModel
-from app.modules.team.provider_pool_share import normalize_pool_share_percent_by_provider
+from app.modules.team.provider_pool_share import validate_pool_share_percent_by_provider
 
 TEAM_STATUS_PATTERN = r"^(active|suspended)$"
 TEAM_WINDOW_PATTERN = r"^(day|week|month)$"
@@ -73,8 +73,8 @@ class _PoolShareRequest(DashboardModel):
 
     @field_validator("pool_share_percent_by_provider", check_fields=False)
     @classmethod
-    def validate_pool_share_by_provider(cls, value: dict[str, float | None] | None) -> dict[str, float] | None:
-        return normalize_pool_share_percent_by_provider(value)
+    def validate_pool_share_by_provider(cls, value: dict[str, float | None] | None) -> dict[str, float | None] | None:
+        return validate_pool_share_percent_by_provider(value)
 
 
 class TeamMemberCreateRequest(_PoolShareRequest):

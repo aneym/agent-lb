@@ -83,6 +83,7 @@ async def stream_responses(
             request_model=payload.model,
             request_service_tier=payload.service_tier,
             request_usage_budget=estimate_api_key_request_usage(payload),
+            provider="openai",
         )
     )
 
@@ -206,6 +207,7 @@ async def collect_responses(
         request_model=payload.model,
         request_service_tier=payload.service_tier,
         request_usage_budget=estimate_api_key_request_usage(payload),
+        provider="openai",
     )
 
     rate_limit_headers = await context.service.rate_limit_headers()

@@ -81,7 +81,7 @@ class _ApiKeyUsageMixin:
         if api_key is None:
             return None
 
-        await check_member_gate(api_key, model=request_model)
+        await check_member_gate(api_key, model=request_model, provider="openai")
 
         proxy = cast(_ApiKeyUsageServiceProtocol, self)
         with anyio.CancelScope(shield=True):

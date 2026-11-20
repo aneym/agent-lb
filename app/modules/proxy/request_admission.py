@@ -34,11 +34,12 @@ async def enforce_request_limits(
     request_service_tier: str | None,
     request_usage_budget: ApiKeyRequestUsageBudget | None = None,
     request_is_file_operation: bool = False,
+    provider: str | None = None,
 ) -> ApiKeyUsageReservationData | None:
     if api_key is None:
         return None
 
-    await check_member_gate(api_key, model=request_model)
+    await check_member_gate(api_key, model=request_model, provider=provider)
 
     async with get_background_session() as session:
         service = ApiKeysService(ApiKeysRepository(session))

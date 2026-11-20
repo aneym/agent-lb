@@ -63,6 +63,7 @@ async def backend_files_create(
         request_model=FILES_CREATE_LIMIT_MODEL,
         request_service_tier=None,
         request_is_file_operation=True,
+        provider="openai",
     )
     try:
         result = await context.service.create_file(
@@ -102,6 +103,7 @@ async def backend_files_finalize(
         request_model=FILES_FINALIZE_LIMIT_MODEL,
         request_service_tier=None,
         request_is_file_operation=True,
+        provider="openai",
     )
     try:
         result = await context.service.finalize_file(

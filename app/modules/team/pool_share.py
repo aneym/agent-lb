@@ -175,7 +175,6 @@ async def _aggregate(
     snapshots: list[_Snapshot],
     *,
     member_id: str | None = None,
-    provider: str | None = None,
 ) -> dict[tuple[str, int], _Totals]:
     if not snapshots:
         return {}
@@ -207,8 +206,6 @@ async def _aggregate(
         )
         .group_by(windows.c.account_id, windows.c.length)
     )
-    if provider is not None:
-        stmt = stmt.join(Account, Account.id == RequestLog.account_id).where(Account.provider == provider)
     if member_id is not None:
         stmt = stmt.join(ApiKey, ApiKey.id == RequestLog.api_key_id).where(ApiKey.member_id == member_id)
     rows = (await session.execute(stmt)).all()
@@ -235,8 +232,8 @@ async def pool_share_windows(
     snapshots = await _snapshots(session, accounts, now)
     current = [snapshot for snapshot in snapshots if snapshot.current]
 
-    denominators = await _aggregate(session, current, provider=provider)
-    members = await _aggregate(session, current, member_id=member_id, provider=provider)
+    denominators = await _aggregate(session, current)
+    members = await _aggregate(session, current, member_id=member_id)
     grouped: dict[int, list[tuple[_Snapshot, float]]] = {}
     for snapshot in snapshots:
         attributed = 0.0
