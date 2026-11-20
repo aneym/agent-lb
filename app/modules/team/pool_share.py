@@ -21,6 +21,7 @@ class PoolWindow:
     used_percent: float
     limit_percent: float
     reset_at: datetime
+    provider: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +42,7 @@ class _Totals:
     unpriced_tokens: int
 
 
-_CacheKey = tuple[str, float, tuple[str, ...] | None]
+_CacheKey = tuple[str, float, tuple[str, ...] | None, str | None]
 _members: dict[_CacheKey, tuple[float, list[PoolWindow]]] = {}
 _cache_generation = 0
 
@@ -81,7 +82,13 @@ def _local_upper_fraction(member: _Totals, account: _Totals) -> float:
     return max(priced, unpriced)
 
 
-async def _reachable_accounts(session: AsyncSession, member_id: str, account_ids: list[str] | None) -> set[str]:
+async def _reachable_accounts(
+    session: AsyncSession,
+    member_id: str,
+    account_ids: list[str] | None,
+    *,
+    provider: str | None = None,
+) -> set[str]:
     keys = (
         await session.execute(
             select(ApiKey.id, ApiKey.account_assignment_scope_enabled).where(
@@ -98,8 +105,22 @@ async def _reachable_accounts(session: AsyncSession, member_id: str, account_ids
         query = select(Account.id)
     if account_ids is not None:
         query = query.where(Account.id.in_(account_ids))
+    if provider is not None:
+        query = query.where(Account.provider == provider)
     query = query.where(Account.status.notin_((AccountStatus.DEACTIVATED, AccountStatus.REAUTH_REQUIRED)))
     return set((await session.execute(query)).scalars().all())
+
+
+async def reachable_account_providers(
+    session: AsyncSession,
+    member_id: str,
+    account_ids: list[str] | None,
+) -> list[str]:
+    accounts = await _reachable_accounts(session, member_id, account_ids)
+    if not accounts:
+        return []
+    query = select(Account.provider).distinct().where(Account.id.in_(accounts))
+    return sorted(str(item) for item in (await session.execute(query)).scalars().all() if item)
 
 
 async def _snapshots(session: AsyncSession, account_ids: set[str], now: datetime) -> list[_Snapshot]:
@@ -150,7 +171,11 @@ async def _snapshots(session: AsyncSession, account_ids: set[str], now: datetime
 
 
 async def _aggregate(
-    session: AsyncSession, snapshots: list[_Snapshot], *, member_id: str | None = None
+    session: AsyncSession,
+    snapshots: list[_Snapshot],
+    *,
+    member_id: str | None = None,
+    provider: str | None = None,
 ) -> dict[tuple[str, int], _Totals]:
     if not snapshots:
         return {}
@@ -182,6 +207,8 @@ async def _aggregate(
         )
         .group_by(windows.c.account_id, windows.c.length)
     )
+    if provider is not None:
+        stmt = stmt.join(Account, Account.id == RequestLog.account_id).where(Account.provider == provider)
     if member_id is not None:
         stmt = stmt.join(ApiKey, ApiKey.id == RequestLog.api_key_id).where(ApiKey.member_id == member_id)
     rows = (await session.execute(stmt)).all()
@@ -189,21 +216,27 @@ async def _aggregate(
 
 
 async def pool_share_windows(
-    session: AsyncSession, member_id: str, limit: float, *, now: datetime, account_ids: list[str] | None = None
+    session: AsyncSession,
+    member_id: str,
+    limit: float,
+    *,
+    now: datetime,
+    account_ids: list[str] | None = None,
+    provider: str | None = None,
 ) -> list[PoolWindow]:
     clock = time.monotonic()
     generation = _cache_generation
-    cache_key = (member_id, limit, None if account_ids is None else tuple(sorted(account_ids)))
+    cache_key = (member_id, limit, None if account_ids is None else tuple(sorted(account_ids)), provider)
     cached = _members.get(cache_key)
     if cached is not None and cached[0] > clock and all(window.reset_at > now for window in cached[1]):
         return cached[1]
 
-    accounts = await _reachable_accounts(session, member_id, account_ids)
+    accounts = await _reachable_accounts(session, member_id, account_ids, provider=provider)
     snapshots = await _snapshots(session, accounts, now)
     current = [snapshot for snapshot in snapshots if snapshot.current]
 
-    denominators = await _aggregate(session, current)
-    members = await _aggregate(session, current, member_id=member_id)
+    denominators = await _aggregate(session, current, provider=provider)
+    members = await _aggregate(session, current, member_id=member_id, provider=provider)
     grouped: dict[int, list[tuple[_Snapshot, float]]] = {}
     for snapshot in snapshots:
         attributed = 0.0
@@ -224,7 +257,13 @@ async def pool_share_windows(
             ),
         )
         result.append(
-            PoolWindow(_window_label(length), sum(value for _, value in entries) / len(entries), limit, reset)
+            PoolWindow(
+                _window_label(length),
+                sum(value for _, value in entries) / len(entries),
+                limit,
+                reset,
+                provider=provider,
+            )
         )
     if generation == _cache_generation:
         _cache_put(cache_key, (clock + _CACHE_SECONDS, result), clock)

@@ -9,6 +9,7 @@ proofs: []
 unmapped:
   - {"path":"app/modules/team/service.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/team/pool_share.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
+  - {"path":"app/modules/team/provider_pool_share.py","date":"2026-11-20","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/team/__init__.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/team/member_policy.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}
   - {"path":"app/modules/team/schemas.py","date":"2026-10-18","reason":"support module without its own HTTP route surface"}

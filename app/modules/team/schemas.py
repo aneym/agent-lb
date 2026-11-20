@@ -5,6 +5,7 @@ from datetime import date, datetime
 from pydantic import Field, field_validator
 
 from app.modules.shared.schemas import DashboardModel
+from app.modules.team.provider_pool_share import normalize_pool_share_percent_by_provider
 
 TEAM_STATUS_PATTERN = r"^(active|suspended)$"
 TEAM_WINDOW_PATTERN = r"^(day|week|month)$"
@@ -34,6 +35,7 @@ class TeamPoolWindowResponse(DashboardModel):
     used_percent: float
     limit_percent: float
     reset_at: datetime
+    provider: str | None = None
 
 
 class TeamMemberResponse(DashboardModel):
@@ -54,6 +56,7 @@ class TeamMemberResponse(DashboardModel):
     usage: TeamUsageResponse
     gate: str
     pool_share_percent: float | None = None
+    pool_share_percent_by_provider: dict[str, float] | None = None
     pool_share: list[TeamPoolWindowResponse] = Field(default_factory=list)
     pool_share_known: bool = False
     pool_share_account_ids: list[str] | None = None
@@ -68,6 +71,11 @@ class _PoolShareRequest(DashboardModel):
             raise ValueError("pool_share_percent must have at most three decimal places")
         return value
 
+    @field_validator("pool_share_percent_by_provider", check_fields=False)
+    @classmethod
+    def validate_pool_share_by_provider(cls, value: dict[str, float | None] | None) -> dict[str, float] | None:
+        return normalize_pool_share_percent_by_provider(value)
+
 
 class TeamMemberCreateRequest(_PoolShareRequest):
     name: str = Field(min_length=1, max_length=128)
@@ -80,6 +88,7 @@ class TeamMemberCreateRequest(_PoolShareRequest):
     token_cap_week: int | None = Field(default=None, gt=0)
     token_cap_month: int | None = Field(default=None, gt=0)
     pool_share_percent: float | None = Field(default=None, ge=0.001, le=100)
+    pool_share_percent_by_provider: dict[str, float | None] | None = None
     allowed_models: list[str] | None = None
     notes: str | None = Field(default=None, max_length=4000)
 
@@ -95,6 +104,7 @@ class TeamMemberUpdateRequest(_PoolShareRequest):
     token_cap_week: int | None = Field(default=None, gt=0)
     token_cap_month: int | None = Field(default=None, gt=0)
     pool_share_percent: float | None = Field(default=None, ge=0.001, le=100)
+    pool_share_percent_by_provider: dict[str, float | None] | None = None
     pool_share_account_ids: list[str] | None = None
     allowed_models: list[str] | None = None
     notes: str | None = Field(default=None, max_length=4000)

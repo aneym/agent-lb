@@ -11,6 +11,7 @@ from app.dependencies import TeamContext, get_team_context
 from app.modules.api_keys.api import _to_response as _api_key_to_response
 from app.modules.api_keys.schemas import ApiKeyCreateResponse
 from app.modules.api_keys.service_data import ApiKeyCreateData, ApiKeyValidationError, MemberKeyScopeRequiredError
+from app.modules.team.provider_pool_share import PoolShareUpdate
 from app.modules.team.schemas import (
     TeamMemberCreateRequest,
     TeamMemberKeyCreateRequest,
@@ -68,6 +69,7 @@ def _to_member_response(member: TeamMemberData) -> TeamMemberResponse:
         ),
         gate=member.gate,
         pool_share_percent=member.pool_share_percent,
+        pool_share_percent_by_provider=member.pool_share_percent_by_provider,
         pool_share_known=member.pool_share_known,
         pool_share_account_ids=member.pool_share_account_ids,
         pool_share=[
@@ -76,6 +78,7 @@ def _to_member_response(member: TeamMemberData) -> TeamMemberResponse:
                 used_percent=window.used_percent,
                 limit_percent=window.limit_percent,
                 reset_at=window.reset_at,
+                provider=window.provider,
             )
             for window in member.pool_share
         ],
@@ -154,6 +157,7 @@ async def create_team_member(
                 notes=payload.notes,
                 status=payload.status or "active",
                 pool_share_percent=payload.pool_share_percent,
+                pool_share_percent_by_provider=payload.pool_share_percent_by_provider,
             )
         )
     except TeamValidationError as exc:
@@ -197,10 +201,14 @@ async def update_team_member(
         allowed_models_set="allowed_models" in fields,
         notes=payload.notes,
         notes_set="notes" in fields,
-        pool_share_percent=payload.pool_share_percent,
-        pool_share_percent_set="pool_share_percent" in fields,
-        pool_share_account_ids=payload.pool_share_account_ids,
-        pool_share_account_ids_set="pool_share_account_ids" in fields,
+        pool_share=PoolShareUpdate(
+            percent=payload.pool_share_percent,
+            percent_set="pool_share_percent" in fields,
+            percent_by_provider=payload.pool_share_percent_by_provider,
+            percent_by_provider_set="pool_share_percent_by_provider" in fields,
+            account_ids=payload.pool_share_account_ids,
+            account_ids_set="pool_share_account_ids" in fields,
+        ),
     )
     try:
         member = await context.service.update_member(member_id, update)

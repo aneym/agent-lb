@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
@@ -14,8 +13,18 @@ from app.core.utils.time import to_utc_naive, utcnow
 from app.db.access_models import TeamMember, TeamMemberStatus
 from app.db.request_models import ApiKey
 from app.modules.api_keys.service_data import ApiKeyData
-from app.modules.team.member_policy import GATE_OK, cap_for, compute_gate, model_is_allowed, status_value
-from app.modules.team.pool_share import PoolWindow, pool_share_windows, reset_pool_share_cache
+from app.modules.team import provider_pool_share
+from app.modules.team.member_policy import (
+    GATE_OK,
+    cap_for,
+    compute_gate,
+    deserialize_allowed_models,
+    model_is_allowed,
+    serialize_allowed_models,
+    status_value,
+)
+from app.modules.team.pool_share import PoolWindow, reset_pool_share_cache
+from app.modules.team.provider_pool_share import PoolShareUpdate
 from app.modules.team.repository import TeamRepository, TeamUsageDayRow, TeamUsageModelRow, TeamUsageTotals
 from app.modules.team.windows import TEAM_WINDOWS, window_end, window_start
 
@@ -77,6 +86,7 @@ class TeamMemberCreateData:
     notes: str | None = None
     status: str = TeamMemberStatus.ACTIVE.value
     pool_share_percent: float | None = None
+    pool_share_percent_by_provider: dict[str, float | None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,10 +113,7 @@ class TeamMemberUpdateData:
     allowed_models_set: bool = False
     notes: str | None = None
     notes_set: bool = False
-    pool_share_percent: float | None = None
-    pool_share_percent_set: bool = False
-    pool_share_account_ids: list[str] | None = None
-    pool_share_account_ids_set: bool = False
+    pool_share: PoolShareUpdate = field(default_factory=PoolShareUpdate)
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +145,7 @@ class TeamMemberData:
     gate: str = GATE_OK
     keys: list[TeamMemberKeyData] = field(default_factory=list)
     pool_share_percent: float | None = None
+    pool_share_percent_by_provider: dict[str, float] | None = None
     pool_share: list[PoolWindow] = field(default_factory=list)
     pool_share_known: bool = False
     pool_share_account_ids: list[str] | None = None
@@ -163,6 +171,7 @@ class TeamMemberSelfStatus:
     allowed_models: list[str] | None
     windows: list[TeamMemberWindowStatus]
     pool_share_percent: float | None = None
+    pool_share_percent_by_provider: dict[str, float] | None = None
     pool_windows: list[PoolWindow] = field(default_factory=list)
 
 
@@ -177,32 +186,13 @@ class TeamMemberUsageDetail:
     series: list[TeamUsageDayRow]
 
 
-def serialize_allowed_models(models: list[str] | None) -> str | None:
-
-    if not models:
-        return None
-    return json.dumps(models)
-
-
-def deserialize_allowed_models(raw: str | None) -> list[str] | None:
-    if not raw:
-        return None
-    try:
-        parsed = json.loads(raw)
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(parsed, list):
-        return None
-    return [str(item) for item in parsed]
-
-
 class TeamService:
     def __init__(self, repository: TeamRepository) -> None:
         self._repository = repository
 
-    async def check_member_gate(self, api_key: ApiKeyData, model: str | None) -> None:
+    async def check_member_gate(self, api_key: ApiKeyData, model: str | None, *, provider: str | None = None) -> None:
         try:
-            await self._check_member_gate(api_key, model)
+            await self._check_member_gate(api_key, model, provider=provider)
         except (TeamMemberSuspendedError, TeamModelNotAllowedError, TeamMemberOverCapError) as exc:
             logger.warning(
                 "team_gate_refused key_id=%s model=%r code=%s message=%r",
@@ -213,7 +203,7 @@ class TeamService:
             )
             raise
 
-    async def _check_member_gate(self, api_key: ApiKeyData, model: str | None) -> None:
+    async def _check_member_gate(self, api_key: ApiKeyData, model: str | None, *, provider: str | None = None) -> None:
         member_id = getattr(api_key, "member_id", None)
         if not member_id:
             return
@@ -244,14 +234,14 @@ class TeamService:
             if token_cap is not None and totals.tokens >= int(token_cap):
                 raise _over_cap_error(window, now, f"token cap {int(token_cap)}")
 
-        for pool_window in await self._pool_windows(member, now=now):
-            if pool_window.used_percent >= pool_window.limit_percent:
-                raise TeamMemberOverCapError(
-                    f"You've used your share of the shared accounts for this {pool_window.window} window; "
-                    f"it resets at {_reset_text(pool_window.reset_at)}. {MEMBER_CONTACT_LINE}",
-                    window=pool_window.window,
-                    reset_at=pool_window.reset_at,
-                )
+        await provider_pool_share.enforce_pool_share_gate(
+            self._repository._session,
+            member,
+            now=now,
+            model=model,
+            provider=provider,
+            contact_line=MEMBER_CONTACT_LINE,
+        )
 
     async def _usage_for_window(self, member_id: str, window: str, *, now: datetime) -> TeamUsageTotals:
         cache_key = (member_id, window)
@@ -265,17 +255,6 @@ class TeamService:
         _aggregate_cache[cache_key] = (clock + _AGGREGATE_CACHE_TTL_SECONDS, since, totals)
         return totals
 
-    async def _pool_windows(self, member: TeamMember, *, now: datetime) -> list[PoolWindow]:
-        if member.pool_share_percent is None:
-            return []
-        return await pool_share_windows(
-            self._repository._session,
-            member.id,
-            float(member.pool_share_percent),
-            now=now,
-            account_ids=member.pool_share_account_ids,
-        )
-
     async def list_members(self) -> list[TeamMemberData]:
         members = await self._repository.list_all()
         if not members:
@@ -288,12 +267,15 @@ class TeamService:
                 window: await self._repository.aggregate_usage(member.id, since=window_start(window, now))
                 for window in TEAM_WINDOWS
             }
+            pool_windows = await provider_pool_share.member_pool_share_windows(
+                self._repository._session, member, now=now
+            )
             results.append(
                 _to_member_data(
                     member,
                     usage=usage,
                     keys=keys_by_member.get(member.id, []),
-                    pool_windows=await self._pool_windows(member, now=now),
+                    pool_windows=pool_windows,
                 ),
             )
         return results
@@ -306,7 +288,8 @@ class TeamService:
             for window in TEAM_WINDOWS
         }
         keys = await self._repository.list_keys_by_member(member.id)
-        return _to_member_data(member, usage=usage, keys=keys, pool_windows=await self._pool_windows(member, now=now))
+        pool_windows = await provider_pool_share.member_pool_share_windows(self._repository._session, member, now=now)
+        return _to_member_data(member, usage=usage, keys=keys, pool_windows=pool_windows)
 
     async def create_member(self, payload: TeamMemberCreateData) -> TeamMemberData:
         name = _normalize_name(payload.name)
@@ -327,15 +310,17 @@ class TeamService:
             allowed_models=serialize_allowed_models(payload.allowed_models),
             notes=_normalize_optional_text(payload.notes),
             pool_share_percent=payload.pool_share_percent,
+            pool_share_percent_by_provider=provider_pool_share.normalize_pool_share_percent_by_provider(
+                payload.pool_share_percent_by_provider
+            ),
             created_at=now,
             updated_at=now,
         )
         created = await self._repository.create(row)
         invalidate_team_member_caches()
         await bump_api_key_cache_namespace()
-        return _to_member_data(
-            created, usage=_empty_usage(), keys=[], pool_windows=await self._pool_windows(created, now=now)
-        )
+        pool_windows = await provider_pool_share.member_pool_share_windows(self._repository._session, created, now=now)
+        return _to_member_data(created, usage=_empty_usage(), keys=[], pool_windows=pool_windows)
 
     async def update_member(self, member_id: str, payload: TeamMemberUpdateData) -> TeamMemberData:
         member = await self._require_member(member_id)
@@ -366,10 +351,7 @@ class TeamService:
             member.allowed_models = serialize_allowed_models(payload.allowed_models)
         if payload.notes_set:
             member.notes = _normalize_optional_text(payload.notes)
-        if payload.pool_share_percent_set:
-            member.pool_share_percent = payload.pool_share_percent
-        if payload.pool_share_account_ids_set:
-            member.pool_share_account_ids = sorted(set(payload.pool_share_account_ids or [])) or None
+        provider_pool_share.apply_pool_share_update(member, payload.pool_share)
         member.updated_at = utcnow()
 
         await self._repository.commit()
@@ -409,13 +391,14 @@ class TeamService:
 
         now = utcnow()
         usage = {window: await self._usage_for_window(member.id, window, now=now) for window in TEAM_WINDOWS}
-        pool_windows = await self._pool_windows(member, now=now)
+        pool_windows = await provider_pool_share.member_pool_share_windows(self._repository._session, member, now=now)
         return TeamMemberSelfStatus(
             id=member.id,
             name=member.name,
             status=status_value(member.status),
             gate=compute_gate(member, usage, pool_windows),
             pool_share_percent=_optional_float(member.pool_share_percent),
+            pool_share_percent_by_provider=provider_pool_share.member_pool_share_percent_by_provider(member),
             pool_windows=pool_windows,
             allowed_models=deserialize_allowed_models(member.allowed_models),
             windows=[
@@ -504,6 +487,7 @@ def _to_member_data(
         usage=usage,
         gate=compute_gate(member, usage, pool_windows),
         pool_share_percent=_optional_float(member.pool_share_percent),
+        pool_share_percent_by_provider=provider_pool_share.member_pool_share_percent_by_provider(member),
         pool_share=pool_windows or [],
         pool_share_known=bool(pool_windows),
         pool_share_account_ids=member.pool_share_account_ids,

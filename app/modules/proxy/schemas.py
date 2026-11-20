@@ -226,6 +226,7 @@ class V1UsagePoolWindowResponse(BaseModel):
     used_percent: float
     limit_percent: float
     reset_at: str
+    provider: str | None = None
 
 
 class V1UsageMemberResponse(BaseModel):
@@ -238,6 +239,7 @@ class V1UsageMemberResponse(BaseModel):
     allowed_models: list[str] | None = None
     windows: list[V1UsageMemberWindowResponse] = []
     pool_share_percent: float | None = Field(default=None, alias="poolSharePercent")
+    pool_share_percent_by_provider: dict[str, float] | None = Field(default=None, alias="poolSharePercentByProvider")
     pool_windows: list[V1UsagePoolWindowResponse] = Field(default_factory=list, alias="poolWindows")
 
 

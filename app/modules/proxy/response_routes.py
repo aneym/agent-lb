@@ -25,6 +25,7 @@ from app.modules.proxy.control_routes import (
     is_openai_sdk_request,
 )
 from app.modules.proxy.http_bridge_forwarding import parse_forwarded_request
+from app.modules.proxy.payload_rejections import rejected_payload_error
 from app.modules.proxy.request_admission import opportunistic_admission_denial
 from app.modules.proxy.request_policy import (
     enforce_strict_function_tools_format,
@@ -33,7 +34,6 @@ from app.modules.proxy.request_policy import (
     openai_client_payload_error,
     openai_validation_error,
 )
-from app.modules.proxy.payload_rejections import rejected_payload_error
 from app.modules.proxy.response_errors import logged_error_json_response
 from app.modules.proxy.response_requests import collect_responses, stream_responses, strip_internal_bridge_headers
 from app.modules.team.gate import check_member_gate
@@ -127,7 +127,7 @@ async def responses_websocket(
         await websocket.send_denial_response(denial)
         return
     try:
-        await check_member_gate(api_key, model=None)
+        await check_member_gate(api_key, model=None, provider="openai")
     except (TeamMemberOverCapError, TeamMemberSuspendedError) as exc:
         await websocket.send_denial_response(
             JSONResponse(
@@ -264,7 +264,7 @@ async def v1_responses_websocket(
         await websocket.send_denial_response(denial)
         return
     try:
-        await check_member_gate(api_key, model=None)
+        await check_member_gate(api_key, model=None, provider="openai")
     except (TeamMemberOverCapError, TeamMemberSuspendedError) as exc:
         await websocket.send_denial_response(
             JSONResponse(

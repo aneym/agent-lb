@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 
 from app.db.access_models import TeamMember, TeamMemberStatus
@@ -75,6 +76,24 @@ def _model_match_keys(model: str) -> set[str]:
         keys.add(strip_model_alias_suffix(key))
     keys.discard("")
     return keys
+
+
+def serialize_allowed_models(models: list[str] | None) -> str | None:
+    if not models:
+        return None
+    return json.dumps(models)
+
+
+def deserialize_allowed_models(raw: str | None) -> list[str] | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, list):
+        return None
+    return [str(item) for item in parsed]
 
 
 def model_is_allowed(model: str, allowed_models: list[str]) -> bool:

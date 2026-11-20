@@ -204,12 +204,14 @@ def to_v1_usage_member_response(status: TeamMemberSelfStatus | None) -> V1UsageM
         gate=status.gate,
         allowed_models=status.allowed_models,
         pool_share_percent=status.pool_share_percent,
+        pool_share_percent_by_provider=status.pool_share_percent_by_provider,
         pool_windows=[
             V1UsagePoolWindowResponse(
                 window=window.window,
                 used_percent=window.used_percent,
                 limit_percent=window.limit_percent,
                 reset_at=window.reset_at.isoformat() + "Z",
+                provider=window.provider,
             )
             for window in status.pool_windows
         ],

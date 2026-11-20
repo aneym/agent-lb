@@ -6,13 +6,18 @@ from app.modules.team.repository import TeamRepository
 from app.modules.team.service import TeamMemberSelfStatus, TeamService
 
 
-async def check_member_gate(api_key: ApiKeyData | None, *, model: str | None) -> None:
+async def check_member_gate(
+    api_key: ApiKeyData | None,
+    *,
+    model: str | None,
+    provider: str | None = None,
+) -> None:
 
     if api_key is None or getattr(api_key, "member_id", None) is None:
         return
 
     async with get_background_session() as session:
-        await TeamService(TeamRepository(session)).check_member_gate(api_key, model)
+        await TeamService(TeamRepository(session)).check_member_gate(api_key, model, provider=provider)
 
 
 async def get_member_self_status(api_key: ApiKeyData | None) -> TeamMemberSelfStatus | None:
