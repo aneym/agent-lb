@@ -130,6 +130,7 @@ class GeminiGateway:
             request_model=choice.canonical,
             request_service_tier=None,
             request_usage_budget=_usage_budget(body, raw_size),
+            provider=GEMINI_PROVIDER,
         )
         try:
             return await self._attempt(api_key, choice, body, effort, useragent, reservation)
