@@ -11,10 +11,11 @@ from datetime import datetime, timezone
 
 from app.core.balancer import PERMANENT_FAILURE_CODES, QUOTA_EXCEEDED_COOLDOWN_SECONDS
 from app.core.clients.anthropic_usage import fetch_anthropic_usage
+from app.core.clients.gemini_usage import fetch_gemini_usage
 from app.core.clients.kimi_usage import fetch_kimi_usage
 from app.core.clients.usage import UsageFetchError, fetch_usage
 from app.core.plan_types import account_plan_matches_allowed, coerce_account_plan_type
-from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, GEMINI_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.upstream_proxy import ResolvedUpstreamRoute, resolve_upstream_route
 from app.core.usage.models import AdditionalRateLimitPayload, UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
@@ -40,7 +41,7 @@ class _MergedAdditionalWindow:
 last_successful_refresh: dict[str, datetime] = {}
 
 
-USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, "kimi"})
+USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, "kimi", GEMINI_PROVIDER_NAME})
 
 
 ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
@@ -161,6 +162,8 @@ async def fetch_usage_payload(
         return await fetch_anthropic_usage(access_token=access_token, account_id=account.id)
     if account.provider == "kimi":
         return await fetch_kimi_usage(access_token=access_token)
+    if account.provider == GEMINI_PROVIDER_NAME:
+        return await fetch_gemini_usage(access_token=access_token, project_id=account.workspace_id)
     route = await _resolve_upstream_route_for_account(account, operation="usage_refresh")
     return await fetch_usage(
         access_token=access_token,

@@ -117,6 +117,18 @@ async def resolve_code_assist_project(access_token: str, *, session: aiohttp.Cli
     raise CodeAssistError(504, "Code Assist onboarding did not finish")
 
 
+async def post_code_assist(
+    path: str,
+    access_token: str,
+    body: Mapping[str, object],
+    *,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    base_url = get_settings().gemini_code_assist_base_url.rstrip("/")
+    async with lease_http_session() as client_session:
+        return await _call(client_session, f"{base_url}{path}", access_token, body, timeout_seconds=timeout_seconds)
+
+
 def _validated[Answer: BaseModel](model: type[Answer], data: dict[str, object]) -> Answer:
     try:
         return model.model_validate(data)
@@ -125,14 +137,19 @@ def _validated[Answer: BaseModel](model: type[Answer], data: dict[str, object]) 
 
 
 async def _call(
-    client_session: aiohttp.ClientSession, url: str, access_token: str, body: Mapping[str, object] | None = None
+    client_session: aiohttp.ClientSession,
+    url: str,
+    access_token: str,
+    body: Mapping[str, object] | None = None,
+    *,
+    timeout_seconds: float = 30.0,
 ) -> dict[str, object]:
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
         "User-Agent": CODE_ASSIST_USER_AGENT,
     }
-    timeout = aiohttp.ClientTimeout(total=30)
+    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     try:
         async with client_session.request(
             "GET" if body is None else "POST", url, json=body, headers=headers, timeout=timeout, allow_redirects=False

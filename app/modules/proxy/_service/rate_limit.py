@@ -6,17 +6,18 @@ from collections.abc import Mapping
 from typing import Protocol, cast
 
 from app.core import usage as usage_core
+from app.core.providers import GEMINI_PROVIDER_NAME
 from app.core.usage.types import UsageWindowRow
 from app.db.models import Account, UsageHistory
 from app.modules.proxy.helpers import (
     _credits_headers,
     _credits_snapshot,
     _plan_type_for_accounts,
-    rate_limit_details,
     _rate_limit_headers,
     _select_accounts_for_limits,
     _summarize_window,
     _window_snapshot,
+    rate_limit_details,
 )
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
@@ -160,7 +161,9 @@ class _RateLimitMixin:
     async def _refresh_usage(self, repos: ProxyRepositories, accounts: list[Account]) -> None:
         latest_usage = await repos.usage.latest_by_account(window="primary")
         updater = UsageUpdater(repos.usage, repos.accounts, repos.additional_usage)
-        await updater.refresh_accounts(accounts, latest_usage)
+        await updater.refresh_accounts(
+            [account for account in accounts if account.provider != GEMINI_PROVIDER_NAME], latest_usage
+        )
 
     async def _latest_usage_rows(
         self,

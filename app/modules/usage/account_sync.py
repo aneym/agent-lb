@@ -12,10 +12,12 @@ from app.core.balancer import (
 from app.core.clients.usage import UsageFetchError
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
+from app.core.providers import GEMINI_PROVIDER_NAME
 from app.core.usage.models import UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager
+from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.anthropic_rate_limits import KIMI_MONTHLY_LIMIT_REASON
 from app.modules.usage.refresh_ports import (
     AccountsRepositoryWithStatusComparePort,
@@ -89,6 +91,40 @@ class UsageAccountSync:
         account.status = status
         account.deactivation_reason = reason
 
+    async def _mark_rate_limited_from_usage_error(self, account: Account, exc: UsageFetchError) -> None:
+        now = time.time()
+        reset_at = exc.reset_at
+        if not self._accounts_repo or reset_at is None or reset_at <= now:
+            return
+        if account.status in (
+            AccountStatus.REAUTH_REQUIRED,
+            AccountStatus.DEACTIVATED,
+            AccountStatus.PAUSED,
+            AccountStatus.EXCHANGE_UNCERTAIN,
+        ):
+            return
+        blocked_at = int(now)
+        repo = cast(AccountsRepositoryWithStatusComparePort, self._accounts_repo)
+        updated = await repo.update_status_if_current(
+            account.id,
+            AccountStatus.RATE_LIMITED,
+            None,
+            reset_at,
+            blocked_at=blocked_at,
+            expected_status=account.status,
+            expected_deactivation_reason=account.deactivation_reason,
+            expected_reset_at=account.reset_at,
+            expected_blocked_at=account.blocked_at,
+        )
+        if not updated:
+            await self._sync_account_from_repo(account)
+            return
+        account.status = AccountStatus.RATE_LIMITED
+        account.deactivation_reason = None
+        account.reset_at = reset_at
+        account.blocked_at = blocked_at
+        get_account_selection_cache().invalidate()
+
     async def _sync_identity_metadata(self, account: Account, payload: UsagePayload) -> bool:
         expected_refresh_token_encrypted = account.refresh_token_encrypted
         next_plan_type = coerce_account_plan_type(payload.plan_type, account.plan_type or "free")
@@ -159,6 +195,8 @@ class UsageAccountSync:
         if account.provider == "kimi" and account.deactivation_reason == KIMI_MONTHLY_LIMIT_REASON and monthly is None:
             return
         if account.status == AccountStatus.RATE_LIMITED:
+            if account.provider == GEMINI_PROVIDER_NAME and secondary is None:
+                return
             long_window = monthly or secondary
             if primary is None and monthly is None:
                 return

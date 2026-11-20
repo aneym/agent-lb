@@ -5,16 +5,17 @@ from typing import cast
 from app.core import usage as usage_core
 from app.core.auth.refresh import RefreshError
 from app.core.clients.usage import UsageFetchError
-from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, GEMINI_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.usage.models import UsagePayload
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account
 from app.modules.accounts import reset_credit_cache
+from app.modules.accounts.auth_manager import AccountNotOwnedError
 from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
-from app.modules.usage.anthropic_limits_store import record_anthropic_limits
 from app.modules.usage.account_sync import UsageAccountSync
+from app.modules.usage.anthropic_limits_store import record_anthropic_limits
 from app.modules.usage.identity_mismatch import clear_identity_mismatch, record_identity_mismatch
 from app.modules.usage.rate_limit_backoff import mark_usage_refresh_auth_cooldown
 from app.modules.usage.refresh_ports import AccountRefreshResult, AccountsRepositoryWithStatusComparePort
@@ -47,6 +48,12 @@ class UsageAccountRefresh(UsageAccountSync):
         usage_account_id: str | None,
     ) -> AccountRefreshResult:
         refresh_started_at = utcnow()
+        if account.provider == GEMINI_PROVIDER_NAME and self._auth_manager:
+            try:
+                account = await self._auth_manager.ensure_fresh(account)
+            except (RefreshError, AccountNotOwnedError):
+                mark_usage_refresh_auth_cooldown(account.id, 401)
+                return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
         payload: UsagePayload | None = None
         try:
@@ -64,10 +71,12 @@ class UsageAccountRefresh(UsageAccountSync):
             mark_usage_refresh_auth_cooldown(account.id, 0)
             return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
         except UsageFetchError as exc:
-            if account.provider != "kimi" and should_deactivate_for_usage_error(exc):
+            if account.provider not in ("kimi", GEMINI_PROVIDER_NAME) and should_deactivate_for_usage_error(exc):
                 await self._deactivate_for_client_error(account, exc)
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
             if exc.status_code != 401 or not self._auth_manager:
+                if account.provider == GEMINI_PROVIDER_NAME and exc.status_code == 429:
+                    await self._mark_rate_limited_from_usage_error(account, exc)
                 mark_usage_refresh_auth_cooldown(account.id, exc.status_code, exc.retry_after_seconds)
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
             try:
@@ -91,9 +100,13 @@ class UsageAccountRefresh(UsageAccountSync):
                 mark_usage_refresh_auth_cooldown(account.id, 0)
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
             except UsageFetchError as retry_exc:
-                if account.provider != "kimi" and should_deactivate_for_usage_error(retry_exc):
+                if account.provider not in ("kimi", GEMINI_PROVIDER_NAME) and should_deactivate_for_usage_error(
+                    retry_exc
+                ):
                     await self._deactivate_for_client_error(account, retry_exc)
                 else:
+                    if account.provider == GEMINI_PROVIDER_NAME and retry_exc.status_code == 429:
+                        await self._mark_rate_limited_from_usage_error(account, retry_exc)
                     mark_usage_refresh_auth_cooldown(account.id, retry_exc.status_code, retry_exc.retry_after_seconds)
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
 

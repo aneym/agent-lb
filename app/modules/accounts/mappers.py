@@ -7,7 +7,12 @@ from app.core.auth import DEFAULT_PLAN
 from app.core.config import settings as config_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
-from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
+from app.core.providers import (
+    ANTHROPIC_PROVIDER_NAME,
+    GEMINI_PROVIDER_NAME,
+    OPENAI_PROVIDER_NAME,
+    normalize_provider_name,
+)
 from app.core.utils.time import from_epoch_seconds, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, UsageHistory
 from app.db.request_models import AccountLimitWarmup
@@ -130,7 +135,8 @@ def _account_to_summary(
     if (
         primary_remaining_percent is None
         and not weekly_only_usage
-        and normalize_provider_name(account.provider) not in (ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, "kimi")
+        and normalize_provider_name(account.provider)
+        not in (ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, "kimi", GEMINI_PROVIDER_NAME)
     ):
         primary_remaining_percent = 100.0
 

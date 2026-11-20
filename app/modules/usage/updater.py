@@ -4,12 +4,12 @@ import time
 from typing import Mapping
 
 from app.core.config.settings import get_settings
+from app.core.providers import GEMINI_PROVIDER_NAME
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.usage.account_usage_refresh import UsageAccountRefresh
-from app.modules.usage.refresh_ports import AccountRefreshResult
 from app.modules.usage.rate_limit_backoff import (
     is_usage_refresh_in_cooldown,
     prune_usage_refresh_auth_cooldowns,
@@ -17,6 +17,7 @@ from app.modules.usage.rate_limit_backoff import (
     usage_refresh_auth_cooldowns,
     usage_refresh_rate_limit_strikes,
 )
+from app.modules.usage.refresh_ports import AccountRefreshResult
 from app.modules.usage.refresh_rules import (
     USAGE_REFRESH_PROVIDERS,
     USAGE_REFRESH_SINGLEFLIGHT,
@@ -80,7 +81,7 @@ class UsageUpdater(UsageAccountRefresh):
                     ),
                 )
                 await self._sync_account_from_repo(account)
-                refreshed = refreshed or result.usage_written
+                refreshed = refreshed or (result.usage_written and account.provider != GEMINI_PROVIDER_NAME)
 
                 if result.fetch_succeeded:
                     last_successful_refresh[account.id] = now
