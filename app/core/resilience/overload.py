@@ -44,7 +44,7 @@ def merge_retry_after_headers(
 
 
 def is_proxy_path(path: str) -> bool:
-    return path.startswith("/v1/") or path.startswith("/backend-api/")
+    return path.startswith(("/v1/", "/v1beta/", "/backend-api/"))
 
 
 async def send_json_http_response(

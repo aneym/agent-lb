@@ -61,7 +61,7 @@ def _is_protected_api_path(path: str) -> bool:
         return True
     if path == "/api/frame" or path.startswith("/api/frame/"):
         return True
-    return path == "/v1" or path.startswith("/v1/")
+    return path in ("/v1", "/v1beta") or path.startswith(("/v1/", "/v1beta/"))
 
 
 def _resolve_client_ip(

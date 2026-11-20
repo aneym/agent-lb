@@ -392,7 +392,6 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
     "gpt-image-1.5*": "gpt-image-1.5",
     "gpt-image-1-mini*": "gpt-image-1-mini",
     "gpt-image-1*": "gpt-image-1",
-    "gemini-4-neon*": "gemini-4-neon",
 }
 
 

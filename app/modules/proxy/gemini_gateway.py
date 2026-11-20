@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from anyio import CancelScope
+
 from app.core.auth.refresh import RefreshError
 from app.core.balancer.types import UpstreamError
 from app.core.config.settings import get_settings
@@ -131,7 +133,8 @@ class GeminiGateway:
         try:
             return await self._attempt(api_key, choice, body, effort, useragent, reservation)
         except BaseException:
-            await settle_gemini_reservation(reservation, model=choice.canonical, usage=None)
+            with CancelScope(shield=True):
+                await settle_gemini_reservation(reservation, model=choice.canonical, usage=None)
             raise
 
     async def _attempt(
@@ -146,8 +149,10 @@ class GeminiGateway:
         excluded: set[str] = set()
         refreshed: set[str] = set()
         last_error: GeminiGatewayError | None = None
+        retry_account: Account | None = None
         for _ in range(MAX_ACCOUNT_ATTEMPTS + 1):
-            account = await self._select(api_key, choice.canonical, excluded, last_error)
+            account = retry_account or await self._select(api_key, choice.canonical, excluded, last_error)
+            retry_account = None
             upstream = configured_upstream()
             if upstream is None:
                 raise GeminiGatewayError(
@@ -174,6 +179,7 @@ class GeminiGateway:
                 )
                 if exc.kind == "auth" and account.id not in refreshed:
                     refreshed.add(account.id)
+                    retry_account = account
                     continue
                 if not await self._mark_failure(account, exc):
                     raise last_error from exc
@@ -239,7 +245,7 @@ class GeminiGateway:
     async def _mark_failure(self, account: Account, exc: GeminiUpstreamError) -> bool:
         error: UpstreamError = {"message": exc.message}
         if exc.reset_at is not None:
-            error["resets_at"] = exc.reset_at
+            error["quota_reset_at"] = int(exc.reset_at)
         if exc.kind == "rate_limit":
             await self._load_balancer.mark_rate_limit(account, error)
             return True
@@ -290,30 +296,32 @@ class GeminiGateway:
         error: GeminiUpstreamError | None = None,
         cancelled: bool = False,
     ) -> None:
-        if error is not None:
-            await self._mark_failure(attempt.account, error)
-        elif not cancelled:
-            await self._load_balancer.record_success(attempt.account)
         first_ms = (
             int((attempt.first_token_at - attempt.started_at) * 1000) if attempt.first_token_at is not None else None
         )
         status = "error" if error is not None or cancelled else "success"
-        await record_gemini_request(
-            GeminiLogEntry(
-                api_key=attempt.api_key,
-                account=attempt.account,
-                model=attempt.choice.canonical,
-                reasoning_effort=attempt.reasoning_effort,
-                useragent=attempt.useragent,
-                usage=usage,
-                latency_ms=int((time.monotonic() - attempt.started_at) * 1000),
-                latency_first_token_ms=first_ms,
-                status=status,
-                error_code=f"upstream_{error.kind}"
-                if error is not None
-                else ("client_cancelled" if cancelled else None),
-                error_message=error.message if error is not None else None,
-                upstream_status_code=error.status_code if error is not None else None,
+        try:
+            await record_gemini_request(
+                GeminiLogEntry(
+                    api_key=attempt.api_key,
+                    account=attempt.account,
+                    model=attempt.choice.canonical,
+                    reasoning_effort=attempt.reasoning_effort,
+                    useragent=attempt.useragent,
+                    usage=usage,
+                    latency_ms=int((time.monotonic() - attempt.started_at) * 1000),
+                    latency_first_token_ms=first_ms,
+                    status=status,
+                    error_code=f"upstream_{error.kind}"
+                    if error is not None
+                    else ("client_cancelled" if cancelled else None),
+                    error_message=error.message if error is not None else None,
+                    upstream_status_code=error.status_code if error is not None else None,
+                )
             )
-        )
-        await settle_gemini_reservation(attempt.reservation, model=attempt.choice.canonical, usage=usage)
+            if error is not None:
+                await self._mark_failure(attempt.account, error)
+            elif not cancelled:
+                await self._load_balancer.record_success(attempt.account)
+        finally:
+            await settle_gemini_reservation(attempt.reservation, model=attempt.choice.canonical, usage=usage)

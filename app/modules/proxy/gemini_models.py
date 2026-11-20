@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,10 +24,6 @@ class GeminiModelChoice:
 
 def catalog_ids() -> list[str]:
     return [GEMINI_CANONICAL_MODEL, *(f"{GEMINI_CANONICAL_MODEL}-{level}" for level in GEMINI_THINKING_LEVELS)]
-
-
-def visible_catalog_ids() -> list[str]:
-    return [model_id for model_id in catalog_ids() if model_is_visible(model_id)]
 
 
 def resolve_choice(requested: str) -> GeminiModelChoice | None:
@@ -58,9 +55,12 @@ def model_resource(choice: GeminiModelChoice) -> dict[str, Any]:
     }
 
 
-def models_page(page_size: int | None, page_token: str | None) -> dict[str, Any]:
-    choices = [choice for model_id in visible_catalog_ids() if (choice := resolve_choice(model_id)) is not None]
-    start = int(page_token) if page_token and page_token.isdigit() else 0
+def models_page(page_size: int | None, start: int, allowed: Callable[[GeminiModelChoice], bool]) -> dict[str, Any]:
+    choices = [
+        choice
+        for model_id in catalog_ids()
+        if (choice := resolve_choice(model_id)) is not None and choice_is_visible(choice) and allowed(choice)
+    ]
     size = page_size if page_size and page_size > 0 else 50
     end = min(start + size, len(choices))
     page: dict[str, Any] = {"models": [model_resource(choice) for choice in choices[start:end]]}

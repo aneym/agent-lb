@@ -61,11 +61,11 @@ def _visible_choice(name: str) -> GeminiModelChoice:
     return choice
 
 
-def _page_size(raw: str | None) -> int | None:
-    if raw is None or not raw.strip():
+def _page_number(raw: str | None, name: str) -> int | None:
+    if raw is None or raw == "":
         return None
-    if not raw.strip().isdigit():
-        raise GeminiGatewayError(400, "pageSize must be a positive integer.", code="invalid_page_size")
+    if not (raw.isascii() and raw.isdigit() and len(raw) <= 6):
+        raise GeminiGatewayError(400, f"{name} must be a non-negative integer.", code="invalid_page_parameter")
     return int(raw)
 
 
@@ -73,19 +73,14 @@ def _page_size(raw: str | None) -> int | None:
 async def list_models(request: Request) -> Response:
     try:
         api_key = await _authenticate(request)
-        page_size = _page_size(request.query_params.get("pageSize"))
+        page_size = _page_number(request.query_params.get("pageSize"), "pageSize")
+        start = _page_number(request.query_params.get("pageToken"), "pageToken") or 0
         await _gateway(request).require_pool(api_key)
     except AppError as exc:
         return gemini_error_response(request, from_app_error(exc))
     except GeminiGatewayError as exc:
         return gemini_error_response(request, exc)
-    page = models_page(page_size, request.query_params.get("pageToken"))
-    page["models"] = [
-        model
-        for model in page["models"]
-        if (choice := resolve_choice(model["name"])) is not None and _key_allows(api_key, choice)
-    ]
-    return JSONResponse(page)
+    return JSONResponse(models_page(page_size, start, lambda choice: _key_allows(api_key, choice)))
 
 
 @router.get("/models/{name}")
@@ -95,6 +90,7 @@ async def get_model(request: Request, name: str) -> Response:
         choice = _visible_choice(name)
         if not _key_allows(api_key, choice):
             raise _not_found(choice.requested)
+        await _gateway(request).require_pool(api_key)
     except AppError as exc:
         return gemini_error_response(request, from_app_error(exc))
     except GeminiGatewayError as exc:
