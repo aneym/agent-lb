@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 from anyio import CancelScope
@@ -33,7 +33,7 @@ async def _chunks(attempt: GeminiAttempt) -> AsyncIterator[dict[str, Any]]:
         yield chunk
 
 
-async def stream_bytes(gateway: GeminiGateway, attempt: GeminiAttempt, *, sse: bool) -> AsyncIterator[bytes]:
+async def stream_bytes(gateway: GeminiGateway, attempt: GeminiAttempt, *, sse: bool) -> AsyncGenerator[bytes, None]:
     usage: GeminiUsage | None = None
     error: GeminiUpstreamError | None = None
     cancelled = False
@@ -84,10 +84,8 @@ async def collect_response(gateway: GeminiGateway, attempt: GeminiAttempt) -> di
 
 class GeminiStreamResponse(StreamingResponse):
     def __init__(self, gateway: GeminiGateway, attempt: GeminiAttempt, *, sse: bool) -> None:
-        super().__init__(
-            stream_bytes(gateway, attempt, sse=sse),
-            media_type="text/event-stream" if sse else "application/json",
-        )
+        self._body = stream_bytes(gateway, attempt, sse=sse)
+        super().__init__(self._body, media_type="text/event-stream" if sse else "application/json")
         self._gateway = gateway
         self._attempt = attempt
 
@@ -96,5 +94,6 @@ class GeminiStreamResponse(StreamingResponse):
             await super().__call__(scope, receive, send)
         finally:
             with CancelScope(shield=True):
+                await self._body.aclose()
                 await self._gateway.finish(self._attempt, None, cancelled=True)
                 await self._attempt.rest.aclose()
