@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -18,6 +19,7 @@ from app.core.providers.gemini_models import GeminiModel
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts.auth_manager import AccountNotOwnedError, AuthManager
+from app.modules.accounts.gemini_project import GEMINI_TERMS_DISABLED_CODE
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyRequestUsageBudget, ApiKeyUsageReservationData
@@ -40,7 +42,6 @@ from app.modules.usage.repository import AdditionalUsageRepository, UsageReposit
 logger = logging.getLogger(__name__)
 
 MAX_ACCOUNT_ATTEMPTS = 3
-TERMS_DISABLED_CODE = "gemini_terms_disabled"
 _UNSERVABLE_STATUSES = frozenset({AccountStatus.DEACTIVATED, AccountStatus.REAUTH_REQUIRED})
 
 
@@ -164,7 +165,12 @@ class GeminiGateway:
             retry_account = None
             upstream = configured_upstream()
             started_at = time.monotonic()
-            access_token = await self._access_token(account, force=account.id in refreshed)
+            try:
+                access_token = await self._access_token(account, force=account.id in refreshed)
+            except GeminiGatewayError as exc:
+                last_error = exc
+                excluded.add(account.id)
+                continue
             call = GeminiUpstreamCall(
                 model=choice.canonical_model,
                 body=body,
@@ -250,7 +256,7 @@ class GeminiGateway:
     async def _mark_failure(self, account: Account, exc: GeminiUpstreamError) -> bool:
         error: UpstreamError = {"message": exc.message}
         if exc.reset_at is not None:
-            error["quota_reset_at"] = int(exc.reset_at)
+            error["quota_reset_at"] = math.ceil(exc.reset_at)
         if exc.kind == "rate_limit":
             await self._load_balancer.mark_rate_limit(account, error)
             return True
@@ -258,7 +264,7 @@ class GeminiGateway:
             await self._load_balancer.mark_quota_exceeded(account, error)
             return True
         if exc.kind == "terms_disabled":
-            await self._load_balancer.mark_permanent_failure(account, TERMS_DISABLED_CODE)
+            await self._load_balancer.mark_permanent_failure(account, GEMINI_TERMS_DISABLED_CODE)
             logger.error(
                 "gemini_account_terms_disabled alert=true account_id=%s status=%s", account.id, exc.status_code
             )

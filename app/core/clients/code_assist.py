@@ -17,13 +17,25 @@ CODE_ASSIST_METADATA = {"ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSP
 ONBOARD_POLL_SECONDS = 5.0
 ONBOARD_MAX_POLLS = 12
 FREE_TIER_ID = "free-tier"
+ERROR_BODY_LIMIT = 64 * 1024
 
 
 class CodeAssistError(Exception):
-    def __init__(self, status_code: int, message: str) -> None:
+    def __init__(self, status_code: int, message: str, *, body: bytes = b"") -> None:
         super().__init__(message)
         self.status_code = status_code
         self.message = message
+        self.body = body
+
+
+async def read_error_body(content: aiohttp.StreamReader) -> bytes:
+    raw = b""
+    while len(raw) < ERROR_BODY_LIMIT:
+        data = await content.read(ERROR_BODY_LIMIT - len(raw))
+        if not data:
+            break
+        raw += data
+    return raw
 
 
 class _Tier(BaseModel):
@@ -124,7 +136,9 @@ async def _call(
         ) as resp:
             if resp.status >= 300:
                 logger.warning("Code Assist request failed path=%s status=%s", url.rsplit("/", 1)[-1], resp.status)
-                raise CodeAssistError(resp.status, f"Code Assist answered {resp.status}")
+                raise CodeAssistError(
+                    resp.status, f"Code Assist answered {resp.status}", body=await read_error_body(resp.content)
+                )
             data = await resp.json(content_type=None)
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
         raise CodeAssistError(502, f"Code Assist unreachable: {exc.__class__.__name__}") from exc

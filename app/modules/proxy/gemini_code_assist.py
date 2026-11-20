@@ -9,7 +9,12 @@ from typing import Any
 
 import aiohttp
 
-from app.core.clients.code_assist import CODE_ASSIST_USER_AGENT, CodeAssistError, resolve_code_assist_project
+from app.core.clients.code_assist import (
+    CODE_ASSIST_USER_AGENT,
+    CodeAssistError,
+    read_error_body,
+    resolve_code_assist_project,
+)
 from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
 from app.modules.accounts.gemini_project import remember_gemini_project
@@ -22,12 +27,6 @@ logger = logging.getLogger(__name__)
 STREAM_PATH = "/v1internal:streamGenerateContent"
 CONNECT_TIMEOUT_SECONDS = 30.0
 READ_TIMEOUT_SECONDS = 300.0
-ERROR_BODY_LIMIT = 64 * 1024
-
-
-def _project_failure(exc: CodeAssistError) -> GeminiUpstreamError:
-    kind = "auth" if exc.status_code == 401 else "transient" if exc.status_code >= 500 else "invalid_request"
-    return GeminiUpstreamError(exc.status_code, "Gemini Code Assist project lookup failed.", kind=kind)
 
 
 async def _project(call: GeminiUpstreamCall) -> str:
@@ -36,7 +35,7 @@ async def _project(call: GeminiUpstreamCall) -> str:
     try:
         project_id = await resolve_code_assist_project(call.access_token)
     except CodeAssistError as exc:
-        raise _project_failure(exc) from exc
+        raise upstream_error(exc.status_code, exc.body) from exc
     await remember_gemini_project(call.account_id, project_id)
     return project_id
 
@@ -108,14 +107,18 @@ class CodeAssistGeminiUpstream:
                     url, params={"alt": "sse"}, json=payload, headers=headers, timeout=timeout, allow_redirects=False
                 ) as resp:
                     if resp.status >= 300:
-                        raw = await resp.content.read(ERROR_BODY_LIMIT)
+                        raw = await read_error_body(resp.content)
                         logger.warning("gemini_code_assist_failed path=%s status=%s", STREAM_PATH, resp.status)
                         raise upstream_error(resp.status, raw)
+                    answered = False
                     async for item in _sse_payloads(resp.content):
                         _raise_stream_error(item)
                         chunk = gemini_chunk(item)
                         if chunk is not None:
+                            answered = True
                             yield chunk
+                    if not answered:
+                        raise GeminiUpstreamError(502, "Gemini Code Assist sent no response.", kind="transient")
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             logger.warning("gemini_code_assist_unreachable path=%s error=%s", STREAM_PATH, exc.__class__.__name__)
             raise GeminiUpstreamError(502, "Gemini Code Assist is unreachable.", kind="transient") from exc
