@@ -3,7 +3,19 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func, text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,6 +51,7 @@ class TeamMember(Base):
     token_cap_week: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     token_cap_month: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     pool_share_percent: Mapped[float | None] = mapped_column(Numeric(6, 3, asdecimal=False), nullable=True)
+    pool_share_account_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     allowed_models: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)

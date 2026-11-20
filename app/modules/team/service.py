@@ -105,6 +105,8 @@ class TeamMemberUpdateData:
     notes_set: bool = False
     pool_share_percent: float | None = None
     pool_share_percent_set: bool = False
+    pool_share_account_ids: list[str] | None = None
+    pool_share_account_ids_set: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +140,7 @@ class TeamMemberData:
     pool_share_percent: float | None = None
     pool_share: list[PoolWindow] = field(default_factory=list)
     pool_share_known: bool = False
+    pool_share_account_ids: list[str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,7 +268,13 @@ class TeamService:
     async def _pool_windows(self, member: TeamMember, *, now: datetime) -> list[PoolWindow]:
         if member.pool_share_percent is None:
             return []
-        return await pool_share_windows(self._repository._session, member.id, float(member.pool_share_percent), now=now)
+        return await pool_share_windows(
+            self._repository._session,
+            member.id,
+            float(member.pool_share_percent),
+            now=now,
+            account_ids=member.pool_share_account_ids,
+        )
 
     async def list_members(self) -> list[TeamMemberData]:
         members = await self._repository.list_all()
@@ -359,6 +368,8 @@ class TeamService:
             member.notes = _normalize_optional_text(payload.notes)
         if payload.pool_share_percent_set:
             member.pool_share_percent = payload.pool_share_percent
+        if payload.pool_share_account_ids_set:
+            member.pool_share_account_ids = sorted(set(payload.pool_share_account_ids or [])) or None
         member.updated_at = utcnow()
 
         await self._repository.commit()
@@ -495,6 +506,7 @@ def _to_member_data(
         pool_share_percent=_optional_float(member.pool_share_percent),
         pool_share=pool_windows or [],
         pool_share_known=bool(pool_windows),
+        pool_share_account_ids=member.pool_share_account_ids,
         keys=[
             TeamMemberKeyData(
                 id=key.id,

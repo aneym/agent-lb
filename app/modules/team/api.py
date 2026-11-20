@@ -69,6 +69,7 @@ def _to_member_response(member: TeamMemberData) -> TeamMemberResponse:
         gate=member.gate,
         pool_share_percent=member.pool_share_percent,
         pool_share_known=member.pool_share_known,
+        pool_share_account_ids=member.pool_share_account_ids,
         pool_share=[
             TeamPoolWindowResponse(
                 window=window.window,
@@ -198,6 +199,8 @@ async def update_team_member(
         notes_set="notes" in fields,
         pool_share_percent=payload.pool_share_percent,
         pool_share_percent_set="pool_share_percent" in fields,
+        pool_share_account_ids=payload.pool_share_account_ids,
+        pool_share_account_ids_set="pool_share_account_ids" in fields,
     )
     try:
         member = await context.service.update_member(member_id, update)

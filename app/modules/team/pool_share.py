@@ -41,7 +41,8 @@ class _Totals:
     unpriced_tokens: int
 
 
-_members: dict[tuple[str, float], tuple[float, list[PoolWindow]]] = {}
+_CacheKey = tuple[str, float, tuple[str, ...] | None]
+_members: dict[_CacheKey, tuple[float, list[PoolWindow]]] = {}
 _cache_generation = 0
 
 
@@ -51,7 +52,7 @@ def reset_pool_share_cache() -> None:
     _members.clear()
 
 
-def _cache_put(key: tuple[str, float], value: tuple[float, list[PoolWindow]], now: float) -> None:
+def _cache_put(key: _CacheKey, value: tuple[float, list[PoolWindow]], now: float) -> None:
 
     for expired in [entry for entry, (deadline, _) in _members.items() if deadline <= now]:
         _members.pop(expired, None)
@@ -80,7 +81,7 @@ def _local_upper_fraction(member: _Totals, account: _Totals) -> float:
     return max(priced, unpriced)
 
 
-async def _reachable_accounts(session: AsyncSession, member_id: str) -> set[str]:
+async def _reachable_accounts(session: AsyncSession, member_id: str, account_ids: list[str] | None) -> set[str]:
     keys = (
         await session.execute(
             select(ApiKey.id, ApiKey.account_assignment_scope_enabled).where(
@@ -95,6 +96,8 @@ async def _reachable_accounts(session: AsyncSession, member_id: str) -> set[str]
         query = select(Account.id).where(Account.id.in_(assigned))
     else:
         query = select(Account.id)
+    if account_ids is not None:
+        query = query.where(Account.id.in_(account_ids))
     query = query.where(Account.status.notin_((AccountStatus.DEACTIVATED, AccountStatus.REAUTH_REQUIRED)))
     return set((await session.execute(query)).scalars().all())
 
@@ -185,15 +188,17 @@ async def _aggregate(
     return {(row[0], row[1]): _totals(row) for row in rows}
 
 
-async def pool_share_windows(session: AsyncSession, member_id: str, limit: float, *, now: datetime) -> list[PoolWindow]:
+async def pool_share_windows(
+    session: AsyncSession, member_id: str, limit: float, *, now: datetime, account_ids: list[str] | None = None
+) -> list[PoolWindow]:
     clock = time.monotonic()
     generation = _cache_generation
-    cache_key = (member_id, limit)
+    cache_key = (member_id, limit, None if account_ids is None else tuple(sorted(account_ids)))
     cached = _members.get(cache_key)
     if cached is not None and cached[0] > clock and all(window.reset_at > now for window in cached[1]):
         return cached[1]
 
-    accounts = await _reachable_accounts(session, member_id)
+    accounts = await _reachable_accounts(session, member_id, account_ids)
     snapshots = await _snapshots(session, accounts, now)
     current = [snapshot for snapshot in snapshots if snapshot.current]
 
