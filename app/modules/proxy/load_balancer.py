@@ -72,11 +72,11 @@ from app.modules.proxy.anthropic_rate_limits import (
     bounded_retry_at,
     kimi_monthly_selection_state,
 )
-from app.modules.proxy.usage_credit_snapshot import extract_credit_status
 from app.modules.proxy.model_account_filter import filter_accounts_for_model
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind, RuntimeState
+from app.modules.proxy.usage_credit_snapshot import extract_credit_status
 from app.modules.quota_planner.logic import PlannerSettings, build_routing_costs
 from app.modules.usage.additional_quota_keys import (
     canonicalize_additional_quota_key,
@@ -2005,15 +2005,12 @@ def _state_from_account(
             status_seed = account.status
             effective_runtime_reset = marker_reset
     kimi_monthly_block = account.provider == "kimi" and account.deactivation_reason == KIMI_MONTHLY_LIMIT_REASON
-    if (
-        not kimi_monthly_block
-        and status_seed in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED)
-        and effective_blocked_at is not None
-    ):
-        effective_runtime_reset = bounded_retry_at(effective_runtime_reset, effective_blocked_at)
     effective_cooldown_until = runtime.cooldown_until
-    if not kimi_monthly_block and effective_cooldown_until is not None and effective_blocked_at is not None:
-        effective_cooldown_until = bounded_retry_at(effective_cooldown_until, effective_blocked_at)
+    if not kimi_monthly_block and account.provider != "gemini" and effective_blocked_at is not None:
+        if status_seed in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED):
+            effective_runtime_reset = bounded_retry_at(effective_runtime_reset, effective_blocked_at)
+        if effective_cooldown_until is not None:
+            effective_cooldown_until = bounded_retry_at(effective_cooldown_until, effective_blocked_at)
     if kimi_monthly_block:
         status_seed, effective_runtime_reset, effective_cooldown_until = kimi_monthly_selection_state(
             account, secondary_entry, runtime.reset_at, effective_cooldown_until

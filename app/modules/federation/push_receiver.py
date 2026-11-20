@@ -12,7 +12,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.providers.registry import list_provider_names
 from app.modules.federation.exceptions import FederationConflictError
 from app.modules.federation.push_auth import PushSource
-from app.modules.federation.repository import FederationRepository
+from app.modules.federation.repository import LOCAL_ONLY_PROVIDERS, FederationRepository
 from app.modules.federation.schemas import FederationPushRequest, FederationPushResponse, FederationPushSkip
 from app.modules.proxy.account_cache import get_account_selection_cache
 
@@ -84,7 +84,7 @@ class FederationPushReceiver:
             existing = await self._repository.get_account(account.account_id)
             if existing is not None and existing.owner_instance != owner:
                 reason = "conflict_owned_elsewhere"
-            elif account.provider not in providers:
+            elif account.provider not in providers or account.provider in LOCAL_ONLY_PROVIDERS:
                 reason = "unsupported_provider"
             elif account.expires_at_ms is not None and (
                 account.expires_at_ms <= now_ms or not _representable_expiry(account.expires_at_ms)

@@ -6,15 +6,15 @@ from datetime import datetime
 from sqlalchemy import and_, func, or_, select, update
 
 from app.core.crypto import TokenEncryptor
+from app.core.providers.gemini import GEMINI_PROVIDER_NAME
 from app.core.utils.time import utcnow
 from app.db.federation_models import AccountTransfer, AccountTransferDirection, AccountTransferState
 from app.db.models import Account, AccountStatus
 from app.modules.federation.repository_transfers import FederationTransferRepository
 from app.modules.federation.repository_usage import FederationUsageRepository
 from app.modules.federation.schemas import FederationAuthPayload
-from app.modules.proxy.gemini_models import GEMINI_PROVIDER
 
-LOCAL_ONLY_PROVIDERS = frozenset({GEMINI_PROVIDER})
+LOCAL_ONLY_PROVIDERS = frozenset({GEMINI_PROVIDER_NAME})
 
 
 class FederationRepository(FederationTransferRepository, FederationUsageRepository):

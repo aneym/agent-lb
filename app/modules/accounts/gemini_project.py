@@ -37,3 +37,14 @@ async def _store_project(account: Account, project_id: str) -> None:
         )
         await session.commit()
     get_account_selection_cache().invalidate()
+
+
+async def remember_gemini_project(account_id: str, project_id: str) -> None:
+    async with get_background_session() as session:
+        await session.execute(
+            update(Account)
+            .where(Account.id == account_id, Account.workspace_id.is_(None))
+            .values(workspace_id=project_id)
+        )
+        await session.commit()
+    get_account_selection_cache().invalidate()

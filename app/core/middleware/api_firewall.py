@@ -13,6 +13,7 @@ from app.core.middleware.firewall_cache import get_firewall_ip_cache
 from app.db.session import get_background_session
 from app.modules.firewall.repository import FirewallRepository
 from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
+from app.modules.proxy.gemini_errors import gemini_error_body
 
 
 def add_api_firewall_middleware(app: FastAPI) -> None:
@@ -50,6 +51,10 @@ def add_api_firewall_middleware(app: FastAPI) -> None:
         if is_allowed:
             return await call_next(request)
 
+        if path == "/v1beta" or path.startswith("/v1beta/"):
+            return JSONResponse(
+                status_code=403, content=gemini_error_body(403, "ip_forbidden", "Access denied for client IP")
+            )
         return JSONResponse(
             status_code=403,
             content=openai_error("ip_forbidden", "Access denied for client IP", error_type="access_error"),

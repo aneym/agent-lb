@@ -1,50 +1,25 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from app.core.model_aliases import model_is_visible
+from app.core.providers.gemini_models import GEMINI_MODEL_REGISTRY, GeminiModel
 
-GEMINI_PROVIDER = "gemini"
-GEMINI_CANONICAL_MODEL = "gemini-4-neon"
-GEMINI_DEFAULT_THINKING_LEVEL = "high"
-GEMINI_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
 GEMINI_INPUT_TOKEN_LIMIT = 1_048_576
 GEMINI_OUTPUT_TOKEN_LIMIT = 65_536
 GEMINI_METHODS = ("generateContent", "streamGenerateContent")
 
 
-@dataclass(frozen=True, slots=True)
-class GeminiModelChoice:
-    requested: str
-    canonical: str
-    thinking_level: str | None
+def model_visible(model: GeminiModel) -> bool:
+    return model_is_visible(model.model_id) and model_is_visible(model.canonical_model)
 
 
-def catalog_ids() -> list[str]:
-    return [GEMINI_CANONICAL_MODEL, *(f"{GEMINI_CANONICAL_MODEL}-{level}" for level in GEMINI_THINKING_LEVELS)]
-
-
-def resolve_choice(requested: str) -> GeminiModelChoice | None:
-    name = requested.removeprefix("models/").strip()
-    if name == GEMINI_CANONICAL_MODEL:
-        return GeminiModelChoice(name, GEMINI_CANONICAL_MODEL, None)
-    for level in GEMINI_THINKING_LEVELS:
-        if name == f"{GEMINI_CANONICAL_MODEL}-{level}":
-            return GeminiModelChoice(name, GEMINI_CANONICAL_MODEL, level)
-    return None
-
-
-def choice_is_visible(choice: GeminiModelChoice) -> bool:
-    return model_is_visible(choice.requested) and model_is_visible(choice.canonical)
-
-
-def model_resource(choice: GeminiModelChoice) -> dict[str, Any]:
-    level = choice.thinking_level
+def model_resource(model: GeminiModel) -> dict[str, Any]:
+    level = model.effort
     return {
-        "name": f"models/{choice.requested}",
-        "baseModelId": choice.canonical,
+        "name": f"models/{model.model_id}",
+        "baseModelId": model.canonical_model,
         "version": "001",
         "displayName": "Gemini 4 Neon" if level is None else f"Gemini 4 Neon ({level})",
         "description": "Gemini 4 Neon served through agent-lb",
@@ -55,38 +30,11 @@ def model_resource(choice: GeminiModelChoice) -> dict[str, Any]:
     }
 
 
-def models_page(page_size: int | None, start: int, allowed: Callable[[GeminiModelChoice], bool]) -> dict[str, Any]:
-    choices = [
-        choice
-        for model_id in catalog_ids()
-        if (choice := resolve_choice(model_id)) is not None and choice_is_visible(choice) and allowed(choice)
-    ]
+def models_page(page_size: int | None, start: int, allowed: Callable[[GeminiModel], bool]) -> dict[str, Any]:
+    choices = [model for model in GEMINI_MODEL_REGISTRY.models if model_visible(model) and allowed(model)]
     size = page_size if page_size and page_size > 0 else 50
     end = min(start + size, len(choices))
     page: dict[str, Any] = {"models": [model_resource(choice) for choice in choices[start:end]]}
     if end < len(choices):
         page["nextPageToken"] = str(end)
     return page
-
-
-def apply_thinking_level(body: dict[str, Any], choice: GeminiModelChoice) -> str:
-    config = body.get("generationConfig")
-    if not isinstance(config, dict):
-        config = {}
-        body["generationConfig"] = config
-    thinking = config.get("thinkingConfig")
-    if not isinstance(thinking, dict):
-        thinking = {}
-        config["thinkingConfig"] = thinking
-    if choice.thinking_level is not None:
-        thinking.pop("thinkingBudget", None)
-        thinking["thinkingLevel"] = choice.thinking_level
-        return choice.thinking_level
-    sent = thinking.get("thinkingLevel")
-    if isinstance(sent, str) and sent.strip().lower() in GEMINI_THINKING_LEVELS:
-        level = sent.strip().lower()
-        thinking["thinkingLevel"] = level
-        return level
-    thinking.pop("thinkingBudget", None)
-    thinking["thinkingLevel"] = GEMINI_DEFAULT_THINKING_LEVEL
-    return GEMINI_DEFAULT_THINKING_LEVEL

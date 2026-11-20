@@ -13,15 +13,18 @@ from app.core.auth.refresh import RefreshError
 from app.core.balancer.types import UpstreamError
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
+from app.core.providers.gemini import GEMINI_PROVIDER_NAME
+from app.core.providers.gemini_models import GeminiModel
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts.auth_manager import AccountNotOwnedError, AuthManager
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyRequestUsageBudget, ApiKeyUsageReservationData
+from app.modules.proxy.gemini_code_assist import CodeAssistGeminiUpstream
 from app.modules.proxy.gemini_errors import GeminiGatewayError
 from app.modules.proxy.gemini_fake_upstream import FakeGeminiUpstream
-from app.modules.proxy.gemini_models import GEMINI_PROVIDER, GeminiModelChoice, apply_thinking_level
+from app.modules.proxy.gemini_request import apply_thinking_level, normalized_request
 from app.modules.proxy.gemini_stream import GeminiUsage
 from app.modules.proxy.gemini_upstream import GeminiUpstream, GeminiUpstreamCall, GeminiUpstreamError
 from app.modules.proxy.gemini_usage_log import GeminiLogEntry, record_gemini_request, settle_gemini_reservation
@@ -67,10 +70,10 @@ def _scoped_account_ids(api_key: ApiKeyData | None) -> set[str] | None:
     return set(api_key.assigned_account_ids)
 
 
-def configured_upstream() -> GeminiUpstream | None:
+def configured_upstream() -> GeminiUpstream:
     if get_settings().gemini_upstream == "fake":
         return FakeGeminiUpstream()
-    return None
+    return CodeAssistGeminiUpstream()
 
 
 def _usage_budget(body: dict[str, Any], raw_size: int) -> ApiKeyRequestUsageBudget:
@@ -85,7 +88,7 @@ def _usage_budget(body: dict[str, Any], raw_size: int) -> ApiKeyRequestUsageBudg
 @dataclass(slots=True)
 class GeminiAttempt:
     api_key: ApiKeyData | None
-    choice: GeminiModelChoice
+    choice: GeminiModel
     reasoning_effort: str
     useragent: str | None
     reservation: ApiKeyUsageReservationData | None
@@ -106,7 +109,7 @@ class GeminiGateway:
         scoped = _scoped_account_ids(api_key)
         async with _repo_factory() as repos:
             servable = any(
-                account.provider == GEMINI_PROVIDER
+                account.provider == GEMINI_PROVIDER_NAME
                 and account.status not in _UNSERVABLE_STATUSES
                 and (scoped is None or account.id in scoped)
                 for account in await repos.accounts.list_accounts()
@@ -118,31 +121,32 @@ class GeminiGateway:
         self,
         *,
         api_key: ApiKeyData | None,
-        choice: GeminiModelChoice,
+        choice: GeminiModel,
         body: dict[str, Any],
         raw_size: int,
         useragent: str | None,
     ) -> GeminiAttempt:
-        validate_model_access(api_key, choice.canonical)
+        validate_model_access(api_key, choice.canonical_model)
+        body = normalized_request(body)
         effort = apply_thinking_level(body, choice)
         reservation = await enforce_request_limits(
             api_key,
-            request_model=choice.canonical,
+            request_model=choice.canonical_model,
             request_service_tier=None,
             request_usage_budget=_usage_budget(body, raw_size),
-            provider=GEMINI_PROVIDER,
+            provider=GEMINI_PROVIDER_NAME,
         )
         try:
             return await self._attempt(api_key, choice, body, effort, useragent, reservation)
         except BaseException:
             with CancelScope(shield=True):
-                await settle_gemini_reservation(reservation, model=choice.canonical, usage=None)
+                await settle_gemini_reservation(reservation, model=choice.canonical_model, usage=None)
             raise
 
     async def _attempt(
         self,
         api_key: ApiKeyData | None,
-        choice: GeminiModelChoice,
+        choice: GeminiModel,
         body: dict[str, Any],
         effort: str,
         useragent: str | None,
@@ -156,17 +160,13 @@ class GeminiGateway:
         while retry_account is not None or selections < MAX_ACCOUNT_ATTEMPTS:
             if retry_account is None:
                 selections += 1
-            account = retry_account or await self._select(api_key, choice.canonical, excluded, last_error)
+            account = retry_account or await self._select(api_key, choice.canonical_model, excluded, last_error)
             retry_account = None
             upstream = configured_upstream()
-            if upstream is None:
-                raise GeminiGatewayError(
-                    501, "The Gemini upstream adapter is not configured on this agent-lb.", code="gemini_upstream_off"
-                )
             started_at = time.monotonic()
             access_token = await self._access_token(account, force=account.id in refreshed)
             call = GeminiUpstreamCall(
-                model=choice.canonical,
+                model=choice.canonical_model,
                 body=body,
                 access_token=access_token,
                 project_id=account.workspace_id,
@@ -215,7 +215,7 @@ class GeminiGateway:
     ) -> Account:
         selection = await self._load_balancer.select_account(
             model=model,
-            provider=GEMINI_PROVIDER,
+            provider=GEMINI_PROVIDER_NAME,
             account_ids=_scoped_account_ids(api_key),
             exclude_account_ids=excluded,
             routing_strategy="usage_weighted",
@@ -270,7 +270,7 @@ class GeminiGateway:
         self,
         api_key: ApiKeyData | None,
         account: Account,
-        choice: GeminiModelChoice,
+        choice: GeminiModel,
         effort: str,
         useragent: str | None,
         exc: GeminiUpstreamError,
@@ -280,7 +280,7 @@ class GeminiGateway:
             GeminiLogEntry(
                 api_key=api_key,
                 account=account,
-                model=choice.canonical,
+                model=choice.canonical_model,
                 reasoning_effort=effort,
                 useragent=useragent,
                 usage=None,
@@ -313,7 +313,7 @@ class GeminiGateway:
                 GeminiLogEntry(
                     api_key=attempt.api_key,
                     account=attempt.account,
-                    model=attempt.choice.canonical,
+                    model=attempt.choice.canonical_model,
                     reasoning_effort=attempt.reasoning_effort,
                     useragent=attempt.useragent,
                     usage=usage,
@@ -332,4 +332,4 @@ class GeminiGateway:
             elif not cancelled:
                 await self._load_balancer.record_success(attempt.account)
         finally:
-            await settle_gemini_reservation(attempt.reservation, model=attempt.choice.canonical, usage=usage)
+            await settle_gemini_reservation(attempt.reservation, model=attempt.choice.canonical_model, usage=usage)

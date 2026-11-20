@@ -4,13 +4,13 @@ import logging
 from dataclasses import dataclass
 
 from app.core.identity import attach_member, get_request_identity
+from app.core.providers.gemini import GEMINI_PROVIDER_NAME
 from app.core.utils.request_id import get_request_id
 from app.db.models import Account
 from app.db.session import get_background_session
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeysService
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyUsageReservationData
-from app.modules.proxy.gemini_models import GEMINI_PROVIDER
 from app.modules.proxy.gemini_stream import GeminiUsage
 from app.modules.request_logs.repository import RequestLogsRepository
 
@@ -56,7 +56,7 @@ async def record_gemini_request(entry: GeminiLogEntry) -> None:
                 error_message=entry.error_message,
                 upstream_status_code=entry.upstream_status_code,
                 plan_type=entry.account.plan_type if entry.account else None,
-                provider=GEMINI_PROVIDER,
+                provider=GEMINI_PROVIDER_NAME,
                 transport="http",
                 useragent=entry.useragent,
             )

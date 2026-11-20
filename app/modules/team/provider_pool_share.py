@@ -13,6 +13,7 @@ from app.core.exceptions import TeamMemberOverCapError
 from app.core.openai.model_registry import get_model_registry
 from app.core.providers.anthropic import ANTHROPIC_PROVIDER_NAME
 from app.core.providers.anthropic_compat import ANTHROPIC_COMPAT_PROFILES, provider_name_for_anthropic_model
+from app.core.providers.gemini import GEMINI_PROVIDER_NAME
 from app.core.providers.openai import OPENAI_PROVIDER_NAME
 from app.core.providers.openrouter import OPENROUTER_PROVIDER_NAME, is_deepseek_model
 from app.db.access_models import TeamMember
@@ -20,7 +21,6 @@ from app.modules.proxy.request_policy import resolve_model_alias, strip_model_al
 from app.modules.team.pool_share import PoolWindow, pool_share_windows, reachable_account_providers
 from app.modules.usage.additional_quota_keys import get_additional_quota_definition_for_model
 
-GEMINI_PROVIDER_NAME = "gemini"
 _OPENROUTER_CREDITS_QUOTA_KEY = "openrouter_credits"
 _MODEL_CONTEXT_SUFFIX = re.compile(r"(?:\[[^\]]*\]|-1m)$")
 _PROVIDER_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")

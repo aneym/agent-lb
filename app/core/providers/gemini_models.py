@@ -4,14 +4,14 @@ from dataclasses import dataclass
 
 GEMINI_NEON_MODEL = "gemini-4-neon"
 GEMINI_EFFORT_LEVELS = ("low", "medium", "high", "xhigh")
-GEMINI_DEFAULT_THINKING_LEVEL = "HIGH"
+GEMINI_DEFAULT_EFFORT = "high"
 
 
 @dataclass(frozen=True, slots=True)
 class GeminiModel:
     model_id: str
     canonical_model: str
-    thinking_level: str
+    effort: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,10 +30,7 @@ class GeminiModelRegistry:
 
 GEMINI_MODEL_REGISTRY = GeminiModelRegistry(
     models=(
-        GeminiModel(GEMINI_NEON_MODEL, GEMINI_NEON_MODEL, GEMINI_DEFAULT_THINKING_LEVEL),
-        *(
-            GeminiModel(f"{GEMINI_NEON_MODEL}-{level}", GEMINI_NEON_MODEL, level.upper())
-            for level in GEMINI_EFFORT_LEVELS
-        ),
+        GeminiModel(GEMINI_NEON_MODEL, GEMINI_NEON_MODEL, None),
+        *(GeminiModel(f"{GEMINI_NEON_MODEL}-{level}", GEMINI_NEON_MODEL, level) for level in GEMINI_EFFORT_LEVELS),
     )
 )

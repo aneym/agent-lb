@@ -7,17 +7,12 @@ from fastapi.responses import JSONResponse
 
 from app.core.auth.dependencies import select_proxy_authorization, validate_proxy_api_key_authorization
 from app.core.exceptions import AppError
+from app.core.providers.gemini_models import GEMINI_MODEL_REGISTRY, GeminiModel
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy.gemini_errors import GeminiGatewayError, from_app_error, gemini_error_response
 from app.modules.proxy.gemini_exchange import GeminiStreamResponse, collect_response
 from app.modules.proxy.gemini_gateway import GeminiGateway
-from app.modules.proxy.gemini_models import (
-    GeminiModelChoice,
-    choice_is_visible,
-    model_resource,
-    models_page,
-    resolve_choice,
-)
+from app.modules.proxy.gemini_models import model_resource, model_visible, models_page
 from app.modules.proxy.request_policy import validate_model_access
 
 router = APIRouter(prefix="/v1beta", tags=["gemini"])
@@ -40,9 +35,9 @@ async def _authenticate(request: Request) -> ApiKeyData | None:
     return await validate_proxy_api_key_authorization(authorization, request=request)
 
 
-def _key_allows(api_key: ApiKeyData | None, choice: GeminiModelChoice) -> bool:
+def _key_allows(api_key: ApiKeyData | None, model: GeminiModel) -> bool:
     try:
-        validate_model_access(api_key, choice.canonical)
+        validate_model_access(api_key, model.canonical_model)
     except AppError:
         return False
     return True
@@ -54,11 +49,11 @@ def _not_found(name: str) -> GeminiGatewayError:
     )
 
 
-def _visible_choice(name: str) -> GeminiModelChoice:
-    choice = resolve_choice(name)
-    if choice is None or not choice_is_visible(choice):
+def _visible_model(name: str) -> GeminiModel:
+    model = GEMINI_MODEL_REGISTRY.get(name)
+    if model is None or not model_visible(model):
         raise _not_found(name.removeprefix("models/"))
-    return choice
+    return model
 
 
 def _page_number(raw: str | None, name: str) -> int | None:
@@ -80,22 +75,22 @@ async def list_models(request: Request) -> Response:
         return gemini_error_response(request, from_app_error(exc))
     except GeminiGatewayError as exc:
         return gemini_error_response(request, exc)
-    return JSONResponse(models_page(page_size, start, lambda choice: _key_allows(api_key, choice)))
+    return JSONResponse(models_page(page_size, start, lambda model: _key_allows(api_key, model)))
 
 
 @router.get("/models/{name}")
 async def get_model(request: Request, name: str) -> Response:
     try:
         api_key = await _authenticate(request)
-        choice = _visible_choice(name)
-        if not _key_allows(api_key, choice):
-            raise _not_found(choice.requested)
+        model = _visible_model(name)
+        if not _key_allows(api_key, model):
+            raise _not_found(model.model_id)
         await _gateway(request).require_pool(api_key)
     except AppError as exc:
         return gemini_error_response(request, from_app_error(exc))
     except GeminiGatewayError as exc:
         return gemini_error_response(request, exc)
-    return JSONResponse(model_resource(choice))
+    return JSONResponse(model_resource(model))
 
 
 @router.post("/models/{target}")
@@ -107,7 +102,7 @@ async def generate(request: Request, target: str) -> Response:
             raise GeminiGatewayError(
                 404, f"Method {method or target} is not served on v1beta.", code="method_not_found"
             )
-        choice = _visible_choice(name)
+        model = _visible_model(name)
         raw = await request.body()
         try:
             body = json.loads(raw or b"{}")
@@ -118,7 +113,7 @@ async def generate(request: Request, target: str) -> Response:
         api_key = await _authenticate(request)
         attempt = await gateway.open(
             api_key=api_key,
-            choice=choice,
+            choice=model,
             body=body,
             raw_size=len(raw),
             useragent=request.headers.get("user-agent"),
