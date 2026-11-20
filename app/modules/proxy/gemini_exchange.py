@@ -5,6 +5,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from anyio import CancelScope
+from fastapi.responses import StreamingResponse
+from starlette.types import Receive, Scope, Send
 
 from app.modules.proxy.gemini_errors import GeminiGatewayError, gemini_error_body, gemini_error_sse_event
 from app.modules.proxy.gemini_gateway import GeminiAttempt, GeminiGateway
@@ -78,3 +80,21 @@ async def collect_response(gateway: GeminiGateway, attempt: GeminiAttempt) -> di
     with CancelScope(shield=True):
         await gateway.finish(attempt, usage)
     return aggregate.response()
+
+
+class GeminiStreamResponse(StreamingResponse):
+    def __init__(self, gateway: GeminiGateway, attempt: GeminiAttempt, *, sse: bool) -> None:
+        super().__init__(
+            stream_bytes(gateway, attempt, sse=sse),
+            media_type="text/event-stream" if sse else "application/json",
+        )
+        self._gateway = gateway
+        self._attempt = attempt
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            with CancelScope(shield=True):
+                await self._gateway.finish(self._attempt, None, cancelled=True)
+                await self._attempt.rest.aclose()

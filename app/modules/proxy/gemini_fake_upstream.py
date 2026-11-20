@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from app.modules.proxy.gemini_upstream import GeminiUpstreamCall, GeminiUpstreamError
@@ -113,10 +113,10 @@ def _usage(body: dict[str, Any], output_tokens: int) -> dict[str, int]:
 
 
 class FakeGeminiUpstream:
-    def stream(self, call: GeminiUpstreamCall) -> AsyncIterator[dict[str, Any]]:
+    def stream(self, call: GeminiUpstreamCall) -> AsyncGenerator[dict[str, Any], None]:
         return self._reply(call)
 
-    async def _reply(self, call: GeminiUpstreamCall) -> AsyncIterator[dict[str, Any]]:
+    async def _reply(self, call: GeminiUpstreamCall) -> AsyncGenerator[dict[str, Any], None]:
         body = call.body
         if "fake-gemini-429" in _all_text(body):
             raise GeminiUpstreamError(429, "Fake upstream rate limit", kind="rate_limit")

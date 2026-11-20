@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -91,9 +91,10 @@ class GeminiAttempt:
     reservation: ApiKeyUsageReservationData | None
     account: Account
     first_chunk: dict[str, Any] | None
-    rest: AsyncIterator[dict[str, Any]]
+    rest: AsyncGenerator[dict[str, Any], None]
     started_at: float
     first_token_at: float | None
+    finished: bool = False
 
 
 class GeminiGateway:
@@ -150,7 +151,10 @@ class GeminiGateway:
         refreshed: set[str] = set()
         last_error: GeminiGatewayError | None = None
         retry_account: Account | None = None
-        for _ in range(MAX_ACCOUNT_ATTEMPTS + 1):
+        selections = 0
+        while retry_account is not None or selections < MAX_ACCOUNT_ATTEMPTS:
+            if retry_account is None:
+                selections += 1
             account = retry_account or await self._select(api_key, choice.canonical, excluded, last_error)
             retry_account = None
             upstream = configured_upstream()
@@ -296,6 +300,9 @@ class GeminiGateway:
         error: GeminiUpstreamError | None = None,
         cancelled: bool = False,
     ) -> None:
+        if attempt.finished:
+            return
+        attempt.finished = True
         first_ms = (
             int((attempt.first_token_at - attempt.started_at) * 1000) if attempt.first_token_at is not None else None
         )

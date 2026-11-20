@@ -17,6 +17,7 @@ from app.db.session import get_background_session
 from app.modules.accounts import probes
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.repository import AccountsRepository
+from app.modules.proxy.gemini_models import GEMINI_PROVIDER
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 
 _FABLE_PROBE_MODEL = "claude-fable-5-2"
@@ -90,6 +91,8 @@ async def _default_probe_sender(account: Account, access_token: str) -> tuple[in
             base_url=base_url,
             model=compat_profile.default_probe_model,
         )
+    if provider == GEMINI_PROVIDER:
+        return 0, "Gemini accounts have no pulse probe."
     return await probes.send_openai_probe_with_error_code(
         access_token=access_token,
         chatgpt_account_id=account.chatgpt_account_id,

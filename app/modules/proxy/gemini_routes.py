@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from app.core.auth.dependencies import select_proxy_authorization, validate_proxy_api_key_authorization
 from app.core.exceptions import AppError
 from app.modules.api_keys.service_data import ApiKeyData
 from app.modules.proxy.gemini_errors import GeminiGatewayError, from_app_error, gemini_error_response
-from app.modules.proxy.gemini_exchange import collect_response, stream_bytes
+from app.modules.proxy.gemini_exchange import GeminiStreamResponse, collect_response
 from app.modules.proxy.gemini_gateway import GeminiGateway
 from app.modules.proxy.gemini_models import (
     GeminiModelChoice,
@@ -124,11 +124,7 @@ async def generate(request: Request, target: str) -> Response:
             useragent=request.headers.get("user-agent"),
         )
         if method == "streamGenerateContent":
-            sse = request.query_params.get("alt") == "sse"
-            return StreamingResponse(
-                stream_bytes(gateway, attempt, sse=sse),
-                media_type="text/event-stream" if sse else "application/json",
-            )
+            return GeminiStreamResponse(gateway, attempt, sse=request.query_params.get("alt") == "sse")
         return JSONResponse(await collect_response(gateway, attempt))
     except AppError as exc:
         return gemini_error_response(request, from_app_error(exc))

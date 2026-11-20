@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -33,4 +33,4 @@ class GeminiUpstreamError(Exception):
 
 
 class GeminiUpstream(Protocol):
-    def stream(self, call: GeminiUpstreamCall) -> AsyncIterator[dict[str, Any]]: ...
+    def stream(self, call: GeminiUpstreamCall) -> AsyncGenerator[dict[str, Any], None]: ...
