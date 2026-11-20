@@ -18,6 +18,9 @@ if ! python3 -c 'import ipaddress,sys; sys.exit(0 if ipaddress.ip_address(sys.ar
   echo "install-tailnet-ingress: refusing $IP; only a tailnet address (100.64.0.0/10) may be bound" >&2
   exit 2
 fi
+HOST="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
+[[ "$HOST" == *.ts.net ]] || { echo "install-tailnet-ingress: no tailnet DNS name for this box" >&2; exit 2; }
+HTTPS_PORT=8455
 
 put() {
   local src="$1" dest="$2"
@@ -39,8 +42,8 @@ fi
 chmod 600 "$PROOF"
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
-printf 'AGENT_LB_TAILNET_IP=%s\nAGENT_LB_TAILNET_PORT=2455\nAGENT_LB_FRONT_PORT=2455\nAGENT_LB_INGRESS_PROOF_FILE=%s\nAGENT_LB_STUDIO_SOCKET=%s\n' \
-  "$IP" "$PROOF" "$XDG_RUNTIME_DIR/agent-lb-tailnet-ingress/studio.sock" > "$TMP"
+printf 'AGENT_LB_TAILNET_IP=%s\nAGENT_LB_TAILNET_HOST=%s\nAGENT_LB_TAILNET_PORT=2455\nAGENT_LB_TAILNET_HTTPS_PORT=%s\nAGENT_LB_FRONT_PORT=2455\nAGENT_LB_INGRESS_PROOF_FILE=%s\nAGENT_LB_STUDIO_SOCKET=%s\n' \
+  "$IP" "$HOST" "$HTTPS_PORT" "$PROOF" "$XDG_RUNTIME_DIR/agent-lb-tailnet-ingress/studio.sock" > "$TMP"
 put "$TMP" "$ENV_FILE"
 put "$ROOT/deploy/tailnet-ingress/Caddyfile" "$CADDYFILE"
 put "$ROOT/deploy/systemd/$UNIT" "$UNIT_FILE"
@@ -54,4 +57,8 @@ elif (( ${#CHANGED[@]} )); then
 fi
 systemctl --user is-active --quiet "$UNIT"
 curl -fsS -o /dev/null -m 5 "http://$IP:2455/health"
-echo "$UNIT active on $IP:2455 -> 127.0.0.1:2455"
+if ! curl -fsS -o /dev/null -m 15 "https://$HOST:$HTTPS_PORT/health"; then
+  echo "install-tailnet-ingress: https://$HOST:$HTTPS_PORT has no certificate; Caddy fetches it from tailscaled, which needs 'sudo tailscale set --operator=$USER' once" >&2
+  exit 1
+fi
+echo "$UNIT active on http://$IP:2455 and https://$HOST:$HTTPS_PORT -> 127.0.0.1:2455"
