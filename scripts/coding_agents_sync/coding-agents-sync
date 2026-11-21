@@ -323,8 +323,9 @@ def main():
         return 2
     home = Path(home)
     clone = Path(os.environ.get("AGENT_LB_POLICY_SRC", str(home / ".agent-lb/policy-src")))
+    claude_config = pull_claude_config(home)
     result = sync(home, clone, os.environ.get("CODING_AGENTS_ORIGIN", ORIGIN), wait, timeout)
-    result["claude_config"] = pull_claude_config(home)
+    result["claude_config"] = claude_config
     if result["result"] != "busy":
         try:
             durable(clone.parent / "coding-agents-sync.last.json", dict(result, at=utc()))
