@@ -96,7 +96,7 @@ class SettingsFields(BaseSettings):
     )
     gemini_oauth_client_id_secret_name: str = "agent-lb-gemini-oauth-client-id"
     gemini_oauth_client_secret_name: str = "agent-lb-gemini-oauth-client-secret"
-    gemini_code_assist_base_url: str = "https://cloudcode-pa.googleapis.com"
+    gemini_code_assist_base_url: str = "https://daily-cloudcode-pa.googleapis.com"
     gemini_code_assist_model: str = "gemini-4-neon"
     gemini_oauth_userinfo_url: str = "https://openidconnect.googleapis.com/v1/userinfo"
     anthropic_version: str = "2023-06-01"
