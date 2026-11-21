@@ -3,7 +3,7 @@ id: usage
 product: agent-lb
 owner: weekend-finish
 status: live
-covers: ["route:/api/usage/callers", "route:/api/usage/history", "route:/api/usage/instances", "route:/api/usage/summary", "route:/api/usage/window"]
+covers: ["route:/api/usage/callers", "route:/api/usage/gemini", "route:/api/usage/history", "route:/api/usage/instances", "route:/api/usage/summary", "route:/api/usage/window"]
 paths: ["features/agent-lb/usage.md"]
 proofs: []
 ---

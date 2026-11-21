@@ -22,6 +22,7 @@ struct PoolSection: View {
   var vendorPools: [PoolEntry] = []
   var seats: [SeatAccount] = []
   var pacePools: [PoolEntry] = []
+  var googleUsage: GoogleUsage? = nil
 
   private var isScoped: Bool { scope != .all }
   var showsPoolTiles: Bool { scope == .all && !menuPools.isEmpty }
@@ -43,6 +44,12 @@ struct PoolSection: View {
         poolTiles
         paceCard
         metricsStrip
+        if hasError {
+          RetryRow(retry: retry)
+        }
+      } else if scope == .google {
+        cards
+        GoogleUsageStrip(usage: googleUsage)
         if hasError {
           RetryRow(retry: retry)
         }
@@ -108,7 +115,12 @@ struct PoolSection: View {
     }
   }
 
-  static func metricsLineCount(scope: ProviderScope, summary: UsageSummary?, hasArbitrage: Bool) -> Int {
+  static func metricsLineCount(
+    scope: ProviderScope, summary: UsageSummary?, hasArbitrage: Bool, googleUsage: GoogleUsage? = nil
+  ) -> Int {
+    if scope == .google {
+      return GoogleUsage.metricsLineCount(googleUsage)
+    }
     if scope.isSeatVendor {
       return max(1, SeatVendorSummary.stripLines(summary: summary).count)
     }
@@ -145,7 +157,7 @@ struct PoolSection: View {
           recoveredCredits: recovered(.primary, now: now),
           schedule: scheduleTooltip(.primary, now: now),
 
-          status: isScoped ? nil : riskStatus
+          status: scope == .google ? googleStatus(.primary) : isScoped ? nil : riskStatus
         )
       }
       WindowCard(
@@ -155,7 +167,7 @@ struct PoolSection: View {
         knownFull: knownFull(.secondary),
         recoveredCredits: recovered(.secondary, now: now),
         schedule: scheduleTooltip(.secondary, now: now),
-        status: nil
+        status: scope == .google ? googleStatus(.secondary) : nil
       )
     }
   }
@@ -166,14 +178,21 @@ struct PoolSection: View {
       ? "MONTHLY LIMIT" : "WEEKLY LIMIT"
   }
 
+  private func googleStatus(_ window: ProviderScope.Window) -> WindowCard.Status {
+    let reported = GoogleUsage.reportedWindow(scopedAccounts, window: window) != nil
+    return .init(text: reported ? "reported by Google" : "no quota from Google", emphasized: false, warning: false)
+  }
+
   private func primaryWindow(now: Date) -> UsageWindow? {
-    isScoped
+    if scope == .google { return GoogleUsage.reportedWindow(scopedAccounts, window: .primary) }
+    return isScoped
       ? ProviderScope.summarizeWindow(scopedAccounts, window: .primary, now: now).usage
       : summary?.primaryWindow
   }
 
   private func secondaryWindow(now: Date) -> UsageWindow? {
-    isScoped
+    if scope == .google { return GoogleUsage.reportedWindow(scopedAccounts, window: .secondary) }
+    return isScoped
       ? ProviderScope.summarizeWindow(scopedAccounts, window: .secondary, now: now).usage
       : summary?.secondaryWindow ?? summary?.monthlyWindow
   }

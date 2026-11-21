@@ -77,7 +77,7 @@ enum WeeklyPace {
     case .openai: ["openai-codex"]
     case .cursor: ["grok", "cursor"]
     case .devin: ["devin"]
-    case .muse, .other: []
+    case .google, .muse, .other: []
     }
   }
 

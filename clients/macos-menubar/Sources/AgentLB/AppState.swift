@@ -14,6 +14,7 @@ final class AppState {
 
   var serviceStatus: ServiceStatus = .running
   var summary: UsageSummary?
+  var googleUsage: GoogleUsage?
   var projections: ProjectionsResponse?
   var accounts: [Account] = []
   var seatAccounts: [SeatAccount] = []
@@ -223,8 +224,14 @@ final class AppState {
     errors.insert(section)
   }
 
+  private func fetchGoogleUsage() async {
+    guard providerScope == .google else { return }
+    googleUsage = (try? await client.googleUsage()) ?? googleUsage
+  }
+
   private func fetchSummary() async {
     let scope = providerScope
+    await fetchGoogleUsage()
     do {
       let fetched = try await client.usageSummary(provider: scope.providerParam)
 
@@ -290,6 +297,7 @@ final class AppState {
 
   private func fetchSummarySilently() async {
     let scope = providerScope
+    await fetchGoogleUsage()
     guard let fetched = try? await client.usageSummary(provider: scope.providerParam) else { return }
     guard scope == providerScope else { return }
     summary = fetched

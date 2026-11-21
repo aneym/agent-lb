@@ -96,3 +96,27 @@ class MetricsTrends(DashboardModel):
     tokens: list[TrendPoint] = Field(default_factory=list)
     cost: list[TrendPoint] = Field(default_factory=list)
     error_rate: list[TrendPoint] = Field(default_factory=list)
+
+
+class GeminiSource(DashboardModel):
+    id: str
+    kind: str
+    name: str
+    detail: str
+    share_percent: float | None = None
+    requests_5h: int = Field(alias="requests5h")
+    tokens_5h: int = Field(alias="tokens5h")
+    requests_7d: int = Field(alias="requests7d")
+    tokens_7d: int = Field(alias="tokens7d")
+    last_request_at: datetime | None = None
+    metered_at: datetime | None = None
+
+
+class GeminiUsageResponse(DashboardModel):
+    generated_at: datetime
+    plan: str | None = None
+    requests_5h: int = Field(alias="requests5h")
+    tokens_5h: int = Field(alias="tokens5h")
+    requests_7d: int = Field(alias="requests7d")
+    tokens_7d: int = Field(alias="tokens7d")
+    sources: list[GeminiSource]

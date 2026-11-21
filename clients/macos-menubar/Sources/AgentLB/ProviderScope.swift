@@ -4,10 +4,11 @@ import Foundation
 
 
 enum ProviderScope: String, CaseIterable, Sendable {
-  static let allCases: [ProviderScope] = [.all, .openai, .anthropic, .cursor, .devin, .other]
+  static let allCases: [ProviderScope] = [.all, .openai, .anthropic, .google, .cursor, .devin, .other]
   case all
   case openai
   case anthropic
+  case google = "gemini"
   case cursor
   case devin
   case muse
@@ -19,6 +20,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
     case .all: "All"
     case .openai: "Codex"
     case .anthropic: "Claude"
+    case .google: "Google"
     case .cursor: "X Ultra"
     case .devin: "Devin"
     case .muse: "Muse"
@@ -46,7 +48,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
     if self == .all { return true }
     let provider = account.provider.lowercased()
     if self == .other {
-      return !["openai", "anthropic", "cursor", "devin"].contains(provider)
+      return !["openai", "anthropic", "gemini", "cursor", "devin"].contains(provider)
     }
     return provider == rawValue
   }

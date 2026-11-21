@@ -5,8 +5,11 @@ from fastapi import APIRouter, Depends, Query
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.dependencies import FederationContext, UsageContext, get_federation_context, get_usage_context
 from app.modules.federation.schemas import FederationUsageInstancesResponse
+from app.modules.usage.gemini_sources import gemini_usage
+from app.modules.usage.gemini_usage_repository import GeminiUsageRepository
 from app.modules.usage.schemas import (
     CallerUsageResponse,
+    GeminiUsageResponse,
     UsageHistoryResponse,
     UsageSummaryResponse,
     UsageWindowResponse,
@@ -32,6 +35,13 @@ async def get_usage_summary(
     context: UsageContext = Depends(get_usage_context),
 ) -> UsageSummaryResponse:
     return await context.service.get_usage_summary(provider)
+
+
+@router.get("/gemini", response_model=GeminiUsageResponse)
+async def get_gemini_usage(
+    context: UsageContext = Depends(get_usage_context),
+) -> GeminiUsageResponse:
+    return await gemini_usage(GeminiUsageRepository(context.session))
 
 
 @router.get("/callers", response_model=CallerUsageResponse)

@@ -160,3 +160,27 @@ for All and provider-scoped views.
 - **GIVEN** a provider-scoped view uses reset-soonest ordering
 - **WHEN** the operator changes the All-view sort selection
 - **THEN** the provider-scoped view keeps reset-soonest ordering
+
+### Requirement: Google has its own scope with Google-reported quota and metered use
+
+The macOS menu-bar MUST show a Google scope for accounts whose provider is
+`gemini`, and the Other scope MUST exclude them. The Google pool cards MUST show
+the five-hour and weekly remaining percent Google reports for the Google sign-in
+(Code Assist quota summary) and say so; when Google reports no window the card
+MUST read "no quota from Google" instead of a figure. Requests and tokens MUST
+come from `GET /api/usage/gemini`, which sums the Neon seat's metered Antigravity
+CLI use and the agent-lb gateway's Gemini request logs per key over 5 hours and
+7 days, and the scope MUST list each source with use in the last 7 days.
+
+#### Scenario: Neon seat and team key use both count
+
+- **GIVEN** the Neon seat metered 525 requests and Jacob's key sent 8 Gemini requests in 7 days
+- **WHEN** the Google scope renders
+- **THEN** it shows 533 or more requests over 7 days
+- **AND** lists the Neon seat and Jacob's key with their own figures
+
+#### Scenario: Google reports no quota window
+
+- **GIVEN** the Google account has no reported five-hour remaining percent
+- **WHEN** the Google scope renders
+- **THEN** the five-hour card shows no percent and reads "no quota from Google"

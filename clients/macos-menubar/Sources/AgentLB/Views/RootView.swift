@@ -128,7 +128,8 @@ struct RootView: View {
 
 
     inputs.metricsLines = PoolSection.metricsLineCount(
-      scope: scope, summary: appState.summary, hasArbitrage: arbitrage != nil
+      scope: scope, summary: appState.summary, hasArbitrage: arbitrage != nil,
+      googleUsage: appState.googleUsage
     )
     inputs.paceRows = WeeklyPace.rows(pools: appState.pools, scope: scope, now: .now).count
     inputs.poolHasError = appState.sectionErrors.contains(.pool)
@@ -200,6 +201,7 @@ struct RootView: View {
     ScopeTabContent(
       scope: scope,
       summary: appState.summary,
+      googleUsage: appState.googleUsage,
       projections: appState.projections,
       accounts: scopedAccounts,
       seats: scopedSeats,
@@ -237,6 +239,7 @@ struct RootView: View {
 struct ScopeTabContent: View {
   let scope: ProviderScope
   let summary: UsageSummary?
+  var googleUsage: GoogleUsage? = nil
   let projections: ProjectionsResponse?
   let accounts: [Account]
   let seats: [SeatAccount]
@@ -271,7 +274,8 @@ struct ScopeTabContent: View {
         menuTimeZone: Format.eastern,
         vendorPools: scope.isSeatVendor ? pools : [],
         seats: seats,
-        pacePools: pools
+        pacePools: pools,
+        googleUsage: googleUsage
       )
       .padding(.horizontal, 14)
       .padding(.vertical, 6)

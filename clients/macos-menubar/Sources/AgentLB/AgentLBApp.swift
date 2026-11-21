@@ -6,6 +6,7 @@ struct AgentLBApp: App {
   @State private var appState: AppState
 
   init() {
+    PanelSnapshot.runIfRequested()
     if !SingleInstanceGuard.acquire(lockURL: SingleInstanceGuard.defaultLockURL()) {
       FileHandle.standardError.write(
         Data("AgentLB: another instance holds the single-instance lock; exiting.\n".utf8)

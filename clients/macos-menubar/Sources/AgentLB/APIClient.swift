@@ -157,6 +157,10 @@ struct APIClient: @unchecked Sendable {
     return try await get("/api/usage/summary?provider=\(provider)")
   }
 
+  func googleUsage() async throws -> GoogleUsage {
+    try await get("/api/usage/gemini")
+  }
+
   func projections() async throws -> ProjectionsResponse {
     try await get("/api/dashboard/projections")
   }
