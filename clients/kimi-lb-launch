@@ -44,7 +44,6 @@ def main() -> None:
         ANTHROPIC_DEFAULT_FABLE_MODEL=model,
         ANTHROPIC_DEFAULT_SONNET_MODEL=model,
         ANTHROPIC_DEFAULT_HAIKU_MODEL=model,
-        CLAUDE_CODE_SUBAGENT_MODEL=model,
     )
     env.pop("ANTHROPIC_API_KEY", None)
     for name in ("NO_PROXY", "no_proxy"):
@@ -72,7 +71,6 @@ def main() -> None:
         }
         or key
         in {
-            "CLAUDE_CODE_SUBAGENT_MODEL",
             "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
             "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
             "CLAUDE_CODE_EFFORT_LEVEL",
