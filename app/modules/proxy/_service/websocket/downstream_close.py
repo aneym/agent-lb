@@ -30,11 +30,10 @@ class DownstreamActivity(Protocol):
 class DownstreamClose:
     code: int
     reason: str
-    streaming: bool = False
 
 
 def draining() -> bool:
-    return shutdown_state.websockets_closing() or not shutdown_state.admits_requests()
+    return shutdown_state.is_draining()
 
 
 async def due(
@@ -46,11 +45,9 @@ async def due(
 ) -> DownstreamClose | None:
     async with pending_lock:
         streaming = bool(pending_requests) or activity.relaying
-    if shutdown_state.websockets_closing():
-        return DownstreamClose(RESTART_CLOSE_CODE, RESTART_CLOSE_REASON, streaming=streaming)
     if streaming:
         return None
-    if not shutdown_state.admits_requests():
+    if shutdown_state.is_draining():
         return DownstreamClose(RESTART_CLOSE_CODE, RESTART_CLOSE_REASON)
     if idle_timeout_seconds is not None and time.monotonic() - activity.last_activity_at >= idle_timeout_seconds:
         return DownstreamClose(IDLE_CLOSE_CODE, IDLE_CLOSE_REASON)
@@ -75,10 +72,8 @@ async def close_if_due(
         return False
     if frame.code == RESTART_CLOSE_CODE:
         logger.info(
-            "downstream_websocket_drain_close code=%s streaming=%s grace_expired=%s",
+            "downstream_websocket_drain_close code=%s",
             frame.code,
-            str(frame.streaming).lower(),
-            str(shutdown_state.websockets_closing()).lower(),
         )
         activity.mark_disconnected()
     try:

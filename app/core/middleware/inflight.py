@@ -9,10 +9,7 @@ from starlette.websockets import WebSocket
 _DRAIN_ALLOWED_HTTP_PATHS = frozenset(
     {
         "/health/live",
-        "/internal/drain/start",
-        "/internal/drain/stop",
         "/internal/drain/status",
-        "/internal/drain/close-websockets",
         "/internal/oauth/pending",
         "/internal/bridge/responses",
     }
@@ -23,10 +20,7 @@ _IN_FLIGHT_EXCLUDED_HTTP_PATHS = frozenset(
         "/health/live",
         "/health/ready",
         "/health/startup",
-        "/internal/drain/start",
-        "/internal/drain/stop",
         "/internal/drain/status",
-        "/internal/drain/close-websockets",
         "/internal/oauth/pending",
     }
 )
@@ -48,7 +42,7 @@ class InFlightMiddleware:
         shutdown_state = import_module("app.core.shutdown")
 
         path = scope.get("path", "")
-        if not shutdown_state.admits_requests() and path not in _DRAIN_ALLOWED_HTTP_PATHS:
+        if shutdown_state.is_draining() and path not in _DRAIN_ALLOWED_HTTP_PATHS:
             await _draining_response()(scope, receive, send)
             return
 
@@ -64,7 +58,7 @@ class InFlightMiddleware:
 
     async def _websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
         shutdown_state = import_module("app.core.shutdown")
-        if not shutdown_state.admits_requests():
+        if shutdown_state.is_draining():
             websocket = WebSocket(scope, receive, send)
             if "websocket.http.response" in scope.get("extensions", {}):
                 await websocket.send_denial_response(_draining_response())
