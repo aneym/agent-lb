@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import math
 import os
-import subprocess
 import sys
 import time
 from urllib.parse import quote, urlencode
 
 from app.core.browser_profiles import BrowserProfile, add_profile, load_profiles, profile_for, user_data_dir
 from app.core.cdp_page import close_browser
+from app.core.profile_launch import LaunchError, chrome_argv, launch_profile
 from app.core.profile_lock import profile_held
 from app.core.profile_theme import apply_theme, display_name, pick_color, theme_color
 from app.lb_service import (
@@ -20,7 +20,8 @@ from app.lb_service import (
     close_stale_callbacks,
     request,
     retrying,
-    send_callback,
+    send_code,
+    shown_code,
 )
 from app.status_cli import DEFAULT_BASE_URL, StatusObservationError, _validated_base_url
 
@@ -54,31 +55,12 @@ def add_parser(subparsers) -> None:
     reauth.add_argument("--auto", action="store_true", help="Reuse the profile's session; never type or page.")
 
 
-def chrome_argv(profile: BrowserProfile, url: str) -> list[str]:
-    return [
-        os.getenv("AGENT_LB_CHROME", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-        f"--user-data-dir={user_data_dir(profile)}",
-        f"--remote-debugging-port={profile.cdp_port}",
-        "--remote-debugging-address=127.0.0.1",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--new-window",
-        url,
-    ]
-
-
 def _profile(email: str) -> BrowserProfile:
     profile = profile_for(email)
     if profile is None:
         print(f"no browser profile for {email}; run: agent-lb profiles add {email} --dir <dir>", file=sys.stderr)
         raise SystemExit(2)
     return profile
-
-
-def launch_profile(profile: BrowserProfile, url: str) -> None:
-    subprocess.Popen(
-        chrome_argv(profile, url), start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
 
 
 def run_profiles(args) -> None:
@@ -106,6 +88,9 @@ def run_profiles(args) -> None:
             _add(args)
         else:
             launch_profile(_profile(args.email), "about:blank")
+    except LaunchError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from None
     except (OSError, ValueError) as exc:
         print(f"profiles: {type(exc).__name__}", file=sys.stderr)
         raise SystemExit(1) from None
@@ -144,13 +129,15 @@ def _open_browser(profile: BrowserProfile, url: str, cdp: str) -> tuple[bool, bo
 
 def _wait(args, profile: BrowserProfile, provider: str, base: str, flow: dict, cdp: str, debug: bool) -> None:
     started = time.monotonic()
-    handled: set[str] = set()
+    sent = False
     prompted = False
     down = False
     while time.monotonic() - started < args.timeout:
         try:
-            if debug and provider == "anthropic" and flow.get("callbackUrl"):
-                send_callback(base, flow, cdp, handled)
+            if not sent and debug and provider == "anthropic" and flow.get("callbackUrl"):
+                shown = shown_code(profile.cdp_port, flow)
+                sent = bool(shown) and send_code(base, flow, shown)
+                shown = None
             status = request(base, "/api/oauth/status?" + urlencode({"flowId": flow["flowId"]}))
             if status.get("status") == "success":
                 account = retrying(lambda: account_for(base, profile.email, provider), "account lookup")
@@ -243,7 +230,7 @@ def _reauth(args, profile: BrowserProfile) -> None:
         _wait(args, profile, provider, base, flow, cdp, debug)
         if launched:
             close_browser(profile.cdp_port)
-    except (ServiceError, StatusObservationError) as exc:
+    except (ServiceError, StatusObservationError, LaunchError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from None
     except (OSError, ValueError, TypeError, AttributeError, KeyError):

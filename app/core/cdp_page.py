@@ -134,7 +134,7 @@ class CdpPage:
         try:
             if self.owned:
                 self.call("Target.closeTarget", {"targetId": self.target_id})
-        except CdpError:
+        except (CdpError, WebSocketException, TimeoutError):
             pass
         finally:
             self._socket.close()

@@ -9,11 +9,22 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
+from websockets.exceptions import WebSocketException
+
+from app.core.cdp_page import CdpError, CdpPage
 from app.lb_caller_key import caller_key_headers
 
 from app.status_cli import NoRedirect
 
 SERVICE_TIMEOUT = 30
+_SHOWN_CODE = (
+    "(state => { const mark = '#' + state;"
+    " const inputs = [...document.querySelectorAll('input, textarea')].map(e => e.value || '');"
+    " for (const text of [(document.body && document.body.innerText) || '', ...inputs]) {"
+    " const at = text.indexOf(mark); if (at < 0) continue;"
+    " const code = text.slice(0, at).match(/[A-Za-z0-9_-]{20,}$/); if (code) return code[0] + mark; }"
+    " return null; })(%s)"
+)
 RETRY_WINDOW = 300
 
 
@@ -126,23 +137,34 @@ def close_stale_callbacks(cdp: str, prefix: str) -> None:
         close_page(cdp, page)
 
 
-def send_callback(base: str, flow: dict, cdp: str, handled: set[str]) -> None:
+def shown_code(port: int, flow: dict) -> str | None:
     expected = oauth_state(flow["authorizationUrl"])
-    for page in callback_pages(cdp, flow["callbackUrl"]):
-        url = page["url"]
-        query = parse_qs(urlsplit(url).query)
-        if url in handled or not query.get("code"):
-            continue
-        if expected is None or (query.get("state") or [None])[0] != expected:
-            handled.add(url)
-            close_page(cdp, page)
+    if not expected:
+        return None
+    script = _SHOWN_CODE % json.dumps(expected)
+    for tab in callback_pages(f"http://127.0.0.1:{port}", flow["callbackUrl"]):
+        try:
+            page = CdpPage(port, target_id=str(tab.get("id", "")), timeout=10)
+        except (CdpError, WebSocketException, OSError, TimeoutError):
             continue
         try:
-            reply = request(base, "/api/oauth/manual-callback", body={"flowId": flow["flowId"], "callbackUrl": url})
-        except ServiceUnavailable:
-            return
-        except ServiceError as exc:
-            reply = {"status": "error", "errorMessage": str(exc)}
-        if isinstance(reply, dict) and reply.get("status") == "error":
-            print(f"callback not accepted ({reply.get('errorMessage')}); watching for a new one", file=sys.stderr)
-        handled.add(url)
+            shown = page.evaluate(script)
+        except (CdpError, WebSocketException, TimeoutError):
+            shown = None
+        finally:
+            page.detach()
+        if isinstance(shown, str) and shown:
+            return shown
+    return None
+
+
+def send_code(base: str, flow: dict, shown: str) -> bool:
+    try:
+        reply = request(base, "/api/oauth/manual-callback", body={"flowId": flow["flowId"], "callbackUrl": shown})
+    except ServiceUnavailable:
+        return False
+    except ServiceError as exc:
+        reply = {"status": "error", "errorMessage": str(exc)}
+    if isinstance(reply, dict) and reply.get("status") == "error":
+        print(f"code not accepted ({reply.get('errorMessage')})", file=sys.stderr)
+    return True

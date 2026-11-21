@@ -9,8 +9,8 @@ from websockets.exceptions import WebSocketException
 
 from app.core.browser_profiles import BrowserProfile
 from app.core.cdp_page import CdpError, CdpPage, cdp_up, close_browser
+from app.core.profile_launch import start_chrome
 from app.core.profile_lock import profile_held
-from app.profiles_cli import launch_profile
 from app.reauth_page import signed_in_as
 
 VISIT_SECONDS = 60
@@ -75,13 +75,10 @@ def visit(profile: BrowserProfile) -> tuple[str, str]:
     with profile_held(profile.email) as free:
         if not free:
             return "skipped", "another run holds this profile"
-        launch_profile(profile, "about:blank")
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and not cdp_up(profile.cdp_port):
-            time.sleep(0.25)
         pages: list[CdpPage] = []
+        checks: list = []
         try:
-            checks = []
+            start_chrome(profile, seconds=15)
             if profile.login == "google":
                 google = CdpPage(profile.cdp_port, "https://myaccount.google.com/", background=True)
                 pages.append(google)

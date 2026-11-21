@@ -37,12 +37,15 @@ def existing_ask(payload: object) -> str | None:
     return existing_ask(payload.get("error"))
 
 
-def owner_arguments(question: str, options: list[str], floor: str) -> dict:
-    return {"to": "owner", "floor": floor, "question": question, "options": options}
+def owner_arguments(question: str, options: list[str], floor: str, lane: str | None = None) -> dict:
+    arguments = {"to": "owner", "floor": floor, "question": question, "options": options}
+    if lane:
+        arguments["lane"] = lane
+    return arguments
 
 
-def ask_owner(agent: str, question: str, options: list[str], *, floor: str) -> dict:
-    payload = call(agent, "ask", owner_arguments(question, options, floor))
+def ask_owner(agent: str, question: str, options: list[str], *, floor: str, lane: str | None = None) -> dict:
+    payload = call(agent, "ask", owner_arguments(question, options, floor, lane))
     if "error" in payload:
         if payload.get("existing"):
             return {"landed": True, "askId": payload["existing"], "repeat": True}

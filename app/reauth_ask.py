@@ -45,6 +45,10 @@ def question(email: str, account_id: str, kind: str, profile: BrowserProfile) ->
     return "\n".join(lines), ["Signed in on Studio", "Pasted the code in the dashboard"]
 
 
+def signin_lane() -> str | None:
+    return os.getenv("AGENT_LB_SIGNIN_LANE", "").strip() or None
+
+
 def ask_hold(entry: dict, kind: str, now: float) -> str | None:
     if entry.get("askId"):
         return f"ask already open ({entry['askId']})"
@@ -63,8 +67,9 @@ def file_ask(entry: dict, email: str, account_id: str, kind: str, profile: Brows
     if dry_run:
         entry["askId"] = "dry-run"
         entry["askKind"] = kind
-        return "would file ask: " + text.splitlines()[0] + f" ({WHY.get(kind, kind)})"
-    landed = rails_ask.ask_owner(ASKER, text, options, floor="login")
+        where = f"floor account; lane {signin_lane() or 'none'}"
+        return "would file ask: " + text.splitlines()[0] + f" ({WHY.get(kind, kind)}; {where})"
+    landed = rails_ask.ask_owner(ASKER, text, options, floor="account", lane=signin_lane())
     if not landed.get("landed"):
         return f"ask not filed: {landed.get('detail')}"
     entry["askId"] = landed["askId"]

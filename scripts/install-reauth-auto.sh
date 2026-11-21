@@ -17,7 +17,10 @@ plist = {
     "ProgramArguments": [binary, "reauth-auto", "run"],
     "StartInterval": 600,
     "RunAtLoad": True,
-    "EnvironmentVariables": {"PATH": os.environ["PATH"]},
+    "EnvironmentVariables": {
+        "PATH": os.environ["PATH"],
+        **({"AGENT_LB_SIGNIN_LANE": lane} if (lane := os.environ.get("AGENT_LB_SIGNIN_LANE", "").strip()) else {}),
+    },
     "StandardOutPath": home + "/.agent-lb/state/reauth-auto.out.log",
     "StandardErrorPath": home + "/.agent-lb/state/reauth-auto.err.log",
 }

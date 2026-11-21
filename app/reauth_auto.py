@@ -7,20 +7,19 @@ from urllib.parse import urlencode
 from websockets.exceptions import WebSocketException
 
 from app.core.browser_profiles import BrowserProfile
-from app.core.cdp_page import CdpError, CdpPage, cdp_up, close_browser
+from app.core.cdp_page import CdpError, CdpPage, close_browser
+from app.core.profile_launch import LaunchError, start_chrome
 from app.core.profile_lock import profile_held
 from app.lb_service import (
     ServiceError,
     ServiceUnavailable,
     account_for,
-    callback_pages,
     close_stale_callbacks,
-    oauth_state,
     request,
     retrying,
-    send_callback,
+    send_code,
+    shown_code,
 )
-from app.profiles_cli import launch_profile
 from app.reauth_enroll import refusal
 from app.reauth_page import classify, click, signed_in_as
 
@@ -35,18 +34,6 @@ class Outcome:
     detail: str = ""
     clicks: list[str] = field(default_factory=list)
     bound: bool = False
-
-
-def _launch(profile: BrowserProfile) -> bool:
-    if cdp_up(profile.cdp_port):
-        return False
-    launch_profile(profile, "about:blank")
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline and not cdp_up(profile.cdp_port):
-        time.sleep(0.25)
-    if not cdp_up(profile.cdp_port):
-        raise CdpError(f"the {profile.email} Chrome did not open DevTools on {profile.cdp_port}")
-    return True
 
 
 def _status(base: str, flow: dict) -> dict:
@@ -89,25 +76,22 @@ def _drive(base: str, profile: BrowserProfile, account_id: str, flow: dict, hold
     page.call("Emulation.setFocusEmulationEnabled", {"enabled": True}, session=page.session)
     page.call("Page.bringToFront", session=page.session)
     clicks: list[str] = []
-    handled: set[str] = set()
-    expected = oauth_state(flow["authorizationUrl"])
-    cdp = f"http://127.0.0.1:{profile.cdp_port}"
+    sent = False
     started = time.monotonic()
     unknown_since: float | None = None
     try:
         while time.monotonic() - started < RUN_SECONDS:
-            mine = [
-                tab
-                for tab in callback_pages(cdp, flow["callbackUrl"])
-                if oauth_state(str(tab.get("url", ""))) == expected
-            ]
-            if mine and hold:
-                return Outcome(hold, "a callback arrived while holding; not sent", clicks)
-            if mine:
-                send_callback(base, flow, cdp, handled)
+            shown = None if sent else shown_code(profile.cdp_port, flow)
+            if shown and hold:
+                return Outcome(hold, "Claude showed the code while holding; not sent", clicks)
+            if shown:
+                sent = send_code(base, flow, shown)
+                shown = None
             done = _finish(base, profile, account_id, flow)
             if done:
                 done.clicks = clicks
+                if sent:
+                    done.detail = f"{done.detail}; sent the code Claude showed on its page"
                 if done.result == "active":
                     page.close()
                 return done
@@ -168,10 +152,12 @@ def reauth_account(base: str, account: dict, profile: BrowserProfile, *, observe
         bound = flow.get("expectedAccountId") == account_id
         launched = False
         try:
-            launched = _launch(profile)
+            launched = start_chrome(profile, seconds=15)
             close_stale_callbacks(f"http://127.0.0.1:{profile.cdp_port}", flow["callbackUrl"])
             hold = "bind_not_live" if not bound else "observed" if observe_only else None
             outcome = _drive(base, profile, account_id, flow, hold)
+        except LaunchError as exc:
+            outcome = Outcome("error", f"launch: {str(exc)[:300]}")
         except (CdpError, WebSocketException, OSError, TimeoutError) as exc:
             outcome = Outcome("error", f"browser: {str(exc)[:160] or type(exc).__name__}")
         outcome.bound = bound

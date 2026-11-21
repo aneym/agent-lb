@@ -10,7 +10,7 @@ from websockets.exceptions import WebSocketException
 from app.core.browser_profiles import profile_for
 from app.core.cdp_page import CdpError, CdpPage, cdp_up
 from app.core.claude_billing import BILLING_URL, SIGNED_IN_OR_LOGIN, claude_tab
-from app.profiles_cli import launch_profile
+from app.core.profile_launch import launch_profile
 
 PLACE = {"left": 80, "top": 60, "width": 1280, "height": 1000}
 
