@@ -190,14 +190,6 @@ launch=("$policy" -- "${FACTORY_CLAUDE_BIN:-$HOME/.local/bin/claude}")
 lb_host=${base#*://}
 lb_host=${lb_host%%[:/]*}
 no_proxy="$lb_host,127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}"
-workflow_model=${CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL-}
-if [[ -z $workflow_model ]]; then
-  case " ${argv[*]} " in
-    *" --model claude-opus-5-5 "*) workflow_model=claude-opus-5-5 ;;
-    *" --model claude-sonnet-5-5 "*) workflow_model=claude-sonnet-5-5 ;;
-  esac
-fi
-workflow_model=${workflow_model:-claude-opus-5-5}
 shell_prefix=
 for candidate in "${CLAUDE_CODE_SHELL_PREFIX:-}" "$HOME/.local/bin/agent-scan-shell"; do
   [[ -n $candidate && -f $candidate && -x $candidate ]] && { shell_prefix=$candidate; break; }
@@ -214,7 +206,6 @@ fi
 exec env "${env_args[@]}" \
   ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-5-5" \
   ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-5-5" \
-  ANTHROPIC_DEFAULT_OPUS_MODEL="$workflow_model" \
   ANTHROPIC_SMALL_FAST_MODEL="claude-haiku-5-5" \
   ANTHROPIC_BASE_URL="$base" CLAUDE_LB_LOCAL_URL="$local_url" REVIEW_PR_CODEX_BASE_URL="$codex_url" \
   NO_PROXY="$no_proxy" no_proxy="$no_proxy" \
