@@ -12,7 +12,7 @@ from app.core.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-CODE_ASSIST_USER_AGENT = "antigravity/1.0.0 agent-lb"
+CODE_ASSIST_USER_AGENT = "antigravity/cli/1.5.12 (os_type=linux; arch=amd64; auth_method=consumer)"
 CODE_ASSIST_METADATA = {"ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI"}
 ONBOARD_POLL_SECONDS = 5.0
 ONBOARD_MAX_POLLS = 12

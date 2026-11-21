@@ -87,7 +87,7 @@ class CodeAssistGeminiUpstream:
         project_id = await _project(call)
         payload = code_assist_request(
             call.body,
-            model=settings.gemini_code_assist_model,
+            model=f"{settings.gemini_code_assist_model}-{call.effort}",
             project=project_id,
             user_prompt_id=uuid.uuid4().hex,
         )

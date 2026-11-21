@@ -173,6 +173,7 @@ class GeminiGateway:
                 continue
             call = GeminiUpstreamCall(
                 model=choice.canonical_model,
+                effort=effort,
                 body=body,
                 access_token=access_token,
                 project_id=account.workspace_id,

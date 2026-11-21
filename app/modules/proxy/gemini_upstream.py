@@ -10,6 +10,7 @@ GeminiFailureKind = Literal["rate_limit", "quota", "auth", "terms_disabled", "in
 @dataclass(frozen=True, slots=True)
 class GeminiUpstreamCall:
     model: str
+    effort: str
     body: dict[str, Any]
     access_token: str
     project_id: str | None
