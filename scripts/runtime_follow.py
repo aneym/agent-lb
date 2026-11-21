@@ -6,17 +6,15 @@ import calendar
 import fcntl
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.thread_delivery import send
-from scripts import runtime_bin, runtime_imports, runtime_plan, systemd_drain
+from scripts import runtime_bin, runtime_imports, runtime_plan, systemd_handoff
 from scripts import runtime_tree as tree
 from scripts.runtime_tree import Paths, log_line, utc
 
@@ -112,7 +110,7 @@ def deploy(paths: Paths, state: dict, want: str, manage_static: bool, bin_todo: 
     saved = tree.backup(paths, LABEL)
     runtime_bin.save(bin_todo, saved / "bin")
     old_lock = tree.lock_sha(paths.runtime)
-    front_before = systemd_drain.front_digest(paths.runtime)
+    front_before = systemd_handoff.front_digest(paths.runtime)
     report = runtime_bin.BinReport()
     try:
         tree.apply(paths, manage_static=manage_static)
@@ -129,8 +127,8 @@ def deploy(paths: Paths, state: dict, want: str, manage_static: bool, bin_todo: 
         rc, tail = 0, [""]
         log_line(paths, f"runtime-follow: cli-only host, no local service to restart for {want[:10]}")
     elif units:
-        front_after = systemd_drain.front_digest(paths.runtime)
-        rc, tail = systemd_restart(systemd_drain.units_to_restart(units, front_before, front_after), paths)
+        front_after = systemd_handoff.front_digest(paths.runtime)
+        rc, tail = systemd_handoff.restart(systemd_handoff.units_to_restart(units, front_before, front_after), paths)
     else:
         cmd = [
             str(paths.bin_dir / "lb-restart"),
@@ -147,7 +145,7 @@ def deploy(paths: Paths, state: dict, want: str, manage_static: bool, bin_todo: 
     if rc != 0:
         result = failed(paths, state, want, saved, old_lock, before, f"restart rc={rc}: {tail[0][:200]}")
         if units:
-            systemd_restart(units, paths)
+            systemd_handoff.restart(units, paths)
         return result
     state["restarted_at"] = utc()
     for key in runtime_plan.PENDING_KEYS:
@@ -162,43 +160,6 @@ def deploy(paths: Paths, state: dict, want: str, manage_static: bool, bin_todo: 
     state.pop("alerted", None)
     tree.prune_backups(paths, LABEL)
     return True
-
-
-def healthy(url: str) -> bool:
-    try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            return resp.status == 200
-    except (OSError, ValueError):
-        return False
-
-
-def systemd_restart(units: list[str], paths: Paths) -> tuple[int, list[str]]:
-    url = os.environ.get("AGENT_LB_FOLLOW_HEALTH_URL") or "http://127.0.0.1:2477/health"
-
-    def terminate(signum: int, _frame: object) -> None:
-        raise SystemExit(128 + signum)
-
-    previous_handler = signal.signal(signal.SIGTERM, terminate)
-    try:
-        systemd_drain.drain(url, lambda line: log_line(paths, line))
-        try:
-            done = subprocess.run(
-                ["systemctl", "--user", "restart", *units], capture_output=True, text=True, timeout=600
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return 1, [str(exc)]
-        if done.returncode:
-            return done.returncode, (done.stderr or "").strip().splitlines()[-1:] or [""]
-        deadline = time.monotonic() + 90
-        while time.monotonic() < deadline:
-            systemd_drain.undrain(url)
-            if healthy(url):
-                return 0, [""]
-            time.sleep(1)
-        return 1, [f"{url} not healthy 90s after systemctl restart"]
-    finally:
-        systemd_drain.undrain(url)
-        signal.signal(signal.SIGTERM, previous_handler)
 
 
 def failed(paths: Paths, state: dict, want: str, saved: Path, old_lock: str, before: str, why: str) -> bool:
