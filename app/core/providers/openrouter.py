@@ -86,3 +86,15 @@ def map_deepseek_body(body: dict) -> dict:
     else:
         mapped.pop("provider", None)
     return mapped
+
+
+OPENROUTER_IGNORED_PROVIDERS = ("together", "minimax", "novita", "streamlake", "atlas-cloud")
+
+
+def map_openrouter_body(model: str, body: dict) -> dict:
+    mapped = map_deepseek_body(body) if is_deepseek_model(model) else dict(body)
+    provider = dict(mapped.get("provider") or {})
+    ignored = list(provider.get("ignore") or [])
+    provider["ignore"] = ignored + [slug for slug in OPENROUTER_IGNORED_PROVIDERS if slug not in ignored]
+    mapped["provider"] = provider
+    return mapped
