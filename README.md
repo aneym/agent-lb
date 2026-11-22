@@ -198,6 +198,16 @@ relaunches. If the icon ever vanishes:
 launchctl kickstart -k gui/$(id -u)/com.aneyman.agentlb.menubar
 ```
 
+Build notes: the bundle carries an ad-hoc signature (`codesign --sign -`), valid
+only on the machine that built it; Gatekeeper elsewhere rejects it, and any
+entitlement needs a real signing identity. Notarized distribution would mean an
+Xcode project with a Developer ID certificate and `xcrun notarytool submit`.
+`CFBundleExecutable` must match the binary name exactly. Launch at login
+(`SMAppService.mainApp`) works only from `AgentLB.app`, never from a bare
+`swift run`, so test it with `make run`. The LaunchAgent runs the copy in
+`~/Applications` because launchd cannot reliably exec from an external volume at
+login; `make install-agent APP_PATH=/some/other/AgentLB.app` overrides it.
+
 `make uninstall` removes the agent; `make test` runs the unit suite.
 
 **Remote machines (Tailscale):** copy `AgentLB.app` anywhere (e.g.

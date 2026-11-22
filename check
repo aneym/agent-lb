@@ -65,6 +65,11 @@ run_step() {
 }
 
 run_step 'make lint' make lint
+if [ "$mode" = staged ]; then
+  run_step 'no comments' python3 scripts/check_no_comments.py --staged --gate "$gate"
+else
+  run_step 'no comments' python3 scripts/check_no_comments.py --gate "$gate"
+fi
 if [ "$mode" = full ]; then
   run_step 'make architecture-check' make architecture-check
   run_step 'make test-floor' make test-floor

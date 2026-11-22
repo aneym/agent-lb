@@ -1,10 +1,4 @@
 # syntax=docker/dockerfile:1
-# of-work/<repo>-base: of-work/agents + uv + Python + one repo at a base commit
-# with its test dependencies synced (by the repo's of-sync). Per-task images are:
-#   FROM of-work/<repo>-base
-#   RUN of-checkout <sha>
-# Build through ../../build-images.sh, which puts a scratch bare repo (src.git,
-# history up to BASE_SHA only) and the repo's of-sync in the build context.
 ARG AGENTS_IMAGE=of-work/agents:latest
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.19
 FROM ${UV_IMAGE} AS uv
@@ -30,7 +24,6 @@ RUN git config --system user.name "of-agent" \
 
 COPY of-checkout of-sync /usr/local/bin/
 
-# src.git is bind-mounted, never stored in a layer.
 RUN --mount=type=bind,source=src.git,target=/tmp/src.git \
     git init -q /app \
  && git -C /app fetch -q --no-tags --update-shallow /tmp/src.git "+refs/of/base:refs/of/base" \

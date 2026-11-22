@@ -1,12 +1,3 @@
-"""Box nodes see the accounts other nodes push to Studio (p6, 2026-10-01 17:57 ET).
-
-Studio's mirror exported only the accounts it owns. The box nodes (ax42, pc-wsl, forge) mirror
-Studio, so they never saw the accounts Nate's node pushes in (25600cac, 86fe250c) and piled all
-box traffic onto two Studio-owned accounts until their 5-hour windows ran out. With
-AGENT_LB_FEDERATION_MIRROR_INCLUDE_PUSHED on, the mirror also carries pushed-in accounts: access
-token only, never a refresh token, so the pushing node stays the only one that refreshes them.
-"""
-
 from __future__ import annotations
 
 import pytest

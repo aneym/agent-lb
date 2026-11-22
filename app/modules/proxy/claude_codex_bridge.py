@@ -245,7 +245,7 @@ def anthropic_status_for_error(error_frame: JsonObject) -> int:
 
 async def _empty_events() -> AsyncIterator[JsonObject]:
     return
-    yield  # pragma: no cover - makes this a (never-yielding) async generator
+    yield  # pragma: no cover
 
 
 STARTUP_FIRST_FRAME_TIMEOUT_SECONDS = 90.0

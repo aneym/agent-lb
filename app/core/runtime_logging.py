@@ -253,7 +253,7 @@ def _stop_listener(listener: logging.handlers.QueueListener) -> None:
     try:
         if getattr(listener, "_thread", None) is not None:
             listener.stop()
-    except Exception:  # noqa: BLE001 - shutdown must never raise
+    except Exception:  # noqa: BLE001
         pass
 
 

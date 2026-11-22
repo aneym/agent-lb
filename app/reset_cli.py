@@ -125,7 +125,7 @@ def _request(base_url: str, path: str, timeout: float, *, body: dict[str, Any] |
     request = Request(base_url + path, data=data, headers=headers, method="POST" if body is not None else "GET")
     try:
         opener = build_opener(ProxyHandler({}), NoRedirect())
-        with opener.open(request, timeout=timeout) as response:  # noqa: S310 -- explicit local/operator URL.
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310
             if not 200 <= response.status < 300:
                 raise ResetCliError(f"service returned HTTP {response.status}")
             return json.loads(response.read().decode("utf-8"))

@@ -396,7 +396,7 @@ def run_confined(root: Path, action, reads: bool, timeout_s: int = 120):
             confine(root, reads)
             out: dict = {"ok": action()}
             code = 0
-        except BaseException as exc:  # noqa: BLE001 - reported to the parent by class and message
+        except BaseException as exc:  # noqa: BLE001
             out = {"error": exc.__class__.__name__, "message": str(exc)}
         try:
             data = json.dumps(out).encode()

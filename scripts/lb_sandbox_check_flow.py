@@ -72,7 +72,7 @@ def count_lines(path: Path) -> int:
         return 0
 
 
-def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in order
+def run_check(c: Check, args) -> None:  # noqa: C901
     out = c.out
     run_id = f"lbsbx-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dt%H%M%Sz')}-{os.getpid()}"
     c.run_id = run_id

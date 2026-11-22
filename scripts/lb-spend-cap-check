@@ -164,7 +164,7 @@ def main() -> int:
             raise InfraError(f"account seed failed: {seed.stderr[-400:]}")
 
         sys.path.insert(0, str(app_root))
-        from app.core.anthropic.pricing import DEFAULT_PRICING_MODELS  # noqa: E402 - sandbox ref's own table
+        from app.core.anthropic.pricing import DEFAULT_PRICING_MODELS  # noqa: E402
 
         price = DEFAULT_PRICING_MODELS[PRICE_KEY]
         usd = (
@@ -328,7 +328,7 @@ def main() -> int:
         )
     except InfraError as exc:
         infra = str(exc)
-    except Exception as exc:  # noqa: BLE001 - every failure must land in result.json
+    except Exception as exc:  # noqa: BLE001
         infra = f"{type(exc).__name__}: {exc}"
     finally:
         if server_proc is not None and server_proc.poll() is None:

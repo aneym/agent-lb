@@ -105,10 +105,10 @@ class FakeAnthropic(http.server.ThreadingHTTPServer):
 class _FakeHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
+    def log_message(self, format: str, *args) -> None:  # noqa: A002
         return
 
-    def do_POST(self) -> None:  # noqa: N802 - stdlib name
+    def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length)
         if (self.headers.get("Content-Encoding") or "").lower() == "gzip":

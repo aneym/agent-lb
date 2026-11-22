@@ -99,7 +99,7 @@ existing: dict[str, Any] = {}
 if plist_path.exists():
     try:
         loaded = plistlib.loads(plist_path.read_bytes())
-    except Exception as exc:  # pragma: no cover - exercised through shell failure
+    except Exception as exc:  # pragma: no cover
         print(f"error: unable to read existing LaunchAgent plist {plist_path}: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     if not isinstance(loaded, dict):

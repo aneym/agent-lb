@@ -62,7 +62,7 @@ def _resolve_configured_ttl() -> int:
         from app.core.config.settings import get_settings
 
         return int(get_settings().firewall_ip_cache_ttl_seconds)
-    except Exception:  # pragma: no cover — defensive only
+    except Exception:  # pragma: no cover
         return DEFAULT_FIREWALL_IP_CACHE_TTL_SECONDS
 
 

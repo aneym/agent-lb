@@ -362,7 +362,7 @@ class ThrottledTransport(asyncio.Transport):
             elif not wanted and self._applied_pause:
                 self._applied_pause = False
                 self._protocol_resume()
-        except Exception:  # pragma: no cover - pacing must never break a connection
+        except Exception:  # pragma: no cover
             logger.debug("upload_throttle flow control failed", exc_info=True)
 
     def _maybe_pause(self) -> None:
@@ -424,7 +424,7 @@ class ThrottledTransport(asyncio.Transport):
                 self._transport.write_eof()
             if self._close_after_drain:
                 self._transport.close()
-        except Exception:  # pragma: no cover - never let pacing kill a connection silently
+        except Exception:  # pragma: no cover
             logger.exception("upload_throttle drain failed; flushing unpaced")
             while self._pending:
                 self._transport.write(self._pending.popleft())

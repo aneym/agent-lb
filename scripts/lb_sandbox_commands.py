@@ -92,7 +92,7 @@ def load_key(root: Path | None) -> str | None:
         raise Refused(f"sandbox store key is redirected or shared ({exc.__class__.__name__})") from None
 
 
-def cmd_aux(root_arg: str) -> int:  # noqa: C901 - one event loop with three listeners and a child
+def cmd_aux(root_arg: str) -> int:  # noqa: C901
     import asyncio
     import ssl
 

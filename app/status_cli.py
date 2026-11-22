@@ -189,7 +189,7 @@ def get_status_json(url: str, timeout: float) -> Any:
     request = Request(url, headers=headers, method="GET")
     try:
         opener = build_opener(ProxyHandler({}), NoRedirect())
-        with opener.open(request, timeout=timeout) as response:  # noqa: S310 -- URL is explicit local/operator input.
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310
             if response.status < 200 or response.status >= 300:
                 raise StatusObservationError(f"service returned HTTP {response.status}")
             try:

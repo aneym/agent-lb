@@ -101,7 +101,7 @@ from scripts.lb_sandbox_system import (
 )
 
 
-def cmd_start(args) -> int:  # noqa: C901 - one sequence, each step torn down on failure
+def cmd_start(args) -> int:  # noqa: C901
     run_id = check_run_id(args.run_id)
     if not (args.from_live or args.from_ref):
         raise Refused("start needs --from-live or --from-ref REF (accounts always come from live)")
