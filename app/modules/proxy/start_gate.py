@@ -89,21 +89,21 @@ async def pool_room() -> tuple[float, int | None]:
         usage = UsageRepository(session)
         primary = await usage.latest_by_account(window="primary", account_ids=ids)
         weekly = await usage.latest_by_account(window="secondary", account_ids=ids)
-    room = 0.0
-    resets: list[int] = []
-    for account_id in ids:
-        week = weekly.get(account_id)
-        if week is not None and _spent(week.used_percent, week.reset_at, now):
-            continue
-        entry = primary.get(account_id)
-        if entry is None or entry.used_percent is None:
-            room += 1.0
-            continue
-        if entry.reset_at is not None and entry.reset_at > now:
-            resets.append(int(entry.reset_at))
-            room += max(0.0, 100.0 - float(entry.used_percent)) / 100.0
-        else:
-            room += 1.0
+        room = 0.0
+        resets: list[int] = []
+        for account_id in ids:
+            week = weekly.get(account_id)
+            if week is not None and _spent(week.used_percent, week.reset_at, now):
+                continue
+            entry = primary.get(account_id)
+            if entry is None or entry.used_percent is None:
+                room += 1.0
+                continue
+            if entry.reset_at is not None and entry.reset_at > now:
+                resets.append(int(entry.reset_at))
+                room += max(0.0, 100.0 - float(entry.used_percent)) / 100.0
+            else:
+                room += 1.0
     _room_cache = (now, room, min(resets) if resets else None)
     return room, _room_cache[2]
 
