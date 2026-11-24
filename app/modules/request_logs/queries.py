@@ -92,13 +92,13 @@ class RequestLogQueries:
         if offset:
             stmt = stmt.offset(offset)
         if limit:
-            stmt = stmt.limit(limit)
+            stmt = stmt.limit(limit if include_total else limit + 1)
         result = await self._session.execute(stmt)
         rows = result.all()
         if not rows:
             return [], await self._count_recent(filters) if include_total else offset
-        logs = [row[0] for row in rows]
-        total = rows[0][1] if include_total else offset + len(logs)
+        total = rows[0][1] if include_total else offset + len(rows)
+        logs = [row[0] for row in (rows[:limit] if limit else rows)]
         return logs, total
 
     async def _count_recent(self, filters: _RequestLogFilters) -> int:
