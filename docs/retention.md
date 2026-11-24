@@ -30,16 +30,16 @@ The window applies to whole rows. `request_logs` stores no prompts, bodies or tr
 ## Commands
 
 ```sh
-agent-lb retention run --dry-run --archive-dir ~/.agent-rails/archive-pc-wsl/agent-lb-retention --receipt <receipt.json>
-agent-lb retention run --apply --archive-dir ~/.agent-rails/archive-pc-wsl/agent-lb-retention --approval <approval record>
-agent-lb retention restore ~/.agent-rails/archive-pc-wsl/agent-lb-retention/<archive id>
+agent-lb retention run --dry-run --archive-dir <archive dir> --receipt <receipt.json>
+agent-lb retention run --apply --archive-dir <archive dir> --approval <approval record>
+agent-lb retention restore <archive dir>/<archive id>
 ```
 
 `run` defaults to a dry run: one read-only transaction that reports rows, bytes, rollup rows, the archive estimate and the space a rewrite would free for the 30, 60 and 90 day windows. `--apply` refuses without an approval record, refuses an archive directory on the root volume, and refuses a volume that lacks twice the estimated archive size plus 1 GB or would pass 70% used with it.
 
 ## Archive target
 
-On ax42 the archive goes off the box to pc-wsl through the `~/.agent-rails/archive-pc-wsl` mount, under `agent-lb-retention/`. Never `/` (the database volume) and never `/srv`: `/srv/data` and `/srv/cow` share one volume that worktrees need. Any other target must be off the box or on a volume that stays under 70% used after the archive lands.
+The service reads the target from `AGENT_LB_RETENTION_ARCHIVE_DIR` in the primary's env file. The ax42 primary has no archive target today. Never `/` (the database volume) and never `/srv`: `/srv/data` and `/srv/cow` share one volume that worktrees need. The target must be off the box or on a volume that stays under 70% used after the archive lands.
 
 Apply takes an advisory lock, exports every day before the cutoff in one repeatable-read snapshot to `request_logs/<day>.csv.gz` and `request_context_parts/<day>.csv.gz`, and writes `manifest.json` with a row count and md5 per day plus sha256 of each file and of its uncompressed bytes. It re-reads every file before deleting anything. Each day is then its own transaction: lock the rows, recompute the checksum, insert the rollup rows tagged with the archive id, delete, and check the count. A day that changed since export stops the run with nothing deleted for it.
 

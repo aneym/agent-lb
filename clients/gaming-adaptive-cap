@@ -30,12 +30,6 @@ GAME_LOSS = 12
 MIN_COLUMNS = 13
 
 
-DEFAULT_SAMPLES_CMD = (
-    "ssh -o BatchMode=yes -o ConnectTimeout=5 pc-wsl "
-    "'test -n \"$(find pc-facts/pinghud-samples.csv -mmin -2 2>/dev/null)\" && cat pc-facts/pinghud-samples.csv'"
-)
-
-
 def home():
     return Path(os.environ.get("GAMING_ADAPTIVE_HOME") or str(Path.home()))
 
@@ -204,7 +198,9 @@ def parse_samples(text):
 
 
 def read_samples():
-    command = os.environ.get("GAMING_ADAPTIVE_SAMPLES_CMD") or DEFAULT_SAMPLES_CMD
+    command = os.environ.get("GAMING_ADAPTIVE_SAMPLES_CMD")
+    if not command:
+        return [], False
     try:
         result = subprocess.run(
             ["sh", "-c", command],

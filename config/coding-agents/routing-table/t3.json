@@ -58,11 +58,6 @@
         "ssh_host": "ax42",
         "mac": false
       },
-      "pc-wsl": {
-        "environmentId": "f7485ca4-2ee1-45db-9b83-30791f625d38",
-        "ssh_host": "pc-wsl",
-        "mac": false
-      },
       "forge": {
         "environmentId": "befef143-e101-4db9-9343-430093675ddf",
         "ssh_host": "forge",

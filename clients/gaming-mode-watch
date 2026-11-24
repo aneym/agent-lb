@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 
 
-import csv
 import json
 import os
 import subprocess
@@ -11,27 +10,13 @@ from pathlib import Path
 
 HOME = Path(os.environ.get("GAMING_MODE_HOME") or Path.home())
 STATE = HOME / ".agent-lb" / "state" / "gaming-mode.json"
-GAMES_FILE = HOME / ".agent-lb" / "state" / "gaming-games.txt"
 LOG = HOME / ".agent-lb" / "logs" / "gaming-mode.log"
 SIGNAL = Path(os.environ.get("GAMING_MODE_SIGNAL_FILE") or Path.home() / ".agent-rails/factory/state/pc-game-signal.json").expanduser()
 ACK = Path(os.environ.get("GAMING_MODE_ACK_FILE") or Path.home() / ".agent-rails/factory/state/pc-game-ack/network.json").expanduser()
-GAMES_JSON = Path(os.environ.get("GAMING_MODE_GAMES_JSON") or Path.home() / "factory/fleet/config/pc-games.json").expanduser()
-SHADOW = HOME / ".agent-lb" / "state" / "gaming-signal-shadow.tsv"
-SIGNAL_MODE = os.environ.get("GAMING_MODE_SIGNAL_MODE", "shadow")
 THROTTLE = Path(
     os.environ.get("GAMING_MODE_THROTTLE_CMD")
     or HOME / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "agent-lb"
 )
-SSH = os.environ.get("GAMING_MODE_SSH") or "/usr/bin/ssh"
-DEFAULT_GAMES = (
-    "League of Legends.exe",
-    "LeagueClient.exe",
-    "VALORANT-Win64-Shipping.exe",
-    "cs2.exe",
-    "dota2.exe",
-)
-MISSES_TO_RELEASE = 2
-SSH_TIMEOUT_SECONDS = 25
 
 
 def now() -> str:
@@ -42,24 +27,6 @@ def log(message: str) -> None:
     LOG.parent.mkdir(parents=True, exist_ok=True)
     with LOG.open("a") as handle:
         handle.write(f"{now()} {message}\n")
-
-
-def games() -> list:
-    try:
-        data = json.loads(GAMES_JSON.read_text())
-        names = data.get("games") if isinstance(data, dict) else None
-        if isinstance(names, list) and names and all(isinstance(name, str) and name.strip() for name in names):
-            return [name + ".exe" for name in names]
-    except (OSError, ValueError):
-        pass
-    try:
-        names = [line.strip() for line in GAMES_FILE.read_text().splitlines()]
-        names = [name for name in names if name and not name.startswith("#")]
-        if names:
-            return names
-    except OSError:
-        pass
-    return list(DEFAULT_GAMES)
 
 
 def load_state() -> dict:
@@ -75,37 +42,6 @@ def save_state(state: dict) -> None:
     temp = STATE.with_suffix(".tmp")
     temp.write_text(json.dumps(state) + "\n")
     os.replace(temp, STATE)
-
-
-def running_images():
-
-    try:
-        result = subprocess.run(
-
-            [SSH, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc-wsl",
-             'test -n "$(find pc-facts/tasklist.csv -mmin -2 2>/dev/null)" && cat pc-facts/tasklist.csv'],
-            capture_output=True,
-            text=True,
-            timeout=SSH_TIMEOUT_SECONDS,
-            stdin=subprocess.DEVNULL,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-    if result.returncode != 0:
-        return None
-    images = set()
-    lines = [line for line in result.stdout.splitlines() if line.strip() and not line.startswith("**")]
-    try:
-        for line in lines:
-            row = next(csv.reader([line], strict=True))
-
-
-            if len(row) != 5 or not row[0].strip() or not row[1].strip().isdigit():
-                return None
-            images.add(row[0].strip().lower())
-    except csv.Error:
-        return None
-    return images or None
 
 
 def set_throttle(on: bool, reason: str = "") -> bool:
@@ -161,52 +97,26 @@ def read_signal():
         return None
 
 
-def record_signal(signal: dict, gaming: bool, own: str, ok: bool) -> None:
-    applied = "gaming" if gaming else "normal"
-    SHADOW.parent.mkdir(parents=True, exist_ok=True)
-    needs_header = not SHADOW.exists()
-    with SHADOW.open("a") as handle:
-        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
-        if needs_header:
-            writer.writerow(["at", "generation", "signal_state", "signal_mode", "applied_mode", "tasklist", "agreement"])
-        disagree = signal["state"] != "unknown" and signal["mode"] != applied
-        writer.writerow([now(), signal["generation"], signal["state"], signal["mode"], applied, own, "disagree" if disagree else "agree"])
+def record_ack(signal: dict, gaming: bool, ok: bool) -> None:
     ACK.parent.mkdir(parents=True, exist_ok=True)
     temp = ACK.with_suffix(".tmp")
-    temp.write_text(json.dumps({"generation": signal["generation"], "mode": applied, "ok": ok, "at": now()}) + "\n")
+    temp.write_text(json.dumps({"generation": signal["generation"], "mode": "gaming" if gaming else "normal", "ok": ok, "at": now()}) + "\n")
     os.replace(temp, ACK)
 
 
 def main() -> int:
     state = load_state()
     gaming = throttle_enabled()
-    misses = int(state.get("misses", 0))
-    images = running_images()
-    wanted = [] if images is None else [
-        name for name in games() if name.lower() in images or name.lower()[:25] in images
-    ]
-    own = "unknown" if images is None else "game" if wanted else "idle"
     signal = read_signal()
-    if signal is not None:
+    ok = True
+    if signal is None:
+        if state.get("last_poll_ok") is not False:
+            log("UNKNOWN no readable factory signal; keeping protection")
+    else:
         previous = state.get("signal_generation")
         if type(previous) is int and signal["generation"] < previous:
             log(f"factory restart: generation {previous} -> {signal['generation']}")
         state["signal_generation"] = signal["generation"]
-    fallback = SIGNAL_MODE == "enforce" and signal is None
-    if fallback and not state.get("signal_fallback"):
-        log("No readable factory signal; falling back to tasklist")
-    state["signal_fallback"] = fallback
-    ok = True
-    if images is None:
-        if state.get("last_poll_ok") is not False:
-            log("UNKNOWN tasklist poll failed or did not parse; keeping protection")
-        misses = 0
-    elif wanted:
-        misses = 0
-    else:
-        misses += 1
-
-    if SIGNAL_MODE == "enforce" and signal is not None:
         if signal["state"] != "unknown":
             desired = signal["mode"] == "gaming"
             if desired != gaming:
@@ -214,27 +124,13 @@ def main() -> int:
                 if ok:
                     gaming = desired
                     log(f"{'ON' if gaming else 'OFF'} factory signal gen {signal['generation']}")
-    elif wanted:
-        if not gaming:
-            ok = set_throttle(True, ", ".join(wanted))
-            if ok:
-                gaming = True
-                log(f"ON  game running: {', '.join(wanted)} -> agent-lb upload throttle on")
-    elif images is not None and gaming and misses >= MISSES_TO_RELEASE:
-        ok = set_throttle(False)
-        if ok:
-            gaming = False
-            log(f"OFF no game for {misses} consecutive polls -> agent-lb upload throttle off")
-    if signal is not None:
-        record_signal(signal, gaming, own, ok)
+        record_ack(signal, gaming, ok)
     state.update(
         {
             "gaming": gaming,
             "note": "gaming mirrors the gaming-detector hold",
-            "misses": misses,
             "last_poll": now(),
-            "last_poll_ok": images is not None,
-            "seen": wanted,
+            "last_poll_ok": signal is not None,
         }
     )
     save_state(state)

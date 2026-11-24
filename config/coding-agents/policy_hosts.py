@@ -27,7 +27,7 @@ def policy_box_hosts(home: Path) -> list[str]:
     except (OSError, ValueError, AttributeError):
         gaming = True
     if gaming:
-        disabled.update(("pc-wsl", "pc", "pc-windows"))
+        disabled.update(("pc", "pc-windows"))
     known = {name for row in machines for name in [row["name"], *row.get("aliases", [])]}
     hosts = [
         row["name"]

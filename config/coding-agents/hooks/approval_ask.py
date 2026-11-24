@@ -13,7 +13,7 @@ from pathlib import Path
 ASK = re.compile(r"^[\s>*_-]*Ask\s*:(.*)$", re.M | re.I)
 SHAPE = re.compile(r"\s*`?([0-9a-f]{12})\s+target\s+([a-z0-9][a-z0-9-]*):([^\s`]+)`?\s*")
 PEERS = ("ax102", "ax42")
-MACHINES = ("ax102", "ax42", "studio", "forge", "pc-wsl", "book", "macbook", "macbook-ts")
+MACHINES = ("ax102", "ax42", "studio", "forge", "book", "macbook", "macbook-ts")
 LIFE = timedelta(days=7)
 COVERS = timedelta(hours=24)
 SKEW = timedelta(minutes=5)
