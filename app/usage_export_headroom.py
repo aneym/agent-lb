@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app import usage_export_burn, usage_export_owners, usage_export_points, usage_export_resets
+from app.core.anthropic.extra_usage import EXTRA_USAGE_QUOTA_KEY, extra_usage_blocked
+from app.core.config.settings import get_settings
+from app.core.utils.time import naive_utc_to_epoch
 from app.usage_export_sql import rows
 
 SCHEMA = "agent-lb-headroom/2"
@@ -30,8 +34,8 @@ CROSS JOIN (VALUES ('primary'), ('secondary')) AS w(name)
 CROSS JOIN LATERAL (
     SELECT h.used_percent, h.reset_at, h.window_minutes, h.recorded_at
     FROM usage_history h
-    WHERE h.account_id = a.id AND h.window = w.name AND h.recorded_at >= %(since)s
-    ORDER BY h.recorded_at DESC
+    WHERE h.account_id = a.id AND h.window = w.name
+    ORDER BY h.recorded_at DESC, h.id DESC
     LIMIT 1
 ) AS latest
 WHERE a.provider = 'anthropic'
@@ -49,6 +53,32 @@ CROSS JOIN LATERAL (
 ) AS latest
 WHERE a.provider = 'anthropic'
 """
+
+_TRIPWIRES_SQL = """
+SELECT a.id, latest.used_percent, latest.reset_at, latest.recorded_at
+FROM accounts a
+CROSS JOIN LATERAL (
+    SELECT h.used_percent, h.reset_at, h.recorded_at
+    FROM additional_usage_history h
+    WHERE h.account_id = a.id AND h.quota_key = %(quota_key)s AND h.window = 'primary'
+    ORDER BY h.recorded_at DESC, h.id DESC
+    LIMIT 1
+) AS latest
+WHERE a.provider = 'anthropic'
+"""
+
+
+@dataclass(frozen=True)
+class _QuotaReading:
+    used_percent: float
+    reset_at: int | None
+    recorded_at: datetime
+
+
+def _quota_reading(row: dict[str, Any] | None) -> _QuotaReading | None:
+    if row is None:
+        return None
+    return _QuotaReading(row["used_percent"], row["reset_at"], row["recorded_at"])
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -107,14 +137,21 @@ def blocker(account: dict[str, Any], now: datetime) -> str | None:
     return None
 
 
-def exhausted(five_hour: dict[str, Any] | None, weekly: dict[str, Any] | None) -> str | None:
-    primary = float(five_hour["used_percent"]) if five_hour else 0.0
-    secondary = float(weekly["used_percent"]) if weekly else primary
-    if primary >= 100.0:
+def exhausted(
+    five_hour: dict[str, Any] | None, weekly: dict[str, Any] | None, *, now: datetime | None = None
+) -> str | None:
+    if _window_exhausted(five_hour, now):
         return "5-hour window at 100%"
-    if secondary >= 100.0:
+    if _window_exhausted(weekly, now):
         return "weekly all-models at 100%"
     return None
+
+
+def _window_exhausted(row: dict[str, Any] | None, now: datetime | None) -> bool:
+    if row is None or float(row["used_percent"]) < 100:
+        return False
+    reset_at = row.get("reset_at")
+    return now is None or reset_at is None or reset_at > naive_utc_to_epoch(now)
 
 
 def _age_minutes(row: dict[str, Any], now: datetime) -> int:
@@ -151,13 +188,27 @@ def _entry(
     resets: dict[str, int | None],
     clears: dict[str, list[str] | None],
     now: datetime,
+    tripwire: _QuotaReading | None,
+    route_paid_extra: bool,
 ) -> dict[str, Any]:
     five_hour = windows.get((account["id"], "primary"))
     weekly = windows.get((account["id"], "secondary"))
+    primary_reading = _quota_reading(five_hour)
+    secondary_reading = _quota_reading(weekly)
+    spent = exhausted(five_hour, weekly, now=now)
+    since = now - timedelta(hours=LOOKBACK_HOURS)
+    if five_hour and five_hour["recorded_at"] < since:
+        five_hour = None
+    if weekly and weekly["recorded_at"] < since:
+        weekly = None
+
     fable_used = _pct(fable["used_percent"]) if fable else None
     recorded = [row["recorded_at"] for row in (five_hour, weekly, fable) if row]
     blocked = blocker(account, now)
-    spent = exhausted(five_hour, weekly)
+    if tripwire is not None and extra_usage_blocked(
+        tripwire, primary_reading, secondary_reading, now=now, route_paid_extra=route_paid_extra
+    ):
+        spent = f"extra-usage tripwire active until subscription quota recovers or {_epoch(tripwire.reset_at)}"
     return {
         "account": account["account"],
         "owner": "teammate-owned" if account["owner_instance"] else "primary",
@@ -199,9 +250,25 @@ def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[st
     since = now - timedelta(hours=LOOKBACK_HOURS)
     accounts = rows(cursor, _ACCOUNTS_SQL)
     resets, clears, resets_error = usage_export_resets.held()
-    windows = {(row["id"], row["window_name"]): row for row in rows(cursor, _WINDOWS_SQL, {"since": since})}
+    windows = {(row["id"], row["window_name"]): row for row in rows(cursor, _WINDOWS_SQL)}
     fable = {row["id"]: row for row in rows(cursor, _FABLE_SQL, {"since": since, "quota_key": FABLE_QUOTA_KEY})}
-    entries = [_entry(account, windows, fable.get(account["id"]), resets, clears, now) for account in accounts]
+    tripwires = {
+        row["id"]: _quota_reading(row) for row in rows(cursor, _TRIPWIRES_SQL, {"quota_key": EXTRA_USAGE_QUOTA_KEY})
+    }
+    route_paid_extra = get_settings().anthropic_route_to_extra_usage
+    entries = [
+        _entry(
+            account,
+            windows,
+            fable.get(account["id"]),
+            resets,
+            clears,
+            now,
+            tripwires.get(account["id"]),
+            route_paid_extra,
+        )
+        for account in accounts
+    ]
     ids = [account["id"] for account in accounts]
     burn = usage_export_burn.apply(cursor, now, ids, entries)
     points = usage_export_points.apply(cursor, now, ids, entries)
@@ -221,9 +288,8 @@ def build(cursor: Any, now: datetime, source: str, generated_at: str) -> dict[st
         },
         "usable_rule": "the router's own rule from stored state: status not reauth_required, deactivated or paused; "
         "subscription not canceled or org-blocked; rate_limited or quota_exceeded only once accounts.reset_at has "
-        "passed; a mirrored or exchange-uncertain account needs an unexpired access token; latest 5-hour and weekly "
-        "readings under 100% (a missing 5-hour reading counts as 0%, a missing weekly reading falls back to the "
-        "5-hour one). In-memory error cooldowns are not stored and not shown.",
+        "passed; a mirrored or exchange-uncertain account needs an unexpired access token; no unexpired 5-hour or "
+        "weekly cap or unrecovered extra-usage tripwire. In-memory error cooldowns are not stored and not shown.",
         "resets_held_source": usage_export_resets.SOURCE
         if resets_error is None
         else f"unavailable this run ({resets_error})",

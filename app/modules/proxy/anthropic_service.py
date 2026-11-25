@@ -19,6 +19,8 @@ from yarl import URL
 
 from app.core import upload_admission
 from app.core.anthropic.entrypoint_label import relabel_billing_block
+from app.core.anthropic.extra_usage import EXTRA_USAGE_QUOTA_KEY as _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY
+from app.core.anthropic.extra_usage import extra_usage_blocked
 from app.core.anthropic.models import (
     AnthropicErrorEvent,
     AnthropicMessageRequest,
@@ -47,8 +49,8 @@ from app.core.providers import (
 from app.core.providers.request_body import prepare_provider_body
 from app.core.utils.client_session import get_dispatch_id
 from app.core.utils.request_id import ensure_request_id
-from app.core.utils.time import naive_utc_to_epoch
-from app.db.models import Account, AccountStatus, StickySessionKind
+from app.core.utils.time import naive_utc_to_epoch, utcnow
+from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
 from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
     OPENROUTER_CREDITS_QUOTA_KEY,
@@ -100,9 +102,6 @@ logger = logging.getLogger(__name__)
 _STREAM_CHUNK_SIZE = 8192
 _MAX_SELECTION_ATTEMPTS = 4
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
-
-
-_ANTHROPIC_EXTRA_USAGE_QUOTA_KEY = "anthropic_extra_usage"
 
 
 _ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"
@@ -1555,7 +1554,8 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             quota_key = model_quota_key(model, quota_key)
         if provider_name == OPENROUTER_PROVIDER_NAME:
             return await self._openrouter_credit_eligibility()
-        now = int(time.time())
+        quota_as_of = utcnow()
+        now = naive_utc_to_epoch(quota_as_of)
         settings = get_settings()
         fable_routing = provider_name == ANTHROPIC_PROVIDER_NAME and settings.anthropic_fable_routing_enabled
 
@@ -1571,22 +1571,15 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             request_quota_cooldowns = await quota_cooldown_store.latest(
                 repos.additional_usage, quota_key, account_ids, seat_wide=extra_usage_gate
             )
-            extra_usage_tripwire_cooldowns: dict[str, tuple[float, int | None, int]] = {}
+            extra_usage_tripwires: dict[str, AdditionalUsageHistory] = {}
             if extra_usage_gate:
-                extra_usage_tripwire_latest = await repos.additional_usage.latest_by_account(
+                extra_usage_tripwires = await repos.additional_usage.latest_by_account(
                     _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
                     quota_cooldown_store.COOLDOWN_WINDOW,
                     account_ids=account_ids,
                 )
-                extra_usage_tripwire_cooldowns = {
-                    account_id: (
-                        float(entry.used_percent),
-                        entry.reset_at,
-                        naive_utc_to_epoch(entry.recorded_at),
-                    )
-                    for account_id, entry in extra_usage_tripwire_latest.items()
-                }
 
+            primary_usage: dict[str, UsageHistory] = {}
             primary_exhaustion: dict[str, int] = {}
             primary_headroom_recorded_at: dict[str, int] = {}
             credit_enabled_exhausted_account_ids: frozenset[str] = frozenset()
@@ -1620,20 +1613,11 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                 )
             weekly_usage_used_percent: dict[str, float] = {}
             secondary_exhaustion: dict[str, int | None] = {}
-            secondary_snapshot_recorded_at: dict[str, int] = {}
-            secondary_headroom_recorded_at: dict[str, int] = {}
+            secondary_usage: dict[str, UsageHistory] = {}
             if extra_usage_gate or fable_routing:
                 secondary_usage = await repos.usage.latest_by_account(window="secondary", account_ids=account_ids)
                 weekly_usage_used_percent = {
                     account_id: float(entry.used_percent) for account_id, entry in secondary_usage.items()
-                }
-                secondary_snapshot_recorded_at = {
-                    account_id: naive_utc_to_epoch(entry.recorded_at) for account_id, entry in secondary_usage.items()
-                }
-                secondary_headroom_recorded_at = {
-                    account_id: naive_utc_to_epoch(entry.recorded_at)
-                    for account_id, entry in secondary_usage.items()
-                    if entry.used_percent is not None and float(entry.used_percent) < 100.0
                 }
                 secondary_exhaustion = {
                     account_id: int(entry.reset_at) if entry.reset_at is not None else None
@@ -1642,6 +1626,17 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                     and float(entry.used_percent) >= 100.0
                     and (entry.reset_at is None or int(entry.reset_at) > now)
                 }
+            extra_usage_blocks = {
+                account_id: tripwire.reset_at
+                for account_id, tripwire in extra_usage_tripwires.items()
+                if extra_usage_blocked(
+                    tripwire,
+                    primary_usage.get(account_id),
+                    secondary_usage.get(account_id),
+                    now=quota_as_of,
+                    route_paid_extra=settings.anthropic_route_to_extra_usage,
+                )
+            }
             fable_access_markers: dict[str, tuple[float, int | None]] = {}
             fable_scoped_markers: dict[str, tuple[float, int | None, int]] = {}
             if fable_routing:
@@ -1717,28 +1712,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
         blocked_count = 0
         request_quota_blocked_account_ids: set[str] = set()
 
-        route_paid_extra = bool(getattr(settings, "anthropic_route_to_extra_usage", False))
-
-        def _subscription_window_recovered(recorded_at: int | None, tripwire_recorded_at: int) -> bool:
-            return recorded_at is not None and recorded_at > tripwire_recorded_at
-
-        def _active_extra_usage_tripwire_blocks(account_id: str) -> bool:
-            tripwire = extra_usage_tripwire_cooldowns.get(account_id)
-            if tripwire is None or not _anthropic_cooldown_is_active(tripwire[0], tripwire[1], now=now):
-                return False
-            primary_recovered = _subscription_window_recovered(
-                primary_headroom_recorded_at.get(account_id),
-                tripwire[2],
-            )
-
-            if route_paid_extra or account_id not in secondary_snapshot_recorded_at:
-                return not primary_recovered
-            if not primary_recovered:
-                return True
-            return not _subscription_window_recovered(
-                secondary_headroom_recorded_at.get(account_id),
-                tripwire[2],
-            )
+        route_paid_extra = settings.anthropic_route_to_extra_usage
 
         for account_id in model_scope_account_ids:
             held = limit_backoff.hold_until(
@@ -1756,11 +1730,10 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                 if weekly_reset is not None:
                     blocked_reset_by_account_id[account_id] = int(weekly_reset)
                 continue
-            tripwire_cooldown = extra_usage_tripwire_cooldowns.get(account_id)
-            if tripwire_cooldown is not None and _active_extra_usage_tripwire_blocks(account_id):
+            tripwire_reset = extra_usage_blocks.get(account_id)
+            if tripwire_reset is not None:
                 blocked_count += 1
-                if tripwire_cooldown[1] is not None:
-                    blocked_reset_by_account_id[account_id] = int(tripwire_cooldown[1])
+                blocked_reset_by_account_id[account_id] = tripwire_reset
                 continue
             eligible_ids.append(account_id)
 
@@ -2396,10 +2369,6 @@ def _anthropic_selection_quota_detail(
 
 def _hash_for_key(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()[:32]
-
-
-def _anthropic_cooldown_is_active(used_percent: float, reset_at: int | None, *, now: int) -> bool:
-    return float(used_percent) >= 100.0 and reset_at is not None and int(reset_at) > now
 
 
 def _frame_end_to_end_headers(headers: Mapping[str, str]) -> dict[str, str]:
