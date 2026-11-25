@@ -26,6 +26,7 @@ from app.core.request_locality import (
     is_local_request,
     is_unauthenticated_client_allowed,
     is_untrusted_loopback_host_request,
+    resolve_request_client_host,
 )
 from app.core.upstream_proxy import UpstreamProxyRouteError, resolve_upstream_route
 from app.core.utils.time import utcnow
@@ -175,6 +176,12 @@ async def validate_dashboard_session(request: Request) -> None:
         if await _dashboard_operator_key(request) is not None:
             return
         if not is_dashboard_keyless_client(request) and not _password_session_applies(settings):
+            logger.warning(
+                "dashboard_api_key_required peer=%s client=%s path=%s",
+                request.client.host if request.client else None,
+                resolve_request_client_host(request),
+                request.url.path,
+            )
             raise DashboardAuthError("An agent-lb key is required for this route", code="api_key_required")
 
     request_auth = get_dashboard_request_auth(request)

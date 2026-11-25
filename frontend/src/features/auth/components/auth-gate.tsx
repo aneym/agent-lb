@@ -35,6 +35,25 @@ export function AuthGate({ children }: PropsWithChildren) {
     return <BootstrapSetupScreen />;
   }
 
+  if (authMode === "disabled" && !authenticated) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center p-4">
+        <div className="w-full max-w-lg rounded-2xl border bg-card p-6 shadow-sm">
+          <h1 className="text-lg font-semibold tracking-tight">This browser is not on the keyless list</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Password sign-in is off on this agent-lb, so no password works here. The dashboard opens without a
+            login only from the devices on its keyless list, through its tailnet address.
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Adding an account does not need the dashboard: run{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">agent-lb add-account gemini</code> on any
+            machine with the agent-lb CLI.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (passwordRequired && !authenticated) {
     if (totpRequiredOnLogin) {
       return <TotpDialog open />;
