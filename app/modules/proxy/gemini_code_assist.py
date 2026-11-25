@@ -17,6 +17,7 @@ from app.core.clients.code_assist import (
 )
 from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
+from app.core.providers.gemini_models import GEMINI_NEON_MODEL
 from app.modules.accounts.gemini_project import remember_gemini_project
 from app.modules.proxy.gemini_code_assist_errors import upstream_error
 from app.modules.proxy.gemini_code_assist_wire import code_assist_request, gemini_chunk
@@ -85,9 +86,10 @@ class CodeAssistGeminiUpstream:
     async def _stream(self, call: GeminiUpstreamCall) -> AsyncGenerator[dict[str, Any], None]:
         settings = get_settings()
         project_id = await _project(call)
+        model = f"{settings.gemini_code_assist_model}-{call.effort}" if call.model == GEMINI_NEON_MODEL else call.model
         payload = code_assist_request(
             call.body,
-            model=f"{settings.gemini_code_assist_model}-{call.effort}",
+            model=model,
             project=project_id,
             user_prompt_id=uuid.uuid4().hex,
         )

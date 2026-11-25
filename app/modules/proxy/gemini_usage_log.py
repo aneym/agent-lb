@@ -28,6 +28,7 @@ class GeminiLogEntry:
     latency_ms: int
     latency_first_token_ms: int | None
     status: str
+    session_id: str | None = None
     error_code: str | None = None
     error_message: str | None = None
     upstream_status_code: int | None = None
@@ -59,6 +60,8 @@ async def record_gemini_request(entry: GeminiLogEntry) -> None:
                 provider=GEMINI_PROVIDER_NAME,
                 transport="http",
                 useragent=entry.useragent,
+                session_id=entry.session_id,
+                client_session_id=entry.session_id,
             )
     except Exception:
         logger.warning("Failed to persist Gemini request log request_id=%s", request_id, exc_info=True)

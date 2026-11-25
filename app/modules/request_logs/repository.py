@@ -147,6 +147,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
         unified_headers: dict[str, str] | None = None,
         quota_observed_at: datetime | None = None,
         upstream_cost_usd: float | None = None,
+        client_session_id: str | None = None,
     ) -> RequestLog:
         parts = await measured_parts()
         if status == "error":
@@ -173,7 +174,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
                 provider=provider,
                 api_key_id=api_key_id,
                 session_id=session_id,
-                client_session_id=get_client_session_id(),
+                client_session_id=get_client_session_id() or client_session_id,
                 caller_user=caller.caller_user,
                 caller_user_source=caller.caller_user_source,
                 caller_machine=caller.caller_machine,

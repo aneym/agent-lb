@@ -4,11 +4,20 @@ from collections.abc import Callable
 from typing import Any
 
 from app.core.model_aliases import model_is_visible
-from app.core.providers.gemini_models import GEMINI_MODEL_REGISTRY, GeminiModel
+from app.core.providers.gemini_models import (
+    GEMINI_FLASH_LITE_MODEL,
+    GEMINI_HYDROGEN_SONAR_MODEL,
+    GEMINI_MODEL_REGISTRY,
+    GeminiModel,
+)
 
 GEMINI_INPUT_TOKEN_LIMIT = 1_048_576
 GEMINI_OUTPUT_TOKEN_LIMIT = 65_536
 GEMINI_METHODS = ("generateContent", "streamGenerateContent")
+_AUXILIARY_DISPLAY_NAMES = {
+    GEMINI_FLASH_LITE_MODEL: "Gemini 3.5 Flash Lite",
+    GEMINI_HYDROGEN_SONAR_MODEL: "Gemini 4 Hydrogen Sonar",
+}
 
 
 def model_visible(model: GeminiModel) -> bool:
@@ -17,12 +26,14 @@ def model_visible(model: GeminiModel) -> bool:
 
 def model_resource(model: GeminiModel) -> dict[str, Any]:
     level = model.effort
+    base_name = _AUXILIARY_DISPLAY_NAMES.get(model.canonical_model, "Gemini 4 Neon")
+    display_name = f"{base_name} ({level})" if level is not None and not model.auxiliary else base_name
     return {
         "name": f"models/{model.model_id}",
         "baseModelId": model.canonical_model,
         "version": "001",
-        "displayName": "Gemini 4 Neon" if level is None else f"Gemini 4 Neon ({level})",
-        "description": "Gemini 4 Neon served through agent-lb",
+        "displayName": display_name,
+        "description": f"{base_name} served through agent-lb",
         "inputTokenLimit": GEMINI_INPUT_TOKEN_LIMIT,
         "outputTokenLimit": GEMINI_OUTPUT_TOKEN_LIMIT,
         "supportedGenerationMethods": list(GEMINI_METHODS),
