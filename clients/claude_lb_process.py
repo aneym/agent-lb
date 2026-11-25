@@ -16,6 +16,7 @@ from claude_lb_common import (  # pyrefly: ignore[missing-import]
     CCGPT_MODEL,
     DEFAULT_CLAUDE_EFFORT,
     DEFAULT_CLAUDE_MODEL,
+    EXIT_CONFIG,
     EXIT_TEMPFAIL,
     STALL_STARTUP_GRACE,
     STALL_TIMEOUT_DEFAULT,
@@ -55,15 +56,28 @@ def without_option(argv: list[str], option: str) -> list[str]:
 
 def claude_executable() -> str:
     own = Path(__file__).resolve().with_name("claude-lb-launch")
+    configured = os.environ.get("FACTORY_CLAUDE_BIN")
+    if configured:
+        candidate = Path(configured).expanduser().absolute()
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            if not candidate.samefile(own):
+                return str(candidate.resolve())
+            raise SystemExit("cc: FACTORY_CLAUDE_BIN points to claude-lb-launch; refusing to start itself")
+        raise SystemExit("cc: FACTORY_CLAUDE_BIN must point to an executable Claude Code binary")
+
+    native = Path.home() / ".local/bin/claude"
+    if native.is_file() and os.access(native, os.X_OK) and not native.samefile(own):
+        return str(native.resolve())
+
     shadowed = False
     for entry in os.environ.get("PATH", os.defpath).split(os.pathsep):
         candidate = Path(entry or ".") / "claude"
         if not (candidate.is_file() and os.access(candidate, os.X_OK)):
             continue
-        if candidate.resolve() == own:
+        if candidate.samefile(own):
             shadowed = True
             continue
-        return str(candidate) if shadowed else "claude"
+        return str(candidate.resolve())
     if shadowed:
         print(
             f"cc: every claude on PATH is this launcher ({own}); refusing to start itself. "
@@ -71,7 +85,8 @@ def claude_executable() -> str:
             file=sys.stderr,
         )
         raise SystemExit(127)
-    return "claude"
+    print("cc: Claude Code executable 'claude' was not found", file=sys.stderr)
+    raise SystemExit(127)
 
 
 def claude_launch_executable() -> str:
@@ -382,7 +397,7 @@ def run_headless_with_resume(
     stall_timeout = env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT)
     for attempt in range(RESUME_MAX_ATTEMPTS + 1):
         returncode = run_supervised(current, activity, stall_timeout, session_id=claude_session_id)
-        if returncode in (0, EXIT_TEMPFAIL) or claude_session_id is None:
+        if returncode in (0, EXIT_CONFIG, EXIT_TEMPFAIL) or claude_session_id is None:
             return returncode
 
         claim, _, retry_at = claim_session_route(session_id, model, quota_key, LaunchConfig.base_url)

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from claude_lb_common import (  # pyrefly: ignore[missing-import]
     CA_CERT,
     CCGPT_MODE,
+    EXIT_CONFIG,
     EXIT_TEMPFAIL,
     SHIM_START_TIMEOUT_DEFAULT,
     STALL_TIMEOUT_DEFAULT,
@@ -68,6 +69,17 @@ def has_first_party_login() -> bool:
     return bool(login.get("accessToken") or login.get("refreshToken"))
 
 
+def enter_launch() -> None:
+    depth = os.environ.get("CLAUDE_LB_LAUNCH_DEPTH", "0")
+    if depth not in {"0", "1"}:
+        print(
+            "cc: Claude launcher recursion limit reached or depth is invalid; check the configured Claude executable",
+            file=sys.stderr,
+        )
+        raise SystemExit(EXIT_CONFIG)
+    os.environ["CLAUDE_LB_LAUNCH_DEPTH"] = str(int(depth) + 1)
+
+
 def main() -> None:
     for name in ("GH_TOKEN", "GITHUB_TOKEN"):
         os.environ.pop(name, None)
@@ -87,6 +99,7 @@ def main() -> None:
         )
         return
 
+    enter_launch()
     check_working_directory()
     raise_fd_soft_limit(65536)
 
@@ -102,6 +115,10 @@ def main() -> None:
         print(f"{requested} is not available to Claude Code", file=sys.stderr)
         sys.exit(1)
 
+    command = build_command(argv)
+    shell_prefix = Path.home() / ".local/bin/agent-scan-shell"
+    if shell_prefix.is_file() and os.access(shell_prefix, os.X_OK):
+        os.environ.setdefault("CLAUDE_CODE_SHELL_PREFIX", str(shell_prefix))
     schedule_opus_doctor()
 
     if not headless_invocation(argv):
@@ -183,7 +200,6 @@ def main() -> None:
         bypass_anthropic_proxy()
 
     os.environ.pop("AGENT_LB_LANE", None)
-    command = build_command(argv)
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":
         print(" ".join(command))
         print(
