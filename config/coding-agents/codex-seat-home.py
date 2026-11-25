@@ -25,7 +25,7 @@ def main() -> None:
         top.append(line)
     matches = [re.match(r'\s*model_provider\s*=\s*"([^"\n]+)"', line) for line in top]
     provider = next((match.group(1) for match in matches if match), "agent-lb")
-    lines = ['approval_policy = "never"', 'sandbox_mode = "workspace-write"']
+    lines = ['approval_policy = "never"', 'sandbox_mode = "workspace-write"', "suppress_unstable_features_warning = true"]
     if provider:
         lines.append(f'model_provider = "{provider}"')
     lines += ["", "[sandbox_workspace_write]", "network_access = true", "", "[features]"]
