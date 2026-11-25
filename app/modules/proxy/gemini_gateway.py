@@ -271,13 +271,13 @@ class GeminiGateway:
                     and is_locally_owned(account, settings)
                 ]
             )
+            accounts = drop_excluded(accounts, accounts, model)
+            for account in accounts:
+                repos.accounts.session.expunge(account)
         now = time.time()
         self._auxiliary_holds = {key: hold for key, hold in self._auxiliary_holds.items() if hold[0] > now}
         soonest: tuple[float, GeminiUpstreamError] | None = None
-        for account in sorted(
-            drop_excluded(accounts, accounts, model),
-            key=lambda account: self._auxiliary_last_used.get((model, account.id), 0.0),
-        ):
+        for account in sorted(accounts, key=lambda account: self._auxiliary_last_used.get((model, account.id), 0.0)):
             if account.id in excluded:
                 continue
             key = (model, account.id)
