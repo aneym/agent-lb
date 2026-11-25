@@ -18,6 +18,7 @@ from app import (
     usage_export_asked_by,
     usage_export_asked_by_records,
     usage_export_codex,
+    usage_export_effort,
     usage_export_gemini,
     usage_export_headroom,
     usage_export_hourly,
@@ -59,6 +60,7 @@ def collect(
             usage = usage_export_hourly.build(
                 cursor, now, _source(host, "request_logs, deleted_at null, every status"), generated_at
             )
+            usage["effort_24h"] = usage_export_effort.build(cursor, now)
             turns, records = usage_export_asked_by_records.load(asked_by, now)
             usage["asked_by"] = usage_export_asked_by.build(cursor, now, turns, {**records, "pulled": pulled})
             headroom = usage_export_headroom.build(
