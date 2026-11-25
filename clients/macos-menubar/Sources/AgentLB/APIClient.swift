@@ -51,8 +51,18 @@ struct APIClient: @unchecked Sendable {
   private let probeSession: URLSession
 
   init() {
-    let raw = UserDefaults.standard.string(forKey: "baseURL") ?? "http://127.0.0.1:2455"
-    let resolved = URL(string: raw) ?? URL(string: "http://127.0.0.1:2455")!
+    let heron = URL(string: "https://ax42.tailf266ac.ts.net:8455")!
+    let local = URL(string: "http://127.0.0.1:2455")!
+    let launchAgent = FileManager.default.homeDirectoryForCurrentUser
+      .appending(path: "Library/LaunchAgents/com.aneyman.agent-lb.plist")
+    let fallback = FileManager.default.fileExists(atPath: launchAgent.path) ? local : heron
+    let configured = UserDefaults.standard.string(forKey: "baseURL").flatMap { URL(string: $0) }
+    let resolved: URL
+    if let configured, let host = configured.host() {
+      resolved = host == "studio.tailf266ac.ts.net" && configured.port == 2455 ? heron : configured
+    } else {
+      resolved = fallback
+    }
     self.base = resolved
     self.isRemote = !ServiceLocality.isLoopback(resolved)
 

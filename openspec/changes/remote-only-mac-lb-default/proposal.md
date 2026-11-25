@@ -6,7 +6,7 @@ Book runs no local agent-lb. Its desktop proxy LaunchAgent and `claude-lb-launch
 
 ## What Changes
 
-- On macOS, when `~/Library/LaunchAgents/com.aneyman.agent-lb.plist` (or the `CLAUDE_LB_LAUNCHD_LABEL` plist) is absent and `CLAUDE_LB_LOCAL_URL` is unset, `claude-lb-launch` defaults its LB to `https://studio.tailf266ac.ts.net:2455` and skips the local candidate.
+- On macOS, when `~/Library/LaunchAgents/com.aneyman.agent-lb.plist` (or the `CLAUDE_LB_LAUNCHD_LABEL` plist) is absent and `CLAUDE_LB_LOCAL_URL` is unset, `claude-lb-launch` defaults its LB to `https://ax42.tailf266ac.ts.net:8455` and skips the local candidate.
 - `scripts/install-claude-desktop-proxy.sh` defaults its upstream the same way.
 - Explicit `CLAUDE_LB_BASE_URL`, `CLAUDE_LB_LOCAL_URL` and `CLAUDE_DESKTOP_PROXY_UPSTREAM` still win. Linux hosts and Macs with a local LB keep the current defaults.
 

@@ -17,6 +17,7 @@ from pathlib import Path
 LOCAL_LB_URL = "http://127.0.0.1:2455"
 
 
+HERON_LB_URL = "https://ax42.tailf266ac.ts.net:8455"
 STUDIO_LB_URL = "https://studio.tailf266ac.ts.net:2455"
 
 
@@ -28,7 +29,9 @@ def remote_only_mac() -> bool:
 
 
 def default_remote_url() -> str:
-    if remote_only_mac() or sys.platform.startswith("linux"):
+    if remote_only_mac():
+        return HERON_LB_URL
+    if sys.platform.startswith("linux"):
         return STUDIO_LB_URL
     return LOCAL_LB_URL
 

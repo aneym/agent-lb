@@ -15,7 +15,7 @@ if [[ -n "${CLAUDE_DESKTOP_PROXY_UPSTREAM:-}" ]]; then
 elif [[ -e "$LOCAL_LB_PLIST" ]]; then
   UPSTREAM="http://127.0.0.1:2455"
 else
-  UPSTREAM="https://studio.tailf266ac.ts.net:2455"
+  UPSTREAM="https://ax42.tailf266ac.ts.net:8455"
 fi
 PYTHON_BIN="${CLAUDE_DESKTOP_PROXY_PYTHON:-$(command -v python3 || true)}"
 PLIST="$TARGET_HOME/Library/LaunchAgents/$LABEL.plist"
