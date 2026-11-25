@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+HOME = Path.home()
+FRESH = timedelta(minutes=35)
+BLOCKED = {"paused", "deactivated", "reauth_required"}
+CODEX_WEIGHT = {"pro": 1, "plus": 1 / 18}
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def authorized(url, key_name, body=None):
+    key = subprocess.run(
+        ["agent-secret", "get", key_name], capture_output=True, text=True, timeout=10, check=True
+    ).stdout.strip()
+    if not key:
+        raise ValueError("empty credential")
+    headers = {"Authorization": "Bearer " + key, "Accept": "application/json"}
+    payload = None
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        payload = json.dumps(body, separators=(",", ":"), allow_nan=False).encode()
+    with build_opener(NoRedirect).open(Request(url, headers=headers, data=payload), timeout=90) as response:
+        return json.load(response)
+
+
+def fresh(at, now):
+    return bool(at) and now - FRESH <= datetime.fromisoformat(at) <= now + timedelta(minutes=1)
+
+
+def quota_export(directory, filename, key, now):
+    data = json.loads((directory / filename).read_bytes())
+    return data[key] if fresh(data["generated_at"], now) else []
+
+
+def headroom(readings):
+    values = [(min(100, max(0, 100 - used)), weight) for used, weight in readings if used is not None and weight > 0]
+    return round(sum(left * weight for left, weight in values) / sum(weight for _, weight in values), 3) if values else None
+
+
+def pools(directory, now):
+    claude = [
+        row for row in quota_export(directory, "headroom.json", "accounts_now", now)
+        if row["status"] not in BLOCKED and fresh(row["limits_recorded_at"], now)
+    ]
+    codex = [row for row in quota_export(directory, "codex.json", "plans", now) if not row["stale"]]
+    neon = [row for row in quota_export(directory, "gemini.json", "plans", now) if not row["stale"]]
+    readings = {
+        "claude": [(row["weekly_all_used_pct"], 1) for row in claude],
+        "fable": [(row["fable_weekly_used_pct"], 1) for row in claude],
+        "codex": [(row["weekly_used_pct"], CODEX_WEIGHT.get(row["plan"], 0)) for row in codex],
+        "neon": [(row["weekly_used_pct"], 1) for row in neon],
+    }
+    return {pool: amount for pool, rows in readings.items() if (amount := headroom(rows)) is not None}
+
+
+def thread_burn(reply):
+    if reply.get("windowHours") != 24 or any("ownPoolSharePct" not in row for row in reply["threads"]):
+        raise ValueError("Factory's lane attribution is not deployed")
+    rows = []
+    for root in reply["threads"]:
+        for thread in (root, *root["children"]):
+            env = thread.get("environmentId") or root.get("environmentId")
+            if not env:
+                continue
+            native = thread["ownPoolSharePct"] or {}
+            values = {"claude": native.get("anthropic"), "codex": native.get("openai"), "fable": thread["fablePoolSharePct"]}
+            amounts = {pool: round(value, 6) for pool, value in values.items() if value is not None}
+            if amounts:
+                rows.append([env, thread["threadId"], root["threadId"], amounts])
+    return rows
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Push Factory's rolling T3 quota burn and pool headroom to Rails.")
+    parser.add_argument("--factory", default="http://127.0.0.1:2457")
+    parser.add_argument("--export", type=Path, default=HOME / ".agent-lb" / "usage-export")
+    parser.add_argument("--rails", default="https://one.rails.so")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    try:
+        reply = authorized(args.factory + "/api/t3/threads/burn?range=24h", "agent-lb-key-t3-collector")
+        now = datetime.now(UTC)
+        at = reply["generatedAt"]
+        if not fresh(at, now):
+            raise ValueError("stale burn snapshot")
+        rows = thread_burn(reply)
+        room = pools(args.export, now)
+        if not args.dry_run:
+            receipt = authorized(
+                args.rails + "/api/ops/model-burn", "rails-factory-model-burn",
+                {"at": at, "headroom": room, "threads": rows},
+            )
+            print(f"Rails model burn: {receipt['threads']} threads, {len(room)} headroom readings, stored={receipt['stored']}")
+        else:
+            print(f"Rails model burn dry run: {len(rows)} threads, {len({row[0] for row in rows})} environments, {len(room)} headroom readings")
+    except HTTPError as error:
+        print(f"Rails model burn: HTTP {error.code}", file=sys.stderr)
+        return 1
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        print(f"Rails model burn: {type(error).__name__}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

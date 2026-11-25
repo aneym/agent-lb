@@ -44,7 +44,7 @@ Description=Send T3 thread names and native session ids to agent-lb
 [Service]
 Type=oneshot
 Environment=AGENT_LB_BASE_URL=http://127.0.0.1:2457
-ExecStart=/usr/bin/python3 %h/.agent-lb/bin/t3-thread-collector --host ax42
+ExecStart=/usr/bin/python3 %h/.agent-lb/bin/t3-thread-collector --host %H
 Nice=10
 TimeoutStartSec=60
 UNIT
@@ -54,6 +54,7 @@ Description=Run the agent-lb T3 thread collector every two minutes
 
 [Timer]
 OnBootSec=60
+OnActiveSec=10
 OnUnitActiveSec=120
 
 [Install]

@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import AdditionalUsageHistory
 from app.db.request_models import RequestLog
 from app.db.session import sqlite_writer_section
 from app.db.t3_models import T3NativeSession, T3Thread
@@ -25,7 +26,9 @@ logger = logging.getLogger(__name__)
 
 UPSERT_CHUNK = 200
 POOL_PROVIDERS = ("anthropic", "openai")
+FABLE_QUOTA_KEY = "anthropic_fable_scoped_weekly"
 THREAD_FIELDS = (
+    "environment_id",
     "project_id",
     "project_title",
     "workspace_root",
@@ -103,7 +106,10 @@ class T3ThreadsRepository:
                 await self._session.execute(
                     statement.on_conflict_do_update(
                         index_elements=[T3Thread.host, T3Thread.thread_id],
-                        set_={name: statement.excluded[name] for name in (*THREAD_FIELDS, "last_seen_at")},
+                        set_={
+                            **{name: statement.excluded[name] for name in (*THREAD_FIELDS, "last_seen_at")},
+                            "environment_id": func.coalesce(statement.excluded.environment_id, T3Thread.environment_id),
+                        },
                     )
                 )
             for start in range(0, len(sessions), UPSERT_CHUNK):
@@ -154,6 +160,16 @@ class T3ThreadsRepository:
         threads = (await self._session.execute(select(T3Thread))).scalars().all()
         sessions = (await self._session.execute(select(T3NativeSession))).scalars().all()
         return list(threads), list(sessions)
+
+    async def fable_samples(self, accounts: list[str], start: datetime):
+        quota = AdditionalUsageHistory
+        statement = select(quota.account_id, quota.recorded_at, quota.used_percent, quota.reset_at).where(
+            quota.account_id.in_(accounts),
+            quota.quota_key == FABLE_QUOTA_KEY,
+            quota.window == "primary",
+            quota.recorded_at >= start.replace(tzinfo=None),
+        )
+        return (await self._session.execute(statement)).all()
 
     async def request_groups(self, start: datetime) -> list[RequestGroup]:
         if self._session.get_bind().dialect.name == "postgresql":

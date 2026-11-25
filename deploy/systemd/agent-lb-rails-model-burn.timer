@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh the Rails Lane map quota data every ten minutes
+
+[Timer]
+OnActiveSec=30
+OnUnitActiveSec=600
+
+[Install]
+WantedBy=timers.target

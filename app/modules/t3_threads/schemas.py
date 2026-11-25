@@ -14,6 +14,7 @@ Host = Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,32}$")]
 
 class SyncThread(DashboardModel):
     thread_id: str = Field(min_length=1)
+    environment_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,96}$")
     project_id: str | None = Field(default=None, max_length=64)
     project_title: str | None = None
     workspace_root: str | None = None
@@ -83,6 +84,9 @@ class ThreadBurn(DashboardModel):
     host: str
     thread_id: str
     root_thread_id: str
+    environment_id: str | None = None
+    fable_pool_share_pct: float | None = None
+    own_pool_share_pct: dict[str, float] | None = None
     title: str | None = None
     project_title: str | None = None
     created_at: datetime | None = None

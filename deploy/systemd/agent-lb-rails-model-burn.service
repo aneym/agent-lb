@@ -1,0 +1,9 @@
+[Unit]
+Description=Send Factory's T3 quota burn and pool headroom to Rails
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 %h/.agent-lb/bin/push-rails-model-burn
+Nice=10
+TimeoutStartSec=120

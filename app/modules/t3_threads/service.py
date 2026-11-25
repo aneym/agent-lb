@@ -47,12 +47,16 @@ class Loaded:
     start: datetime
     groups: list[RequestGroup]
     rises: dict[tuple[str, int], float]
+    fable_rises: dict[tuple[str, int], float]
+    fable_accounts: set[str]
     accounts: dict[str, str]
 
 
 @dataclass
 class Tally:
     pct: dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    own_pct: dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    fable_pct: float = 0.0
     requests: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     input_tokens: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     output_tokens: dict[str, int] = field(default_factory=lambda: defaultdict(int))
@@ -61,9 +65,12 @@ class Tally:
     hourly: dict[str, dict[int, float]] = field(default_factory=lambda: defaultdict(lambda: defaultdict(float)))
     last_at: datetime | None = None
 
-    def add(self, group: RequestGroup, pct: float, family: str) -> None:
+    def add(self, group: RequestGroup, pct: float, family: str, fable: float, own: bool) -> None:
         provider = group.provider
         self.pct[provider] += pct
+        if own:
+            self.own_pct[provider] += pct
+            self.fable_pct += fable
         self.requests[provider] += group.requests
         self.input_tokens[provider] += group.input_tokens
         self.output_tokens[provider] += group.output_tokens
@@ -132,7 +139,7 @@ async def load(session: AsyncSession, summaries: list[AccountSummary], window: s
         if cached is not None and time.monotonic() - cached[0] < CACHE_SECONDS:
             return cached[1]
         now = utcnow()
-        start = (now - timedelta(hours=RANGES[window])).replace(minute=0, second=0, microsecond=0)
+        start = now - timedelta(hours=RANGES[window])
         factors, providers = pool_accounts(summaries)
         groups = await T3ThreadsRepository(session).request_groups(start)
         samples = await sampled_usage(session, list(factors), start - timedelta(hours=1))
@@ -140,14 +147,29 @@ async def load(session: AsyncSession, summaries: list[AccountSummary], window: s
         for row in samples:
             if weekly_row(providers[row.account_id], row):
                 by_account[row.account_id].append((row.recorded_at, row.used_percent, row.reset_at))
-        first = hour_index(start)
+        utc_start = start.replace(tzinfo=UTC)
         rises = {
             (account, hour): rise
             for account, rows in by_account.items()
-            for hour, rise in weekly_rises(rows, factors[account]).items()
-            if hour >= first
+            for hour, rise in weekly_rises(rows, factors[account], utc_start).items()
         }
-        loaded = Loaded(now, start, groups, rises, providers)
+        fable_samples = await T3ThreadsRepository(session).fable_samples(
+            [account for account in factors if providers[account] == "anthropic"], start - timedelta(hours=1)
+        )
+        fable_by_account: dict[str, list] = defaultdict(list)
+        for account, recorded_at, used_percent, reset_at in fable_samples:
+            fable_by_account[account].append((recorded_at, used_percent, reset_at))
+        fable_rises = {
+            (account, hour): rise
+            for account, rows in fable_by_account.items()
+            for hour, rise in weekly_rises(rows, factors[account], utc_start).items()
+        }
+        fable_accounts = {
+            account
+            for account, rows in fable_by_account.items()
+            if any(hour_index(row[0]) >= hour_index(now) - 1 for row in rows)
+        }
+        loaded = Loaded(now, start, groups, rises, fable_rises, fable_accounts, providers)
         _CACHE[window] = (time.monotonic(), loaded)
         return loaded
 
@@ -163,6 +185,7 @@ def thread_info(
         host=host,
         thread_id=thread_id,
         root_thread_id=row.root_thread_id if row else thread_id,
+        environment_id=row.environment_id if row else None,
         title=row.title if row else None,
         project_title=row.project_title if row else None,
         created_at=row.created_at if row else None,
@@ -197,6 +220,13 @@ def finish(
             cache_read_tokens=tally.cache_read_tokens.get(provider, 0),
         )
     info.pools = pools
+    info.own_pool_share_pct = {
+        provider: tally.own_pct.get(provider, 0.0) / capacity[provider]
+        for provider in POOL_PROVIDERS
+        if capacity.get(provider)
+    }
+    if capacity.get("fable"):
+        info.fable_pool_share_pct = tally.fable_pct / capacity["fable"]
     info.models = dict(tally.models)
     if tally.last_at is not None:
         info.last_request_at = tally.last_at
@@ -237,25 +267,38 @@ async def build_burn(
 
     weights = group_weights(loaded.groups)
     loads: dict[tuple[str, int], dict[int, float]] = defaultdict(dict)
+    fable_loads: dict[tuple[str, int], dict[int, float]] = defaultdict(dict)
     for index, (group, weight) in enumerate(zip(loaded.groups, weights)):
         loads[(group.account_id, group.hour)][index] = weight
-    shares, unexplained_by_account = apportion(loaded.rises, loads)
+        if group.provider == "anthropic" and group.model.lower().startswith("claude-fable"):
+            fable_loads[(group.account_id, group.hour)][index] = weight
+    shares, _ = apportion(loaded.rises, loads)
+    fable_shares, _ = apportion(loaded.fable_rises, fable_loads)
     pct = [0.0] * len(loaded.groups)
+    fable_pct = [0.0] * len(loaded.groups)
     for per_group in shares.values():
         for index, value in per_group.items():
             pct[index] += value
+    for per_group in fable_shares.values():
+        for index, value in per_group.items():
+            fable_pct[index] += value
     unexplained: dict[str, float] = defaultdict(float)
     for (account, hour), rise in loaded.rises.items():
         if (account, hour) not in shares:
             unexplained[loaded.accounts[account]] += rise
 
     capacity = pool_capacity(summaries)
+    capacity["fable"] = sum(
+        plan_factor(account.provider, account.plan_type) or 0.0
+        for account in summaries
+        if account.account_id in loaded.fable_accounts and not excluded(account)
+    )
     hours = max((loaded.now - loaded.start).total_seconds() / HOUR_SECONDS, 1.0)
     totals: dict[str, dict[str, float]] = {name: defaultdict(float) for name in (THREAD, UNREGISTERED, OUTSIDE)}
     requests: dict[str, dict[str, int]] = {name: defaultdict(int) for name in (THREAD, UNREGISTERED, OUTSIDE)}
     roots: dict[tuple[str, str], Tally] = {}
     children: dict[tuple[str, str, str], Tally] = {}
-    for group, value in zip(loaded.groups, pct):
+    for group, value, fable in zip(loaded.groups, pct, fable_pct):
         label = label_of(group, native)
         requests[label][group.provider] += group.requests
         if label != THREAD:
@@ -270,9 +313,9 @@ async def build_burn(
         if root is not None and root_id != root:
             continue
         family = model_family(group, item.driver)
-        roots.setdefault((item.host, root_id), Tally()).add(group, value, family)
+        roots.setdefault((item.host, root_id), Tally()).add(group, value, family, fable, item.thread_id == root_id)
         if item.thread_id != root_id:
-            children.setdefault((item.host, root_id, item.thread_id), Tally()).add(group, value, family)
+            children.setdefault((item.host, root_id, item.thread_id), Tally()).add(group, value, family, fable, True)
 
     pools = {}
     for provider in POOL_PROVIDERS:

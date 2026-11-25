@@ -190,6 +190,15 @@ def key_headers():
     return {"Authorization": "Bearer " + value} if value.startswith("sk-clb-") else {}
 
 
+def environment_of(db):
+    path = os.path.join(os.path.dirname(db), "environment-id")
+    with open(path, encoding="utf-8") as handle:
+        value = handle.read().strip()
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,96}", value):
+        raise Drift("invalid T3 environment id")
+    return value
+
+
 def post(base_url, body):
     request = Request(
         base_url.rstrip("/") + "/api/t3/threads/sync",
@@ -225,7 +234,8 @@ def main(argv=None):
             threads, sessions, newest = collect(connection, since_of(state, full))
         finally:
             connection.close()
-    except (Drift, sqlite3.Error) as error:
+        environment = environment_of(args.db) if not args.dry_run else None
+    except (Drift, sqlite3.Error, OSError) as error:
         print("t3-thread-collector: %s" % error, file=sys.stderr)
         return 3
     summary = {"host": args.host, "full": full, "threads": len(threads), "nativeSessions": len(sessions)}
@@ -234,6 +244,8 @@ def main(argv=None):
         summary["sampleNativeSessions"] = sessions[:5]
         print(json.dumps(summary, indent=2))
         return 0
+    for thread in threads:
+        thread["environmentId"] = environment
     try:
         send(args.base_url, args.host, threads, sessions)
     except (HTTPError, URLError, OSError) as error:

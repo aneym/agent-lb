@@ -14,6 +14,7 @@ class T3Thread(Base):
 
     host: Mapped[str] = mapped_column(String(32), primary_key=True)
     thread_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    environment_id: Mapped[str | None] = mapped_column(String(96), nullable=True)
     project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     project_title: Mapped[str | None] = mapped_column(Text, nullable=True)
     workspace_root: Mapped[str | None] = mapped_column(Text, nullable=True)

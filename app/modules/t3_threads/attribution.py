@@ -30,7 +30,9 @@ def token_equivalents(input_tokens: int, output_tokens: int, cache_creation: int
     )
 
 
-def weekly_rises(samples: Iterable[tuple[datetime, float, datetime | None]], factor: float) -> dict[int, float]:
+def weekly_rises(
+    samples: Iterable[tuple[datetime, float, datetime | None]], factor: float, start: datetime | None = None
+) -> dict[int, float]:
     ordered = sorted(samples, key=lambda sample: timestamp(sample[0]) or datetime.min)
     rises: dict[int, float] = defaultdict(float)
     top = ordered[0][1] if ordered else 0.0
@@ -38,7 +40,9 @@ def weekly_rises(samples: Iterable[tuple[datetime, float, datetime | None]], fac
         if not same_window(reset_before, reset_after):
             top = after
         elif after > top:
-            rises[hour_index(at)] += (after - top) * factor
+            observed = timestamp(at)
+            if start is None or (observed is not None and observed >= start):
+                rises[hour_index(at)] += (after - top) * factor
             top = after
     return dict(rises)
 
