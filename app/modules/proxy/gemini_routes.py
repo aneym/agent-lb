@@ -49,6 +49,10 @@ def _not_found(name: str) -> GeminiGatewayError:
     )
 
 
+def _is_antigravity(request: Request) -> bool:
+    return request.headers.get("user-agent", "").startswith("antigravity/cli/")
+
+
 def _visible_model(name: str) -> GeminiModel:
     model = GEMINI_MODEL_REGISTRY.get(name)
     if model is None or not model_visible(model):
@@ -75,7 +79,10 @@ async def list_models(request: Request) -> Response:
         return gemini_error_response(request, from_app_error(exc))
     except GeminiGatewayError as exc:
         return gemini_error_response(request, exc)
-    return JSONResponse(models_page(page_size, start, lambda model: _key_allows(api_key, model)))
+    return JSONResponse(
+        models_page(page_size, start, lambda model: _key_allows(api_key, model), antigravity=_is_antigravity(request)),
+        headers={"Vary": "User-Agent"},
+    )
 
 
 @router.get("/models/{name}")
@@ -90,7 +97,7 @@ async def get_model(request: Request, name: str) -> Response:
         return gemini_error_response(request, from_app_error(exc))
     except GeminiGatewayError as exc:
         return gemini_error_response(request, exc)
-    return JSONResponse(model_resource(model))
+    return JSONResponse(model_resource(model, antigravity=_is_antigravity(request)), headers={"Vary": "User-Agent"})
 
 
 @router.post("/models/{target}")

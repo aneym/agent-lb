@@ -13,6 +13,8 @@ from app.core.providers.gemini_models import (
 
 GEMINI_INPUT_TOKEN_LIMIT = 1_048_576
 GEMINI_OUTPUT_TOKEN_LIMIT = 65_536
+ANTIGRAVITY_NEON_CHECKPOINT_TOKENS = 200_000
+ANTIGRAVITY_NEON_CONTEXT_TOKENS = ANTIGRAVITY_NEON_CHECKPOINT_TOKENS + GEMINI_OUTPUT_TOKEN_LIMIT
 GEMINI_METHODS = ("generateContent", "streamGenerateContent")
 _AUXILIARY_DISPLAY_NAMES = {
     GEMINI_FLASH_LITE_MODEL: "Gemini 3.5 Flash Lite",
@@ -24,7 +26,7 @@ def model_visible(model: GeminiModel) -> bool:
     return model_is_visible(model.model_id) and model_is_visible(model.canonical_model)
 
 
-def model_resource(model: GeminiModel) -> dict[str, Any]:
+def model_resource(model: GeminiModel, *, antigravity: bool = False) -> dict[str, Any]:
     level = model.effort
     base_name = _AUXILIARY_DISPLAY_NAMES.get(model.canonical_model, "Gemini 4 Neon")
     display_name = f"{base_name} ({level})" if level is not None and not model.auxiliary else base_name
@@ -34,18 +36,24 @@ def model_resource(model: GeminiModel) -> dict[str, Any]:
         "version": "001",
         "displayName": display_name,
         "description": f"{base_name} served through agent-lb",
-        "inputTokenLimit": GEMINI_INPUT_TOKEN_LIMIT,
+        "inputTokenLimit": (
+            ANTIGRAVITY_NEON_CONTEXT_TOKENS if antigravity and not model.auxiliary else GEMINI_INPUT_TOKEN_LIMIT
+        ),
         "outputTokenLimit": GEMINI_OUTPUT_TOKEN_LIMIT,
         "supportedGenerationMethods": list(GEMINI_METHODS),
         "thinking": True,
     }
 
 
-def models_page(page_size: int | None, start: int, allowed: Callable[[GeminiModel], bool]) -> dict[str, Any]:
+def models_page(
+    page_size: int | None, start: int, allowed: Callable[[GeminiModel], bool], *, antigravity: bool = False
+) -> dict[str, Any]:
     choices = [model for model in GEMINI_MODEL_REGISTRY.models if model_visible(model) and allowed(model)]
     size = page_size if page_size and page_size > 0 else 50
     end = min(start + size, len(choices))
-    page: dict[str, Any] = {"models": [model_resource(choice) for choice in choices[start:end]]}
+    page: dict[str, Any] = {
+        "models": [model_resource(choice, antigravity=antigravity) for choice in choices[start:end]]
+    }
     if end < len(choices):
         page["nextPageToken"] = str(end)
     return page
