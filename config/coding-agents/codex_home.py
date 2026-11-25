@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from codex_catalog import catalog_changes  # type: ignore[missing-import]
+from codex_features import feature_changes  # type: ignore[missing-import]
 from codex_tool_scope import tool_scope_changes  # type: ignore[missing-import]
 
 OFFLOAD_COMMAND = (
@@ -135,6 +136,7 @@ def codex_changes(home: Path, model: str | None) -> dict[Path, str]:
         text = reconcile_codex_config(config[1], model) if model else config[1]
         text, catalog = catalog_changes(home, text, model is not None)
         text = tool_scope_changes(text, model is not None)
+        text = feature_changes(text, model is not None)
         changes.update(catalog)
         if text != config[1]:
             changes[config[0]] = text

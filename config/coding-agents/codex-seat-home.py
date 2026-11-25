@@ -44,7 +44,7 @@ def main() -> None:
             "responses_websockets_v2",
         )
     ]
-    lines += ["", "[agents]", "max_depth = 1"]
+    lines += ["code_mode = true", "", "[agents]", "max_depth = 1"]
     if provider:
         header = re.compile(
             r'\[\s*model_providers\.(?:"%s"|%s)\s*\]\s*(?:#.*)?$' % (re.escape(provider), re.escape(provider))
