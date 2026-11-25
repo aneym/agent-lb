@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import tomllib
 
-WANTED = {"code_mode": True}
+WANTED = {"code_mode": False}
 TOP = {"suppress_unstable_features_warning": True}
 HEADER = re.compile(r"^\s*\[(?!\[)\s*features\s*\]\s*(#.*)?$")
 TABLE = re.compile(r"^\s*\[")
