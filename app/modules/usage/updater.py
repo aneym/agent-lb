@@ -6,7 +6,7 @@ from typing import Mapping
 from app.core.config.settings import get_settings
 from app.core.providers import GEMINI_PROVIDER_NAME
 from app.core.utils.request_id import get_request_id
-from app.core.utils.time import utcnow
+from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.usage.account_usage_refresh import UsageAccountRefresh
@@ -41,6 +41,7 @@ class UsageUpdater(UsageAccountRefresh):
 
         refreshed = False
         now = utcnow()
+        now_epoch = naive_utc_to_epoch(to_utc_naive(now))
         interval = settings.usage_refresh_interval_seconds
         prune_usage_refresh_auth_cooldowns()
         for account in accounts:
@@ -55,10 +56,21 @@ class UsageUpdater(UsageAccountRefresh):
             if not bypass_freshness and latest_usage_is_fresh(latest, now=now, interval_seconds=interval):
                 continue
 
+            last_ok = last_successful_refresh.get(account.id)
+            if (
+                not bypass_freshness
+                and last_ok is not None
+                and (now - last_ok).total_seconds() < interval
+                and (
+                    latest is None
+                    or latest.reset_at is None
+                    or latest.reset_at > now_epoch
+                    or naive_utc_to_epoch(to_utc_naive(last_ok)) >= latest.reset_at
+                )
+            ):
+                continue
+
             if latest is None:
-                last_ok = last_successful_refresh.get(account.id)
-                if not bypass_freshness and last_ok and (now - last_ok).total_seconds() < interval:
-                    continue
                 if self._additional_usage_repo is not None:
                     additional_fresh_at = await self._additional_usage_repo.latest_recorded_at_for_account(
                         account.id,
@@ -84,7 +96,7 @@ class UsageUpdater(UsageAccountRefresh):
                 refreshed = refreshed or (result.usage_written and account.provider != GEMINI_PROVIDER_NAME)
 
                 if result.fetch_succeeded:
-                    last_successful_refresh[account.id] = now
+                    last_successful_refresh[account.id] = utcnow()
                     record_usage_refresh_success(account.id)
             except Exception as exc:
                 logger.warning(

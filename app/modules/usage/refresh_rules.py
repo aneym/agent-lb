@@ -19,9 +19,10 @@ from app.core.providers import ANTHROPIC_PROVIDER_NAME, GEMINI_PROVIDER_NAME, OP
 from app.core.upstream_proxy import ResolvedUpstreamRoute, resolve_upstream_route
 from app.core.usage.models import AdditionalRateLimitPayload, UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
-from app.core.utils.time import utcnow
+from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
+from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.usage.additional_quota_keys import canonicalize_additional_quota_key
 from app.modules.usage.refresh_ports import AccountRefreshResult, AdditionalUsageRepositoryPort
 from app.modules.usage.repository import AdditionalUsageRepository
@@ -365,6 +366,25 @@ async def delete_additional_usage_quota_key_window(
     window: str,
 ) -> None:
     await repo.delete_for_account_quota_key_window(account_id, quota_key, window)
+
+
+def anthropic_reset_refresh_due(
+    account: Account,
+    primary: UsageHistory | None,
+    secondary: UsageHistory | None,
+    now_epoch: float,
+) -> bool:
+    if account.provider != ANTHROPIC_PROVIDER_NAME or not is_subscription_usable(account):
+        return False
+    if primary is None or primary.reset_at is None or primary.reset_at + 3 > now_epoch:
+        return False
+    cutoff = float(primary.reset_at + 3)
+    if to_utc_naive(primary.recorded_at).replace(tzinfo=timezone.utc).timestamp() >= cutoff:
+        return False
+    if secondary is not None and to_utc_naive(secondary.recorded_at).replace(tzinfo=timezone.utc).timestamp() >= cutoff:
+        return False
+    last_ok = last_successful_refresh.get(account.id)
+    return last_ok is None or to_utc_naive(last_ok).replace(tzinfo=timezone.utc).timestamp() < cutoff
 
 
 def latest_usage_is_fresh(

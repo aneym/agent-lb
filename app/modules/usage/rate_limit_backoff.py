@@ -66,6 +66,7 @@ def record_usage_refresh_success(account_id: str) -> None:
     now = time.monotonic()
     if now - _last_rate_limit_at.get(account_id, 0.0) >= _MAX_BACKOFF_SECONDS:
         strikes -= 1
+        _last_rate_limit_at[account_id] = now
     if strikes <= 0:
         usage_refresh_auth_cooldowns.pop(account_id, None)
         usage_refresh_rate_limit_strikes.pop(account_id, None)

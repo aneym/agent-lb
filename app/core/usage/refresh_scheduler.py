@@ -34,7 +34,11 @@ from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.quota_planner.repository import QuotaPlannerRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.settings.repository import SettingsRepository
-from app.modules.usage.refresh_rules import USAGE_REFRESH_PROVIDERS, USAGE_REFRESH_SINGLEFLIGHT
+from app.modules.usage.refresh_rules import (
+    USAGE_REFRESH_PROVIDERS,
+    USAGE_REFRESH_SINGLEFLIGHT,
+    anthropic_reset_refresh_due,
+)
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 from app.modules.usage.updater import UsageUpdater
 
@@ -219,14 +223,11 @@ class UsageRefreshScheduler:
                         for account in accounts
                     )
                     for account in accounts:
-                        entry = before_primary.get(account.id)
-                        if (
-                            account.provider == ANTHROPIC_PROVIDER_NAME
-                            and is_subscription_usable(account)
-                            and entry is not None
-                            and entry.reset_at is not None
-                            and entry.reset_at + 3 <= now_epoch
-                            and entry.recorded_at.replace(tzinfo=timezone.utc).timestamp() < entry.reset_at + 3
+                        if anthropic_reset_refresh_due(
+                            account,
+                            before_primary.get(account.id),
+                            before_secondary.get(account.id),
+                            now_epoch,
                         ):
                             await updater.force_refresh(account)
 

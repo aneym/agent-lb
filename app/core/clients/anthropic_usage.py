@@ -291,19 +291,21 @@ async def _usage_payload_or_raise(resp: aiohttp.ClientResponse, *, account_id: s
     if resp.status >= 400:
         code = _extract_error_code(data)
         message = _extract_error_message(data) or f"Anthropic usage fetch failed ({resp.status})"
+        retry_after = _retry_after_seconds(resp.headers.get("Retry-After"))
         logger.warning(
-            "Anthropic usage fetch failed request_id=%s account=%s status=%s code=%s message=%s",
+            "Anthropic usage fetch failed request_id=%s account=%s status=%s code=%s retry_after=%s message=%s",
             get_request_id(),
             account_id[:8] if account_id else None,
             resp.status,
             code,
+            retry_after,
             message,
         )
         raise UsageFetchError(
             resp.status,
             message,
             code=code,
-            retry_after_seconds=_retry_after_seconds(resp.headers.get("Retry-After")),
+            retry_after_seconds=retry_after,
         )
     try:
         payload = AnthropicOAuthUsagePayload.model_validate(data)

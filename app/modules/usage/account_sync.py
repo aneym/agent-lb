@@ -12,9 +12,10 @@ from app.core.balancer import (
 from app.core.clients.usage import UsageFetchError
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
-from app.core.providers import GEMINI_PROVIDER_NAME
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, GEMINI_PROVIDER_NAME
 from app.core.usage.models import UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
+from app.core.utils.time import naive_utc_to_epoch, to_utc_naive
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager
 from app.modules.proxy.account_cache import get_account_selection_cache
@@ -51,6 +52,20 @@ class UsageAccountSync:
         self._auth_manager = AuthManager(accounts_repo) if accounts_repo else None
 
     async def _freshness_usage_entry(self, account: Account, latest: UsageHistory | None) -> UsageHistory | None:
+        if account.provider == ANTHROPIC_PROVIDER_NAME:
+            secondary = await self._usage_repo.latest_entry_for_account(account.id, window="secondary")
+            if secondary is not None and (
+                latest is None
+                or (
+                    to_utc_naive(secondary.recorded_at) > to_utc_naive(latest.recorded_at)
+                    and (
+                        latest.reset_at is None
+                        or latest.reset_at > epoch_now()
+                        or naive_utc_to_epoch(to_utc_naive(secondary.recorded_at)) >= latest.reset_at + 3
+                    )
+                )
+            ):
+                return secondary
         if latest is not None:
             return latest
         if usage_core.capacity_for_plan(account.plan_type, "monthly") is None:

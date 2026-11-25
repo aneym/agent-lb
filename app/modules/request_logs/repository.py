@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from typing import cast as typing_cast
+from uuid import uuid4
 
 import anyio
 from sqlalchemy import and_, select
@@ -27,7 +28,7 @@ from app.core.utils.client_session import (  # noqa: I001  # fmt: skip
     get_room,
     get_thread_id,
 )
-from app.core.utils.request_id import ensure_request_id
+from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account
 from app.db.request_models import RequestKind, RequestLog
@@ -156,7 +157,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
         caller = identity_for_log(identity)
         factory = factory_attribution if factory_attribution is not None else FACTORY_ATTRIBUTION.get()
         async with sqlite_writer_section(self._session):
-            resolved_request_id = ensure_request_id(request_id)
+            resolved_request_id = request_id or get_request_id() or str(uuid4())
             resolved_plan_type = plan_type
             if resolved_plan_type is None and account_id:
                 resolved_plan_type = await self._resolve_account_plan_type(account_id)
@@ -248,7 +249,7 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
     async def update_model_for_request(self, request_id: str, model: str) -> int:
 
         async with sqlite_writer_section(self._session):
-            resolved_request_id = ensure_request_id(request_id)
+            resolved_request_id = request_id or get_request_id() or str(uuid4())
             try:
                 stmt = select(RequestLog).where(RequestLog.request_id == resolved_request_id)
                 result_rows = await self._session.execute(stmt)
