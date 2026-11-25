@@ -241,7 +241,11 @@ def get_dashboard_request_auth_mode() -> DashboardAuthMode:
 
 def _is_trusted_dashboard_client(request: HTTPConnection) -> bool:
 
-    return is_local_request(request) or _is_proxy_unauthenticated_client_allowed(request)
+    return (
+        is_local_request(request)
+        or is_dashboard_keyless_client(request)
+        or _is_proxy_unauthenticated_client_allowed(request)
+    )
 
 
 _is_proxy_unauthenticated_client_allowed = is_unauthenticated_client_allowed

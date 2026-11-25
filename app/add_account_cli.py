@@ -9,6 +9,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
+from zoneinfo import ZoneInfo
 
 from app.core.state_dir import state_dir
 from app.lb_service import ServiceError, ServiceUnavailable, request, retrying
@@ -104,7 +105,7 @@ def _start(args, base: str) -> None:
         return
     print("Gemini (Neon) sign-in link. Open it on your own computer and sign in with the Google account to add:")
     print(flow["authorizationUrl"])
-    print(f"It expires at {_local(expires_at)} ({_minutes_left(expires_at)}).")
+    print(f"It expires at {_eastern_time(expires_at)} ({_minutes_left(expires_at)}).")
     print(
         "After sign-in, copy the full URL from the address bar of the page Google lands on, even if it does not load."
     )
@@ -119,7 +120,7 @@ def _finish(args, base: str) -> None:
         raise SignInError(f"no Gemini sign-in is waiting on this machine; {START_AGAIN}")
     remembered = flows.get(flow_id)
     if remembered and remembered["expiresAt"] <= time.time():
-        raise SignInError(f"the Gemini sign-in link expired at {_local(remembered['expiresAt'])}; {START_AGAIN}")
+        raise SignInError(f"the Gemini sign-in link expired at {_eastern_time(remembered['expiresAt'])}; {START_AGAIN}")
     pasted = _read_pasted(args.callback_file)
     reply = retrying(
         lambda: request(base, "/api/oauth/manual-callback", body={"flowId": flow_id, "callbackUrl": pasted}),
@@ -218,8 +219,8 @@ def _save(flows: dict[str, dict]) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def _local(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp).astimezone().strftime("%-I:%M %p %Z")
+def _eastern_time(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp, ZoneInfo("America/New_York")).strftime("%-I:%M %p ET")
 
 
 def _minutes_left(timestamp: float) -> str:
