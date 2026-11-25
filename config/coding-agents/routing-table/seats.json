@@ -75,6 +75,22 @@
       "box": null,
       "model": "opus-latest",
       "effort": "medium"
+    },
+    "sol-work": {
+      "vendor": "openai",
+      "box": {
+        "adapter": "codex"
+      },
+      "model": "sol-latest",
+      "effort": "high"
+    },
+    "astra-e2e": {
+      "vendor": "openai",
+      "box": {
+        "adapter": "codex"
+      },
+      "model": "astra-latest",
+      "effort": "high"
     }
   }
 }

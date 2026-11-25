@@ -1,6 +1,6 @@
 {
   "spread": {
-    "note": "Opus writes everything until launch (2026-11-06); no spread across pools.",
+    "note": "New work uses its class default. Automatic spread across pools is off.",
     "min_headroom_percent": 15,
     "classes": {}
   },
@@ -10,6 +10,7 @@
     "sonnet-latest": "anthropic-general",
     "haiku-latest": "anthropic-general",
     "sol-latest": "openai-codex",
+    "astra-latest": "openai-codex",
     "luna-latest": "openai-codex",
     "grok-latest": "grok",
     "grok-latest-low": "grok",

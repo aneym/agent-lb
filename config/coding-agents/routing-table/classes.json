@@ -9,7 +9,6 @@
     "test-run": "mechanical",
     "investigation": "explore",
     "exploration": "explore",
-    "digest": "count",
     "triage": "count",
     "gather": "count",
     "tally": "count",
@@ -35,14 +34,14 @@
     "trust-boundary",
     "money-path"
   ],
-  "implement_default": "opus-seat",
+  "implement_default": "sol-work",
   "classes": {
     "plan": {
       "chain": [
         {
-          "seat": "planner",
-          "model": "opus-latest",
-          "vendor": "anthropic",
+          "seat": "sol-work",
+          "model": "sol-latest",
+          "vendor": "openai",
           "effort": "high"
         }
       ]
@@ -80,9 +79,9 @@
     "research": {
       "chain": [
         {
-          "seat": "opus-seat",
-          "model": "opus-latest",
-          "vendor": "anthropic",
+          "seat": "sol-work",
+          "model": "sol-latest",
+          "vendor": "openai",
           "effort": "high"
         }
       ]
@@ -90,9 +89,9 @@
     "implement": {
       "chain": [
         {
-          "seat": "opus-seat",
-          "model": "opus-latest",
-          "vendor": "anthropic",
+          "seat": "sol-work",
+          "model": "sol-latest",
+          "vendor": "openai",
           "effort": "high"
         }
       ]
@@ -100,9 +99,9 @@
     "mechanical": {
       "chain": [
         {
-          "seat": "opus-seat",
-          "model": "opus-latest",
-          "vendor": "anthropic",
+          "seat": "sol-work",
+          "model": "sol-latest",
+          "vendor": "openai",
           "effort": "high"
         }
       ]
@@ -133,6 +132,46 @@
           "seat": "opus-seat",
           "model": "opus-latest",
           "vendor": "anthropic",
+          "effort": "high"
+        }
+      ]
+    },
+    "e2e": {
+      "chain": [
+        {
+          "seat": "astra-e2e",
+          "model": "astra-latest",
+          "vendor": "openai",
+          "effort": "high"
+        }
+      ]
+    },
+    "lane": {
+      "chain": [
+        {
+          "seat": "sol-work",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        }
+      ]
+    },
+    "decide": {
+      "chain": [
+        {
+          "seat": "sol-work",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        }
+      ]
+    },
+    "digest": {
+      "chain": [
+        {
+          "seat": "sol-work",
+          "model": "sol-latest",
+          "vendor": "openai",
           "effort": "high"
         }
       ]

@@ -16,7 +16,7 @@ Prod UI walks with a test account run on a box via `lane-harness` (browser-harne
 
 This is a Studio-only Codex forwarding seat, including when `SEAT_EXEC` is set. Always use the foreground local wrapper below. It refuses other hosts, pins nested admission to Studio, and rejects companion background jobs. Never call seat-run or seat-exec from this seat.
 
-Terra fast is for computer use and video editing, never code (Alex, 2026-10-28: "terra isnt for coding though"); a coding brief goes to opus-seat. Keep `--service-tier fast`: it is the fast mode Alex approved, and codex-local.sh refuses any tier but fast or flex.
+Terra fast is for computer use and video editing, never code (Alex, 2026-10-28: "terra isnt for coding though"). Use the build-loop skill to route coding briefs. Keep `--service-tier fast`: it is the fast mode Alex approved, and codex-local.sh refuses any tier but fast or flex.
 
 You forward, you do not drive the computer. Run one fresh Codex task in the assigned lane directory:
 

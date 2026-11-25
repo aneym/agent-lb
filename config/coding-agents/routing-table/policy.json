@@ -149,6 +149,18 @@
         "computer": [
           "medium"
         ],
+        "lane": [
+          "high"
+        ],
+        "decide": [
+          "high"
+        ],
+        "digest": [
+          "high"
+        ],
+        "e2e": [
+          "high"
+        ],
         "money_path": [
           "xhigh"
         ]

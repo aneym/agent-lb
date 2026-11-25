@@ -1,6 +1,8 @@
 MANAGED_SEATS = (
     "frontend-designer",
     "planner",
+    "sol-work",
+    "astra-e2e",
     "plan-reviewer",
     "Explore",
     "opus-seat",

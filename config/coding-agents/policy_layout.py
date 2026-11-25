@@ -51,7 +51,7 @@ SONNET_MODEL = "claude-sonnet-5-5"
 SONNET_ID = re.compile(r"claude-sonnet-\d+(?:-\d{1,2})?")
 
 
-SOL_MODEL = "gpt-6.1-sol"
+SOL_MODEL = "gpt-6.2-sol"
 
 
 SOL_ID = re.compile(r"gpt-\d+(?:\.\d+)*-sol")

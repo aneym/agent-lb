@@ -1,6 +1,6 @@
 ---
 name: planner
-description: "Use when running a lane, workstream or multi-child project on Opus 5.5 at high: plan, decompose, dispatch delegate_task children, reconcile and verify. Single tasks use opus-seat or Explore."
+description: "Use when running a lane, workstream or multi-child project on Opus 5.5 at high: plan, decompose, dispatch delegate_task children, reconcile and verify. Start non-visual lanes and executors through Codex `sol-latest` at `high`. Use Explore for read-only lookups."
 tools:
   [
     Read,

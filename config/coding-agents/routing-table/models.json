@@ -136,7 +136,8 @@
     },
     "astra-latest": {
       "vendor": "openai",
-      "family": "astra"
+      "family": "astra",
+      "pinned": "gpt-6.2-astra"
     }
   },
   "retired": [

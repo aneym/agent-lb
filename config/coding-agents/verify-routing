@@ -92,7 +92,7 @@ if not SOURCE_ONLY:
     )
 plan_chain = [entry.get("model") for entry in classes.get("plan", {}).get("chain", [])]
 check(
-    plan_chain == ["opus-latest"], f"plan uses only opus-latest, without a Sol fallback ({plan_chain})"
+    plan_chain == ["sol-latest"], f"plan uses sol-latest ({plan_chain})"
 )
 
 

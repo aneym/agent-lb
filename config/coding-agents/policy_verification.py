@@ -1,6 +1,8 @@
 MANAGED = (
     ("frontend-designer", ".claude/agents/frontend-designer.md", "agents/frontend-designer.md"),
     ("planner", ".claude/agents/planner.md", "agents/planner.md"),
+    ("sol-work", ".claude/agents/sol-work.md", "agents/sol-work.md"),
+    ("astra-e2e", ".claude/agents/astra-e2e.md", "agents/astra-e2e.md"),
     ("plan-reviewer", ".claude/agents/plan-reviewer.md", "agents/plan-reviewer.md"),
     ("Explore", ".claude/agents/Explore.md", "agents/Explore.md"),
     ("opus-seat", ".claude/agents/opus-seat.md", "agents/opus-seat.md"),
