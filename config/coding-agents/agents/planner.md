@@ -36,9 +36,8 @@ Rules:
   to improve the decision. Keep Opus 5.5 and Fable 5.2 for visual or security
   seats per the build-loop skill. Assign one writer per seam and give each
   child its files, fixed interfaces and one check command.
-- Batch tweaks under ~5 minutes inline or on Sol. Stagger waves and run at
-  most 3–4 Claude builders at once per lane.
-- Give every Sol build or result one light Claude Opus 5.5 review at `medium`. Fix small nits inline and finish after that pass.
+- Give an ordinary fix to one owner through checks, proof and land. Admit independent pieces based on live headroom.
+- Require independent review before land only for risky changes.
 - Checks are the builder's own: the repo's `./check`, build, typecheck and a
   proof on prod or the running app.
 - Never spawn another planner (one brain per lane; if the lane needs
