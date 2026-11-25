@@ -68,7 +68,7 @@ def run(args: Any) -> None:
 def observe(
     *, base_url: str, timeout: float, provider: str | None, model: str | None, thinking: bool = False
 ) -> dict[str, Any]:
-    base_url = _validated_base_url(base_url)
+    base_url = validated_base_url(base_url)
     health = get_status_json(base_url + "/health/ready", timeout)
     accounts_response = get_status_json(base_url + "/api/accounts", timeout)
     if not isinstance(health, dict) or not isinstance(accounts_response, dict):
@@ -159,7 +159,7 @@ def _anthropic_cache_observation(summary: Any) -> dict[str, Any]:
     return observation
 
 
-def _validated_base_url(value: str) -> str:
+def validated_base_url(value: str) -> str:
     value = value.rstrip("/")
     try:
         parsed = urlsplit(value)
@@ -220,7 +220,7 @@ def _cache_dir() -> Path:
 
 def _status_cache_path(base_url: str, provider: str | None, model: str | None, thinking: bool) -> Path | None:
     try:
-        normalized = _validated_base_url(base_url)
+        normalized = validated_base_url(base_url)
     except StatusObservationError:
         return None
     material = "|".join((normalized, provider or "", model or "", "true" if thinking else "false"))

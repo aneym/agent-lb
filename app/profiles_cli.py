@@ -23,7 +23,7 @@ from app.lb_service import (
     send_code,
     shown_code,
 )
-from app.status_cli import DEFAULT_BASE_URL, StatusObservationError, _validated_base_url
+from app.status_cli import DEFAULT_BASE_URL, StatusObservationError, validated_base_url
 
 PROVIDERS = ("anthropic", "openai")
 SKIPPED_PROVIDERS = ("openai",)
@@ -185,7 +185,7 @@ def _reauth(args, profile: BrowserProfile) -> None:
         provider = args.provider or (profile.providers[0] if len(profile.providers) == 1 else None)
         base = ""
         if not args.dry_run:
-            base = _validated_base_url(args.base_url or os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL))
+            base = validated_base_url(args.base_url or os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL))
             if provider is None:
                 account = retrying(lambda: account_for(base, profile.email), "account lookup")
                 provider = account.get("provider") if account else None

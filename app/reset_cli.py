@@ -10,7 +10,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 from app.lb_caller_key import caller_key_headers
 
-from app.status_cli import DEFAULT_BASE_URL, NoRedirect, StatusObservationError, _validated_base_url
+from app.status_cli import DEFAULT_BASE_URL, NoRedirect, StatusObservationError, validated_base_url
 
 
 class ResetCliError(Exception):
@@ -19,7 +19,7 @@ class ResetCliError(Exception):
 
 def run(args: Any) -> None:
     try:
-        base_url = _validated_base_url(args.base_url or os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL))
+        base_url = validated_base_url(args.base_url or os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL))
         account = _select_account(_request(base_url, "/api/accounts", args.timeout), args.account)
         account_id = account["accountId"]
         inventory_path = f"/api/accounts/{quote(account_id, safe='')}/rate-limit-reset-credits"

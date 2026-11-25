@@ -72,8 +72,8 @@ def request(base: str, path: str, *, body: dict | None = None, method: str | Non
         raise ServiceUnavailable("service unavailable or returned invalid JSON") from None
 
 
-def retrying(call, what: str):
-    deadline = time.monotonic() + RETRY_WINDOW
+def retrying(call, what: str, window: float = RETRY_WINDOW):
+    deadline = time.monotonic() + window
     delay = 1.0
     while True:
         try:

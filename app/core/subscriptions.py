@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from app.core.state_dir import state_dir
+
 
 @dataclass(frozen=True)
 class Subscription:
@@ -62,16 +64,12 @@ class LedgerUnavailable(Exception):
     pass
 
 
-def _state_dir() -> Path:
-    return Path(os.getenv("AGENT_LB_STATE_DIR", str(Path.home() / ".agent-lb/state")))
-
-
 def registry_path() -> Path:
-    return _state_dir() / "subscriptions.json"
+    return state_dir() / "subscriptions.json"
 
 
 def ledger_home() -> tuple[str, str] | None:
-    path = _state_dir() / "ledger.json"
+    path = state_dir() / "ledger.json"
     if not path.exists():
         return None
     try:

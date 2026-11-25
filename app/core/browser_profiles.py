@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.core.state_dir import state_dir
+
 CHROME_ROOT = Path.home() / "Library/Application Support/agent-lb-chrome"
 CDP_PORT_BASE = 9333
 LOGINS = ("google", "email")
@@ -24,7 +26,7 @@ class BrowserProfile:
 
 
 def registry_path() -> Path:
-    return Path(os.getenv("AGENT_LB_STATE_DIR", str(Path.home() / ".agent-lb/state"))) / "browser-profiles.json"
+    return state_dir() / "browser-profiles.json"
 
 
 def load_profiles() -> dict[str, BrowserProfile]:

@@ -22,6 +22,8 @@ rate-limited account triage, billing/subscription changes, pause/reactivate
 routing, removals, verification, or dedicated browser-profile work — use the
 `agent-lb-account-operator` skill and the local
 `.agent-lb/account-profiles.json` registry.
+To add a Gemini (Neon) account, run `agent-lb add-account gemini` and follow its
+printed finish line; that skill's "Add a Gemini (Neon) account" section has the steps.
 
 ## Environment
 

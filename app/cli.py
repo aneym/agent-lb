@@ -79,6 +79,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     from app.profiles_cli import add_parser as add_profiles_parser
 
     add_profiles_parser(subparsers)
+    from app.add_account_cli import add_parser as add_account_parser
+
+    add_account_parser(subparsers)
     from app.subscriptions_cli import add_parser as add_subscriptions_parser
 
     add_subscriptions_parser(subparsers)
@@ -263,6 +266,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         (run_profiles if args.command == "profiles" else run_reauth)(args)
         return
 
+    if args.command == "add-account":
+        from app.add_account_cli import run as run_add_account
+
+        run_add_account(args)
+        return
     if args.command == "solo":
         from app.solo_cli import run as run_solo
 

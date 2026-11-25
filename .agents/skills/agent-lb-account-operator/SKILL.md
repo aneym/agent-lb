@@ -1,8 +1,8 @@
 ---
 name: "agent-lb-account-operator"
 description: |
-  Manage agent-lb account subscription/admin work with local browser profiles,
-  the dashboard subscription ledger, and gitignored operator memory.
+  Manage agent-lb accounts (OpenAI/ChatGPT, Anthropic, Gemini/Neon): add a Gemini
+  account in one command, browser profiles, the subscription ledger and operator memory.
 metadata:
   author: agent-lb
   version: "1.0.0"
@@ -11,16 +11,24 @@ metadata:
 # Agent LB Account Operator
 
 Use this skill when the user asks to add, cancel, pause, reactivate, verify, or
-open an OpenAI/ChatGPT/Anthropic account that agent-lb routes through. Also use
-it for account-specific support work such as quota reset checks,
-stuck/rate-limited account triage, subscription/account status checks, routing
-imbalance reports, or pause/reactivate routing requests.
+open an OpenAI/ChatGPT, Anthropic or Gemini/Neon account that agent-lb routes
+through, or for account support: quota reset checks, stuck/rate-limited triage,
+subscription and status checks, routing imbalance, pause/reactivate, removal.
+For a fresh machine or client wiring, use `get-started` first.
 
-If the user is setting up a fresh machine or wiring clients, use `get-started`
-first. Use this skill for account-specific browser profiles, billing/admin
-actions, subscription-ledger updates, account status diagnostics, quota/rate
-limit triage, routing pause/reactivate work, routing imbalance diagnostics,
-account removal, or verification.
+## Add a Gemini (Neon) account
+
+The link lives 15 minutes, so start only when the person is ready. Run it at
+once: no research, no dashboard, no admin password.
+
+1. `agent-lb add-account gemini` prints the sign-in link, its expiry and the
+   finish command. Give the person the link.
+2. They sign in on their own computer and paste the address-bar URL of the page
+   Google lands on. It carries a one-time code: collect it as a 0600 file
+   (`request_secret` with file delivery), never in chat or on a command line.
+3. Run the printed finish command: `agent-lb add-account gemini --flow ID
+   --callback-file - < FILE`; it names the account it added or refreshed.
+4. Confirm with `agent-lb status --provider gemini`.
 
 ## Add or upgrade an account
 
@@ -77,8 +85,6 @@ first and bypassing load-balancer scoring:
 
 Interpretation and gotchas:
 
-- Responses are camelCase (`probeStatusCode`, `accountStatusAfter`), not
-  snake_case.
 - `200` = auth and subscription both usable.
 - `403` with "OAuth authentication is currently not allowed for this
   organization" = tokens are fine but the org has no active Claude
@@ -134,8 +140,7 @@ When someone asks why a projections surface says elevated risk:
 `GET /api/dashboard/projections` risk is pool-level (mean across accounts);
 `worstAccountEmail`/`worstRiskLevel` name the account driving it and
 `depletionPrimaryByProvider`/`depletionSecondaryByProvider` scope it per
-provider. A single hot account (e.g. one long interactive session pinned by
-sticky routing) elevates its own attribution, not the pool.
+provider. A single hot account elevates its own attribution, not the pool.
 
 ## Browser profiles
 
@@ -144,8 +149,7 @@ handwritten Chrome commands. `agent-lb reauth EMAIL --provider PROVIDER --dry-ru
 shows the exact profile path, CDP port and OAuth plan without starting a login.
 
 For standard websites and embedded Stripe fields use the available browser agent
-or direct Playwright CDP. Argent is not required by this account workflow; prefer
-the tool that can operate the actual form. Do not change browser tools repeatedly
+or direct Playwright CDP; prefer the tool that can operate the actual form. Do not change browser tools repeatedly
 when one already reaches the page. Keep the requested account profile open and
 preserve unrelated sessions unless the user requested their closure.
 
@@ -248,7 +252,6 @@ Verify the full signed-in email and current plan in the rendered page. A named
 folder, existing process or stored cookie does not prove account identity or login.
 Never create a second empty profile by deriving a path from the email.
 
-Prefer an available browser agent or direct Playwright CDP for normal websites.
 Use DOM locators inside Stripe frames when the browser tool cannot reach embedded
 fields. A failed DOM lookup calls for inspecting that frame's controls, not a
 30-second retry of an assumed selector. Never dump cookies, token values, form

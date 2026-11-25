@@ -100,8 +100,9 @@ The snapshot is not a reservation or a guarantee that the next request will succ
 Actual provider limits, authentication, and explicitly configured spending limits
 still apply. Set `AGENT_LB_BASE_URL` or pass `--base-url` for a non-default service.
 From a checkout without a PATH install, use `.venv/bin/agent-lb status`.
-For an existing internal runtime, `scripts/install-status-cli.sh` adds the PATH
-entry under `~/.local/bin` without restarting the service or replacing a command.
+`scripts/install-status-cli.sh` puts `agent-lb` in `~/.local/bin` without restarting
+the service or replacing an unmanaged command: it runs the local runtime, or on a box
+with none, the serving box's CLI over ssh (`AGENT_LB_REMOTE_HOST`, default `ax42`).
 
 ## Quick Start
 

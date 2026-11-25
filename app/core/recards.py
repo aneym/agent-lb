@@ -6,9 +6,11 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.core.state_dir import state_dir
+
 
 def registry_path() -> Path:
-    return Path(os.getenv("AGENT_LB_STATE_DIR", str(Path.home() / ".agent-lb/state"))) / "recards.json"
+    return state_dir() / "recards.json"
 
 
 def load_recards() -> dict[str, dict]:
