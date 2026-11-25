@@ -4,7 +4,9 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-GeminiFailureKind = Literal["rate_limit", "quota", "auth", "terms_disabled", "invalid_request", "transient"]
+GeminiFailureKind = Literal[
+    "rate_limit", "quota", "auth", "terms_disabled", "validation_required", "invalid_request", "transient"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,12 +27,14 @@ class GeminiUpstreamError(Exception):
         *,
         kind: GeminiFailureKind,
         reset_at: float | None = None,
+        validation_url: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.message = message
         self.kind = kind
         self.reset_at = reset_at
+        self.validation_url = validation_url
 
 
 class GeminiUpstream(Protocol):

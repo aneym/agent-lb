@@ -34,6 +34,7 @@ from app.modules.accounts.cache_warmer import build_accounts_cache_warmer
 from app.modules.accounts.pulse import build_account_pulse_scheduler
 from app.modules.accounts.reset_credit_scheduler import build_reset_credit_auto_redeem_scheduler
 from app.modules.api_keys import api as api_keys_api
+from app.modules.api_keys.gemini_pool_scope import attach_gemini_pool_to_scoped_keys
 from app.modules.api_keys.reset_scheduler import build_api_key_limit_reset_scheduler
 from app.modules.audit import api as audit_api
 from app.modules.conversation_archive import api as conversation_archive_api
@@ -112,6 +113,7 @@ async def lifespan(app: FastAPI):
     async with startup_recorder.phase("database"):
         await init_db()
         init_background_db()
+        await attach_gemini_pool_to_scoped_keys()
     async with startup_recorder.phase("bootstrap_token"):
         _auto_bootstrap_token = await ensure_auto_bootstrap_token()
     if _auto_bootstrap_token:
@@ -322,7 +324,6 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-
     upload_throttle.install()
     settings = get_settings()
     register_stack_dump_signal()

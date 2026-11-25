@@ -16,13 +16,14 @@ from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.providers.gemini import GEMINI_PROVIDER_NAME
 from app.core.providers.gemini_models import GeminiModel
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountStatus, StickySessionKind
 from app.db.session import get_background_session
 from app.modules.accounts.auth_manager import AccountNotOwnedError, AuthManager
 from app.modules.accounts.gemini_project import GEMINI_TERMS_DISABLED_CODE
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service_data import ApiKeyData, ApiKeyRequestUsageBudget, ApiKeyUsageReservationData
+from app.modules.proxy.gemini_affinity import gemini_sticky_key
 from app.modules.proxy.gemini_code_assist import CodeAssistGeminiUpstream
 from app.modules.proxy.gemini_errors import GeminiGatewayError
 from app.modules.proxy.gemini_fake_upstream import FakeGeminiUpstream
@@ -30,6 +31,7 @@ from app.modules.proxy.gemini_request import apply_thinking_level, normalized_re
 from app.modules.proxy.gemini_stream import GeminiUsage
 from app.modules.proxy.gemini_upstream import GeminiUpstream, GeminiUpstreamCall, GeminiUpstreamError
 from app.modules.proxy.gemini_usage_log import GeminiLogEntry, record_gemini_request, settle_gemini_reservation
+from app.modules.proxy.gemini_validation import validation_failure_code
 from app.modules.proxy.load_balancer import LoadBalancer
 from app.modules.proxy.repo_bundle import ProxyRepositories
 from app.modules.proxy.request_admission import enforce_request_limits
@@ -128,6 +130,7 @@ class GeminiGateway:
         useragent: str | None,
     ) -> GeminiAttempt:
         validate_model_access(api_key, choice.canonical_model)
+        sticky_key = gemini_sticky_key(choice.canonical_model, body)
         body = normalized_request(body)
         effort = apply_thinking_level(body, choice)
         reservation = await enforce_request_limits(
@@ -138,7 +141,7 @@ class GeminiGateway:
             provider=GEMINI_PROVIDER_NAME,
         )
         try:
-            return await self._attempt(api_key, choice, body, effort, useragent, reservation)
+            return await self._attempt(api_key, choice, body, effort, useragent, reservation, sticky_key)
         except BaseException:
             with CancelScope(shield=True):
                 await settle_gemini_reservation(reservation, model=choice.canonical_model, usage=None)
@@ -152,6 +155,7 @@ class GeminiGateway:
         effort: str,
         useragent: str | None,
         reservation: ApiKeyUsageReservationData | None,
+        sticky_key: str | None,
     ) -> GeminiAttempt:
         excluded: set[str] = set()
         refreshed: set[str] = set()
@@ -161,7 +165,9 @@ class GeminiGateway:
         while retry_account is not None or selections < MAX_ACCOUNT_ATTEMPTS:
             if retry_account is None:
                 selections += 1
-            account = retry_account or await self._select(api_key, choice.canonical_model, excluded, last_error)
+            account = retry_account or await self._select(
+                api_key, choice.canonical_model, excluded, last_error, sticky_key
+            )
             retry_account = None
             upstream = configured_upstream()
             started_at = time.monotonic()
@@ -219,8 +225,11 @@ class GeminiGateway:
         model: str,
         excluded: set[str],
         last_error: GeminiGatewayError | None,
+        sticky_key: str | None,
     ) -> Account:
         selection = await self._load_balancer.select_account(
+            sticky_key=sticky_key,
+            sticky_kind=StickySessionKind.CODEX_SESSION if sticky_key else None,
             model=model,
             provider=GEMINI_PROVIDER_NAME,
             account_ids=_scoped_account_ids(api_key),
@@ -268,6 +277,14 @@ class GeminiGateway:
             await self._load_balancer.mark_permanent_failure(account, GEMINI_TERMS_DISABLED_CODE)
             logger.error(
                 "gemini_account_terms_disabled alert=true account_id=%s status=%s", account.id, exc.status_code
+            )
+            return True
+        if exc.kind == "validation_required":
+            await self._load_balancer.mark_permanent_failure(account, validation_failure_code(exc.validation_url))
+            logger.error(
+                "gemini_account_validation_required alert=true account_id=%s validation_url=%s",
+                account.id,
+                exc.validation_url,
             )
             return True
         await self._load_balancer.record_error(account)

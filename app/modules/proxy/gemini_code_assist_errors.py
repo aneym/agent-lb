@@ -16,7 +16,8 @@ _QUOTA_FAILURE = "type.googleapis.com/google.rpc.QuotaFailure"
 _DURATION_PART = re.compile(r"([0-9]+(?:\.[0-9]+)?)(ms|h|m|s)")
 _CAPACITY = re.compile(r"exhausted your capacity|capacity exceeded|MODEL_CAPACITY_EXHAUSTED", re.IGNORECASE)
 _CAPACITY_REASONS = frozenset({"MODEL_CAPACITY_EXHAUSTED", "MODEL_CAPACITY_EXCEEDED"})
-_TERMS_REASONS = frozenset({"VALIDATION_REQUIRED", "TOS_VIOLATION", "ACCOUNT_DISABLED"})
+_TERMS_REASONS = frozenset({"TOS_VIOLATION", "ACCOUNT_DISABLED"})
+_VALIDATION_REASON = "VALIDATION_REQUIRED"
 _UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
 
 
@@ -76,6 +77,18 @@ def _reset_at(error: dict[str, Any], now: float) -> float | None:
     return None
 
 
+def _validation_url(error: dict[str, Any]) -> str | None:
+    for info in _details(error, _ERROR_INFO):
+        metadata = info.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        for key in ("validation_url", "validationUrl"):
+            url = metadata.get(key)
+            if isinstance(url, str) and url.startswith("https://"):
+                return url
+    return None
+
+
 def _daily_quota(error: dict[str, Any]) -> bool:
     for failure in _details(error, _QUOTA_FAILURE):
         violations = failure.get("violations")
@@ -91,6 +104,8 @@ def _kind(status: int, error: dict[str, Any], message: str, reset_at: float | No
     if status == 401:
         return "auth"
     if status == 403:
+        if _VALIDATION_REASON in reasons:
+            return "validation_required"
         terms = reasons & _TERMS_REASONS or "terms of service" in message.lower()
         return "terms_disabled" if terms else "invalid_request"
     if status == 429:
@@ -112,4 +127,6 @@ def upstream_error(status: int, raw: bytes) -> GeminiUpstreamError:
     text = message.strip()[:MESSAGE_LIMIT] if isinstance(message, str) and message.strip() else ""
     text = text or f"Gemini Code Assist answered {status}."
     reset_at = _reset_at(error, now) if status == 429 else None
-    return GeminiUpstreamError(status, text, kind=_kind(status, error, text, reset_at, now), reset_at=reset_at)
+    kind = _kind(status, error, text, reset_at, now)
+    validation_url = _validation_url(error) if kind == "validation_required" else None
+    return GeminiUpstreamError(status, text, kind=kind, reset_at=reset_at, validation_url=validation_url)

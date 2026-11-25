@@ -49,6 +49,7 @@ from app.modules.accounts.subscription_status import (
     normalize_subscription_status,
 )
 from app.modules.proxy.account_cache import get_account_selection_cache
+from app.modules.proxy.gemini_validation import needs_validation, validation_cleared
 
 logger = logging.getLogger(__name__)
 _ON_HOLD_MIN_RETRY_SECONDS = 3600.0
@@ -61,7 +62,6 @@ class FableProbeVerdict(str, Enum):
 
 
 def _classify_fable_probe(status: int, message: str | None) -> FableProbeVerdict:
-
     del message
     if 200 <= status < 300:
         return FableProbeVerdict.CAPABLE
@@ -71,7 +71,6 @@ def _classify_fable_probe(status: int, message: str | None) -> FableProbeVerdict
 
 
 def _is_fable_probe_routable(account: Account) -> bool:
-
     return account.status not in (
         AccountStatus.REAUTH_REQUIRED,
         AccountStatus.DEACTIVATED,
@@ -150,7 +149,6 @@ class AccountPulseScheduler:
             self._task = None
 
     async def _run_loop(self) -> None:
-
         wake_seconds = min(self.interval_seconds, self.recovery_interval_seconds)
         next_full_pass_monotonic = time.monotonic()
         while not self._stop.is_set():
@@ -268,6 +266,10 @@ class AccountPulseScheduler:
                     )
                     return
                 access_token = self._encryptor.decrypt(fresh_account.access_token_encrypted)
+                if needs_validation(fresh_account.deactivation_reason) and not await validation_cleared(
+                    fresh_account, access_token
+                ):
+                    return
                 status, message = await self.probe_sender(fresh_account, access_token)
                 verdict = probes.classify_probe_result(status, message)
                 if (
@@ -296,7 +298,6 @@ class AccountPulseScheduler:
         status: int,
         code: str | None,
     ) -> probes.ProbeVerdict:
-
         check_status = await self.openai_auth_check_sender(account, access_token)
         if check_status == 401:
             return probes.ProbeVerdict.DISCONNECTED
@@ -311,7 +312,6 @@ class AccountPulseScheduler:
         return probes.ProbeVerdict.INCONCLUSIVE
 
     async def _reconcile_fable_quota_cooldowns(self, account: Account, access_token: str) -> None:
-
         try:
             if normalize_provider_name(account.provider) != ANTHROPIC_PROVIDER_NAME:
                 return
@@ -345,7 +345,6 @@ class AccountPulseScheduler:
             )
 
     async def _maybe_probe_fable_access(self, account: Account, access_token: str) -> None:
-
         from app.core.config.settings import get_settings
 
         try:

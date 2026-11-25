@@ -21,11 +21,12 @@ from app.core.clients.oauth import (
 )
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
-from app.core.providers import OPENAI_PROVIDER_NAME, ProviderLookupError, get_provider
+from app.core.providers import GEMINI_PROVIDER_NAME, OPENAI_PROVIDER_NAME, ProviderLookupError, get_provider
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.db.session import get_background_session
 from app.modules.accounts.identity_repository import AccountIdentityConflictError
 from app.modules.accounts.repository import AccountsRepository
+from app.modules.api_keys.gemini_pool_scope import attach_gemini_pool_to_scoped_keys
 from app.modules.oauth.account_bind import save_signed_in_account
 from app.modules.oauth.callbacks import (
     _ACCOUNT_IDENTITY_CONFLICT_MESSAGE,
@@ -76,7 +77,6 @@ _OAUTH_STORE = OAuthStateStore()
 
 
 async def pending_oauth_flow_ages() -> list[float]:
-
     async with _OAUTH_STORE.lock:
         return _OAUTH_STORE.pending_flow_ages_locked()
 
@@ -390,6 +390,8 @@ class OauthService(OAuthCallbackHandlers):
                 await save_signed_in_account(repo, account, expected_id)
         else:
             await save_signed_in_account(self._accounts_repo, account, expected_id)
+        if provider_name == GEMINI_PROVIDER_NAME:
+            await attach_gemini_pool_to_scoped_keys()
         await self._invalidate_account_routing_caches()
 
     async def _invalidate_account_routing_caches(self) -> None:
