@@ -42,7 +42,7 @@ cat > "$UNITS/$UNIT.timer" <<TIMER
 Description=Check every 5 minutes on $DAY whether the Claude pool has run dry
 
 [Timer]
-OnCalendar=$DAY *:0/5
+OnCalendar=$DAY *:0/5 UTC
 AccuracySec=10s
 
 [Install]
