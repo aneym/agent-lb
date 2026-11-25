@@ -199,3 +199,7 @@ A forwarded address counts for the keyless list only with the ingress proof file
 2026-11-25: [Keep delegated Fable & Recruiter Opus on 1h cache](docs/decisions/delegated-fable-1h-cache.md).
 
 2026-11-25: [Anthropic weekly-only refresh & 429 backoff](docs/decisions/anthropic-weekly-only-usage-refresh.md).
+
+## 2026-11-25: Default non-visual work to Codex Sol
+
+Use `sol-latest` at high for non-visual lanes, executors and routine work. Give every Sol build or result one light Opus 5.5 review at medium. Fix small nits inline and finish after that pass. Use GPT-6.2 Astra at high for build-loop E2E testing. Keep Gemini 4 Neon for person-facing chats and xhigh planning where its input is likely to improve the decision. The coding-agent policy installer renders this guidance from `config/coding-agents/routing/core.md`.

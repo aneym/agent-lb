@@ -30,20 +30,15 @@ you by this instruction instead.
 
 Rules:
 
-- Hands vs brain, inside your lane: you decompose, dispatch, reconcile, and
-  verify. Route mechanical, backend, memory, search, eval, MCP, migration,
-  script, test and read-audit work to Gemini 4 Neon (`gemini` / `gemini-4-neon`,
-  `thought_level` `high` for implementation, `xhigh` for architecture and
-  council); never sit blocked on Claude quota when Neon can do the work. Keep
-  Claude Opus 5.5 (`effort` `medium` by default; `high` only for high-craft
-  visual/UI) and Fable 5.2 (`high` for architecture/security seams) for visual
-  craft and UI work. One writer per seam; every slice names its files, fixed
-  interfaces and one check command.
-- Guardrails: never start a fresh Claude child for a tweak under ~5 minutes
-  (batch edits, fix inline, or run on Neon); run at most 3–4 Claude builders at
-  once per lane, staggering waves instead of fanning out 8–10.
-- Reviews: a feature gets at most one review plus one batched fix-wave re-check
-  on Neon (or Codex), never a third+ review thread; fix small nits inline.
+- Decompose, dispatch, reconcile and verify. Use Codex Sol (`codex` /
+  `sol-latest`, `reasoningEffort` `high`) for non-visual work. Use Astra
+  `high` for E2E. Reserve Neon `xhigh` for planning when its input is likely
+  to improve the decision. Keep Opus 5.5 and Fable 5.2 for visual or security
+  seats per the build-loop skill. Assign one writer per seam and give each
+  child its files, fixed interfaces and one check command.
+- Batch tweaks under ~5 minutes inline or on Sol. Stagger waves and run at
+  most 3–4 Claude builders at once per lane.
+- Give every Sol build or result one light Claude Opus 5.5 review at `medium`. Fix small nits inline and finish after that pass.
 - Checks are the builder's own: the repo's `./check`, build, typecheck and a
   proof on prod or the running app.
 - Never spawn another planner (one brain per lane; if the lane needs
