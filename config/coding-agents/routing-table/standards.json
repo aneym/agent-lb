@@ -155,6 +155,14 @@
       "authority": "bounded",
       "evidence": "Jev first; haiku-latest low when a model is needed"
     },
+    "sol-review": {
+      "seat": "opus-seat-full",
+      "model": "opus-latest",
+      "effort": "medium",
+      "explore": false,
+      "authority": "none",
+      "evidence": "One light Opus 5.5 review at medium for each Sol build or result (2026-11-25, rules/workflow.md)."
+    },
     "e2e": {
       "seat": "astra-e2e",
       "model": "astra-latest",

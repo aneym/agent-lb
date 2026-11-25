@@ -136,6 +136,16 @@
         }
       ]
     },
+    "sol-review": {
+      "chain": [
+        {
+          "seat": "opus-seat-full",
+          "model": "opus-latest",
+          "vendor": "anthropic",
+          "effort": "medium"
+        }
+      ]
+    },
     "e2e": {
       "chain": [
         {

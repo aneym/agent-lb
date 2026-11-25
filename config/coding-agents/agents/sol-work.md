@@ -1,7 +1,7 @@
 ---
 name: sol-work
 description: "Codex Sol high for non-visual planning, implementation, research and routines. Start it through route or T3 delegate_task."
-model: sol-latest-high
+model: sol-latest
 effort: high
 ---
 

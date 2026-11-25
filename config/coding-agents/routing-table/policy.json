@@ -158,6 +158,9 @@
         "digest": [
           "high"
         ],
+        "sol-review": [
+          "medium"
+        ],
         "e2e": [
           "high"
         ],
