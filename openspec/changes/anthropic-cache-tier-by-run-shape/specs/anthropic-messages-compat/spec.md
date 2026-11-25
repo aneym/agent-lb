@@ -19,14 +19,19 @@ For Anthropic Claude Code requests that carry ephemeral cache breakpoints, the p
 - **THEN** the request is forwarded unchanged
 
 ### Requirement: Short-gap classes write the five-minute tier
-When `anthropic_short_gap_cache_5m_enabled` is on, the proxy MUST set the five-minute tier, ahead of the session one-hour rule, for three classes whose measured gaps make five minutes cheaper: Fable requests from a T3 delegated-task child thread (`x-agent-lb-thread` starting `thread:delegated-task:`), Opus requests from the Recruiter agent home (`x-agent-lb-agent: recruiter`), and requests from seat `rails-runner`. Every other session keeps the one-hour tier. The proxy MUST NOT forward `x-agent-lb-agent` upstream.
+When `anthropic_short_gap_cache_5m_enabled` is on, the proxy MUST set the five-minute tier, ahead of the session one-hour rule, only for seat `rails-runner` (true one-shot routine runs). Long-lived delegated Fable threads (`thread:delegated-task:`) and Recruiter Opus sessions MUST keep the one-hour tier. The proxy MUST NOT forward `x-agent-lb-agent` upstream.
 
 #### Scenario: A Fable delegated child
-- **GIVEN** a `claude-fable-5-2` request stamped with a `thread:delegated-task:` thread
+- **GIVEN** a `claude-fable-5-2` request stamped with a `thread:delegated-task:` thread from `t3-code`
 - **WHEN** the proxy forwards it
-- **THEN** every breakpoint carries `ttl: 5m`
+- **THEN** every breakpoint carries `ttl: 1h` and the extended cache TTL beta is set
 
 #### Scenario: A main chat on Fable
 - **GIVEN** a `claude-fable-5-2` request stamped with an `mcp:launch:` thread
 - **WHEN** the proxy forwards it
 - **THEN** every breakpoint carries `ttl: 1h`
+
+#### Scenario: A rails-runner routine run
+- **GIVEN** a request from seat `rails-runner`
+- **WHEN** the proxy forwards it
+- **THEN** every breakpoint carries `ttl: 5m`

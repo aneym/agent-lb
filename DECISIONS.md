@@ -279,3 +279,5 @@ Loopback no longer reads accounts, pools, usage or keys without one: shared agen
 ## 2026-11-17: Keyless dashboard needs the real peer
 
 A forwarded address counts for the keyless list only with the ingress proof file, so no ax42 process can claim the operator's devices over loopback.
+
+2026-11-25: [Keep delegated Fable & Recruiter Opus on 1h cache](docs/decisions/delegated-fable-1h-cache.md).
