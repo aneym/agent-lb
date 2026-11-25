@@ -2,7 +2,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-url="${OF_AGENT_LB_URL:-https://studio.tailf266ac.ts.net:2455}"
+url="${OF_AGENT_LB_URL:-https://ax42.tailf266ac.ts.net:8455}"
 other_port="${PROBE_OTHER_PORT:-8950}"
 python="${HARBOR_PYTHON:-$HOME/.local/share/uv/tools/harbor/bin/python}"
 image="${EGRESS_SIDECAR_IMAGE:-$(docker images --format '{{.Repository}}:{{.Tag}}' | grep 'harbor-docker-egress-control-sidecar' | head -1)}"

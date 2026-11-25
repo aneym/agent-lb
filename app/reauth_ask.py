@@ -12,7 +12,7 @@ from app.core.thread_delivery import send
 
 ASKER = "factory"
 ASK_GAP_S = 24 * 3600
-DASHBOARD = os.getenv("AGENT_LB_DASHBOARD_URL", "https://studio.tailf266ac.ts.net:2455").rstrip("/")
+DASHBOARD = os.getenv("AGENT_LB_DASHBOARD_URL", "https://ax42.tailf266ac.ts.net:8455").rstrip("/")
 
 WHY = {
     "stuck:password": "it stopped at a password prompt",

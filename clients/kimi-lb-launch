@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from claude_lb_common import HERON_LB_URL, STUDIO_LB_URL
+from claude_lb_common import HERON_LB_URL
 
 
 def main() -> None:
@@ -33,8 +33,7 @@ def main() -> None:
             model = argv[index + 1]
         elif arg.startswith("--model="):
             model = arg.partition("=")[2]
-    default_url = HERON_LB_URL if sys.platform == "darwin" else STUDIO_LB_URL
-    base_url = os.environ.get("AGENT_LB_KIMI_BASE_URL") or os.environ.get("CLAUDE_LB_BASE_URL", default_url)
+    base_url = os.environ.get("AGENT_LB_KIMI_BASE_URL") or os.environ.get("CLAUDE_LB_BASE_URL", HERON_LB_URL)
     env = os.environ.copy()
     env.update(
         ANTHROPIC_BASE_URL=base_url,

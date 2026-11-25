@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const url = process.env.LB_USAGE_URL || "https://studio.tailf266ac.ts.net:2455/usage";
+const url = process.env.LB_USAGE_URL || "https://ax42.tailf266ac.ts.net:8455/usage";
 const out = process.env.LB_QUOTA_EVIDENCE || mkdtempSync(path.join(tmpdir(), "lb-quota-proof-"));
 mkdirSync(out, { recursive: true });
 const steps = path.join(out, "quota-steps.json");
