@@ -117,7 +117,7 @@ def answered(ask, host, now):
     if ask.get("state") != "done" or ask.get("dropped_at") is not None or not isinstance(answer, dict):
         raise Refused("the ask is not answered")
     if answer.get("answered_by") != "owner" or answer.get("source") is not None:
-        raise Refused("the person did not answer the ask themselves in Needs you")
+        raise Refused("the person did not answer the ask themselves in Inbox")
     choice, options = answer.get("choice"), ask.get("options")
     if answer.get("not_needed") is not False or not isinstance(options, list) or choice not in options:
         raise Refused("the answer is not one of the ask's options")

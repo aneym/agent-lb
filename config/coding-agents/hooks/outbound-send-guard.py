@@ -15,7 +15,7 @@ TRIGGER = re.compile(
 )
 NEXT = (
     "Ask Alex for this exact text through Rails: raise a hold for it (hold_raise, kind message, the exact text) so it lands "
-    "on his Needs you card, or send it with the Rails gated tool (gmail_send and the like). After his Allow, hold_get "
+    "on his Inbox card, or send it with the Rails gated tool (gmail_send and the like). After his Allow, hold_get "
     "returns a signed receipt: write it to a file (mode 600, never print it), hold_consume it, then cite the file on the "
     'call: AGENT_OUTBOUND_APPROVAL=<receipt file> <command>, --approval <receipt file>, or an "approval" field on an MCP '
     "call. A local approval file, a note or an agent grant is not his yes; a yes covers that exact message only."
