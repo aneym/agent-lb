@@ -29,11 +29,11 @@
     },
     "review": {
       "seat": "plan-reviewer",
-      "model": "fable-latest",
+      "model": "opus-latest",
       "effort": "high",
       "explore": false,
       "authority": "verdict",
-      "evidence": "Fable 5.2 high reviews architecture and scoping docs before Alex sees them, never a merge or deploy gate, and since 2026-11-11 architects difficult things (record alex-fable-architects-hard-things-2026-11-11.md) (Alex, 2026-11-10 ~16:14Z: \"have architecture and scoping docs get a fable reviwe before presenting them to me\"; record alex-all-agents-opus-fable-doc-review-2026-11-10.md)"
+      "evidence": "Opus 5.5 high reviews architecture and scoping docs before Alex sees them. This is not a merge or deploy gate (Alex, 2026-11-25 19:07 ET, Factory main)."
     },
     "design": {
       "seat": "frontend-designer",
@@ -41,7 +41,7 @@
       "effort": "high",
       "explore": false,
       "authority": "architecture",
-      "evidence": "Every agent seat runs Opus 5.5 high; Fable 5.2 reviews architecture and scoping docs, architects difficult things (2026-11-11) and runs any pass or task Alex asks Fable for (record alex-fable-on-request-2026-11-11.md) (Alex, 2026-11-10 ~16:14Z: \"yeah lets just have all agents on opus\"; record alex-all-agents-opus-fable-doc-review-2026-11-10.md)"
+      "evidence": "Opus 5.5 high handles design planning. Fable is available only when Alex names it for a task (Factory main, 2026-11-25 19:07 ET; alex-fable-on-request-2026-11-11.md)."
     },
     "audit": {
       "seat": "plan-reviewer",

@@ -198,6 +198,8 @@ A forwarded address counts for the keyless list only with the ingress proof file
 
 2026-11-25: [Keep delegated Fable & Recruiter Opus on 1h cache](docs/decisions/delegated-fable-1h-cache.md).
 
+2026-11-25: Default Claude leads and planners to Opus 5.5 high, builders to Opus 5.5 medium. Keep Fable only when Alex names it for a task. Leave existing chats' stored models alone. Alex in Factory main, 19:07 ET: "we should probably be using Fable a lot less and just defaulting to Opus".
+
 2026-11-25: [Anthropic weekly-only refresh & 429 backoff](docs/decisions/anthropic-weekly-only-usage-refresh.md).
 
 ## 2026-11-25: Default non-visual work to Codex Sol

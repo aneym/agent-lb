@@ -15,7 +15,7 @@
     "plan-reviewer": {
       "vendor": "anthropic",
       "box": null,
-      "model": "fable-latest",
+      "model": "opus-latest",
       "effort": "high"
     },
     "fable-orchestrator": {

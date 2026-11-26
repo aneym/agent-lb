@@ -50,7 +50,7 @@
       "chain": [
         {
           "seat": "plan-reviewer",
-          "model": "fable-latest",
+          "model": "opus-latest",
           "vendor": "anthropic",
           "effort": "high"
         }

@@ -58,7 +58,7 @@ def frontmatter_model(text: str) -> str | None:
 
 
 settings = verify_installation(SOURCE_ONLY, HOME, SOURCE, CANONICAL, check, read, unpinned, MARKER_START, MARKER_END, MANAGED)
-for name, family in (("plan-reviewer", "fable"), ("frontend-designer", "opus")):
+for name, family in (("plan-reviewer", "opus"), ("frontend-designer", "opus")):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
     check(model == family, f"{name} runs on the newest {family.title()} via `model: {family}` (got {model})")
 

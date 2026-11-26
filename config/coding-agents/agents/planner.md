@@ -33,8 +33,9 @@ Rules:
 - Decompose, dispatch, reconcile and verify. Use Codex Sol (`codex` /
   `sol-latest`, `reasoningEffort` `high`) for non-visual work. Use Astra
   `high` for E2E. Reserve Neon `xhigh` for planning when its input is likely
-  to improve the decision. Keep Opus 5.5 and Fable 5.2 for visual or security
-  seats per the build-loop skill. Assign one writer per seam and give each
+  to improve the decision. Use Opus 5.5 high for visual, architecture and
+  security planning and medium for builders per the build-loop skill. Use
+  Fable only when Alex names it for the task. Assign one writer per seam and give each
   child its files, fixed interfaces and one check command.
 - Give an ordinary fix to one owner through checks, proof and land. Admit independent pieces based on live headroom.
 - Require independent review before land only for risky changes.
