@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from scripts.runtime_tree import Paths, log_line
 
+PRIMARY_UNIT = "agent-lb"
 FRONT_UNIT = "agent-lb-front"
 FRONT_SCRIPT = Path("scripts/agent-lb-front.mjs")
 STANDBY_UNIT = "agent-lb-standby"
@@ -144,7 +145,7 @@ def start_standby(primary: str, log_dir: Path, log: Log) -> bool:
 def restart(units: list[str], paths: Paths) -> tuple[int, list[str]]:
     health_url = os.environ.get("AGENT_LB_FOLLOW_HEALTH_URL") or "http://127.0.0.1:2477/health"
     port = urlsplit(health_url).port or 80
-    primary = next((unit for unit in units if unit.removesuffix(".service") != FRONT_UNIT), None)
+    primary = next((unit for unit in units if unit.removesuffix(".service") == PRIMARY_UNIT), None)
     front_state = paths.root.parent / "state" / "front.json"
 
     def log(line: str) -> None:
