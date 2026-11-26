@@ -14,6 +14,8 @@ On macOS pkill and killall treat every word after the first name as another name
 
 Studio can never be wired to Ethernet. Never ask anyone to wire Studio to Ethernet or suggest it. Treat Studio as having poor Wi-Fi connectivity. Design workflows to run on Book and servers without depending on Studio.
 
+A doc or page for Alex is visual work: build it through the share-page skill (`~/.agents/skills/share-page/SKILL.md`) following `~/.claude/docs/plan-docs.md`, with a picture in each section, and read the light, dark, desk and phone shots `rails-one-doc` prints before you call it done.
+
 Machines and browser: `~/.agents/shared/MACHINES.md`. CLIs: `~/.agents/shared/CLI-INDEX.md`. Tests: load `test-audit` before writing or changing one. Research Alex asks for: run `x-pass "<question>"` once.
 
 Delegation: delegate bounded work to cheaper workers, answer simple asks directly. `~/.agent-lb/bin/route resolve <alias>` gives the model id; set `reasoning_effort` and `fork_turns: "none"`. Luna for mechanical, Terra for bounded implementation, Sol for hard diagnosis. Details: `~/.claude/docs/codex-delegation.md`.
