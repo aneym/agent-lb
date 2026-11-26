@@ -86,7 +86,9 @@ def _standby_command(primary: str, log_dir: Path) -> list[str]:
     shown = _systemctl(
         "show", primary, "-p", "ExecStart", "-p", "WorkingDirectory", "-p", "EnvironmentFiles", "-p", "Environment"
     ).stdout
-    props = dict(line.split("=", 1) for line in shown.splitlines() if "=" in line)
+    props: dict[str, str] = {}
+    for key, value in (line.split("=", 1) for line in shown.splitlines() if "=" in line):
+        props[key] = f"{props[key]}\n{value}" if key in props else value
     found = re.search(r"argv\[\]=(.*?) ;", props.get("ExecStart", ""))
     if found is None:
         raise RuntimeError(f"{primary} shows no ExecStart")
