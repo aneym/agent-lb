@@ -192,8 +192,11 @@ def key_headers():
 
 def environment_of(db):
     path = os.path.join(os.path.dirname(db), "environment-id")
-    with open(path, encoding="utf-8") as handle:
-        value = handle.read().strip()
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = handle.read().strip()
+    except FileNotFoundError:
+        return None
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,96}", value):
         raise Drift("invalid T3 environment id")
     return value
@@ -244,8 +247,9 @@ def main(argv=None):
         summary["sampleNativeSessions"] = sessions[:5]
         print(json.dumps(summary, indent=2))
         return 0
-    for thread in threads:
-        thread["environmentId"] = environment
+    if environment:
+        for thread in threads:
+            thread["environmentId"] = environment
     try:
         send(args.base_url, args.host, threads, sessions)
     except (HTTPError, URLError, OSError) as error:
