@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-ALERT_TO = "factory"
+ALERT_TO = "factory-office"
 LOW_HOURS = 3.0
 REARM_HOURS = 6.0
 FALLBACK_SENDER = Path.home() / ".agent-rails/factory-runtime/bin/orch-watch-alert"
@@ -29,15 +29,9 @@ def _save(path: Path, state: dict[str, Any]) -> None:
 
 
 def _send(message: str) -> None:
-    sender = shutil.which("orch-watch-alert") or str(FALLBACK_SENDER)
-    result = subprocess.run(
-        [sender, "--message", message],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-        env=dict(os.environ, ORCH_WATCH_ALERT_TO=os.environ.get("ORCH_WATCH_ALERT_TO") or ALERT_TO),
-    )
+    from app.core.thread_delivery import send
+
+    result = send(ALERT_TO, message, timeout=60)
     if result.returncode:
         reason = (result.stderr or result.stdout).strip().splitlines()
         raise RuntimeError(f"orch-watch-alert exited {result.returncode}: {(reason[-1] if reason else '')[:300]}")

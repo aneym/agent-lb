@@ -9,8 +9,13 @@ from pathlib import Path
 
 
 def _record(target: str) -> dict | None:
-    path = Path.home() / ".agent-rails/agents" / target / "agent.json"
-    return json.loads(path.read_text()) if path.is_file() else None
+    path = Path.home() / ".agent-rails/agents" / ("factory" if target == "factory-office" else target) / "agent.json"
+    record = json.loads(path.read_text()) if path.is_file() else None
+    if target == "factory-office":
+        if not record or not (record.get("t3") or {}).get("office"):
+            raise ValueError("factory has no office binding")
+        return {"t3": record["t3"]["office"]}
+    return record
 
 
 def thread_id(target: str) -> str:

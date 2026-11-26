@@ -16,7 +16,7 @@ NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 SSH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]*$")
 STAMP = "%Y-%m-%dT%H:%M:%SZ"
 HOSTS = Path(__file__).resolve().parent / "fleet-hosts.json"
-ALERT_TO = "factory"
+ALERT_TO = "factory-office"
 BAD = {"unreachable", "missing", "failed", "stale", "behind"}
 PROBE = """import json,os,time
 from pathlib import Path
@@ -142,9 +142,13 @@ def alert(name, result, origin):
         detail[:400],
     )
     try:
-        send(ALERT_TO, text.strip())
+        sent = send(ALERT_TO, text.strip())
+        if sent.returncode:
+            raise ValueError("send exited %s: %s" % (sent.returncode, sent.stderr.strip()))
+        return True
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print("coding-agents-fleet-status: alert not sent: %s" % exc, file=sys.stderr)
+        return False
 
 
 def write_state(path, value):
@@ -187,10 +191,16 @@ def main():
         "hosts": results,
         "warnings": warnings,
     }
-    write_state(state_path, state)
+    delivered = prior.get("delivered", {})
     for name, result in results.items():
-        if result["status"] in BAD and result["status"] != prior.get("hosts", {}).get(name, {}).get("status"):
-            alert(name, result, origin)
+        fingerprint = [result["status"], (result["failure"] or {}).get("reason"), (result["failure"] or {}).get("detail"), result["error"]]
+        if result["status"] in BAD:
+            if delivered.get(name) != fingerprint and alert(name, result, origin):
+                delivered[name] = fingerprint
+        else:
+            delivered.pop(name, None)
+    state["delivered"] = delivered
+    write_state(state_path, state)
     print(json.dumps(state, ensure_ascii=False))
     return 0
 

@@ -6,6 +6,8 @@ import socket
 import subprocess
 import sys
 import time
+import json
+from pathlib import Path
 
 from app.core.thread_delivery import send
 from app.core.config.service_database import LOCAL_DATABASE_URL, primary_database_url
@@ -49,11 +51,16 @@ def alert(target: str, sender: str, host: str, problem: str) -> int:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Post to a lane when agent-lb receipts stop arriving.")
     parser.add_argument("--minutes", type=int, default=60)
-    parser.add_argument("--to", default="factory")
+    parser.add_argument("--to", default="factory-office")
     parser.add_argument("--from", dest="sender", default="agentlb-receipts")
     args = parser.parse_args(argv)
     host = socket.gethostname().split(".")[0]
     url = os.environ.get("AGENT_LB_DATABASE_URL") or primary_database_url() or LOCAL_DATABASE_URL
+    state_path = Path.home() / ".agent-lb/receipts-guard-alert.json"
+    try:
+        previous = json.loads(state_path.read_text())
+    except (OSError, ValueError):
+        previous = None
     try:
         count = read_count(url, args.minutes)
     except Exception as exc:
@@ -61,10 +68,18 @@ def main(argv: list[str] | None = None) -> None:
     else:
         print(f"receipts guard: {count} receipts in the last {args.minutes} min on {host}")
         if count:
+            state_path.unlink(missing_ok=True)
             return
         problem = f"0 receipts in the last {args.minutes} min"
     print(f"receipts guard: {problem}", file=sys.stderr)
-    raise SystemExit(alert(args.to, args.sender, host, problem) or 3)
+    if previous != problem:
+        if alert(args.to, args.sender, host, problem):
+            raise SystemExit(1)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        temp = state_path.with_suffix(".tmp")
+        temp.write_text(json.dumps(problem))
+        os.replace(temp, state_path)
+    raise SystemExit(3)
 
 
 if __name__ == "__main__":

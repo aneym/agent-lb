@@ -1,11 +1,15 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 STATE = Path(".agent-lb/claude-config-alert.json")
 BLOCKING = ("dirty", "diverged", "off_main", "failed")
-ALERT_TO = "factory"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from app.core.thread_delivery import send
+
+ALERT_TO = "factory-office"
 
 
 def notify(home, outcome, kept):
@@ -30,14 +34,7 @@ def notify(home, outcome, kept):
             "coding-agents-sync cannot pull hook and rule changes until it is reconciled "
             "(land the edit in a claude-config worktree, then git restore the path)."
         )
-    sent = subprocess.run(
-        ["orch-watch-alert", "--message", message],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-        env=dict(os.environ, ORCH_WATCH_ALERT_TO=os.environ.get("ORCH_WATCH_ALERT_TO") or ALERT_TO),
-    )
+    sent = send(ALERT_TO, message, timeout=60)
     if sent.returncode:
         reason = (sent.stderr or sent.stdout).strip().splitlines()
         raise subprocess.SubprocessError(
