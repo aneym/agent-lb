@@ -41,6 +41,7 @@ LIVE_TOP = (
     "docker-compose.yml",
 )
 RESTART_EXCEPT = ("scripts/run-agent-lb.sh",)
+LIVE_JOBS = frozenset({"app/receipts_guard.py", "app/usage_export_alert.py"})
 PENDING_KEYS = (
     "restart_pending_since",
     "restart_paths",
@@ -64,7 +65,7 @@ def split(changes: list[str], own: set[str], held: list[str]) -> tuple[list[str]
     for line in changes:
         rel = rel_of(line)
         top = "/" not in rel and (rel in LIVE_TOP or rel.endswith(".md"))
-        is_live = rel not in RESTART_EXCEPT and (top or rel.startswith(LIVE_PREFIXES))
+        is_live = rel not in RESTART_EXCEPT and (top or rel in LIVE_JOBS or rel.startswith(LIVE_PREFIXES))
         if is_live or (rel in own and not line.startswith("*deleting")):
             live.append(rel)
         if not is_live:
