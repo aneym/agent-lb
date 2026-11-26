@@ -40,10 +40,27 @@ def _first_turn(body: dict[str, Any]) -> str | None:
     return json.dumps([system, first_user], ensure_ascii=False, separators=(",", ":"))
 
 
+def _cascade_id(body: dict[str, Any]) -> str | None:
+    labels = body.get("labels")
+    if isinstance(labels, dict):
+        for key in ("cascade_id", "cascadeId"):
+            value = labels.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    for key in ("cascade_id", "cascadeId"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def gemini_sticky_key(model: str, body: dict[str, Any]) -> str | None:
     thread = get_thread_id()
     if thread:
         return f"gemini:{model}:thread:{_digest(thread)}"
+    cascade = _cascade_id(body)
+    if cascade:
+        return f"gemini:{model}:cascade:{_digest(cascade)}"
     session = body.get("sessionId", body.get("session_id"))
     if isinstance(session, str) and session.strip():
         return f"gemini:{model}:session:{_digest(session.strip())}"

@@ -183,7 +183,7 @@ class SettingsFields(BaseSettings):
     http_responses_session_bridge_enabled: bool = True
     http_responses_session_bridge_request_budget_seconds: float = Field(default=7200.0, gt=0)
 
-    http_bridge_first_event_timeout_seconds: float = Field(default=60.0, gt=0)
+    http_bridge_first_event_timeout_seconds: float = Field(default=180.0, gt=0)
 
     http_bridge_strip_foreign_encrypted_reasoning: bool = True
     http_responses_session_bridge_idle_ttl_seconds: float = Field(default=120.0, gt=0)
