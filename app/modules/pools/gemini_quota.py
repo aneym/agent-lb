@@ -132,7 +132,7 @@ def gemini_view(reading: dict[str, Any] | None, now: datetime) -> GeminiView:
         w is not None and w.used_percent >= 100.0 and (w.resets_at is None or w.resets_at > now)
         for w in (short, weekly)
     )
-    erred = last_error is not None and now - (last_error + METER_BUCKET) <= QUOTA_ERROR_HOLD
+    erred = last_error is not None and last_error <= now and now - (last_error + METER_BUCKET) <= QUOTA_ERROR_HOLD
     hold = "vendor_cap" if capped else "quota_error" if erred else None
     return GeminiView(
         state=state,

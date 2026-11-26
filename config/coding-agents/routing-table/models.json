@@ -138,6 +138,11 @@
       "vendor": "openai",
       "family": "astra",
       "pinned": "gpt-6.2-astra"
+    },
+    "hydrogen-latest": {
+      "vendor": "google",
+      "family": "hydrogen",
+      "pinned": "gemini-4-hydrogen-medium"
     }
   },
   "retired": [

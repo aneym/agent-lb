@@ -354,6 +354,11 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
         cached_input_per_1m=0.15,
         output_per_1m=15.0,
     ),
+    "gemini-4-hydrogen": ModelPrice(
+        input_per_1m=0.5,
+        cached_input_per_1m=0.05,
+        output_per_1m=2.5,
+    ),
 }
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
@@ -363,6 +368,11 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
         f"{model}-{suffix}": model
         for model in ("gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.1-terra")
         for suffix in ("minimal", "low", "medium", "high", "xhigh", "fast")
+    },
+    **{
+        f"{model}-{suffix}": model
+        for model in ("gemini-4-neon", "gemini-4-hydrogen")
+        for suffix in ("low", "medium", "high", "xhigh")
     },
     "gpt-5.6-sol*": "gpt-5.6-sol",
     "gpt-5.6-terra*": "gpt-5.6-terra",

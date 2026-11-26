@@ -17,7 +17,7 @@ from app.core.clients.code_assist import (
 )
 from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
-from app.core.providers.gemini_models import GEMINI_NEON_MODEL
+from app.core.providers.gemini_models import GEMINI_HYDROGEN_MODEL, GEMINI_NEON_MODEL
 from app.modules.accounts.gemini_project import remember_gemini_project
 from app.modules.proxy.gemini_code_assist_errors import upstream_error
 from app.modules.proxy.gemini_code_assist_wire import code_assist_request, gemini_chunk
@@ -79,6 +79,14 @@ def _raise_stream_error(item: object) -> None:
         raise upstream_error(status, json.dumps(item).encode())
 
 
+def resolve_upstream_model(call_model: str, effort: str, default_neon_model: str) -> str:
+    if call_model == GEMINI_NEON_MODEL:
+        return f"{default_neon_model}-{effort}"
+    if call_model == GEMINI_HYDROGEN_MODEL:
+        return f"{GEMINI_HYDROGEN_MODEL}-{effort}"
+    return call_model
+
+
 class CodeAssistGeminiUpstream:
     def stream(self, call: GeminiUpstreamCall) -> AsyncGenerator[dict[str, Any], None]:
         return self._stream(call)
@@ -86,7 +94,7 @@ class CodeAssistGeminiUpstream:
     async def _stream(self, call: GeminiUpstreamCall) -> AsyncGenerator[dict[str, Any], None]:
         settings = get_settings()
         project_id = await _project(call)
-        model = f"{settings.gemini_code_assist_model}-{call.effort}" if call.model == GEMINI_NEON_MODEL else call.model
+        model = resolve_upstream_model(call.model, call.effort, settings.gemini_code_assist_model)
         payload = code_assist_request(
             call.body,
             model=model,

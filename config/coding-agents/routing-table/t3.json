@@ -45,6 +45,11 @@
         "providerInstanceId": "gemini",
         "model": "gemini-4-neon",
         "effort_option": "thought_level"
+      },
+      "hydrogen-latest": {
+        "providerInstanceId": "gemini",
+        "model": "gemini-4-hydrogen-medium",
+        "effort_option": "thought_level"
       }
     },
     "environments": {
