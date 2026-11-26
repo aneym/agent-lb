@@ -3,10 +3,13 @@
   "private": true,
   "version": "1.20.0-beta.3",
   "type": "module",
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.4",
   "scripts": {
     "dev": "vite",
-    "build": "tsrs -b && vite build",
+    "build": "bun check --no-script -b && vite build",
+    "typecheck": "bun check --no-script -b",
+    "format": "bun fmt --no-script",
+    "format:check": "bun fmt --no-script --check",
     "shots": "scripts/aside-shots.sh",
     "lint": "factory-lint check --changed",
     "preview": "vite preview"
