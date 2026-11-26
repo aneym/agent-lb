@@ -27,7 +27,7 @@ def authorized(url, key_name, body=None):
     ).stdout.strip()
     if not key:
         raise ValueError("empty credential")
-    headers = {"Authorization": "Bearer " + key, "Accept": "application/json"}
+    headers = {"Authorization": "Bearer " + key, "Accept": "application/json", "User-Agent": "agent-lb-rails-model-burn/1"}
     payload = None
     if body is not None:
         headers["Content-Type"] = "application/json"
