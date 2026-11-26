@@ -6,8 +6,7 @@ import logging
 import random
 import re
 import time
-from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -34,6 +33,7 @@ from app.core.anthropic.quota_headers import parse_unified_utilization as _parse
 from app.core.anthropic.quota_keys import model_quota_key
 from app.core.auth.refresh import classify_refresh_error
 from app.core.balancer.error_rules import match_error_rule
+from app.core.balancer.exclusions import active_model_exclusions
 from app.core.balancer.types import UpstreamError
 from app.core.clients import upstream_body
 from app.core.clients.http import lease_http_session
@@ -73,6 +73,7 @@ from app.modules.proxy.anthropic_rate_limits import (
     rate_limit_error_from_response,
 )
 from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, overloaded_backoff_jitter
+from app.modules.proxy.anthropic_selection_details import AnthropicSelectionDetails
 from app.modules.proxy.anthropic_thread_anchor import ThreadAnchor
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
 from app.modules.proxy.anthropic_transport import AnthropicTransport
@@ -94,6 +95,7 @@ from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
 from app.modules.proxy.mirror_tokens import MirrorTokenRefresh
 from app.modules.proxy.openrouter_usage import chat_usage, collect_chat_usage
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
+from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.usage.additional_quota_keys import get_additional_quota_definition_for_model
 from app.modules.usage.anthropic_live_quota import observe_anthropic_quota
 
@@ -365,6 +367,8 @@ class _AnthropicQuotaEligibility:
 
     cooldown_blocked_count: int = 0
     cooldown_reset_at: int | None = None
+    model_hold_count: int = 0
+    weekly_exhausted_count: int = 0
 
     paid_fallback_account_ids: frozenset[str] = frozenset()
 
@@ -380,7 +384,7 @@ def _upload_admission_error(exc: upload_admission.UploadAdmissionTimeout) -> tup
     return code, upload_admission.failure_message(exc)
 
 
-class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
+class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, AnthropicTransport):
     def __init__(self, repo_factory: ProxyRepoFactory) -> None:
         self._repo_factory = repo_factory
         self._load_balancer = LoadBalancer(repo_factory)
@@ -1344,7 +1348,9 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
     ) -> Account:
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             quota_key = model_quota_key(model, quota_key)
-        eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=model)
+        eligibility = await self._provider_quota_eligibility(
+            provider_name, quota_key, model=model, attempted_account_ids=exclude_account_ids
+        )
         if provider_name == ANTHROPIC_PROVIDER_NAME and not eligibility.account_ids and eligibility.blocked_count == 0:
             async with self._repo_factory() as repos:
                 has_accounts = any(
@@ -1374,6 +1380,16 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                 if eligibility.next_reset_at is not None
                 else ""
             )
+            hold_suffix = (
+                f" Operator holds exclude {eligibility.model_hold_count} of those accounts."
+                if eligibility.model_hold_count
+                else ""
+            )
+            weekly_suffix = (
+                f" All-model weekly quota is exhausted on {eligibility.weekly_exhausted_count} of those accounts."
+                if eligibility.weekly_exhausted_count
+                else ""
+            )
             raise selection_refusal.SelectionRefusal(
                 429,
                 (
@@ -1381,7 +1397,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                     f"for quota '{quota_key}'.{reset_suffix}"
                     if eligibility.cooldown_blocked_count == eligibility.blocked_count
                     else f"No {_provider_label(provider_name)} accounts are currently eligible "
-                    f"for quota '{quota_key}'.{reset_suffix}"
+                    f"for quota '{quota_key}'.{weekly_suffix}{hold_suffix}{reset_suffix}"
                 ),
                 code=_quota_cooldown_code(provider_name),
                 retry_at=eligibility.next_reset_at,
@@ -1439,116 +1455,13 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             )
         return selection.account
 
-    async def _selection_failure_details(
-        self,
-        *,
-        model: str,
-        quota_key: str,
-        provider_name: str,
-        fallback: str,
-        quota_reset_at: int | None = None,
-        quota_blocked_count: int = 0,
-        quota_candidate_count: int | None = None,
-        quota_cooldown_blocked_count: int = 0,
-        quota_cooldown_reset_at: int | None = None,
-        selection_error_code: str | None = None,
-        selection_error_message: str | None = None,
-        selection_retry_at: int | None = None,
-        selection_cooldown_count: int = 0,
-    ) -> tuple[str, int | None]:
-        now = int(time.time())
-        reset_candidates: list[int] = [quota_reset_at] if quota_reset_at is not None else []
-        async with self._repo_factory() as repos:
-            provider_accounts = [
-                account for account in await repos.accounts.list_accounts() if account.provider.lower() == provider_name
-            ]
-
-            accounts = selectable_accounts(provider_accounts)
-            unusable_count = len(provider_accounts) - len(accounts)
-            account_count = len(accounts)
-            status_counts = Counter(_account_status_label(account) for account in accounts)
-            reset_candidates.extend(int(account.reset_at) for account in accounts if account.reset_at)
-            primary_usage = await repos.usage.latest_by_account(
-                "primary",
-                account_ids=[account.id for account in accounts],
-            )
-            reset_candidates.extend(
-                int(entry.reset_at)
-                for entry in primary_usage.values()
-                if entry.reset_at and float(entry.used_percent) >= 100.0
-            )
-
-        live_retries = [
-            candidate
-            for candidate in (quota_reset_at, quota_cooldown_reset_at, selection_retry_at)
-            if candidate is not None and candidate > now
-        ]
-        if live_retries:
-            retry_at = min(live_retries)
-        else:
-            future_resets = [candidate for candidate in reset_candidates if candidate > now]
-            retry_at = min(future_resets) if future_resets else None
-        if account_count == 0:
-            return fallback, retry_at
-        status_summary = ", ".join(f"{status}={count}" for status, count in sorted(status_counts.items()))
-        noun = "account" if account_count == 1 else "accounts"
-        reset_suffix = (
-            f" Limits reset at {datetime.fromtimestamp(retry_at, tz=timezone.utc).isoformat()}."
-            if retry_at is not None
-            else ""
-        )
-        quota_detail = _anthropic_selection_quota_detail(
-            quota_key=quota_key,
-            blocked_count=quota_blocked_count,
-            candidate_count=quota_candidate_count,
-            cooldown_blocked_count=quota_cooldown_blocked_count,
-            cooldown_reset_at=quota_cooldown_reset_at,
-            selection_error_code=selection_error_code,
-            selection_error_message=selection_error_message,
-        )
-        quota_sentence = f"Model quota: {quota_detail}. " if quota_detail else ""
-        runtime_sentence = (
-            f"Selector runtime cooldown excluded {selection_cooldown_count} "
-            f"{'account' if selection_cooldown_count == 1 else 'accounts'}. "
-            if selection_cooldown_count
-            else ""
-        )
-        stored_note = (
-            f" (+{unusable_count} stored but not routable: canceled, deactivated, paused, or reauth-required)"
-            if unusable_count
-            else ""
-        )
-        message = (
-            f"{account_count} {_provider_label(provider_name)} {noun} exist, but none are selectable for "
-            f"{model}/{quota_key}; statuses: {status_summary}.{stored_note} "
-            f"{quota_sentence}{runtime_sentence}"
-            f"{_other_provider_routing_message(provider_name)}{reset_suffix}"
-        )
-        logger.warning(
-            (
-                "Anthropic account selection failed model=%s quota_key=%s statuses=%s "
-                "quota_blocked=%s quota_cooldown_blocked=%s quota_candidates=%s "
-                "selection_error_code=%s selection_error_message=%s runtime_cooldown_excluded=%s retry_at=%s"
-            ),
-            model,
-            quota_key,
-            status_summary,
-            quota_blocked_count,
-            quota_cooldown_blocked_count,
-            quota_candidate_count,
-            selection_error_code,
-            selection_error_message,
-            selection_cooldown_count,
-            retry_at,
-        )
-        return message, retry_at
-
     async def _provider_quota_eligibility(
         self,
         provider_name: str,
         quota_key: str,
         *,
         model: str | None = None,
+        attempted_account_ids: Collection[str] = (),
     ) -> _AnthropicQuotaEligibility:
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             quota_key = model_quota_key(model, quota_key)
@@ -1665,6 +1578,7 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                 }
 
         fable_request = fable_routing and is_fable_model(model)
+        model_holds = active_model_exclusions(resolve_model_alias(model), now) if fable_request else {}
         threshold = settings.anthropic_fable_weekly_max_used_percent if fable_routing else 0.0
         scoped_threshold = settings.anthropic_fable_scoped_max_used_percent if fable_routing else 0.0
 
@@ -1710,11 +1624,19 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
         eligible_ids: list[str] = []
         blocked_reset_by_account_id: dict[str, int] = {}
         blocked_count = 0
+        model_hold_count = 0
+        weekly_exhausted_count = 0
         request_quota_blocked_account_ids: set[str] = set()
 
         route_paid_extra = settings.anthropic_route_to_extra_usage
 
         for account_id in model_scope_account_ids:
+            if account_id in model_holds:
+                model_hold_count += 1
+                blocked_count += 1
+                blocked_reset_by_account_id[account_id] = int(model_holds[account_id])
+                continue
+
             held = limit_backoff.hold_until(
                 account_id, request_quota_cooldowns.get(account_id), now, primary_headroom_recorded_at.get(account_id)
             )
@@ -1726,6 +1648,8 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
 
             if extra_usage_gate and not route_paid_extra and account_id in secondary_exhaustion:
                 blocked_count += 1
+                if fable_request:
+                    weekly_exhausted_count += 1
                 weekly_reset = secondary_exhaustion[account_id]
                 if weekly_reset is not None:
                     blocked_reset_by_account_id[account_id] = int(weekly_reset)
@@ -1739,7 +1663,9 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
 
         if fable_request and eligible_ids:
             preferred_standard_account_ids = [
-                account_id for account_id in eligible_ids if account_id in preferred_fable_account_ids
+                account_id
+                for account_id in eligible_ids
+                if account_id in preferred_fable_account_ids and account_id not in attempted_account_ids
             ]
             if preferred_standard_account_ids:
                 eligible_ids = preferred_standard_account_ids
@@ -1760,12 +1686,15 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
                 account_id
                 for account_id in model_scope_account_ids
                 if account_id in credit_enabled_exhausted_account_ids
+                and account_id not in model_holds
                 and account_id not in request_quota_blocked_account_ids
                 and account_id not in secondary_exhaustion
             ]
             if fable_request:
                 preferred_paid_candidates = [
-                    account_id for account_id in paid_candidates if account_id in preferred_fable_account_ids
+                    account_id
+                    for account_id in paid_candidates
+                    if account_id in preferred_fable_account_ids and account_id not in attempted_account_ids
                 ]
                 if preferred_paid_candidates:
                     paid_candidates = preferred_paid_candidates
@@ -1801,6 +1730,8 @@ class AnthropicProxyService(MirrorTokenRefresh, AnthropicTransport):
             next_reset_at=min(blocked_reset_by_account_id.values()) if blocked_reset_by_account_id else None,
             cooldown_blocked_count=len(cooling_account_ids),
             cooldown_reset_at=min(cooldown_resets) if cooldown_resets else None,
+            model_hold_count=model_hold_count,
+            weekly_exhausted_count=weekly_exhausted_count,
             paid_fallback_account_ids=paid_fallback_account_ids,
             burn_first_account_ids=burn_first_account_ids,
         )
@@ -2246,10 +2177,6 @@ def _quota_cooldown_code(provider_name: str) -> str:
     return get_anthropic_compat_profile(provider_name).quota_cooldown_code
 
 
-def _other_provider_routing_message(provider_name: str) -> str:
-    return get_anthropic_compat_profile(provider_name).other_provider_routing_message
-
-
 def anthropic_request_session_id(
     payload: AnthropicMessageRequest,
     headers: Mapping[str, str],
@@ -2327,44 +2254,6 @@ def _anthropic_content_text(content: object) -> str | None:
             if isinstance(value, str):
                 parts.append(value)
     return "".join(parts) if parts else None
-
-
-def _account_status_label(account: Account) -> str:
-    status = account.status
-    return status.value if hasattr(status, "value") else str(status)
-
-
-def _anthropic_selection_quota_detail(
-    *,
-    quota_key: str,
-    blocked_count: int,
-    candidate_count: int | None,
-    cooldown_blocked_count: int,
-    cooldown_reset_at: int | None,
-    selection_error_code: str | None,
-    selection_error_message: str | None,
-) -> str | None:
-    parts: list[str] = []
-
-    if cooldown_blocked_count > 0:
-        noun = "account" if cooldown_blocked_count == 1 else "accounts"
-        reset_text = (
-            f" until {datetime.fromtimestamp(cooldown_reset_at).isoformat()}" if cooldown_reset_at is not None else ""
-        )
-        parts.append(f"{quota_key} cooldown excluded {cooldown_blocked_count} {noun}{reset_text}")
-    other_blocked_count = max(0, blocked_count - cooldown_blocked_count)
-    if other_blocked_count > 0:
-        noun = "account" if other_blocked_count == 1 else "accounts"
-        parts.append(f"{other_blocked_count} {noun} out of window or capped")
-    if candidate_count is not None and (blocked_count > 0 or selection_error_code):
-        noun = "account" if candidate_count == 1 else "accounts"
-        parts.append(f"{candidate_count} {noun} remained after the {quota_key} prefilter")
-    if selection_error_code or selection_error_message and selection_error_message != "No available accounts":
-        reason = selection_error_code or selection_error_message
-        if selection_error_code and selection_error_message and selection_error_message != "No available accounts":
-            reason = f"{selection_error_message} ({selection_error_code})"
-        parts.append(f"selector reason: {reason}")
-    return "; ".join(parts) if parts else None
 
 
 def _hash_for_key(value: str) -> str:

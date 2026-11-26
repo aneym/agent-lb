@@ -9,10 +9,13 @@ from app.core.config.settings import get_settings
 T = TypeVar("T")
 
 
-def drop_excluded(accounts: Sequence[T], pool: Sequence[T], model: str | None) -> list[T]:
-    now = time.time()
+def active_model_exclusions(model: str | None, now: float) -> dict[str, float]:
     rules = get_settings().model_account_exclusions.get(model or "", {})
-    excluded = {account_id for account_id, until in rules.items() if until > now}
+    return {account_id: until for account_id, until in rules.items() if until > now}
+
+
+def drop_excluded(accounts: Sequence[T], pool: Sequence[T], model: str | None) -> list[T]:
+    excluded = active_model_exclusions(model, time.time())
     if all(getattr(account, "id") in excluded for account in pool):
         return list(accounts)
     return [account for account in accounts if getattr(account, "id") not in excluded]
