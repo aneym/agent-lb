@@ -43,7 +43,6 @@ from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
 )
-from app.core.resilience.overload import is_local_overload_error_code
 from app.core.types import JsonValue
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.utils.request_id import get_request_id
@@ -397,6 +396,7 @@ from app.modules.proxy.http_bridge_forwarding import (
 )
 from app.modules.proxy.load_balancer import AccountLease
 from app.modules.proxy.payload_rejections import rejected_payload_error
+from app.modules.proxy.pool_exhaustion import websocket_selection_failure
 from app.modules.proxy.request_policy import (
     apply_api_key_enforcement,
     normalize_responses_request_payload,
@@ -1627,7 +1627,7 @@ class _WebSocketMixin:
             len(exclude_account_ids),
             api_key is not None,
         )
-        status_code = 429 if is_local_overload_error_code(error_code) else 503
+        status_code, payload = websocket_selection_failure(selection, error_code, error_message, requested_model=model)
         await proxy._emit_websocket_connect_failure(
             websocket,
             client_send_lock=client_send_lock,
@@ -1635,11 +1635,7 @@ class _WebSocketMixin:
             api_key=api_key,
             request_state=request_state,
             status_code=status_code,
-            payload=openai_error(
-                error_code,
-                error_message,
-                error_type="rate_limit_error" if status_code == 429 else "server_error",
-            ),
+            payload=payload,
             error_code=error_code,
             error_message=error_message,
         )

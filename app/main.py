@@ -47,6 +47,7 @@ from app.modules.firewall import api as firewall_api
 from app.modules.health import api as health_api
 from app.modules.oauth import api as oauth_api
 from app.modules.pools import api as pools_api
+from app.modules.pools import headroom as pools_headroom
 from app.modules.pools.seat_quota_scheduler import build_seat_quota_scheduler
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy.gemini_routes import router as gemini_router
@@ -377,6 +378,7 @@ def configure_app(app: FastAPI, settings) -> None:
         routing_policy_api.router,
         sessions_api.router,
         sessions_api.short_link_router,
+        pools_headroom.router,
         pools_api.router,
         quota_planner_api.router,
         reports_api.router,

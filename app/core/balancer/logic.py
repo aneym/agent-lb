@@ -41,6 +41,7 @@ from app.core.balancer.state import (
     TrafficClass,
     UsageWeightedOrder,
 )
+from app.core.balancer.tiers import shared_first
 from app.db.models import AccountStatus
 
 
@@ -214,20 +215,19 @@ def select_account(
                     return _selection_failure("All accounts require re-authentication", all_states, current=current)
                 if deactivated:
                     return _selection_failure("All accounts are deactivated", all_states, current=current)
-            if quota_exceeded:
-                reset_candidates = [s.reset_at for s in quota_exceeded if s.reset_at]
-                if reset_candidates:
-                    return _selection_failure(
-                        _format_retry_hint(min(reset_candidates), current), all_states, current=current
-                    )
-            cooldowns = [
+            limited = {AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED}
+            recoveries = [
                 deadline
                 for s in all_states
-                for deadline in (s.error_rule_cooldown_until, s.cooldown_until)
+                for deadline in (
+                    (s.reset_at or s.primary_reset_at) if s.status in limited else None,
+                    s.error_rule_cooldown_until,
+                    s.cooldown_until,
+                )
                 if deadline and deadline > current
             ]
-            if cooldowns:
-                return _selection_failure(_format_retry_hint(min(cooldowns), current), all_states, current=current)
+            if recoveries:
+                return _selection_failure(_format_retry_hint(min(recoveries), current), all_states, current=current)
             if in_error_backoff:
                 count = len(in_error_backoff)
                 noun = "account" if count == 1 else "accounts"
@@ -306,7 +306,7 @@ def select_account(
     healthy = [s for s in available if s.health_tier == HEALTH_TIER_HEALTHY]
     probing = [s for s in available if s.health_tier == HEALTH_TIER_PROBING]
     draining = [s for s in available if s.health_tier == HEALTH_TIER_DRAINING]
-    health_pool = healthy or probing or draining or available
+    health_pool = shared_first(healthy or probing or draining or available)
     burn_first = [s for s in health_pool if _routing_policy(s) == ROUTING_POLICY_BURN_FIRST]
     normal = [s for s in health_pool if _routing_policy(s) == ROUTING_POLICY_NORMAL]
     preserve = [s for s in health_pool if _routing_policy(s) == ROUTING_POLICY_PRESERVE]

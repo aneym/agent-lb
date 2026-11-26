@@ -26,6 +26,7 @@ from app.modules.proxy.constants import (
     UNAVAILABLE_SELECTION_ERROR_CODES,
     logger,
 )
+from app.modules.proxy.pool_exhaustion import openai_terminal
 from app.modules.proxy.selection_diagnostics import retry_after_seconds_from_error_detail
 
 
@@ -44,6 +45,15 @@ def logged_error_json_response(
         public_content = content
     code, message = error_details_from_content(public_content)
     effective_headers = dict(headers or {})
+    terminal = (
+        openai_terminal(public_content, provider=_provider_for_path(request.url.path))
+        if status_code in (429, 503)
+        else None
+    )
+    if terminal is not None:
+        public_content, pool_headers = terminal
+        status_code, code = 429, "usage_limit_reached"
+        effective_headers.update(pool_headers)
     if status_code == 429 and is_local_overload_error_code(code):
         effective_headers = merge_retry_after_headers(effective_headers)
 
@@ -62,6 +72,10 @@ def logged_error_json_response(
     )
 
     return JSONResponse(status_code=status_code, content=public_content, headers=effective_headers or None)
+
+
+def _provider_for_path(path: str) -> str:
+    return "openrouter" if "openrouter" in path else "openai"
 
 
 def error_details_from_content(

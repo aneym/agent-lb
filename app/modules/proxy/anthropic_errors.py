@@ -14,6 +14,7 @@ from app.modules.api_keys.service_data import (
     ApiKeyUsageReservationData,
 )
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError
+from app.modules.proxy.pool_exhaustion import anthropic_terminal_headers
 from app.modules.proxy.reservations import release_reservation
 
 
@@ -89,7 +90,13 @@ def retry_headers(retry_at: int | None) -> dict[str, str] | None:
 def anthropic_proxy_error_response(exc: AnthropicProxyError) -> JSONResponse:
 
     if exc.retry_at is not None or exc.status_code == 429:
-        return anthropic_error_response(429, "rate_limit_error", exc.message, retry_at=exc.retry_at)
+        return anthropic_error_response(
+            429,
+            "rate_limit_error",
+            exc.message,
+            retry_at=exc.retry_at,
+            headers=anthropic_terminal_headers(exc.code, exc.retry_at),
+        )
     response = anthropic_error_response(exc.status_code, exc.code, exc.message, details=exc.details)
     if exc.code == "balance_exhausted":
         response.headers["x-should-retry"] = "false"

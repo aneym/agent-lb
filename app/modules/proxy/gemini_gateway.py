@@ -41,6 +41,7 @@ from app.modules.proxy.gemini_upstream import GeminiUpstream, GeminiUpstreamCall
 from app.modules.proxy.gemini_usage_log import GeminiLogEntry, record_gemini_request, settle_gemini_reservation
 from app.modules.proxy.gemini_validation import validation_failure_code
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
+from app.modules.proxy.pool_exhaustion import gemini_terminal
 from app.modules.proxy.repo_bundle import ProxyRepositories
 from app.modules.proxy.request_admission import enforce_request_limits
 from app.modules.proxy.request_policy import validate_model_access
@@ -317,6 +318,8 @@ class GeminiGateway:
         if last_error is not None:
             raise last_error
         retry_at = selection.retry_at.timestamp() if selection.retry_at is not None else None
+        if terminal := gemini_terminal(selection, retry_at):
+            raise GeminiGatewayError(429, terminal[0], code="QUOTA_EXHAUSTED", retry_at=retry_at, headers=terminal[1])
         message = selection.error_message or "No Gemini account is available."
         if message.startswith("No available accounts") or selection.error_code == "no_accounts":
             message = "No Gemini account is connected to agent-lb."
