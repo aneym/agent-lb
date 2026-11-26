@@ -41,4 +41,6 @@ def notify(home, outcome, kept):
             f"orch-watch-alert exited {sent.returncode}: {(reason[-1] if reason else '')[:300]}"
         )
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(signature))
+    pending = state_path.with_suffix(".tmp")
+    pending.write_text(json.dumps(signature))
+    os.replace(pending, state_path)

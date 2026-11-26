@@ -146,8 +146,8 @@ def alert(name, result, origin):
         if sent.returncode:
             raise ValueError("send exited %s: %s" % (sent.returncode, sent.stderr.strip()))
         return True
-    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        print("coding-agents-fleet-status: alert not sent: %s" % exc, file=sys.stderr)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print("coding-agents-fleet-status: alert not sent: %s" % type(exc).__name__, file=sys.stderr)
         return False
 
 

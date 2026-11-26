@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
 ALERT_TO = "factory-office"
 LOW_HOURS = 3.0
 REARM_HOURS = 6.0
-FALLBACK_SENDER = Path.home() / ".agent-rails/factory-runtime/bin/orch-watch-alert"
 
 
 def _load(path: Path) -> dict[str, Any]:

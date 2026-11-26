@@ -30,7 +30,9 @@ def probe(repo, *args, timeout=60):
             env=env,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired:
+        raise Blocked("failed", f"git {args[0]} timed out") from None
+    except OSError as exc:
         raise Blocked("failed", f"git {args[0]}: {exc}")
     return proc.returncode, proc.stdout.rstrip("\n"), proc.stderr.strip()
 
@@ -167,6 +169,6 @@ def pull_claude_config(home):
     if outcome["result"] != "absent":
         try:
             notify(home, outcome, kept)
-        except (OSError, subprocess.SubprocessError) as exc:
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
             outcome = dict(outcome, alert_failed=str(exc))
     return outcome
