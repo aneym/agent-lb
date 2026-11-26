@@ -1325,8 +1325,7 @@ class ProxyService(
             budget_threshold_pct=_sticky_reallocation_primary_budget_threshold_pct(settings),
             secondary_budget_threshold_pct=_sticky_reallocation_secondary_budget_threshold_pct(settings),
             hold_sticky_until_exhausted=_openai_sticky_hold_until_exhausted(),
-            traffic_class=caller_policy.traffic_class,
-            allow_personal_fallback=caller_policy.allow_personal_fallback,
+            caller_policy=caller_policy,
         )
         if selection.account is None:
             return None
@@ -1613,8 +1612,6 @@ class ProxyService(
             _raise_proxy_budget_exhausted()
         caller_policy = resolve_caller_selection_policy(api_key, traffic_class=traffic_class)
         scoped_account_ids = caller_policy.scoped_account_ids
-        effective_traffic_class = caller_policy.traffic_class
-        allow_personal_fallback = caller_policy.allow_personal_fallback
         excluded_account_ids_set = set(exclude_account_ids or ())
         logger.info(
             "Proxy account selection start request_id=%s kind=%s request_stage=%s model=%s "
@@ -1708,8 +1705,7 @@ class ProxyService(
                         hold_sticky_until_exhausted=_openai_sticky_hold_until_exhausted(),
                         lease_kind=lease_kind,
                         estimated_lease_tokens=estimated_lease_tokens,
-                        traffic_class=effective_traffic_class,
-                        allow_personal_fallback=allow_personal_fallback,
+                        caller_policy=caller_policy,
                     )
                     if preferred_selection.account is not None:
                         logger.info(
@@ -1752,8 +1748,7 @@ class ProxyService(
                     hold_sticky_until_exhausted=_openai_sticky_hold_until_exhausted(),
                     lease_kind=lease_kind,
                     estimated_lease_tokens=estimated_lease_tokens,
-                    traffic_class=effective_traffic_class,
-                    allow_personal_fallback=allow_personal_fallback,
+                    caller_policy=caller_policy,
                 )
                 if selection.account is not None and selection.account.id in excluded_account_ids_set:
                     logger.warning(

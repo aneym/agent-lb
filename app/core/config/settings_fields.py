@@ -260,6 +260,15 @@ class SettingsFields(BaseSettings):
     proxy_unauthenticated_client_cidrs: Annotated[list[str], NoDecode] = Field(default_factory=list)
     proxy_unauthenticated_exclude_personal: bool = False
     proxy_unauthenticated_default_traffic_class: Literal["foreground", "opportunistic"] = "foreground"
+    proxy_unauthenticated_headroom_floor_percent: float = Field(default=30.0, ge=0.0, le=95.0)
+    proxy_unauthenticated_plus_headroom_floor_percent: float = Field(default=50.0, ge=0.0, le=95.0)
+    proxy_unauthenticated_respect_team_pool_share: bool = True
+    proxy_unauthenticated_team_share_pool_cap_percent: float = Field(default=30.0, ge=0.0, le=95.0)
+    proxy_unauthenticated_team_share_account_cap_percent: float = Field(default=50.0, ge=0.0, le=95.0)
+    proxy_unauthenticated_account_concurrency_limit: int = Field(default=6, ge=0)
+    proxy_unauthenticated_plus_concurrency_limit: int = Field(default=2, ge=0)
+    proxy_unauthenticated_post_reset_concurrency_limit: int = Field(default=2, ge=0)
+    proxy_unauthenticated_post_reset_window_seconds: int = Field(default=3600, ge=0)
     pool_personal_account_ids: str = ""
     pool_headroom_workers_per_account: int = Field(default=4, ge=1)
 

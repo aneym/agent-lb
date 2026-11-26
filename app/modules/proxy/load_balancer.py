@@ -43,14 +43,6 @@ from app.core.config import settings as config_settings
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
-from app.core.metrics.prometheus import (
-    PROMETHEUS_AVAILABLE,
-    account_cap_rejections_total,
-    account_lease_acquired_total,
-    account_lease_active,
-    account_lease_released_total,
-    account_lease_stale_reclaimed_total,
-)
 from app.core.openai.model_registry import get_model_registry
 from app.core.plan_types import account_plan_matches_allowed, normalize_account_plan_type
 from app.core.providers import OPENAI_PROVIDER_NAME, normalize_provider_name
@@ -64,7 +56,15 @@ from app.db.models import Account, AccountStatus, AdditionalUsageHistory, Sticky
 from app.modules.accounts.auth_manager import access_token_hard_expired, is_locally_owned
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.proxy.account_cache import get_account_selection_cache
-from app.modules.proxy.account_lease_policy import stale_ttl_seconds
+from app.modules.proxy.account_lease_policy import (
+    account_cap_error_code,
+    filter_states_for_account_caps,
+    record_account_cap_rejection,
+    record_account_lease_acquired,
+    record_account_lease_released,
+    record_account_lease_stale_reclaimed,
+    stale_ttl_seconds,
+)
 from app.modules.proxy.account_warmup import candidates
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
 from app.modules.proxy.anthropic_rate_limits import (
@@ -75,6 +75,13 @@ from app.modules.proxy.anthropic_rate_limits import (
 from app.modules.proxy.budget_selection import (
     select_account_preferring_budget_safe,
     state_above_sticky_budget_threshold,
+)
+from app.modules.proxy.caller_policy import CallerSelectionPolicy
+from app.modules.proxy.fleet_guards import (
+    TeamHeadroomFloors,
+    filter_candidates_for_caller,
+    load_team_headroom_floors,
+    unauthenticated_lease_allowed,
 )
 from app.modules.proxy.model_account_filter import filter_accounts_for_model
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
@@ -155,6 +162,7 @@ class _SelectionInputs:
     ignore_standard_quota_status: bool = False
     persist_standard_quota_status: bool = True
     routing_policy_override: str | None = None
+    team_headroom_floors: TeamHeadroomFloors = field(default_factory=TeamHeadroomFloors)
 
 
 SelectionInputs = _SelectionInputs
@@ -188,12 +196,12 @@ class LoadBalancer:
             if kind == "response_create":
                 cap = get_settings().proxy_account_response_create_limit
                 if cap > 0 and runtime.inflight_response_creates >= cap:
-                    _record_account_cap_rejection("response_create")
+                    record_account_cap_rejection("response_create")
                     return None
             else:
                 cap = get_settings().proxy_account_stream_limit
                 if cap > 0 and runtime.inflight_streams >= cap:
-                    _record_account_cap_rejection("stream")
+                    record_account_cap_rejection("stream")
                     return None
             return self._acquire_account_lease_locked(
                 account_id,
@@ -233,7 +241,7 @@ class LoadBalancer:
         runtime.leased_tokens += lease.estimated_tokens
         runtime.last_selected_at = time.time()
         runtime.version += 1
-        _record_account_lease_acquired(kind)
+        record_account_lease_acquired(kind)
         return lease
 
     def _account_lease_allowed_locked(self, account_id: str, *, kind: AccountLeaseKind) -> bool:
@@ -257,9 +265,9 @@ class LoadBalancer:
             runtime.inflight_streams = max(0, runtime.inflight_streams - 1)
         runtime.leased_tokens = max(0.0, runtime.leased_tokens - current.estimated_tokens)
         runtime.version += 1
-        _record_account_lease_released(current.kind, reason)
+        record_account_lease_released(current.kind, reason)
         if reason == "stale":
-            _record_account_lease_stale_reclaimed(current.kind)
+            record_account_lease_stale_reclaimed(current.kind)
             logger.warning(
                 "Reclaimed stale account lease account_id=%s kind=%s age_seconds=%.3f",
                 current.account_id,
@@ -312,7 +320,13 @@ class LoadBalancer:
         estimated_lease_tokens: float = 0.0,
         traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
         allow_personal_fallback: bool = True,
+        is_unauthenticated: bool = False,
+        caller_policy: CallerSelectionPolicy | None = None,
     ) -> AccountSelection:
+        if caller_policy is not None:
+            traffic_class = caller_policy.traffic_class
+            allow_personal_fallback = caller_policy.allow_personal_fallback
+            is_unauthenticated = caller_policy.is_unauthenticated
         excluded_ids = set(exclude_account_ids or ())
         scoped_account_ids = None if account_ids is None else set(account_ids)
         request_ignore_primary_quota_ids = frozenset(ignore_primary_quota_account_ids or ())
@@ -355,6 +369,7 @@ class LoadBalancer:
                     ignore_standard_quota_status=selection_inputs.ignore_standard_quota_status,
                     persist_standard_quota_status=selection_inputs.persist_standard_quota_status,
                     routing_policy_override=selection_inputs.routing_policy_override,
+                    team_headroom_floors=selection_inputs.team_headroom_floors,
                 )
             if excluded_ids and selection_inputs.accounts:
                 filtered_accounts = [account for account in selection_inputs.accounts if account.id not in excluded_ids]
@@ -382,6 +397,7 @@ class LoadBalancer:
                     ignore_standard_quota_status=selection_inputs.ignore_standard_quota_status,
                     persist_standard_quota_status=selection_inputs.persist_standard_quota_status,
                     routing_policy_override=selection_inputs.routing_policy_override,
+                    team_headroom_floors=selection_inputs.team_headroom_floors,
                 )
             return selection_inputs
 
@@ -433,21 +449,18 @@ class LoadBalancer:
                             now=datetime.now(timezone.utc),
                         )
                     )
-                    selection_states = _filter_states_for_account_caps(states, lease_kind=lease_kind)
-                    if not selection_states and states:
-                        result = SelectionResult(None, "No available accounts")
+                    selection_states, blocked_result, selection_error_code = filter_candidates_for_caller(
+                        states,
+                        is_unauthenticated=is_unauthenticated,
+                        lease_kind=lease_kind,
+                        floors=selection_inputs.team_headroom_floors,
+                        settings=get_settings(),
+                    )
+                    if blocked_result is not None:
+                        result = blocked_result
                         error_message = result.error_message
                         failed_result = result
-                        selection_error_code = _account_cap_error_code(lease_kind)
-                        logger.warning(
-                            "Account cap exhausted during selection lease_kind=%s reason=%s candidates=%s",
-                            lease_kind,
-                            selection_error_code,
-                            len(states),
-                        )
-                        _record_account_cap_rejection(lease_kind)
                     else:
-                        selection_error_code = None
                         result = select_account_preferring_budget_safe(
                             selection_states,
                             prefer_earlier_reset=prefer_earlier_reset_accounts,
@@ -623,21 +636,19 @@ class LoadBalancer:
                 hard_sticky = sticky_kind == StickySessionKind.CODEX_SESSION and isinstance(
                     sticky_existing_account_id, str
                 )
-                selection_states = (
-                    states if hard_sticky else _filter_states_for_account_caps(states, lease_kind=lease_kind)
+                selection_states, blocked_result, selection_error_code = filter_candidates_for_caller(
+                    states,
+                    is_unauthenticated=is_unauthenticated,
+                    hard_sticky=hard_sticky,
+                    lease_kind=lease_kind,
+                    floors=selection_inputs.team_headroom_floors,
+                    settings=get_settings(),
                 )
-                if not selection_states and states:
-                    result = SelectionResult(None, "No available accounts")
-                    selection_error_code = _account_cap_error_code(lease_kind)
-                    logger.warning(
-                        "Account cap exhausted during sticky selection lease_kind=%s reason=%s candidates=%s",
-                        lease_kind,
-                        selection_error_code,
-                        len(states),
-                    )
-                    _record_account_cap_rejection(lease_kind)
+                if blocked_result is not None:
+                    result = blocked_result
+                    failed_result = result
+                    error_message = result.error_message
                 else:
-                    selection_error_code = None
                     async with self._repo_factory() as repos:
                         result = await self._select_with_stickiness(
                             states=selection_states,
@@ -694,10 +705,25 @@ class LoadBalancer:
                             selected_snapshot.deactivation_reason = result.account.deactivation_reason
                             selected_snapshot.reset_at = selected_reset_at
                             if lease_kind is not None:
-                                if not self._account_lease_allowed_locked(selected.id, kind=lease_kind):
+                                selected_state = next(
+                                    (state for state in selected_states if state.account_id == selected.id),
+                                    None,
+                                )
+                                lease_blocked = not self._account_lease_allowed_locked(
+                                    selected.id, kind=lease_kind
+                                ) or (
+                                    is_unauthenticated
+                                    and not unauthenticated_lease_allowed(
+                                        self._runtime.setdefault(selected.id, RuntimeState()),
+                                        selected_state,
+                                        settings=get_settings(),
+                                    )
+                                )
+                                if lease_blocked:
                                     selected_snapshot = None
                                     error_message = "No available accounts"
-                                    selection_error_code = _account_cap_error_code(lease_kind)
+                                    selection_error_code = account_cap_error_code(lease_kind)
+                                    record_account_cap_rejection(lease_kind)
                                 else:
                                     selected_lease = self._acquire_account_lease_locked(
                                         selected.id,
@@ -741,6 +767,7 @@ class LoadBalancer:
                 if (
                     selected_snapshot is None
                     and selection_error_code is not None
+                    and selection_error_code != "no_accounts"
                     and not hard_sticky
                     and attempt < _MAX_SELECTION_ATTEMPTS
                 ):
@@ -880,6 +907,12 @@ class LoadBalancer:
                     quota_planner_settings = PlannerSettings()
             else:
                 quota_planner_settings = PlannerSettings()
+            accounts_session = getattr(repos.accounts, "session", None)
+            team_headroom_floors = await load_team_headroom_floors(
+                accounts_session if isinstance(accounts_session, AsyncSession) else None,
+                provider_name=provider_name,
+                settings=selection_settings,
+            )
             ignore_standard_quota_status = effective_limit_name is not None
             routing_policy_override = _additional_quota_routing_policy_override(
                 effective_limit_name,
@@ -1026,6 +1059,7 @@ class LoadBalancer:
                 ignore_standard_quota_status=ignore_standard_quota_status,
                 persist_standard_quota_status=True,
                 routing_policy_override=routing_policy_override,
+                team_headroom_floors=team_headroom_floors,
             )
             await self._selection_inputs_cache.set(
                 _clone_selection_inputs(selection_inputs), key=cache_key, generation=load_generation
@@ -1066,15 +1100,15 @@ class LoadBalancer:
                 routing_policy_override=selection_inputs.routing_policy_override,
                 ignore_standard_quota_account_ids=selection_inputs.ignore_standard_quota_account_ids,
             )
-            selection_states = _filter_states_for_account_caps(states, lease_kind=lease_kind)
+            selection_states = filter_states_for_account_caps(states, lease_kind=lease_kind)
             if not selection_states and states:
                 logger.warning(
                     "Account cap exhausted during opportunistic admission lease_kind=%s reason=%s candidates=%s",
                     lease_kind,
-                    _account_cap_error_code(lease_kind),
+                    account_cap_error_code(lease_kind),
                     len(states),
                 )
-                _record_account_cap_rejection(lease_kind)
+                record_account_cap_rejection(lease_kind)
                 return AccountSelection(
                     account=None,
                     error_message="opportunistic burn window closed: no account capacity available",
@@ -1816,66 +1850,6 @@ def _build_states(
     return states, account_map
 
 
-def _filter_states_for_account_caps(
-    states: Iterable[AccountState],
-    *,
-    lease_kind: AccountLeaseKind | None,
-) -> list[AccountState]:
-    if lease_kind is None:
-        return list(states)
-    settings = get_settings()
-    filtered: list[AccountState] = []
-    for state in states:
-        if lease_kind == "response_create":
-            cap = settings.proxy_account_response_create_limit
-            if cap > 0 and state.inflight_response_creates >= cap:
-                continue
-        else:
-            cap = settings.proxy_account_stream_limit
-            if cap > 0 and state.inflight_streams >= cap:
-                continue
-        filtered.append(state)
-    return filtered
-
-
-def _account_cap_error_code(lease_kind: AccountLeaseKind | None) -> str | None:
-    if lease_kind == "response_create":
-        return "account_response_create_cap"
-    if lease_kind == "stream":
-        return "account_stream_cap"
-    return None
-
-
-def _record_account_lease_acquired(kind: AccountLeaseKind) -> None:
-    if not PROMETHEUS_AVAILABLE:
-        return
-    if account_lease_acquired_total is not None:
-        account_lease_acquired_total.labels(kind=kind).inc()
-    if account_lease_active is not None:
-        account_lease_active.labels(kind=kind).inc()
-
-
-def _record_account_lease_released(kind: AccountLeaseKind, reason: str) -> None:
-    if not PROMETHEUS_AVAILABLE:
-        return
-    if account_lease_released_total is not None:
-        account_lease_released_total.labels(kind=kind, reason=reason).inc()
-    if account_lease_active is not None:
-        account_lease_active.labels(kind=kind).dec()
-
-
-def _record_account_lease_stale_reclaimed(kind: AccountLeaseKind) -> None:
-    if PROMETHEUS_AVAILABLE and account_lease_stale_reclaimed_total is not None:
-        account_lease_stale_reclaimed_total.labels(kind=kind).inc()
-
-
-def _record_account_cap_rejection(kind: AccountLeaseKind | None) -> None:
-    if kind is None:
-        return
-    if PROMETHEUS_AVAILABLE and account_cap_rejections_total is not None:
-        account_cap_rejections_total.labels(kind=kind).inc()
-
-
 def _normalize_account_routing_policy(value: str | None) -> str:
     if value in _ACCOUNT_ROUTING_POLICIES:
         return value
@@ -2363,6 +2337,10 @@ def _clone_selection_inputs(selection_inputs: SelectionInputs) -> SelectionInput
         ignore_standard_quota_status=selection_inputs.ignore_standard_quota_status,
         persist_standard_quota_status=selection_inputs.persist_standard_quota_status,
         routing_policy_override=selection_inputs.routing_policy_override,
+        team_headroom_floors=TeamHeadroomFloors(
+            default_floor=selection_inputs.team_headroom_floors.default_floor,
+            by_account_id=dict(selection_inputs.team_headroom_floors.by_account_id),
+        ),
     )
 
 

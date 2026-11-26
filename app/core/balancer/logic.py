@@ -51,43 +51,110 @@ def _timestamp_as_utc(value: int | float | None) -> datetime | None:
     return datetime.fromtimestamp(value, tz=timezone.utc)
 
 
+def _account_quota_reset_at(state: AccountState, current: float) -> float | None:
+    if state.status not in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED):
+        return None
+    candidates: list[float] = []
+    if state.reset_at is not None and state.reset_at > current:
+        candidates.append(float(state.reset_at))
+    primary_used = state.raw_used_percent if state.raw_used_percent is not None else state.used_percent
+    secondary_used = (
+        state.raw_secondary_used_percent
+        if state.raw_secondary_used_percent is not None
+        else state.secondary_used_percent
+    )
+    if (
+        primary_used is not None
+        and primary_used >= 100.0
+        and state.primary_reset_at is not None
+        and state.primary_reset_at > current
+    ):
+        candidates.append(float(state.primary_reset_at))
+    if (
+        secondary_used is not None
+        and secondary_used >= 100.0
+        and state.secondary_reset_at is not None
+        and state.secondary_reset_at > current
+    ):
+        candidates.append(float(state.secondary_reset_at))
+    if not candidates:
+        fallback = (
+            state.reset_at if state.reset_at is not None else (state.primary_reset_at or state.secondary_reset_at)
+        )
+        if fallback is not None and fallback > current:
+            candidates.append(float(fallback))
+    return max(candidates) if candidates else None
+
+
+def _account_transient_backoff_until(state: AccountState) -> float | None:
+    if state.error_count >= 3 and state.blocked_at is None and state.last_error_at is not None:
+        return state.last_error_at + min(300, 30 * (2 ** (state.error_count - 3)))
+    return None
+
+
+def _account_cooldown_until(state: AccountState, current: float) -> float | None:
+    future = [
+        float(ts) for ts in (state.error_rule_cooldown_until, state.cooldown_until) if ts is not None and ts > current
+    ]
+    if future:
+        return max(future)
+    return state.error_rule_cooldown_until or state.cooldown_until
+
+
+def _account_recovery_at(state: AccountState, current: float) -> float | None:
+    if state.status in (
+        AccountStatus.REAUTH_REQUIRED,
+        AccountStatus.EXCHANGE_UNCERTAIN,
+        AccountStatus.DEACTIVATED,
+        AccountStatus.PAUSED,
+    ):
+        return None
+    blockers = [
+        float(ts)
+        for ts in (
+            _account_quota_reset_at(state, current),
+            state.error_rule_cooldown_until,
+            state.cooldown_until,
+            _account_transient_backoff_until(state),
+        )
+        if ts is not None and ts > current
+    ]
+    return max(blockers) if blockers else None
+
+
 def _selection_failure(
     message: str,
     states: Iterable[AccountState],
     *,
     current: float,
 ) -> SelectionResult:
+    state_list = list(states)
     excluded_accounts = [
         ExcludedAccount(
             account_id=state.account_id,
             status=state.status.value,
-            reset_at=_timestamp_as_utc(state.reset_at if state.reset_at is not None else state.primary_reset_at),
-            cooldown_until=_timestamp_as_utc(state.error_rule_cooldown_until or state.cooldown_until),
+            reset_at=_timestamp_as_utc(
+                _account_quota_reset_at(state, current)
+                if state.status in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED)
+                else (state.reset_at if state.reset_at is not None else state.primary_reset_at)
+            ),
+            cooldown_until=_timestamp_as_utc(_account_cooldown_until(state, current)),
             deactivation_reason=state.deactivation_reason,
             plan_type=state.plan_type,
-            transient_backoff_until=_timestamp_as_utc(
-                state.last_error_at + min(300, 30 * (2 ** (state.error_count - 3)))
-                if state.error_count >= 3 and state.blocked_at is None and state.last_error_at is not None
-                else None
-            ),
+            transient_backoff_until=_timestamp_as_utc(_account_transient_backoff_until(state)),
         )
-        for state in states
+        for state in state_list
     ]
     future_recoveries = [
-        recovery_at
-        for excluded in excluded_accounts
-        for recovery_at in (
-            excluded.reset_at if excluded.status in ("rate_limited", "quota_exceeded") else None,
-            excluded.cooldown_until,
-            excluded.transient_backoff_until,
-        )
-        if recovery_at is not None and recovery_at.timestamp() > current
+        _timestamp_as_utc(recovery_ts)
+        for state in state_list
+        if (recovery_ts := _account_recovery_at(state, current)) is not None
     ]
     return SelectionResult(
         account=None,
         error_message=message,
         excluded_accounts=excluded_accounts,
-        retry_at=min(future_recoveries, default=None),
+        retry_at=min((ts for ts in future_recoveries if ts is not None), default=None),
     )
 
 
@@ -199,24 +266,7 @@ def select_account(
             paused = [s for s in all_states if s.status == AccountStatus.PAUSED]
             rate_limited = [s for s in all_states if s.status == AccountStatus.RATE_LIMITED]
             quota_exceeded = [s for s in all_states if s.status == AccountStatus.QUOTA_EXCEEDED]
-            permanent = {
-                AccountStatus.REAUTH_REQUIRED,
-                AccountStatus.EXCHANGE_UNCERTAIN,
-                AccountStatus.DEACTIVATED,
-                AccountStatus.PAUSED,
-            }
-            limited = {AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED}
-            recoveries = [
-                deadline
-                for s in all_states
-                if s.status not in permanent
-                for deadline in (
-                    (s.reset_at or s.primary_reset_at) if s.status in limited else None,
-                    s.error_rule_cooldown_until,
-                    s.cooldown_until,
-                )
-                if deadline and deadline > current
-            ]
+            recoveries = [recovery for s in all_states if (recovery := _account_recovery_at(s, current)) is not None]
 
             if not rate_limited and not quota_exceeded and not recoveries and not in_error_backoff:
                 if paused and reauth_required and deactivated:

@@ -312,6 +312,7 @@ class GeminiGateway:
             exclude_account_ids=excluded,
             routing_strategy="usage_weighted",
             prefer_earlier_reset_accounts=True,
+            is_unauthenticated=api_key is None,
         )
         if selection.account is not None:
             return selection.account
@@ -321,7 +322,9 @@ class GeminiGateway:
         if terminal := gemini_terminal(selection, retry_at):
             raise GeminiGatewayError(429, terminal[0], code="QUOTA_EXHAUSTED", retry_at=retry_at, headers=terminal[1])
         message = selection.error_message or "No Gemini account is available."
-        if message.startswith("No available accounts") or selection.error_code == "no_accounts":
+        if message == "No available accounts" or (
+            selection.error_code == "no_accounts" and "human headroom reserved" not in message
+        ):
             message = "No Gemini account is connected to agent-lb."
         raise GeminiGatewayError(503, message, code=selection.error_code or "no_gemini_account", retry_at=retry_at)
 

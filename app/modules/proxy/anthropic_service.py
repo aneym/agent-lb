@@ -1350,8 +1350,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             budget_threshold_pct=100.0 if hold_until_exhausted else 95.0,
             headroom_reallocate=app_settings.anthropic_sticky_headroom_reallocation_enabled
             and not hold_until_exhausted,
-            traffic_class=caller_policy.traffic_class,
-            allow_personal_fallback=caller_policy.allow_personal_fallback,
+            caller_policy=caller_policy,
         )
         eligible_account_ids = (
             [account_id for account_id in eligibility.account_ids if account_id in scoped_account_ids]

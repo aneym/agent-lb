@@ -71,6 +71,18 @@ def handle_rate_limit(state: AccountState, error: UpstreamError) -> None:
     state.last_error_at = now
     state.blocked_at = now
     retry_at = _live_quota_retry_at(error, state.error_count, now=now)
+    secondary_used = (
+        state.raw_secondary_used_percent
+        if state.raw_secondary_used_percent is not None
+        else state.secondary_used_percent
+    )
+    if (
+        secondary_used is not None
+        and secondary_used >= 100.0
+        and state.secondary_reset_at is not None
+        and state.secondary_reset_at > now
+    ):
+        retry_at = max(retry_at, float(state.secondary_reset_at))
     state.reset_at = retry_at
     state.cooldown_until = retry_at
 
@@ -92,6 +104,18 @@ def handle_quota_exceeded(state: AccountState, error: UpstreamError) -> None:
     state.raw_used_percent = 100.0
     state.blocked_at = now
     retry_at = _live_quota_retry_at(error, state.error_count, now=now)
+    secondary_used = (
+        state.raw_secondary_used_percent
+        if state.raw_secondary_used_percent is not None
+        else state.secondary_used_percent
+    )
+    if (
+        secondary_used is not None
+        and secondary_used >= 100.0
+        and state.secondary_reset_at is not None
+        and state.secondary_reset_at > now
+    ):
+        retry_at = max(retry_at, float(state.secondary_reset_at))
     state.reset_at = retry_at
     state.cooldown_until = retry_at
 

@@ -12,6 +12,7 @@ class CallerSelectionPolicy:
     scoped_account_ids: set[str] | None
     traffic_class: TrafficClass
     allow_personal_fallback: bool
+    is_unauthenticated: bool = False
 
 
 def resolve_caller_selection_policy(
@@ -42,4 +43,5 @@ def resolve_caller_selection_policy(
         scoped_account_ids=scoped_account_ids,
         traffic_class=effective_traffic_class,
         allow_personal_fallback=allow_personal_fallback,
+        is_unauthenticated=api_key is None,
     )

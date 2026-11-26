@@ -24,14 +24,22 @@ def account_problems(
         account.owner_instance
         and account.owner_instance != get_settings().local_instance_id
         and account.access_expires_at
-        and now - _utc(account.access_expires_at) > timedelta(hours=1)
     ):
-        problems.append(
-            AccountProblem(
-                code="owner_stale",
-                message=f"Owner {account.owner_instance} stopped pushing; token expired {_utc(account.access_expires_at).isoformat()}.",
+        expires_at = _utc(account.access_expires_at)
+        if now - expires_at > timedelta(hours=1):
+            problems.append(
+                AccountProblem(
+                    code="owner_stale",
+                    message=f"Owner {account.owner_instance} stopped pushing; token expired {expires_at.isoformat()}.",
+                )
             )
-        )
+        elif expires_at - now <= timedelta(minutes=30):
+            problems.append(
+                AccountProblem(
+                    code="owner_expiring",
+                    message=f"Owner {account.owner_instance} push is overdue; mirrored token expires {expires_at.isoformat()}.",
+                )
+            )
     if account.status in {AccountStatus.QUOTA_EXCEEDED, AccountStatus.RATE_LIMITED}:
         reset = account.reset_at
         if reset is None:
