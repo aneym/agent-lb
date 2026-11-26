@@ -276,6 +276,13 @@ DISPATCH_DROPPED = {
     "a23a29c251219671107cbbb6d606dec7e08c709a42625b2953a0ce009a910f66": "land-open-guard.py",
     "ce0d9c515ec1f3a44ac8e76013bfaf95e982e96616003d99bb508b585fed441b": "stash-guard from the engine",
     "ef0e21887ae72a362a207bcb2335c79c876dcedb86a24ea4197e1f20432fe404": "kill-scope-guard",
+    "7ab2e1c9f78c8612ce76e2e798a80ca2021cb1a32215e86506e566fd53612806": "wrapped agent-home-hooks.py SessionStart",
+    "16ae92b6d915efb6581615166d4b7ebc8271898a8f1a2847a831dbcfdeef33c5": "wrapped agent-home-hooks.py UserPromptSubmit",
+    "1dae7f41eadd5133a07b15d9e682d1adfea44e531b9152f9240f16532f821b19": "wrapped agent-home-hooks.py PreToolUse",
+    "ef54c8feabad48fe4e6ff55477a0819a31ee65e88971bac1e4b46b0221801b01": "wrapped agent-home-hooks.py PostToolUse",
+    "613b49d83bd6d142d5e12f4d41401424be4a7a9a1d4e4666c0033cd5722c832a": "wrapped agent-home-hooks.py Stop",
+    "e1269aac3d2717a739e9098d612b97a6adb1c056e6990b650bbffec4e697c1e1": "wrapped agent-home-hooks.py PreCompact",
+    "4c2ba7095f1e1875609739bd4a14ca06df577af72df47bd9a131ec2b93e3faec": "wrapped agent-home-hooks.py SessionEnd",
 }
 
 

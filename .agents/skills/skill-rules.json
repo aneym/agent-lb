@@ -171,7 +171,7 @@
         "sessionSkillUsed": true,
         "envOverride": "SKIP_CONVENTION_GUARD"
       },
-      "blockMessage": "BLOCKED: Run /project-conventions first.\nYou must review project conventions before editing code.\n\n→ Skill tool: 'project-conventions'\n→ Bypass: SKIP_CONVENTION_GUARD=1"
+      "remindMessage": "REMINDER: Consider reviewing /project-conventions before editing code (Skill tool: 'project-conventions'; silence with SKIP_CONVENTION_GUARD=1)."
     }
   }
 }

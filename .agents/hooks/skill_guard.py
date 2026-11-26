@@ -73,6 +73,16 @@ def check_file_markers(file_path: str, markers: list[str]) -> bool:
         return False
 
 
+def format_remind_message(name: str, rule: dict) -> str:
+    remind_message = rule.get("remindMessage")
+    if isinstance(remind_message, str) and remind_message.strip():
+        return remind_message.strip()
+    block_message = rule.get("blockMessage")
+    if isinstance(block_message, str) and block_message.strip():
+        return re.sub(r"^\s*BLOCKED\s*:\s*", "REMINDER: ", block_message.strip(), flags=re.IGNORECASE)
+    return f"REMINDER: Consider invoking skill '{name}' (/{name}) before editing this file."
+
+
 def main() -> None:
     try:
         input_data = json.loads(sys.stdin.read())
@@ -96,11 +106,7 @@ def main() -> None:
     session_state = load_session_state(session_id)
 
 
-    guardrails = {
-        name: rule
-        for name, rule in skills.items()
-        if rule.get("type") == "guardrail" and rule.get("enforcement") == "block"
-    }
+    guardrails = {name: rule for name, rule in skills.items() if rule.get("enforcement") == "block"}
 
     for name, rule in guardrails.items():
         file_triggers = rule.get("fileTriggers")
@@ -161,6 +167,7 @@ def main() -> None:
         name: rule for name, rule in skills.items() if rule.get("enforcement") == "remind" and rule.get("fileTriggers")
     }
 
+    reminders: list[str] = []
     for name, rule in remind_rules.items():
         file_triggers = rule.get("fileTriggers", {})
 
@@ -176,7 +183,6 @@ def main() -> None:
         if content_patterns and not match_content_patterns(file_path, content_patterns):
             continue
 
-
         skip = rule.get("skipConditions", {})
 
         if skip.get("sessionSkillUsed") and name in session_state.get("usedSkills", []):
@@ -186,26 +192,31 @@ def main() -> None:
         if env_override and os.environ.get(env_override):
             continue
 
+        reminders.append(format_remind_message(name, rule))
 
+    if reminders:
         emit_event(
             session_id,
             "hook.invoked",
             {
                 "hook": "skill_guard",
                 "trigger": "PreToolUse",
-                "outcome": "remind_blocked",
-                "matched_count": 1,
-                "exit_code": 2,
+                "outcome": "reminded",
+                "matched_count": len(reminders),
+                "exit_code": 0,
             },
         )
-        block_message = rule.get(
-            "blockMessage",
-            f"BLOCKED: Run /{name} first.\n"
-            f"You must invoke this skill before editing this file.\n\n"
-            f"→ Skill tool: '{name}'",
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "additionalContext": "\n\n".join(reminders),
+                    }
+                }
+            )
         )
-        print(block_message, file=sys.stderr)
-        sys.exit(2)
+        sys.exit(0)
 
     emit_event(
         session_id,
