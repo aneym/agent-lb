@@ -41,7 +41,11 @@ def alert(target: str, sender: str, host: str, problem: str) -> int:
         f"agent-lb receipts guard on {host}: {problem}. Token and efficiency audits read empty until this clears. "
         "Check the primary request_logs writer and this host's primary-database.url path."
     )
-    result = send(target, text, timeout=60)
+    try:
+        result = send("factory-office" if target == "factory" else target, text, timeout=60)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"receipts guard: T3 delivery failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
     if result.returncode != 0:
         print(f"receipts guard: T3 send exited {result.returncode}: {result.stderr.strip()}", file=sys.stderr)
         return 1
@@ -65,19 +69,21 @@ def main(argv: list[str] | None = None) -> None:
         count = read_count(url, args.minutes)
     except Exception as exc:
         problem = f"cannot read the primary receipts database ({type(exc).__name__})"
+        fingerprint = "database-unreadable"
     else:
         print(f"receipts guard: {count} receipts in the last {args.minutes} min on {host}")
         if count:
             state_path.unlink(missing_ok=True)
             return
         problem = f"0 receipts in the last {args.minutes} min"
+        fingerprint = "no-receipts"
     print(f"receipts guard: {problem}", file=sys.stderr)
-    if previous != problem:
+    if previous != fingerprint:
         if alert(args.to, args.sender, host, problem):
             raise SystemExit(1)
         state_path.parent.mkdir(parents=True, exist_ok=True)
         temp = state_path.with_suffix(".tmp")
-        temp.write_text(json.dumps(problem))
+        temp.write_text(json.dumps(fingerprint))
         os.replace(temp, state_path)
     raise SystemExit(3)
 

@@ -24,7 +24,7 @@ def notify(home, outcome, kept):
         previous = json.loads(state_path.read_text())
     except (OSError, ValueError):
         previous = None
-    if signature == previous:
+    if fingerprint(signature) == fingerprint(previous):
         return
     if signature is None:
         message = "~/.claude is clean and tracking origin/main again"
@@ -42,5 +42,15 @@ def notify(home, outcome, kept):
         )
     state_path.parent.mkdir(parents=True, exist_ok=True)
     pending = state_path.with_suffix(".tmp")
-    pending.write_text(json.dumps(signature))
+    pending.write_text(json.dumps(fingerprint(signature)))
     os.replace(pending, state_path)
+
+
+def fingerprint(signature):
+    if isinstance(signature, list) and len(signature) == 2 and signature[0] == "failed":
+        detail = signature[1].lower()
+        if detail.startswith("git fetch") and any(
+            word in detail for word in ("timed out", "timeout", "failed to connect", "could not resolve")
+        ):
+            return ["failed", "git fetch network failure"]
+    return signature
