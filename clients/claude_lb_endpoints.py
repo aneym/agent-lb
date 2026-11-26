@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 
 from claude_lb_common import (  # pyrefly: ignore[missing-import]
     CCGPT_MODEL,
@@ -217,11 +218,31 @@ def probe_ccgpt_at(base_url: str, *, timeout: float) -> tuple[bool, str]:
         accounts = lb_json("/api/accounts", timeout=timeout, base_url=base_url).get("accounts") or []
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
         return False, f"ccgpt account-pool probe failed: {error}"
+    openai = [account for account in accounts if account.get("provider") == "openai"]
     if not any(
-        account.get("provider") == "openai"
-        and str(account.get("status", "")).lower() == "active"
+        str(account.get("status", "")).lower() == "active"
         and str(account.get("routingPolicy", "normal")).lower() not in {"paused", "disabled"}
-        for account in accounts
+        for account in openai
     ):
-        return False, "no active OpenAI accounts"
+        return False, "no active OpenAI accounts" + gpt_reset_suffix(openai)
     return True, ""
+
+
+def gpt_reset_suffix(accounts: list[dict]) -> str:
+    resets: list[float] = []
+    for account in accounts:
+        if str(account.get("status", "")).lower() not in {"rate_limited", "quota_exceeded"}:
+            continue
+        raw = account.get("rateLimitResetAt") or account.get("resetAtPrimary")
+        try:
+            resets.append(datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            continue
+    future = [reset for reset in resets if reset > time.time()]
+    if not future:
+        return "; every GPT account is out of quota or needs sign-in"
+    earliest = min(future)
+    label = datetime.fromtimestamp(earliest, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return (
+        f"; every GPT account is out of quota, earliest reset {label} (in {round((earliest - time.time()) / 60)} min)"
+    )
