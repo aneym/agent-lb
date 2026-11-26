@@ -9,6 +9,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from hashlib import sha256
 from typing import Any, AsyncContextManager, cast
 
@@ -362,6 +363,7 @@ class AnthropicFrameResult:
 @dataclass(frozen=True, slots=True)
 class _AnthropicQuotaEligibility:
     account_ids: list[str]
+    preferred_account_ids: tuple[str, ...] = ()
     blocked_count: int = 0
     next_reset_at: int | None = None
 
@@ -1405,10 +1407,10 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         app_settings = get_settings()
 
         hold_until_exhausted = app_settings.anthropic_sticky_hold_until_exhausted
-        selection = await self._load_balancer.select_account(
+        select = partial(
+            self._load_balancer.select_account,
             model=model,
             provider=provider_name,
-            account_ids=eligibility.account_ids,
             exclude_account_ids=exclude_account_ids,
             ignore_primary_quota_account_ids=eligibility.paid_fallback_account_ids,
             burn_first_account_ids=eligibility.burn_first_account_ids,
@@ -1424,6 +1426,10 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             headroom_reallocate=app_settings.anthropic_sticky_headroom_reallocation_enabled
             and not hold_until_exhausted,
         )
+        preferred = eligibility.preferred_account_ids
+        selection = await select(account_ids=preferred or eligibility.account_ids)
+        if selection.account is None and preferred and len(preferred) < len(eligibility.account_ids):
+            selection = await select(account_ids=eligibility.account_ids)
         if selection.account is None:
             labeled = f"No available {_provider_label(provider_name)} accounts"
             raw_fallback = selection.error_message or labeled
@@ -1438,6 +1444,8 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 quota_candidate_count=len(eligibility.account_ids),
                 quota_cooldown_blocked_count=eligibility.cooldown_blocked_count,
                 quota_cooldown_reset_at=eligibility.cooldown_reset_at,
+                model_hold_count=eligibility.model_hold_count,
+                weekly_exhausted_count=eligibility.weekly_exhausted_count,
                 selection_error_code=selection.error_code,
                 selection_error_message=selection.error_message,
                 selection_retry_at=int(selection.retry_at.timestamp()) if selection.retry_at is not None else None,
@@ -1661,22 +1669,6 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 continue
             eligible_ids.append(account_id)
 
-        if fable_request and eligible_ids:
-            preferred_standard_account_ids = [
-                account_id
-                for account_id in eligible_ids
-                if account_id in preferred_fable_account_ids and account_id not in attempted_account_ids
-            ]
-            if preferred_standard_account_ids:
-                eligible_ids = preferred_standard_account_ids
-            else:
-                logger.warning(
-                    "All subscription-covered Anthropic accounts are soft Fable fallbacks "
-                    "past the weekly threshold (%.0f%%); using that headroom model=%s",
-                    threshold,
-                    model,
-                )
-
         pool_primary_exhausted = bool(model_scope_account_ids) and all(
             account_id in primary_exhaustion for account_id in model_scope_account_ids
         )
@@ -1690,14 +1682,6 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 and account_id not in request_quota_blocked_account_ids
                 and account_id not in secondary_exhaustion
             ]
-            if fable_request:
-                preferred_paid_candidates = [
-                    account_id
-                    for account_id in paid_candidates
-                    if account_id in preferred_fable_account_ids and account_id not in attempted_account_ids
-                ]
-                if preferred_paid_candidates:
-                    paid_candidates = preferred_paid_candidates
             eligible_ids = paid_candidates
             paid_fallback_account_ids = frozenset(paid_candidates)
             blocked_count -= len(eligible_ids)
@@ -1726,6 +1710,11 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         ]
         return _AnthropicQuotaEligibility(
             account_ids=eligible_ids,
+            preferred_account_ids=tuple(
+                account_id
+                for account_id in eligible_ids
+                if account_id in preferred_fable_account_ids and account_id not in attempted_account_ids
+            ),
             blocked_count=blocked_count,
             next_reset_at=min(blocked_reset_by_account_id.values()) if blocked_reset_by_account_id else None,
             cooldown_blocked_count=len(cooling_account_ids),

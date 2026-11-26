@@ -63,6 +63,19 @@ def test_fable_hold_does_not_hide_eligible_fallback(tmp_path):
                     )
                     assert route.status_code == 200, route.text
                     assert route.json()["accountId"] == "fallback"
+                    db.execute(
+                        """INSERT INTO accounts (id, email, provider, plan_type, access_token_encrypted,
+                                   refresh_token_encrypted, last_refresh, status, owner_instance)
+                           VALUES ('preferred', 'preferred@example.invalid', 'anthropic', 'claude', '', '', %s,
+                                   'active', 'unavailable-mirror')""",
+                        (now,),
+                    )
+                    route = client.post(
+                        "/api/anthropic/session-route", json={"sessionId": "fable-test-second", "model": MODEL}
+                    )
+                    assert route.status_code == 200, route.text
+                    assert route.json()["accountId"] == "fallback"
+                    db.execute("UPDATE accounts SET status = 'reauth_required' WHERE id = 'preferred'")
                     db.execute("UPDATE usage_history SET used_percent = 100 WHERE account_id = 'fallback'")
                 refused = client.post(
                     "/v1/messages",

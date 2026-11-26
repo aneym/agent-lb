@@ -28,6 +28,8 @@ class AnthropicSelectionDetails:
         quota_candidate_count: int | None = None,
         quota_cooldown_blocked_count: int = 0,
         quota_cooldown_reset_at: int | None = None,
+        model_hold_count: int = 0,
+        weekly_exhausted_count: int = 0,
         selection_error_code: str | None = None,
         selection_error_message: str | None = None,
         selection_retry_at: int | None = None,
@@ -84,6 +86,10 @@ class AnthropicSelectionDetails:
             selection_error_message=selection_error_message,
         )
         quota_sentence = f"Model quota: {quota_detail}. " if quota_detail else ""
+        if weekly_exhausted_count:
+            quota_sentence += f"All-model weekly quota is exhausted on {weekly_exhausted_count} accounts. "
+        if model_hold_count:
+            quota_sentence += f"Operator holds exclude {model_hold_count} accounts. "
         runtime_sentence = (
             f"Selector runtime cooldown excluded {selection_cooldown_count} "
             f"{'account' if selection_cooldown_count == 1 else 'accounts'}. "
