@@ -199,7 +199,7 @@ async def v1_messages_count_tokens(
         return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
 
     try:
-        result = await context.service.count_tokens(payload, request.headers, model=model)
+        result = await context.service.count_tokens(payload, request.headers, model=model, api_key=api_key)
     except AnthropicProxyError as exc:
         return anthropic_proxy_error_response(exc)
     return Response(content=result.body, status_code=result.status_code, media_type=result.media_type)

@@ -22,8 +22,12 @@ def account_tier(account_id: str) -> str:
     return "personal" if account_id.startswith(personal_prefixes()) else "shared"
 
 
-def shared_first(states: Iterable[T]) -> list[T]:
+def shared_first(states: Iterable[T], *, allow_personal_fallback: bool = True) -> list[T]:
     pool = list(states)
     prefixes = personal_prefixes()
-    shared = [state for state in pool if not state.account_id.startswith(prefixes)] if prefixes else pool
-    return shared or pool
+    if not prefixes:
+        return pool
+    shared = [state for state in pool if not state.account_id.startswith(prefixes)]
+    if shared or not allow_personal_fallback:
+        return shared
+    return pool

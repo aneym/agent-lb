@@ -51,6 +51,8 @@ class _Candidate:
 
 def is_pool_usable(summary: AccountSummary) -> bool:
 
+    if any(problem.code == "owner_stale" for problem in summary.problems):
+        return False
     if normalize_subscription_status(summary.subscription.status if summary.subscription else None) == (
         CANCELED_SUBSCRIPTION_STATUS
     ):

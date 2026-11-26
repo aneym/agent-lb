@@ -29,13 +29,17 @@ def _account_recovery_at(account: AccountSummary):
     return min(candidates) if candidates else None
 
 
+def _is_owner_stale(account: AccountSummary) -> bool:
+    return any(problem.code == "owner_stale" for problem in account.problems)
+
+
 def build_availability_response(accounts: list[AccountSummary]) -> AvailabilityResponse:
     providers: dict[str, ProviderAvailability] = {}
     grouped: dict[str, list[AccountSummary]] = {}
     for account in accounts:
         grouped.setdefault(account.provider, []).append(account)
     for provider, rows in sorted(grouped.items()):
-        unavailable = [row for row in rows if row.status not in _AVAILABLE_ACCOUNT_STATUSES]
+        unavailable = [row for row in rows if row.status not in _AVAILABLE_ACCOUNT_STATUSES or _is_owner_stale(row)]
         recoveries = [
             recovery for recovery in (_account_recovery_at(row) for row in unavailable) if recovery is not None
         ]
@@ -45,7 +49,11 @@ def build_availability_response(accounts: list[AccountSummary]) -> AvailabilityR
             unavailable=[
                 AvailabilityUnavailableAccount(
                     id=row.account_id,
-                    status=row.status,
+                    status=(
+                        "owner_stale"
+                        if row.status in _AVAILABLE_ACCOUNT_STATUSES and _is_owner_stale(row)
+                        else row.status
+                    ),
                     reset_at=_account_recovery_at(row),
                 )
                 for row in unavailable

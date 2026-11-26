@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from hashlib import sha256
-from typing import Any, AsyncContextManager, cast
+from typing import Any, cast
 
 import aiohttp
 from pydantic import ValidationError
@@ -33,6 +33,7 @@ from app.core.anthropic.quota_headers import parse_reset_epoch as _parse_reset_e
 from app.core.anthropic.quota_headers import parse_unified_utilization as _parse_unified_utilization
 from app.core.anthropic.quota_keys import model_quota_key
 from app.core.auth.refresh import classify_refresh_error
+from app.core.balancer import TRAFFIC_CLASS_FOREGROUND, TrafficClass
 from app.core.balancer.error_rules import match_error_rule
 from app.core.balancer.exclusions import active_model_exclusions
 from app.core.balancer.types import UpstreamError
@@ -66,6 +67,11 @@ from app.modules.proxy import limit_backoff, quota_cooldown_store, selection_ref
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_warmup import WarmupBusy, admitted_http_session
 from app.modules.proxy.anthropic_cache_policy import apply_cache_tier as _apply_cache_tier
+from app.modules.proxy.anthropic_connect_retry import (
+    ConnectRetryingResponse,
+    UpstreamStallTimeout,
+    compression_deadline_error,
+)
 from app.modules.proxy.anthropic_outbound_headers import build_anthropic_headers
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError, require_claude_code_client
 from app.modules.proxy.anthropic_rate_limits import (
@@ -73,7 +79,7 @@ from app.modules.proxy.anthropic_rate_limits import (
     kimi_monthly_rate_limit_error,
     rate_limit_error_from_response,
 )
-from app.modules.proxy.anthropic_retry_backoff import connect_backoff_seconds, overloaded_backoff_jitter
+from app.modules.proxy.anthropic_retry_backoff import overloaded_backoff_jitter
 from app.modules.proxy.anthropic_selection_details import AnthropicSelectionDetails
 from app.modules.proxy.anthropic_thread_anchor import ThreadAnchor
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
@@ -83,6 +89,7 @@ from app.modules.proxy.anthropic_upstream_error_body import (
     read_error_details,
     read_error_message,
 )
+from app.modules.proxy.caller_policy import resolve_caller_selection_policy
 from app.modules.proxy.claude_codex_bridge import estimate_claude_input_tokens
 from app.modules.proxy.claude_model_identity import with_route_model_identity
 from app.modules.proxy.compat_errors import STOP_STATUS, pool_exhausted, refresh_due, refuses_plan, rejects_key
@@ -137,24 +144,6 @@ _OVERLOADED_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 
 _CONNECT_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
-_CONNECT_ERRORS: tuple[type[BaseException], ...] = (
-    aiohttp.ClientConnectorError,
-    aiohttp.ServerTimeoutError,
-    aiohttp.ClientOSError,
-    asyncio.TimeoutError,
-)
-
-
-class UpstreamStallTimeout(Exception):
-    def __init__(self, phase: str, seconds: float) -> None:
-        self.phase = phase
-        self.seconds = seconds
-        self.code = f"upstream_{phase}_timeout"
-        if phase == "first_byte":
-            message = f"Anthropic sent no response bytes within {seconds:g} s ({self.code})"
-        else:
-            message = f"Anthropic stream went silent for {seconds:g} s ({self.code})"
-        super().__init__(message)
 
 
 class UpstreamTruncatedEvent(UpstreamStallTimeout):
@@ -229,79 +218,6 @@ async def _stall_bounded_chunks(
             seen_bytes = True
             deadline = loop.time() + idle_seconds if idle_seconds > 0 else None
         yield chunk
-
-
-def _compression_deadline_error() -> AnthropicProxyError:
-
-    return AnthropicProxyError(504, "Proxy request budget exhausted", code="upstream_request_timeout")
-
-
-class _ConnectRetryingResponse:
-    def __init__(
-        self,
-        open_response: Callable[[], AsyncContextManager[aiohttp.ClientResponse]],
-        *,
-        attempts: int,
-        label: str,
-        first_byte_deadline: float | None = None,
-        first_byte_seconds: float = 0.0,
-    ) -> None:
-        self._open_response = open_response
-        self._attempts = max(1, attempts)
-        self._label = label
-        self._first_byte_deadline = first_byte_deadline
-        self._first_byte_seconds = first_byte_seconds
-        self._context: AsyncContextManager[aiohttp.ClientResponse] | None = None
-
-    async def __aenter__(self) -> aiohttp.ClientResponse:
-        bound = asyncio.timeout_at(self._first_byte_deadline)
-        response: aiohttp.ClientResponse | None = None
-        try:
-            async with bound:
-                response = await self._open_with_retries()
-                if self._first_byte_deadline is not None and response.status >= 400:
-                    await response.read()
-                return response
-        except BaseException as exc:
-            if response is not None:
-                response.close()
-                self._context = None
-            if isinstance(exc, TimeoutError) and bound.expired():
-                raise UpstreamStallTimeout("first_byte", self._first_byte_seconds) from None
-            raise
-
-    async def _open_with_retries(self) -> aiohttp.ClientResponse:
-        last_error: BaseException | None = None
-        for attempt in range(self._attempts):
-            context = self._open_response()
-            try:
-                response = await context.__aenter__()
-            except upstream_body.CompressionDeadlineExceeded as exc:
-                raise _compression_deadline_error() from exc
-            except _CONNECT_ERRORS as exc:
-                last_error = exc
-                logger.warning(
-                    "upstream_connect_failed provider=%s attempt=%d/%d error=%s",
-                    self._label,
-                    attempt + 1,
-                    self._attempts,
-                    exc,
-                )
-                if attempt + 1 < self._attempts:
-                    await _CONNECT_RETRY_SLEEP(connect_backoff_seconds(attempt))
-                continue
-            self._context = context
-            return response
-        raise AnthropicProxyError(
-            503,
-            f"{self._label} upstream unreachable after {self._attempts} connect attempts: {last_error}",
-            code="upstream_unreachable",
-        ) from last_error
-
-    async def __aexit__(self, exc_type, exc, tb) -> bool | None:
-        if self._context is None:
-            return None
-        return await self._context.__aexit__(exc_type, exc, tb)
 
 
 _OVERLOADED_RETRY_JITTER: Callable[[], float] = overloaded_backoff_jitter
@@ -453,6 +369,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 exclude_account_ids=selected_account_ids,
                 sticky_key=sticky_key,
                 quota_key=quota_key,
+                api_key=api_key,
             )
         except AnthropicProxyError as exc:
             if not wait_enabled or exc.retry_at is None:
@@ -503,6 +420,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                 exclude_account_ids=selected_account_ids,
                                 sticky_key=sticky_key,
                                 quota_key=quota_key,
+                                api_key=api_key,
                             )
                             selected_account_ids.add(account.id)
                         if not limit_backoff.claim(account.id):
@@ -575,7 +493,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                 if payload.stream and first_byte_seconds > 0
                                 else None
                             )
-                            async with _ConnectRetryingResponse(
+                            async with ConnectRetryingResponse(
                                 lambda: self._open_upstream_response(
                                     session,
                                     provider_name=provider_name,
@@ -587,6 +505,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                 label=_provider_label(provider_name),
                                 first_byte_deadline=first_byte_deadline,
                                 first_byte_seconds=first_byte_seconds,
+                                sleep_fn=_CONNECT_RETRY_SLEEP,
                             ) as resp:
                                 await admission_stack.aclose()
                                 quota_observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1233,6 +1152,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         inbound_headers: Mapping[str, str],
         *,
         model: str,
+        api_key: ApiKeyData | None = None,
     ) -> AnthropicCountTokensResult:
         resolved_request = await self.resolve_count_tokens_request(body, model=model)
         body = resolved_request.body
@@ -1254,6 +1174,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             exclude_account_ids=set(),
             sticky_key=None,
             quota_key=_count_tokens_quota_key(provider_name),
+            api_key=api_key,
         )
         access_token = await self._fresh_access_token(account)
         headers = build_anthropic_headers(inbound_headers, access_token, provider_name=provider_name)
@@ -1287,14 +1208,14 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 status="error",
                 error_code=code,
                 error_message=message,
-                api_key=None,
+                api_key=api_key,
                 session_id=session_id,
                 useragent=useragent,
                 useragent_group=useragent_group,
             )
             raise AnthropicProxyError(503, message, code=code) from exc
         except upstream_body.CompressionDeadlineExceeded as exc:
-            raise _compression_deadline_error() from exc
+            raise compression_deadline_error() from exc
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise AnthropicProxyError(
                 502,
@@ -1347,6 +1268,8 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         exclude_account_ids: set[str],
         sticky_key: str | None,
         quota_key: str,
+        api_key: ApiKeyData | None = None,
+        traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
     ) -> Account:
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             quota_key = model_quota_key(model, quota_key)
@@ -1405,6 +1328,8 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                 retry_at=eligibility.next_reset_at,
             )
         app_settings = get_settings()
+        caller_policy = resolve_caller_selection_policy(api_key, traffic_class=traffic_class)
+        scoped_account_ids = caller_policy.scoped_account_ids
 
         hold_until_exhausted = app_settings.anthropic_sticky_hold_until_exhausted
         select = partial(
@@ -1425,11 +1350,22 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             budget_threshold_pct=100.0 if hold_until_exhausted else 95.0,
             headroom_reallocate=app_settings.anthropic_sticky_headroom_reallocation_enabled
             and not hold_until_exhausted,
+            traffic_class=caller_policy.traffic_class,
+            allow_personal_fallback=caller_policy.allow_personal_fallback,
         )
-        preferred = eligibility.preferred_account_ids
-        selection = await select(account_ids=preferred or eligibility.account_ids)
-        if selection.account is None and preferred and len(preferred) < len(eligibility.account_ids):
-            selection = await select(account_ids=eligibility.account_ids)
+        eligible_account_ids = (
+            [account_id for account_id in eligibility.account_ids if account_id in scoped_account_ids]
+            if scoped_account_ids is not None
+            else eligibility.account_ids
+        )
+        preferred = (
+            [account_id for account_id in eligibility.preferred_account_ids if account_id in scoped_account_ids]
+            if scoped_account_ids is not None
+            else eligibility.preferred_account_ids
+        )
+        selection = await select(account_ids=preferred if preferred else eligible_account_ids)
+        if selection.account is None and preferred and len(preferred) < len(eligible_account_ids):
+            selection = await select(account_ids=eligible_account_ids)
         if selection.account is None:
             labeled = f"No available {_provider_label(provider_name)} accounts"
             raw_fallback = selection.error_message or labeled
@@ -2013,6 +1949,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         quota_key: str,
         affinity_quota_key: str | None = None,
         provider_name: str = ANTHROPIC_PROVIDER_NAME,
+        api_key: ApiKeyData | None = None,
     ) -> Account:
         sticky_quota_key = affinity_quota_key or quota_key
         sticky_key = f"{_sticky_prefix(provider_name)}:{sticky_quota_key}:session:{_hash_for_key(session_id)}"
@@ -2022,6 +1959,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             exclude_account_ids=set(),
             sticky_key=sticky_key,
             quota_key=quota_key,
+            api_key=api_key,
         )
         async with self._repo_factory() as repos:
             await repos.sticky_sessions.upsert(sticky_key, account.id, kind=StickySessionKind.CODEX_SESSION)

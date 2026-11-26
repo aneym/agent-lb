@@ -109,6 +109,7 @@ def select_account(
     bypass_quota_exceeded_account_ids: Collection[str] | None = None,
     primary_first_usage_weighted: bool = False,
     routing_costs: RoutingCostsByAccount | None = None,
+    allow_personal_fallback: bool = True,
 ) -> SelectionResult:
 
     current = now or time.time()
@@ -163,6 +164,11 @@ def select_account(
             state.last_error_at = None
         available.append(state)
 
+    personal_isolated = False
+    if not allow_personal_fallback and available:
+        available = shared_first(available, allow_personal_fallback=False)
+        personal_isolated = not available
+
     if traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC and available:
         opportunistic_available, reason = _filter_opportunistic_candidates(available, current)
         if not opportunistic_available:
@@ -170,21 +176,49 @@ def select_account(
         available = opportunistic_available
 
     if not available:
-        if allow_backoff_fallback and (in_error_backoff or cooled):
-            available.append(min(in_error_backoff + cooled, key=lambda s: (s.error_count, s.last_error_at or 0.0)))
+        backoff_pool = shared_first(
+            in_error_backoff + cooled,
+            allow_personal_fallback=allow_personal_fallback,
+        )
+        if allow_backoff_fallback and backoff_pool:
+            available.append(min(backoff_pool, key=lambda s: (s.error_count, s.last_error_at or 0.0)))
             if traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC:
                 opportunistic_available, reason = _filter_opportunistic_candidates(available, current)
                 if not opportunistic_available:
                     return SelectionResult(None, f"opportunistic burn window closed: {reason}")
                 available = opportunistic_available
+        elif personal_isolated or (not allow_personal_fallback and (in_error_backoff or cooled) and not backoff_pool):
+            return _selection_failure(
+                "No shared accounts available (personal accounts isolated from caller)",
+                all_states,
+                current=current,
+            )
         else:
             reauth_required = [s for s in all_states if s.status == AccountStatus.REAUTH_REQUIRED]
             deactivated = [s for s in all_states if s.status == AccountStatus.DEACTIVATED]
             paused = [s for s in all_states if s.status == AccountStatus.PAUSED]
             rate_limited = [s for s in all_states if s.status == AccountStatus.RATE_LIMITED]
             quota_exceeded = [s for s in all_states if s.status == AccountStatus.QUOTA_EXCEEDED]
+            permanent = {
+                AccountStatus.REAUTH_REQUIRED,
+                AccountStatus.EXCHANGE_UNCERTAIN,
+                AccountStatus.DEACTIVATED,
+                AccountStatus.PAUSED,
+            }
+            limited = {AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED}
+            recoveries = [
+                deadline
+                for s in all_states
+                if s.status not in permanent
+                for deadline in (
+                    (s.reset_at or s.primary_reset_at) if s.status in limited else None,
+                    s.error_rule_cooldown_until,
+                    s.cooldown_until,
+                )
+                if deadline and deadline > current
+            ]
 
-            if not rate_limited and not quota_exceeded:
+            if not rate_limited and not quota_exceeded and not recoveries and not in_error_backoff:
                 if paused and reauth_required and deactivated:
                     return _selection_failure(
                         "All accounts are paused, deactivated, or require re-authentication",
@@ -215,17 +249,6 @@ def select_account(
                     return _selection_failure("All accounts require re-authentication", all_states, current=current)
                 if deactivated:
                     return _selection_failure("All accounts are deactivated", all_states, current=current)
-            limited = {AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED}
-            recoveries = [
-                deadline
-                for s in all_states
-                for deadline in (
-                    (s.reset_at or s.primary_reset_at) if s.status in limited else None,
-                    s.error_rule_cooldown_until,
-                    s.cooldown_until,
-                )
-                if deadline and deadline > current
-            ]
             if recoveries:
                 return _selection_failure(_format_retry_hint(min(recoveries), current), all_states, current=current)
             if in_error_backoff:
@@ -306,7 +329,16 @@ def select_account(
     healthy = [s for s in available if s.health_tier == HEALTH_TIER_HEALTHY]
     probing = [s for s in available if s.health_tier == HEALTH_TIER_PROBING]
     draining = [s for s in available if s.health_tier == HEALTH_TIER_DRAINING]
-    health_pool = shared_first(healthy or probing or draining or available)
+    health_pool = shared_first(
+        healthy or probing or draining or available,
+        allow_personal_fallback=allow_personal_fallback,
+    )
+    if not health_pool:
+        return _selection_failure(
+            "No shared accounts available (personal accounts isolated from caller)",
+            all_states,
+            current=current,
+        )
     burn_first = [s for s in health_pool if _routing_policy(s) == ROUTING_POLICY_BURN_FIRST]
     normal = [s for s in health_pool if _routing_policy(s) == ROUTING_POLICY_NORMAL]
     preserve = [s for s in health_pool if _routing_policy(s) == ROUTING_POLICY_PRESERVE]

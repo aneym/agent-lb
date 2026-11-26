@@ -12,7 +12,7 @@ from app.modules.proxy.anthropic_outbound_headers import merge_anthropic_beta_he
 logger = logging.getLogger(__name__)
 
 ONE_SHOT_ENTRYPOINTS = frozenset({"sdk-cli"})
-SHORT_GAP_SEATS = frozenset({"rails-runner"})
+SHORT_GAP_SEATS: frozenset[str] = frozenset()
 
 _ENTRYPOINT = re.compile(r"^claude-cli/\S+ \(external, ([\w.-]+)")
 

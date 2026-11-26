@@ -238,8 +238,8 @@ def test_anthropic_cache_tier_policy_over_http(tmp_path):
                             )
                             assert runner_resp.status_code == 200, runner_resp.text
                             headers, body = captured[-1]
-                            assert _all_ttls(body) == ["5m", "5m", "5m"]
-                            assert "extended-cache-ttl-2025-04-11" not in headers.get("anthropic-beta", "")
+                            assert _all_ttls(body) == ["1h", "1h", "1h"]
+                            assert "extended-cache-ttl-2025-04-11" in headers.get("anthropic-beta", "")
 
                         with psycopg.connect(autocommit=True) as db:
                             rows = db.execute(
@@ -252,9 +252,9 @@ def test_anthropic_cache_tier_policy_over_http(tmp_path):
                             ("claude-fable-5-2", "t3-code", TOP_LEVEL_THREAD, "1h"),
                             ("claude-opus-5-5", "shared-recruiter", None, "1h"),
                             ("claude-fable-5-2", "t3-code", None, "5m"),
-                            ("claude-fable-5-2", "rails-runner", None, "5m"),
+                            ("claude-fable-5-2", "rails-runner", None, "1h"),
                             ("claude-opus-5-5", "t3-code", None, "5m"),
-                            ("claude-opus-5-5", "rails-runner", None, "5m"),
+                            ("claude-opus-5-5", "rails-runner", None, "1h"),
                         ]
                 finally:
                     server.terminate()

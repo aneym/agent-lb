@@ -258,6 +258,8 @@ class SettingsFields(BaseSettings):
     model_registry_client_version: str = "0.101.0"
     model_context_window_overrides: Annotated[dict[str, int], NoDecode] = Field(default_factory=dict)
     proxy_unauthenticated_client_cidrs: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    proxy_unauthenticated_exclude_personal: bool = False
+    proxy_unauthenticated_default_traffic_class: Literal["foreground", "opportunistic"] = "foreground"
     pool_personal_account_ids: str = ""
     pool_headroom_workers_per_account: int = Field(default=4, ge=1)
 

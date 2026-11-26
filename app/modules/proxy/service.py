@@ -21,7 +21,6 @@ from app.core.auth.refresh import (
 from app.core.balancer import (
     PERMANENT_FAILURE_CODES,
     TRAFFIC_CLASS_FOREGROUND,
-    TRAFFIC_CLASS_OPPORTUNISTIC,
     ResetPreferenceWindow,
     RoutingStrategy,
     TrafficClass,
@@ -637,6 +636,7 @@ from app.modules.proxy.affinity import (
 from app.modules.proxy.affinity import (
     _sticky_key_for_responses_request as _sticky_key_for_responses_request,
 )
+from app.modules.proxy.caller_policy import resolve_caller_selection_policy
 from app.modules.proxy.compat_errors import is_account_neutral_error_code as _is_account_neutral_error_code
 from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup as DurableBridgeLookup,
@@ -953,9 +953,6 @@ class ProxyService(
                 account = await self._select_codex_control_account_without_budget(
                     affinity=affinity,
                     api_key=api_key,
-                    traffic_class=TRAFFIC_CLASS_OPPORTUNISTIC
-                    if api_key is not None and api_key.traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC
-                    else TRAFFIC_CLASS_FOREGROUND,
                     prefer_earlier_reset_window=_prefer_earlier_reset_window(settings),
                 )
                 if account is None:
@@ -1307,11 +1304,8 @@ class ProxyService(
         traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
         prefer_earlier_reset_window: ResetPreferenceWindow = "secondary",
     ) -> Account | None:
-        scoped_account_ids = (
-            set(api_key.assigned_account_ids)
-            if api_key is not None and api_key.account_assignment_scope_enabled
-            else None
-        )
+        caller_policy = resolve_caller_selection_policy(api_key, traffic_class=traffic_class)
+        scoped_account_ids = caller_policy.scoped_account_ids
         settings = await get_settings_cache().get()
         if _routing_strategy(settings) == "single_account":
             selected_account_id = (settings.single_account_id or "").strip()
@@ -1331,7 +1325,8 @@ class ProxyService(
             budget_threshold_pct=_sticky_reallocation_primary_budget_threshold_pct(settings),
             secondary_budget_threshold_pct=_sticky_reallocation_secondary_budget_threshold_pct(settings),
             hold_sticky_until_exhausted=_openai_sticky_hold_until_exhausted(),
-            traffic_class=traffic_class,
+            traffic_class=caller_policy.traffic_class,
+            allow_personal_fallback=caller_policy.allow_personal_fallback,
         )
         if selection.account is None:
             return None
@@ -1616,16 +1611,10 @@ class ProxyService(
                 "%s request budget exhausted before account selection request_id=%s", kind.title(), request_id
             )
             _raise_proxy_budget_exhausted()
-        scoped_account_ids = (
-            set(api_key.assigned_account_ids)
-            if api_key is not None and api_key.account_assignment_scope_enabled
-            else None
-        )
-        effective_traffic_class = (
-            TRAFFIC_CLASS_OPPORTUNISTIC
-            if api_key is not None and api_key.traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC
-            else traffic_class
-        )
+        caller_policy = resolve_caller_selection_policy(api_key, traffic_class=traffic_class)
+        scoped_account_ids = caller_policy.scoped_account_ids
+        effective_traffic_class = caller_policy.traffic_class
+        allow_personal_fallback = caller_policy.allow_personal_fallback
         excluded_account_ids_set = set(exclude_account_ids or ())
         logger.info(
             "Proxy account selection start request_id=%s kind=%s request_stage=%s model=%s "
@@ -1720,6 +1709,7 @@ class ProxyService(
                         lease_kind=lease_kind,
                         estimated_lease_tokens=estimated_lease_tokens,
                         traffic_class=effective_traffic_class,
+                        allow_personal_fallback=allow_personal_fallback,
                     )
                     if preferred_selection.account is not None:
                         logger.info(
@@ -1763,6 +1753,7 @@ class ProxyService(
                     lease_kind=lease_kind,
                     estimated_lease_tokens=estimated_lease_tokens,
                     traffic_class=effective_traffic_class,
+                    allow_personal_fallback=allow_personal_fallback,
                 )
                 if selection.account is not None and selection.account.id in excluded_account_ids_set:
                     logger.warning(
