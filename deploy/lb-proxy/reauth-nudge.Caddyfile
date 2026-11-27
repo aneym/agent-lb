@@ -10,6 +10,8 @@ http://:2464 {
 		method POST
 		path /api/federation/mirror/nudge
 	}
-	reverse_proxy @owner_nudge 127.0.0.1:2458
-	respond 404
+	route {
+		reverse_proxy @owner_nudge 127.0.0.1:2458
+		respond 404
+	}
 }
