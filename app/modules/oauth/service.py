@@ -5,7 +5,6 @@ import logging
 import secrets
 import time
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
 from typing import Callable
 
 from app.core.auth.api_key_cache import get_api_key_cache
@@ -15,26 +14,27 @@ from app.core.clients.oauth import (
     OAuthTokens,
     build_authorization_url,
     exchange_authorization_code,
-    exchange_device_token,
     generate_pkce_pair,
-    request_device_code,
 )
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
-from app.core.providers import GEMINI_PROVIDER_NAME, OPENAI_PROVIDER_NAME, ProviderLookupError, get_provider
+from app.core.providers import (
+    GEMINI_PROVIDER_NAME,
+    OPENAI_PROVIDER_NAME,
+    ProviderLookupError,
+    get_provider,
+)
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.db.session import get_background_session
-from app.modules.accounts.identity_repository import AccountIdentityConflictError
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.gemini_pool_scope import attach_gemini_pool_to_scoped_keys
-from app.modules.oauth.account_bind import save_signed_in_account
-from app.modules.oauth.callbacks import (
-    _ACCOUNT_IDENTITY_CONFLICT_MESSAGE,
-    OAuthCallbackHandlers,
-)
+from app.modules.oauth.account_bind import load_expected_account, requires_bound_probe, save_signed_in_account
+from app.modules.oauth.callbacks import OAuthCallbackHandlers
 from app.modules.oauth.callbacks import (
     _error_html as _error_html,
 )
+from app.modules.oauth.device import DeviceOAuthHandlers
+from app.modules.oauth.durable import POST_SAVE_TIMEOUT_SECONDS, DurableOAuthFlows
 from app.modules.oauth.provider_flows import PROVIDER_OAUTH_FLOWS
 from app.modules.oauth.schemas import (
     OauthCompleteRequest,
@@ -44,9 +44,8 @@ from app.modules.oauth.schemas import (
     OauthStatusResponse,
 )
 from app.modules.oauth.state import (
-    _MAX_RETAINED_TERMINAL_OAUTH_FLOWS as _MAX_RETAINED_TERMINAL_OAUTH_FLOWS,
-)
-from app.modules.oauth.state import (
+    OAUTH_FLOW_TTL_SECONDS,
+    ExpectedAccount,
     OAuthCallbackServer,
     OAuthState,
     OAuthStateStore,
@@ -54,10 +53,9 @@ from app.modules.oauth.state import (
 from app.modules.oauth.token_account import account_from_tokens
 from app.modules.proxy.account_cache import get_account_selection_cache
 
-_async_sleep = asyncio.sleep
 logger = logging.getLogger(__name__)
-_PENDING_BROWSER_OAUTH_FLOW_TTL_SECONDS = 15 * 60
 _CALLBACK_PORT_RELEASE_GRACE_SECONDS = 1.0
+_PRUNE_INTERVAL_SECONDS = 60
 
 
 async def _oauth_route() -> ResolvedUpstreamRoute | None:
@@ -74,6 +72,54 @@ async def _oauth_route() -> ResolvedUpstreamRoute | None:
 
 
 _OAUTH_STORE = OAuthStateStore()
+_prune_task: asyncio.Task[None] | None = None
+_stop_prune: asyncio.Event | None = None
+
+
+async def _prune_oauth_flows(flows: DurableOAuthFlows, stop: asyncio.Event) -> None:
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=_PRUNE_INTERVAL_SECONDS)
+            return
+        except TimeoutError:
+            pass
+        try:
+            await flows.prune()
+        except Exception as exc:
+            logger.error("OAuth cleanup failed exception_type=%s", type(exc).__name__)
+
+
+async def resume_oauth_flows() -> None:
+    global _prune_task, _stop_prune
+    if get_settings().federation_peer_url:
+        return
+    async with get_background_session() as session:
+        service = OauthService(AccountsRepository(session))
+        await service._flows.prune()
+        browser_flow_id = None
+        for flow in await service._flows.active():
+            if flow.method == "device":
+                await service._ensure_device_poll_task(flow)
+            else:
+                async with _OAUTH_STORE.lock:
+                    _OAUTH_STORE.remember_flow_locked(flow)
+                service._schedule_callback_listener_expiry(flow)
+                browser_flow_id = flow.flow_id
+        if browser_flow_id is not None:
+            await service._ensure_callback_server(browser_flow_id)
+        if _prune_task is None or _prune_task.done():
+            _stop_prune = asyncio.Event()
+            _prune_task = asyncio.create_task(_prune_oauth_flows(service._flows, _stop_prune))
+
+
+async def stop_oauth_flows() -> None:
+    global _prune_task, _stop_prune
+    if _prune_task is not None and _stop_prune is not None:
+        _stop_prune.set()
+        await asyncio.gather(_prune_task, return_exceptions=True)
+        _prune_task = None
+        _stop_prune = None
+    await _OAUTH_STORE.reset()
 
 
 async def pending_oauth_flow_ages() -> list[float]:
@@ -81,7 +127,7 @@ async def pending_oauth_flow_ages() -> list[float]:
         return _OAUTH_STORE.pending_flow_ages_locked()
 
 
-class OauthService(OAuthCallbackHandlers):
+class OauthService(OAuthCallbackHandlers, DeviceOAuthHandlers):
     def __init__(
         self,
         accounts_repo: AccountsRepository,
@@ -89,6 +135,7 @@ class OauthService(OAuthCallbackHandlers):
     ) -> None:
         self._accounts_repo = accounts_repo
         self._encryptor = TokenEncryptor()
+        self._flows = DurableOAuthFlows(self._encryptor)
         self._store = _OAUTH_STORE
         self._repo_factory = repo_factory
 
@@ -98,7 +145,12 @@ class OauthService(OAuthCallbackHandlers):
             provider = get_provider(request.provider)
         except ProviderLookupError as exc:
             raise OAuthError("unsupported_provider", str(exc), 400) from exc
-        if not force_method:
+        expected = (
+            await load_expected_account(self._accounts_repo, request.expected_account_id, provider.name)
+            if request.expected_account_id is not None
+            else None
+        )
+        if not force_method and expected is None:
             accounts = await self._accounts_repo.list_accounts()
             has_openai_account = any(
                 getattr(account, "provider", OPENAI_PROVIDER_NAME) == OPENAI_PROVIDER_NAME for account in accounts
@@ -107,9 +159,10 @@ class OauthService(OAuthCallbackHandlers):
                 server: OAuthCallbackServer | None = None
                 stop_task: asyncio.Task[None] | None = None
                 async with self._store.lock:
-                    server = self._store._cleanup_locked(clear_callback_server=False)
-                    self._store._state = OAuthState(status="success")
-                    if server is not None:
+                    self._store.compat_success = True
+                    if not self._store.has_pending_browser_flows_locked():
+                        server = self._store._callback_server
+                    if server:
                         stop_task = self._start_callback_server_stop_locked(server)
                 if server is not None and stop_task is not None:
                     await self._finish_callback_server_stop(server, stop_task)
@@ -122,67 +175,48 @@ class OauthService(OAuthCallbackHandlers):
                     "Device login is only supported for OpenAI accounts.",
                     400,
                 )
-            return await self._start_device_flow()
+            return await self._start_device_flow(request, expected)
 
         try:
             return await self._start_browser_flow(
                 provider.name,
-                warmup_hours=request.warmup_hours,
-                warmup_capacity_percent=request.warmup_capacity_percent,
-                warmup_max_concurrent=request.warmup_max_concurrent,
-                expected_account_id=request.expected_account_id,
+                request,
+                expected,
             )
         except OSError:
             if provider.name != OPENAI_PROVIDER_NAME:
                 raise
-            return await self._start_device_flow()
+            return await self._start_device_flow(request, expected)
 
     async def oauth_status(self, flow_id: str | None = None) -> OauthStatusResponse:
         async with self._store.lock:
-            state = self._store.get_flow_locked(flow_id)
-            if state is None:
-                state = self._store.state if flow_id is None else OAuthState(status="pending")
-            status = state.status if state.status != "idle" else "pending"
-            return OauthStatusResponse(status=status, error_message=state.error_message)
+            if flow_id is None and self._store.compat_success:
+                return OauthStatusResponse(status="success")
+        flow = await self._flows.get(flow_id)
+        if flow is None:
+            return OauthStatusResponse(status="pending")
+        return OauthStatusResponse(
+            status="pending" if flow.status in {"processing", "verifying"} else flow.status,
+            error_message=flow.error_message,
+            probe_status_code=flow.probe_status_code,
+        )
 
     async def complete_oauth(self, request: OauthCompleteRequest | None = None) -> OauthCompleteResponse:
         payload = request or OauthCompleteRequest()
-        async with self._store.lock:
-            flow = self._store.get_flow_locked(payload.flow_id)
-            state = flow
-            if state is None:
-                state = self._store.state if payload.flow_id is None else OAuthState(status="pending")
-            if payload.device_auth_id and flow is not None:
-                flow.device_auth_id = payload.device_auth_id
-            if payload.user_code and flow is not None:
-                flow.user_code = payload.user_code
-            if flow is not None:
-                self._store.set_latest_flow_locked(flow)
-            if state.status == "success":
-                return OauthCompleteResponse(status="success")
-            if state.method != "device":
-                return OauthCompleteResponse(status="pending")
-            if not self._ensure_device_poll_task_locked(state):
-                if flow is not None:
-                    self._store.set_flow_status_locked(
-                        flow,
-                        status="error",
-                        error_message="Device code flow is not initialized.",
-                    )
-                else:
-                    state.status = "error"
-                    state.error_message = "Device code flow is not initialized."
-                return OauthCompleteResponse(status="error")
-            return OauthCompleteResponse(status="pending")
+        flow = await self._flows.get(payload.flow_id)
+        if flow is not None and flow.status == "pending" and flow.method == "device":
+            await self._ensure_device_poll_task(flow)
+        if flow is not None:
+            return OauthCompleteResponse(
+                status="pending" if flow.status in {"processing", "verifying"} else flow.status
+            )
+        return OauthCompleteResponse(status=(await self.oauth_status(payload.flow_id)).status)
 
     async def _start_browser_flow(
         self,
-        provider_name: str = OPENAI_PROVIDER_NAME,
-        *,
-        warmup_hours: float | None = None,
-        warmup_capacity_percent: float | None = None,
-        warmup_max_concurrent: int | None = None,
-        expected_account_id: str | None = None,
+        provider_name: str,
+        request: OauthStartRequest,
+        expected: ExpectedAccount | None,
     ) -> OauthStartResponse:
         flow_id = secrets.token_urlsafe(12)
         code_verifier, code_challenge = generate_pkce_pair()
@@ -203,28 +237,24 @@ class OauthService(OAuthCallbackHandlers):
                 scope=oauth_config.scope,
                 extra_params=oauth_config.authorization_extra_params,
             )
+        started = time.time()
+        pending = OAuthState(
+            flow_id=flow_id,
+            method="browser",
+            provider=provider.name,
+            state_token=state_token,
+            code_verifier=code_verifier,
+            started_at=started,
+            expires_at=started + OAUTH_FLOW_TTL_SECONDS,
+            warmup_hours=request.warmup_hours,
+            warmup_capacity_percent=request.warmup_capacity_percent,
+            warmup_max_concurrent=request.warmup_max_concurrent,
+            expected_account=expected,
+        )
+        await self._flows.insert(pending)
         async with self._store.lock:
-            self._store.remember_flow_locked(
-                OAuthState(
-                    flow_id=flow_id,
-                    status="pending",
-                    method="browser",
-                    provider=provider.name,
-                    state_token=state_token,
-                    code_verifier=code_verifier,
-                    started_at=time.time(),
-                    expires_at=time.time() + _PENDING_BROWSER_OAUTH_FLOW_TTL_SECONDS,
-                    warmup_hours=warmup_hours,
-                    warmup_capacity_percent=warmup_capacity_percent,
-                    warmup_max_concurrent=warmup_max_concurrent,
-                    expected_account_id=expected_account_id,
-                )
-            )
-
-            asyncio.get_running_loop().call_later(
-                _PENDING_BROWSER_OAUTH_FLOW_TTL_SECONDS + _CALLBACK_PORT_RELEASE_GRACE_SECONDS,
-                lambda: asyncio.ensure_future(self._stop_callback_server_if_idle()),
-            )
+            self._store.remember_flow_locked(pending)
+            self._schedule_callback_listener_expiry(pending)
 
         bind_task = asyncio.ensure_future(self._ensure_callback_server(flow_id))
         self._store._callback_server_bind_tasks.add(bind_task)
@@ -236,8 +266,22 @@ class OauthService(OAuthCallbackHandlers):
             method="browser",
             authorization_url=authorization_url,
             callback_url=oauth_config.redirect_uri,
-            expected_account_id=expected_account_id,
+            expected_account_id=request.expected_account_id,
         )
+
+    def _schedule_callback_listener_expiry(self, flow: OAuthState) -> None:
+        assert flow.expires_at is not None and flow.flow_id is not None
+        if timer := self._store.callback_expiries.get(flow.flow_id):
+            timer.cancel()
+        self._store.callback_expiries[flow.flow_id] = asyncio.get_running_loop().call_later(
+            max(0, flow.expires_at - time.time()) + _CALLBACK_PORT_RELEASE_GRACE_SECONDS,
+            self._expire_callback_listener,
+            flow.flow_id,
+        )
+
+    def _expire_callback_listener(self, flow_id: str) -> None:
+        self._store.callback_expiries.pop(flow_id, None)
+        asyncio.create_task(self._stop_callback_server_if_idle())
 
     async def _ensure_callback_server(self, flow_id: str) -> None:
         settings = get_settings()
@@ -267,7 +311,10 @@ class OauthService(OAuthCallbackHandlers):
                     )
                 except Exception:
                     await callback_server.stop()
-                    await self._set_error("Could not open the OAuth callback listener.", flow_id)
+                    await self._flows.finish(
+                        flow_id, from_status="pending", error="Could not open the OAuth callback listener."
+                    )
+                    await self._forget_browser_flow(flow_id)
                     raise
                 else:
                     async with self._store.lock:
@@ -276,83 +323,7 @@ class OauthService(OAuthCallbackHandlers):
         if callback_server is not None:
             await self._stop_callback_server_if_idle()
 
-    async def _start_device_flow(self) -> OauthStartResponse:
-        flow_id = secrets.token_urlsafe(12)
-        try:
-            route = await _oauth_route()
-            device = await request_device_code(route=route, allow_direct_egress=route is None)
-        except OAuthError as exc:
-            await self._set_error(exc.message)
-            raise
-
-        async with self._store.lock:
-            flow = OAuthState(
-                flow_id=flow_id,
-                status="pending",
-                method="device",
-                device_auth_id=device.device_auth_id,
-                user_code=device.user_code,
-                interval_seconds=device.interval_seconds,
-                started_at=time.time(),
-                expires_at=time.time() + device.expires_in_seconds,
-            )
-            self._store.remove_pending_device_flows_locked()
-            self._store.remember_flow_locked(flow)
-            self._ensure_device_poll_task_locked(flow)
-
-        return OauthStartResponse(
-            flow_id=flow_id,
-            method="device",
-            verification_url=device.verification_url,
-            user_code=device.user_code,
-            device_auth_id=device.device_auth_id,
-            interval_seconds=device.interval_seconds,
-            expires_in_seconds=device.expires_in_seconds,
-        )
-
-    async def _poll_device_tokens(self, flow_id: str | None, context: "DevicePollContext") -> None:
-        try:
-            while time.time() < context.expires_at:
-                route = await _oauth_route()
-                tokens = await exchange_device_token(
-                    device_auth_id=context.device_auth_id,
-                    user_code=context.user_code,
-                    route=route,
-                    allow_direct_egress=route is None,
-                )
-                if tokens:
-                    await self._persist_tokens(tokens, provider_name=OPENAI_PROVIDER_NAME, flow_id=flow_id)
-                    await self._set_success(flow_id)
-                    return
-                await _async_sleep(context.interval_seconds)
-            await self._set_error("Device code expired.", flow_id=flow_id)
-        except OAuthError as exc:
-            await self._set_error(exc.message, flow_id=flow_id)
-        except AccountIdentityConflictError:
-            await self._set_error(_ACCOUNT_IDENTITY_CONFLICT_MESSAGE, flow_id=flow_id)
-        finally:
-            async with self._store.lock:
-                flow = self._store.get_flow_locked(flow_id)
-                current = asyncio.current_task()
-                if flow is not None and flow.poll_task is current:
-                    flow.poll_task = None
-                    self._store.set_latest_flow_locked(flow)
-
-    def _ensure_device_poll_task_locked(self, state: OAuthState) -> bool:
-        if state.poll_task and not state.poll_task.done():
-            return True
-        if not state.device_auth_id or not state.user_code or not state.expires_at:
-            return False
-
-        interval = state.interval_seconds if state.interval_seconds is not None else 0
-        poll_context = DevicePollContext(
-            device_auth_id=state.device_auth_id,
-            user_code=state.user_code,
-            interval_seconds=max(interval, 0),
-            expires_at=state.expires_at,
-        )
-        state.poll_task = asyncio.create_task(self._poll_device_tokens(state.flow_id, poll_context))
-        return True
+    _oauth_route = staticmethod(_oauth_route)
 
     async def _exchange_authorization_code(
         self,
@@ -378,21 +349,31 @@ class OauthService(OAuthCallbackHandlers):
             allow_direct_egress=route is None,
         )
 
-    async def _persist_tokens(
-        self, tokens: OAuthTokens, *, provider_name: str = OPENAI_PROVIDER_NAME, flow_id: str | None = None
-    ) -> None:
-        async with self._store.lock:
-            flow = self._store.get_flow_locked(flow_id)
-        account = account_from_tokens(tokens, provider_name, self._encryptor, flow=flow)
-        expected_id = flow.expected_account_id if flow is not None else None
+    async def _persist_tokens(self, tokens: OAuthTokens, flow: OAuthState) -> int | None:
+        assert flow.flow_id is not None
+        if flow.expires_at is None or flow.expires_at <= time.time():
+            raise OAuthError("expired_flow", "This sign-in has expired; nothing was saved.", 409)
+        account = account_from_tokens(tokens, flow.provider, self._encryptor, flow=flow)
         if self._repo_factory:
             async with self._repo_factory() as repo:
-                await save_signed_in_account(repo, account, expected_id)
+                await save_signed_in_account(repo, account, flow.expected_account, flow_id=flow.flow_id)
         else:
-            await save_signed_in_account(self._accounts_repo, account, expected_id)
-        if provider_name == GEMINI_PROVIDER_NAME:
-            await attach_gemini_pool_to_scoped_keys()
-        await self._invalidate_account_routing_caches()
+            async with get_background_session() as session:
+                await save_signed_in_account(
+                    AccountsRepository(session), account, flow.expected_account, flow_id=flow.flow_id
+                )
+
+        probe_status_code = None
+        if flow.expected_account is not None and requires_bound_probe(flow.provider):
+            probe_status_code = await _verify_committed_account(flow.expected_account.account_id)
+        try:
+            async with asyncio.timeout(5):
+                if flow.provider == GEMINI_PROVIDER_NAME:
+                    await attach_gemini_pool_to_scoped_keys()
+                await self._invalidate_account_routing_caches()
+        except Exception as exc:
+            logger.error("OAuth post-save cache update failed exception_type=%s", type(exc).__name__)
+        return probe_status_code
 
     async def _invalidate_account_routing_caches(self) -> None:
         get_account_selection_cache().invalidate()
@@ -401,43 +382,13 @@ class OauthService(OAuthCallbackHandlers):
         if poller is not None:
             await poller.bump(NAMESPACE_API_KEY)
 
-    async def _set_success(self, flow_id: str | None = None) -> None:
-        async with self._store.lock:
-            flow = self._store.get_flow_locked(flow_id)
-            if flow_id is not None and flow is None:
-                return
-            if flow is None:
-                self._store.state.status = "success"
-                self._store.state.error_message = None
-                return
-            self._store.set_flow_status_locked(flow, status="success", error_message=None)
 
-    async def _set_error(self, message: str, flow_id: str | None = None) -> None:
-        await self._record_error(message, flow_id)
+async def _verify_committed_account(account_id: str) -> int:
+    try:
+        from app.modules.accounts.reauth_completion import verify_bound_reauth
 
-        asyncio.create_task(self._stop_callback_server_if_idle())
-
-    async def _record_error(self, message: str, flow_id: str | None) -> None:
-        async with self._store.lock:
-            if flow_id is None and self._store.state.flow_id is not None:
-                return
-            flow = self._store.get_flow_locked(flow_id)
-            if flow_id is not None and flow is None:
-                return
-            if flow is None:
-                if self._store.state.status == "success":
-                    return
-                self._store.state.status = "error"
-                self._store.state.error_message = message
-                return
-            if flow.status == "success":
-                return
-            self._store.set_flow_status_locked(flow, status="error", error_message=message)
-
-
-@dataclass(frozen=True)
-class DevicePollContext:
-    device_auth_id: str
-    user_code: str
-    interval_seconds: int
-    expires_at: float
+        async with asyncio.timeout(POST_SAVE_TIMEOUT_SECONDS):
+            return await verify_bound_reauth(account_id)
+    except Exception as exc:
+        logger.error("OAuth post-save verification failed exception_type=%s", type(exc).__name__)
+        return 0

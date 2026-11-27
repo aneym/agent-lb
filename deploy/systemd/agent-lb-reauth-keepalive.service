@@ -1,0 +1,16 @@
+[Unit]
+Description=Check enrolled agent-lb browser profiles without signing in
+After=agent-lb.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.agent-lb-primary/runtime/agent-lb
+EnvironmentFile=%h/.agent-lb-primary/agent-lb.env
+Environment=AGENT_LB_BASE_URL=http://127.0.0.1:2477
+Environment=AGENT_LB_STATE_DIR=%h/.agent-lb-primary/state
+Environment=AGENT_LB_CHROME_ROOT=%h/.agent-lb-primary/browser-profiles
+Environment=AGENT_LB_CHROME=%h/.local/bin/google-chrome-stable
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.agent-lb-primary/runtime/agent-lb/.venv/bin/agent-lb reauth-auto run --keepalive-only
+TimeoutStartSec=45min
+UMask=0077

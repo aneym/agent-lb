@@ -5,7 +5,7 @@ import json
 from urllib.parse import parse_qs, urlparse
 
 
-def _encode_jwt(payload: dict) -> str:
+def encode_jwt(payload: dict) -> str:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     body = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
     return f"header.{body}.sig"

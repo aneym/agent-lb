@@ -240,7 +240,7 @@ async def test_tokens_never_leave_the_receiver(
 
 
 @pytest.mark.asyncio
-async def test_mirror_export_is_unchanged_and_skips_pushed_rows(
+async def test_mirror_export_withholds_pushed_credentials_but_reports_presence(
     async_client, app_instance, sources_path: Path, whois_calls
 ) -> None:
     await _seed_account("o", owner_instance=_LOCAL_INSTANCE_ID, access_token="local-o")
@@ -254,6 +254,6 @@ async def test_mirror_export_is_unchanged_and_skips_pushed_rows(
     after = await async_client.get("/api/federation/mirror", headers=mirror_headers)
 
     assert after.status_code == 200, after.text
-    assert after.json() == before.json()
-    assert [account["account_id"] for account in after.json()["accounts"]] == ["o"]
+    assert after.json()["accounts"] == before.json()["accounts"]
+    assert set(after.json()["present_account_ids"]) == {"o", "x"}
     assert "pushed-access-x" not in after.text

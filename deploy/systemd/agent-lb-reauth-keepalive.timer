@@ -1,0 +1,9 @@
+[Unit]
+Description=Check for agent-lb browser profiles due for their weekly visit
+
+[Timer]
+OnActiveSec=30min
+OnUnitInactiveSec=30min
+
+[Install]
+WantedBy=timers.target

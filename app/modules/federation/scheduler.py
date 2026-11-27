@@ -5,12 +5,13 @@ import contextlib
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
@@ -18,7 +19,17 @@ from app.db.request_models import RequestLog
 from app.db.session import get_background_session
 from app.modules.federation.peer_client import AiohttpFederationPeerClient, FederationPeerClient
 from app.modules.federation.repository import FederationRepository
-from app.modules.federation.schemas import CALLER_MACHINE_MAX_LENGTH, CALLER_MACHINE_SOURCE_MAX_LENGTH, CALLER_SEAT_MAX_LENGTH, CALLER_USER_MAX_LENGTH, CALLER_USER_SOURCE_MAX_LENGTH, ROOM_MAX_LENGTH, FederationRequestLogRow, FederationRequestLogsRequest, FederationUsageReportRequest  # noqa: I001  # fmt: skip
+from app.modules.federation.schemas import (
+    CALLER_MACHINE_MAX_LENGTH,
+    CALLER_MACHINE_SOURCE_MAX_LENGTH,
+    CALLER_SEAT_MAX_LENGTH,
+    CALLER_USER_MAX_LENGTH,
+    CALLER_USER_SOURCE_MAX_LENGTH,
+    ROOM_MAX_LENGTH,
+    FederationRequestLogRow,
+    FederationRequestLogsRequest,
+    FederationUsageReportRequest,
+)
 from app.modules.federation.sticky_pin_sync import SEED_MARKER_NAME, StickyPinSync
 from app.modules.proxy.account_cache import get_account_selection_cache
 
@@ -47,9 +58,10 @@ class FederationMirrorScheduler:
     request_log_cursor_path: Path | None = None
     peer_client: FederationPeerClient = field(default_factory=AiohttpFederationPeerClient)
     encryptor: TokenEncryptor = field(default_factory=TokenEncryptor)
-    sleep: Callable[[float], Awaitable[None]] = field(default_factory=lambda: asyncio.sleep)
     sticky_pin_sync: StickyPinSync | None = None
     _task: asyncio.Task[None] | None = None
+    _report_task: asyncio.Task[None] | None = None
+    _wake: asyncio.Event = field(default_factory=asyncio.Event)
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     consecutive_failures: int = 0
     last_success_at: datetime | None = None
@@ -78,9 +90,21 @@ class FederationMirrorScheduler:
         with contextlib.suppress(asyncio.CancelledError):
             await self._task
         self._task = None
+        if self._report_task is not None:
+            self._report_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._report_task
+            self._report_task = None
+
+    def nudge(self) -> bool:
+        if self._task is None or self._task.done() or self._stop.is_set():
+            return False
+        self._wake.set()
+        return True
 
     async def _run_loop(self) -> None:
         while not self._stop.is_set():
+            self._wake.clear()
             delay = self.interval_seconds
             try:
                 self.last_attempt_at = utcnow()
@@ -102,18 +126,26 @@ class FederationMirrorScheduler:
                     exc_info=True,
                 )
             else:
-                await self._push_usage_report()
-                await self._forward_request_logs()
+                if self._report_task is None or self._report_task.done():
+                    self._report_task = asyncio.create_task(self._report_to_peer())
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=delay)
+                await asyncio.wait_for(self._wake.wait(), timeout=delay)
             except asyncio.TimeoutError:
                 continue
+
+    async def _report_to_peer(self) -> None:
+        await self._push_usage_report()
+        await self._forward_request_logs()
 
     async def mirror_once(self) -> None:
         if not self.peer_url or not self.federation_token:
             return
+        sync_started_at = utcnow()
         response = await self.peer_client.fetch_mirror(peer_url=self.peer_url, token=self.federation_token)
+        if response.instance_id == self.local_instance_id:
+            raise ValueError("Federation peer has the local instance ID")
         applied = False
+        pruned = False
         async with self.repo_factory() as repo:
             for account in response.accounts:
                 applied = (
@@ -126,7 +158,7 @@ class FederationMirrorScheduler:
                         plan_type=account.plan_type,
                         chatgpt_account_id=account.chatgpt_account_id,
                         access_token=account.access_token,
-                        expires_at_ms=getattr(account, "expires_at_ms", None),
+                        expires_at_ms=account.expires_at_ms,
                         subscription_status=account.subscription_status,
                         deactivation_reason=account.deactivation_reason,
                         owner_instance_id=response.instance_id,
@@ -135,8 +167,18 @@ class FederationMirrorScheduler:
                     )
                     or applied
                 )
-        if applied:
+            if response.present_account_ids is not None:
+                pruned = await repo.prune_mirror_accounts(
+                    owner_instance_id=response.instance_id,
+                    local_instance_id=self.local_instance_id,
+                    keep_ids=response.present_account_ids | {account.account_id for account in response.accounts},
+                    sync_started_at=sync_started_at,
+                    encryptor=self.encryptor,
+                )
+        if applied or pruned:
             get_account_selection_cache().invalidate()
+        if pruned:
+            get_api_key_cache().clear()
 
     async def _push_usage_report(self) -> None:
         if not self.peer_url or not self.federation_token:

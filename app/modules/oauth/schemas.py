@@ -30,6 +30,7 @@ class OauthStartResponse(DashboardModel):
 class OauthStatusResponse(DashboardModel):
     status: str
     error_message: str | None = None
+    probe_status_code: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class OauthCompleteRequest(DashboardModel):
@@ -50,3 +51,4 @@ class ManualCallbackRequest(DashboardModel):
 class ManualCallbackResponse(DashboardModel):
     status: str
     error_message: str | None = None
+    probe_status_code: int | None = Field(default=None, exclude_if=lambda value: value is None)

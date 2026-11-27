@@ -29,13 +29,15 @@ async def apply_verdict[Failure](
     now: Callable[[], datetime],
     failures: MutableMapping[str, Failure],
     record_failure: Callable[[str], None],
+    verified_reauth: bool = False,
 ) -> None:
     checked_at = to_utc_naive(now())
     date_label = checked_at.date().isoformat()
-    subscription_canceled = normalize_subscription_status(account.subscription_status) == CANCELED_SUBSCRIPTION_STATUS
+    subscription_status = normalize_subscription_status(account.subscription_status)
+    subscription_canceled = subscription_status == CANCELED_SUBSCRIPTION_STATUS
     if verdict is probes.ProbeVerdict.HEALTHY:
         failures.pop(account.id, None)
-        if subscription_canceled:
+        if subscription_canceled or (verified_reauth and subscription_status == "paused"):
             await repo.update_subscription_ledger(
                 account.id,
                 status=ACTIVE_SUBSCRIPTION_STATUS,

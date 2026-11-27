@@ -78,7 +78,7 @@ class _AuthManagerLike(Protocol):
     async def ensure_fresh(self, account: Account, *, force: bool = False) -> Account: ...
 
 
-async def _default_probe_sender(account: Account, access_token: str) -> tuple[int, str | None]:
+async def default_probe_sender(account: Account, access_token: str) -> tuple[int, str | None]:
     from app.core.config.settings import get_settings
 
     settings = get_settings()
@@ -101,7 +101,7 @@ async def _default_probe_sender(account: Account, access_token: str) -> tuple[in
     )
 
 
-async def _default_openai_auth_check_sender(account: Account, access_token: str) -> int:
+async def default_openai_auth_check_sender(account: Account, access_token: str) -> int:
     return await probes.send_openai_auth_check(
         access_token=access_token,
         chatgpt_account_id=account.chatgpt_account_id,

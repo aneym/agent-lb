@@ -209,6 +209,7 @@ class SettingsFields(BaseSettings):
         return self.federation_mirror_token or self.federation_token
 
     federation_peer_url: str | None = None
+    federation_mirror_nudge_url: str | None = None
     federation_mirror_interval_seconds: int = Field(default=300, gt=0)
 
     federation_mirror_include_pushed: bool = False

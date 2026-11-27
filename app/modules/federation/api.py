@@ -4,11 +4,12 @@ import hashlib
 import hmac
 
 import aiohttp
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.config.settings import get_settings
+from app.core.utils.time import utcnow
 from app.dependencies import FederationContext, get_federation_context
 from app.modules.federation.exceptions import (
     FederationConflictError,
@@ -18,7 +19,6 @@ from app.modules.federation.exceptions import (
 )
 from app.modules.federation.push_auth import PushSource, require_federation_push_source
 from app.modules.federation.push_receiver import FederationPushReceiver
-from app.core.utils.time import utcnow
 from app.modules.federation.scheduler import FederationMirrorScheduler
 from app.modules.federation.schemas import (
     FederationAbortRequest,
@@ -60,7 +60,7 @@ async def require_federation_mirror_auth(
 ) -> None:
     settings = get_settings()
     token = settings.effective_federation_mirror_token
-    if not token or credentials is None or not hmac.compare_digest(credentials.credentials, token):
+    if not token or credentials is None or not hmac.compare_digest(credentials.credentials.encode(), token.encode()):
         raise HTTPException(status_code=403, detail="Invalid federation mirror credentials")
 
 
@@ -102,6 +102,14 @@ async def post_push(
 @router.get("/mirror", response_model=FederationMirrorResponse, dependencies=[Depends(require_federation_mirror_auth)])
 async def get_mirror(context: FederationContext = Depends(get_federation_context)) -> FederationMirrorResponse:
     return await context.service.build_mirror_response()
+
+
+@router.post("/mirror/nudge", status_code=202, dependencies=[Depends(require_federation_mirror_auth)])
+async def post_mirror_nudge(request: Request) -> Response:
+    scheduler: FederationMirrorScheduler | None = getattr(request.app.state, "federation_mirror_scheduler", None)
+    if scheduler is None or not scheduler.nudge():
+        raise HTTPException(status_code=503, detail="Federation mirror is not running")
+    return Response(status_code=202)
 
 
 @router.post(
@@ -155,7 +163,7 @@ async def get_status(
 ) -> FederationStatusResponse:
     settings = get_settings()
     scheduler: FederationMirrorScheduler | None = getattr(request.app.state, "federation_mirror_scheduler", None)
-    owned, mirrored = await context.repository.count_accounts_by_ownership(settings.local_instance_id)
+    owned, mirrored, owner_stale = await context.repository.count_accounts_by_ownership(settings.local_instance_id)
     is_enabled = bool(settings.federation_peer_url and settings.effective_federation_mirror_token)
     return FederationStatusResponse(
         local_instance_id=settings.local_instance_id,
@@ -173,7 +181,7 @@ async def get_status(
             last_success_at=scheduler.usage_push_last_success_at if scheduler else None,
             last_error=scheduler.usage_push_last_error if scheduler else None,
         ),
-        accounts=FederationAccountCounts(owned=owned, mirrored=mirrored),
+        accounts=FederationAccountCounts(owned=owned, mirrored=mirrored, owner_stale=owner_stale),
     )
 
 

@@ -17,6 +17,7 @@ from app.modules.federation.exceptions import (  # noqa: I001  # fmt: skip
     FederationNotConfiguredError,
     FederationNotFoundError,
 )
+from app.modules.federation.owner_health import OWNER_STALE_AFTER
 from app.modules.federation.peer_client import AiohttpFederationPeerClient, FederationPeerClient
 from app.modules.federation.repository import LOCAL_ONLY_PROVIDERS, FederationRepository
 from app.modules.federation.schemas import (  # noqa: I001  # fmt: skip
@@ -99,18 +100,23 @@ class FederationService:
 
     async def build_mirror_response(self) -> FederationMirrorResponse:
         local_id = self._settings.local_instance_id
-        accounts = await self._repo.list_mirrorable_accounts(
-            local_id, include_foreign=self._settings.federation_mirror_include_pushed
-        )
+        accounts = await self._repo.list_federation_accounts()
+        stale_before_ms = naive_utc_to_epoch(utcnow() - OWNER_STALE_AFTER) * 1000
         mirror_accounts = []
         for account in accounts:
-            if warmup_active(account):
+            foreign = account.owner_instance not in (None, local_id)
+            if (
+                account.provider in LOCAL_ONLY_PROVIDERS
+                or warmup_active(account)
+                or (foreign and not self._settings.federation_mirror_include_pushed)
+            ):
                 continue
             try:
                 access_token = self._encryptor.decrypt(account.access_token_encrypted)
             except Exception:
                 logger.warning("Federation mirror skipped account_id=%s", account.id)
                 continue
+            expires_at_ms = _account_expiry_ms(account, access_token)
             mirror_accounts.append(
                 FederationMirrorAccount(
                     account_id=account.id,
@@ -121,12 +127,15 @@ class FederationService:
                     plan_type=account.plan_type,
                     chatgpt_account_id=account.chatgpt_account_id,
                     access_token=access_token,
-                    expires_at_ms=_account_expiry_ms(account, access_token),
+                    expires_at_ms=expires_at_ms,
+                    owner_stale=foreign and expires_at_ms is not None and expires_at_ms < stale_before_ms,
                     subscription_status=account.subscription_status,
                     deactivation_reason=account.deactivation_reason,
                 )
             )
-        return FederationMirrorResponse(instance_id=local_id, accounts=mirror_accounts)
+        return FederationMirrorResponse(
+            instance_id=local_id, accounts=mirror_accounts, present_account_ids={account.id for account in accounts}
+        )
 
     async def checkout(self, account_id: str, taker_instance_id: str, nonce: str) -> FederationCheckoutResponse:
         async with _cross_process_refresh_lock(account_id):

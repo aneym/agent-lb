@@ -163,7 +163,7 @@ async def validate_eval_api_access(request: HTTPConnection) -> None:
         raise DashboardForbiddenError("Eval traffic may only access model proxy routes", code="eval_proxy_only")
 
 
-async def validate_dashboard_session(request: Request) -> None:
+async def validate_dashboard_session(request: HTTPConnection) -> None:
     settings = await get_settings_cache().get()
 
     if getattr(settings, "team_mode_enabled", False) and not _is_trusted_dashboard_client(request):
@@ -216,7 +216,7 @@ async def validate_dashboard_session(request: Request) -> None:
         raise DashboardAuthError("TOTP verification is required for dashboard access", code="totp_required")
 
 
-async def _dashboard_operator_key(request: Request) -> ApiKeyData | None:
+async def _dashboard_operator_key(request: HTTPConnection) -> ApiKeyData | None:
     authorization = select_member_key_authorization(
         request.headers.get("authorization"), request.headers.get("x-api-key")
     )

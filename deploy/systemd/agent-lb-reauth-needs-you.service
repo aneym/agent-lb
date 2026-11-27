@@ -1,0 +1,10 @@
+[Unit]
+Description=Withdraw Rails Needs You cards after verified agent-lb sign-in
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.agent-lb-primary/runtime/agent-lb
+Environment=AGENT_LB_STATE_DIR=%h/.agent-lb-primary/state
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.agent-lb-primary/runtime/agent-lb/.venv/bin/python -m app.reauth_needs_you
+TimeoutStartSec=100

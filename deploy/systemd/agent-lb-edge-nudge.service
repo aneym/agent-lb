@@ -1,0 +1,14 @@
+[Unit]
+Description=Receive agent-lb mirror nudges from the primary over Tailscale
+After=agent-lb-edge.service
+
+[Service]
+Type=notify
+WorkingDirectory=%h/.config/agent-lb/lb-proxy
+EnvironmentFile=%h/.config/agent-lb/lb-proxy/reauth-nudge.env
+ExecStart=%h/.local/bin/caddy run --config reauth-nudge.Caddyfile --adapter caddyfile
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

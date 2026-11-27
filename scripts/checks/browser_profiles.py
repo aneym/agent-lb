@@ -42,11 +42,8 @@ def main() -> None:
         assert rows["afn9@case.edu"]["cdpPort"] == 9333
         assert rows["afn9@case.edu"]["providers"] == ["anthropic", "openai"]
         plan = json.loads(run("reauth", "alex@chordtalent.com", "--dry-run").stdout)
-        assert f"--user-data-dir={root}/a.neyman17+lb3@gmail.com" in plan["chrome_argv"]
-        assert "--remote-debugging-port=9334" in plan["chrome_argv"]
-        assert "--remote-debugging-address=127.0.0.1" in plan["chrome_argv"]
-        assert plan["start"]["body"] == {"provider": "anthropic", "forceMethod": "browser"}
-        assert plan["complete"] == "manual-callback via CDP"
+        assert plan == {"reauthPath": "/reauth/<accountId>", "provider": "anthropic", "localBrowser": False}
+        assert "unmanaged profile windows are disabled" in run("profiles", "open", "afn9@case.edu", rc=1).stderr
         assert "profiles add" in run("reauth", "nobody@x", "--dry-run", rc=2).stderr
         registry = root / "state/browser-profiles.json"
         assert stat.S_IMODE(registry.stat().st_mode) == 0o600

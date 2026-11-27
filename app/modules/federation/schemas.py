@@ -17,6 +17,7 @@ class FederationMirrorAccount(BaseModel):
     chatgpt_account_id: str | None = None
     access_token: str = Field(repr=False)
     expires_at_ms: int | None = None
+    owner_stale: bool = False
     subscription_status: str | None = None
     deactivation_reason: str | None = None
 
@@ -24,6 +25,7 @@ class FederationMirrorAccount(BaseModel):
 class FederationMirrorResponse(BaseModel):
     instance_id: str
     accounts: list[FederationMirrorAccount]
+    present_account_ids: set[str] | None = None
 
 
 class FederationUsageDayRollup(BaseModel):
@@ -122,6 +124,7 @@ class FederationUsagePushStatus(DashboardModel):
 class FederationAccountCounts(DashboardModel):
     owned: int
     mirrored: int
+    owner_stale: int
 
 
 class FederationStatusResponse(DashboardModel):

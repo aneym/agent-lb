@@ -13,7 +13,7 @@ from enum import Enum
 
 from app.core.audit.service import AuditService
 from app.core.auth.refresh import RefreshError, classify_refresh_error
-from app.core.balancer import ACCOUNT_ON_HOLD_REASON, DEAD_REFRESH_GRANT_REASONS
+from app.core.balancer import ACCOUNT_ON_HOLD_REASON, DEAD_REFRESH_GRANT_REASONS, permanent_failure_reason
 from app.core.crypto import TokenEncryptor
 from app.core.providers import (
     ANTHROPIC_PROVIDER_NAME,
@@ -34,13 +34,13 @@ from app.modules.accounts.pulse_backend import (
     _default_auth_manager_factory,
     _default_fable_marker_writer,
     _default_fable_probe_sender,
-    _default_openai_auth_check_sender,
-    _default_probe_sender,
     _default_quota_cooldown_clearer,
     _default_quota_cooldown_probe_sender,
     _default_weekly_usage_lookup,
     _get_leader_election,
     _LeaderElectionLike,
+    default_openai_auth_check_sender,
+    default_probe_sender,
 )
 from app.modules.accounts.pulse_verdicts import apply_verdict, mark_disconnected
 from app.modules.accounts.subscription_status import (
@@ -112,8 +112,8 @@ class AccountPulseScheduler:
     leader_election_factory: _LeaderElectionFactory = field(default_factory=lambda: _get_leader_election)
     repo_factory: _RepoFactory = field(default_factory=lambda: _default_accounts_repo_factory)
     auth_manager_factory: _AuthManagerFactory = field(default_factory=lambda: _default_auth_manager_factory)
-    probe_sender: _ProbeSender = field(default_factory=lambda: _default_probe_sender)
-    openai_auth_check_sender: _AuthCheckSender = field(default_factory=lambda: _default_openai_auth_check_sender)
+    probe_sender: _ProbeSender = field(default_factory=lambda: default_probe_sender)
+    openai_auth_check_sender: _AuthCheckSender = field(default_factory=lambda: default_openai_auth_check_sender)
     fable_probe_sender: _ProbeSender = field(default_factory=lambda: _default_fable_probe_sender)
     weekly_usage_lookup: _WeeklyUsageLookup = field(default_factory=lambda: _default_weekly_usage_lookup)
     fable_marker_writer: _FableMarkerWriter = field(default_factory=lambda: _default_fable_marker_writer)
@@ -215,7 +215,7 @@ class AccountPulseScheduler:
             return False
         if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
             if account.deactivation_reason in DEAD_REFRESH_GRANT_REASONS:
-                return account.id not in self._failures
+                return False
             if account.deactivation_reason == ACCOUNT_ON_HOLD_REASON:
                 return not self._in_backoff(account.id, min_delay_seconds=_ON_HOLD_MIN_RETRY_SECONDS)
         if not recovery_only:
@@ -230,6 +230,10 @@ class AccountPulseScheduler:
             async with self.repo_factory() as repo:
                 account = await repo.get_by_id(account_id)
                 if account is None or account.status == AccountStatus.PAUSED:
+                    return
+                if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED) and (
+                    account.deactivation_reason in DEAD_REFRESH_GRANT_REASONS
+                ):
                     return
                 if account.deactivation_reason == GEMINI_TERMS_DISABLED_REASON:
                     return
@@ -247,11 +251,12 @@ class AccountPulseScheduler:
                     fresh_account = await manager.ensure_fresh(account, force=False)
                 except RefreshError as exc:
                     is_permanent = exc.is_permanent or classify_refresh_error(exc.code)
-                    if is_permanent and account.status == AccountStatus.ACTIVE:
+                    reason = permanent_failure_reason(exc.code)
+                    if reason in DEAD_REFRESH_GRANT_REASONS:
+                        await mark_disconnected(repo, account, reason=reason)
+                    elif is_permanent and account.status == AccountStatus.ACTIVE:
                         await mark_disconnected(
-                            repo,
-                            account,
-                            reason=f"Account pulse: token refresh failed ({exc.code})",
+                            repo, account, reason=f"Account pulse: token refresh failed ({exc.code})"
                         )
                     else:
                         self._record_failure(account_id)

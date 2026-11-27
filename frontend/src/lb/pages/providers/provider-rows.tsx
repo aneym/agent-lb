@@ -309,6 +309,7 @@ export function ProxyAccountRow({
       )
     : undefined;
   const rowLink = `/providers/${encodeURIComponent(a.accountId)}`;
+  const ownerStale = a.problems.find((problem) => problem.code === "owner_stale");
   return (
     <AccountRow
       label={accountLabel(a, hideEmails)}
@@ -324,10 +325,10 @@ export function ProxyAccountRow({
       }
       state={
         <AccountState
-          status={a.status}
+          status={ownerStale ? "owner_stale" : a.status}
           resetAt={a.rateLimitResetAt || a.resetAtSecondary}
           sub={
-            a.warmupUntil && new Date(a.warmupUntil).getTime() > now
+            ownerStale ? ownerStale.message : a.warmupUntil && new Date(a.warmupUntil).getTime() > now
               ? `warming up until ${new Date(a.warmupUntil).toLocaleString()}`
               : a.status === "active" && sessions
                 ? `holding ${sessions} sessions`
@@ -384,7 +385,8 @@ export function ProxyAccountRow({
               {
                 label: "Sign in again",
                 hidden: a.status !== "reauth_required",
-                onSelect: () => navigate(`${rowLink}?signin=1`),
+                onSelect: () => navigate(a.provider === "anthropic" || a.provider === "openai"
+                  ? `/reauth/${encodeURIComponent(a.accountId)}` : `${rowLink}?signin=1`),
               },
               { label: "Remove…", onSelect: () => navigate(rowLink) },
             ]}

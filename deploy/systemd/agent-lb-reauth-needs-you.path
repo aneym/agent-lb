@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch for verified agent-lb sign-ins
+
+[Path]
+PathChanged=%h/.agent-lb-primary/state/reauth-verified
+
+[Install]
+WantedBy=default.target

@@ -46,6 +46,7 @@ from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.firewall import api as firewall_api
 from app.modules.health import api as health_api
 from app.modules.oauth import api as oauth_api
+from app.modules.oauth.service import resume_oauth_flows, stop_oauth_flows
 from app.modules.pools import api as pools_api
 from app.modules.pools import headroom as pools_headroom
 from app.modules.pools.seat_quota_scheduler import build_seat_quota_scheduler
@@ -78,6 +79,7 @@ from app.modules.usage import api as usage_api
 from app.modules.usage.additional_quota_keys import reload_additional_quota_registry
 from app.modules.verifier_receipts import api as verifier_receipts_api
 from app.muse_routes import register_muse_routes
+from app.reauth_stream import router as reauth_browser_router
 from app.runtime_diagnostics import log_runtime_diagnostic_fingerprint
 from app.static_routes import configure_static_routes
 
@@ -121,6 +123,7 @@ async def lifespan(app: FastAPI):
         log_bootstrap_token(logger, _auto_bootstrap_token)
     async with startup_recorder.phase("http_client"):
         await init_http_client()
+        await resume_oauth_flows()
     async with startup_recorder.phase("bridge_schema"):
         bridge_durable_schema_ready = await ensure_bridge_durable_schema_ready(settings)
     log_runtime_diagnostic_fingerprint(settings, bridge_durable_schema_ready=bridge_durable_schema_ready)
@@ -304,6 +307,7 @@ async def lifespan(app: FastAPI):
         await api_key_limit_reset_scheduler.stop()
         await seat_quota_scheduler.stop()
         await usage_scheduler.stop()
+        await stop_oauth_flows()
         if not await shutdown_state.settle_exchanges(shutdown_state.EXCHANGE_SETTLE_S):
             logger.warning("Shutdown timed out with %d token exchanges pending", shutdown_state.get_exchanges())
         try:
@@ -385,6 +389,7 @@ def configure_app(app: FastAPI, settings) -> None:
         conversation_archive_api.router,
         runtime_api.router,
         oauth_api.router,
+        reauth_browser_router,
         dashboard_auth_api.router,
         settings_api.router,
         firewall_api.router,

@@ -1,35 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LABEL=com.aneyman.agent-lb-reauth-auto
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-AGENT_LB="$(command -v agent-lb)"
-mkdir -p "$(dirname "$PLIST")" "$HOME/.agent-lb/state"
-python3 - "$PLIST" "$AGENT_LB" "$HOME" <<'PY'
-import os
-import plistlib
-import sys
-from pathlib import Path
-
-path, binary, home = sys.argv[1:]
-plist = {
-    "Label": "com.aneyman.agent-lb-reauth-auto",
-    "ProgramArguments": [binary, "reauth-auto", "run"],
-    "StartInterval": 600,
-    "RunAtLoad": True,
-    "EnvironmentVariables": {
-        "PATH": os.environ["PATH"],
-        **({"AGENT_LB_SIGNIN_LANE": lane} if (lane := os.environ.get("AGENT_LB_SIGNIN_LANE", "").strip()) else {}),
-    },
-    "StandardOutPath": home + "/.agent-lb/state/reauth-auto.out.log",
-    "StandardErrorPath": home + "/.agent-lb/state/reauth-auto.err.log",
-}
-Path(path).write_bytes(plistlib.dumps(plist))
-Path(path).chmod(0o600)
-PY
-plutil -lint "$PLIST" >/dev/null
-if launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null; then
-    :
+if [[ $(uname -s) != Linux || $(hostname -s) != ax42 ]]; then
+  printf '%s\n' 'Install reauth automation on the ax42 Linux account owner only.' >&2
+  exit 1
 fi
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "installed $LABEL -> $AGENT_LB reauth-auto run"
+
+source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../deploy/systemd" && pwd)"
+units="$HOME/.config/systemd/user"
+state="$HOME/.agent-lb-primary/state"
+mkdir -p "$units"
+install -d -m 0700 "$state/reauth-verified"
+install -m 0644 "$source_dir"/agent-lb-reauth-{auto,keepalive,needs-you}.{service,timer} "$source_dir"/agent-lb-reauth-needs-you.path "$units"
+systemctl --user daemon-reload
+systemctl --user enable --now agent-lb-reauth-{auto,keepalive,needs-you}.timer agent-lb-reauth-needs-you.path

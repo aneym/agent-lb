@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 from websockets.exceptions import WebSocketException
 
 from app.core.browser_profiles import BrowserProfile
-from app.core.cdp_page import CdpError, CdpPage, cdp_up, close_browser
-from app.core.profile_launch import start_chrome
+from app.core.cdp_page import CdpError, CdpPage
+from app.core.profile_launch import isolated_browser
 from app.core.profile_lock import profile_held
 from app.reauth_page import signed_in_as
 
@@ -70,36 +70,38 @@ def _claude(page: CdpPage, email: str) -> str | None:
 
 
 def visit(profile: BrowserProfile) -> tuple[str, str]:
-    if cdp_up(profile.cdp_port):
-        return "skipped", "Chrome is already open on this profile"
     with profile_held(profile.email) as free:
         if not free:
             return "skipped", "another run holds this profile"
-        pages: list[CdpPage] = []
-        checks: list = []
         try:
-            start_chrome(profile, seconds=15)
-            if profile.login == "google":
-                google = CdpPage(profile.cdp_port, "https://myaccount.google.com/", background=True)
-                pages.append(google)
-                checks.append(("google", lambda: _google(google, profile.email)))
-            claude = CdpPage(profile.cdp_port, "https://claude.ai/", background=True)
-            pages.append(claude)
-            checks.append(("claude", lambda: _claude(claude, profile.email)))
-            results: dict[str, str] = {}
-            stop = time.monotonic() + VISIT_SECONDS
-            while time.monotonic() < stop and len(results) < len(checks):
-                for name, check in checks:
-                    if name not in results and (answer := check()):
-                        results[name] = answer
-                time.sleep(2)
+            with isolated_browser(profile, "anthropic") as browser:
+                return _visit(profile, browser.port)
         except (CdpError, WebSocketException, OSError, TimeoutError) as exc:
-            return "unknown", f"browser: {str(exc)[:120] or type(exc).__name__}"
-        finally:
-            for page in pages:
-                page.close()
-            close_browser(profile.cdp_port)
-        for name, _check in checks:
-            if results.get(name, "unknown") != "ok":
-                return results.get(name, "unknown"), f"{name} check"
-        return "ok", ", ".join(f"{name} signed in" for name, _check in checks)
+            return "unknown", f"browser: {type(exc).__name__}"
+
+
+def _visit(profile: BrowserProfile, port: int) -> tuple[str, str]:
+    pages: list[CdpPage] = []
+    checks: list = []
+    try:
+        if profile.login == "google":
+            google = CdpPage(port, "https://myaccount.google.com/", background=True)
+            pages.append(google)
+            checks.append(("google", lambda: _google(google, profile.email)))
+        claude = CdpPage(port, "https://claude.ai/", background=True)
+        pages.append(claude)
+        checks.append(("claude", lambda: _claude(claude, profile.email)))
+        results: dict[str, str] = {}
+        stop = time.monotonic() + VISIT_SECONDS
+        while time.monotonic() < stop and len(results) < len(checks):
+            for name, check in checks:
+                if name not in results and (answer := check()):
+                    results[name] = answer
+            time.sleep(2)
+    finally:
+        for page in pages:
+            page.detach()
+    for name, _check in checks:
+        if results.get(name, "unknown") != "ok":
+            return results.get(name, "unknown"), f"{name} check"
+    return "ok", ", ".join(f"{name} signed in" for name, _check in checks)

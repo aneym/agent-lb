@@ -4,6 +4,7 @@ import os
 import subprocess
 import time
 from datetime import date
+from urllib.parse import quote
 
 from app.core import rails_ask
 from app.core.browser_profiles import BrowserProfile, user_data_dir
@@ -37,12 +38,12 @@ WHY = {
 def question(email: str, account_id: str, kind: str, profile: BrowserProfile) -> tuple[str, list[str]]:
     window = profile_name(user_data_dir(profile)) or profile.label or email
     lines = [
-        f"Sign in to Claude as {email} in its Chrome window on Studio",
+        f"Sign in to Claude as {email}",
         f"agent-lb could not renew this sign-in by itself: {WHY.get(kind, 'it stopped')}.",
-        f'The window is the Chrome profile "{window}". Once Claude shows you signed in there, agent-lb finishes on its own.',
-        f"Or sign in from any browser: {DASHBOARD}/providers/{account_id}?signin=1 opens a fresh sign-in with a box for the code.",
+        f'Open {DASHBOARD}/reauth/{quote(account_id, safe="")} to sign in using the isolated server profile "{window}".',
+        "If Claude blocks the server IP, use the private sign-in instructions on that page.",
     ]
-    return "\n".join(lines), ["Signed in on Studio", "Pasted the code in the dashboard"]
+    return "\n".join(lines), ["Signed in on the server", "Used private sign-in"]
 
 
 def signin_lane() -> str | None:
@@ -103,13 +104,17 @@ def changed(entry: dict, *, lapsed: bool) -> None:
 
 
 def withdraw_ask(entry: dict, *, dry_run: bool) -> str | None:
-    ask_id = entry.pop("askId", None)
-    entry.pop("askKind", None)
+    ask_id = entry.get("askId")
     if not ask_id:
         return None
     if dry_run or ask_id == "dry-run":
+        entry.pop("askId", None)
+        entry.pop("askKind", None)
         return f"would withdraw ask {ask_id}"
     withdrawn = rails_ask.withdraw(ASKER, ask_id)
+    if withdrawn:
+        entry.pop("askId", None)
+        entry.pop("askKind", None)
     return f"withdrew ask {ask_id}" if withdrawn else f"could not withdraw ask {ask_id}"
 
 

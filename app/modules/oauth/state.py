@@ -9,8 +9,17 @@ from aiohttp import web
 
 from app.core.providers import OPENAI_PROVIDER_NAME
 
-_TERMINAL_OAUTH_STATUSES = {"error", "success"}
-_MAX_RETAINED_TERMINAL_OAUTH_FLOWS = 16
+OAUTH_FLOW_TTL_SECONDS = 60 * 60
+
+
+@dataclass(frozen=True)
+class ExpectedAccount:
+    account_id: str
+    email: str
+    provider: str
+    upstream_id: str | None
+    workspace_id: str | None
+    created_at: str
 
 
 @dataclass
@@ -20,28 +29,28 @@ class OAuthState:
     method: str | None = None
     provider: str = OPENAI_PROVIDER_NAME
     error_message: str | None = None
+    probe_status_code: int | None = None
     state_token: str | None = None
     code_verifier: str | None = None
     device_auth_id: str | None = None
     user_code: str | None = None
     interval_seconds: int | None = None
     expires_at: float | None = None
-    finished_at: float | None = None
     started_at: float | None = None
     warmup_hours: float | None = None
     warmup_capacity_percent: float | None = None
     warmup_max_concurrent: int | None = None
-    expected_account_id: str | None = None
-    callback_server: "OAuthCallbackServer | None" = None
+    expected_account: ExpectedAccount | None = None
+    poll_after: float | None = None
     poll_task: asyncio.Task[None] | None = None
+    stop_poll: asyncio.Event | None = None
 
 
 class OAuthStateStore:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
-        self._state = OAuthState(status="idle")
+        self.compat_success = False
         self._flows: dict[str, OAuthState] = {}
-        self._state_token_index: dict[str, str] = {}
         self._callback_server: OAuthCallbackServer | None = None
         self._callback_server_stop_task: asyncio.Task[None] | None = None
 
@@ -49,66 +58,28 @@ class OAuthStateStore:
         self._callback_server_bound_at: float | None = None
 
         self._callback_server_bind_tasks: set[asyncio.Task[None]] = set()
+        self.callback_expiries: dict[str, asyncio.TimerHandle] = {}
 
     @property
     def lock(self) -> asyncio.Lock:
         return self._lock
 
-    @property
-    def state(self) -> OAuthState:
-        return self._state
-
-    def get_flow_locked(self, flow_id: str | None) -> OAuthState | None:
-        resolved_flow_id = flow_id or self._state.flow_id
-        if resolved_flow_id is None:
-            return None
-        return self._flows.get(resolved_flow_id)
-
-    def get_flow_by_state_token_locked(self, state_token: str | None) -> OAuthState | None:
-        if state_token is None:
-            return None
-        flow_id = self._state_token_index.get(state_token)
-        if flow_id is None:
-            return None
+    def get_flow_locked(self, flow_id: str) -> OAuthState | None:
         return self._flows.get(flow_id)
 
     def remember_flow_locked(self, flow: OAuthState) -> None:
         if flow.flow_id is None:
             raise ValueError("flow_id is required")
         self.prune_expired_pending_browser_flows_locked()
-        self._flows[flow.flow_id] = flow
-        if flow.state_token is not None:
-            self._state_token_index[flow.state_token] = flow.flow_id
-        self.set_latest_flow_locked(flow)
-
-    def set_latest_flow_locked(self, flow: OAuthState) -> None:
-        self._state = OAuthState(
+        self.compat_success = False
+        self._flows[flow.flow_id] = OAuthState(
             flow_id=flow.flow_id,
-            status=flow.status,
             method=flow.method,
-            provider=flow.provider,
-            error_message=flow.error_message,
-            state_token=flow.state_token,
-            code_verifier=flow.code_verifier,
-            device_auth_id=flow.device_auth_id,
-            user_code=flow.user_code,
-            interval_seconds=flow.interval_seconds,
             expires_at=flow.expires_at,
-            finished_at=flow.finished_at,
             started_at=flow.started_at,
-            warmup_hours=flow.warmup_hours,
-            warmup_capacity_percent=flow.warmup_capacity_percent,
-            warmup_max_concurrent=flow.warmup_max_concurrent,
             poll_task=flow.poll_task,
+            stop_poll=flow.stop_poll,
         )
-
-    def set_flow_status_locked(self, flow: OAuthState, *, status: str, error_message: str | None) -> None:
-        flow.status = status
-        flow.error_message = error_message
-        flow.finished_at = time.time() if status in _TERMINAL_OAUTH_STATUSES else None
-        self.set_latest_flow_locked(flow)
-        if status in _TERMINAL_OAUTH_STATUSES:
-            self.prune_terminal_flows_locked()
 
     def pending_flow_ages_locked(self) -> list[float]:
 
@@ -125,42 +96,31 @@ class OAuthStateStore:
 
     def has_pending_browser_flows_locked(self) -> bool:
         self.prune_expired_pending_browser_flows_locked()
-        return any(flow.method == "browser" and flow.status == "pending" for flow in self._flows.values())
+        return any(flow.method == "browser" for flow in self._flows.values())
 
     async def reset(self) -> None:
-        server: OAuthCallbackServer | None = None
         async with self._lock:
-            server = self._cleanup_locked()
-            self._state = OAuthState(status="idle")
-        if server is not None:
-            await server.stop()
-
-    def _cleanup_locked(self, *, clear_callback_server: bool = True) -> OAuthCallbackServer | None:
-        for flow in self._flows.values():
-            task = flow.poll_task
-            if task and not task.done():
-                task.cancel()
-        server = self._callback_server
-        if clear_callback_server:
+            tasks = {flow.poll_task for flow in self._flows.values() if flow.poll_task is not None}
+            for flow in self._flows.values():
+                if flow.stop_poll is not None:
+                    flow.stop_poll.set()
+            binds = set(self._callback_server_bind_tasks)
+            for timer in self.callback_expiries.values():
+                timer.cancel()
+            self.callback_expiries.clear()
+            self._flows.clear()
+            self.compat_success = False
+        await asyncio.gather(*tasks, *binds, return_exceptions=True)
+        async with self._lock:
+            server = self._callback_server
+            stop = self._callback_server_stop_task
             self._callback_server = None
             self._callback_server_bound_at = None
-        self._flows.clear()
-        self._state_token_index.clear()
-        return server
-
-    def prune_terminal_flows_locked(self) -> None:
-        terminal_flows = [
-            flow
-            for flow in self._flows.values()
-            if flow.flow_id is not None and flow.status in _TERMINAL_OAUTH_STATUSES
-        ]
-        extra_count = len(terminal_flows) - _MAX_RETAINED_TERMINAL_OAUTH_FLOWS
-        if extra_count <= 0:
-            return
-
-        terminal_flows.sort(key=lambda flow: flow.finished_at or 0)
-        for flow in terminal_flows[:extra_count]:
-            self.remove_flow_locked(flow)
+            self._callback_server_stop_task = None
+        if stop is not None:
+            await stop
+        elif server is not None:
+            await server.stop()
 
     def prune_expired_pending_browser_flows_locked(self) -> None:
         now = time.time()
@@ -175,34 +135,9 @@ class OAuthStateStore:
         for flow in expired_flows:
             self.remove_flow_locked(flow)
 
-    def remove_pending_device_flows_locked(self) -> None:
-        pending_device_flows = [
-            flow for flow in self._flows.values() if flow.method == "device" and flow.status == "pending"
-        ]
-        for flow in pending_device_flows:
-            task = flow.poll_task
-            if task and not task.done():
-                task.cancel()
-            self.remove_flow_locked(flow)
-
     def remove_flow_locked(self, flow: OAuthState) -> None:
-        removed_latest = flow.flow_id is not None and flow.flow_id == self._state.flow_id
         if flow.flow_id is not None:
             self._flows.pop(flow.flow_id, None)
-        if flow.state_token is not None:
-            self._state_token_index.pop(flow.state_token, None)
-        if removed_latest:
-            self._restore_latest_flow_locked()
-
-    def _restore_latest_flow_locked(self) -> None:
-        if not self._flows:
-            self._state = OAuthState(status="idle")
-            return
-        latest_flow = max(
-            self._flows.values(),
-            key=lambda flow: flow.finished_at or flow.expires_at or 0,
-        )
-        self.set_latest_flow_locked(latest_flow)
 
 
 class OAuthCallbackServer:
@@ -222,7 +157,7 @@ class OAuthCallbackServer:
         app = web.Application()
         app.router.add_get("/auth/callback", self._handler)
         app.router.add_get("/callback", self._handler)
-        self._runner = web.AppRunner(app)
+        self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self._host, self._port)
         await self._site.start()

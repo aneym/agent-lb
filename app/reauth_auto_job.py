@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.browser_profiles import profile_for, registry_path
+from app.core.profile_launch import LaunchError, registered_profile_dir
 from app.lb_service import ServiceError, request, retrying
 from app.reauth_ask import changed, closure, file_ask, note_error, withdraw_ask
 from app.reauth_auto import reauth_account
@@ -22,10 +23,13 @@ TRIES_PER_DAY = 3
 
 
 class Job:
-    def __init__(self, *, dry_run: bool, now_ids: tuple[str, ...] = (), keepalive: bool = True) -> None:
+    def __init__(
+        self, *, dry_run: bool, now_ids: tuple[str, ...] = (), keepalive: bool = True, keepalive_only: bool = False
+    ) -> None:
         self.dry_run = dry_run
         self.now_ids = now_ids
         self.keepalive = keepalive
+        self.keepalive_only = keepalive_only
         self.base = os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
         root = registry_path().parent
         self.state_path = root / ("auto-reauth-state.dry.json" if dry_run else "auto-reauth-state.json")
@@ -99,8 +103,6 @@ class Job:
         if outcome.result == "active":
             entry.pop("stuckAt", None)
             changed(entry, lapsed=False)
-            if note := withdraw_ask(entry, dry_run=self.dry_run):
-                self.log(account_id, email, "ask", note)
         elif outcome.result.startswith("stuck:") or outcome.result == "bind_not_live":
             entry["stuckAt"] = now
             if account.get("status") == "reauth_required" or (forced and self.dry_run):
@@ -147,7 +149,7 @@ class Job:
         reason = refusal(account)
         if account_id not in enrolled or reason:
             entry = self.state.get(account_id) or {}
-            if entry.get("askId"):
+            if str(entry.get("askKind", "")).startswith("lapsed:") and entry.get("askId"):
                 self.log(account_id, email, "ask", withdraw_ask(entry, dry_run=self.dry_run) or "")
             if needs:
                 self.log(account_id, email, "skipped", reason or "not enrolled", quiet_repeat=True)
@@ -156,7 +158,18 @@ class Job:
         if profile is None:
             self.log(account_id, email, "no_profile", "enrolled but no browser profile on this host", quiet_repeat=True)
             return
+        if str(enrolled[account_id].get("email", "")).lower() != email:
+            self.log(account_id, email, "no_profile", "enrolled account email does not match", quiet_repeat=True)
+            return
+        try:
+            registered_profile_dir(profile, "anthropic")
+        except LaunchError as exc:
+            self.log(account_id, email, "no_profile", str(exc), quiet_repeat=True)
+            return
         entry = self.state.setdefault(account_id, {})
+        if self.keepalive_only:
+            self._keepalive(account, profile)
+            return
         self._closure(account_id, email, entry)
         if needs:
             self._reauth(account, profile)
@@ -164,7 +177,6 @@ class Job:
             changed(entry, lapsed=False)
             if entry.get("askId") and not str(entry.get("askKind", "")).startswith("lapsed:"):
                 entry.pop("stuckAt", None)
-                self.log(account_id, email, "active", withdraw_ask(entry, dry_run=self.dry_run) or "")
         if self.keepalive:
             self._keepalive(account, profile)
 

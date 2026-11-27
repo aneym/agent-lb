@@ -1,0 +1,9 @@
+[Unit]
+Description=Check enrolled agent-lb accounts for reauthentication every ten minutes
+
+[Timer]
+OnActiveSec=10min
+OnUnitInactiveSec=10min
+
+[Install]
+WantedBy=timers.target

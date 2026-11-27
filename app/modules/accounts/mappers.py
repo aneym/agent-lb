@@ -261,8 +261,9 @@ def _account_to_summary(
                 effective_status = AccountStatus.QUOTA_EXCEEDED
         additional_quotas = _openrouter_additional_quotas(additional_quotas)
     account_is_locally_owned = is_locally_owned(account, config_settings.get_settings())
+    problems = account_problems(account, primary_usage, secondary_usage)
     return AccountSummary(
-        problems=account_problems(account, primary_usage, secondary_usage),
+        problems=problems,
         account_id=account.id,
         provider=account.provider,
         email=account.email,
@@ -325,6 +326,7 @@ def _account_to_summary(
         identity_mismatch=_identity_mismatch_status(account.id),
         owner_instance=account.owner_instance,
         is_locally_owned=account_is_locally_owned,
+        owner_stale=any(problem.code == "owner_stale" for problem in problems),
         owner_label=(
             (owner_source_names or {}).get(account.owner_instance, account.owner_instance)
             if not account_is_locally_owned and account.owner_instance

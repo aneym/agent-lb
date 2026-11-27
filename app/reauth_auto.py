@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import time
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
@@ -7,14 +8,13 @@ from urllib.parse import urlencode
 from websockets.exceptions import WebSocketException
 
 from app.core.browser_profiles import BrowserProfile
-from app.core.cdp_page import CdpError, CdpPage, close_browser
-from app.core.profile_launch import LaunchError, start_chrome
+from app.core.cdp_page import CdpError, CdpPage
+from app.core.profile_launch import LaunchError, isolated_browser, isolated_page, registered_profile_dir
 from app.core.profile_lock import profile_held
 from app.lb_service import (
     ServiceError,
     ServiceUnavailable,
     account_for,
-    close_stale_callbacks,
     request,
     retrying,
     send_code,
@@ -58,32 +58,23 @@ def _finish(base: str, profile: BrowserProfile, account_id: str, flow: dict) -> 
     return Outcome("active" if account.get("status") == "active" else "error", f"status {account.get('status')}")
 
 
-def _consent(page: CdpPage, profile: BrowserProfile, hold: str | None) -> Outcome | None:
+def _consent(page: CdpPage, profile: BrowserProfile) -> Outcome | None:
     who = signed_in_as(page)
     if who is None:
         return Outcome("stuck:identity_unknown", "the consent page did not say which account is signed in")
     if who != profile.email:
         return Outcome("stuck:wrong_account", f"consent page is signed in as {who}")
-    if hold == "bind_not_live":
-        return Outcome(hold, f"consent reached as {who}; no Authorize click until the server binds flows")
-    if hold:
-        return Outcome(hold, f"consent reached as {who}; observe only")
     return None
 
 
-def _drive(base: str, profile: BrowserProfile, account_id: str, flow: dict, hold: str | None) -> Outcome:
-    page = CdpPage(profile.cdp_port, flow["authorizationUrl"])
-    page.call("Emulation.setFocusEmulationEnabled", {"enabled": True}, session=page.session)
-    page.call("Page.bringToFront", session=page.session)
+def _drive(base: str, profile: BrowserProfile, account_id: str, flow: dict, page: CdpPage, port: int) -> Outcome:
     clicks: list[str] = []
     sent = False
     started = time.monotonic()
     unknown_since: float | None = None
     try:
         while time.monotonic() - started < RUN_SECONDS:
-            shown = None if sent else shown_code(profile.cdp_port, flow)
-            if shown and hold:
-                return Outcome(hold, "Claude showed the code while holding; not sent", clicks)
+            shown = None if sent else shown_code(port, flow)
             if shown:
                 sent = send_code(base, flow, shown)
                 shown = None
@@ -92,14 +83,12 @@ def _drive(base: str, profile: BrowserProfile, account_id: str, flow: dict, hold
                 done.clicks = clicks
                 if sent:
                     done.detail = f"{done.detail}; sent the code Claude showed on its page"
-                if done.result == "active":
-                    page.close()
                 return done
             verdict = classify(page, profile)
             if verdict.kind.startswith("stuck:"):
                 return Outcome(verdict.kind, verdict.detail, clicks)
             if verdict.kind == "consent":
-                blocked = _consent(page, profile, hold)
+                blocked = _consent(page, profile)
                 if blocked:
                     blocked.clicks = clicks
                     return blocked
@@ -134,6 +123,14 @@ def reauth_account(base: str, account: dict, profile: BrowserProfile, *, observe
     account_id = str(account["accountId"])
     if profile.email != str(account.get("email", "")).lower():
         return Outcome("skipped", "profile email does not match the account")
+    try:
+        directory = registered_profile_dir(profile, "anthropic")
+    except LaunchError as exc:
+        return Outcome("no_profile", str(exc))
+    if observe_only:
+        return Outcome("observed", "would open a bound OAuth flow in the account's isolated profile")
+    if not sys.platform.startswith("linux"):
+        return Outcome("skipped", "auto reauth must run on the Linux account owner")
     with profile_held(profile.email) as free:
         if not free:
             return Outcome("busy", "another reauth, recard or auto run holds this profile")
@@ -149,18 +146,15 @@ def reauth_account(base: str, account: dict, profile: BrowserProfile, *, observe
             or not flow.get("callbackUrl")
         ):
             return Outcome("error", "service returned an incomplete browser OAuth flow")
-        bound = flow.get("expectedAccountId") == account_id
-        launched = False
+        if flow.get("expectedAccountId") != account_id:
+            return Outcome("bind_not_live", "server did not bind the OAuth flow; browser not opened")
         try:
-            launched = start_chrome(profile, seconds=15)
-            close_stale_callbacks(f"http://127.0.0.1:{profile.cdp_port}", flow["callbackUrl"])
-            hold = "bind_not_live" if not bound else "observed" if observe_only else None
-            outcome = _drive(base, profile, account_id, flow, hold)
+            with isolated_browser(profile, "anthropic", expected_directory=directory) as browser:
+                page = isolated_page(browser, flow["authorizationUrl"])
+                outcome = _drive(base, profile, account_id, flow, page, browser.port)
         except LaunchError as exc:
             outcome = Outcome("error", f"launch: {str(exc)[:300]}")
         except (CdpError, WebSocketException, OSError, TimeoutError) as exc:
-            outcome = Outcome("error", f"browser: {str(exc)[:160] or type(exc).__name__}")
-        outcome.bound = bound
-        if launched and not outcome.result.startswith("stuck:"):
-            close_browser(profile.cdp_port)
+            outcome = Outcome("error", f"browser: {type(exc).__name__}")
+        outcome.bound = True
         return outcome

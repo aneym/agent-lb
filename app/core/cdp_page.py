@@ -13,7 +13,7 @@ class CdpError(Exception):
     pass
 
 
-def _devtools(port: int, path: str) -> Any:
+def devtools(port: int, path: str) -> Any:
     try:
         with build_opener(ProxyHandler({})).open(f"http://127.0.0.1:{port}{path}", timeout=3) as response:
             return json.load(response)
@@ -23,13 +23,13 @@ def _devtools(port: int, path: str) -> Any:
 
 def cdp_up(port: int) -> bool:
     try:
-        return isinstance(_devtools(port, "/json/version"), dict)
+        return isinstance(devtools(port, "/json/version"), dict)
     except CdpError:
         return False
 
 
 def page_targets(port: int) -> list[dict]:
-    targets = _devtools(port, "/json/list")
+    targets = devtools(port, "/json/list")
     return [target for target in targets if isinstance(target, dict) and target.get("type") == "page"]
 
 
@@ -45,7 +45,7 @@ class CdpPage:
         new_window: bool = False,
     ) -> None:
         try:
-            endpoint = _devtools(port, "/json/version")["webSocketDebuggerUrl"]
+            endpoint = devtools(port, "/json/version")["webSocketDebuggerUrl"]
         except (KeyError, TypeError):
             raise CdpError(f"no Chrome DevTools endpoint on port {port}") from None
         self._socket = connect(endpoint, max_size=None, open_timeout=timeout)
@@ -142,7 +142,7 @@ class CdpPage:
 
 def close_browser(port: int, timeout: float = 5) -> bool:
     try:
-        endpoint = _devtools(port, "/json/version")["webSocketDebuggerUrl"]
+        endpoint = devtools(port, "/json/version")["webSocketDebuggerUrl"]
         with connect(endpoint, max_size=None, open_timeout=timeout) as socket:
             socket.send(json.dumps({"id": 1, "method": "Browser.close"}))
             socket.recv(timeout=timeout)

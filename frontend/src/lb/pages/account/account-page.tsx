@@ -258,8 +258,16 @@ export function AccountPage() {
     );
   const name = accountLabel(account, hideEmails);
   const isOAuth = account.provider === "anthropic" || account.provider === "openai" || account.provider === "gemini";
-  const signIn = () =>
-    isOAuth ? setOauthOpen(true) : navigate(`/providers/add?provider=${account.provider || "glm"}`);
+  const signIn = () => {
+    if (account.provider === "anthropic" || account.provider === "openai") {
+      navigate(`/reauth/${encodeURIComponent(accountId)}`);
+    } else if (isOAuth) {
+      setOauthOpen(true);
+    } else {
+      navigate(`/providers/add?provider=${account.provider || "glm"}`);
+    }
+  };
+  const ownerStale = account.problems.find((problem) => problem.code === "owner_stale");
   const exportSignIn = async () => {
     try {
       setExportData(await mutations.exportAuthMutation.mutateAsync(accountId));
@@ -314,9 +322,9 @@ export function AccountPage() {
             )}
           </span>
           <AccountState
-            status={account.status}
+            status={ownerStale ? "owner_stale" : account.status}
             resetAt={account.rateLimitResetAt || account.resetAtPrimary}
-            sub={account.status === "rate_limited" ? "· 5-hour window used up" : undefined}
+            sub={ownerStale?.message ?? (account.status === "rate_limited" ? "· 5-hour window used up" : undefined)}
           />
           {account.warmupUntil && new Date(account.warmupUntil).getTime() > Date.now() && (
             <span className="meta">
@@ -483,7 +491,8 @@ export function AccountPage() {
             }
           }}
           onStart={async (method, provider) => {
-            await oauth.start(method, provider);
+            if (provider !== account.provider) throw new Error("Choose the provider for this account.");
+            await oauth.start(method, provider, accountId);
           }}
           onComplete={async () => {
             await oauth.complete();

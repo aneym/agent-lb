@@ -6,7 +6,7 @@ from enum import StrEnum
 from functools import lru_cache
 from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_address, ip_network
 
-from fastapi import Request
+from starlette.requests import HTTPConnection
 
 _HEADER_NAME_PATTERN = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _FORBIDDEN_PROXY_AUTH_HEADERS = frozenset(
@@ -68,7 +68,7 @@ def _parse_trusted_proxy_networks(
     return tuple(ip_network(cidr, strict=False) for cidr in cidrs)
 
 
-def get_dashboard_request_auth(request: Request) -> DashboardRequestAuth | None:
+def get_dashboard_request_auth(request: HTTPConnection) -> DashboardRequestAuth | None:
     cached = getattr(request.state, "dashboard_request_auth", None)
     if isinstance(cached, DashboardRequestAuth):
         return cached
@@ -91,7 +91,7 @@ def password_management_enabled(mode: DashboardAuthMode) -> bool:
     return mode != DashboardAuthMode.DISABLED
 
 
-def _get_trusted_header_auth(request: Request) -> DashboardRequestAuth | None:
+def _get_trusted_header_auth(request: HTTPConnection) -> DashboardRequestAuth | None:
     from app.core.config.settings import get_settings
 
     settings = get_settings()

@@ -135,6 +135,7 @@ export const AccountSummarySchema = z.object({
   isEmailDuplicate: z.boolean().optional(),
   ownerInstance: z.string().nullable().optional(),
   isLocallyOwned: z.boolean().optional(),
+  problems: z.array(z.object({ code: z.string(), message: z.string() })).default([]),
 });
 
 export const AccountTrendsResponseSchema = z.object({
@@ -316,6 +317,7 @@ export const AccountUpdateRequestSchema = z.object({
 export const OauthStartRequestSchema = z.object({
   provider: AccountProviderSchema.default("openai"),
   forceMethod: z.string().optional(),
+  expectedAccountId: z.string().min(1).max(200).optional(),
 });
 
 export const OauthStartResponseSchema = z.object({
@@ -329,11 +331,13 @@ export const OauthStartResponseSchema = z.object({
   deviceAuthId: z.string().nullable(),
   intervalSeconds: z.number().nullable(),
   expiresInSeconds: z.number().nullable(),
+  expectedAccountId: z.string().nullable().optional(),
 });
 
 export const OauthStatusResponseSchema = z.object({
   status: z.string(),
   errorMessage: z.string().nullable(),
+  probeStatusCode: z.number().int().nullable().optional(),
 });
 
 export const OauthCompleteRequestSchema = z.object({
@@ -354,6 +358,7 @@ export const ManualOauthCallbackRequestSchema = z.object({
 export const ManualOauthCallbackResponseSchema = z.object({
   status: z.string(),
   errorMessage: z.string().nullable(),
+  probeStatusCode: z.number().int().nullable().optional(),
 });
 
 export const RuntimeConnectAddressResponseSchema = z.object({
@@ -373,6 +378,7 @@ export const OAuthStateSchema = z.object({
   intervalSeconds: z.number().nullable(),
   expiresInSeconds: z.number().nullable(),
   errorMessage: z.string().nullable(),
+  probeStatusCode: z.number().int().nullable().optional(),
 });
 
 export const ImportStateSchema = z.object({

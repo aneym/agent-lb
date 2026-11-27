@@ -9,6 +9,7 @@ from app.core.subscriptions import subscription_for
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.schemas import AccountProblem
 from app.modules.accounts.subscription_status import is_subscription_usable
+from app.modules.federation.owner_health import OWNER_STALE_AFTER
 
 
 def _utc(value: datetime) -> datetime:
@@ -26,7 +27,7 @@ def account_problems(
         and account.access_expires_at
     ):
         expires_at = _utc(account.access_expires_at)
-        if now - expires_at > timedelta(hours=1):
+        if now - expires_at > OWNER_STALE_AFTER:
             problems.append(
                 AccountProblem(
                     code="owner_stale",

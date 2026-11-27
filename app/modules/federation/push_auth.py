@@ -15,6 +15,13 @@ from app.core.request_locality import resolve_request_client_host
 
 logger = logging.getLogger(__name__)
 
+_TAILSCALE_BINARIES = (
+    Path("/usr/bin/tailscale"),
+    Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale"),
+    Path("/usr/local/bin/tailscale"),
+    Path("/opt/homebrew/bin/tailscale"),
+)
+
 
 @dataclass(frozen=True)
 class PushSource:
@@ -72,19 +79,10 @@ async def resolve_tailscale_login(ip: str) -> str | None:
     now = time.monotonic()
     if cached is not None and cached[0] > now:
         return cached[1]
-    settings = get_settings()
-    binary = settings.federation_tailscale_bin or next(
-        (
-            str(path)
-            for path in (
-                Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale"),
-                Path("/usr/local/bin/tailscale"),
-                Path("/opt/homebrew/bin/tailscale"),
-            )
-            if path.is_file()
-        ),
-        "tailscale",
-    )
+    configured = get_settings().federation_tailscale_bin
+    if configured and Path(configured).resolve().name == "tailscale-whois-via-studio":
+        configured = None
+    binary = configured or next((str(path) for path in _TAILSCALE_BINARIES if path.is_file()), "tailscale")
     try:
         process = await asyncio.create_subprocess_exec(
             binary,

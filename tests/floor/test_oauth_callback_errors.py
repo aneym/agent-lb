@@ -1,308 +1,315 @@
 from __future__ import annotations
 
-import json
-import logging
-from types import SimpleNamespace
-from typing import Any, cast
+import asyncio
+import socket
+from dataclasses import dataclass, field
+from urllib.parse import parse_qs, urlparse
 
 import pytest
-from fastapi.responses import JSONResponse
+import pytest_asyncio
+from aiohttp import web
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import update
 
-import app.modules.oauth.service as oauth_module
-from app.core.clients.oauth import OAuthError
+from app.core.clients.oauth import pkce_challenge
+from app.core.config.settings import get_settings
+from app.core.crypto import TokenEncryptor
+from app.core.utils.time import utcnow
+from app.db.models import Account, AccountStatus
+from app.db.oauth_models import OAuthFlow
 from app.db.session import SessionLocal
-from app.modules.accounts.repository import AccountsRepository
-from app.modules.oauth import api as oauth_api_module
-from app.modules.oauth.schemas import ManualCallbackRequest
-from tests.floor.oauth_flow_support import (
-    _oauth_state_token,
-)
+from app.modules.oauth.service import stop_oauth_flows
+from tests.floor.oauth_flow_support import _oauth_state_token, encode_jwt
 
 pytestmark = pytest.mark.integration
 
-
-@pytest.mark.asyncio
-async def test_manual_callback_api_sanitizes_unexpected_exception():
-    class FailingOauthService:
-        async def manual_callback(self, callback_url: str, flow_id: str | None = None):
-            raise RuntimeError("Traceback (most recent call last): password=super-secret")
-
-    response = cast(
-        JSONResponse,
-        await oauth_api_module.manual_callback(
-            ManualCallbackRequest(callback_url="http://localhost:1455/?code=c&state=s"),
-            context=cast(Any, SimpleNamespace(service=FailingOauthService())),
-        ),
-    )
-
-    assert response.status_code == 500
-    payload = json.loads(bytes(response.body))
-    assert payload == {
-        "error": {
-            "code": "manual_callback_failed",
-            "message": "An internal error occurred.",
-        }
-    }
-    assert "super-secret" not in bytes(response.body).decode()
+_EMAIL = "target@example.invalid"
+_ACCOUNT_ID = "expected-openai"
+_UPSTREAM_ID = "vendor-target"
+_WORKSPACE = "workspace-target"
+_ANTHROPIC_ACCOUNT_ID = "expected-anthropic"
 
 
-@pytest.mark.asyncio
-async def test_manual_callback_api_preserves_oauth_error():
-    class FailingOauthService:
-        async def manual_callback(self, callback_url: str, flow_id: str | None = None):
-            raise OAuthError("invalid_grant", "Authorization code expired", status_code=400)
+@dataclass
+class OAuthVendor:
+    browser_calls: int = 0
+    device_calls: int = 0
+    probe_calls: int = 0
+    committed_before_probe: bool = False
+    authorized: bool = False
+    workspace: str | None = _WORKSPACE
+    authorized_browser: asyncio.Event = field(default_factory=asyncio.Event)
+    allow_browser_reply: asyncio.Event = field(default_factory=asyncio.Event)
+    code_challenge: str | None = None
 
-    response = cast(
-        JSONResponse,
-        await oauth_api_module.manual_callback(
-            ManualCallbackRequest(callback_url="http://localhost:1455/?code=c&state=s"),
-            context=cast(Any, SimpleNamespace(service=FailingOauthService())),
-        ),
-    )
-
-    assert response.status_code == 502
-    assert json.loads(bytes(response.body)) == {
-        "error": {
-            "code": "invalid_grant",
-            "message": "Authorization code expired",
-        }
-    }
-
-
-@pytest.mark.asyncio
-async def test_manual_callback_service_sanitizes_unexpected_exception(monkeypatch, caplog):
-    await oauth_module._OAUTH_STORE.reset()
-    caplog.set_level(logging.ERROR, logger=oauth_module.logger.name)
-    async with oauth_module._OAUTH_STORE.lock:
-        oauth_module._OAUTH_STORE.remember_flow_locked(
-            oauth_module.OAuthState(
-                flow_id="flow-1",
-                status="pending",
-                method="browser",
-                state_token="state-1",
-                code_verifier="verifier-1",
-            )
+    def credentials(self) -> web.Response:
+        return web.json_response(
+            {
+                "access_token": "fixture-access",
+                "refresh_token": "fixture-refresh",
+                "id_token": encode_jwt(
+                    {
+                        "email": _EMAIL,
+                        "https://api.openai.com/auth": {
+                            "chatgpt_account_id": _UPSTREAM_ID,
+                            "workspace_id": self.workspace,
+                        },
+                    }
+                ),
+            }
         )
 
-    async def fake_oauth_route():
-        return None
+    async def browser_exchange(self, request: web.Request) -> web.Response:
+        self.browser_calls += 1
+        form = await request.post()
+        if form.get("code") != "browser-code" or pkce_challenge(str(form.get("code_verifier"))) != self.code_challenge:
+            return web.json_response({"error": "invalid_grant"}, status=400)
+        self.authorized_browser.set()
+        await self.allow_browser_reply.wait()
+        return self.credentials()
 
-    async def fake_exchange_authorization_code(**_kwargs):
-        raise RuntimeError("Unexpected error: /home/app/password.txt")
+    async def device_start(self, _request: web.Request) -> web.Response:
+        return web.json_response(
+            {"device_auth_id": "fixture-device", "user_code": "TESTCODE", "interval": 1, "expires_in": 7200}
+        )
 
-    monkeypatch.setattr(oauth_module, "_oauth_route", fake_oauth_route)
-    monkeypatch.setattr(oauth_module, "exchange_authorization_code", fake_exchange_authorization_code)
-    service = oauth_module.OauthService(cast(AccountsRepository, SimpleNamespace()))
+    async def anthropic_exchange(self, request: web.Request) -> web.Response:
+        payload = await request.json()
+        if payload.get("code") != "anthropic-code" or not payload.get("state"):
+            return web.json_response({"error": "invalid_grant"}, status=400)
+        return web.json_response(
+            {
+                "access_token": "fixture-access",
+                "refresh_token": "fixture-refresh",
+                "account": {"uuid": _UPSTREAM_ID, "email_address": _EMAIL},
+            }
+        )
 
-    response = await service.manual_callback("http://localhost:1455/?code=code-1&state=state-1", flow_id="flow-1")
+    async def device_exchange(self, request: web.Request) -> web.Response:
+        self.device_calls += 1
+        if await request.json() != {"device_auth_id": "fixture-device", "user_code": "TESTCODE"}:
+            return web.json_response({"error": "invalid_grant"}, status=400)
+        if not self.authorized:
+            return web.json_response({}, status=404)
+        return self.credentials()
 
-    assert response.status == "error"
-    assert response.error_message == "An internal error occurred."
-    assert "RuntimeError" in caplog.text
-    assert "password.txt" not in caplog.text
-    assert "/home/app" not in caplog.text
-    assert "Traceback" not in caplog.text
-    async with oauth_module._OAUTH_STORE.lock:
-        flow = oauth_module._OAUTH_STORE.get_flow_locked("flow-1")
-        assert flow is not None
-        assert flow.error_message == "An internal error occurred."
-
-
-def test_oauth_error_html_escapes_message():
-    html = oauth_module._error_html("bad <script>alert('x')</script>")
-
-    assert "<script>" not in html
-    assert "&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;" in html
-
-
-@pytest.mark.asyncio
-async def test_manual_callback_returns_error_message_for_invalid_state(async_client, monkeypatch):
-    await oauth_module._OAUTH_STORE.reset()
-
-    async def fake_callback_server_start(self) -> None:
-        return None
-
-    monkeypatch.setattr(oauth_module.OAuthCallbackServer, "start", fake_callback_server_start)
-
-    start = await async_client.post("/api/oauth/start", json={"forceMethod": "browser"})
-    assert start.status_code == 200
-    payload = start.json()
-    assert payload["method"] == "browser"
-
-    response = await async_client.post(
-        "/api/oauth/manual-callback",
-        json={
-            "callbackUrl": "http://localhost:1455/auth/callback?code=manual-code&state=wrong",
-        },
-    )
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "error",
-        "errorMessage": "Invalid OAuth callback: state mismatch or missing code.",
-    }
-
-    status = await async_client.get("/api/oauth/status")
-    assert status.status_code == 200
-    assert status.json() == {"status": "pending", "errorMessage": None}
-
-    flow_status = await async_client.get("/api/oauth/status", params={"flowId": payload["flowId"]})
-    assert flow_status.status_code == 200
-    assert flow_status.json() == {"status": "pending", "errorMessage": None}
-
-
-@pytest.mark.asyncio
-async def test_manual_callback_error_resolves_state_before_marking_flow_failed(async_client, monkeypatch):
-    await oauth_module._OAUTH_STORE.reset()
-
-    async def fake_callback_server_start(self) -> None:
-        return None
-
-    monkeypatch.setattr(oauth_module.OAuthCallbackServer, "start", fake_callback_server_start)
-
-    first_start = await async_client.post("/api/oauth/start", json={"forceMethod": "browser"})
-    assert first_start.status_code == 200
-    first_payload = first_start.json()
-    first_error_url = (
-        "http://localhost:1455/auth/callback?error=access_denied&state="
-        f"{_oauth_state_token(first_payload['authorizationUrl'])}"
-    )
-
-    second_start = await async_client.post("/api/oauth/start", json={"forceMethod": "browser"})
-    assert second_start.status_code == 200
-    second_payload = second_start.json()
-    assert second_payload["flowId"] != first_payload["flowId"]
-
-    mismatched_response = await async_client.post(
-        "/api/oauth/manual-callback",
-        json={
-            "callbackUrl": first_error_url,
-            "flowId": second_payload["flowId"],
-        },
-    )
-    assert mismatched_response.status_code == 200
-    assert mismatched_response.json() == {
-        "status": "error",
-        "errorMessage": "OAuth error: access_denied",
-    }
-
-    first_status = await async_client.get("/api/oauth/status", params={"flowId": first_payload["flowId"]})
-    assert first_status.status_code == 200
-    assert first_status.json() == {"status": "pending", "errorMessage": None}
-
-    second_status = await async_client.get("/api/oauth/status", params={"flowId": second_payload["flowId"]})
-    assert second_status.status_code == 200
-    assert second_status.json() == {"status": "pending", "errorMessage": None}
-
-    matching_response = await async_client.post(
-        "/api/oauth/manual-callback",
-        json={
-            "callbackUrl": first_error_url,
-            "flowId": first_payload["flowId"],
-        },
-    )
-    assert matching_response.status_code == 200
-    assert matching_response.json() == {
-        "status": "error",
-        "errorMessage": "OAuth error: access_denied",
-    }
-
-    first_status = await async_client.get("/api/oauth/status", params={"flowId": first_payload["flowId"]})
-    assert first_status.status_code == 200
-    assert first_status.json() == {
-        "status": "error",
-        "errorMessage": "OAuth error: access_denied",
-    }
-
-    second_status = await async_client.get("/api/oauth/status", params={"flowId": second_payload["flowId"]})
-    assert second_status.status_code == 200
-    assert second_status.json() == {"status": "pending", "errorMessage": None}
-
-
-@pytest.mark.asyncio
-async def test_unknown_flow_error_does_not_mutate_latest_oauth_status():
-    await oauth_module._OAUTH_STORE.reset()
-    async with SessionLocal() as session:
-        service = oauth_module.OauthService(AccountsRepository(session))
-
-        async with oauth_module._OAUTH_STORE.lock:
-            latest = oauth_module.OAuthState(
-                flow_id="latest-flow",
-                status="pending",
-                method="browser",
-                state_token="latest-state",
-                code_verifier="latest-verifier",
+    async def probe(self, _request: web.Request) -> web.Response:
+        self.probe_calls += 1
+        account_id = _ANTHROPIC_ACCOUNT_ID if _request.method == "POST" else _ACCOUNT_ID
+        async with SessionLocal() as session:
+            account = await session.get(Account, account_id)
+            self.committed_before_probe = bool(
+                account and TokenEncryptor().decrypt(account.refresh_token_encrypted) == "fixture-refresh"
             )
-            oauth_module._OAUTH_STORE.remember_flow_locked(latest)
-            oauth_module._OAUTH_STORE.set_latest_flow_locked(latest)
-
-        await service._set_error("wrong flow", flow_id="missing-flow")
-
-        async with oauth_module._OAUTH_STORE.lock:
-            latest_state = oauth_module._OAUTH_STORE.state
-            latest_flow = oauth_module._OAUTH_STORE.get_flow_locked("latest-flow")
-
-    assert latest_state.status == "pending"
-    assert latest_state.error_message is None
-    assert latest_flow is not None
-    assert latest_flow.status == "pending"
-    assert latest_flow.error_message is None
+        return web.json_response({}, status=503)
 
 
-@pytest.mark.asyncio
-async def test_missing_flow_error_does_not_mutate_latest_oauth_status():
-    await oauth_module._OAUTH_STORE.reset()
-    async with SessionLocal() as session:
-        service = oauth_module.OauthService(AccountsRepository(session))
-
-        async with oauth_module._OAUTH_STORE.lock:
-            latest = oauth_module.OAuthState(
-                flow_id="latest-flow",
-                status="pending",
-                method="browser",
-                state_token="latest-state",
-                code_verifier="latest-verifier",
-            )
-            oauth_module._OAUTH_STORE.remember_flow_locked(latest)
-            oauth_module._OAUTH_STORE.set_latest_flow_locked(latest)
-
-        await service._set_error("wrong flow")
-
-        async with oauth_module._OAUTH_STORE.lock:
-            latest_state = oauth_module._OAUTH_STORE.state
-            latest_flow = oauth_module._OAUTH_STORE.get_flow_locked("latest-flow")
-
-    assert latest_state.status == "pending"
-    assert latest_state.error_message is None
-    assert latest_flow is not None
-    assert latest_flow.status == "pending"
-    assert latest_flow.error_message is None
-
-
-@pytest.mark.asyncio
-async def test_manual_callback_unknown_state_does_not_mutate_latest_flow(async_client, monkeypatch):
-    await oauth_module._OAUTH_STORE.reset()
-
-    async def fake_callback_server_start(self) -> None:
-        return None
-
-    monkeypatch.setattr(oauth_module.OAuthCallbackServer, "start", fake_callback_server_start)
-
-    start = await async_client.post("/api/oauth/start", json={"forceMethod": "browser"})
-    assert start.status_code == 200
-    payload = start.json()
-
-    response = await async_client.post(
-        "/api/oauth/manual-callback",
-        json={
-            "callbackUrl": "http://localhost:1455/auth/callback?error=access_denied&state=missing-state",
-        },
+@pytest_asyncio.fixture
+async def oauth_vendor(monkeypatch):
+    await stop_oauth_flows()
+    vendor = OAuthVendor()
+    upstream = web.Application()
+    upstream.add_routes(
+        [
+            web.post("/oauth/token", vendor.browser_exchange),
+            web.post("/v1/oauth/token", vendor.anthropic_exchange),
+            web.post("/v1/messages", vendor.probe),
+            web.post("/api/accounts/deviceauth/usercode", vendor.device_start),
+            web.post("/api/accounts/deviceauth/token", vendor.device_exchange),
+            web.get("/backend-api/wham/usage", vendor.probe),
+        ]
     )
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "error",
-        "errorMessage": "OAuth error: access_denied",
-    }
+    runner = web.AppRunner(upstream)
+    await runner.setup()
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    await web.SockSite(runner, listener).start()
+    monkeypatch.setenv("AGENT_LB_AUTH_BASE_URL", f"http://127.0.0.1:{port}")
+    monkeypatch.setenv("AGENT_LB_UPSTREAM_BASE_URL", f"http://127.0.0.1:{port}/backend-api")
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_OAUTH_TOKEN_URL", f"http://127.0.0.1:{port}/v1/oauth/token")
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_UPSTREAM_BASE_URL", f"http://127.0.0.1:{port}")
+    monkeypatch.setenv("AGENT_LB_OAUTH_CALLBACK_HOST", "127.0.0.1")
+    monkeypatch.setenv("AGENT_LB_OAUTH_CALLBACK_PORT", "0")
+    get_settings.cache_clear()
+    try:
+        yield vendor
+    finally:
+        vendor.allow_browser_reply.set()
+        await stop_oauth_flows()
+        await runner.cleanup()
+        get_settings.cache_clear()
 
-    status = await async_client.get("/api/oauth/status", params={"flowId": payload["flowId"]})
-    assert status.status_code == 200
-    assert status.json() == {"status": "pending", "errorMessage": None}
+
+async def _account() -> None:
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        for account_id, workspace_id in ((_ACCOUNT_ID, _WORKSPACE), ("same-email-other-workspace", "other")):
+            session.add(
+                Account(
+                    id=account_id,
+                    provider="openai",
+                    email=_EMAIL,
+                    chatgpt_account_id=_UPSTREAM_ID,
+                    workspace_id=workspace_id,
+                    status=AccountStatus.REAUTH_REQUIRED,
+                    plan_type="plus",
+                    access_token_encrypted=encryptor.encrypt("old-access"),
+                    refresh_token_encrypted=encryptor.encrypt("old-refresh"),
+                    last_refresh=utcnow(),
+                )
+            )
+        await session.commit()
+
+
+async def _status(client: AsyncClient, flow_id: str) -> dict:
+    response = await client.get("/api/oauth/status", params={"flowId": flow_id})
+    response.raise_for_status()
+    return response.json()
+
+
+async def _refresh_marker(account_id: str) -> str:
+    async with SessionLocal() as session:
+        account = await session.get(Account, account_id)
+        assert account is not None
+        return TokenEncryptor().decrypt(account.refresh_token_encrypted)
+
+
+@pytest.mark.asyncio
+async def test_browser_callback_resumes_after_restart_and_claims_code_once(oauth_vendor, app_instance):
+    transport = ASGITransport(app=app_instance)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with app_instance.router.lifespan_context(app_instance):
+            await _account()
+            response = await client.post(
+                "/api/oauth/start", json={"forceMethod": "browser", "expectedAccountId": _ACCOUNT_ID}
+            )
+            response.raise_for_status()
+            browser = response.json()
+            state = _oauth_state_token(browser["authorizationUrl"])
+            oauth_vendor.code_challenge = parse_qs(urlparse(browser["authorizationUrl"]).query)["code_challenge"][0]
+            async with SessionLocal() as session:
+                stored = await session.get(OAuthFlow, browser["flowId"])
+                assert stored is not None
+                assert stored.expires_at - stored.started_at == 3600
+                assert stored.secrets_encrypted is not None
+                assert state.encode() not in stored.secrets_encrypted
+        await stop_oauth_flows()
+        async with app_instance.router.lifespan_context(app_instance):
+            assert (await _status(client, browser["flowId"]))["status"] == "pending"
+            body = {"flowId": browser["flowId"], "callbackUrl": f"browser-code#{state}"}
+            completion = asyncio.create_task(client.post("/api/oauth/manual-callback", json=body))
+            try:
+                await asyncio.wait_for(oauth_vendor.authorized_browser.wait(), timeout=5)
+                duplicate = await client.post("/api/oauth/manual-callback", json=body)
+                assert duplicate.json()["status"] == "pending"
+                assert (await _status(client, browser["flowId"]))["status"] == "pending"
+            finally:
+                oauth_vendor.allow_browser_reply.set()
+                complete = await completion
+            assert complete.json() == {"status": "success", "errorMessage": None, "probeStatusCode": 503}
+            duplicate = await client.post("/api/oauth/manual-callback", json=body)
+            assert duplicate.json() == complete.json()
+            assert await _status(client, browser["flowId"]) == complete.json()
+            assert oauth_vendor.browser_calls == oauth_vendor.probe_calls == 1
+            assert oauth_vendor.committed_before_probe
+            assert await _refresh_marker(_ACCOUNT_ID) == "fixture-refresh"
+            assert await _refresh_marker("same-email-other-workspace") == "old-refresh"
+            async with SessionLocal() as session:
+                stored = await session.get(OAuthFlow, browser["flowId"])
+                assert stored is not None and stored.secrets_encrypted is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace", [_WORKSPACE, None], ids=["matching-workspace", "missing-workspace"])
+async def test_device_auto_poll_resumes_with_original_binding(oauth_vendor, app_instance, workspace):
+    transport = ASGITransport(app=app_instance)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with app_instance.router.lifespan_context(app_instance):
+            await _account()
+            response = await client.post(
+                "/api/oauth/start", json={"forceMethod": "device", "expectedAccountId": _ACCOUNT_ID}
+            )
+            response.raise_for_status()
+            started = response.json()
+            assert started["expectedAccountId"] == _ACCOUNT_ID
+            assert started["expiresInSeconds"] == 3600
+            async with asyncio.timeout(5):
+                while oauth_vendor.device_calls == 0:
+                    await asyncio.sleep(0.01)
+        await stop_oauth_flows()
+        oauth_vendor.workspace = workspace
+        oauth_vendor.authorized = True
+        async with app_instance.router.lifespan_context(app_instance):
+            async with asyncio.timeout(5):
+                while (result := await _status(client, started["flowId"]))["status"] == "pending":
+                    await asyncio.sleep(0.01)
+            assert oauth_vendor.device_calls == 2
+            if workspace is None:
+                assert result["status"] == "error"
+                assert "does not match" in result["errorMessage"]
+                assert oauth_vendor.probe_calls == 0
+                assert await _refresh_marker(_ACCOUNT_ID) == "old-refresh"
+            else:
+                assert result == {"status": "success", "errorMessage": None, "probeStatusCode": 503}
+                assert oauth_vendor.probe_calls == 1 and oauth_vendor.committed_before_probe
+                assert await _refresh_marker(_ACCOUNT_ID) == "fixture-refresh"
+            assert await _refresh_marker("same-email-other-workspace") == "old-refresh"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_bound_manual_fragment_saves_before_probe(oauth_vendor, async_client):
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        session.add(
+            Account(
+                id=_ANTHROPIC_ACCOUNT_ID,
+                provider="anthropic",
+                email=_EMAIL,
+                chatgpt_account_id=_EMAIL,
+                status=AccountStatus.REAUTH_REQUIRED,
+                plan_type="max",
+                access_token_encrypted=encryptor.encrypt("old-access"),
+                refresh_token_encrypted=encryptor.encrypt("old-refresh"),
+                last_refresh=utcnow(),
+            )
+        )
+        await session.commit()
+    started = await async_client.post(
+        "/api/oauth/start",
+        json={"forceMethod": "browser", "provider": "anthropic", "expectedAccountId": _ANTHROPIC_ACCOUNT_ID},
+    )
+    started.raise_for_status()
+    flow = started.json()
+    state = _oauth_state_token(flow["authorizationUrl"])
+    completed = await async_client.post(
+        "/api/oauth/manual-callback", json={"flowId": flow["flowId"], "callbackUrl": f"anthropic-code#{state}"}
+    )
+    assert completed.json() == {"status": "success", "errorMessage": None, "probeStatusCode": 503}
+    assert oauth_vendor.probe_calls == 1 and oauth_vendor.committed_before_probe
+    assert await _refresh_marker(_ANTHROPIC_ACCOUNT_ID) == "fixture-refresh"
+
+
+@pytest.mark.asyncio
+async def test_invalid_state_and_expired_callback_do_not_consume_live_flow(oauth_vendor, async_client):
+    first = (await async_client.post("/api/oauth/start", json={"forceMethod": "browser"})).json()
+    second = (await async_client.post("/api/oauth/start", json={"forceMethod": "browser"})).json()
+    first_state = _oauth_state_token(first["authorizationUrl"])
+    second_state = _oauth_state_token(second["authorizationUrl"])
+
+    denied = await async_client.post(
+        "/api/oauth/manual-callback",
+        json={"flowId": first["flowId"], "callbackUrl": f"http://localhost/?error=access_denied&state={second_state}"},
+    )
+    assert denied.json()["status"] == "error"
+    assert (await _status(async_client, first["flowId"]))["status"] == "pending"
+    assert (await _status(async_client, second["flowId"]))["status"] == "pending"
+
+    async with SessionLocal() as session:
+        await session.execute(update(OAuthFlow).where(OAuthFlow.id == first["flowId"]).values(expires_at=0))
+        await session.commit()
+    expired = await async_client.post("/api/oauth/manual-callback", json={"callbackUrl": f"browser-code#{first_state}"})
+    assert expired.json()["status"] == "error"
+    assert "expired" in expired.json()["errorMessage"]
+    assert oauth_vendor.browser_calls == 0
+    assert (await _status(async_client, second["flowId"]))["status"] == "pending"

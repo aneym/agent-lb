@@ -8,6 +8,7 @@ import { AccountPage } from "@/lb/pages/account/account-page";
 import { AddAccountPage } from "@/lb/pages/add-account/add-account-page";
 import { KeysPage } from "@/lb/pages/keys/keys-page";
 import { ProvidersPage } from "@/lb/pages/providers/providers-page";
+import { ReauthPage } from "@/lb/pages/reauth/reauth-page";
 import { DecisionsTab } from "@/lb/pages/routing/decisions-tab";
 import { EvalsTab } from "@/lb/pages/routing/evals-tab";
 import { PipelineTab } from "@/lb/pages/routing/pipeline-tab";
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/" element={<ProvidersPage />} />
             <Route path="/providers/add" element={<AddAccountPage />} />
             <Route path="/providers/:accountId" element={<AccountPage />} />
+            <Route path="/reauth/:accountId" element={<ReauthPage />} />
             <Route path="/routing" element={<RoutingLayout />}>
               <Route index element={<PipelineTab />} />
               <Route path="decisions" element={<DecisionsTab />} />

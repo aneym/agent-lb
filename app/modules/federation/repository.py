@@ -3,13 +3,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import and_, func, or_, select, update
+from cryptography.fernet import InvalidToken
+from sqlalchemy import ColumnElement, delete, func, or_, select, update
 
 from app.core.crypto import TokenEncryptor
 from app.core.providers.gemini import GEMINI_PROVIDER_NAME
 from app.core.utils.time import utcnow
+from app.db.account_state_models import AccountExchangeIntent
 from app.db.federation_models import AccountTransfer, AccountTransferDirection, AccountTransferState
 from app.db.models import Account, AccountStatus
+from app.modules.federation.owner_health import OWNER_STALE_AFTER
 from app.modules.federation.repository_transfers import FederationTransferRepository
 from app.modules.federation.repository_usage import FederationUsageRepository
 from app.modules.federation.schemas import FederationAuthPayload
@@ -18,18 +21,15 @@ LOCAL_ONLY_PROVIDERS = frozenset({GEMINI_PROVIDER_NAME})
 
 
 class FederationRepository(FederationTransferRepository, FederationUsageRepository):
-    async def count_accounts_by_ownership(self, local_instance_id: str) -> tuple[int, int]:
-        owned = await self._session.scalar(
-            select(func.count())
-            .select_from(Account)
-            .where(or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id))
+    async def count_accounts_by_ownership(self, local_instance_id: str) -> tuple[int, int, int]:
+        owned = or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id)
+        stale = Account.access_expires_at < utcnow() - OWNER_STALE_AFTER
+        counts = await self._session.execute(
+            select(
+                func.count().filter(owned), func.count().filter(~owned), func.count().filter(~owned, stale)
+            ).select_from(Account)
         )
-        mirrored = await self._session.scalar(
-            select(func.count())
-            .select_from(Account)
-            .where(and_(Account.owner_instance.is_not(None), Account.owner_instance != local_instance_id))
-        )
-        return int(owned or 0), int(mirrored or 0)
+        return counts.one()._tuple()
 
     async def list_locally_owned_accounts(self, local_instance_id: str) -> list[Account]:
         stmt = (
@@ -40,11 +40,8 @@ class FederationRepository(FederationTransferRepository, FederationUsageReposito
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_mirrorable_accounts(self, local_instance_id: str, *, include_foreign: bool) -> list[Account]:
-        if not include_foreign:
-            return await self.list_locally_owned_accounts(local_instance_id)
-        result = await self._session.execute(select(Account).where(Account.provider.notin_(LOCAL_ONLY_PROVIDERS)))
-        return list(result.scalars().all())
+    async def list_federation_accounts(self) -> list[Account]:
+        return list(await self._session.scalars(select(Account)))
 
     async def release_for_checkout(
         self, account_id: str, taker_instance_id: str, *, local_instance_id: str, nonce: str
@@ -214,21 +211,19 @@ class FederationRepository(FederationTransferRepository, FederationUsageReposito
     ) -> bool:
         subscription = {} if subscription_status is None else {"subscription_status": subscription_status}
 
-        existing = await self._session.get(Account, account_id)
+        existing = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
         if existing is not None:
-            pending = (
-                select(AccountTransfer.id)
-                .where(
-                    AccountTransfer.account_id == account_id,
-                    AccountTransfer.state.in_((AccountTransferState.PENDING, AccountTransferState.ABORTING)),
-                )
-                .exists()
-            )
+            if existing.owner_instance in (None, local_instance_id) or not _has_empty_refresh(existing, encryptor):
+                await self._session.rollback()
+                return False
             result = await self._session.execute(
                 update(Account)
-                .where(Account.id == account_id, Account.owner_instance == existing.owner_instance)
-                .where(Account.owner_instance.is_not(None), Account.owner_instance != local_instance_id)
-                .where(~pending)
+                .where(
+                    Account.id == account_id,
+                    Account.owner_instance == existing.owner_instance,
+                    Account.refresh_token_encrypted == existing.refresh_token_encrypted,
+                    *_without_custody_intents(open_transfers_only=existing.owner_instance == owner_instance_id),
+                )
                 .values(
                     provider=provider,
                     email=email,
@@ -271,6 +266,39 @@ class FederationRepository(FederationTransferRepository, FederationUsageReposito
             )
         await self._session.commit()
         return True
+
+    async def prune_mirror_accounts(
+        self,
+        *,
+        owner_instance_id: str,
+        local_instance_id: str,
+        keep_ids: set[str],
+        sync_started_at: datetime,
+        encryptor: TokenEncryptor,
+    ) -> bool:
+        if owner_instance_id == local_instance_id:
+            return False
+        missing = (
+            Account.owner_instance == owner_instance_id,
+            Account.provider.notin_(LOCAL_ONLY_PROVIDERS),
+            Account.last_refresh < sync_started_at,
+            Account.id.not_in(keep_ids),
+        )
+        unleased = _without_custody_intents(open_transfers_only=False)
+        candidates = await self._session.scalars(select(Account).where(*missing, *unleased).with_for_update())
+        removed = False
+        for account in candidates:
+            if not _has_empty_refresh(account, encryptor):
+                continue
+            result = await self._session.execute(
+                delete(Account)
+                .where(*missing, *unleased, Account.id == account.id)
+                .where(Account.refresh_token_encrypted == account.refresh_token_encrypted)
+                .returning(Account.id)
+            )
+            removed = result.scalar_one_or_none() is not None or removed
+        await self._session.commit()
+        return removed
 
     async def has_owner_accounts(self, owner_instance_id: str) -> bool:
         return (
@@ -375,6 +403,23 @@ def _coerce_account_status(value: str) -> AccountStatus:
         return AccountStatus(value)
     except ValueError:
         return AccountStatus.ACTIVE
+
+
+def _has_empty_refresh(account: Account, encryptor: TokenEncryptor) -> bool:
+    try:
+        return encryptor.decrypt(account.refresh_token_encrypted) == ""
+    except (InvalidToken, UnicodeError):
+        return False
+
+
+def _without_custody_intents(*, open_transfers_only: bool) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
+    transfers = select(AccountTransfer.id).where(AccountTransfer.account_id == Account.id)
+    if open_transfers_only:
+        transfers = transfers.where(
+            AccountTransfer.state.in_((AccountTransferState.PENDING, AccountTransferState.ABORTING))
+        )
+    exchanges = select(AccountExchangeIntent.account_id).where(AccountExchangeIntent.account_id == Account.id)
+    return ~transfers.exists(), ~exchanges.exists()
 
 
 def _expiry_from_ms(expires_at_ms: int | None) -> datetime | None:

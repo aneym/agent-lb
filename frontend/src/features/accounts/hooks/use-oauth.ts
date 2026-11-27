@@ -46,6 +46,7 @@ export function useOauth() {
   const [state, setState] = useState<OAuthState>(INITIAL_OAUTH_STATE);
   const pollTimerRef = useRef<number | null>(null);
   const countdownTimerRef = useRef<number | null>(null);
+  const pollingFlow = useRef<string | null>(null);
 
   const clearPollTimer = useCallback(() => {
     if (pollTimerRef.current !== null) {
@@ -68,10 +69,14 @@ export function useOauth() {
   }, [clearCountdownTimer, clearPollTimer]);
 
   const poll = useCallback(async () => {
+    const flowId = state.flowId;
+    const requestKey = flowId ?? "latest";
+    if (pollingFlow.current === requestKey) return;
+    pollingFlow.current = requestKey;
     try {
-      const status = await getOauthStatus(state.flowId ?? undefined);
+      const status = await getOauthStatus(flowId ?? undefined);
       setState((prev) =>
-        OAuthStateSchema.parse({
+        prev.flowId !== flowId || prev.status !== "pending" ? prev : OAuthStateSchema.parse({
           ...prev,
           status:
             status.status === "success"
@@ -80,29 +85,30 @@ export function useOauth() {
                 ? "error"
                 : "pending",
           errorMessage: status.errorMessage,
+          probeStatusCode: status.probeStatusCode,
         }),
       );
-    } catch (error) {
-      setState((prev) =>
-        OAuthStateSchema.parse({
-          ...prev,
-          status: "error",
-          errorMessage: error instanceof Error ? error.message : "Failed to poll OAuth status",
-        }),
-      );
+    } catch {
+      return;
+    } finally {
+      if (pollingFlow.current === requestKey) pollingFlow.current = null;
     }
   }, [state.flowId]);
 
   const start = useCallback(async (
     forceMethod?: "browser" | "device",
     provider: AccountProvider = "openai",
+    expectedAccountId?: string,
   ) => {
     clearPollTimer();
     clearCountdownTimer();
-    setState((prev) => ({ ...prev, provider, status: "starting", errorMessage: null }));
+    setState({ ...INITIAL_OAUTH_STATE, provider, status: "starting" });
 
     try {
-      const response = await startOauth({ forceMethod, provider });
+      const response = await startOauth({ forceMethod, provider, expectedAccountId });
+      if (expectedAccountId && (!response.flowId || response.expectedAccountId !== expectedAccountId)) {
+        throw new Error("The server did not bind this sign-in to the requested account.");
+      }
       const resolvedProvider = response.provider ?? provider;
       if (!isExpectedAuthorizationUrl(resolvedProvider, response.authorizationUrl)) {
         throw new Error("Anthropic OAuth is not available from this backend yet.");
@@ -117,7 +123,7 @@ export function useOauth() {
         verificationUrl: response.verificationUrl,
         userCode: response.userCode,
         deviceAuthId: response.deviceAuthId,
-        intervalSeconds: response.intervalSeconds,
+        intervalSeconds: response.intervalSeconds ?? (expectedAccountId ? 2 : null),
         expiresInSeconds: response.expiresInSeconds,
         errorMessage: null,
       });
@@ -184,8 +190,9 @@ export function useOauth() {
       setState((prev) =>
         OAuthStateSchema.parse({
           ...prev,
-          status: response.status === "success" ? "success" : "error",
+            status: response.status === "success" ? "success" : response.status === "pending" ? "pending" : "error",
           errorMessage: response.errorMessage,
+          probeStatusCode: response.probeStatusCode,
         }),
       );
       return response;

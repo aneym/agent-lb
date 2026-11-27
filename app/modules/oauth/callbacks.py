@@ -3,34 +3,36 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING
+from urllib.parse import parse_qs, urlparse
 
 from aiohttp import web
 
-from app.core.clients.oauth import OAuthError
-from app.core.providers import get_provider
+from app.core.clients.oauth import OAuthError, OAuthTokens
 from app.modules.accounts.identity_repository import AccountIdentityConflictError
+from app.modules.oauth.account_bind import ACCOUNT_IDENTITY_CONFLICT_MESSAGE
+from app.modules.oauth.durable import DurableOAuthFlows
 from app.modules.oauth.schemas import ManualCallbackResponse
-from app.modules.oauth.state import OAuthCallbackServer
-
-if TYPE_CHECKING:
-    from app.modules.oauth.service import OauthService
+from app.modules.oauth.state import OAuthCallbackServer, OAuthState, OAuthStateStore
 
 logger = logging.getLogger("app.modules.oauth.service")
 _SUCCESS_TEMPLATE = Path(__file__).resolve().parent / "templates" / "oauth_success.html"
-_ACCOUNT_IDENTITY_CONFLICT_MESSAGE = (
-    "Multiple accounts match the authenticated identity. Remove duplicate accounts and retry OAuth."
-)
 
 
-class OAuthCallbackHandlers:
-    async def manual_callback(
-        self: OauthService, callback_url: str, flow_id: str | None = None
-    ) -> ManualCallbackResponse:
+class OAuthCallbackHandlers(ABC):
+    _flows: DurableOAuthFlows
+    _store: OAuthStateStore
 
-        from urllib.parse import parse_qs, urlparse
+    @abstractmethod
+    async def _exchange_authorization_code(
+        self, provider_name: str, *, code: str, code_verifier: str, state: str | None = None
+    ) -> OAuthTokens: ...
 
+    @abstractmethod
+    async def _persist_tokens(self, tokens: OAuthTokens, flow: OAuthState) -> int | None: ...
+
+    async def manual_callback(self, callback_url: str, flow_id: str | None = None) -> ManualCallbackResponse:
         parsed = urlparse(callback_url)
         bare_code = not parsed.scheme and not any(mark in callback_url for mark in "#?=&")
         if bare_code:
@@ -46,103 +48,88 @@ class OAuthCallbackHandlers:
         error = params.get("error", [None])[0]
         code = params.get("code", [None])[0]
         state = params.get("state", [None])[0]
+        return await self._complete_browser_flow(
+            code, state, error, flow_id=flow_id, allow_bare_code=bare_code and flow_id is not None
+        )
 
-        async with self._store.lock:
-            if bare_code and flow_id is not None:
-                pasted_flow = self._store.get_flow_locked(flow_id)
-                state = pasted_flow.state_token if pasted_flow is not None else None
-            flow = self._store.get_flow_by_state_token_locked(state)
-            verifier = flow.code_verifier if flow is not None else None
-            target_flow_id = flow.flow_id if flow is not None else flow_id
-            can_update_error = target_flow_id is not None
-            if flow_id is not None and (flow is None or flow.flow_id != flow_id):
-                flow = None
-                verifier = None
-                target_flow_id = None
-                can_update_error = False
-            if flow is not None and flow.status == "success" and state == flow.state_token:
-                return ManualCallbackResponse(status="success")
+    async def _complete_browser_flow(
+        self,
+        code: str | None,
+        state: str | None,
+        error: str | None,
+        *,
+        flow_id: str | None = None,
+        allow_bare_code: bool = False,
+    ) -> ManualCallbackResponse:
+        invalid = "Invalid OAuth callback: state mismatch or missing code."
+        if not state and not allow_bare_code:
+            return ManualCallbackResponse(status="error", error_message=_provider_error(error) if error else invalid)
 
-        if error:
-            message = f"OAuth error: {error}"
-            if can_update_error:
-                await self._set_error(message, flow_id=target_flow_id)
+        flow = await self._flows.get(flow_id, state=state, include_secrets=True)
+        if flow is None or flow.method != "browser" or flow.flow_id is None:
+            return ManualCallbackResponse(status="error", error_message=_provider_error(error) if error else invalid)
+        if flow.status != "pending":
+            return _callback_result(flow.status, flow.error_message, flow.probe_status_code)
+
+        if error or not code or not flow.state_token or not flow.code_verifier:
+            message = _provider_error(error) if error else invalid
+            if not await self._flows.finish(flow.flow_id, from_status="pending", error=message):
+                return await self._browser_result(flow.flow_id)
+            await self._forget_browser_flow(flow.flow_id)
             return ManualCallbackResponse(status="error", error_message=message)
+        if not await self._flows.claim(flow.flow_id):
+            return await self._browser_result(flow.flow_id)
 
-        if not code or not state or flow is None or not verifier:
-            message = "Invalid OAuth callback: state mismatch or missing code."
-            if can_update_error:
-                await self._set_error(message, flow_id=target_flow_id)
-            return ManualCallbackResponse(status="error", error_message=message)
-
+        probe_status_code = None
         try:
-            provider = get_provider(flow.provider)
             tokens = await self._exchange_authorization_code(
-                provider.name, code=code, code_verifier=verifier, state=state
+                flow.provider, code=code, code_verifier=flow.code_verifier, state=flow.state_token
             )
-            await self._persist_tokens(tokens, provider_name=provider.name, flow_id=flow.flow_id)
-            await self._set_success(flow.flow_id)
-            asyncio.create_task(self._stop_callback_server_if_idle())
-            return ManualCallbackResponse(status="success")
+            probe_status_code = await self._persist_tokens(tokens, flow)
+            message = None
         except OAuthError as exc:
-            await self._set_error(exc.message, flow_id=flow.flow_id)
-            return ManualCallbackResponse(status="error", error_message=exc.message)
+            message = exc.message
         except AccountIdentityConflictError:
-            await self._set_error(_ACCOUNT_IDENTITY_CONFLICT_MESSAGE, flow_id=flow.flow_id)
-            return ManualCallbackResponse(status="error", error_message=_ACCOUNT_IDENTITY_CONFLICT_MESSAGE)
+            message = ACCOUNT_IDENTITY_CONFLICT_MESSAGE
         except Exception as exc:
-            logger.error("manual OAuth callback failed exception_type=%s", type(exc).__name__)
+            logger.error("OAuth callback failed exception_type=%s", type(exc).__name__)
             message = "An internal error occurred."
-            await self._set_error(message, flow_id=flow.flow_id)
-            return ManualCallbackResponse(status="error", error_message=message)
+        await self._flows.finish(
+            flow.flow_id,
+            from_status="verifying" if probe_status_code is not None else "processing",
+            error=message,
+            probe_status_code=probe_status_code,
+        )
+        await self._forget_browser_flow(flow.flow_id)
+        return await self._browser_result(flow.flow_id)
 
-    async def _handle_callback(self: OauthService, request: web.Request) -> web.Response:
-        params = request.rel_url.query
-        error = params.get("error")
-        code = params.get("code")
-        state = params.get("state")
+    async def _browser_result(self, flow_id: str) -> ManualCallbackResponse:
+        flow = await self._flows.get(flow_id)
+        if flow is None:
+            return ManualCallbackResponse(status="error", error_message="This sign-in is no longer available.")
+        return _callback_result(flow.status, flow.error_message, flow.probe_status_code)
 
+    async def _forget_browser_flow(self, flow_id: str) -> None:
         async with self._store.lock:
-            flow = self._store.get_flow_by_state_token_locked(state)
-            verifier = flow.code_verifier if flow is not None else None
-            if flow is not None and flow.status == "success":
-                return self._html_response(_success_html())
-
-        if error:
-            await self._set_error(f"OAuth error: {error}", flow_id=flow.flow_id if flow is not None else None)
-            return self._html_response(_error_html("Authorization failed."))
-
-        if not code or not state or flow is None or not verifier:
-            await self._set_error("Invalid OAuth callback state.", flow_id=flow.flow_id if flow is not None else None)
-            if flow is None:
-                logger.warning("OAuth callback for a sign-in this process did not start")
-                return self._html_response(
-                    _error_html(
-                        "This sign-in was not started by the agent-lb instance that received it "
-                        "(it may have restarted). Start the sign-in again from the dashboard."
-                    )
-                )
-            return self._html_response(_error_html("Invalid OAuth callback."))
-
-        try:
-            provider = get_provider(flow.provider)
-            tokens = await self._exchange_authorization_code(
-                provider.name, code=code, code_verifier=verifier, state=state
-            )
-            await self._persist_tokens(tokens, provider_name=provider.name, flow_id=flow.flow_id)
-            await self._set_success(flow.flow_id)
-            html = _success_html()
-        except OAuthError as exc:
-            await self._set_error(exc.message, flow_id=flow.flow_id)
-            html = _error_html(exc.message)
-        except AccountIdentityConflictError:
-            await self._set_error(_ACCOUNT_IDENTITY_CONFLICT_MESSAGE, flow_id=flow.flow_id)
-            html = _error_html(_ACCOUNT_IDENTITY_CONFLICT_MESSAGE)
-
+            tracked = self._store.get_flow_locked(flow_id)
+            if tracked is not None:
+                self._store.remove_flow_locked(tracked)
+            if timer := self._store.callback_expiries.pop(flow_id, None):
+                timer.cancel()
         asyncio.create_task(self._stop_callback_server_if_idle())
-        return self._html_response(html)
 
-    def _start_callback_server_stop_locked(self: OauthService, server: OAuthCallbackServer) -> asyncio.Task[None]:
+    async def _handle_callback(self, request: web.Request) -> web.Response:
+        params = request.rel_url.query
+        result = await self._complete_browser_flow(params.get("code"), params.get("state"), params.get("error"))
+        if result.status == "success":
+            return self._html_response(_success_html())
+        if result.status == "pending":
+            return self._html_response(
+                "<html><body><h1>Sign-in in progress</h1><p>Check the dashboard.</p></body></html>"
+            )
+        return self._html_response(_error_html(result.error_message or "Authorization failed."))
+
+    def _start_callback_server_stop_locked(self, server: OAuthCallbackServer) -> asyncio.Task[None]:
         stop_task = self._store._callback_server_stop_task
         if stop_task is not None and not stop_task.done():
             return stop_task
@@ -151,7 +138,7 @@ class OAuthCallbackHandlers:
         return stop_task
 
     async def _finish_callback_server_stop(
-        self: OauthService,
+        self,
         server: OAuthCallbackServer,
         stop_task: asyncio.Task[None],
     ) -> None:
@@ -165,7 +152,7 @@ class OAuthCallbackHandlers:
                 if self._store._callback_server_stop_task is stop_task:
                     self._store._callback_server_stop_task = None
 
-    async def _wait_for_callback_server_stop(self: OauthService) -> None:
+    async def _wait_for_callback_server_stop(self) -> None:
         while True:
             async with self._store.lock:
                 stop_task = self._store._callback_server_stop_task
@@ -173,7 +160,7 @@ class OAuthCallbackHandlers:
                 return
             await asyncio.shield(stop_task)
 
-    async def _stop_callback_server_if_idle(self: OauthService) -> None:
+    async def _stop_callback_server_if_idle(self) -> None:
         server: OAuthCallbackServer | None = None
         stop_task: asyncio.Task[None] | None = None
         async with self._store.lock:
@@ -188,6 +175,20 @@ class OAuthCallbackHandlers:
     @staticmethod
     def _html_response(html: str) -> web.Response:
         return web.Response(text=html, content_type="text/html")
+
+
+def _callback_result(status: str, message: str | None, probe_status_code: int | None) -> ManualCallbackResponse:
+    if status in {"processing", "verifying"}:
+        return ManualCallbackResponse(
+            status="pending", error_message="Sign-in is already in progress. Check its status."
+        )
+    return ManualCallbackResponse(status=status, error_message=message, probe_status_code=probe_status_code)
+
+
+def _provider_error(error: str) -> str:
+    if error.isascii() and len(error) <= 64 and error.replace("_", "").isalnum():
+        return f"OAuth error: {error}"
+    return "Authorization failed."
 
 
 def _success_html() -> str:

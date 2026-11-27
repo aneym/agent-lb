@@ -29,6 +29,8 @@ def configure_static_routes(app: FastAPI) -> None:
     def _is_static_asset_path(path: str) -> bool:
         if path.startswith("assets/"):
             return True
+        if path.startswith("reauth/") and path.count("/") == 1:
+            return False
         last_segment = path.rsplit("/", maxsplit=1)[-1]
         return "." in last_segment
 

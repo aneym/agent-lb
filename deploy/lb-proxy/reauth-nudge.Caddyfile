@@ -1,0 +1,15 @@
+{
+	admin off
+	persist_config off
+}
+
+http://:2464 {
+	bind {$AGENT_LB_EDGE_TAILNET_IP}
+	@owner_nudge {
+		remote_ip {$AGENT_LB_PRIMARY_TAILNET_IP}
+		method POST
+		path /api/federation/mirror/nudge
+	}
+	reverse_proxy @owner_nudge 127.0.0.1:2458
+	respond 404
+}

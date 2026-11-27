@@ -5,6 +5,7 @@ import os
 import sys
 
 from app.core.browser_profiles import profile_for
+from app.core.profile_launch import LaunchError, registered_profile_dir
 from app.lb_service import ServiceError, request, retrying
 from app.reauth_auto import reauth_account
 from app.reauth_auto_job import DEFAULT_BASE_URL, Job
@@ -17,7 +18,9 @@ def add_parser(subparsers) -> None:
     run = commands.add_parser("run", help="One tick: reauth enrolled accounts that need it, then keep-alive.")
     run.add_argument("--dry-run", action="store_true", help="Click nothing, file nothing; log what it would ask.")
     run.add_argument("--now", action="append", default=[], metavar="ACCOUNT_ID", help="Try this enrolled account now.")
-    run.add_argument("--no-keepalive", action="store_true")
+    checks = run.add_mutually_exclusive_group()
+    checks.add_argument("--no-keepalive", action="store_true")
+    checks.add_argument("--keepalive-only", action="store_true", help="Check session health without starting OAuth.")
     adding = commands.add_parser("enroll", help="Enroll an account by id or unique id prefix.")
     adding.add_argument("account")
     removing = commands.add_parser("unenroll")
@@ -57,14 +60,23 @@ def run(args) -> None:
     try:
         command = args.reauth_auto_command
         if command == "run":
-            job = Job(dry_run=args.dry_run, now_ids=_resolve_ids(args.now), keepalive=not args.no_keepalive)
+            if args.keepalive_only and args.now:
+                raise ValueError("--keepalive-only cannot be combined with --now")
+            job = Job(
+                dry_run=args.dry_run,
+                now_ids=_resolve_ids(args.now),
+                keepalive=not args.no_keepalive,
+                keepalive_only=args.keepalive_only,
+            )
             raise SystemExit(job.run())
         if command == "enroll":
             account = _resolve(args.account)
-            if profile_for(str(account.get("email", ""))) is None:
+            profile = profile_for(str(account.get("email", "")))
+            if profile is None:
                 raise ServiceError(
                     f"{account.get('email')}: no browser profile on this host; run agent-lb profiles add"
                 )
+            registered_profile_dir(profile, "anthropic")
             row = enroll(account)
             print(f"enrolled {account['accountId']} {row['email']}")
         elif command == "unenroll":
@@ -83,7 +95,7 @@ def run(args) -> None:
                 print(f"{key}\t{row.get('email')}\t{row.get('enrolledAt')}")
             for key, row in sorted(load_dropped().items()):
                 print(f"{key}\t{row.get('email')}\tdropped {row.get('droppedAt')}: {row.get('why')}")
-    except (ServiceError, ValueError) as exc:
+    except (LaunchError, ServiceError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from None
 
@@ -106,7 +118,10 @@ def run_reauth_auto(args) -> None:
     if account is None or profile is None:
         print(json.dumps({"email": email, "result": "skipped", "detail": "no anthropic account or no profile"}))
         raise SystemExit(2)
-    reason = refusal(account) or (None if account["accountId"] in load_enrolled() else "not enrolled")
+    enrollment = load_enrolled().get(account["accountId"])
+    reason = refusal(account) or (
+        None if enrollment and str(enrollment.get("email", "")).lower() == email else "not enrolled for this email"
+    )
     if reason:
         print(json.dumps({"email": email, "result": "skipped", "detail": reason}))
         raise SystemExit(2)

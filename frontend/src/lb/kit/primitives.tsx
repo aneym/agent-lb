@@ -149,6 +149,7 @@ function StateGlyph({ status }: { status: string }) {
     case "quota_exceeded":
       return <TriangleAlert {...props} />;
     case "reauth_required":
+    case "owner_stale":
       return <Unplug {...props} />;
     case "deactivated":
       return <CircleOff {...props} />;
@@ -163,6 +164,7 @@ const accountTone: Record<string, string> = {
   rate_limited: "warn",
   quota_exceeded: "warn",
   reauth_required: "bad",
+  owner_stale: "warn",
 };
 export function AccountState({
   status,
@@ -179,6 +181,7 @@ export function AccountState({
     rate_limited: "Rate limited",
     quota_exceeded: "Out",
     reauth_required: "Disconnected",
+    owner_stale: "Owner stale",
     exchange_uncertain: "Reconnecting",
     deactivated: "Off",
   };

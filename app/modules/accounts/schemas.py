@@ -166,6 +166,7 @@ class AccountSummary(DashboardModel):
 
     owner_instance: str | None = None
     is_locally_owned: bool = True
+    owner_stale: bool = False
     owner_label: str | None = None
     warmup_until: datetime | None = None
     warmup_status: str | None = None
