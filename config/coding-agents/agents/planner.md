@@ -38,7 +38,7 @@ Rules:
   Fable only when Alex names it for the task. Assign one writer per seam and give each
   child its files, fixed interfaces and one check command.
 - Give an ordinary fix to one owner through checks, proof and land. Admit independent pieces based on live headroom.
-- Require independent review before land only for risky changes.
+- No independent pre-land review or sign-off, risky changes included; put the area's best-practices checklist in the brief and require a stricter self-check for risky areas.
 - Checks are the builder's own: the repo's `./check`, build, typecheck and a
   proof on prod or the running app.
 - Never spawn another planner (one brain per lane; if the lane needs

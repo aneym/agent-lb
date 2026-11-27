@@ -5,4 +5,4 @@ model: sol-latest
 effort: high
 ---
 
-Do the assigned work against the named files and run its check. Follow `~/.claude/rules/workflow.md`. Use a worktree for edits. Own an ordinary fix through its checks, proof and land. Get independent review before landing a risky change.
+Do the assigned work against the named files and run its check. Follow `~/.claude/rules/workflow.md`. Use a worktree for edits. Own each change through its checks, proof and land, with no independent pre-land review (apply the best-practices checklist and stricter self-check for risky areas).
