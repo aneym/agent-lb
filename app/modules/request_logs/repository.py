@@ -11,7 +11,7 @@ from sqlalchemy import exc as sa_exc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.core.clients.failure_observation import failure_fields
+from app.core.clients.failure_observation import UpstreamObservation, failure_fields
 from app.core.context_parts.capture import measured_parts
 from app.core.eval_guard import eval_guard_state
 from app.core.identity import RequestIdentity, identity_for_log
@@ -148,11 +148,12 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
         quota_observed_at: datetime | None = None,
         upstream_cost_usd: float | None = None,
         client_session_id: str | None = None,
+        upstream_observation: UpstreamObservation | None = None,
     ) -> RequestLog:
         parts = await measured_parts()
         if status == "error":
             upstream_status_code, upstream_error_code = failure_fields(
-                upstream_status_code, upstream_error_code, error_code
+                upstream_status_code, upstream_error_code, error_code, request_observation=upstream_observation
             )
             error_code = error_code or upstream_error_code
         caller = identity_for_log(identity)

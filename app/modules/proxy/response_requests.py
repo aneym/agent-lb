@@ -32,6 +32,7 @@ from app.modules.proxy.response_errors import (
 )
 from app.modules.proxy.stream_iteration import prepend_initial_sse_heartbeat
 from app.modules.proxy.stream_transport import (
+    ResponsesStreamingResponse,
     probe_stream_startup_error,
     stream_response_error_events,
     stream_startup_error_response,
@@ -133,7 +134,8 @@ async def stream_responses(
             suppress_text_done_events=suppress_text_done_events,
             retry_protocol_only_failures=enforce_openai_sdk_contract,
         )
-    stream, startup_error = await probe_stream_startup_error(
+    source = stream
+    startup_stream, startup_error, first_task = await probe_stream_startup_error(
         stream,
         convert_event_errors=bridge_active,
         timeout_seconds=(
@@ -151,7 +153,7 @@ async def stream_responses(
     stream = normalize_public_responses_stream(
         retryable_overload_stream(
             stream_response_error_events(
-                stream,
+                startup_stream,
                 owns_reservation=owns_reservation,
                 reservation=reservation,
             )
@@ -166,19 +168,21 @@ async def stream_responses(
             request_id=get_request_id(),
             route_family="responses",
         )
+    body = inject_sse_keepalives(stream, get_settings().sse_keepalive_interval_seconds, keepalive_frame=keepalive_frame)
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",
+        **turn_state_headers,
+        **rate_limit_headers,
+    }
+    if bridge_active:
+        return ResponsesStreamingResponse(
+            body, startup_stream=startup_stream, source=source, first_task=first_task, headers=headers
+        )
     return StreamingResponse(
-        inject_sse_keepalives(
-            stream,
-            get_settings().sse_keepalive_interval_seconds,
-            keepalive_frame=keepalive_frame,
-        ),
+        body,
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            **turn_state_headers,
-            **rate_limit_headers,
-        },
+        headers=headers,
     )
 
 

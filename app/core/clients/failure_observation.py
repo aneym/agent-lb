@@ -22,7 +22,7 @@ def observe_status(status: int) -> None:
         current.error_class = None
 
 
-def observe_error(payload: Any) -> None:
+def observe_error(payload: Any, *, target: UpstreamObservation | None = None) -> None:
     if not isinstance(payload, dict):
         return
     response = payload.get("response")
@@ -31,8 +31,8 @@ def observe_error(payload: Any) -> None:
     if not isinstance(error, dict):
         return
     code = error.get("code") or error.get("type")
-    status = payload.get("status_code") or error.get("status_code")
-    previous = observation.get()
+    status = payload.get("status_code") or error.get("status_code") or payload.get("status")
+    previous = target if target is not None else observation.get()
     if not isinstance(status, int) or not 100 <= status <= 599:
         status = previous.status if previous else None
     if previous is not None:
@@ -48,11 +48,15 @@ def observe_text(text: str) -> None:
 
 
 def failure_fields(
-    status: int | None, upstream_code: str | None, error_code: str | None
+    status: int | None,
+    upstream_code: str | None,
+    error_code: str | None,
+    *,
+    request_observation: UpstreamObservation | None = None,
 ) -> tuple[int | None, str | None]:
-    observed = observation.get()
+    observed = request_observation if request_observation is not None else observation.get()
     if status is None and observed is not None:
         status = observed.status
     if upstream_code is None and observed is not None:
         upstream_code = observed.error_class
-    return status, upstream_code or error_code
+    return status, upstream_code or (error_code if request_observation is None else None)

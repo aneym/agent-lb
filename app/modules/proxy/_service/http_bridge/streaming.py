@@ -6,6 +6,7 @@ import json
 import logging
 import math
 from collections.abc import AsyncGenerator, Callable
+from contextlib import aclosing
 from typing import Any, AsyncIterator, Mapping, TypeVar, cast
 from uuid import uuid4
 
@@ -111,6 +112,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _websocket_event_error_param,
     _websocket_event_error_type,
 )
+from app.modules.proxy._service.http_bridge.socket_errors import BRIDGE_SOCKET_RETIRED, BRIDGE_SOCKET_RETIRED_MESSAGE
 from app.modules.proxy._service.observability import (
     _hash_identifier as _hash_identifier,
 )
@@ -343,7 +345,7 @@ class _HTTPBridgeStreamingMixin:
                 yield line
             return
 
-        async for line in self._stream_via_http_bridge(
+        stream: AsyncGenerator[str, None] = self._stream_via_http_bridge(
             payload,
             headers,
             codex_session_affinity=codex_session_affinity,
@@ -365,8 +367,10 @@ class _HTTPBridgeStreamingMixin:
             forwarded_affinity_key=forwarded_affinity_key,
             rewritten_file_account_id=rewritten_file_account_id,
             client_session_id=client_session_id,
-        ):
-            yield line
+        )
+        async with aclosing(stream):
+            async for line in stream:
+                yield line
 
     async def _stream_via_http_bridge(
         self: Any,
@@ -1101,11 +1105,7 @@ class _HTTPBridgeStreamingMixin:
                     model_class=_extract_model_class(effective_payload.model) if effective_payload.model else None,
                     owner_check_applied=True,
                 )
-                await self._reset_http_bridge_session_after_local_terminal_error(
-                    session,
-                    error_code="stream_incomplete",
-                    error_message="Upstream websocket closed before response.completed",
-                )
+                await self._close_http_bridge_session(session, reason="context_overflow_fresh_turn")
                 recovery_path = "context_overflow_fresh_turn"
                 retry_payload = _http_bridge_payload_without_previous_response_id(untrimmed_effective_payload)
                 retry_previous_response_id = None
@@ -1123,11 +1123,7 @@ class _HTTPBridgeStreamingMixin:
                     model_class=_extract_model_class(effective_payload.model) if effective_payload.model else None,
                     owner_check_applied=True,
                 )
-                await self._reset_http_bridge_session_after_local_terminal_error(
-                    session,
-                    error_code="stream_incomplete",
-                    error_message="Upstream websocket closed before response.completed",
-                )
+                await self._close_http_bridge_session(session, reason="context_overflow_rollover")
                 raise
             else:
                 if PROMETHEUS_AVAILABLE and bridge_durable_recover_total is not None:
@@ -1142,11 +1138,7 @@ class _HTTPBridgeStreamingMixin:
                     model_class=_extract_model_class(effective_payload.model) if effective_payload.model else None,
                     owner_check_applied=True,
                 )
-                await self._reset_http_bridge_session_after_local_terminal_error(
-                    session,
-                    error_code="stream_incomplete",
-                    error_message="Upstream websocket closed before response.completed",
-                )
+                await self._close_http_bridge_session(session, reason="previous_response_recovery")
                 recovery_path = "local_previous_response_error"
                 retry_payload = effective_payload
                 retry_previous_response_id = request_state.previous_response_id
@@ -1237,30 +1229,6 @@ class _HTTPBridgeStreamingMixin:
             except Exception:
                 pass
 
-    async def _reset_http_bridge_session_after_local_terminal_error(
-        self: Any,
-        session: "_HTTPBridgeSession",
-        *,
-        error_code: str,
-        error_message: str,
-    ) -> None:
-        async with self._http_bridge_lock:
-            if self._http_bridge_sessions.get(session.key) is session:
-                self._http_bridge_sessions.pop(session.key, None)
-        async with session.pending_lock:
-            session.queued_request_count = 0
-        await self._fail_pending_websocket_requests(
-            account=session.account,
-            account_id_value=session.account.id,
-            pending_requests=session.pending_requests,
-            pending_lock=session.pending_lock,
-            error_code=error_code,
-            error_message=error_message,
-            api_key=None,
-            response_create_gate=session.response_create_gate,
-        )
-        await self._close_http_bridge_session(session)
-
     async def _quarantine_http_bridge_first_event_account(
         self: Any,
         session: "_HTTPBridgeSession",
@@ -1306,18 +1274,29 @@ class _HTTPBridgeStreamingMixin:
         propagate_http_errors: bool,
         downstream_turn_state: str | None,
     ) -> AsyncGenerator[str, None]:
-        await self._submit_http_bridge_request(
-            session,
-            request_state=request_state,
-            text_data=text_data,
-            queue_limit=queue_limit,
-        )
-        if downstream_turn_state is not None:
-            await self._register_http_bridge_turn_state(session, downstream_turn_state)
-
         try:
-            event_queue = request_state.event_queue
-            assert event_queue is not None
+            await self._submit_http_bridge_request(
+                session,
+                request_state=request_state,
+                text_data=text_data,
+                queue_limit=queue_limit,
+            )
+        except ProxyResponseError as exc:
+            if exc.payload["error"].get("code") == BRIDGE_SOCKET_RETIRED:
+                await self._write_websocket_connect_failure(
+                    request_state=request_state,
+                    account_id=session.account.id,
+                    api_key=request_state.api_key,
+                    error_code=BRIDGE_SOCKET_RETIRED,
+                    error_message=BRIDGE_SOCKET_RETIRED_MESSAGE,
+                    terminal=True,
+                )
+            raise
+        event_queue = request_state.event_queue
+        assert event_queue is not None
+        try:
+            if downstream_turn_state is not None:
+                await self._register_http_bridge_turn_state(session, downstream_turn_state)
             yielded_any = False
             upstream_yielded = False
             keepalive_sent = False
@@ -1333,7 +1312,6 @@ class _HTTPBridgeStreamingMixin:
                 ),
             )
             first_event_deadline = max(request_state.started_at, _service_time().monotonic()) + first_event_timeout
-            first_event_timed_out = False
             degraded_retried = False
             failover_retried = False
             quarantined_ids: set[str] = set()
@@ -1450,7 +1428,20 @@ class _HTTPBridgeStreamingMixin:
                                     keepalive_count = 0
                                     keepalive_sent = False
                                     continue
-                            first_event_timed_out = True
+                            timeout_code = "bridge_first_event_timeout"
+                            timeout_message = "Upstream produced no events for this turn within the first-event window"
+                            with anyio.CancelScope(shield=True):
+                                timed_out = await self._detach_http_bridge_request(
+                                    session,
+                                    request_state=request_state,
+                                    error_code="stream_incomplete",
+                                    error_message=timeout_message,
+                                    require_unacknowledged=True,
+                                )
+                                if timed_out and session.account.id not in quarantined_ids:
+                                    await self._quarantine_http_bridge_first_event_account(session)
+                            if not timed_out:
+                                continue
                             logger.warning(
                                 "HTTP bridge first-event timeout request_id=%s account_id=%s "
                                 "bridge_kind=%s timeout_seconds=%s",
@@ -1475,10 +1466,8 @@ class _HTTPBridgeStreamingMixin:
                                 _service_write_response_create_dump(
                                     request_state,
                                     account_id_value=session.account.id,
-                                    error_code="bridge_first_event_timeout",
-                                    error_message=(
-                                        "Upstream produced no events for this turn within the first-event window"
-                                    ),
+                                    error_code=timeout_code,
+                                    error_message=timeout_message,
                                     log_prefix="first-event-timeout",
                                 )
                             except Exception:
@@ -1491,14 +1480,23 @@ class _HTTPBridgeStreamingMixin:
                                 cast(
                                     Mapping[str, JsonValue],
                                     response_failed_event(
-                                        "bridge_first_event_timeout",
-                                        "Upstream produced no events for this turn within the first-event window",
+                                        timeout_code,
+                                        timeout_message,
                                         response_id=downstream_response_id,
                                     ),
                                 )
                             )
                             break
                         if keepalive_count > max_keepalive_count:
+                            with anyio.CancelScope(shield=True):
+                                timed_out = await self._detach_http_bridge_request(
+                                    session,
+                                    request_state=request_state,
+                                    error_code="stream_idle_timeout",
+                                    error_message="Upstream did not respond within the keepalive window",
+                                )
+                            if not timed_out:
+                                continue
                             logger.info(
                                 "HTTP bridge stream idle timeout request_id=%s keepalive_count=%s "
                                 "max_keepalive_count=%s",
@@ -1594,20 +1592,3 @@ class _HTTPBridgeStreamingMixin:
             with anyio.CancelScope(shield=True):
                 await self._detach_http_bridge_request(session, request_state=request_state)
                 session.last_used_at = _service_time().monotonic()
-                if first_event_timed_out:
-                    if session.account.id not in quarantined_ids:
-                        await self._quarantine_http_bridge_first_event_account(session)
-
-                    try:
-                        await self._retire_stale_pending_http_bridge_session(
-                            session,
-                            detail="first_event_timeout",
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Failed to retire poisoned HTTP bridge session after first-event timeout "
-                            "request_id=%s account_id=%s",
-                            request_state.request_id,
-                            session.account.id,
-                            exc_info=True,
-                        )

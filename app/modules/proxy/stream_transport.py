@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from contextlib import suppress
 
+import anyio
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
+from starlette.types import Receive, Scope, Send
 
 from app.core.clients.proxy import ProxyResponseError
 from app.core.errors import response_failed_event
@@ -32,12 +35,48 @@ from app.modules.proxy.response_errors import (
 from app.modules.proxy.stream_iteration import prepend_first, prepend_first_task, prepend_items, read_first_stream_item
 
 
+class ResponsesStreamingResponse(StreamingResponse):
+    def __init__(
+        self,
+        body: AsyncGenerator[str, None],
+        *,
+        startup_stream: AsyncGenerator[str, None],
+        source: AsyncIterator[str],
+        first_task: asyncio.Task[str] | None,
+        headers: Mapping[str, str],
+    ) -> None:
+        super().__init__(body, media_type="text/event-stream", headers=headers)
+        self._body = body
+        self._startup_stream = startup_stream
+        self._source = source
+        self._first_task = first_task
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            with anyio.CancelScope(shield=True):
+                await self._body.aclose()
+                if self._first_task is not None:
+                    await _cancel_first_stream_item(self._first_task)
+                await self._startup_stream.aclose()
+                aclose = getattr(self._source, "aclose", None)
+                if callable(aclose):
+                    await aclose()
+
+
+async def _cancel_first_stream_item(task: asyncio.Task[str]) -> None:
+    task.cancel()
+    with suppress(asyncio.CancelledError, StopAsyncIteration, ProxyResponseError):
+        await task
+
+
 async def probe_stream_startup_error(
     stream: AsyncIterator[str],
     *,
     convert_event_errors: bool = False,
     timeout_seconds: float | None = None,
-) -> tuple[AsyncIterator[str], ProxyResponseError | OpenAIErrorEnvelopeModel | None]:
+) -> tuple[AsyncGenerator[str, None], ProxyResponseError | OpenAIErrorEnvelopeModel | None, asyncio.Task[str] | None]:
     if timeout_seconds is None:
         timeout_seconds = STREAM_STARTUP_ERROR_PROBE_SECONDS
     first_task = asyncio.create_task(read_first_stream_item(stream))
@@ -47,19 +86,23 @@ async def probe_stream_startup_error(
             timeout=timeout_seconds,
         )
     except TimeoutError:
-        return prepend_first_task(first_task, stream), None
+        return prepend_first_task(first_task, stream), None, first_task
+    except asyncio.CancelledError:
+        with anyio.CancelScope(shield=True):
+            await _cancel_first_stream_item(first_task)
+        raise
     except StopAsyncIteration:
-        return prepend_first(None, stream), None
+        return prepend_first(None, stream), None, None
     except ProxyResponseError as exc:
-        return prepend_first(None, stream), exc
+        return prepend_first(None, stream), exc, None
     if convert_event_errors:
         first_error = stream_event_error_envelope(first)
         if first_error is not None:
             aclose = getattr(stream, "aclose", None)
             if callable(aclose):
                 await aclose()
-            return prepend_first(None, stream), first_error
-    return prepend_first(first, stream), None
+            return prepend_first(None, stream), first_error, None
+    return prepend_first(first, stream), None, None
 
 
 async def probe_chat_stream_startup_error(

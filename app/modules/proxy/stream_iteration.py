@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 
 from app.modules.proxy.constants import logger
 
 
-async def prepend_first(first: str | None, stream: AsyncIterator[str]) -> AsyncIterator[str]:
+async def prepend_first(first: str | None, stream: AsyncIterator[str]) -> AsyncGenerator[str, None]:
     if first is not None:
         yield first
     async for line in stream:
@@ -25,7 +25,7 @@ async def prepend_items(items: list[str], stream: AsyncIterator[str]) -> AsyncIt
         yield line
 
 
-async def prepend_first_task(first_task: asyncio.Task[str], stream: AsyncIterator[str]) -> AsyncIterator[str]:
+async def prepend_first_task(first_task: asyncio.Task[str], stream: AsyncIterator[str]) -> AsyncGenerator[str, None]:
     try:
         yield await first_task
     except StopAsyncIteration:

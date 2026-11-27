@@ -27,6 +27,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _upstream_turn_state_from_socket,
     _websocket_connect_deadline,
 )
+from app.modules.proxy._service.http_bridge.socket_errors import socket_retired_error
 from app.modules.proxy._service.support import (
     _copy_websocket_route_metadata_to_session,
     _HTTPBridgeSession,
@@ -52,6 +53,8 @@ class _HTTPBridgeReconnectMixin:
     ) -> None:
         observed_upstream = session.upstream
         async with session.reconnect_lock:
+            if session.upstream_close_attempted or session.upstream_control.retire_after_drain:
+                raise socket_retired_error()
             if session.upstream is not observed_upstream and not session.closed:
                 reader = session.upstream_reader
                 if restart_reader and (reader is None or reader.done()):
@@ -269,6 +272,10 @@ class _HTTPBridgeReconnectMixin:
                 logger.debug("Failed to close HTTP bridge upstream websocket before reconnect", exc_info=True)
             if selected_account_lease is not session.account_lease:
                 await self._load_balancer.release_account_lease(session.account_lease)
+            if session.upstream_close_attempted or session.upstream_control.retire_after_drain:
+                await release_selected_account_lease()
+                await upstream.close()
+                raise socket_retired_error()
             session.account_lease = selected_account_lease
             session.account = account
             session.headers = connect_headers

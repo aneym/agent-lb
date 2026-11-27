@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 import anyio
 
 from app.core.balancer.types import UpstreamError
+from app.core.clients.failure_observation import UpstreamObservation
 from app.core.clients.proxy_websocket import UpstreamResponsesWebSocket
 from app.core.identity import RequestIdentity
 from app.core.openai.models import OpenAIEvent
@@ -144,12 +145,7 @@ class _StreamSettlement:
 def _stream_settlement_error_payload(settlement: _StreamSettlement) -> UpstreamError:
     if settlement.error is not None:
         return settlement.error
-    payload: UpstreamError = {}
-    if settlement.error_message:
-        payload["message"] = settlement.error_message
-    else:
-        payload["message"] = "Upstream error"
-    return payload
+    return {"message": settlement.error_message or "Upstream error"}
 
 
 def _consume_api_key_reservation_heartbeat_result(task: asyncio.Task[None]) -> None:
@@ -204,13 +200,13 @@ class _WebSocketRequestState:
     force_refresh_account_id: str | None = None
     excluded_account_ids: set[str] = field(default_factory=set)
     skip_request_log: bool = False
+    bridge_observation: UpstreamObservation | None = None
     previous_response_id: str | None = None
     session_id: str | None = None
     client_session_id: str | None = None
     proxy_injected_previous_response_id: bool = False
     expose_stale_previous_response_classifier: bool = False
     fresh_upstream_request_text: str | None = None
-
     fresh_upstream_request_is_retry_safe: bool = False
     request_stage: str = "first_turn"
     preferred_account_id: str | None = None
@@ -250,7 +246,6 @@ class _WebSocketRequestState:
     suppress_next_created_downstream: bool = False
     replay_downstream_response_id: str | None = None
     draining_until_terminal: bool = False
-
     is_compaction_request: bool = False
     compaction_output_items: list[JsonValue] = field(default_factory=list)
 

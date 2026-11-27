@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+
+import anyio
 
 from app.core.clients.failure_observation import observe_error
 from app.core.errors import ResponseFailedEvent
@@ -20,7 +22,7 @@ async def inject_sse_keepalives(
     interval_seconds: float,
     *,
     keepalive_frame: str = SSE_KEEPALIVE_FRAME,
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str, None]:
 
     if interval_seconds <= 0:
         async for chunk in source:
@@ -52,10 +54,11 @@ async def inject_sse_keepalives(
     finally:
         if pending is not None and not pending.done():
             pending.cancel()
-            try:
-                await pending
-            except BaseException:
-                pass
+            with anyio.CancelScope(shield=True):
+                try:
+                    await pending
+                except asyncio.CancelledError:
+                    pass
 
 
 def format_sse_event(payload: JsonPayload) -> str:

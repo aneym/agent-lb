@@ -2,20 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, TypeVar
+from typing import Any
 
+from app.core.clients.failure_observation import observation, observe_error
 from app.core.clients.proxy import CodexControlResponse as CodexControlResponse
 from app.core.openai.parsing import parse_sse_event
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
-from app.modules.proxy._service.api_key_usage import (
-    _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
-)
-from app.modules.proxy._service.compact import (
-    _sticky_key_for_compact_request as _sticky_key_for_compact_request,
-)
-from app.modules.proxy._service.compact import (
-    _sticky_key_from_compact_payload as _sticky_key_from_compact_payload,
-)
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_request_counts_against_queue,
     _log_http_bridge_event,
@@ -125,26 +117,12 @@ from app.modules.proxy.tool_call_dedupe import (
 )
 
 logger = logging.getLogger("app.modules.proxy.service")
-T = TypeVar("T")
 _TEXT_DELTA_EVENT_TYPES = frozenset({"response.output_text.delta", "response.refusal.delta"})
-_REQUEST_TRANSPORT_HTTP = "http"
-_UPSTREAM_CLOSE_CODES_SKIP_SAME_ACCOUNT_RETRY = frozenset({1011})
-_WEBSOCKET_AUTH_INVALIDATED_FAILURE_CODE = "account_auth_invalidated"
 _SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE = "security_work_authorization_required"
-_NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE = "no_security_work_authorized_accounts"
 _SECURITY_WORK_RETRY_MESSAGE = (
     "Upstream flagged this request as possible cybersecurity work. "
     "agent-lb is retrying on an account marked as authorized for security work."
 )
-_SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
-    "Upstream flagged this request as possible cybersecurity work, but no account is marked as authorized for "
-    "security work. agent-lb is continuing with normal account selection; the upstream request may still fail until "
-    "an account with Trusted Access for Cyber is marked as security-work-authorized."
-)
-_HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS = 5.0
-_HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
-
-
 _COMPACTION_OUTPUT_ITEM_CAP = 8
 
 
@@ -154,8 +132,9 @@ class _HTTPBridgeUpstreamEventsMixin:
         session: "_HTTPBridgeSession",
     ) -> None:
         runtime_settings = _service_get_settings()
+        observation_token = observation.set(None)
         try:
-            while True:
+            while not session.upstream_close_attempted:
                 receive_timeout = await self._next_websocket_receive_timeout(
                     session.pending_requests,
                     pending_lock=session.pending_lock,
@@ -175,10 +154,14 @@ class _HTTPBridgeUpstreamEventsMixin:
                 except asyncio.TimeoutError:
                     if receive_timeout is None:
                         raise
+                    if session.upstream_close_attempted:
+                        break
                     retried = await self._retry_http_bridge_precreated_request(session)
                     if retried:
                         continue
                     async with session.lifecycle_lock:
+                        if session.upstream_close_attempted:
+                            break
                         try:
                             session.closed = True
                             async with session.pending_lock:
@@ -194,12 +177,14 @@ class _HTTPBridgeUpstreamEventsMixin:
                                 response_create_gate=session.response_create_gate,
                             )
                         finally:
-                            await self._retire_stale_pending_http_bridge_session(
+                            await self._close_http_bridge_session(
                                 session,
-                                detail=receive_timeout.error_code,
+                                reason=receive_timeout.error_code,
                             )
                     break
 
+                if session.upstream_close_attempted:
+                    break
                 if message.kind == "text" and message.text is not None:
                     session.last_upstream_close_code = None
                     await self._process_http_bridge_upstream_text(session, message.text)
@@ -208,10 +193,14 @@ class _HTTPBridgeUpstreamEventsMixin:
                     continue
 
                 session.last_upstream_close_code = message.close_code
-                retried = await self._retry_http_bridge_precreated_request(session)
+                retried = await self._retry_http_bridge_precreated_request(
+                    session, upstream_close_code=message.close_code if message.kind == "close" else None
+                )
                 if retried:
                     continue
                 async with session.lifecycle_lock:
+                    if session.upstream_close_attempted:
+                        break
                     try:
                         session.closed = True
                         async with session.pending_lock:
@@ -227,9 +216,9 @@ class _HTTPBridgeUpstreamEventsMixin:
                             response_create_gate=session.response_create_gate,
                         )
                     finally:
-                        await self._retire_stale_pending_http_bridge_session(
+                        await self._close_http_bridge_session(
                             session,
-                            detail="stream_incomplete",
+                            reason="stream_incomplete",
                         )
                 break
         except asyncio.CancelledError:
@@ -242,6 +231,8 @@ class _HTTPBridgeUpstreamEventsMixin:
                 exc_info=True,
             )
             async with session.lifecycle_lock:
+                if session.upstream_close_attempted:
+                    return
                 try:
                     session.closed = True
                     async with session.pending_lock:
@@ -257,12 +248,15 @@ class _HTTPBridgeUpstreamEventsMixin:
                         response_create_gate=session.response_create_gate,
                     )
                 finally:
-                    await self._retire_stale_pending_http_bridge_session(
+                    await self._close_http_bridge_session(
                         session,
-                        detail="reader_crash",
+                        reason="reader_crash",
                     )
         finally:
             session.closed = True
+            if session.upstream_reader is asyncio.current_task():
+                session.upstream_reader = None
+            observation.reset(observation_token)
 
     async def _process_http_bridge_upstream_text(
         self: Any,
@@ -271,6 +265,7 @@ class _HTTPBridgeUpstreamEventsMixin:
     ) -> None:
         event_block = f"data: {text}\n\n"
         payload = parse_sse_data_json(event_block)
+        upstream_payload = payload
         event = parse_sse_event(event_block)
         event_type = _event_type_from_payload(event, payload)
         response_id = _websocket_response_id(event, payload)
@@ -514,6 +509,8 @@ class _HTTPBridgeUpstreamEventsMixin:
             _record_response_event(terminal_request_state, event_type)
 
         status_request_state = terminal_request_state or matched_request_state
+        if status_request_state is not None and status_request_state.bridge_observation is not None:
+            observe_error(upstream_payload, target=status_request_state.bridge_observation)
         if status_request_state is None and is_previous_response_not_found_event:
             session.upstream_control.reconnect_requested = True
             return
@@ -536,11 +533,7 @@ class _HTTPBridgeUpstreamEventsMixin:
             and terminal_request_state.suppressed_duplicate_tool_call
         ):
             session.upstream_control.reconnect_requested = True
-            session.closed = True
-            try:
-                await session.upstream.close()
-            except Exception:
-                logger.debug("Failed to close HTTP bridge upstream after suppressed duplicate tool call", exc_info=True)
+            await self._close_http_bridge_session(session, reason="suppressed_duplicate_tool_call")
             terminal_request_state.error_http_status_override = 502
             (
                 event,

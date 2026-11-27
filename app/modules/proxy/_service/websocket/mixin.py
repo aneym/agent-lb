@@ -3193,6 +3193,7 @@ class _WebSocketMixin:
                 status=status,
                 error_code=error_code,
                 error_message=error_message,
+                upstream_observation=request_state.bridge_observation,
                 input_tokens=usage.input_tokens if usage else None,
                 output_tokens=usage.output_tokens if usage else None,
                 cached_input_tokens=cached_input_tokens,
@@ -3386,36 +3387,16 @@ class _WebSocketMixin:
                     downstream_activity=downstream_activity,
                 )
             await proxy._release_websocket_request_state_reservation(request_state)
-            if account_id_value is None or request_state.skip_request_log:
+            if account_id_value is None:
                 continue
-            latency_ms = int((time.monotonic() - request_state.started_at) * 1000)
-            await proxy._write_request_log(
-                identity=request_state.identity,
-                factory_attribution=request_state.factory_attribution,
+            await proxy._write_websocket_connect_failure(
+                request_state=request_state,
                 account_id=account_id_value,
-                api_key=api_key,
-                request_id=request_state.response_id or request_state.request_log_id or request_state.request_id,
-                model=request_state.model or "",
-                latency_ms=latency_ms,
-                status=status,
+                api_key=request_state.api_key if request_state.bridge_observation is not None else api_key,
                 error_code=request_error_code,
                 error_message=request_error_message,
-                reasoning_effort=request_state.reasoning_effort,
-                transport=request_state.transport,
-                service_tier=request_state.service_tier,
-                requested_service_tier=request_state.requested_service_tier,
-                actual_service_tier=request_state.actual_service_tier,
-                latency_first_token_ms=request_state.latency_first_token_ms,
-                session_id=request_state.client_session_id or request_state.session_id,
-                upstream_proxy_route_mode=request_state.upstream_proxy_route_mode,
-                upstream_proxy_pool_id=request_state.upstream_proxy_pool_id,
-                upstream_proxy_endpoint_id=request_state.upstream_proxy_endpoint_id,
-                upstream_proxy_fallback_used=(
-                    request_state.upstream_proxy_fallback_used if request_state.upstream_proxy_endpoint_id else None
-                ),
-                upstream_proxy_fail_closed_reason=request_state.upstream_proxy_fail_closed_reason,
-                useragent=request_state.useragent,
-                useragent_group=request_state.useragent_group,
+                status=status,
+                terminal=True,
             )
 
     async def _emit_websocket_terminal_error(

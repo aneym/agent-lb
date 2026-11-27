@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import logging
 from collections import deque
-from typing import Any, Literal, TypeVar, overload
+from typing import Any, Literal, overload
 from uuid import uuid4
 
 import aiohttp
@@ -101,6 +101,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.owner_forwarding import _HTTPBridgeOwnerForwardingMixin
 from app.modules.proxy._service.http_bridge.protocol import _HTTPBridgeServiceProtocol
+from app.modules.proxy._service.http_bridge.reconnect import _HTTPBridgeReconnectMixin
 from app.modules.proxy._service.http_bridge.request_submit import _HTTPBridgeRequestSubmitMixin
 from app.modules.proxy._service.http_bridge.service_stubs import (
     _await_cancelled_task,
@@ -122,8 +123,8 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _websocket_connect_deadline,
 )
 from app.modules.proxy._service.http_bridge.session_registry import _HTTPBridgeSessionRegistryMixin
+from app.modules.proxy._service.http_bridge.socket_errors import BRIDGE_SOCKET_RETIRED, BRIDGE_SOCKET_RETIRED_MESSAGE
 from app.modules.proxy._service.http_bridge.streaming import _HTTPBridgeStreamingMixin
-from app.modules.proxy._service.http_bridge.reconnect import _HTTPBridgeReconnectMixin
 from app.modules.proxy._service.http_bridge.upstream_events import _HTTPBridgeUpstreamEventsMixin
 from app.modules.proxy._service.observability import (
     _hash_identifier as _hash_identifier,
@@ -196,21 +197,7 @@ from app.modules.proxy.load_balancer import AccountLease
 from app.modules.proxy.selection_diagnostics import enrich_selection_error
 
 logger = logging.getLogger("app.modules.proxy.service")
-T = TypeVar("T")
-_TEXT_DELTA_EVENT_TYPES = frozenset({"response.output_text.delta", "response.refusal.delta"})
 _REQUEST_TRANSPORT_HTTP = "http"
-_WEBSOCKET_AUTH_INVALIDATED_FAILURE_CODE = "account_auth_invalidated"
-_SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE = "security_work_authorization_required"
-_NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE = "no_security_work_authorized_accounts"
-_SECURITY_WORK_RETRY_MESSAGE = (
-    "Upstream flagged this request as possible cybersecurity work. "
-    "agent-lb is retrying on an account marked as authorized for security work."
-)
-_SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
-    "Upstream flagged this request as possible cybersecurity work, but no account is marked as authorized for "
-    "security work. agent-lb is continuing with normal account selection; the upstream request may still fail until "
-    "an account with Trusted Access for Cyber is marked as security-work-authorized."
-)
 _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS = 5.0
 _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
 _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS = 5.0
@@ -1608,15 +1595,18 @@ class _HTTPBridgeMixin(
         self,
         session: "_HTTPBridgeSession",
         *,
-        turn_state_lock_held: bool = False,
+        reason: str | None = None,
     ) -> None:
         session.closed = True
-        if turn_state_lock_held:
-            self._unregister_http_bridge_turn_states_locked(session)
-            self._unregister_http_bridge_previous_response_ids_locked(session)
-        else:
-            await self._unregister_http_bridge_turn_states(session)
-            await self._unregister_http_bridge_previous_response_ids(session)
+        if session.upstream_close_attempted:
+            return
+        session.upstream_close_attempted = True
+        session.upstream_control.reconnect_requested = True
+        session.upstream_control.retire_after_drain = True
+        async with self._http_bridge_lock:
+            if self._detach_http_bridge_session_locked(session.key, expected_session=session) is None:
+                self._unregister_http_bridge_turn_states_locked(session)
+                self._unregister_http_bridge_previous_response_ids_locked(session)
         account_lease = getattr(session, "account_lease", None)
         try:
             await self._load_balancer.release_account_lease(account_lease)
@@ -1634,14 +1624,6 @@ class _HTTPBridgeMixin(
                 )
             except Exception:
                 logger.warning("Failed to release durable HTTP bridge session", exc_info=True)
-        upstream_reader = session.upstream_reader
-        if upstream_reader is not None:
-            if upstream_reader is asyncio.current_task():
-                session.upstream_reader = None
-            else:
-                await _await_cancelled_task(upstream_reader, label="http bridge upstream reader")
-                if session.upstream_reader is upstream_reader:
-                    session.upstream_reader = None
         try:
             await session.upstream.close()
         except Exception:
@@ -1657,16 +1639,22 @@ class _HTTPBridgeMixin(
                 account_id_value=session.account.id,
                 pending_requests=pending_requests,
                 pending_lock=pending_lock,
-                error_code="stream_incomplete",
-                error_message="HTTP bridge session closed before response.completed",
+                error_code=BRIDGE_SOCKET_RETIRED,
+                error_message=BRIDGE_SOCKET_RETIRED_MESSAGE,
                 api_key=None,
                 response_create_gate=response_create_gate,
+                penalize_account=False,
             )
+        upstream_reader = session.upstream_reader
+        if upstream_reader is not None and upstream_reader is not asyncio.current_task():
+            if not upstream_reader.done():
+                await _await_cancelled_task(upstream_reader, label="http bridge upstream reader")
         _log_http_bridge_event(
             "close",
             session.key,
             account_id=session.account.id,
             model=session.request_model,
+            detail=reason,
             cache_key_family=session.key.affinity_kind,
             model_class=_extract_model_class(session.request_model) if session.request_model else None,
         )

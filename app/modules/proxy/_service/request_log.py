@@ -7,6 +7,7 @@ from typing import Protocol, cast
 
 import anyio
 
+from app.core.clients.failure_observation import UpstreamObservation
 from app.core.identity import RequestIdentity, attach_member, get_request_identity
 from app.core.utils.client_session import FACTORY_ATTRIBUTION, FactoryAttribution
 from app.modules.api_keys.service_data import ApiKeyData
@@ -31,6 +32,7 @@ def _normalize_session_id(session_id: str | None) -> str | None:
 
 class WebSocketRequestLogState(Protocol):
     actual_service_tier: str | None
+    bridge_observation: UpstreamObservation | None
     client_session_id: str | None
     factory_attribution: FactoryAttribution
     identity: RequestIdentity | None
@@ -40,6 +42,7 @@ class WebSocketRequestLogState(Protocol):
     request_id: str
     request_log_id: str | None
     requested_service_tier: str | None
+    response_id: str | None
     service_tier: str | None
     session_id: str | None
     skip_request_log: bool
@@ -113,6 +116,7 @@ class _RequestLogMixin:
         failure_exception_type: str | None = None,
         upstream_status_code: int | None = None,
         upstream_error_code: str | None = None,
+        upstream_observation: UpstreamObservation | None = None,
         bridge_stage: str | None = None,
         request_kind: str = "normal",
         upstream_proxy_route_mode: str | None = None,
@@ -156,6 +160,7 @@ class _RequestLogMixin:
                 failure_exception_type=failure_exception_type,
                 upstream_status_code=upstream_status_code,
                 upstream_error_code=upstream_error_code,
+                upstream_observation=upstream_observation,
                 bridge_stage=bridge_stage,
                 request_kind=request_kind,
                 upstream_proxy_route_mode=upstream_proxy_route_mode,
@@ -234,6 +239,7 @@ class _RequestLogMixin:
         failure_exception_type: str | None = None,
         upstream_status_code: int | None = None,
         upstream_error_code: str | None = None,
+        upstream_observation: UpstreamObservation | None = None,
         bridge_stage: str | None = None,
         request_kind: str = "normal",
         upstream_proxy_route_mode: str | None = None,
@@ -276,6 +282,7 @@ class _RequestLogMixin:
                     failure_exception_type=failure_exception_type,
                     upstream_status_code=upstream_status_code,
                     upstream_error_code=upstream_error_code,
+                    upstream_observation=upstream_observation,
                     bridge_stage=bridge_stage,
                     upstream_proxy_route_mode=upstream_proxy_route_mode,
                     upstream_proxy_pool_id=upstream_proxy_pool_id,
@@ -301,20 +308,27 @@ class _RequestLogMixin:
         request_state: WebSocketRequestLogState,
         error_code: str,
         error_message: str,
+        status: str = "error",
+        terminal: bool = False,
     ) -> None:
         if request_state.skip_request_log:
             return
+        if terminal:
+            request_state.skip_request_log = True
         await self._write_request_log(
             identity=request_state.identity,
             factory_attribution=request_state.factory_attribution,
             account_id=account_id,
             api_key=api_key,
-            request_id=request_state.request_log_id or request_state.request_id,
+            request_id=(request_state.response_id if terminal else None)
+            or request_state.request_log_id
+            or request_state.request_id,
             model=request_state.model or "",
             latency_ms=int((time.monotonic() - request_state.started_at) * 1000),
-            status="error",
+            status=status,
             error_code=error_code,
             error_message=error_message,
+            upstream_observation=request_state.bridge_observation,
             reasoning_effort=request_state.reasoning_effort,
             transport=request_state.transport,
             service_tier=request_state.service_tier,
