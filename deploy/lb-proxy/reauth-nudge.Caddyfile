@@ -11,7 +11,9 @@ http://:2464 {
 		path /api/federation/mirror/nudge
 	}
 	route {
-		reverse_proxy @owner_nudge 127.0.0.1:2458
+		reverse_proxy @owner_nudge 127.0.0.1:2458 {
+			header_up Host {upstream_hostport}
+		}
 		respond 404
 	}
 }
