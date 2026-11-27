@@ -4,6 +4,8 @@ Deliver the requested outcome end to end with your own judgment; make reversible
 
 {{inline: claude-config rules/floors.md}}
 
+**Live-Verified World Gold Standard Rule.** Before recommending or locking in a library, framework, SDK, UI kit, protocol, runtime, or tool, check primary sources live. Cite the current stable release and date, latest commit date or vendor update, maintenance/deprecation status, and why it fits better than the leading current alternative or a thin native implementation. Check the repo’s actual pin and compatibility when it exists. Keep stale, niche, or superseded picks out of the recommendation. Mark evidence gaps unverified and keep those picks out of decisions until checked.
+
 Every turn in a T3 thread ends through the a0 skill (`~/.agents/skills/a0/SKILL.md`).
 
 Main checkouts stay on the default branch; other branches get a worktree (`git worktree add <repos>/<repo>-wt/<topic> -b <branch> origin/main`, or `delegate_task` with `isolation: "worktree"`). Never `git switch` a shared checkout. Landing: agent-rails via `scripts/studio_merge.py merge <branch>`; other repos fast-forward to origin/main.
