@@ -15,7 +15,7 @@ body:
         - Refresh / OAuth callback fails for one or more accounts
         - "Requested account is always the same" routing imbalance
 
-        For security vulnerabilities, use a [private advisory](https://github.com/aneym/agent-lb/security/advisories/new) - do not post them publicly.
+        For security vulnerabilities, use a [private advisory](https://github.com/shelf-group/agent-lb/security/advisories/new) - do not post them publicly.
 
   - type: checkboxes
     id: preflight

@@ -37,15 +37,15 @@ You don't need to write code to help:
 - **Triage**: reproduce open issues, ask for missing details, add labels.
 - **Docs**: improve the README, fix typos, document a deployment recipe.
 - **Discussions**: answer "how do I…?" questions in
-  [GitHub Discussions](https://github.com/aneym/agent-lb/discussions).
+  [GitHub Discussions](https://github.com/shelf-group/agent-lb/discussions).
 - **Bug reports**: file a structured report using the Bug Report issue form.
 - **Feature ideas**: propose them in Discussions first if open-ended; use the
   Feature Request form when the idea is concrete.
 - **Code**: fix a bug, implement a feature, refactor a hot spot.
 
 Look for issues labelled
-[`good first issue`](https://github.com/aneym/agent-lb/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) or
-[`help wanted`](https://github.com/aneym/agent-lb/issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22)
+[`good first issue`](https://github.com/shelf-group/agent-lb/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) or
+[`help wanted`](https://github.com/shelf-group/agent-lb/issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22)
 if you're looking for a starter task.
 
 ## Development setup
@@ -286,7 +286,7 @@ uv run pytest tests/floor -q
 
 Please do **not** open public issues for security vulnerabilities. Report them
 privately via
-[GitHub Security Advisories](https://github.com/aneym/agent-lb/security/advisories/new).
+[GitHub Security Advisories](https://github.com/shelf-group/agent-lb/security/advisories/new).
 See [SECURITY.md](./SECURITY.md) for full details.
 
 ---

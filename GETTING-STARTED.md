@@ -62,7 +62,7 @@ step 6 — skip it by default.
 ## 2. Clone and install
 
 ```bash
-git clone https://github.com/aneym/agent-lb.git ~/repos/agent-lb
+git clone https://github.com/shelf-group/agent-lb.git ~/repos/agent-lb
 cd ~/repos/agent-lb
 uv sync
 ```

@@ -9,14 +9,14 @@ body:
         Thanks for proposing an idea! Before you continue:
 
         - For open-ended ideas, please consider opening a
-          [Discussion](https://github.com/aneym/agent-lb/discussions) first to
+          [Discussion](https://github.com/shelf-group/agent-lb/discussions) first to
           collect feedback. Use this form when you have a concrete, scoped proposal.
         - agent-lb uses **OpenSpec-first** development. Significant behavior
           changes will eventually live as an `openspec/changes/<change>/`
           proposal — you don't need to write the spec yourself, but think about
           *what changes* in observable behavior, not just *how* to implement it.
         - For security vulnerabilities, use a
-          [private advisory](https://github.com/aneym/agent-lb/security/advisories/new)
+          [private advisory](https://github.com/shelf-group/agent-lb/security/advisories/new)
           - do not post them publicly.
 
   - type: checkboxes

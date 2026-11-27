@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 parser = argparse.ArgumentParser(description="Mark and close inactive issues and PRs")
 parser.add_argument("--dry-run", action="store_true")
 args = parser.parse_args()
-repo = "repos/aneym/agent-lb"
+repo = "repos/shelf-group/agent-lb"
 now = dt.datetime.now(dt.timezone.utc)
 operations = 0
 result = {"staled-issues-prs": [], "closed-issues-prs": [], "unstaled": [], "dry_run": args.dry_run}

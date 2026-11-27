@@ -33,7 +33,7 @@ printed finish line; that skill's "Add a Gemini (Neon) account" section has the 
 
 ## Branch Policy (fork)
 
-**Development on this fork (`aneym/agent-lb`) stays on `main`.** Work directly on `main`; do not create or switch to feature branches unless the user explicitly asks. `feat/anthropic-provider` was consolidated into `main` on 2026-06-09 and is retired. The "do not commit directly to main" convention in `.agents/conventions/git-workflow.md` applies only to upstream (`Soju06/codex-lb`) contributions. The local checkout also runs the live launchd service (label in `scripts/install-service.sh`), so the working tree must remain on `main`.
+**Development on this fork (`shelf-group/agent-lb`) stays on `main`.** Work directly on `main`; do not create or switch to feature branches unless the user explicitly asks. `feat/anthropic-provider` was consolidated into `main` on 2026-06-09 and is retired. The "do not commit directly to main" convention in `.agents/conventions/git-workflow.md` applies only to upstream (`Soju06/codex-lb`) contributions. The local checkout also runs the live launchd service (label in `scripts/install-service.sh`), so the working tree must remain on `main`.
 
 ## Auto-publish (standing authorization)
 

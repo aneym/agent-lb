@@ -13,7 +13,7 @@ import sys
 import tarfile
 import time
 
-URL = "https://github.com/aneym/agent-lb.git"
+URL = "https://github.com/shelf-group/agent-lb.git"
 LIB = "/usr/local/lib/agent-floors"
 STATE = "/var/lib/agent-floors"
 ACCEPTED = "/etc/agent-floors/accepted.json"

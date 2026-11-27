@@ -71,10 +71,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/aneym/agent-lb"
-Repository = "https://github.com/aneym/agent-lb"
-Issues = "https://github.com/aneym/agent-lb/issues"
-Releases = "https://github.com/aneym/agent-lb/releases"
+Homepage = "https://github.com/shelf-group/agent-lb"
+Repository = "https://github.com/shelf-group/agent-lb"
+Issues = "https://github.com/shelf-group/agent-lb/issues"
+Releases = "https://github.com/shelf-group/agent-lb/releases"
 
 [project.optional-dependencies]
 metrics = ["prometheus-client>=0.20"]

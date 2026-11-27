@@ -11,4 +11,4 @@ class RuntimeVersionResponse(DashboardModel):
     update_available: bool = False
     checked_at: datetime
     source: str | None = None
-    release_url: str = "https://github.com/aneym/agent-lb/releases/latest"
+    release_url: str = "https://github.com/shelf-group/agent-lb/releases/latest"

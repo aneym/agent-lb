@@ -5,8 +5,8 @@ body:
     attributes:
       value: |
         Use this template for usage and how-to questions. For bug reports and
-        feature proposals, please file an [Issue](https://github.com/aneym/agent-lb/issues/new/choose) instead.
-        For security vulnerabilities, use a [private advisory](https://github.com/aneym/agent-lb/security/advisories/new) - do not post them publicly.
+        feature proposals, please file an [Issue](https://github.com/shelf-group/agent-lb/issues/new/choose) instead.
+        For security vulnerabilities, use a [private advisory](https://github.com/shelf-group/agent-lb/security/advisories/new) - do not post them publicly.
 
   - type: input
     id: version

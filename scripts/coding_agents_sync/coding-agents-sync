@@ -25,7 +25,7 @@ from sync_records import (  # type: ignore[missing-import]
     utc,
 )
 
-ORIGIN = "https://github.com/aneym/agent-lb.git"
+ORIGIN = "https://github.com/shelf-group/agent-lb.git"
 
 
 def run(command, timeout=30, env=None):

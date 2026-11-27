@@ -6,9 +6,9 @@
 discussions, or pull requests.**
 
 Instead, report them privately using GitHub's
-[Private Vulnerability Reporting](https://github.com/aneym/agent-lb/security/advisories/new):
+[Private Vulnerability Reporting](https://github.com/shelf-group/agent-lb/security/advisories/new):
 
-1. Open <https://github.com/aneym/agent-lb/security/advisories/new>
+1. Open <https://github.com/shelf-group/agent-lb/security/advisories/new>
 2. Fill in a clear title and a detailed description of the issue.
 3. Include reproduction steps, affected versions, and any proof-of-concept you
    have.

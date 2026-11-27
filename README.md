@@ -6,12 +6,12 @@ Topics
 python oauth sqlalchemy dashboard load-balancer openai anthropic claude rate-limit api-proxy codex fastapi usage-tracking chatgpt opencode openclaw
 
 Resources
-Homepage https://github.com/aneym/agent-lb
-Repository https://github.com/aneym/agent-lb
-Issues https://github.com/aneym/agent-lb/issues
-Releases https://github.com/aneym/agent-lb/releases
-Discussions https://github.com/aneym/agent-lb/discussions
-Security https://github.com/aneym/agent-lb/security/advisories/new
+Homepage https://github.com/shelf-group/agent-lb
+Repository https://github.com/shelf-group/agent-lb
+Issues https://github.com/shelf-group/agent-lb/issues
+Releases https://github.com/shelf-group/agent-lb/releases
+Discussions https://github.com/shelf-group/agent-lb/discussions
+Security https://github.com/shelf-group/agent-lb/security/advisories/new
 -->
 
 # agent-lb
@@ -26,7 +26,7 @@ CLI, Cursor, …) and let it drive. **Agents:** your entrypoints are
 (working on the codebase); setup and operations never require the dashboard.
 
 ```text
-Clone https://github.com/aneym/agent-lb into ~/repos/agent-lb, cd into it, and read
+Clone https://github.com/shelf-group/agent-lb into ~/repos/agent-lb, cd into it, and read
 GETTING-STARTED.md. Follow it top to bottom to set me up:
 
 1. Install dependencies and start the local agent-lb service.
@@ -53,7 +53,7 @@ verification, or browser-profile work — say **"account operator"**. Repo-aware
 agents should use the `agent-lb-account-operator` skill and local
 `.agent-lb/account-profiles.json` registry for that work.
 
-| ![dashboard](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/dashboard.jpg) | ![accounts](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/accounts.jpg) |
+| ![dashboard](https://github.com/shelf-group/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/dashboard.jpg) | ![accounts](https://github.com/shelf-group/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/accounts.jpg) |
 | :------------------------------------------: | :----------------------------------------: |
 
 <details>
@@ -61,11 +61,11 @@ agents should use the `agent-lb-account-operator` skill and local
 
 |                  Settings                  |                Login                 |
 | :----------------------------------------: | :----------------------------------: |
-| ![settings](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/settings.jpg) | ![login](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/login.jpg) |
+| ![settings](https://github.com/shelf-group/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/settings.jpg) | ![login](https://github.com/shelf-group/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/login.jpg) |
 
 |                    Dashboard (dark)                    |                   Accounts (dark)                    |                   Settings (dark)                    |
 | :----------------------------------------------------: | :--------------------------------------------------: | :--------------------------------------------------: |
-| ![dashboard-dark](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/dashboard-dark.jpg) | ![accounts-dark](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/accounts-dark.jpg) | ![settings-dark](https://github.com/aneym/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/settings-dark.jpg) |
+| ![dashboard-dark](https://github.com/shelf-group/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/dashboard-dark.jpg) | ![accounts-dark](https://github.com/shelf-group/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/accounts-dark.jpg) | ![settings-dark](https://github.com/shelf-group/agent-lb/raw/0cf2d88377b46f4f94d4d04675b2d3ef34d71680/docs/screenshots/settings-dark.jpg) |
 
 </details>
 
@@ -112,7 +112,7 @@ This always works, including before PyPI/GHCR artifacts for a prerelease have
 been published:
 
 ```bash
-git clone https://github.com/aneym/agent-lb.git
+git clone https://github.com/shelf-group/agent-lb.git
 cd agent-lb
 uv sync
 scripts/install-service.sh

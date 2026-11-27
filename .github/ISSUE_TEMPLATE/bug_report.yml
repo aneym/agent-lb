@@ -9,9 +9,9 @@ body:
         Thanks for taking the time to file a bug report! 🙏
 
         Before you continue:
-        - Search [open & closed issues](https://github.com/aneym/agent-lb/issues?q=is%3Aissue) — your problem may already be known.
-        - For "how do I…?" questions, please use [Discussions](https://github.com/aneym/agent-lb/discussions) instead.
-        - For security vulnerabilities, use a [private advisory](https://github.com/aneym/agent-lb/security/advisories/new) — **do not** post them here.
+        - Search [open & closed issues](https://github.com/shelf-group/agent-lb/issues?q=is%3Aissue) — your problem may already be known.
+        - For "how do I…?" questions, please use [Discussions](https://github.com/shelf-group/agent-lb/discussions) instead.
+        - For security vulnerabilities, use a [private advisory](https://github.com/shelf-group/agent-lb/security/advisories/new) — **do not** post them here.
 
   - type: checkboxes
     id: preflight

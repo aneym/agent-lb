@@ -105,7 +105,7 @@ pass-to-pass lists, measured in the task image, and not on the whole suite being
   where only the host can see them (for example, through `docker save`). Always run `of-checkout`, even
   when the base commit is the image's own.
 - **Remaining channels are outside git.** The uv cache holds third-party wheels, not project source.
-  `docker history` shows the `of-checkout <sha>` build step, but only on the host. aneym/agent-lb and
+  `docker history` shows the `of-checkout <sha>` build step, but only on the host. shelf-group/agent-lb and
   Soju06/codex-lb are public on GitHub, so the network is the real channel. The next section covers it.
 
 ## Egress: no way to the public repo
@@ -137,8 +137,8 @@ The proof is the `egress-probe` task in `~/.agent-lb/of/harbor-smoke/` (2026-09-
 | Probe | Open egress | Allowlist (oracle) | Allowlist + pin (CC and Codex agents) |
 |---|---|---|---|
 | agent-lb `host.docker.internal:2455/health` | 200 | 200 | 200 |
-| github.com/aneym/agent-lb, Soju06/codex-lb, raw.githubusercontent, codeload, api.github | 200 | blocked | blocked |
-| `git ls-remote https://github.com/aneym/agent-lb` | open | blocked | blocked |
+| github.com/shelf-group/agent-lb, Soju06/codex-lb, raw.githubusercontent, codeload, api.github | 200 | blocked | blocked |
+| `git ls-remote https://github.com/shelf-group/agent-lb` | open | blocked | blocked |
 | pypi.org, example.com, a GitHub IP directly | 200/301 | blocked | blocked |
 | Spoofing an allowlisted name (Host header, or SNI pointed at a GitHub IP) | 200/301 | blocked | blocked |
 | Another host port (`host.docker.internal:2457`) | 200 | 200 | blocked |
@@ -150,7 +150,7 @@ Recipe for a task:
 You need no `--allow-agent-host` flag. That flag cannot carry a port, and the agents apply the pin
 themselves. `~/.agent-lb/of/harbor-smoke/hello-file-egress` is the minimal proof. Its verifier checks,
 inside the trial's own container, that `curl -m5 https://github.com` and
-`git ls-remote https://github.com/aneym/agent-lb` both fail (TLS reset by the sidecar) while
+`git ls-remote https://github.com/shelf-group/agent-lb` both fail (TLS reset by the sidecar) while
 agent-lb's `/health` returns 200. With both agents it scored reward 1.0, and every request was keyed
 `of-harbor`.
 

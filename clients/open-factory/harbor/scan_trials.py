@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 PATTERNS: dict[str, re.Pattern[str]] = {
-    "upstream-url": re.compile(r"github\.com[/:](aneym/agent-lb|Soju06/codex-lb)", re.I),
+    "upstream-url": re.compile(r"github\.com[/:](shelf-group/agent-lb|Soju06/codex-lb)", re.I),
     "github-content-host": re.compile(r"(raw\.githubusercontent|codeload\.github|api\.github)\.com", re.I),
     "git-remote-command": re.compile(r"\bgit\b[^\n|;&]*\b(fetch|clone|pull|ls-remote|remote\s+add)\b"),
     "gh-cli": re.compile(r"(^|[\s;&|(\"'])gh\s+(repo|api|pr|search|browse|release)\b"),

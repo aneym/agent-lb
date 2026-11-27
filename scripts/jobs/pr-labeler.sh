@@ -28,7 +28,7 @@ for label, conditions in config.items():
 
 
 def api(path, data=None):
-    command = ["gh", "api", f"repos/aneym/agent-lb/{path}"]
+    command = ["gh", "api", f"repos/shelf-group/agent-lb/{path}"]
     if data is not None:
         command.extend(["--method", "POST", "--input", "-"])
     response = subprocess.run(command, input=json.dumps(data) if data is not None else None,
