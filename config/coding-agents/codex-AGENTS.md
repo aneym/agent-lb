@@ -14,7 +14,7 @@ Stop only the PID you recorded when you started a process (`echo $!` or a pidfil
 
 On macOS pkill and killall treat every word after the first name as another name, not an option: a stray `1` in `pkill -f "sleep 600" -P 1`, sent over ssh, stopped most of Alex's running programs on 2026-11-10.
 
-Studio can never be wired to Ethernet. Never ask anyone to wire Studio to Ethernet or suggest it. Treat Studio as having poor Wi-Fi connectivity. Design workflows to run on Book and servers without depending on Studio.
+Studio can never be wired to Ethernet. Never ask anyone to wire Studio to Ethernet or suggest it. Treat Studio as having poor Wi-Fi connectivity and never depend on Studio. Nothing besides iOS builds needs to run on Book. All self-hosted services, agents, and workflows run strictly on our servers (never on Book or Studio).
 
 A doc or page for Alex is visual work: build it through the share-page skill (`~/.agents/skills/share-page/SKILL.md`) following `~/.claude/docs/plan-docs.md`, with a picture in each section, and read the light, dark, desk and phone shots `rails-one-doc` prints before you call it done.
 
