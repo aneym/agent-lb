@@ -3,13 +3,13 @@ from __future__ import annotations
 import gzip
 import io
 import zlib
-from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 import zstandard as zstd
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
-from starlette.requests import ClientDisconnect
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.config.settings import get_settings
 from app.core.errors import dashboard_error
@@ -108,68 +108,96 @@ def _decompress_body(data: bytes, encodings: list[str], max_size: int) -> bytes:
     return result
 
 
-def _replace_request_body(request: Request, body: bytes) -> None:
-    request._body = body
-    headers: list[tuple[bytes, bytes]] = []
-    for key, value in request.scope.get("headers", []):
-        if key.lower() in (b"content-encoding", b"content-length"):
-            continue
-        headers.append((key, value))
-    headers.append((b"content-length", str(len(body)).encode("ascii")))
-    request.scope["headers"] = headers
-
-    request.__dict__.pop("_headers", None)
-
-
-def _max_decompressed_body_bytes_for_request(request: Request) -> int:
+def _max_decompressed_body_bytes_for_path(path: str) -> int:
     settings = get_settings()
-    if request.url.path.rstrip("/") in _RESPONSES_DECOMPRESSION_PATHS:
+    if path.rstrip("/") in _RESPONSES_DECOMPRESSION_PATHS:
         return max(settings.max_decompressed_body_bytes, settings.max_decompressed_responses_body_bytes)
     return settings.max_decompressed_body_bytes
 
 
-def add_request_decompression_middleware(app: FastAPI) -> None:
-    @app.middleware("http")
-    async def request_decompression_middleware(
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        content_encoding = request.headers.get("content-encoding")
+class RequestDecompressionMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        content_encoding = Headers(scope=scope).get("content-encoding")
         if not content_encoding:
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
         encodings = [enc.strip().lower() for enc in content_encoding.split(",") if enc.strip()]
         if not encodings:
-            return await call_next(request)
-        max_size = _max_decompressed_body_bytes_for_request(request)
-        try:
-            body = await request.body()
-        except ClientDisconnect:
-            raise
+            await self.app(scope, receive, send)
+            return
+
+        chunks: list[bytes] = []
+        while True:
+            message = await receive()
+            msg_type = message["type"]
+            if msg_type == "http.disconnect":
+                return
+            if msg_type == "http.request":
+                body_part = message.get("body", b"")
+                if body_part:
+                    chunks.append(body_part)
+                if not message.get("more_body", False):
+                    break
+        body = b"".join(chunks)
+        max_size = _max_decompressed_body_bytes_for_path(scope.get("path", ""))
         try:
             decompressed = _decompress_body(body, encodings, max_size)
         except _DecompressedBodyTooLarge:
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=413,
                 content=dashboard_error(
                     "payload_too_large",
                     "Request body exceeds the maximum allowed size",
                 ),
             )
+            await response(scope, receive, send)
+            return
         except ValueError:
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=400,
                 content=dashboard_error(
                     "invalid_request",
                     "Unsupported Content-Encoding",
                 ),
             )
+            await response(scope, receive, send)
+            return
         except Exception:
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=400,
                 content=dashboard_error(
                     "invalid_request",
                     "Request body is compressed but could not be decompressed",
                 ),
             )
-        _replace_request_body(request, decompressed)
-        return await call_next(request)
+            await response(scope, receive, send)
+            return
+
+        headers: list[tuple[bytes, bytes]] = [
+            (key, value)
+            for key, value in scope.get("headers", [])
+            if key.lower() not in (b"content-encoding", b"content-length")
+        ]
+        headers.append((b"content-length", str(len(decompressed)).encode("ascii")))
+        updated_scope = {**scope, "headers": headers}
+        delivered = False
+
+        async def replay_receive() -> Message:
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": decompressed, "more_body": False}
+            return await receive()
+
+        await self.app(updated_scope, replay_receive, send)
+
+
+def add_request_decompression_middleware(app: FastAPI) -> None:
+    app.add_middleware(RequestDecompressionMiddleware)
