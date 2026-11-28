@@ -7,6 +7,7 @@ from app.core.providers.gemini_models import (
     GEMINI_EFFORT_LEVELS,
     GEMINI_FLASH_LITE,
     GEMINI_HYDROGEN_SONAR,
+    GEMINI_NEON_MODEL,
     GeminiModel,
 )
 
@@ -100,7 +101,34 @@ def antigravity_auxiliary_model(body: dict[str, Any]) -> GeminiModel | None:
     return {"minimal": GEMINI_FLASH_LITE, "low": GEMINI_HYDROGEN_SONAR}.get(level or "")
 
 
-def apply_thinking_level(body: dict[str, Any], model: GeminiModel) -> str:
+def _content_text(content: object) -> str:
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        return ""
+    texts = [part.get("text", "") for part in parts if isinstance(part, dict) and isinstance(part.get("text"), str)]
+    return "\n".join(texts)
+
+
+def is_antigravity_subagent_request(body: dict[str, Any]) -> bool:
+    labels = body.get("labels")
+    if not isinstance(labels, dict) or labels.get("client") != "antigravity-cli":
+        return False
+    contents = body.get("contents")
+    if not isinstance(contents, list) or not contents:
+        return False
+    head = _content_text(contents[0])[:600]
+    if "<SYSTEM_MESSAGE>" not in head or "[Message] timestamp=" not in head or " sender=" not in head:
+        return False
+    return "[effort:high]" not in head.lower() and "[effort:xhigh]" not in head.lower()
+
+
+def apply_thinking_level(
+    body: dict[str, Any],
+    model: GeminiModel,
+    *,
+    subagent: bool = False,
+    subagent_default_effort: str | None = None,
+) -> str:
     config = body.get("generationConfig")
     if not isinstance(config, dict):
         config = {}
@@ -110,14 +138,22 @@ def apply_thinking_level(body: dict[str, Any], model: GeminiModel) -> str:
         thinking = {}
         config["thinkingConfig"] = thinking
     if model.effort is not None:
+        level = model.effort
         thinking.pop("thinkingBudget", None)
-        thinking["thinkingLevel"] = model.effort
-        return model.effort
-    sent = thinking.get("thinkingLevel")
-    if isinstance(sent, str) and sent.strip().lower() in GEMINI_EFFORT_LEVELS:
-        level = sent.strip().lower()
-        thinking["thinkingLevel"] = level
-        return level
-    thinking.pop("thinkingBudget", None)
-    thinking["thinkingLevel"] = GEMINI_DEFAULT_EFFORT
-    return GEMINI_DEFAULT_EFFORT
+    else:
+        sent = thinking.get("thinkingLevel")
+        if isinstance(sent, str) and sent.strip().lower() in GEMINI_EFFORT_LEVELS:
+            level = sent.strip().lower()
+        else:
+            thinking.pop("thinkingBudget", None)
+            level = GEMINI_DEFAULT_EFFORT
+    if (
+        subagent
+        and model.canonical_model == GEMINI_NEON_MODEL
+        and level in ("high", "xhigh")
+        and subagent_default_effort in GEMINI_EFFORT_LEVELS
+    ):
+        level = subagent_default_effort
+        thinking.pop("thinkingBudget", None)
+    thinking["thinkingLevel"] = level
+    return level

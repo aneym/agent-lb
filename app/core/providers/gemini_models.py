@@ -8,7 +8,7 @@ GEMINI_PRIMARY_MODELS = (GEMINI_NEON_MODEL, GEMINI_HYDROGEN_MODEL)
 GEMINI_FLASH_LITE_MODEL = "gemini-3.5-flash-lite"
 GEMINI_HYDROGEN_SONAR_MODEL = "gemini-4-hydrogen-sonar"
 GEMINI_EFFORT_LEVELS = ("low", "medium", "high", "xhigh")
-GEMINI_DEFAULT_EFFORT = "high"
+GEMINI_DEFAULT_EFFORT = "medium"
 
 
 @dataclass(frozen=True, slots=True)

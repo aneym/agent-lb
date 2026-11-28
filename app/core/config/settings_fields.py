@@ -99,6 +99,13 @@ class SettingsFields(BaseSettings):
     gemini_code_assist_base_url: str = "https://daily-cloudcode-pa.googleapis.com"
     gemini_code_assist_model: str = "gemini-4-neon"
     gemini_oauth_userinfo_url: str = "https://openidconnect.googleapis.com/v1/userinfo"
+    gemini_subagent_default_effort: str = "medium"
+    gemini_runaway_guard_enabled: bool = True
+    gemini_runaway_max_requests: int = Field(default=300, ge=1)
+    gemini_runaway_max_usd: float = Field(default=35.0, gt=0)
+    gemini_runaway_max_consecutive_errors: int = Field(default=12, ge=1)
+    gemini_runaway_idle_reset_seconds: float = Field(default=180.0, gt=0)
+    gemini_runaway_cooldown_seconds: float = Field(default=180.0, gt=0)
     anthropic_version: str = "2023-06-01"
     glm_anthropic_upstream_base_url: str = "https://api.z.ai/api/anthropic"
     kimi_anthropic_upstream_base_url: str = "https://api.kimi.com/coding"

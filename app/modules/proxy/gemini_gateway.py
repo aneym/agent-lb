@@ -33,10 +33,10 @@ from app.modules.proxy.gemini_errors import GeminiGatewayError
 from app.modules.proxy.gemini_fake_upstream import FakeGeminiUpstream
 from app.modules.proxy.gemini_request import (
     antigravity_auxiliary_model,
-    apply_thinking_level,
     gemini_session_id,
     normalized_request,
 )
+from app.modules.proxy.gemini_runaway_guard import GeminiRunawayGuard
 from app.modules.proxy.gemini_stream import GeminiResponseMetadata, GeminiUsage
 from app.modules.proxy.gemini_upstream import GeminiUpstream, GeminiUpstreamCall, GeminiUpstreamError
 from app.modules.proxy.gemini_usage_log import (
@@ -94,6 +94,7 @@ class GeminiGateway:
         self._encryptor = TokenEncryptor()
         self._auxiliary_holds: dict[tuple[str, str], tuple[float, GeminiUpstreamError]] = {}
         self._auxiliary_last_used: dict[tuple[str, str], float] = {}
+        self._guard = GeminiRunawayGuard()
 
     async def require_pool(self, api_key: ApiKeyData | None) -> None:
         scoped = scoped_account_ids(api_key)
@@ -132,7 +133,7 @@ class GeminiGateway:
             choice = auxiliary
         if choice.auxiliary:
             sticky_key = None
-        effort = apply_thinking_level(body, choice)
+        effort = self._guard.prepare(body, choice)
         reservation = await enforce_request_limits(
             api_key,
             request_model=choice.canonical_model,
@@ -218,12 +219,14 @@ class GeminiGateway:
                 except StopAsyncIteration:
                     first = None
                 except asyncio.CancelledError:
+                    self._guard.record(session_id=session_id, model=choice.canonical_model, failed=True)
                     with CancelScope(shield=True):
                         await record_gemini_failure(
                             api_key, account, choice.canonical_model, effort, useragent, None, started_at, session_id
                         )
                     raise
                 except GeminiUpstreamError as exc:
+                    self._guard.record(session_id=session_id, model=choice.canonical_model, failed=True)
                     await record_gemini_failure(
                         api_key, account, choice.canonical_model, effort, useragent, exc, started_at, session_id
                     )
@@ -425,6 +428,12 @@ class GeminiGateway:
                 error=error,
                 cancelled=cancelled,
                 metadata=metadata,
+            )
+            self._guard.record(
+                session_id=attempt.session_id,
+                model=attempt.choice.canonical_model,
+                usage=usage,
+                failed=error is not None or cancelled,
             )
             await record_gemini_circuit_outcome(attempt.circuit_breaker, error=error, cancelled=cancelled)
             if error is not None:
