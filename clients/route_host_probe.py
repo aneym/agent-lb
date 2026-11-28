@@ -10,6 +10,33 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def t3_service_active() -> bool:
+    if sys.platform != "linux":
+        return True
+    try:
+        active = subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", "t3code.service"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            check=False,
+        )
+        if active.returncode == 0:
+            return True
+        load = subprocess.run(
+            ["systemctl", "--user", "show", "-p", "LoadState", "--value", "t3code.service"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if load.returncode != 0:
+        return True
+    return load.stdout.strip() in ("", "not-found")
+
+
 def startup_failure() -> float | None:
     database = Path.home() / ".t3/userdata/statev2.sqlite"
     if not database.is_file():
@@ -63,12 +90,14 @@ def sample() -> dict:
         ["ps", "-axo", "comm=,args="], capture_output=True, text=True, check=True, timeout=2
     ).stdout
     count = sum(bool(re.search(r"^\S*codex\s+.*\bapp-server\b", line)) for line in processes.splitlines())
+    t3_active = t3_service_active()
     return {
         "at": time.time(),
         "available_mb": available,
         "full_avg60": full,
         "codex_servers": count,
-        "timeout_at": startup_failure(),
+        "t3_service_active": t3_active,
+        "timeout_at": startup_failure() if t3_active else None,
     }
 
 

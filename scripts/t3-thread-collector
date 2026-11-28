@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -226,8 +227,38 @@ def send(base_url, host, threads, sessions):
         )
 
 
+def t3_service_active():
+    if sys.platform != "linux":
+        return True
+    try:
+        active = subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", "t3code.service"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        if active.returncode == 0:
+            return True
+        load = subprocess.run(
+            ["systemctl", "--user", "show", "-p", "LoadState", "--value", "t3code.service"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if load.returncode != 0:
+        return True
+    return load.stdout.strip() in ("", "not-found")
+
+
 def main(argv=None):
     args = parse_args(argv)
+    if not t3_service_active():
+        print(json.dumps({"host": args.host, "skipped": "t3code.service inactive"}))
+        return 0
     try:
         connection = open_readonly(args.db)
         try:
