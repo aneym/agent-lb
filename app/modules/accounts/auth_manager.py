@@ -434,7 +434,7 @@ def access_token_hard_expired(
     return _expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_SERVING_MARGIN_SECONDS, now=now)
 
 
-def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: datetime | None = None) -> bool:
+def account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: datetime | None = None) -> bool:
     current = to_utc_naive(now) if now is not None else utcnow()
     if _access_token_needs_refresh(encryptor, account, now=current):
         return True
@@ -447,6 +447,9 @@ def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: 
         last = to_utc_naive(account.last_refresh)
         return current - last > timedelta(seconds=interval_seconds)
     return should_refresh(account.last_refresh, now=current)
+
+
+_account_needs_refresh = account_needs_refresh
 
 
 def _clear_refresh_singleflight_state() -> None:

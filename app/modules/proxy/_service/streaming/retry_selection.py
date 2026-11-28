@@ -1,13 +1,33 @@
 from __future__ import annotations
 
+import inspect
 import time
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from app.core.clients.proxy import ProxyResponseError
 from app.core.errors import openai_error, response_failed_event
 from app.core.utils.sse import format_sse_event
 from app.modules.proxy._service.streaming.retry_state import RetryState, retry_facade
 from app.modules.proxy.selection_diagnostics import selection_error_extras
+
+_OPTIONAL_SELECTOR_KWARGS = (
+    "require_security_work_authorized",
+    "lease_kind",
+    "estimated_lease_tokens",
+    "fallback_on_preferred_account_unavailable",
+)
+
+
+def filter_optional_selector_kwargs(selector: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    if not any(name in kwargs for name in _OPTIONAL_SELECTOR_KWARGS):
+        return kwargs
+    try:
+        signature = inspect.signature(selector)
+    except (TypeError, ValueError):
+        return kwargs
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()):
+        return kwargs
+    return {k: v for k, v in kwargs.items() if k not in _OPTIONAL_SELECTOR_KWARGS or k in signature.parameters}
 
 
 async def select_retry_account(state: RetryState) -> AsyncIterator[str]:

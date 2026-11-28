@@ -78,6 +78,15 @@ async def normalize_public_responses_stream(
             continue
         raw_event_type = payload.get("type")
         if (
+            created_emitted
+            and raw_event_type == "response.output_text.delta"
+            and event_block.startswith("event: response.output_text.delta\ndata: ")
+            and event_block.endswith("\n\n")
+        ):
+            seen_text_delta_keys.add(text_delta_stream_key(payload))
+            yield event_block
+            continue
+        if (
             enforce_openai_sdk_contract
             and isinstance(raw_event_type, str)
             and raw_event_type

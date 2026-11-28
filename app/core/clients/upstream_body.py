@@ -49,6 +49,14 @@ def gzip_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return out
 
 
+def json_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    if any(key.lower() == "content-type" for key in headers):
+        return dict(headers)
+    out = dict(headers)
+    out["Content-Type"] = "application/json"
+    return out
+
+
 @asynccontextmanager
 async def post_json(
     session: aiohttp.ClientSession,
@@ -57,12 +65,14 @@ async def post_json(
     json_body: Any,
     headers: Mapping[str, str],
     timeout: aiohttp.ClientTimeout,
+    raw_bytes: bytes | None = None,
 ) -> AsyncIterator[aiohttp.ClientResponse]:
 
     deadline = time.monotonic() + timeout.total if timeout.total is not None else None
-    gzipped = await gzip_body(json_body_bytes(json_body), deadline=deadline)
+    raw = raw_bytes if raw_bytes is not None else json_body_bytes(json_body)
+    gzipped = await gzip_body(raw, deadline=deadline)
     if gzipped is None:
-        request = session.post(url, json=json_body, headers=headers, timeout=timeout)
+        request = session.post(url, data=raw, headers=json_headers(headers), timeout=timeout)
     else:
         request = session.post(url, data=gzipped, headers=gzip_headers(headers), timeout=timeout)
     async with request as response:

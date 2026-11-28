@@ -131,6 +131,7 @@ class _RequestLogMixin:
         response_model: str | None = None,
         stop_reason: str | None = None,
         stop_details_category: str | None = None,
+        plan_type: str | None = None,
     ) -> None:
         task = asyncio.create_task(
             self._persist_request_log(
@@ -176,6 +177,7 @@ class _RequestLogMixin:
                 response_model=response_model,
                 stop_reason=stop_reason,
                 stop_details_category=stop_details_category,
+                plan_type=plan_type,
             ),
             name=f"proxy-request-log-{request_id}",
         )
@@ -258,6 +260,7 @@ class _RequestLogMixin:
         response_model: str | None = None,
         stop_reason: str | None = None,
         stop_details_category: str | None = None,
+        plan_type: str | None = None,
     ) -> None:
         proxy = cast(_RequestLogServiceProtocol, self)
         try:
@@ -271,6 +274,7 @@ class _RequestLogMixin:
                     session_id=_normalize_session_id(session_id),
                     request_id=request_id,
                     model=model or "",
+                    plan_type=plan_type,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     cached_input_tokens=cached_input_tokens,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import sys
 import time
 from typing import Any, AsyncIterator, Mapping, cast
@@ -201,6 +200,7 @@ from app.modules.proxy._service.observability import (
 )
 from app.modules.proxy._service.streaming.protocol import _StreamingServiceProtocol
 from app.modules.proxy._service.streaming.retry import _StreamingRetryMixin
+from app.modules.proxy._service.streaming.retry_selection import filter_optional_selector_kwargs
 from app.modules.proxy._service.support import (
     _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
     _REQUEST_TRANSPORT_WEBSOCKET,  # noqa: F401
@@ -333,6 +333,7 @@ from app.modules.proxy.http_bridge_forwarding import (
 )
 from app.modules.proxy.load_balancer import AccountLease, AccountSelection
 from app.modules.proxy.tool_call_dedupe import (
+    fast_text_delta_sse,
     mark_duplicate_tool_call_downstream_event,
     rewrite_parallel_tool_call_sse_line,
 )
@@ -397,28 +398,8 @@ class _StreamingMixin(_StreamingRetryMixin):
         )
 
     async def _select_account_with_budget_for_stream(self, deadline: float, **kwargs: Any) -> AccountSelection:
-        proxy = cast(_StreamingServiceProtocol, self)
-        selector = proxy._select_account_with_budget_compatible
-        optional_kwargs = (
-            "require_security_work_authorized",
-            "lease_kind",
-            "estimated_lease_tokens",
-            "fallback_on_preferred_account_unavailable",
-        )
-        if any(name in kwargs for name in optional_kwargs):
-            try:
-                signature = inspect.signature(selector)
-            except (TypeError, ValueError):
-                signature = None
-            accepts_var_keyword = signature is not None and any(
-                parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
-            )
-            if signature is not None and not accepts_var_keyword:
-                kwargs = dict(kwargs)
-                for name in optional_kwargs:
-                    if name not in signature.parameters:
-                        kwargs.pop(name, None)
-        return await selector(deadline, **kwargs)
+        selector = cast(_StreamingServiceProtocol, self)._select_account_with_budget_compatible
+        return await selector(deadline, **filter_optional_selector_kwargs(selector, kwargs))
 
     async def _stream_once(
         self,
@@ -471,6 +452,17 @@ class _StreamingMixin(_StreamingRetryMixin):
         response_create_lease = AdmissionLease(None, stage="response_create", request_id=request_id)
         account_response_create_lease: AccountLease | None = None
         api_key_reservation_touch_state = _ApiKeyReservationTouchState(last_touch_at=start)
+
+        async def _touch_reservation() -> None:
+            if api_key_reservation is None:
+                return
+            api_key_reservation_touch_state.last_touch_at = await proxy._maybe_touch_api_key_reservation(
+                api_key=api_key,
+                reservation=api_key_reservation,
+                last_touch_at=api_key_reservation_touch_state.last_touch_at,
+                request_id=request_id,
+                surface="stream",
+            )
         api_key_reservation_heartbeat_stop = asyncio.Event()
         api_key_reservation_heartbeat_task: asyncio.Task[None] | None = None
         if api_key_reservation is not None:
@@ -574,13 +566,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                     event.response if event else None, raw_payload=first_payload, current=obs
                 )
             if event_type not in {"response.completed", "response.failed", "response.incomplete", "error"}:
-                api_key_reservation_touch_state.last_touch_at = await proxy._maybe_touch_api_key_reservation(
-                    api_key=api_key,
-                    reservation=api_key_reservation,
-                    last_touch_at=api_key_reservation_touch_state.last_touch_at,
-                    request_id=request_id,
-                    surface="stream",
-                )
+                await _touch_reservation()
             event_service_tier = _facade()._service_tier_from_event_payload(first_payload)
             if event_service_tier is not None:
                 actual_service_tier = event_service_tier
@@ -702,6 +688,15 @@ class _StreamingMixin(_StreamingRetryMixin):
 
             async for line in iterator:
                 ev_payload = parse_sse_data_json(line)
+                fast_delta = fast_text_delta_sse(line, ev_payload)
+                if fast_delta is not None:
+                    saw_text_delta = True
+                    await _touch_reservation()
+                    if latency_first_token_ms is None:
+                        latency_first_token_ms = int((time.monotonic() - request_started_at) * 1000)
+                    settlement.downstream_visible = settlement.downstream_text_visible = True
+                    yield fast_delta
+                    continue
                 event = parse_sse_event_payload(ev_payload)
                 event_type = _event_type_from_payload(event, ev_payload)
                 if event_type in _OBS_EVENTS:
@@ -721,18 +716,14 @@ class _StreamingMixin(_StreamingRetryMixin):
                         error_message=message,
                     )
                 if event_type not in {"response.completed", "response.failed", "response.incomplete", "error"}:
-                    api_key_reservation_touch_state.last_touch_at = await proxy._maybe_touch_api_key_reservation(
-                        api_key=api_key,
-                        reservation=api_key_reservation,
-                        last_touch_at=api_key_reservation_touch_state.last_touch_at,
-                        request_id=request_id,
-                        surface="stream",
-                    )
+                    await _touch_reservation()
                 event_service_tier = _facade()._service_tier_from_event_payload(ev_payload)
                 if event_service_tier is not None:
                     actual_service_tier = event_service_tier
                     service_tier = event_service_tier
-                line, ev_payload, event, event_type = rewrite_parallel_tool_call_sse_line(line, ev_payload)
+                line, ev_payload, event, event_type = rewrite_parallel_tool_call_sse_line(
+                    line, ev_payload, event=event
+                )
                 if event_type in _facade()._TEXT_DELTA_EVENT_TYPES:
                     saw_text_delta = True
                 if _facade()._should_suppress_text_done_event(
@@ -979,6 +970,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                 response_model=obs.response_model,
                 stop_reason=obs.stop_reason,
                 stop_details_category=obs.stop_details_category,
+                plan_type=account.plan_type,
             )
             _maybe_log_proxy_service_tier_trace(
                 "stream",

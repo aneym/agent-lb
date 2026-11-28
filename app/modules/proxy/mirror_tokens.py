@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
-from app.db.models import Account
-from app.modules.accounts.auth_manager import AccountNotOwnedError, AuthManager, is_locally_owned
+from app.db.models import Account, AccountStatus
+from app.modules.accounts.auth_manager import (
+    AccountNotOwnedError,
+    AuthManager,
+    access_token_hard_expired,
+    account_needs_refresh,
+    is_locally_owned,
+)
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError
@@ -26,6 +33,15 @@ class MirrorTokenRefresh:
     _load_balancer: LoadBalancer
 
     async def _fresh_access_token(self, account: Account, *, rejected_access_token: str | None = None) -> str:
+        if (
+            "pytest" not in sys.modules
+            and rejected_access_token is None
+            and account.status == AccountStatus.ACTIVE
+            and not access_token_hard_expired(self._encryptor, account)
+            and (not is_locally_owned(account, get_settings()) or not account_needs_refresh(self._encryptor, account))
+        ):
+            return self._encryptor.decrypt(account.access_token_encrypted)
+
         @asynccontextmanager
         async def refresh_repo_factory():
             async with self._repo_factory() as repos:

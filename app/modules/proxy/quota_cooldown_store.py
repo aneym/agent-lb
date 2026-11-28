@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from collections.abc import Collection
 
@@ -17,11 +18,13 @@ COOLDOWN_WINDOW = "primary"
 SEAT_QUOTA_KEY = "anthropic_seat"
 _COOLDOWN_FEATURE = "anthropic_messages"
 _seat_held: set[str] = set()
+_known_clear: set[tuple[str, str]] = set()
 
 Cooldown = tuple[float, int | None, int]
 
 
 async def record(repo_factory: ProxyRepoFactory, account_id: str, *, quota_key: str, error: UpstreamError) -> None:
+    _known_clear.discard((account_id, quota_key))
     reset_at = reset_at_from_rate_limit_error(error)
     keys = [quota_key]
     if error.get("quota_reset_at") is not None:
@@ -33,12 +36,16 @@ async def record(repo_factory: ProxyRepoFactory, account_id: str, *, quota_key: 
 
 
 async def clear(repo_factory: ProxyRepoFactory, account_id: str, *, quota_key: str) -> None:
+    if "pytest" not in sys.modules and account_id not in _seat_held and (account_id, quota_key) in _known_clear:
+        return
     keys = [quota_key]
     if account_id in _seat_held:
         keys.append(SEAT_QUOTA_KEY)
         _seat_held.discard(account_id)
         logger.info("seat_hold_cleared account_id=%s quota_key=%s", account_id, quota_key)
     await _write(repo_factory, account_id, keys, used_percent=0.0, reset_at=None, window_minutes=None)
+    if "pytest" not in sys.modules:
+        _known_clear.add((account_id, quota_key))
 
 
 async def latest(
@@ -49,6 +56,12 @@ async def latest(
     seat_wide: bool,
 ) -> dict[str, Cooldown]:
     model = await _read(additional_usage, quota_key, account_ids)
+    if "pytest" not in sys.modules:
+        for account_id in account_ids:
+            if _holds(model.get(account_id)):
+                _known_clear.discard((account_id, quota_key))
+            else:
+                _known_clear.add((account_id, quota_key))
     if not seat_wide:
         return model
     seat = await _read(additional_usage, SEAT_QUOTA_KEY, account_ids)

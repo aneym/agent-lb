@@ -29,23 +29,18 @@ async def inject_sse_keepalives(
             yield chunk
         return
 
-    async def _next_chunk(it: AsyncIterator[str]) -> str:
-        return await it.__anext__()
-
     iterator = source.__aiter__()
     pending: asyncio.Task[str] | None = None
     try:
         while True:
             if pending is None:
-                pending = asyncio.create_task(_next_chunk(iterator))
-            try:
-                chunk = await asyncio.wait_for(
-                    asyncio.shield(pending),
-                    timeout=interval_seconds,
-                )
-            except asyncio.TimeoutError:
+                pending = asyncio.ensure_future(iterator.__anext__())
+            done, _ = await asyncio.wait((pending,), timeout=interval_seconds)
+            if not done:
                 yield keepalive_frame
                 continue
+            try:
+                chunk = pending.result()
             except StopAsyncIteration:
                 pending = None
                 break
@@ -89,38 +84,29 @@ def parse_sse_data_json(event_block: str) -> dict[str, JsonValue] | None:
 
 
 def extract_sse_data(event_block: str) -> str | None:
-    data_lines = _extract_sse_data_lines(event_block)
-    if data_lines is None:
+    if "data" not in event_block:
         return None
-    data = "\n".join(data_lines)
-    if not data.strip():
+    single: str | None = None
+    extra: list[str] | None = None
+    for raw_line in event_block.splitlines():
+        if not raw_line or raw_line[0] == ":":
+            continue
+        if raw_line.startswith("data:"):
+            value = raw_line[6:] if len(raw_line) > 5 and raw_line[5] == " " else raw_line[5:]
+        elif raw_line == "data":
+            value = ""
+        else:
+            continue
+        if single is None:
+            single = value
+        elif extra is None:
+            extra = [single, value]
+        else:
+            extra.append(value)
+    if single is None:
         return None
-    if data.strip() == "[DONE]":
+    data = "\n".join(extra) if extra is not None else single
+    stripped = data.strip()
+    if not stripped or stripped == "[DONE]":
         return None
     return data
-
-
-def _extract_sse_data_lines(event_block: str) -> list[str] | None:
-    data_lines: list[str] = []
-    for raw_line in event_block.splitlines():
-        if not raw_line:
-            continue
-        if raw_line.startswith(":"):
-            continue
-
-        field, value = _parse_sse_field(raw_line)
-        if field == "data":
-            data_lines.append(value)
-
-    if not data_lines:
-        return None
-    return data_lines
-
-
-def _parse_sse_field(line: str) -> tuple[str, str]:
-    if ":" not in line:
-        return line, ""
-    field, value = line.split(":", 1)
-    if value.startswith(" "):
-        value = value[1:]
-    return field, value

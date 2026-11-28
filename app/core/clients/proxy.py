@@ -371,6 +371,9 @@ class _CodexSSEContent:
     def __init__(self, response: Any) -> None:
         self._response = response
 
+    def iter_any(self) -> "SSEChunkIteratorProtocol":
+        return cast(SSEChunkIteratorProtocol, self._response.aiter_content())
+
     def iter_chunked(self, size: int) -> "SSEChunkIteratorProtocol":
         del size
         return cast(SSEChunkIteratorProtocol, self._response.aiter_content())
@@ -829,35 +832,19 @@ async def _iter_sse_events(
     idle_timeout_seconds: float,
     max_event_bytes: int,
 ) -> AsyncIterator[str]:
-    async def _next_chunk() -> bytes:
-        return await iterator.__anext__()
-
-    async def _cancel_pending_chunk(task: asyncio.Task[bytes]) -> None:
-        if task.done():
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
     buffer = bytearray()
-    chunk_iterator = resp.content.iter_chunked(_SSE_READ_CHUNK_SIZE)
+    iter_any = getattr(resp.content, "iter_any", None)
+    chunk_iterator = iter_any() if callable(iter_any) else resp.content.iter_chunked(_SSE_READ_CHUNK_SIZE)
     iterator = chunk_iterator.__aiter__()
 
     while True:
-        next_chunk = asyncio.create_task(_next_chunk())
         try:
-            done, _ = await asyncio.wait({next_chunk}, timeout=idle_timeout_seconds)
-            if not done:
-                await _cancel_pending_chunk(next_chunk)
-                raise StreamIdleTimeoutError()
-            chunk = await next_chunk
+            async with asyncio.timeout(idle_timeout_seconds):
+                chunk = await iterator.__anext__()
         except StopAsyncIteration:
             break
-        except asyncio.CancelledError:
-            await _cancel_pending_chunk(next_chunk)
-            raise
+        except TimeoutError:
+            raise StreamIdleTimeoutError() from None
 
         if not chunk:
             continue
@@ -1024,7 +1011,7 @@ def _normalize_sse_event_block(event_block: str) -> str:
     if not event_block:
         return event_block
 
-    if '"type":' not in event_block:
+    if not any(alias in event_block for alias in _SSE_EVENT_TYPE_ALIASES):
         return event_block
 
     if event_block.endswith("\r\n\r\n"):
@@ -2225,7 +2212,8 @@ async def _stream_responses_with_session(
             effective_connect_timeout,
         )
     payload_json = json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":"))
-    payload_size_estimate_bytes = len(payload_json.encode("utf-8"))
+    payload_bytes = payload_json.encode("utf-8")
+    payload_size_estimate_bytes = len(payload_bytes)
     transport_mode = _configured_stream_transport(
         transport=settings.upstream_stream_transport,
         transport_override=upstream_stream_transport_override,
@@ -2248,7 +2236,7 @@ async def _stream_responses_with_session(
 
     try:
         gzipped_payload = await upstream_body.gzip_body(
-            payload_json.encode("utf-8"),
+            payload_bytes,
             deadline=None if request_total_timeout is None else pre_request_started_at + request_total_timeout,
         )
     except upstream_body.CompressionDeadlineExceeded:
@@ -2339,9 +2327,10 @@ async def _stream_responses_with_session(
                 ):
                     last_stream_activity_at = time.monotonic()
                     event_block = _normalize_sse_event_block(event_block)
-                    event = parse_sse_event(event_block)
-                    if event and event.type in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES:
-                        seen_terminal = True
+                    if any(terminal in event_block for terminal in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES):
+                        event = parse_sse_event(event_block)
+                        if event and event.type in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES:
+                            seen_terminal = True
                     archive_text(
                         direction="server_to_codex",
                         kind="responses",
@@ -2413,10 +2402,9 @@ async def _stream_responses_with_session(
             ):
                 last_stream_activity_at = time.monotonic()
                 event_block = _normalize_sse_event_block(event_block)
-                event = parse_sse_event(event_block)
-                if event:
-                    event_type = event.type
-                    if event_type in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES:
+                if any(terminal in event_block for terminal in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES):
+                    event = parse_sse_event(event_block)
+                    if event and event.type in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES:
                         seen_terminal = True
                 archive_text(
                     direction="server_to_codex",

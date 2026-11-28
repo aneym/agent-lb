@@ -86,7 +86,10 @@ from app.modules.proxy.model_account_filter import filter_accounts_for_model
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind, RuntimeState
-from app.modules.proxy.selection_state_persistence import has_selection_state_changes
+from app.modules.proxy.selection_state_persistence import (
+    has_selection_state_changes,
+    optional_repo_context,
+)
 from app.modules.proxy.usage_credit_snapshot import extract_credit_status
 from app.modules.quota_planner.logic import PlannerSettings, build_routing_costs
 from app.modules.usage.additional_quota_keys import (
@@ -357,21 +360,7 @@ class LoadBalancer:
                         error_message="No accounts marked as authorized for security work",
                         error_code="no_security_work_authorized_accounts",
                     )
-                selection_inputs = _SelectionInputs(
-                    accounts=authorized_accounts,
-                    latest_primary=selection_inputs.latest_primary,
-                    latest_secondary=selection_inputs.latest_secondary,
-                    latest_monthly=selection_inputs.latest_monthly,
-                    quota_planner_settings=selection_inputs.quota_planner_settings,
-                    runtime_accounts=selection_inputs.runtime_accounts,
-                    error_message=selection_inputs.error_message,
-                    error_code=selection_inputs.error_code,
-                    ignore_standard_quota_account_ids=selection_inputs.ignore_standard_quota_account_ids,
-                    ignore_standard_quota_status=selection_inputs.ignore_standard_quota_status,
-                    persist_standard_quota_status=selection_inputs.persist_standard_quota_status,
-                    routing_policy_override=selection_inputs.routing_policy_override,
-                    team_headroom_floors=selection_inputs.team_headroom_floors,
-                )
+                selection_inputs = replace(selection_inputs, accounts=authorized_accounts)
             if excluded_ids and selection_inputs.accounts:
                 filtered_accounts = [account for account in selection_inputs.accounts if account.id not in excluded_ids]
                 if require_security_work_authorized and not filtered_accounts:
@@ -385,21 +374,7 @@ class LoadBalancer:
                         error_message="No accounts marked as authorized for security work",
                         error_code="no_security_work_authorized_accounts",
                     )
-                selection_inputs = _SelectionInputs(
-                    accounts=filtered_accounts,
-                    latest_primary=selection_inputs.latest_primary,
-                    latest_secondary=selection_inputs.latest_secondary,
-                    latest_monthly=selection_inputs.latest_monthly,
-                    quota_planner_settings=selection_inputs.quota_planner_settings,
-                    runtime_accounts=selection_inputs.runtime_accounts,
-                    error_message=selection_inputs.error_message,
-                    error_code=selection_inputs.error_code,
-                    ignore_standard_quota_account_ids=selection_inputs.ignore_standard_quota_account_ids,
-                    ignore_standard_quota_status=selection_inputs.ignore_standard_quota_status,
-                    persist_standard_quota_status=selection_inputs.persist_standard_quota_status,
-                    routing_policy_override=selection_inputs.routing_policy_override,
-                    team_headroom_floors=selection_inputs.team_headroom_floors,
-                )
+                selection_inputs = replace(selection_inputs, accounts=filtered_accounts)
             return selection_inputs
 
         selection_inputs = await load_selection_inputs()
@@ -648,7 +623,7 @@ class LoadBalancer:
                     failed_result = result
                     error_message = result.error_message
                 else:
-                    async with self._repo_factory() as repos:
+                    async with optional_repo_context(self._repo_factory, bool(sticky_key)) as repos:
                         result = await self._select_with_stickiness(
                             states=selection_states,
                             account_map=account_map,
@@ -666,7 +641,7 @@ class LoadBalancer:
                             routing_strategy=routing_strategy,
                             relative_availability_power=relative_availability_power,
                             relative_availability_top_k=relative_availability_top_k,
-                            sticky_repo=repos.sticky_sessions,
+                            sticky_repo=None if repos is None else repos.sticky_sessions,
                             sticky_existing_account_id=sticky_existing_account_id,
                             traffic_class=traffic_class,
                             allow_personal_fallback=allow_personal_fallback,
@@ -1304,6 +1279,7 @@ class LoadBalancer:
             )
         if sticky_kind is None:
             raise ValueError("sticky_kind is required when sticky_key is provided")
+        sticky_put = getattr(sticky_repo, "put", sticky_repo.upsert)
         if sticky_existing_account_id is _STICKY_EXISTING_UNSET:
             existing = await sticky_repo.get_account_id(
                 sticky_key,
@@ -1395,7 +1371,7 @@ class LoadBalancer:
                     )
                     if pinned_result.account is not None:
                         if sticky_max_age_seconds is not None:
-                            await sticky_repo.upsert(sticky_key, pinned.account_id, kind=sticky_kind)
+                            await sticky_put(sticky_key, pinned.account_id, kind=sticky_kind)
                         return pinned_result
                 else:
                     if budget_pressured:
@@ -1440,7 +1416,7 @@ class LoadBalancer:
                             )
                             if pinned_result.account is not None:
                                 if sticky_max_age_seconds is not None:
-                                    await sticky_repo.upsert(
+                                    await sticky_put(
                                         sticky_key,
                                         pinned.account_id,
                                         kind=sticky_kind,
@@ -1471,7 +1447,7 @@ class LoadBalancer:
                     )
                     if grace_result.account is not None:
                         if sticky_max_age_seconds is not None:
-                            await sticky_repo.upsert(sticky_key, pinned.account_id, kind=sticky_kind)
+                            await sticky_put(sticky_key, pinned.account_id, kind=sticky_kind)
                         return grace_result
                 if reallocate_sticky:
                     await sticky_repo.delete(sticky_key, kind=sticky_kind)
@@ -1514,7 +1490,7 @@ class LoadBalancer:
                     new_account_id=new_account_id,
                     reason=rebind_reason,
                 )
-            await sticky_repo.upsert(sticky_key, new_account_id, kind=sticky_kind)
+            await sticky_put(sticky_key, new_account_id, kind=sticky_kind)
         return chosen
 
     def _record_sticky_rebind(

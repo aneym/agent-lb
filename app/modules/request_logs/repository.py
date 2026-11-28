@@ -245,8 +245,8 @@ class RequestLogsRepository(RequestLogAggregates, RequestLogQueries):
             self._session.add(log)
             try:
                 await self._session.commit()
-                await self._session.refresh(log)
-                await store_context_parts(self._session, log.id, parts)
+                if parts is not None:
+                    await store_context_parts(self._session, log.id, parts)
                 return log
             except sa_exc.ResourceClosedError:
                 return log

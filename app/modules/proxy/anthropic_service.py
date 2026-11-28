@@ -442,7 +442,8 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                 body_payload, _ = strip_eval_web_tools(body_payload, "anthropic")
                             if provider_name == ANTHROPIC_PROVIDER_NAME:
                                 relabel_billing_block(body_payload, get_settings().anthropic_entrypoint_label)
-                            nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
+                            raw = self._encode_json_body(body_payload)
+                            nbytes = len(raw)
 
                             first_byte_seconds = get_settings().anthropic_first_byte_timeout_seconds
                             idle_seconds = (
@@ -462,12 +463,13 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                     else None
                                 )
                                 async with ConnectRetryingResponse(
-                                    lambda: self._open_upstream_response(
+                                    lambda: self._open_messages(
                                         session,
                                         provider_name=provider_name,
                                         headers=headers,
                                         json_body=body_payload,
-                                        **({"openai_chat": True} if openai_body is not None else {}),
+                                        raw_bytes=raw,
+                                        openai_chat=openai_body is not None,
                                     ),
                                     attempts=get_settings().upstream_connect_attempts,
                                     label=provider_label(provider_name),
@@ -491,7 +493,6 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                                         unified_7d_utilization = _parse_unified_utilization(
                                             resp.headers.get("anthropic-ratelimit-unified-7d-utilization")
                                         )
-                                    if provider_name == ANTHROPIC_PROVIDER_NAME:
                                         await observe_anthropic_quota(account.id, resp.headers)
                                     if resp.status >= 400:
                                         raw_error = await resp.read()

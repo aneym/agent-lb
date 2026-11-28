@@ -62,6 +62,12 @@ class StickySessionsRepository:
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
+    async def put(self, key: str, account_id: str, *, kind: StickySessionKind) -> None:
+        statement = self._build_upsert_statement(key, account_id, kind)
+        async with sqlite_writer_section(self._session):
+            await self._session.execute(statement)
+            await self._session.commit()
+
     async def upsert(self, key: str, account_id: str, *, kind: StickySessionKind) -> StickySession:
         statement = self._build_upsert_statement(key, account_id, kind)
         for attempt in range(3):
@@ -70,7 +76,6 @@ class StickySessionsRepository:
                 await self._session.commit()
             row = await self.get_entry(key, kind=kind)
             if row is not None:
-                await self._session.refresh(row)
                 return row
             if attempt == 0:
                 logger.warning("StickySession upsert read-back missing for kind=%s; retrying", kind.value)

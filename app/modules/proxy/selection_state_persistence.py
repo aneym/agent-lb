@@ -1,7 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from app.core.balancer import AccountState
 from app.db.models import Account, AccountStatus
+from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
+
+
+@asynccontextmanager
+async def optional_repo_context(
+    repo_factory: ProxyRepoFactory,
+    enabled: bool,
+) -> AsyncIterator[ProxyRepositories | None]:
+    if not enabled:
+        yield None
+        return
+    async with repo_factory() as repos:
+        yield repos
 
 
 def has_selection_state_changes(

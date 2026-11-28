@@ -35,6 +35,14 @@ logger = logging.getLogger(__name__)
 _TOOL_CALL_DEDUPE_CACHE_LIMIT = 1024
 
 
+def fast_text_delta_sse(line: str, payload: dict[str, JsonValue] | None) -> str | None:
+    if not isinstance(payload, dict) or payload.get("type") != "response.output_text.delta":
+        return None
+    if line.startswith("event: response.output_text.delta\ndata: ") and line.endswith("\n\n"):
+        return line
+    return format_sse_event(payload)
+
+
 def event_type_from_payload(event: OpenAIEvent | None, payload: dict[str, JsonValue] | None) -> str | None:
     if event is not None:
         return event.type
@@ -415,14 +423,19 @@ def rewrite_parallel_tool_call_text(
     )
 
 
+_UNSET_EVENT = object()
+
+
 def rewrite_parallel_tool_call_sse_line(
     line: str,
     payload: dict[str, JsonValue] | None,
+    *,
+    event: OpenAIEvent | None | object = _UNSET_EVENT,
 ) -> tuple[str, dict[str, JsonValue] | None, OpenAIEvent | None, str | None]:
     rewritten_payload, changed, _removed_count = rewrite_parallel_tool_call_payload(payload)
     if not changed:
-        event = parse_sse_event(line)
-        return line, payload, event, event_type_from_payload(event, payload)
+        resolved_event = parse_sse_event(line) if event is _UNSET_EVENT else cast(OpenAIEvent | None, event)
+        return line, payload, resolved_event, event_type_from_payload(resolved_event, payload)
     assert rewritten_payload is not None
     rewritten_line = format_sse_event(rewritten_payload)
     rewritten_event = parse_sse_event(rewritten_line)
