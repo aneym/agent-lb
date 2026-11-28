@@ -10,6 +10,15 @@ import aiohttp
 from app.core.clients import upstream_body
 from app.core.config.settings import get_settings
 from app.core.providers import ANTHROPIC_PROVIDER_NAME
+from app.core.providers.anthropic_compat import get_anthropic_compat_profile
+
+
+def upstream_base_url(provider_name: str) -> str:
+    profile = get_anthropic_compat_profile(provider_name)
+    if profile.upstream_base_url is not None:
+        return profile.upstream_base_url
+    assert profile.upstream_settings_attr is not None
+    return str(getattr(get_settings(), profile.upstream_settings_attr))
 
 
 class AnthropicTransport:
@@ -61,11 +70,9 @@ class AnthropicTransport:
         openai_chat: bool = False,
         raw_bytes: bytes | None = None,
     ) -> AsyncContextManager[aiohttp.ClientResponse]:
-        from app.modules.proxy.anthropic_service import _upstream_base_url
-
         settings = get_settings()
         url = urljoin(
-            _upstream_base_url(provider_name).rstrip("/") + "/", "v1/chat/completions" if openai_chat else "v1/messages"
+            upstream_base_url(provider_name).rstrip("/") + "/", "v1/chat/completions" if openai_chat else "v1/messages"
         )
         timeout = aiohttp.ClientTimeout(
             total=settings.proxy_request_budget_seconds,
@@ -87,10 +94,8 @@ class AnthropicTransport:
         headers: Mapping[str, str],
         json_body: Mapping[str, Any],
     ) -> AsyncContextManager[aiohttp.ClientResponse]:
-        from app.modules.proxy.anthropic_service import _upstream_base_url
-
         settings = get_settings()
-        url = urljoin(_upstream_base_url(provider_name).rstrip("/") + "/", "v1/messages/count_tokens")
+        url = urljoin(upstream_base_url(provider_name).rstrip("/") + "/", "v1/messages/count_tokens")
         timeout = aiohttp.ClientTimeout(
             total=30.0,
             connect=settings.upstream_connect_timeout_seconds,

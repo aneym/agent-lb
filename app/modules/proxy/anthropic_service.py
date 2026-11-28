@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import random
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Coroutine, Mapping
@@ -120,6 +119,11 @@ from app.modules.proxy.anthropic_connect_retry import (
     compression_deadline_error,
 )
 from app.modules.proxy.anthropic_outbound_headers import build_anthropic_headers
+from app.modules.proxy.anthropic_pool_wait import (
+    POOL_WAIT_CLOCK,
+    hold_for_pool_reset,
+    pool_wait_should_hold,
+)
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError, require_claude_code_client
 from app.modules.proxy.anthropic_rate_limits import (
     kimi_monthly_rate_limit_error,
@@ -129,7 +133,7 @@ from app.modules.proxy.anthropic_retry_backoff import overloaded_backoff_jitter
 from app.modules.proxy.anthropic_selection_details import AnthropicSelectionDetails
 from app.modules.proxy.anthropic_thread_anchor import ThreadAnchor
 from app.modules.proxy.anthropic_transient_status import TRANSIENT_UPSTREAM_STATUSES, exhausted_error_code
-from app.modules.proxy.anthropic_transport import AnthropicTransport
+from app.modules.proxy.anthropic_transport import AnthropicTransport, upstream_base_url
 from app.modules.proxy.anthropic_upstream_error_body import (
     error_type_for_status,
     read_error_details,
@@ -187,20 +191,6 @@ _OVERLOADED_RETRY_JITTER: Callable[[], float] = overloaded_backoff_jitter
 def _overloaded_backoff_seconds(attempt: int) -> float:
     base = min(0.25 * (2**attempt), 2.0)
     return base + _OVERLOADED_RETRY_JITTER()
-
-
-_POOL_WAIT_MIN_POLL_SECONDS = 5.0
-_POOL_WAIT_MAX_POLL_SECONDS = 300.0
-_POOL_WAIT_MAX_JITTER_SECONDS = 5.0
-
-
-def _default_pool_wait_jitter() -> float:
-    return random.uniform(0.0, _POOL_WAIT_MAX_JITTER_SECONDS)
-
-
-_POOL_WAIT_CLOCK: Callable[[], float] = time.time
-_POOL_WAIT_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
-_POOL_WAIT_JITTER: Callable[[], float] = _default_pool_wait_jitter
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,14 +331,14 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             last_stall: UpstreamStallTimeout | None = None
             latency_first_token_ms: int | None = None
             wait_deadline = (
-                _POOL_WAIT_CLOCK() + get_settings().anthropic_pool_exhausted_wait_max_seconds if wait_enabled else None
+                POOL_WAIT_CLOCK() + get_settings().anthropic_pool_exhausted_wait_max_seconds if wait_enabled else None
             )
             account_override = first_account
             pending_wait_error = initial_wait_error
             while True:
                 if pending_wait_error is not None:
                     await lease_holder.release()
-                    await _hold_for_pool_reset(pending_wait_error, deadline=wait_deadline)
+                    await hold_for_pool_reset(pending_wait_error, deadline=wait_deadline)
                     pending_wait_error = None
                     selected_account_ids.clear()
                     last_error_status = None
@@ -1028,7 +1018,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                             last_error_message or "Upstream unavailable",
                             code=exhausted_error_code(last_error_status, no_available_accounts_code(provider_name)),
                         ) from exc
-                    if not streamed_bytes and _pool_wait_should_hold(
+                    if not streamed_bytes and pool_wait_should_hold(
                         exc, wait_enabled=wait_enabled, deadline=wait_deadline
                     ):
                         pending_wait_error = exc
@@ -1050,7 +1040,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                     code=exhausted_error_code(last_error_status, no_available_accounts_code(provider_name)),
                     retry_at=None if last_error_status in TRANSIENT_UPSTREAM_STATUSES else eligibility.next_reset_at,
                 )
-                if _pool_wait_should_hold(exhausted_error, wait_enabled=wait_enabled, deadline=wait_deadline):
+                if pool_wait_should_hold(exhausted_error, wait_enabled=wait_enabled, deadline=wait_deadline):
                     pending_wait_error = exhausted_error
                     account_override = None
                     continue
@@ -1135,7 +1125,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         quota_observed_at: datetime | None = None
         try:
             token = await self._fresh_access_token(account)
-            url = URL(_upstream_base_url(ANTHROPIC_PROVIDER_NAME).rstrip("/") + path_and_query, encoded=True)
+            url = URL(upstream_base_url(ANTHROPIC_PROVIDER_NAME).rstrip("/") + path_and_query, encoded=True)
             async with lease_http_session() as session:
                 for attempt in range(2):
                     headers = build_anthropic_headers(inbound_headers, token)
@@ -2067,51 +2057,6 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         async with self._repo_factory() as repos:
             await repos.sticky_sessions.upsert(sticky_key, account.id, kind=StickySessionKind.CODEX_SESSION)
         return account
-
-
-def _upstream_base_url(provider_name: str) -> str:
-    profile = get_anthropic_compat_profile(provider_name)
-    if profile.upstream_base_url is not None:
-        return profile.upstream_base_url
-    assert profile.upstream_settings_attr is not None
-    return str(getattr(get_settings(), profile.upstream_settings_attr))
-
-
-def _pool_wait_should_hold(
-    exc: AnthropicProxyError,
-    *,
-    wait_enabled: bool,
-    deadline: float | None,
-) -> bool:
-    if not wait_enabled or deadline is None:
-        return False
-
-    if exc.retry_at is None:
-        return False
-    return _POOL_WAIT_CLOCK() < deadline
-
-
-async def _hold_for_pool_reset(error: AnthropicProxyError, *, deadline: float | None) -> None:
-    if deadline is None:
-        raise error
-    now = _POOL_WAIT_CLOCK()
-    remaining = deadline - now
-    if remaining <= 0:
-        raise error
-    delay = _pool_wait_delay_seconds(error.retry_at, now=now, remaining=remaining)
-    logger.info(
-        "Anthropic pool exhausted; holding stream open for reset retry_at=%s delay_seconds=%.1f",
-        error.retry_at,
-        delay,
-    )
-    if delay > 0:
-        await _POOL_WAIT_SLEEP(delay)
-
-
-def _pool_wait_delay_seconds(retry_at: int | None, *, now: float, remaining: float) -> float:
-    base = float(retry_at) - now if retry_at is not None else _POOL_WAIT_MIN_POLL_SECONDS
-    base = min(max(base, _POOL_WAIT_MIN_POLL_SECONDS), _POOL_WAIT_MAX_POLL_SECONDS)
-    return max(0.0, min(base + _POOL_WAIT_JITTER(), remaining))
 
 
 def _anthropic_sticky_key(
