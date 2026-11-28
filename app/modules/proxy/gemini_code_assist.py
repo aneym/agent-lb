@@ -18,12 +18,9 @@ from app.core.clients.code_assist import (
 from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
 from app.core.providers.gemini_models import GEMINI_HYDROGEN_MODEL, GEMINI_NEON_MODEL
-from app.core.utils.request_id import get_request_id
 from app.modules.accounts.gemini_project import remember_gemini_project
 from app.modules.proxy.gemini_code_assist_errors import upstream_error
 from app.modules.proxy.gemini_code_assist_wire import code_assist_request, gemini_chunk
-from app.modules.proxy.gemini_prefix_fingerprint import fingerprint_id, prefix_fingerprint
-from app.modules.proxy.gemini_request import gemini_session_id
 from app.modules.proxy.gemini_upstream import GeminiUpstreamCall, GeminiUpstreamError
 
 logger = logging.getLogger(__name__)
@@ -104,13 +101,6 @@ class CodeAssistGeminiUpstream:
             project=project_id,
             user_prompt_id=uuid.uuid4().hex,
         )
-        if call.model == GEMINI_NEON_MODEL and logger.isEnabledFor(logging.INFO):
-            logger.info(
-                "gemini_prefix request_hash=%s session_hash=%s fp=%s",
-                fingerprint_id(get_request_id()),
-                fingerprint_id(gemini_session_id(call.body)),
-                json.dumps(prefix_fingerprint(payload), separators=(",", ":")),
-            )
         url = f"{settings.gemini_code_assist_base_url.rstrip('/')}{STREAM_PATH}"
         headers = {
             "Authorization": f"Bearer {call.access_token}",
