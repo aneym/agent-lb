@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import sys
+import time
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
+from typing import Any, cast
+
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
@@ -14,6 +21,78 @@ from app.db.request_models import AccountProxyBinding, ProxyEndpoint, ProxyPool,
 _ACCOUNT_BOUND_MODE = "account_bound"
 _DEFAULT_POOL_MODE = "default_pool"
 _SUPPORTED_SCHEMES = frozenset({"http", "https", "socks5", "socks5h"})
+ROUTE_CACHE_MISS = object()
+
+
+@dataclass(slots=True)
+class _CachedRoute:
+    value: ResolvedUpstreamRoute | None
+    expires_at: float
+
+
+_route_cache_ttl_seconds = 0.0 if "pytest" in sys.modules else 5.0
+_route_cache: dict[tuple[str | None, str, bool | None], _CachedRoute] = {}
+_route_cache_generation = 0
+
+
+def invalidate_upstream_route_cache() -> None:
+    global _route_cache_generation
+    _route_cache_generation += 1
+    _route_cache.clear()
+
+
+def get_cached_upstream_route(
+    account_id: str | None,
+    *,
+    scope: str = "account",
+    strict: bool | None = None,
+) -> ResolvedUpstreamRoute | None | object:
+    if _route_cache_ttl_seconds <= 0.0:
+        return ROUTE_CACHE_MISS
+    key = (account_id, scope, strict)
+    entry = _route_cache.get(key)
+    if entry is None:
+        return ROUTE_CACHE_MISS
+    if time.monotonic() >= entry.expires_at:
+        _route_cache.pop(key, None)
+        return ROUTE_CACHE_MISS
+    return entry.value
+
+
+def _store_cached_upstream_route(
+    key: tuple[str | None, str, bool | None],
+    value: ResolvedUpstreamRoute | None,
+    *,
+    generation: int,
+) -> None:
+    if _route_cache_ttl_seconds <= 0.0 or generation != _route_cache_generation:
+        return
+    _route_cache[key] = _CachedRoute(value=value, expires_at=time.monotonic() + _route_cache_ttl_seconds)
+
+
+async def resolve_upstream_route_cached(
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]],
+    resolver: Callable[..., Awaitable[ResolvedUpstreamRoute | None]],
+    *,
+    account_id: str | None,
+    operation: str,
+    scope: str = "account",
+    strict: bool | None = None,
+    encryptor: TokenEncryptor | None = None,
+) -> ResolvedUpstreamRoute | None:
+    cached = get_cached_upstream_route(account_id, scope=scope, strict=strict)
+    if cached is not ROUTE_CACHE_MISS:
+        return cast(ResolvedUpstreamRoute | None, cached)
+    kwargs: dict[str, Any] = {
+        "account_id": account_id,
+        "operation": operation,
+        "scope": scope,
+        "encryptor": encryptor,
+    }
+    if strict is not None:
+        kwargs["strict"] = strict
+    async with session_factory() as session:
+        return await resolver(session, **kwargs)
 
 
 class UpstreamProxyRouteError(RuntimeError):
@@ -34,6 +113,11 @@ async def resolve_upstream_route(
     encryptor: TokenEncryptor | None = None,
 ) -> ResolvedUpstreamRoute | None:
     del operation
+    cache_key = (account_id, scope, strict)
+    cached = get_cached_upstream_route(account_id, scope=scope, strict=strict)
+    if cached is not ROUTE_CACHE_MISS:
+        return cast(ResolvedUpstreamRoute | None, cached)
+    generation = _route_cache_generation
     try:
         binding = await _lookup_account_binding(session, account_id) if account_id else None
     except OperationalError as exc:
@@ -41,13 +125,15 @@ async def resolve_upstream_route(
             raise
         return None
     if binding is not None:
-        return await _resolve_pool(
+        resolved = await _resolve_pool(
             session,
             pool_id=binding.pool_id,
             mode=_ACCOUNT_BOUND_MODE,
             account_id=account_id,
             encryptor=encryptor,
         )
+        _store_cached_upstream_route(cache_key, resolved, generation=generation)
+        return resolved
 
     try:
         settings = await _lookup_dashboard_settings(session)
@@ -59,19 +145,22 @@ async def resolve_upstream_route(
     if strict is not None:
         strict_enabled = strict
     if not strict_enabled:
+        _store_cached_upstream_route(cache_key, None, generation=generation)
         return None
     pool_id = settings.upstream_proxy_default_pool_id if settings is not None else None
     if not pool_id:
         raise UpstreamProxyRouteError("default_pool_unconfigured", account_id=account_id)
     if scope not in {"account", "service", "bootstrap"}:
         raise UpstreamProxyRouteError("unsupported_route_scope", account_id=account_id, pool_id=pool_id)
-    return await _resolve_pool(
+    resolved = await _resolve_pool(
         session,
         pool_id=pool_id,
         mode=_DEFAULT_POOL_MODE,
         account_id=account_id,
         encryptor=encryptor,
     )
+    _store_cached_upstream_route(cache_key, resolved, generation=generation)
+    return resolved
 
 
 def _is_missing_upstream_proxy_schema(exc: OperationalError) -> bool:

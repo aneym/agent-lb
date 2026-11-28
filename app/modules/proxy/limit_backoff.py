@@ -12,6 +12,11 @@ _SHORT_HOLD_SECONDS = 60
 _PROBE_WAIT_SECONDS = 10
 _ready: set[str] = set()
 _probing: dict[str, float] = {}
+_generation: int = 0
+
+
+def generation() -> int:
+    return _generation
 
 
 def enabled() -> bool:
@@ -49,6 +54,7 @@ def hold_until(
 
 
 def claim(account_id: str) -> bool:
+    global _generation
     if account_id not in _ready or not enabled():
         return True
     now = time.time()
@@ -56,11 +62,19 @@ def claim(account_id: str) -> bool:
     if expires is not None and expires > now:
         return False
     _probing[account_id] = now + float(get_settings().anthropic_limit_probe_timeout_seconds)
+    _generation += 1
     logger.info("limit_probe_sent account_id=%s", account_id)
     return True
 
 
 def _settle(account_id: str, outcome: str) -> None:
+    global _generation
+    changed = False
     if _probing.pop(account_id, None) is not None:
         logger.info("limit_probe_settled account_id=%s outcome=%s", account_id, outcome)
-    _ready.discard(account_id)
+        changed = True
+    if account_id in _ready:
+        _ready.discard(account_id)
+        changed = True
+    if changed:
+        _generation += 1

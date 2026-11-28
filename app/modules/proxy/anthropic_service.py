@@ -147,6 +147,7 @@ from app.modules.proxy.error_rule_actions import (
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
 from app.modules.proxy.mirror_tokens import MirrorTokenRefresh
 from app.modules.proxy.openrouter_usage import chat_usage, collect_chat_usage
+from app.modules.proxy.quota_eligibility_cache import AnthropicQuotaEligibility, get_quota_eligibility_cache
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind
@@ -232,23 +233,6 @@ class AnthropicFrameResult:
     status_code: int
     body: bytes
     headers: Mapping[str, str]
-
-
-@dataclass(frozen=True, slots=True)
-class _AnthropicQuotaEligibility:
-    account_ids: list[str]
-    preferred_account_ids: tuple[str, ...] = ()
-    blocked_count: int = 0
-    next_reset_at: int | None = None
-
-    cooldown_blocked_count: int = 0
-    cooldown_reset_at: int | None = None
-    model_hold_count: int = 0
-    weekly_exhausted_count: int = 0
-
-    paid_fallback_account_ids: frozenset[str] = frozenset()
-
-    burn_first_account_ids: frozenset[str] = frozenset()
 
 
 def _upload_admission_error(exc: upload_admission.UploadAdmissionTimeout) -> tuple[str, str]:
@@ -1506,13 +1490,19 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
         *,
         model: str | None = None,
         attempted_account_ids: Collection[str] = (),
-    ) -> _AnthropicQuotaEligibility:
+    ) -> AnthropicQuotaEligibility:
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             quota_key = model_quota_key(model, quota_key)
         if provider_name == OPENROUTER_PROVIDER_NAME:
             return await self._openrouter_credit_eligibility()
         quota_as_of = utcnow()
         now = naive_utc_to_epoch(quota_as_of)
+        cache = get_quota_eligibility_cache()
+        key = (provider_name, quota_key, model)
+        cached = cache.get(key, now=now, attempted_account_ids=attempted_account_ids)
+        if cached is not None:
+            return cached
+        gen = cache.generation
         settings = get_settings()
         fable_routing = provider_name == ANTHROPIC_PROVIDER_NAME and settings.anthropic_fable_routing_enabled
 
@@ -1744,21 +1734,24 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             for account_id in cooling_account_ids
             if account_id in blocked_reset_by_account_id
         ]
-        return _AnthropicQuotaEligibility(
-            account_ids=eligible_ids,
-            preferred_account_ids=tuple(
-                account_id
-                for account_id in eligible_ids
-                if account_id in preferred_fable_account_ids and account_id not in attempted_account_ids
+        return cache.store_and_filter(
+            key,
+            AnthropicQuotaEligibility(
+                account_ids=eligible_ids,
+                preferred_account_ids=tuple(
+                    account_id for account_id in eligible_ids if account_id in preferred_fable_account_ids
+                ),
+                blocked_count=blocked_count,
+                next_reset_at=min(blocked_reset_by_account_id.values()) if blocked_reset_by_account_id else None,
+                cooldown_blocked_count=len(cooling_account_ids),
+                cooldown_reset_at=min(cooldown_resets) if cooldown_resets else None,
+                model_hold_count=model_hold_count,
+                weekly_exhausted_count=weekly_exhausted_count,
+                paid_fallback_account_ids=paid_fallback_account_ids,
+                burn_first_account_ids=burn_first_account_ids,
             ),
-            blocked_count=blocked_count,
-            next_reset_at=min(blocked_reset_by_account_id.values()) if blocked_reset_by_account_id else None,
-            cooldown_blocked_count=len(cooling_account_ids),
-            cooldown_reset_at=min(cooldown_resets) if cooldown_resets else None,
-            model_hold_count=model_hold_count,
-            weekly_exhausted_count=weekly_exhausted_count,
-            paid_fallback_account_ids=paid_fallback_account_ids,
-            burn_first_account_ids=burn_first_account_ids,
+            gen,
+            attempted_account_ids,
         )
 
     async def _persist_request_log(
@@ -2029,7 +2022,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
             service = ApiKeysService(repos.api_keys)
             await service.release_usage_reservation(reservation.reservation_id)
 
-    async def _openrouter_credit_eligibility(self) -> _AnthropicQuotaEligibility:
+    async def _openrouter_credit_eligibility(self) -> AnthropicQuotaEligibility:
         async with self._repo_factory() as repos:
             provider_accounts = [
                 account
@@ -2053,7 +2046,7 @@ class AnthropicProxyService(AnthropicSelectionDetails, MirrorTokenRefresh, Anthr
                     blocked += 1
                     continue
                 eligible.append(account.id)
-            return _AnthropicQuotaEligibility(account_ids=eligible, blocked_count=blocked)
+            return AnthropicQuotaEligibility(account_ids=eligible, blocked_count=blocked)
 
     async def claim_session_route(
         self,

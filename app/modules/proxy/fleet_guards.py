@@ -236,7 +236,7 @@ def filter_states_for_unauthenticated_concurrency(
     filtered: list[AccountState] = []
     for state in states:
         cap = unauthenticated_concurrency_cap(state, now=current, settings=settings)
-        if cap > 0 and (state.inflight_response_creates + state.inflight_streams) >= cap:
+        if cap > 0 and max(state.inflight_response_creates, state.inflight_streams) >= cap:
             continue
         filtered.append(state)
     return filtered
@@ -254,7 +254,7 @@ def unauthenticated_lease_allowed(
     cap = unauthenticated_concurrency_cap(state, now=now, settings=settings)
     if cap <= 0:
         return True
-    return (runtime.inflight_response_creates + runtime.inflight_streams) < cap
+    return max(runtime.inflight_response_creates, runtime.inflight_streams) < cap
 
 
 def filter_candidates_for_caller(

@@ -6,10 +6,20 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.crypto import TokenEncryptor
 from app.core.exceptions import DashboardBadRequestError
+from app.core.upstream_proxy import invalidate_upstream_route_cache
 from app.db.models import Account
 from app.db.request_models import AccountProxyBinding, ProxyEndpoint, ProxyPool, ProxyPoolMember
 from app.dependencies import SettingsContext, get_settings_context
-from app.modules.settings.schemas import AccountProxyBindingRequest, AccountProxyBindingResponse, UpstreamProxyAdminResponse, UpstreamProxyEndpointCreateRequest, UpstreamProxyEndpointResponse, UpstreamProxyPoolCreateRequest, UpstreamProxyPoolMemberRequest, UpstreamProxyPoolResponse  # noqa: I001  # fmt: skip
+from app.modules.settings.schemas import (
+    AccountProxyBindingRequest,
+    AccountProxyBindingResponse,
+    UpstreamProxyAdminResponse,
+    UpstreamProxyEndpointCreateRequest,
+    UpstreamProxyEndpointResponse,
+    UpstreamProxyPoolCreateRequest,
+    UpstreamProxyPoolMemberRequest,
+    UpstreamProxyPoolResponse,
+)
 
 router = APIRouter()
 
@@ -69,6 +79,7 @@ async def create_upstream_proxy_endpoint(
     )
     context.session.add(row)
     await context.session.commit()
+    invalidate_upstream_route_cache()
     await context.session.refresh(row)
     return _proxy_endpoint_response(row)
 
@@ -92,6 +103,7 @@ async def create_upstream_proxy_pool(
         if _is_missing_proxy_endpoint_error(exc):
             raise DashboardBadRequestError("Proxy endpoint not found", code="proxy_endpoint_not_found")
         raise
+    invalidate_upstream_route_cache()
     await context.session.refresh(pool)
     return UpstreamProxyPoolResponse(
         id=pool.id,
@@ -130,6 +142,7 @@ async def add_upstream_proxy_pool_member(
         if _is_duplicate_proxy_pool_member_error(exc):
             raise _duplicate_proxy_pool_member_error()
         raise
+    invalidate_upstream_route_cache()
     endpoint_ids = (
         (
             await context.session.execute(
@@ -239,6 +252,7 @@ async def put_account_proxy_binding(
         row.pool_id = payload.pool_id
         row.is_active = payload.is_active
     await context.session.commit()
+    invalidate_upstream_route_cache()
     await context.session.refresh(row)
     return AccountProxyBindingResponse(account_id=row.account_id, pool_id=row.pool_id, is_active=row.is_active)
 

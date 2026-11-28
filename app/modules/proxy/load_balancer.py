@@ -86,6 +86,7 @@ from app.modules.proxy.model_account_filter import filter_accounts_for_model
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind, RuntimeState
+from app.modules.proxy.selection_state_persistence import has_selection_state_changes
 from app.modules.proxy.usage_credit_snapshot import extract_credit_status
 from app.modules.quota_planner.logic import PlannerSettings, build_routing_costs
 from app.modules.usage.additional_quota_keys import (
@@ -175,6 +176,7 @@ class LoadBalancer:
         self._account_locks: dict[str, asyncio.Lock] = {}
         self._account_locks_registry_lock = asyncio.Lock()
         self._selection_inputs_cache = get_account_selection_cache()
+        self._encryptor = TokenEncryptor()
 
     async def release_account_lease(self, lease: AccountLease | None) -> None:
         if lease is None:
@@ -523,13 +525,11 @@ class LoadBalancer:
                 }
                 pre_persist_cache_generation = self._selection_inputs_cache.generation
                 try:
-                    async with self._repo_factory() as repos:
-                        stale_account_ids = await self._persist_selection_state(
-                            repos.accounts,
-                            selected_account_map,
-                            selected_states,
-                            skip_account_ids=request_ignore_primary_quota_ids,
-                        )
+                    stale_account_ids = await self._persist_selection_state_if_changed(
+                        selected_account_map,
+                        selected_states,
+                        skip_account_ids=request_ignore_primary_quota_ids,
+                    )
                 except BaseException:
                     await self.release_account_lease(selected_lease)
                     selected_lease = None
@@ -733,13 +733,11 @@ class LoadBalancer:
                         error_message = result.error_message
                         failed_result = result
                 try:
-                    async with self._repo_factory() as repos:
-                        stale_account_ids = await self._persist_selection_state(
-                            repos.accounts,
-                            selected_account_map,
-                            selected_states,
-                            skip_account_ids=request_ignore_primary_quota_ids,
-                        )
+                    stale_account_ids = await self._persist_selection_state_if_changed(
+                        selected_account_map,
+                        selected_states,
+                        skip_account_ids=request_ignore_primary_quota_ids,
+                    )
                 except BaseException:
                     await self.release_account_lease(selected_lease)
                     selected_lease = None
@@ -846,26 +844,17 @@ class LoadBalancer:
         )
         cached = await self._selection_inputs_cache.get(cache_key)
         if cached is not None:
-            async with self._repo_factory() as repos:
-                if not isinstance(getattr(repos.accounts, "session", None), AsyncSession):
-                    return _clone_selection_inputs(cached)
-                fresh_accounts = {account.id: account for account in await repos.accounts.list_accounts()}
-                selection_settings = get_settings()
-                encryptor = TokenEncryptor()
-                accounts = [
-                    _clone_account(fresh_accounts[account.id])
-                    for account in cached.accounts
-                    if account.id in fresh_accounts
-                    and fresh_accounts[account.id] in selectable_accounts([fresh_accounts[account.id]])
-                    and (
-                        fresh_accounts[account.id].status != AccountStatus.EXCHANGE_UNCERTAIN
-                        or not access_token_hard_expired(encryptor, fresh_accounts[account.id])
-                    )
-                    and (
-                        is_locally_owned(fresh_accounts[account.id], selection_settings)
-                        or not access_token_hard_expired(encryptor, fresh_accounts[account.id])
-                    )
-                ]
+            selection_settings = get_settings()
+            encryptor = self._encryptor
+            accounts = [
+                _clone_account(account)
+                for account in selectable_accounts(cached.accounts)
+                if (
+                    account.status != AccountStatus.EXCHANGE_UNCERTAIN
+                    or not access_token_hard_expired(encryptor, account)
+                )
+                and (is_locally_owned(account, selection_settings) or not access_token_hard_expired(encryptor, account))
+            ]
             return replace(_clone_selection_inputs(cached), accounts=accounts)
         load_generation = self._selection_inputs_cache.generation
         async with self._repo_factory() as repos:
@@ -874,7 +863,7 @@ class LoadBalancer:
                 account for account in all_accounts if normalize_provider_name(account.provider) == provider_name
             ]
             selection_settings = get_settings()
-            encryptor = TokenEncryptor()
+            encryptor = self._encryptor
             excluded_mirror_count = 0
             eligible_accounts = []
             for account in all_accounts:
@@ -1804,8 +1793,26 @@ class LoadBalancer:
                 account.deactivation_reason = persisted_reason
                 account.reset_at = reset_at_int
                 account.blocked_at = blocked_at_int
+                self._selection_inputs_cache.invalidate()
             return updated
         return True
+
+    async def _persist_selection_state_if_changed(
+        self,
+        account_map: dict[str, Account],
+        states: list[AccountState],
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
+    ) -> set[str]:
+        if not has_selection_state_changes(account_map, states, skip_account_ids=skip_account_ids):
+            return set()
+        async with self._repo_factory() as repos:
+            return await self._persist_selection_state(
+                repos.accounts,
+                account_map,
+                states,
+                skip_account_ids=skip_account_ids,
+            )
 
 
 def _build_states(

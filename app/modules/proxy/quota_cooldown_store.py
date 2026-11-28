@@ -6,6 +6,7 @@ from collections.abc import Collection
 
 from app.core.balancer.types import UpstreamError
 from app.core.utils.time import naive_utc_to_epoch
+from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.anthropic_rate_limits import reset_at_from_rate_limit_error
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 from app.modules.usage.repository import AdditionalUsageRepository
@@ -107,5 +108,6 @@ async def _write(
                     reset_at=reset_at,
                     window_minutes=window_minutes,
                 )
+        get_account_selection_cache().invalidate()
     except Exception:
         logger.warning("Failed to write quota cooldown account_id=%s keys=%s", account_id, keys, exc_info=True)

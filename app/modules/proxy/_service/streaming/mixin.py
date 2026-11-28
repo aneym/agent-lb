@@ -54,7 +54,7 @@ from app.core.openai.response_observability import (
     extract_openai_response_metadata,
     observe_openai_response,
 )
-from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError
+from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route_cached
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
@@ -387,15 +387,14 @@ class _StreamingMixin(_StreamingRetryMixin):
         *,
         operation: str,
     ) -> ResolvedUpstreamRoute | None:
-        proxy = cast(_StreamingServiceProtocol, self)
-        async with _facade().SessionLocal() as session:
-            return await _facade().resolve_upstream_route(
-                session,
-                account_id=account.id,
-                operation=operation,
-                scope="account",
-                encryptor=proxy._encryptor,
-            )
+        facade = _facade()
+        return await resolve_upstream_route_cached(
+            facade.SessionLocal,
+            facade.resolve_upstream_route,
+            account_id=account.id,
+            operation=operation,
+            encryptor=cast(_StreamingServiceProtocol, self)._encryptor,
+        )
 
     async def _select_account_with_budget_for_stream(self, deadline: float, **kwargs: Any) -> AccountSelection:
         proxy = cast(_StreamingServiceProtocol, self)

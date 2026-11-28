@@ -11,6 +11,7 @@ from app.core.auth.dependencies import set_dashboard_error_format, validate_dash
 from app.core.config.settings_cache import get_settings_cache
 from app.core.exceptions import DashboardBadRequestError
 from app.core.request_locality import resolve_request_client_host
+from app.core.upstream_proxy import invalidate_upstream_route_cache
 from app.dependencies import SettingsContext, get_settings_context
 from app.modules.accounts.service_caches import invalidate_additional_quotas_cache
 from app.modules.settings.schemas import (
@@ -313,6 +314,7 @@ async def update_settings(
         raise DashboardBadRequestError(str(exc), code="invalid_totp_config") from exc
 
     await get_settings_cache().invalidate()
+    invalidate_upstream_route_cache()
     changed_fields = [
         field_name
         for field_name in (
