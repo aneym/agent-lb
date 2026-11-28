@@ -17,6 +17,119 @@ SSE_KEEPALIVE_FRAME = ": keepalive\n\n"
 CODEX_KEEPALIVE_FRAME = 'event: codex.keepalive\ndata: {"type":"codex.keepalive"}\n\n'
 
 
+class ChunkIdleTimeoutError(TimeoutError):
+    def __init__(self, *, seen_bytes: bool) -> None:
+        super().__init__("stream_idle" if seen_bytes else "first_byte")
+        self.seen_bytes = seen_bytes
+
+
+async def iter_idle_bounded_chunks(
+    chunks: AsyncIterator[bytes],
+    *,
+    first_byte_deadline: float | None = None,
+    idle_seconds: float,
+) -> AsyncGenerator[bytes, None]:
+    iterator = chunks.__aiter__()
+    if first_byte_deadline is None and idle_seconds <= 0:
+        async for chunk in iterator:
+            yield chunk
+        return
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    seen_bytes = False
+    waiting = False
+    timed_out = False
+    wait_started = loop.time()
+    handle: asyncio.TimerHandle | None = None
+
+    def _on_timeout() -> None:
+        nonlocal handle, timed_out
+        if not waiting:
+            handle = None
+            return
+        target = (
+            first_byte_deadline
+            if not seen_bytes and first_byte_deadline is not None
+            else (wait_started + idle_seconds if idle_seconds > 0 else None)
+        )
+        if target is None:
+            handle = None
+            return
+        now = loop.time()
+        if now + 1e-6 < target:
+            handle = loop.call_at(target, _on_timeout)
+            return
+        timed_out = True
+        handle = None
+        if task is not None:
+            task.cancel()
+
+    try:
+        while True:
+            if seen_bytes:
+                if idle_seconds > 0:
+                    wait_started = loop.time()
+                    if handle is None:
+                        handle = loop.call_at(wait_started + idle_seconds, _on_timeout)
+            else:
+                if first_byte_deadline is not None:
+                    if handle is None:
+                        handle = loop.call_at(first_byte_deadline, _on_timeout)
+                elif idle_seconds > 0:
+                    wait_started = loop.time()
+                    if handle is None:
+                        handle = loop.call_at(wait_started + idle_seconds, _on_timeout)
+            waiting = True
+            try:
+                chunk = await anext(iterator)
+            except StopAsyncIteration:
+                return
+            except asyncio.CancelledError:
+                if timed_out:
+                    if task is not None:
+                        task.uncancel()
+                    raise ChunkIdleTimeoutError(seen_bytes=seen_bytes) from None
+                raise
+            finally:
+                waiting = False
+            if chunk and not seen_bytes:
+                seen_bytes = True
+                if first_byte_deadline is not None:
+                    if idle_seconds <= 0:
+                        if handle is not None:
+                            handle.cancel()
+                            handle = None
+                    else:
+                        now = loop.time()
+                        if now + idle_seconds < first_byte_deadline and handle is not None:
+                            handle.cancel()
+                            handle = loop.call_at(now + idle_seconds, _on_timeout)
+            yield chunk
+    finally:
+        if handle is not None:
+            handle.cancel()
+
+
+def find_sse_separator(buffer: bytes | bytearray) -> tuple[int, int] | None:
+    lf = buffer.find(b"\n\n")
+    crlf = buffer.find(b"\r\n\r\n")
+    if lf < 0:
+        return (crlf, 4) if crlf >= 0 else None
+    if crlf < 0 or lf < crlf:
+        return (lf, 2)
+    return (crlf, 4)
+
+
+def pop_sse_event(buffer: bytearray) -> bytes | None:
+    separator = find_sse_separator(buffer)
+    if separator is None:
+        return None
+    event_end = separator[0] + separator[1]
+    event = bytes(buffer[:event_end])
+    del buffer[:event_end]
+    return event
+
+
 async def inject_sse_keepalives(
     source: AsyncIterator[str],
     interval_seconds: float,

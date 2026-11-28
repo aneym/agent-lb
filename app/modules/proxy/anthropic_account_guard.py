@@ -19,6 +19,7 @@ from app.core.resilience.circuit_breaker import (
     CircuitBreakerOpenError,
     get_circuit_breaker_for_account,
 )
+from app.core.utils.sse import ChunkIdleTimeoutError, iter_idle_bounded_chunks
 from app.modules.accounts.credits import OPENROUTER_CREDITS_QUOTA_KEY, OPENROUTER_PROVIDER_NAME
 from app.modules.proxy.anthropic_connect_retry import UpstreamStallTimeout
 from app.modules.proxy.anthropic_proxy_error import AnthropicProxyError
@@ -153,29 +154,19 @@ async def stall_bounded_chunks(
     first_byte_seconds: float,
     idle_seconds: float,
 ) -> AsyncIterator[bytes]:
-    iterator = chunks.__aiter__()
-    loop = asyncio.get_running_loop()
-    deadline = first_byte_deadline
-    seen_bytes = False
-    while True:
-        bound = asyncio.timeout_at(deadline)
-        try:
-            async with bound:
-                chunk = await anext(iterator)
-        except StopAsyncIteration:
-            return
-        except aiohttp.ClientPayloadError as exc:
-            raise UpstreamBrokenStream() from exc
-        except TimeoutError:
-            if not bound.expired():
-                raise
-            if seen_bytes:
-                raise UpstreamStallTimeout("stream_idle", idle_seconds) from None
-            raise UpstreamStallTimeout("first_byte", first_byte_seconds) from None
-        if chunk:
-            seen_bytes = True
-            deadline = loop.time() + idle_seconds if idle_seconds > 0 else None
-        yield chunk
+    try:
+        async for chunk in iter_idle_bounded_chunks(
+            chunks,
+            first_byte_deadline=first_byte_deadline,
+            idle_seconds=idle_seconds,
+        ):
+            yield chunk
+    except aiohttp.ClientPayloadError as exc:
+        raise UpstreamBrokenStream() from exc
+    except ChunkIdleTimeoutError as exc:
+        if exc.seen_bytes:
+            raise UpstreamStallTimeout("stream_idle", idle_seconds) from None
+        raise UpstreamStallTimeout("first_byte", first_byte_seconds) from None
 
 
 async def close_async_iterator(iterator: object | None) -> None:

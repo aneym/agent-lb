@@ -75,7 +75,17 @@ from app.core.types import JsonObject, JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.request_id import get_request_id
-from app.core.utils.sse import format_sse_event
+from app.core.utils.sse import (
+    ChunkIdleTimeoutError,
+    format_sse_event,
+    iter_idle_bounded_chunks,
+)
+from app.core.utils.sse import (
+    find_sse_separator as _find_sse_separator,
+)
+from app.core.utils.sse import (
+    pop_sse_event as _pop_sse_event,
+)
 
 _ERROR_TYPE_CODE_MAP = {
     "rate_limit_exceeded": "rate_limit_exceeded",
@@ -807,26 +817,6 @@ def _remaining_total_timeout(timeout_seconds: float | None, started_at: float, n
     return max(0.001, timeout_seconds - max(0.0, now - started_at))
 
 
-def _find_sse_separator(buffer: bytes | bytearray) -> tuple[int, int] | None:
-    separators = (b"\r\n\r\n", b"\n\n")
-    positions = [(buffer.find(separator), len(separator)) for separator in separators]
-    valid_positions = [position for position in positions if position[0] >= 0]
-    if not valid_positions:
-        return None
-    return min(valid_positions, key=lambda item: item[0])
-
-
-def _pop_sse_event(buffer: bytearray) -> bytes | None:
-    separator = _find_sse_separator(buffer)
-    if separator is None:
-        return None
-    index, separator_len = separator
-    event_end = index + separator_len
-    event = bytes(buffer[:event_end])
-    del buffer[:event_end]
-    return event
-
-
 async def _iter_sse_events(
     resp: SSEResponse,
     idle_timeout_seconds: float,
@@ -834,35 +824,32 @@ async def _iter_sse_events(
 ) -> AsyncIterator[str]:
     buffer = bytearray()
     iter_any = getattr(resp.content, "iter_any", None)
-    chunk_iterator = iter_any() if callable(iter_any) else resp.content.iter_chunked(_SSE_READ_CHUNK_SIZE)
-    iterator = chunk_iterator.__aiter__()
-
-    while True:
-        try:
-            async with asyncio.timeout(idle_timeout_seconds):
-                chunk = await iterator.__anext__()
-        except StopAsyncIteration:
-            break
-        except TimeoutError:
-            raise StreamIdleTimeoutError() from None
-
-        if not chunk:
-            continue
-
-        buffer.extend(chunk)
-        while True:
-            raw_event = _pop_sse_event(buffer)
-            if raw_event is None:
-                if len(buffer) > max_event_bytes:
-                    raise StreamEventTooLargeError(len(buffer), max_event_bytes)
-                break
-
-            if len(raw_event) > max_event_bytes:
-                raise StreamEventTooLargeError(len(raw_event), max_event_bytes)
-
-            if raw_event.strip():
-                yield raw_event.decode("utf-8", errors="replace")
-
+    chunks = iter_any() if callable(iter_any) else resp.content.iter_chunked(_SSE_READ_CHUNK_SIZE)
+    try:
+        async for chunk in iter_idle_bounded_chunks(chunks, idle_seconds=idle_timeout_seconds):
+            if not chunk:
+                continue
+            if not buffer:
+                sep = _find_sse_separator(chunk)
+                if sep is not None and sep[0] + sep[1] == len(chunk):
+                    if len(chunk) > max_event_bytes:
+                        raise StreamEventTooLargeError(len(chunk), max_event_bytes)
+                    if chunk.strip():
+                        yield chunk.decode("utf-8", errors="replace")
+                    continue
+            buffer.extend(chunk)
+            while True:
+                raw_event = _pop_sse_event(buffer)
+                if raw_event is None:
+                    if len(buffer) > max_event_bytes:
+                        raise StreamEventTooLargeError(len(buffer), max_event_bytes)
+                    break
+                if len(raw_event) > max_event_bytes:
+                    raise StreamEventTooLargeError(len(raw_event), max_event_bytes)
+                if raw_event.strip():
+                    yield raw_event.decode("utf-8", errors="replace")
+    except ChunkIdleTimeoutError:
+        raise StreamIdleTimeoutError() from None
     if buffer:
         if len(buffer) > max_event_bytes:
             raise StreamEventTooLargeError(len(buffer), max_event_bytes)

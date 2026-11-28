@@ -83,15 +83,7 @@ from app.modules.proxy.fleet_guards import (
     unauthenticated_lease_allowed,
 )
 from app.modules.proxy.model_account_filter import filter_accounts_for_model
-from app.modules.proxy.orm_clone import (
-    clone_account as _clone_account,
-)
-from app.modules.proxy.orm_clone import (
-    clone_standard_usage_history as _clone_standard_usage_history,
-)
-from app.modules.proxy.orm_clone import (
-    clone_usage_history as _clone_usage_history,
-)
+from app.modules.proxy.orm_clone import clone_account, clone_standard_usage_history, clone_usage_history
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.proxy.request_policy import resolve_model_alias
 from app.modules.proxy.runtime_state import AccountLease, AccountLeaseKind, RuntimeState
@@ -99,6 +91,7 @@ from app.modules.proxy.selection_state_persistence import (
     has_selection_state_changes,
     optional_repo_context,
 )
+from app.modules.proxy.sticky_repository import touch_sticky_session
 from app.modules.proxy.usage_credit_snapshot import extract_credit_status
 from app.modules.quota_planner.logic import PlannerSettings, build_routing_costs
 from app.modules.usage.additional_quota_keys import (
@@ -491,7 +484,7 @@ class LoadBalancer:
                                     kind=lease_kind,
                                     estimated_tokens=estimated_lease_tokens,
                                 )
-                            selected_snapshot = _clone_account(selected)
+                            selected_snapshot = clone_account(selected)
                             selected_snapshot.status = result.account.status
                             selected_snapshot.deactivation_reason = result.account.deactivation_reason
                             selected_snapshot.reset_at = selected_reset_at
@@ -609,30 +602,29 @@ class LoadBalancer:
                             now=datetime.now(timezone.utc),
                         )
                     )
-                if sticky_key and sticky_kind == StickySessionKind.CODEX_SESSION:
-                    async with self._repo_factory() as repos:
+                async with optional_repo_context(self._repo_factory, bool(sticky_key)) as repos:
+                    if sticky_key and sticky_kind == StickySessionKind.CODEX_SESSION and repos is not None:
                         sticky_existing_account_id = await repos.sticky_sessions.get_account_id(
                             sticky_key,
                             kind=sticky_kind,
                             max_age_seconds=sticky_max_age_seconds,
                         )
-                hard_sticky = sticky_kind == StickySessionKind.CODEX_SESSION and isinstance(
-                    sticky_existing_account_id, str
-                )
-                selection_states, blocked_result, selection_error_code = filter_candidates_for_caller(
-                    states,
-                    is_unauthenticated=is_unauthenticated,
-                    hard_sticky=hard_sticky,
-                    lease_kind=lease_kind,
-                    floors=selection_inputs.team_headroom_floors,
-                    settings=get_settings(),
-                )
-                if blocked_result is not None:
-                    result = blocked_result
-                    failed_result = result
-                    error_message = result.error_message
-                else:
-                    async with optional_repo_context(self._repo_factory, bool(sticky_key)) as repos:
+                    hard_sticky = sticky_kind == StickySessionKind.CODEX_SESSION and isinstance(
+                        sticky_existing_account_id, str
+                    )
+                    selection_states, blocked_result, selection_error_code = filter_candidates_for_caller(
+                        states,
+                        is_unauthenticated=is_unauthenticated,
+                        hard_sticky=hard_sticky,
+                        lease_kind=lease_kind,
+                        floors=selection_inputs.team_headroom_floors,
+                        settings=get_settings(),
+                    )
+                    if blocked_result is not None:
+                        result = blocked_result
+                        failed_result = result
+                        error_message = result.error_message
+                    else:
                         result = await self._select_with_stickiness(
                             states=selection_states,
                             account_map=account_map,
@@ -683,7 +675,7 @@ class LoadBalancer:
                                     state.deactivation_reason = result.account.deactivation_reason
                                     selected_reset_at = int(state.reset_at) if state.reset_at else None
                                     break
-                            selected_snapshot = _clone_account(selected)
+                            selected_snapshot = clone_account(selected)
                             selected_snapshot.status = result.account.status
                             selected_snapshot.deactivation_reason = result.account.deactivation_reason
                             selected_snapshot.reset_at = selected_reset_at
@@ -829,7 +821,7 @@ class LoadBalancer:
             selection_settings = get_settings()
             encryptor = self._encryptor
             accounts = [
-                _clone_account(account)
+                clone_account(account)
                 for account in selectable_accounts(cached.accounts)
                 if (
                     account.status != AccountStatus.EXCHANGE_UNCERTAIN
@@ -905,7 +897,7 @@ class LoadBalancer:
                         latest_secondary={},
                         latest_monthly={},
                         quota_planner_settings=quota_planner_settings,
-                        runtime_accounts=[_clone_account(account) for account in all_accounts],
+                        runtime_accounts=[clone_account(account) for account in all_accounts],
                     )
                     await self._selection_inputs_cache.set(
                         _clone_selection_inputs(selection_inputs), key=cache_key, generation=load_generation
@@ -918,7 +910,7 @@ class LoadBalancer:
                         latest_secondary={},
                         latest_monthly={},
                         quota_planner_settings=quota_planner_settings,
-                        runtime_accounts=[_clone_account(account) for account in all_accounts],
+                        runtime_accounts=[clone_account(account) for account in all_accounts],
                     )
                     await self._selection_inputs_cache.set(
                         _clone_selection_inputs(selection_inputs), key=cache_key, generation=load_generation
@@ -930,7 +922,7 @@ class LoadBalancer:
                     latest_secondary={},
                     latest_monthly={},
                     quota_planner_settings=quota_planner_settings,
-                    runtime_accounts=[_clone_account(account) for account in all_accounts],
+                    runtime_accounts=[clone_account(account) for account in all_accounts],
                     error_message=f"No accounts with a plan supporting model '{model}'",
                     error_code=NO_PLAN_SUPPORT_FOR_MODEL,
                 )
@@ -954,7 +946,7 @@ class LoadBalancer:
                         latest_secondary={},
                         latest_monthly={},
                         quota_planner_settings=quota_planner_settings,
-                        runtime_accounts=[_clone_account(account) for account in all_accounts],
+                        runtime_accounts=[clone_account(account) for account in all_accounts],
                         error_message=additional_filter.error_message,
                         error_code=additional_filter.error_code,
                     )
@@ -969,7 +961,7 @@ class LoadBalancer:
                     latest_secondary={},
                     latest_monthly={},
                     quota_planner_settings=quota_planner_settings,
-                    runtime_accounts=[_clone_account(account) for account in all_accounts],
+                    runtime_accounts=[clone_account(account) for account in all_accounts],
                 )
                 await self._selection_inputs_cache.set(
                     _clone_selection_inputs(selection_inputs), key=cache_key, generation=load_generation
@@ -1012,18 +1004,18 @@ class LoadBalancer:
                 latest_secondary = standard_latest_secondary
                 ignore_standard_quota_account_ids = frozenset()
             selection_inputs = _SelectionInputs(
-                accounts=[_clone_account(account) for account in accounts],
+                accounts=[clone_account(account) for account in accounts],
                 latest_primary={
-                    account_id: _clone_usage_history(entry) for account_id, entry in latest_primary.items()
+                    account_id: clone_usage_history(entry) for account_id, entry in latest_primary.items()
                 },
                 latest_secondary={
-                    account_id: _clone_usage_history(entry) for account_id, entry in latest_secondary.items()
+                    account_id: clone_usage_history(entry) for account_id, entry in latest_secondary.items()
                 },
                 latest_monthly={
-                    account_id: _clone_standard_usage_history(entry) for account_id, entry in latest_monthly.items()
+                    account_id: clone_standard_usage_history(entry) for account_id, entry in latest_monthly.items()
                 },
                 quota_planner_settings=quota_planner_settings,
-                runtime_accounts=[_clone_account(account) for account in all_accounts],
+                runtime_accounts=[clone_account(account) for account in all_accounts],
                 ignore_standard_quota_account_ids=ignore_standard_quota_account_ids,
                 ignore_standard_quota_status=ignore_standard_quota_status,
                 persist_standard_quota_status=True,
@@ -1109,7 +1101,7 @@ class LoadBalancer:
                 error_message=result.error_message or "opportunistic burn window closed: no account available",
                 error_code=OPPORTUNISTIC_BURN_WINDOW_CLOSED,
             )
-        return AccountSelection(account=_clone_account(account), error_message=None, error_code=None)
+        return AccountSelection(account=clone_account(account), error_message=None, error_code=None)
 
     async def _filter_accounts_for_additional_limit(
         self,
@@ -1377,8 +1369,9 @@ class LoadBalancer:
                         routing_costs=routing_costs_by_account_id,
                     )
                     if pinned_result.account is not None:
-                        if sticky_max_age_seconds is not None:
-                            await sticky_put(sticky_key, pinned.account_id, kind=sticky_kind)
+                        await touch_sticky_session(
+                            sticky_repo, sticky_key, pinned.account_id, kind=sticky_kind, max_age_seconds=sticky_max_age_seconds
+                        )
                         return pinned_result
                 else:
                     if budget_pressured:
@@ -1422,12 +1415,9 @@ class LoadBalancer:
                                 routing_costs=routing_costs_by_account_id,
                             )
                             if pinned_result.account is not None:
-                                if sticky_max_age_seconds is not None:
-                                    await sticky_put(
-                                        sticky_key,
-                                        pinned.account_id,
-                                        kind=sticky_kind,
-                                    )
+                                await touch_sticky_session(
+                                    sticky_repo, sticky_key, pinned.account_id, kind=sticky_kind, max_age_seconds=sticky_max_age_seconds
+                                )
                                 return pinned_result
                     if rate_limit_far_away:
                         rebind_reason = "rate_limited_failover"
@@ -1574,7 +1564,7 @@ class LoadBalancer:
         if count < 1:
             return
         async with await self._get_account_lock(account.id):
-            account_snapshot = _clone_account(account)
+            account_snapshot = clone_account(account)
             state = self._state_for(account)
             state.error_count += count
             state.last_error_at = time.time()
@@ -2288,22 +2278,22 @@ def _clone_selection_inputs(
     accounts: list[Account] | None = None,
 ) -> SelectionInputs:
     return _SelectionInputs(
-        accounts=accounts if accounts is not None else [_clone_account(account) for account in selection_inputs.accounts],
+        accounts=accounts if accounts is not None else [clone_account(account) for account in selection_inputs.accounts],
         latest_primary={
-            account_id: _clone_usage_history(entry) for account_id, entry in selection_inputs.latest_primary.items()
+            account_id: clone_usage_history(entry) for account_id, entry in selection_inputs.latest_primary.items()
         },
         latest_secondary={
-            account_id: _clone_usage_history(entry) for account_id, entry in selection_inputs.latest_secondary.items()
+            account_id: clone_usage_history(entry) for account_id, entry in selection_inputs.latest_secondary.items()
         },
         latest_monthly={
-            account_id: _clone_standard_usage_history(entry)
+            account_id: clone_standard_usage_history(entry)
             for account_id, entry in selection_inputs.latest_monthly.items()
         },
         quota_planner_settings=selection_inputs.quota_planner_settings,
         runtime_accounts=(
             None
             if selection_inputs.runtime_accounts is None
-            else [_clone_account(account) for account in selection_inputs.runtime_accounts]
+            else [clone_account(account) for account in selection_inputs.runtime_accounts]
         ),
         error_message=selection_inputs.error_message,
         error_code=selection_inputs.error_code,

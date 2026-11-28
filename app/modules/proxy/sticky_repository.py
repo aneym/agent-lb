@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import and_, bindparam, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -49,9 +49,28 @@ class StickySessionListEntryRecord:
     display_name: str
 
 
+async def touch_sticky_session(
+    sticky_repo: object,
+    key: str,
+    account_id: str,
+    *,
+    kind: StickySessionKind,
+    max_age_seconds: int | None,
+) -> None:
+    if max_age_seconds is None:
+        return
+    touch = getattr(sticky_repo, "touch_if_stale", None)
+    if touch is not None:
+        await touch(key, account_id, kind=kind, max_age_seconds=max_age_seconds)
+        return
+    put = getattr(sticky_repo, "put", getattr(sticky_repo, "upsert"))
+    await put(key, account_id, kind=kind)
+
+
 class StickySessionsRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+        self._seen_age: dict[tuple[str, StickySessionKind], tuple[str, float]] = {}
 
     async def get_account_id(
         self,
@@ -66,11 +85,26 @@ class StickySessionsRepository:
         if row is None:
             return None
         if max_age_seconds is not None:
-            cutoff = utcnow() - timedelta(seconds=max_age_seconds)
-            if to_utc_naive(row.updated_at) < cutoff:
+            now = utcnow()
+            age_seconds = (now - to_utc_naive(row.updated_at)).total_seconds()
+            if age_seconds > max_age_seconds:
                 await self.delete(key, kind=kind)
                 return None
+            self._seen_age[(key, kind)] = (row.account_id, age_seconds)
         return row.account_id
+
+    async def touch_if_stale(
+        self,
+        key: str,
+        account_id: str,
+        *,
+        kind: StickySessionKind,
+        max_age_seconds: int,
+    ) -> None:
+        seen = self._seen_age.get((key, kind))
+        if seen is not None and seen[0] == account_id and seen[1] < min(60.0, max_age_seconds / 4.0):
+            return
+        await self.put(key, account_id, kind=kind)
 
     async def get_entry(self, key: str, *, kind: StickySessionKind) -> StickySession | None:
         if not key:

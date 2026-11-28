@@ -40,10 +40,38 @@ def _estimate_request_input_tokens(payload: ApiKeyUsageEstimableRequest, upstrea
         return None
 
     data = _input_budget_payload(upstream_payload)
+    if _lower_bound_exceeds(data, API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET):
+        return API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET
     serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str)
     if not serialized:
         return 0
     return min(len(serialized.encode("utf-8")), API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET)
+
+
+def _lower_bound_exceeds(value: JsonValue, limit: int) -> bool:
+    remaining = limit
+    stack: list[JsonValue] = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            remaining -= len(item) + 2
+            if remaining <= 0:
+                return True
+        elif isinstance(item, dict):
+            remaining -= 2
+            if remaining <= 0:
+                return True
+            for key, child in item.items():
+                remaining -= len(key) + 3
+                if remaining <= 0:
+                    return True
+                stack.append(child)
+        elif isinstance(item, list):
+            remaining -= 2
+            if remaining <= 0:
+                return True
+            stack.extend(item)
+    return False
 
 
 def _input_budget_payload(payload: JsonObject) -> dict[str, JsonValue]:
